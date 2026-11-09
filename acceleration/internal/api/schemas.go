@@ -289,6 +289,7 @@ type CreateSessionRequest struct {
 	Sts                  *string            `json:"sts,omitempty" doc:"A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides."`
 	Stt                  *string            `json:"stt,omitempty" doc:"Omit it and the config decides, or en-low-latency when there is no config."`
 	Tags                 *map[string]string `json:"tags,omitempty" doc:"Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins."`
+	Team                 *string            `json:"team,omitempty" minLength:"1" maxLength:"59" doc:"The team the session's work is counted under, its team spend limits included, as team:<name> is among a token's usage categories: 1 to 59 letters, digits, _ . and -. Left out, the session is counted under the team the caller's token names, else the agent config's team tag. A token naming another team is refused with a 400: the team a token was signed for is not moved. Server-side only: a device sending it is refused with a 403, since its team is the one its token was signed for."`
 	Timezone             *string            `json:"timezone,omitempty" doc:"The end user's IANA timezone, such as Europe/Amsterdam, which a device knows and the router does not. It sets the zone the agent reads dates in for this session and, for a user the caller may name, is remembered as theirs for the scheduled tasks and sessions that follow. An unknown zone is refused with a 400 invalid_timezone."`
 	Title                *string            `json:"title,omitempty" doc:"What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it."`
 	ToolTimeoutMs        *int               `json:"tool_timeout_ms,omitempty" doc:"How long the model waits for a tool result. Zero is the default."`
@@ -825,7 +826,9 @@ type Session struct {
 	CreatedAt        time.Time               `json:"created_at"`
 	Custom           *map[string]interface{} `json:"custom,omitempty"`
 	Description      *string                 `json:"description,omitempty"`
-	EndReason        *SessionEndReason       `json:"end_reason,omitempty" readOnly:"true" doc:"Why the session ended. Absent while it is running, and for a session that ended before this was kept or by being stopped."`
+	EndFault         *SessionEndFault        `json:"end_fault,omitempty" readOnly:"true" doc:"Whose doing end_reason was. Absent while the session is running."`
+	EndReason        *SessionEndReason       `json:"end_reason,omitempty" readOnly:"true" doc:"Why the session ended. Absent while it is running, and for a session that ended before this was kept."`
+	EndStage         *SessionEndStage        `json:"end_stage,omitempty" readOnly:"true" doc:"How far the session had got when it ended. Absent while it is running."`
 	ForkedFrom       *string                 `json:"forked_from,omitempty" doc:"The session this one continued from, empty for one opened fresh."`
 	Id               string                  `json:"id"`
 	Incognito        *bool                   `json:"incognito,omitempty" doc:"Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from."`
@@ -890,14 +893,6 @@ func (e SessionModality) Valid() bool {
 
 func (SessionModality) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "SessionModality", "How the user took part: text for a conversation held in writing, voice for a call, and video once the agent has seen the user's video. It only moves up, from text or voice to video.", "text", "voice", "video")
-}
-
-// SessionEndReason is why a session ended.
-type SessionEndReason string
-
-func (SessionEndReason) Schema(registry huma.Registry) *huma.Schema {
-	return namedEnum(registry, "SessionEndReason", "Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.",
-		"agent_hangup", "transferred", "hangup", "start", "unanswered", "voicemail")
 }
 
 // SessionMode How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.

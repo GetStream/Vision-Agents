@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -67,6 +68,42 @@ func TestASpendCheckThatCannotBeMadeIsNoRefusalOfMoney(t *testing.T) {
 		"message": "the agent gave no answer", "type": "unavailable", "code": "model_failed"}}`))
 	if errors.As(other, &refused) && refused.SpendCheckUnavailable() {
 		t.Errorf("another unavailable answer says the spend check is")
+	}
+}
+
+func TestARefusalThatAsksForTimeSaysHowLong(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "7")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error": {"message": "the user's spend limit is spent until the hour ends",
+			"type": "rate_limited", "code": "user_limit_reached"}}`))
+	}))
+	t.Cleanup(server.Close)
+
+	var refused *RouterError
+	if err := searching(t, server); !errors.As(err, &refused) {
+		t.Fatalf("the refusal came back as %v", err)
+	}
+	if refused.RetryAfter != 7*time.Second || refused.Code != "user_limit_reached" {
+		t.Errorf("the refusal was read as %+v, want a 7s wait", *refused)
+	}
+}
+
+func TestRetryAfterReadsSecondsOrADate(t *testing.T) {
+	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	for header, want := range map[string]time.Duration{
+		"":                              0,
+		"30":                            30 * time.Second,
+		" 2 ":                           2 * time.Second,
+		"-5":                            0,
+		"Fri, 06 Nov 2026 12:01:30 GMT": 90 * time.Second,
+		"Fri, 06 Nov 2026 11:59:00 GMT": 0,
+		"soon":                          0,
+	} {
+		if got := retryAfter(header, now); got != want {
+			t.Errorf("Retry-After %q read as %v, want %v", header, got, want)
+		}
 	}
 }
 

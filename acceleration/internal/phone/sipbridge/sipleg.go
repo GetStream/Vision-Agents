@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
@@ -65,7 +66,9 @@ type sipLeg struct {
 	password     string
 	// callID is sent as CallIDHeader on the INVITE. Only the Stream leg sets it.
 	callID string
-	log    *slog.Logger
+	// responded is CallParams.Responded. Only the customer leg sets it.
+	responded func(time.Duration)
+	log       *slog.Logger
 	// onDialog registers the leg's Call-ID, so requests the other side sends in this
 	// dialog find it. It runs before the answer arrives.
 	onDialog func(callID string)
@@ -106,6 +109,7 @@ func (l *sipLeg) newInvite(body []byte) *sip.Request {
 func (l *sipLeg) Invite(ctx context.Context, body []byte) ([]byte, error) {
 	req := l.newInvite(body)
 
+	invited, timed := time.Now(), false
 	dlg, err := l.ua.WriteInvite(ctx, req)
 	if err != nil {
 		return nil, stack.Wrap(err)
@@ -130,6 +134,10 @@ func (l *sipLeg) Invite(ctx context.Context, body []byte) ([]byte, error) {
 		Password: l.password,
 		OnResponse: func(res *sip.Response) error {
 			l.log.Info("INVITE response", "status", res.StatusCode, "reason", res.Reason)
+			if l.responded != nil && !timed && statusIndicative(res.StatusCode) {
+				timed = true
+				l.responded(time.Since(invited))
+			}
 			// WaitAnswer resends the same INVITE with credentials right after this hook,
 			// so the retry already carries the address the other side can reach us on.
 			if res.StatusCode == sip.StatusUnauthorized || res.StatusCode == sip.StatusProxyAuthRequired {
@@ -151,6 +159,17 @@ func (l *sipLeg) Invite(ctx context.Context, body []byte) ([]byte, error) {
 		return nil, stack.Wrap(err)
 	}
 	return dlg.InviteResponse.Body(), nil
+}
+
+// statusIndicative reports whether a response to an INVITE ends its post-dial delay, RFC 6076
+// §4.3: any but 100 Trying and the challenges 401, 402 and 407, which say nothing yet of how
+// the call goes.
+func statusIndicative(code int) bool {
+	switch code {
+	case sip.StatusTrying, sip.StatusUnauthorized, sip.StatusPaymentRequired, sip.StatusProxyAuthRequired:
+		return false
+	}
+	return true
 }
 
 // ackForLateAnswer says whether an INVITE that failed was answered all the same, and with

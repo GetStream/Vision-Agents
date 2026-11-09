@@ -78,6 +78,7 @@ func (s *RoutingSuite) TestATargetTheDeploymentCannotBuildIsRefusedNamingWhatIsM
 	_, _, err := router.Select(s.ctx, Request{CustomerID: "acme", Target: "quick/multi"})
 	s.ErrorContains(err, `every candidate for "quick/multi" failed: quick/multi: quick: api key is required (set QUICK_API_KEY)`)
 	s.Equal(1, built.counted["quick/multi"], "only the probe built it: the model was never tried, so nothing counts against it")
+	s.NotErrorIs(err, ErrVendorsFailed, "a model the deployment has no key for is the router's, not its vendor's")
 	s.Empty(stats.queue, "no stat marks the model down")
 }
 

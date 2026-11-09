@@ -608,6 +608,9 @@ func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, 
 		spec.Attribution = routing.AttributionFrom(ctx)
 		spec.Attribution.APIKey, spec.Attribution.UsageCategories = row.APIKey, row.UsageCategories
 	}
+	// Its team too: the one it was opened under is in those categories, and a team the config
+	// was tagged with since does not move a conversation already under way.
+	spec.Team = ""
 	// The row keeps the call voice was last on, which voice goes back to once started.
 	return spec.Holding(session.Call{Type: row.CallType, ID: row.CallID}), nil
 }
@@ -685,6 +688,10 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	spec.Text = !value(request.StartVoice) && request.Phone == nil
 	if request.Call != nil {
 		spec.CallType, spec.CallID = request.Call.Type, request.Call.Id
+	}
+	// Over the config's team tag: the backend opening it knows which team the work is for.
+	if request.Team != nil {
+		spec.Team = *request.Team
 	}
 	// The conversation is kept in Stream Chat unless it is incognito, which Normalize turns
 	// off, so any Chat client can read it back, typed and spoken.
@@ -956,7 +963,46 @@ func mergeStored(rendered *Session, row *store.AgentSession) {
 		reason := SessionEndReason(row.EndReason)
 		rendered.EndReason = &reason
 	}
+	if info, known := session.EndReason(row.EndReason).Info(); known {
+		fault, stage := SessionEndFault(info.Fault), SessionEndStage(info.Stage)
+		rendered.EndFault, rendered.EndStage = &fault, &stage
+	}
 	rendered.LastResponseAt = row.LastResponseAt
+}
+
+// SessionEndReason is why a session ended: a session.EndReasons value a row can keep.
+type SessionEndReason string
+
+func (SessionEndReason) Schema(registry huma.Registry) *huma.Schema {
+	var values, meanings []string
+	for _, info := range session.EndReasons {
+		// A session that never opened has no row to keep its reason on.
+		if info.Stage == session.StageStarting {
+			continue
+		}
+		values = append(values, string(info.Reason))
+		meanings = append(meanings, string(info.Reason)+", "+info.Meaning+
+			" (fault "+string(info.Fault)+", stage "+string(info.Stage)+")")
+	}
+	return namedEnum(registry, "SessionEndReason", "Why the session ended, with whose fault it was and the stage it came at: "+
+		strings.Join(meanings, "; ")+".", values...)
+}
+
+// SessionEndFault is whose doing a session's end was.
+type SessionEndFault string
+
+func (SessionEndFault) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "SessionEndFault", "Whose doing a session's end was: none, the agent or the app ended it; caller, the person on the call; router, the router itself; vendor, a model vendor; carrier, the phone carrier; customer_config, the app's configuration or its own key; customer_credit, the organization's credit or spend limits.",
+		string(session.FaultNone), string(session.FaultCaller), string(session.FaultRouter), string(session.FaultVendor),
+		string(session.FaultCarrier), string(session.FaultCustomerConfig), string(session.FaultCustomerCredit))
+}
+
+// SessionEndStage is how far a session had got when it ended.
+type SessionEndStage string
+
+func (SessionEndStage) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "SessionEndStage", "How far a session had got when it ended: ringing, before a person was on the line of a phone call; conversation, once the session was open.",
+		string(session.StageRinging), string(session.StageConversation))
 }
 
 // modelOverwritesOf reads what the caller asked to change about the models. The name is

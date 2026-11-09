@@ -272,6 +272,9 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok := callsComplaint(config.Calls); !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok := teamTagComplaint(config.Tags, existing.Tags); !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok := outputRetentionComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}

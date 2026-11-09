@@ -279,7 +279,10 @@ module GetStream
         request[:languages] = [@pipeline[:language]] if @pipeline[:language]
         request[:greeting] = { text: @pipeline[:greeting] } if @pipeline[:greeting].is_a?(String)
         request[:tools] = @tools.declarations unless @tools.empty?
-        request.merge!(call.compact).merge!(options).compact
+        request = request.merge!(call.compact).merge!(options).compact
+        team = request.delete(:team).to_s
+        request[:team] = Backend.check_team(team) unless team.empty?
+        request
       end
 
       private
@@ -466,7 +469,9 @@ module GetStream
       #
       # @param options any CreateSessionRequest field (id, up to 64 of A-Za-z0-9_- to hold
       #   the session by; start_voice, title, description, project_id, custom, incognito,
-      #   ...), plus interim and decisions.
+      #   ...), plus interim and decisions. team: counts the session under one of the
+      #   customer's teams; it is server side only, and the router refuses one other than the
+      #   team the token names.
       def create(**options)
         watch = { interim: options.delete(:interim) || false, decisions: options.delete(:decisions) || false }
         created = @client.post("/v1/agents/sessions", body: @agent.session_request({}, options))

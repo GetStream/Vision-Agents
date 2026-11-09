@@ -215,7 +215,7 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	// A suspension that cannot be read refuses the call too: it is there to stop fraud that
 	// costs money.
 	if _, err := s.store.TelephonySuspension(r.Context(), number.CustomerID); !errors.Is(err, store.ErrNotSuspended) {
-		s.refuseArrivingCall(r.Context(), number, callType, callID, "refused an arriving call to a suspended app",
+		s.refuseArrivingCall(r.Context(), number, callType, callID, event.SessionID, "refused an arriving call to a suspended app",
 			"call", event.CallCid, "customer", number.CustomerID, "error", err)
 		return
 	}
@@ -223,7 +223,7 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	// so an organization that may not pay has nobody answer.
 	if err := s.gate.Admit(r.Context(), number.CustomerID); err != nil {
 		answer, _ := moneyError(err)
-		s.refuseArrivingCall(r.Context(), number, callType, callID, "refused an arriving call to an organization that may not pay for it",
+		s.refuseArrivingCall(r.Context(), number, callType, callID, event.SessionID, "refused an arriving call to an organization that may not pay for it",
 			"call", event.CallCid, "customer", number.CustomerID, "code", answer.Code)
 		return
 	}
@@ -236,7 +236,7 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	// it on this node.
 	if number.ConfigID != "" {
 		if s.sessions == nil {
-			s.refuseArrivingCall(r.Context(), number, callType, callID, "refused an arriving call to a number with an agent on a router that runs no sessions",
+			s.refuseArrivingCall(r.Context(), number, callType, callID, event.SessionID, "refused an arriving call to a number with an agent on a router that runs no sessions",
 				"call", event.CallCid, "customer", number.CustomerID, "number", number.E164, "config", number.ConfigID)
 			return
 		}
@@ -271,7 +271,7 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 		s.logger.Error("nobody could answer an arriving call",
 			"call", event.CallCid, "customer", number.CustomerID,
 			"number", number.E164, "error", err)
-		s.refuseArrivingCall(r.Context(), number, callType, callID, "refused an arriving call no worker could take",
+		s.refuseArrivingCall(r.Context(), number, callType, callID, event.SessionID, "refused an arriving call no worker could take",
 			"call", event.CallCid, "customer", number.CustomerID, "number", number.E164)
 		return
 	}
@@ -291,7 +291,7 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 func (s *Server) answerWithAgent(ctx context.Context, sessions *session.Manager, origin hookOrigin, event callEvent, number store.PhoneNumber, callType, callID string) {
 	config, err := s.configs.AgentConfig(ctx, number.CustomerID, number.ConfigID)
 	if err != nil {
-		s.refuseArrivingCall(ctx, number, callType, callID, "refused an arriving call to a number whose agent is gone",
+		s.refuseArrivingCall(ctx, number, callType, callID, event.SessionID, "refused an arriving call to a number whose agent is gone",
 			"call", event.CallCid, "customer", number.CustomerID, "number", number.E164,
 			"config", number.ConfigID, "error", err)
 		return
@@ -330,7 +330,7 @@ func (s *Server) answerWithAgent(ctx context.Context, sessions *session.Manager,
 		s.logger.Error("nobody could answer an arriving call",
 			"call", event.CallCid, "customer", number.CustomerID,
 			"number", number.E164, "config", number.ConfigID, "error", err)
-		s.refuseArrivingCall(ctx, number, callType, callID, "refused an arriving call its agent could not answer",
+		s.refuseArrivingCall(ctx, number, callType, callID, event.SessionID, "refused an arriving call its agent could not answer",
 			"call", event.CallCid, "customer", number.CustomerID, "number", number.E164, "config", number.ConfigID)
 		return
 	}
@@ -373,12 +373,15 @@ const endRefusedTimeout = 10 * time.Second
 // bridge has answered the caller by the time the call's session starts (the caller is its
 // first participant), so a call left alone would run until the caller hung up, and the vendor
 // bills its seconds; it is ended off the request, so the hook still answers at once.
-func (s *Server) refuseArrivingCall(ctx context.Context, number store.PhoneNumber, callType, callID, why string, attributes ...any) {
+func (s *Server) refuseArrivingCall(ctx context.Context, number store.PhoneNumber, callType, callID, streamSession, why string, attributes ...any) {
 	s.logger.Info(why+"; ending it", attributes...)
 	if s.phone == nil {
 		return
 	}
 	ctx = context.WithoutCancel(ctx)
+	// The caller's leg, its Stream session's, ends with the call, on whichever node Stream's
+	// events reach, and is counted failed there. Beside the end, so a slow Redis does not keep the caller on the line.
+	go s.phone.Refused(ctx, number.CustomerID, number.StreamAppPK, callType, callID, streamSession)
 	go func() {
 		ctx, cancel := context.WithTimeout(ctx, endRefusedTimeout)
 		defer cancel()

@@ -54,13 +54,19 @@ func Parse(raw ...string) []string {
 }
 
 // Env reads the keys of the first of names that holds any: NAME itself, then NAME_1,
-// NAME_2 and on in numeric order.
+// NAME_2 and on in numeric order. It remembers that variable as where those keys come from, which the
+// vendor metrics name a pool by.
 func Env(names ...string) []string {
 	for _, name := range names {
 		if name == "" {
 			continue
 		}
 		if keys := Parse(numbered(name)...); len(keys) > 0 {
+			sharedMu.Lock()
+			if _, ok := readFrom[strings.Join(keys, ",")]; !ok {
+				readFrom[strings.Join(keys, ",")] = name
+			}
+			sharedMu.Unlock()
 			return keys
 		}
 	}
@@ -104,6 +110,9 @@ func numbered(name string) []string {
 var (
 	sharedMu sync.Mutex
 	shared   = map[string]*Pool{}
+	// readFrom is the variable Env first read each set of keys from, by the keys joined with
+	// commas. Keys that were never read from one, such as a customer's own, are not in it.
+	readFrom = map[string]string{}
 )
 
 // The status labels of a refusal that came in a websocket frame or close after the handshake,
@@ -118,7 +127,10 @@ const (
 var outOfFundsStatus = strconv.Itoa(http.StatusPaymentRequired)
 
 // FromEnv is the shared pool for explicit when it names any key, or else for the keys Env
-// finds under envVars. The first of envVars names the pool's key variable in its metrics.
+// finds under envVars. The first of envVars names the pool's key variable in its refusal
+// counter; the vendor metrics name it by the variable Env read its keys from, and keep none for
+// keys never read from one. A pool with such a variable has its rate-limit refusal series
+// served at 0 from when it is built.
 func FromEnv(explicit string, envVars ...string) *Pool {
 	keys := Parse(explicit)
 	if len(keys) == 0 {
@@ -135,6 +147,10 @@ func FromEnv(explicit string, envVars ...string) *Pool {
 	}
 	if len(envVars) > 0 {
 		pool.name(envVars[0])
+	}
+	if source, ok := readFrom[id]; ok {
+		pool.from(source)
+		zeroRateLimited(source, len(keys))
 	}
 	return pool
 }
@@ -165,6 +181,9 @@ type ring struct {
 	until []time.Time
 	// keyVar is the variable the keys are read from, "" until a FromEnv names one.
 	keyVar string
+	// source is the variable Env read the keys from, "" for keys it never read: unlike
+	// keyVar, a customer's own key passed to FromEnv beside the router's variable has none.
+	source string
 }
 
 type pin struct {
@@ -265,6 +284,13 @@ func (r *ring) name(keyVar string) {
 	if r.keyVar == "" {
 		r.keyVar = keyVar
 	}
+}
+
+// from gives the ring the variable Env read its keys from.
+func (r *ring) from(source string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.source = source
 }
 
 // countRefused counts a refused attempt under the pool's key variable, never its key.
@@ -446,6 +472,7 @@ func (p *Pool) sendTimes(ctx context.Context, attempts int, send func(key string
 		if err != nil || key == "" {
 			return response, err
 		}
+		p.observe(key, response)
 		rest, refused := p.refused(response)
 		if refused || rejectsKey(response) {
 			p.countRefused(strconv.Itoa(response.StatusCode))
@@ -589,6 +616,9 @@ func (p *Pool) Dial(
 		key := p.Next()
 		endpoint, header := build(key)
 		conn, response, err := dialer.DialContext(ctx, endpoint, header)
+		if response != nil {
+			p.observe(key, response)
+		}
 		if err == nil || response == nil || key == "" {
 			return conn, response, key, err
 		}

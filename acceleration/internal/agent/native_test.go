@@ -93,6 +93,36 @@ func (s *AgentSuite) TestNativeInterruptionStopsBlockedPlaybackAndKeepsTheNextRe
 	s.Equal([]audio.PcmData{pcm}, edge.published)
 }
 
+// A model whose audio outruns a held playback fills the ordered queue; the failure must be
+// ErrPlaybackFull so the session ends it as the router's fault, not the model's.
+func (s *AgentSuite) TestNativeAudioOutrunningPlaybackFailsAsPlaybackFull() {
+	edge := &heldPlayback{loopbackEdge: newLoopbackEdge(), released: make(chan struct{})}
+	agent, err := New(Options{CustomerID: "acme", Edge: edge, STS: &stsrouter.Router{}, STSTarget: "openai/gpt-realtime-2"})
+	s.Require().NoError(err)
+	agent.ctx, agent.cancel = context.WithCancel(s.ctx)
+	s.T().Cleanup(func() { agent.Close() })
+	seen := collect(agent)
+	source := make(chan sts.Event, 8)
+	ordered := make(chan sts.Event, 1)
+	agent.pipe = newPipeline(agent.ctx, true)
+	agent.pipe.running.Add(2)
+	go agent.receiveSTS(agent.pipe, source, ordered)
+	go agent.consumeSTS(agent.pipe, nil, ordered)
+
+	pcm := audio.PcmData{Samples: []int16{1, 2, 3}, SampleRate: 24000, Channels: 1}
+	// consumeSTS holds at most the first chunk, blocked in playback, and the queue one more:
+	// the third chunk finds it full whichever way the two goroutines interleave.
+	source <- sts.ResponseStarted{ResponseID: "r1", Generation: 1, At: time.Now()}
+	for range 3 {
+		source <- sts.AudioChunk{ResponseID: "r1", Generation: 1, Audio: pcm}
+	}
+
+	s.Eventually(func() bool { return countOf[Error](seen.seen()) == 1 }, time.Second, time.Millisecond)
+	failure, _ := firstOf[Error](seen.seen())
+	s.Equal("sts", failure.Context)
+	s.ErrorIs(failure.Err, ErrPlaybackFull)
+}
+
 // nativePeer exercises the real OpenAI adapter over a local WebSocket.
 type nativePeer struct {
 	conn   *websocket.Conn

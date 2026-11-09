@@ -91,6 +91,9 @@ type fakeServer struct {
 	// it.
 	decideAfter time.Duration
 	wordsAfter  time.Duration
+	// wordsGate, when set, holds the words of the next decision asked for them until it is
+	// closed: that decision's alone, the ones after it answering as they come.
+	wordsGate chan struct{}
 	// unfinishedAfter is how long a decision about words still coming, a check over the
 	// agent, takes on top of decideAfter.
 	unfinishedAfter time.Duration
@@ -229,6 +232,13 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				w.(http.Flusher).Flush()
 				f.mu.Unlock()
 				time.Sleep(f.wordsAfter)
+				f.mu.Lock()
+			}
+			if gate := f.wordsGate; gate != nil {
+				f.wordsGate = nil
+				w.(http.Flusher).Flush()
+				f.mu.Unlock()
+				<-gate
 				f.mu.Lock()
 			}
 			_, _ = fmt.Fprintf(w, `{"transcript":{"text":%q,"language":%q,"noise":%q},"transcript_ms":3}`+"\n", words, f.spoken(), f.blanked)
@@ -739,6 +749,10 @@ type transcribing struct {
 	wordsAlone bool
 	interims   bool
 	languages  []string
+	// rulesAlone opens each as a floor that rules alone (NewFloor), whose words another
+	// transcriber writes, asking it for its final with finalize.
+	rulesAlone bool
+	finalize   func() (bool, error)
 	// phase and at keep the voice going from one frame to the next, and noise the line's
 	// noise, floor loud.
 	phase float64
@@ -780,12 +794,16 @@ func (s *transcribing) reopen(now func() time.Time) {
 }
 
 func (s *transcribing) openReading(now func() time.Time) {
-	s.transcriber = NewTranscriber(s.client, "", s.languages, slog.New(slog.DiscardHandler))
+	if s.rulesAlone {
+		s.transcriber = NewFloor(s.client, s.languages, s.finalize, slog.New(slog.DiscardHandler))
+	} else {
+		s.transcriber = NewTranscriber(s.client, "", s.languages, slog.New(slog.DiscardHandler))
+		s.transcriber.interims = s.interims
+	}
 	s.transcriber.now = now
 	if s.wordsAlone {
 		s.transcriber.AskOnPauses(nil)
 	}
-	s.transcriber.interims = s.interims
 	s.Require().NoError(s.transcriber.Start(context.Background()))
 	transcriber := s.transcriber
 	s.T().Cleanup(func() { s.Require().NoError(transcriber.Close()) })

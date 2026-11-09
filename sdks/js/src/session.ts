@@ -258,13 +258,12 @@ export class Session {
       query["decisions"] = "false";
     }
 
-    const url = await client.backend.socketURL(
-      `/v1/agents/sessions/${encodeURIComponent(created.id)}/events`,
-      query,
-    );
-
     try {
-      const socket = await Socket.open(client.backend, url);
+      const socket = await Socket.dial(
+        client.backend,
+        `/v1/agents/sessions/${encodeURIComponent(created.id)}/events`,
+        query,
+      );
       return new Session(client, created, socket, options.tools);
     } catch (cause) {
       // The session is live in the backend even though nothing here can watch it, so it is

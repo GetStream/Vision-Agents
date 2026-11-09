@@ -75,7 +75,7 @@ func run(ctx context.Context, dir string) error {
 	// The models first, because storing a config replaces it: doing this after the sync would
 	// wipe the instructions and skills the sync had just written. A subagent is what makes
 	// a skill mean anything -- without one the fast model answers everything itself.
-	config, err := agents.DefineAgent(ctx, client, acceleration.AgentConfigRequest{
+	config, err := agents.DefineAgent(ctx, stream.Backend{}, acceleration.AgentConfigRequest{
 		Name:     folder.Name,
 		Stt:      text("deepgram/flux-general-en"),
 		Tts:      text("cartesia/sonic-preview"),

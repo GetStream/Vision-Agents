@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/cmd/phonecheck/person/telnyx"
 	"github.com/GetStream/Vision-Agents/acceleration/cmd/phonecheck/person/twilio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/locate"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 type Config struct {
@@ -44,7 +45,7 @@ const usage = "usage: phonecheck outbound|inbound -provider NAME -agent-number E
 
 func main() {
 	if err := runCommand(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, store.RedactLogText(fmt.Sprint(err)))
 		os.Exit(1)
 	}
 }
@@ -173,7 +174,7 @@ func (c Config) validate() error {
 
 func newLogger(format string, w io.Writer) *slog.Logger {
 	if format == "json" {
-		return slog.New(slog.NewJSONHandler(w, nil))
+		return slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{ReplaceAttr: store.RedactJSONLogAttr}))
 	}
-	return slog.New(slog.NewTextHandler(w, nil))
+	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{ReplaceAttr: store.RedactLogAttr}))
 }

@@ -724,6 +724,19 @@ keeps the last snapshot, and a model no read has reached within the health windo
 as with no Redis at all. The metrics are `router_health_reads_total` (by `kind`: `refresh` or
 `miss`), `router_health_refresh_errors_total` and `router_health_snapshot_age_seconds`.
 
+`router_failovers_total` counts each time the router moved work off a provider that failed, by
+`modality`, the `provider` that failed, `stage` and `reason`; `router_requests_total` tells a
+provider's models apart. It is counted once another candidate has been started in its place: the
+last candidate failing, or a walk the caller left, is no failover. `stage` is `start` (a
+candidate the walk could not start), `use` (one that started and failed in the walk's use, as a
+recording whose vendor failed it) or `session` (one that failed after its session started and
+another took over: an STT session the vendor refused, a voice the agent lost mid-call to another
+provider or key, an LLM response the session's model or a fallback before the one that answered
+failed). `reason` is `request` for a setting the provider refused, `customer_key` for work on
+the customer's own key or their own `custom` model, `cancelled` for a candidate that failed once
+the caller's context had ended, and `vendor` otherwise, which is the one an alert on a degrading
+vendor reads.
+
 ### The default groups
 
 These are the shortcuts offered as a choice, for the caller who wants the models we would
@@ -1847,7 +1860,8 @@ and full duration for each attempt. `speech_end_to_audio_ms` estimates the delay
 last input audio using provider STT processing time; it cannot include network transit
 or browser playback. `roundtrip_ms` and `speech_end_to_audio_ms` stop when publishing the
 first chunk of the reply returns, which for a chunk longer than the 400 ms outgoing queue is
-later than it could first be heard. `first_frame_queued_ms`, `first_audible_frame_ms` and
+later than it could first be heard. For a turn whose reply said nothing and handed work on, a
+hold or update line, or what the work came back with, is that first chunk. `first_frame_queued_ms`, `first_audible_frame_ms` and
 `speech_end_to_audible_ms` stop at the first frame being queued for the outgoing track and at
 the track taking the first frame that is not silence; they are absent for an edge that does
 not report them. The router logs call join and each ICE peer connection

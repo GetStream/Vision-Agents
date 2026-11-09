@@ -889,6 +889,17 @@ class TestSessions < LocalRouterTest
     refute session.voice.started?
   end
 
+  def test_a_session_is_counted_under_a_team_only_when_one_is_given
+    serve_session
+
+    client.agent("docs").sessions.create(team: "finance").close
+    assert_equal "finance", @router.last(:post, "/v1/agents/sessions").json["team"]
+    client.agent("docs").sessions.create(team: "").close
+    refute @router.last(:post, "/v1/agents/sessions").json.key?("team")
+    assert_raises(VA::ConfigurationError) { client.agent("docs").sessions.create(team: "team:finance") }
+    assert_equal 2, @router.seen(:post, "/v1/agents/sessions").size
+  end
+
   def test_a_conversation_is_resumed_by_its_session_id
     @router.on(:get, "/v1/agents/sessions/s1", body: { "id" => "s1", "user_id" => "docs", "call_id" => "" })
     @router.on_socket("/v1/agents/sessions/s1/events") do |peer|

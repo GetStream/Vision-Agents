@@ -774,8 +774,8 @@ func (s *Server) Handler() http.Handler {
 	// WaitForDelivery is false because most of what is served here is a long-
 	// lived socket; blocking the handler's return on event delivery would hold
 	// the connection open past its use. The flush in cmd/router covers shutdown.
-	served := withSentry(withRequestID(withTrace(withTiming(withCORS(s.authMode,
-		s.onOwningNode(s.withCustomer(s.withCost(s.withRequestLog(s.withQuota(s.withServerSide(handler)))))))))))
+	served := withSentry(withRequestID(withTrace(withMetrics(mux, withTiming(withCORS(s.authMode,
+		s.onOwningNode(s.withCustomer(s.withCost(s.withRequestLog(s.withQuota(s.withServerSide(handler))))))))))))
 	if s.directory == nil {
 		return served
 	}

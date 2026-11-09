@@ -469,7 +469,9 @@ from .session_call import SessionCall
 from .session_call_outcome import SessionCallOutcome
 from .session_connector_binding import SessionConnectorBinding
 from .session_custom import SessionCustom
+from .session_end_fault import SessionEndFault
 from .session_end_reason import SessionEndReason
+from .session_end_stage import SessionEndStage
 from .session_filter import SessionFilter
 from .session_filter_custom import SessionFilterCustom
 from .session_memory import SessionMemory
@@ -1086,7 +1088,9 @@ __all__ = (
     "SessionCallOutcome",
     "SessionConnectorBinding",
     "SessionCustom",
+    "SessionEndFault",
     "SessionEndReason",
+    "SessionEndStage",
     "SessionFilter",
     "SessionFilterCustom",
     "SessionMemory",

@@ -151,6 +151,17 @@ public sealed record SessionOptions
 
     /// <summary>Models for this conversation alone, over the agent's own.</summary>
     public ModelOverwrites? ModelOverwrites { get; init; }
+
+    /// <summary>
+    /// The team the conversation's work is counted under, its team spend limits included: 1 to
+    /// 59 letters, digits, <c>_ . -</c>. Null is the team the caller's token names, else the
+    /// agent's <c>tags: team</c>.
+    /// </summary>
+    /// <remarks>
+    /// Server side only: a device sending it is refused with a 403, and a token signed for
+    /// another team with a 400.
+    /// </remarks>
+    public string? Team { get; init; }
 }
 
 /// <summary>How an agent is built.</summary>
@@ -700,6 +711,7 @@ public sealed class Agent : IAsyncDisposable
             ProjectId = VisionAgentsClient.Blank(options.ProjectId),
             Custom = options.Custom is { Count: > 0 } custom ? custom.ToDictionary(pair => pair.Key, pair => pair.Value!) : null,
             ModelOverwrites = options.ModelOverwrites,
+            Team = VisionAgentsClient.Blank(options.Team),
             Llm = VisionAgentsClient.Blank(pipeline.Llm),
             Stt = VisionAgentsClient.Blank(pipeline.Stt),
             Tts = VisionAgentsClient.Blank(pipeline.Tts),

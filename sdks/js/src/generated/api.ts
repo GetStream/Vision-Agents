@@ -4634,7 +4634,7 @@ export type components = {
             readonly stt?: string;
             /** @description The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default subagent. */
             readonly subagent?: string;
-            /** @description Cost labels, carried onto every request a session using it makes. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds. */
+            /** @description Cost labels, carried onto every request a session using it makes. The team tag is also the team those sessions are counted under, its spend limits included, when whoever opens one names none: neither the caller's token nor the session's team field. It is 1 to 59 letters, digits, _ . and -, and a config naming another team tag is refused. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds. */
             readonly tags?: {
                 readonly [key: string]: string;
             };
@@ -6538,6 +6538,8 @@ export type components = {
             readonly tags?: {
                 readonly [key: string]: string;
             };
+            /** @description The team the session's work is counted under, its team spend limits included, as team:<name> is among a token's usage categories: 1 to 59 letters, digits, _ . and -. Left out, the session is counted under the team the caller's token names, else the agent config's team tag. A token naming another team is refused with a 400: the team a token was signed for is not moved. Server-side only: a device sending it is refused with a 403, since its team is the one its token was signed for. */
+            readonly team?: string;
             /** @description The end user's IANA timezone, such as Europe/Amsterdam, which a device knows and the router does not. It sets the zone the agent reads dates in for this session and, for a user the caller may name, is remembered as theirs for the scheduled tasks and sessions that follow. An unknown zone is refused with a 400 invalid_timezone. */
             readonly timezone?: string;
             /** @description What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it. */
@@ -7752,6 +7754,8 @@ export type components = {
             readonly duration_ms?: number;
             /** @description Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. key_refused is the vendor refusing the key the app keeps for it (BYOK), and the router's own instance of the model was asked next. refused is a response the prompt injection screen refused: the provider answered as asked, so it is no failure of the provider's either. Any other code, timeout included, is a failure and counts against the provider's health, unless it was on the app's own key. */
             readonly error_code?: string;
+            /** @description What the failure said, absent when success is true: for a provider that answered with an error, the start of its body. Bearer tokens, API keys, authorization headers and URL credentials in it are redacted, and a long one is cut short. Absent for a failure that said nothing, and for a request recorded before the router kept it. */
+            readonly error_message?: string;
             /** Format: int64 */
             readonly input_tokens?: number;
             readonly model: string;
@@ -9079,8 +9083,12 @@ export type components = {
                 readonly [key: string]: unknown;
             };
             readonly description?: string;
-            /** @description Why the session ended. Absent while it is running, and for a session that ended before this was kept or by being stopped. */
+            /** @description Whose doing end_reason was. Absent while the session is running. */
+            readonly end_fault?: components["schemas"]["SessionEndFault"];
+            /** @description Why the session ended. Absent while it is running, and for a session that ended before this was kept. */
             readonly end_reason?: components["schemas"]["SessionEndReason"];
+            /** @description How far the session had got when it ended. Absent while it is running. */
+            readonly end_stage?: components["schemas"]["SessionEndStage"];
             /** @description The session this one continued from, empty for one opened fresh. */
             readonly forked_from?: string;
             readonly id: string;
@@ -9158,10 +9166,20 @@ export type components = {
             readonly name: string;
         };
         /**
-         * @description Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.
+         * @description Whose doing a session's end was: none, the agent or the app ended it; caller, the person on the call; router, the router itself; vendor, a model vendor; carrier, the phone carrier; customer_config, the app's configuration or its own key; customer_credit, the organization's credit or spend limits.
          * @enum {string}
          */
-        readonly SessionEndReason: "agent_hangup" | "transferred" | "hangup" | "start" | "unanswered" | "voicemail";
+        readonly SessionEndFault: "none" | "caller" | "router" | "vendor" | "carrier" | "customer_config" | "customer_credit";
+        /**
+         * @description Why the session ended, with whose fault it was and the stage it came at: agent_hangup, the agent hung up (fault none, stage conversation); transferred, the agent handed the caller to a person (fault none, stage conversation); hangup, the caller left (fault caller, stage conversation); start, nobody joined the phone call in time (fault carrier, stage ringing); unanswered, the call placed was never answered (fault caller, stage ringing); voicemail, an answering machine picked up the call placed, and the agent left its message or hung up (fault none, stage ringing); closed, the session was closed through the API, or replaced by a newer one (fault none, stage conversation); shutdown, the router ended the session as it shut down (fault router, stage conversation); agent_failed, the agent left the call or answered no turn for a failure of the router's own (fault router, stage conversation); model_failed, a model vendor failed: the agent left the call or answered no turn (fault vendor, stage conversation); model_config_refused, the model failed on the customer's own key or model, or refused a setting, and the agent answered no turn (fault customer_config, stage conversation); model_no_credit, the credit or spend limits refused the model's work, and the agent answered no turn (fault customer_credit, stage conversation).
+         * @enum {string}
+         */
+        readonly SessionEndReason: "agent_hangup" | "transferred" | "hangup" | "start" | "unanswered" | "voicemail" | "closed" | "shutdown" | "agent_failed" | "model_failed" | "model_config_refused" | "model_no_credit";
+        /**
+         * @description How far a session had got when it ended: ringing, before a person was on the line of a phone call; conversation, once the session was open.
+         * @enum {string}
+         */
+        readonly SessionEndStage: "ringing" | "conversation";
         /** @description Which sessions to list. A field not listed here is refused rather than ignored. */
         readonly SessionFilter: {
             /** @description The agent name the session was opened against. */

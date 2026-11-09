@@ -832,7 +832,7 @@ namespace GetStream.VisionAgents.Models
         public string? Subagent { get; set; } = default!;
 
         /// <summary>
-        /// Cost labels, carried onto every request a session using it makes. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds.
+        /// Cost labels, carried onto every request a session using it makes. The team tag is also the team those sessions are counted under, its spend limits included, when whoever opens one names none: neither the caller's token nor the session's team field. It is 1 to 59 letters, digits, _ . and -, and a config naming another team tag is refused. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tags")]
         public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
@@ -6000,6 +6000,12 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
 
         /// <summary>
+        /// The team the session's work is counted under, its team spend limits included, as team:&lt;name&gt; is among a token's usage categories: 1 to 59 letters, digits, _ . and -. Left out, the session is counted under the team the caller's token names, else the agent config's team tag. A token naming another team is refused with a 400: the team a token was signed for is not moved. Server-side only: a device sending it is refused with a 403, since its team is the one its token was signed for.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("team")]
+        public string? Team { get; set; } = default!;
+
+        /// <summary>
         /// The end user's IANA timezone, such as Europe/Amsterdam, which a device knows and the router does not. It sets the zone the agent reads dates in for this session and, for a user the caller may name, is remembered as theirs for the scheduled tasks and sessions that follow. An unknown zone is refused with a 400 invalid_timezone.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("timezone")]
@@ -8880,6 +8886,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("error_code")]
         public string? ErrorCode { get; set; } = default!;
+
+        /// <summary>
+        /// What the failure said, absent when success is true: for a provider that answered with an error, the start of its body. Bearer tokens, API keys, authorization headers and URL credentials in it are redacted, and a long one is cut short. Absent for a failure that said nothing, and for a request recorded before the router kept it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("error_message")]
+        public string? ErrorMessage { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("input_tokens")]
         public long? InputTokens { get; set; } = default!;
@@ -12204,10 +12216,22 @@ namespace GetStream.VisionAgents.Models
         public string? Description { get; set; } = default!;
 
         /// <summary>
-        /// Why the session ended. Absent while it is running, and for a session that ended before this was kept or by being stopped.
+        /// Whose doing end_reason was. Absent while the session is running.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("end_fault")]
+        public string? EndFault { get; set; } = default!;
+
+        /// <summary>
+        /// Why the session ended. Absent while it is running, and for a session that ended before this was kept.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("end_reason")]
         public string? EndReason { get; set; } = default!;
+
+        /// <summary>
+        /// How far the session had got when it ended. Absent while it is running.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("end_stage")]
+        public string? EndStage { get; set; } = default!;
 
         /// <summary>
         /// The session this one continued from, empty for one opened fresh.

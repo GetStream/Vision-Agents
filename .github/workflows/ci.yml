@@ -153,6 +153,42 @@ jobs:
         run: go test ./...
         working-directory: performance_benchmark
 
+  # The Go SDK is installed on its own, with no go.work, by Go as old as its go directive,
+  # so it is checked that way too. GOTOOLCHAIN=local keeps 1.25 from switching to a newer
+  # toolchain, which would prove nothing about 1.25.
+  go-sdk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/go
+    env:
+      GOWORK: 'off'
+      GOTOOLCHAIN: local
+      GOFLAGS: ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+          cache-dependency-path: sdks/go/go.sum
+
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Check go.mod and go.sum are tidy and verified
+        run: |
+          go mod tidy -diff
+          go mod verify
+
+      - name: Vet, the end-to-end suite included
+        run: |
+          go vet ./...
+          go vet -tags e2e .
+
+      - name: Test
+        run: go test -race ./...
+
   js:
     runs-on: ubuntu-latest
     defaults:

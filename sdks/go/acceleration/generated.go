@@ -2326,22 +2326,73 @@ func (e SearchOptionsContents) Valid() bool {
 	}
 }
 
+// Defines values for SessionEndFault.
+const (
+	SessionEndFaultCaller         SessionEndFault = "caller"
+	SessionEndFaultCarrier        SessionEndFault = "carrier"
+	SessionEndFaultCustomerConfig SessionEndFault = "customer_config"
+	SessionEndFaultCustomerCredit SessionEndFault = "customer_credit"
+	SessionEndFaultNone           SessionEndFault = "none"
+	SessionEndFaultRouter         SessionEndFault = "router"
+	SessionEndFaultVendor         SessionEndFault = "vendor"
+)
+
+// Valid indicates whether the value is a known member of the SessionEndFault enum.
+func (e SessionEndFault) Valid() bool {
+	switch e {
+	case SessionEndFaultCaller:
+		return true
+	case SessionEndFaultCarrier:
+		return true
+	case SessionEndFaultCustomerConfig:
+		return true
+	case SessionEndFaultCustomerCredit:
+		return true
+	case SessionEndFaultNone:
+		return true
+	case SessionEndFaultRouter:
+		return true
+	case SessionEndFaultVendor:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SessionEndReason.
 const (
-	AgentHangup SessionEndReason = "agent_hangup"
-	Hangup      SessionEndReason = "hangup"
-	Start       SessionEndReason = "start"
-	Transferred SessionEndReason = "transferred"
-	Unanswered  SessionEndReason = "unanswered"
-	Voicemail   SessionEndReason = "voicemail"
+	AgentFailed        SessionEndReason = "agent_failed"
+	AgentHangup        SessionEndReason = "agent_hangup"
+	Closed             SessionEndReason = "closed"
+	Hangup             SessionEndReason = "hangup"
+	ModelConfigRefused SessionEndReason = "model_config_refused"
+	ModelFailed        SessionEndReason = "model_failed"
+	ModelNoCredit      SessionEndReason = "model_no_credit"
+	Shutdown           SessionEndReason = "shutdown"
+	Start              SessionEndReason = "start"
+	Transferred        SessionEndReason = "transferred"
+	Unanswered         SessionEndReason = "unanswered"
+	Voicemail          SessionEndReason = "voicemail"
 )
 
 // Valid indicates whether the value is a known member of the SessionEndReason enum.
 func (e SessionEndReason) Valid() bool {
 	switch e {
+	case AgentFailed:
+		return true
 	case AgentHangup:
 		return true
+	case Closed:
+		return true
 	case Hangup:
+		return true
+	case ModelConfigRefused:
+		return true
+	case ModelFailed:
+		return true
+	case ModelNoCredit:
+		return true
+	case Shutdown:
 		return true
 	case Start:
 		return true
@@ -2350,6 +2401,24 @@ func (e SessionEndReason) Valid() bool {
 	case Unanswered:
 		return true
 	case Voicemail:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SessionEndStage.
+const (
+	Conversation SessionEndStage = "conversation"
+	Ringing      SessionEndStage = "ringing"
+)
+
+// Valid indicates whether the value is a known member of the SessionEndStage enum.
+func (e SessionEndStage) Valid() bool {
+	switch e {
+	case Conversation:
+		return true
+	case Ringing:
 		return true
 	default:
 		return false
@@ -3550,7 +3619,7 @@ type AgentConfigRequest struct {
 	// Subagent The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default subagent.
 	Subagent *string `json:"subagent,omitempty"`
 
-	// Tags Cost labels, carried onto every request a session using it makes. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds.
+	// Tags Cost labels, carried onto every request a session using it makes. The team tag is also the team those sessions are counted under, its spend limits included, when whoever opens one names none: neither the caller's token nor the session's team field. It is 1 to 59 letters, digits, _ . and -, and a config naming another team tag is refused. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds.
 	Tags *map[string]string `json:"tags,omitempty"`
 
 	// Tools How an agent is offered its tools, and how long what they were given and gave back is kept.
@@ -5721,6 +5790,9 @@ type CreateSessionRequest struct {
 	// Tags Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins.
 	Tags *map[string]string `json:"tags,omitempty"`
 
+	// Team The team the session's work is counted under, its team spend limits included, as team:<name> is among a token's usage categories: 1 to 59 letters, digits, _ . and -. Left out, the session is counted under the team the caller's token names, else the agent config's team tag. A token naming another team is refused with a 400: the team a token was signed for is not moved. Server-side only: a device sending it is refused with a 403, since its team is the one its token was signed for.
+	Team *string `json:"team,omitempty"`
+
 	// Timezone The end user's IANA timezone, such as Europe/Amsterdam, which a device knows and the router does not. It sets the zone the agent reads dates in for this session and, for a user the caller may name, is remembered as theirs for the scheduled tasks and sessions that follow. An unknown zone is refused with a 400 invalid_timezone.
 	Timezone *string `json:"timezone,omitempty"`
 
@@ -7032,9 +7104,12 @@ type ModelCallTiming struct {
 	DurationMs *float64 `json:"duration_ms,omitempty"`
 
 	// ErrorCode Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. key_refused is the vendor refusing the key the app keeps for it (BYOK), and the router's own instance of the model was asked next. refused is a response the prompt injection screen refused: the provider answered as asked, so it is no failure of the provider's either. Any other code, timeout included, is a failure and counts against the provider's health, unless it was on the app's own key.
-	ErrorCode   *string `json:"error_code,omitempty"`
-	InputTokens *int64  `json:"input_tokens,omitempty"`
-	Model       string  `json:"model"`
+	ErrorCode *string `json:"error_code,omitempty"`
+
+	// ErrorMessage What the failure said, absent when success is true: for a provider that answered with an error, the start of its body. Bearer tokens, API keys, authorization headers and URL credentials in it are redacted, and a long one is cut short. Absent for a failure that said nothing, and for a request recorded before the router kept it.
+	ErrorMessage *string `json:"error_message,omitempty"`
+	InputTokens  *int64  `json:"input_tokens,omitempty"`
+	Model        string  `json:"model"`
 
 	// OperationId Response ID for this operation; retries can share an ID.
 	OperationId  *string `json:"operation_id,omitempty"`
@@ -8488,8 +8563,14 @@ type Session struct {
 	Custom         *map[string]interface{} `json:"custom,omitempty"`
 	Description    *string                 `json:"description,omitempty"`
 
-	// EndReason Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.
+	// EndFault Whose doing a session's end was: none, the agent or the app ended it; caller, the person on the call; router, the router itself; vendor, a model vendor; carrier, the phone carrier; customer_config, the app's configuration or its own key; customer_credit, the organization's credit or spend limits.
+	EndFault *SessionEndFault `json:"end_fault,omitempty"`
+
+	// EndReason Why the session ended, with whose fault it was and the stage it came at: agent_hangup, the agent hung up (fault none, stage conversation); transferred, the agent handed the caller to a person (fault none, stage conversation); hangup, the caller left (fault caller, stage conversation); start, nobody joined the phone call in time (fault carrier, stage ringing); unanswered, the call placed was never answered (fault caller, stage ringing); voicemail, an answering machine picked up the call placed, and the agent left its message or hung up (fault none, stage ringing); closed, the session was closed through the API, or replaced by a newer one (fault none, stage conversation); shutdown, the router ended the session as it shut down (fault router, stage conversation); agent_failed, the agent left the call or answered no turn for a failure of the router's own (fault router, stage conversation); model_failed, a model vendor failed: the agent left the call or answered no turn (fault vendor, stage conversation); model_config_refused, the model failed on the customer's own key or model, or refused a setting, and the agent answered no turn (fault customer_config, stage conversation); model_no_credit, the credit or spend limits refused the model's work, and the agent answered no turn (fault customer_credit, stage conversation).
 	EndReason *SessionEndReason `json:"end_reason,omitempty"`
+
+	// EndStage How far a session had got when it ended: ringing, before a person was on the line of a phone call; conversation, once the session was open.
+	EndStage *SessionEndStage `json:"end_stage,omitempty"`
 
 	// ForkedFrom The session this one continued from, empty for one opened fresh.
 	ForkedFrom *string `json:"forked_from,omitempty"`
@@ -8593,8 +8674,14 @@ type SessionConnectorBinding struct {
 	Name string `json:"name"`
 }
 
-// SessionEndReason Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.
+// SessionEndFault Whose doing a session's end was: none, the agent or the app ended it; caller, the person on the call; router, the router itself; vendor, a model vendor; carrier, the phone carrier; customer_config, the app's configuration or its own key; customer_credit, the organization's credit or spend limits.
+type SessionEndFault string
+
+// SessionEndReason Why the session ended, with whose fault it was and the stage it came at: agent_hangup, the agent hung up (fault none, stage conversation); transferred, the agent handed the caller to a person (fault none, stage conversation); hangup, the caller left (fault caller, stage conversation); start, nobody joined the phone call in time (fault carrier, stage ringing); unanswered, the call placed was never answered (fault caller, stage ringing); voicemail, an answering machine picked up the call placed, and the agent left its message or hung up (fault none, stage ringing); closed, the session was closed through the API, or replaced by a newer one (fault none, stage conversation); shutdown, the router ended the session as it shut down (fault router, stage conversation); agent_failed, the agent left the call or answered no turn for a failure of the router's own (fault router, stage conversation); model_failed, a model vendor failed: the agent left the call or answered no turn (fault vendor, stage conversation); model_config_refused, the model failed on the customer's own key or model, or refused a setting, and the agent answered no turn (fault customer_config, stage conversation); model_no_credit, the credit or spend limits refused the model's work, and the agent answered no turn (fault customer_credit, stage conversation).
 type SessionEndReason string
+
+// SessionEndStage How far a session had got when it ended: ringing, before a person was on the line of a phone call; conversation, once the session was open.
+type SessionEndStage string
 
 // SessionFilter Which sessions to list. A field not listed here is refused rather than ignored.
 type SessionFilter struct {

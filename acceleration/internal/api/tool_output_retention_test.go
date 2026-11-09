@@ -3,6 +3,7 @@
 package api
 
 import (
+	"crypto/rand"
 	"net/http"
 	"testing"
 	"time"
@@ -29,7 +30,7 @@ func (s *ToolOutputRetentionSuite) TestAnAppPolicyOfNoneRecordsNoneOfAToolsOutpu
 	config := s.createConfig(map[string]any{"name": "orders", "llm": "tooling/tool-model",
 		"tools": map[string]any{"output_retention": "7d"}})
 
-	result := s.ranTheTool(config.Id)
+	result := s.ranTheTool(config.Id, map[string]any{"output": "it ships tomorrow"})
 
 	s.Empty(value(result.Text))
 	s.Equal(map[string]any{"call_id": result.callID, "redacted": true}, value(result.Payload))
@@ -38,10 +39,25 @@ func (s *ToolOutputRetentionSuite) TestAnAppPolicyOfNoneRecordsNoneOfAToolsOutpu
 func (s *ToolOutputRetentionSuite) TestWithoutARetentionAToolsOutputIsRecordedWhole() {
 	config := s.createConfig(map[string]any{"name": "orders", "llm": "tooling/tool-model"})
 
-	result := s.ranTheTool(config.Id)
+	result := s.ranTheTool(config.Id, map[string]any{"output": "it ships tomorrow"})
 
 	s.Equal("it ships tomorrow", value(result.Text))
 	s.Equal(`{"order":"12"}`, value(result.Payload)["arguments"])
+}
+
+// The tool_ran frame of a failed tool says its error without the key it echoed; the item the
+// client lists later says the same, and an error with no key in it as it was sent.
+func (s *ToolOutputRetentionSuite) TestAToolsErrorIsListedWithoutTheKeyItEchoed() {
+	config := s.createConfig(map[string]any{"name": "orders", "llm": "tooling/tool-model"})
+	key := "sk-test-" + rand.Text()
+	for failure, listed := range map[string]string{
+		"orders: 401 Unauthorized\nAuthorization: Bearer " + key: "orders: 401 Unauthorized\n[redacted]",
+		"orders: the order service timed out":                    "orders: the order service timed out",
+	} {
+		result := s.ranTheTool(config.Id, map[string]any{"error": failure})
+
+		s.Equal(listed, value(result.Payload)["error"])
+	}
 }
 
 // recordedResult is a tool result item as the items endpoint lists it, with the id of the
@@ -52,8 +68,9 @@ type recordedResult struct {
 }
 
 // ranTheTool opens a recorded conversation under the config, has the model ask for the
-// caller's own tool and answers it, and returns the tool result item it recorded.
-func (s *ToolOutputRetentionSuite) ranTheTool(configID string) recordedResult {
+// caller's own tool and answers it with the fields of answer, and returns the tool result item
+// it recorded.
+func (s *ToolOutputRetentionSuite) ranTheTool(configID string, answer map[string]any) recordedResult {
 	opened := s.serverClient.createSession(CreateSessionRequest{
 		ConfigId: &configID,
 		Tools: &[]SessionTool{{
@@ -65,9 +82,8 @@ func (s *ToolOutputRetentionSuite) ranTheTool(configID string) recordedResult {
 	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
 		"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: "where is my order"}, nil))
 	asked := s.await(watching, "tool_call")
-	s.Require().NoError(watching.WriteJSON(map[string]any{
-		"type": "tool_result", "tool_call_id": asked["id"], "output": "it ships tomorrow",
-	}))
+	answer["type"], answer["tool_call_id"] = "tool_result", asked["id"]
+	s.Require().NoError(watching.WriteJSON(answer))
 	s.await(watching, "tool_ran")
 
 	var found *AgentResponseItem

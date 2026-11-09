@@ -671,6 +671,23 @@ func TestInstructionsGoOverOnlyWhenGiven(t *testing.T) {
 	}
 }
 
+func TestTheTeamGoesOverOnlyWhenGiven(t *testing.T) {
+	for given, sent := range map[string]any{"": nil, "finance": "finance"} {
+		backend := newRouter(t)
+		agent := backend.client(t).Agent("docs")
+
+		session, err := agent.Sessions.Create(t.Context(), SessionOptions{Team: given})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close(t.Context())
+
+		if body := backend.body(t, "POST", "/v1/agents/sessions"); body["team"] != sent {
+			t.Errorf("team %q went over as %v", given, body["team"])
+		}
+	}
+}
+
 func TestConnectorBindingsNameAConnectionPerAlias(t *testing.T) {
 	backend := newRouter(t)
 	agent := backend.client(t).Agent("docs")
@@ -1007,6 +1024,56 @@ func TestUnwindingFollowsTheCursorUntilTheLastPage(t *testing.T) {
 	}
 	if asked := backend.requests("GET", "/v1/agents/sessions/session-1/responses/items"); asked != 3 {
 		t.Errorf("the items were asked for %d times", asked)
+	}
+}
+
+func TestUnwindingAbandonedHalfwaySaysItWasCancelled(t *testing.T) {
+	backend := newRouter(t)
+	// Every page says there is more, so only cancelling ends the stream.
+	backend.items = [][]acceleration.AgentResponseItem{
+		items("response-1", 0, 2), items("response-1", 2, 2), items("response-1", 4, 2), items("response-1", 6, 2),
+	}
+	session := open(t, backend)
+	ctx, cancel := context.WithCancel(t.Context())
+
+	stream := session.Responses.Items.Unwind(ctx, 2)
+	<-stream.Items()
+	cancel()
+	deadline := time.After(5 * time.Second)
+	for open := true; open; {
+		select {
+		case _, open = <-stream.Items():
+		case <-deadline:
+			t.Fatal("the stream was still open after its context was cancelled")
+		}
+	}
+
+	if !errors.Is(stream.Err(), context.Canceled) {
+		t.Errorf("an abandoned stream ended with %v, want context.Canceled", stream.Err())
+	}
+}
+
+func TestACancelledRequestReturnsTheContextsError(t *testing.T) {
+	asked := make(chan struct{})
+	waiting := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		close(asked)
+		<-r.Context().Done()
+	}))
+	t.Cleanup(waiting.Close)
+	api, err := New(stream.Backend{URL: waiting.URL, CustomerID: "acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() {
+		<-asked
+		cancel()
+	}()
+
+	_, err = api.Agent("docs").Config(ctx)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("a request cancelled in flight returned %v, want context.Canceled", err)
 	}
 }
 
@@ -1602,6 +1669,22 @@ func TestSetUserRefusesAUserWithNothingToProveIt(t *testing.T) {
 	}
 	if _, err := api.SetUser("jean", ""); err == nil {
 		t.Error("a user with no token was allowed")
+	}
+}
+
+func TestSetUserLeavesTheTeamToTheUsersToken(t *testing.T) {
+	api, err := New(stream.Backend{URL: "http://localhost:8080", CustomerID: "acme",
+		Team: "finance", UsageCategories: []string{"project:onboarding"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	jean, err := api.SetUser("jean", "minted.elsewhere")
+	if err != nil {
+		t.Fatalf("a client with a team could not act for a user: %v", err)
+	}
+	if backend := jean.Backend(); backend.Team != "" || len(backend.UsageCategories) > 0 {
+		t.Errorf("the user's client kept team %q and categories %q", backend.Team, backend.UsageCategories)
 	}
 }
 

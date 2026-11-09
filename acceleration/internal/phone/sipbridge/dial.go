@@ -117,7 +117,8 @@ func newLegs(cfg Config, customerClient, streamClient *sipgo.Client, customerURI
 		to:        sip.Uri{User: cfg.Call.To, Host: cfg.CustomerTrunk.Host},
 		transport: cfg.CustomerTrunk.Transport,
 		username:  cfg.CustomerTrunk.Username, password: cfg.CustomerTrunk.Password,
-		log: cfg.Logger.With("leg", customerSide),
+		responded: cfg.Call.Responded,
+		log:       cfg.Logger.With("leg", customerSide),
 	}
 	// Stream matches the routing rule on the called number, which is the trunk's own
 	// number, and makes the caller a participant named after From.

@@ -80,6 +80,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param sts A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
  * @param stt Omit it and the config decides, or en-low-latency when there is no config.
  * @param tags Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins.
+ * @param team The team the session's work is counted under, its team spend limits included, as team:<name> is among a token's usage categories: 1 to 59 letters, digits, _ . and -. Left out, the session is counted under the team the caller's token names, else the agent config's team tag. A token naming another team is refused with a 400: the team a token was signed for is not moved. Server-side only: a device sending it is refused with a 403, since its team is the one its token was signed for.
  * @param timezone The end user's IANA timezone, such as Europe/Amsterdam, which a device knows and the router does not. It sets the zone the agent reads dates in for this session and, for a user the caller may name, is remembered as theirs for the scheduled tasks and sessions that follow. An unknown zone is refused with a 400 invalid_timezone.
  * @param title What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.
  * @param toolTimeoutMs How long the model waits for a tool result. Zero is the default.
@@ -217,6 +218,10 @@ internal data class CreateSessionRequest (
     /* Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins. */
     @SerialName(value = "tags")
     val tags: kotlin.collections.Map<kotlin.String, kotlin.String>? = null,
+
+    /* The team the session's work is counted under, its team spend limits included, as team:<name> is among a token's usage categories: 1 to 59 letters, digits, _ . and -. Left out, the session is counted under the team the caller's token names, else the agent config's team tag. A token naming another team is refused with a 400: the team a token was signed for is not moved. Server-side only: a device sending it is refused with a 403, since its team is the one its token was signed for. */
+    @SerialName(value = "team")
+    val team: kotlin.String? = null,
 
     /* The end user's IANA timezone, such as Europe/Amsterdam, which a device knows and the router does not. It sets the zone the agent reads dates in for this session and, for a user the caller may name, is remembered as theirs for the scheduled tasks and sessions that follow. An unknown zone is refused with a 400 invalid_timezone. */
     @SerialName(value = "timezone")

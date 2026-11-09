@@ -2272,7 +2272,7 @@ module GetStream
           required: %w[title instructions schedule].freeze, open: false
         }.freeze,
         "CreateSessionRequest" => {
-          properties: %w[agent agent_id backchannel call config_id connector_bindings context_truncated custom description floor_control greeting history id incognito instructions keyterms languages llm max_tokens max_tool_rounds memory min_confidence model_overwrites navigating phone project_id resume_history return_url search start_voice sts stt tags timezone title tool_timeout_ms tools tts user_id user_name video voice].freeze,
+          properties: %w[agent agent_id backchannel call config_id connector_bindings context_truncated custom description floor_control greeting history id incognito instructions keyterms languages llm max_tokens max_tool_rounds memory min_confidence model_overwrites navigating phone project_id resume_history return_url search start_voice sts stt tags team timezone title tool_timeout_ms tools tts user_id user_name video voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "CreateSipTrunkRequest" => {
@@ -2548,7 +2548,7 @@ module GetStream
           required: %w[actor].freeze, open: false
         }.freeze,
         "ModelCallTiming" => {
-          properties: %w[duration_ms error_code input_tokens model operation_id output_tokens provider purpose started_at success ttft_ms].freeze,
+          properties: %w[duration_ms error_code error_message input_tokens model operation_id output_tokens provider purpose started_at success ttft_ms].freeze,
           required: %w[model provider started_at success].freeze, open: false
         }.freeze,
         "ModelOverwrites" => {
@@ -2852,7 +2852,7 @@ module GetStream
           required: %w[url].freeze, open: false
         }.freeze,
         "Session" => {
-          properties: %w[agent agent_id call_id call_outcome call_type closed_at config_id context_truncated conversation_id created_at custom description end_reason forked_from id incognito instructions last_response_at llm modality mode model_overwrites project_id review_notes review_score state sts stt subagent summary text title tts usage user_id video voice].freeze,
+          properties: %w[agent agent_id call_id call_outcome call_type closed_at config_id context_truncated conversation_id created_at custom description end_fault end_reason end_stage forked_from id incognito instructions last_response_at llm modality mode model_overwrites project_id review_notes review_score state sts stt subagent summary text title tts usage user_id video voice].freeze,
           required: %w[agent_id call_id call_type created_at id modality state user_id].freeze, open: false
         }.freeze,
         "SessionCall" => {

@@ -220,6 +220,108 @@ final class ClientTest extends TestCase
         self::assertSame('ada', $sent->headers['x-stream-user-id']);
     }
 
+    public function testWithNoProxyTheTeamAndCategoriesAreAHeaderAndClaims(): void
+    {
+        $this->router->answer('GET', '/v1/agents/configs', 200, []);
+        $categories = ['project:onboarding', 'cost-center.7', 'project:onboarding'];
+
+        (new Client(new Backend(url: $this->router->url, customerId: 'examples', team: 'finance', usageCategories: $categories)))->get('/v1/agents/configs');
+        (new Client(new Backend(url: $this->router->url, apiKey: 'key', apiSecret: 'secret', team: 'finance', usageCategories: $categories)))->get('/v1/agents/configs');
+
+        [$customer, $keyed] = $this->router->received();
+        self::assertSame('cost-center.7,project:onboarding,team:finance', $customer->headers['x-stream-usage-categories']);
+        self::assertSame('cost-center.7,project:onboarding,team:finance', $keyed->headers['x-stream-usage-categories']);
+        $claims = self::claims($keyed->headers['authorization']);
+        self::assertTrue($claims['server']);
+        self::assertSame('finance', $claims['team']);
+        self::assertSame(['cost-center.7', 'project:onboarding'], $claims['usage_categories']);
+    }
+
+    public function testBehindTheProxyTheTeamIsOnlyClaimsOnEveryToken(): void
+    {
+        $this->router->answer('GET', '/v1/agents/configs', 200, []);
+        $backend = new Backend(url: $this->router->url, apiKey: 'key', apiSecret: 'secret', authenticate: true, team: 'finance');
+
+        (new Client($backend))->get('/v1/agents/configs');
+        (new Client($backend->actingFor('ada')))->get('/v1/agents/configs');
+        (new Client($backend->onBehalfOf('ada')))->get('/v1/agents/configs');
+
+        foreach ($this->router->received() as $sent) {
+            self::assertArrayNotHasKey('x-stream-usage-categories', $sent->headers);
+            $claims = self::claims($sent->headers['authorization']);
+            self::assertSame('finance', $claims['team']);
+            self::assertArrayNotHasKey('usage_categories', $claims);
+        }
+        self::assertSame('ada', self::claims($this->router->received()[1]->headers['authorization'])['user_id']);
+    }
+
+    public function testNoTeamSendsNoHeaderAndNoClaims(): void
+    {
+        $this->router->answer('GET', '/v1/agents/configs', 200, []);
+
+        (new Client(new Backend(url: $this->router->url, apiKey: 'key', apiSecret: 'secret', team: '')))->get('/v1/agents/configs');
+
+        $sent = $this->router->received()[0];
+        self::assertArrayNotHasKey('x-stream-usage-categories', $sent->headers);
+        self::assertSame(['iat', 'exp', 'server'], array_keys(self::claims($sent->headers['authorization'])));
+    }
+
+    public function testAUserTokenNamesTheTeamAndCategories(): void
+    {
+        $backend = new Backend(url: $this->router->url, apiKey: 'key', apiSecret: 'secret');
+
+        $claims = self::claims('Bearer ' . $backend->userToken('user-42', team: 'finance', usageCategories: ['b', 'a', 'b'], validitySeconds: 60));
+
+        self::assertSame('user-42', $claims['user_id']);
+        self::assertSame('finance', $claims['team']);
+        self::assertSame(['a', 'b'], $claims['usage_categories']);
+        self::assertSame(60, Json::int($claims, 'exp') - Json::int($claims, 'iat'));
+    }
+
+    public function testAUserTokenNeedsTheSecret(): void
+    {
+        $this->expectException(ConfigurationException::class);
+        (new Backend(url: $this->router->url, apiKey: 'key', token: 'tok', userId: 'ada'))->userToken('ada');
+    }
+
+    public function testATeamBesideATokenIsRefused(): void
+    {
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('a token handed in carries the team');
+        new Backend(url: $this->router->url, apiKey: 'key', token: 'tok', userId: 'ada', team: 'finance');
+    }
+
+    /**
+     * @param list<string> $categories
+     */
+    #[DataProvider('refusedCategories')]
+    public function testATeamOrCategoryTheRouterWouldRefuseIsRefused(?string $team, array $categories, string $said): void
+    {
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage($said);
+        new Backend(url: $this->router->url, customerId: 'examples', team: $team, usageCategories: $categories);
+    }
+
+    /**
+     * @return iterable<string, array{?string, list<string>, string}>
+     */
+    public static function refusedCategories(): iterable
+    {
+        yield 'a team with a colon' => ['fin:ance', [], '1 to 59'];
+        yield 'a team too long' => [str_repeat('a', 60), [], '1 to 59'];
+        yield 'a category too long' => [null, [str_repeat('a', 65)], '1 to 64'];
+        yield 'a category with a space' => [null, ['a b'], '1 to 64'];
+        yield 'a category that is a team' => [null, ['TEAM:finance'], 'names a team'];
+        yield 'eleven with the team' => ['finance', array_map(static fn (int $i) => "c{$i}", range(1, 10)), 'at most 10'];
+    }
+
+    public function testTenCategoriesWithNoTeamAreAllowed(): void
+    {
+        $backend = new Backend(url: $this->router->url, customerId: 'examples', usageCategories: array_map(static fn (int $i) => "c{$i}", range(0, 9)));
+
+        self::assertCount(10, $backend->usageCategories);
+    }
+
     public function testPathAndQueryEncoding(): void
     {
         $this->router->answer('GET', '/v1/agents/sessions/a%2Fb', 200, []);

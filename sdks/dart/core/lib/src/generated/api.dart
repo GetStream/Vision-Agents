@@ -502,6 +502,7 @@ final class CreateSessionRequest {
     this.sts,
     this.stt,
     this.tags,
+    this.team,
     this.timezone,
     this.title,
     this.toolTimeoutMs,
@@ -660,6 +661,10 @@ final class CreateSessionRequest {
         null => null,
         final Object value => _strings(value, 'CreateSessionRequest.tags'),
       },
+      team: switch (json['team']) {
+        null => null,
+        final Object value => _string(value, 'CreateSessionRequest.team'),
+      },
       timezone: switch (json['timezone']) {
         null => null,
         final Object value => _string(value, 'CreateSessionRequest.timezone'),
@@ -734,6 +739,7 @@ final class CreateSessionRequest {
   final String? sts;
   final String? stt;
   final Map<String, String>? tags;
+  final String? team;
   final String? timezone;
   final String? title;
   final int? toolTimeoutMs;
@@ -779,6 +785,7 @@ final class CreateSessionRequest {
     'sts': ?sts,
     'stt': ?stt,
     'tags': ?tags,
+    'team': ?team,
     'timezone': ?timezone,
     'title': ?title,
     'tool_timeout_ms': ?toolTimeoutMs,
@@ -1411,7 +1418,9 @@ final class Session {
     required this.createdAt,
     this.custom,
     this.description,
+    this.endFault,
     this.endReason,
+    this.endStage,
     this.forkedFrom,
     required this.id,
     this.incognito,
@@ -1477,9 +1486,17 @@ final class Session {
         null => null,
         final Object value => _string(value, 'Session.description'),
       },
+      endFault: switch (json['end_fault']) {
+        null => null,
+        final Object value => _string(value, 'Session.end_fault'),
+      },
       endReason: switch (json['end_reason']) {
         null => null,
         final Object value => _string(value, 'Session.end_reason'),
+      },
+      endStage: switch (json['end_stage']) {
+        null => null,
+        final Object value => _string(value, 'Session.end_stage'),
       },
       forkedFrom: switch (json['forked_from']) {
         null => null,
@@ -1580,7 +1597,9 @@ final class Session {
   final DateTime createdAt;
   final Map<String, Object?>? custom;
   final String? description;
+  final String? endFault;
   final String? endReason;
+  final String? endStage;
   final String? forkedFrom;
   final String id;
   final bool? incognito;
@@ -1619,7 +1638,9 @@ final class Session {
     'created_at': createdAt.toUtc().toIso8601String(),
     'custom': ?custom,
     'description': ?description,
+    'end_fault': ?endFault,
     'end_reason': ?endReason,
+    'end_stage': ?endStage,
     'forked_from': ?forkedFrom,
     'id': id,
     'incognito': ?incognito,
