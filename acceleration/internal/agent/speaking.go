@@ -157,6 +157,7 @@ func (u *utterance) span() *MessageSpan {
 // utterance to be heard, so it is let go of.
 func (a *Agent) synthesize(voice *ttsrouter.Session, turnID string, request tts.Request, message MessageSpan) error {
 	a.sending(turnID, request.ID, request.Text, message)
+	a.turns.voiced(turnID)
 	err := voice.Synthesize(request)
 	if err != nil {
 		a.takeUtterance(request.ID)

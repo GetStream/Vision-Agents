@@ -68,9 +68,24 @@ func (s *AgentSuite) TestAReplyTheCallerSaidMoreOverBeforeHearingAnyIsDropped() 
 	s.Require().Len(logged, 1)
 	s.Equal(two, logged[0]["turn"])
 	s.Equal("nash", logged[0]["participant"])
-	// Held text counts as sent to the voice until the hold is told apart from it.
-	s.Contains(logged[0], "sent_to_voice")
+	s.Equal(false, logged[0]["sent_to_voice"])
 	s.Contains(logged[0], "gap_ms")
+}
+
+func (s *AgentSuite) TestAHeldReplyDroppedIsLoggedAsNeverSentToTheVoice() {
+	s.logs = &logLines{}
+	s.join(true)
+	two := s.answering("two")
+
+	s.mutters(nash, "Hey,")
+	s.eventually(func() bool { return s.holding(two) }, "the reply was never held for the greeting")
+	s.model.writes(two, "Which two do you mean?")
+	s.mutters(nash, "Hey. Can you help")
+
+	s.eventually(func() bool { return s.model.abandoned(two) }, "the reply to two kept going")
+	logged := s.dropLogged()
+	s.Require().Len(logged, 1)
+	s.Equal(false, logged[0]["sent_to_voice"])
 }
 
 // Session 01a15c2c, with the request arriving as revisions after "Hey,".

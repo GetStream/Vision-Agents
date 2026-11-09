@@ -923,6 +923,7 @@ func (a *Agent) sayAgain(voice *ttsrouter.Session, held *heldReply) {
 			a.sendingLocked(held.turnID, heard.synthesisID, text, heard.message)
 		}
 		a.mu.Unlock()
+		a.turns.voiced(held.turnID)
 		err := voice.Synthesize(tts.Request{ID: heard.synthesisID, Text: text, Final: heard.final})
 		if err == nil {
 			continue
