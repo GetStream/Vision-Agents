@@ -117,7 +117,7 @@ class KnowledgeUrl:
 
         passages = d.pop("passages")
 
-        state = KnowledgeUrlState(d.pop("state"))
+        state = KnowledgeUrlState._decode(d.pop("state"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 

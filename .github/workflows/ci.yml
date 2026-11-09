@@ -93,15 +93,25 @@ jobs:
       - name: Install ffmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
 
+      # The backend is built with Go's SIMD experiment, as acceleration/Dockerfile builds it.
       - name: Vet the backend
         run: go vet ./...
         working-directory: acceleration
+        env:
+          GOEXPERIMENT: simd
 
       - name: Test the backend
         run: go test ./...
         working-directory: acceleration
         env:
+          GOEXPERIMENT: simd
           ROUTER_REDIS_ADDR: localhost:${{ job.services.redis.ports['6379'] }}
+
+      # Without the experiment the Opus codec runs its scalar code, which must still build
+      # and pass.
+      - name: Test the audio without SIMD
+        run: go build ./... && go test ./internal/audio/... ./internal/audiofloor/... ./internal/agent/streamedge/...
+        working-directory: acceleration
 
       - name: Vet phonecheck
         run: go vet ./...
@@ -114,6 +124,8 @@ jobs:
       - name: Compile STS integration tests
         run: go test -tags integration -run '^$' -exec=true ./internal/sts/...
         working-directory: acceleration
+        env:
+          GOEXPERIMENT: simd
 
       - name: Vet the SDK
         run: go vet ./...
@@ -204,6 +216,35 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # The same suite with stream-chat 10 in place of the 9 the lockfile has: an app may hand
+  # either to the SDK, and the SDK reads both by shape.
+  js-stream-chat-10:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/js
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: sdks/js/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      # The newest 10 there is, release candidates included, so a release candidate that
+      # breaks the SDK shows here before it ships. The log says which one ran.
+      - name: Install stream-chat 10
+        run: |
+          npm install --no-save stream-chat@^10.0.0-0
+          node -p "'stream-chat ' + require('./node_modules/stream-chat/package.json').version"
+
+      - name: Test
+        run: npm test
 
   dotnet:
     runs-on: ubuntu-latest

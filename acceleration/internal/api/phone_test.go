@@ -90,6 +90,8 @@ func (s *PhoneSuite) TestSearchingEveryVendorSaysNoneCanBeAsked() {
 }
 
 func (s *PhoneSuite) TestAnAppThatHasBoughtNothingHoldsNoNumbers() {
+	// Not the standard fixture: the campaign suites record numbers on it.
+	s.useApp(s.data.createApp())
 	var numbers []PhoneNumber
 	s.Require().Equal(http.StatusOK,
 		s.serverClient.do(http.MethodGet, "/v1/phone/numbers", nil, &numbers))
@@ -603,7 +605,7 @@ func (s *CallStatusSuite) placedFor(session string) (string, outcome.Key) {
 // path also ends the session, and one ended a moment ago is not found until its row is written.
 func (s *CallStatusSuite) busy(session string) {
 	token, _ := s.placedFor(session)
-	_, err := s.router.phone.Outcomes().Reported(context.Background(), token, outcome.Busy, "busy")
+	_, err := s.router.phone.Outcomes().Reported(context.Background(), token, outcome.Report{Outcome: outcome.Busy, Word: "busy"})
 	s.Require().NoError(err)
 }
 
@@ -624,7 +626,7 @@ func (s *CallStatusSuite) TestASessionShowsWhenTheCallWasAnsweredAndForHowLong()
 	_, key := s.placedFor(opened.Id)
 	answered := time.Now().UTC().Truncate(time.Second)
 	s.Require().NoError(s.router.phone.Outcomes().Answered(context.Background(), key, answered))
-	s.Require().NoError(s.router.phone.Outcomes().Ended(context.Background(), key, answered.Add(75*time.Second)))
+	s.Require().NoError(s.router.phone.Outcomes().Ended(context.Background(), key, answered.Add(75*time.Second), outcome.Leg{}))
 
 	read := s.serverClient.getSession(opened.Id)
 
@@ -820,7 +822,7 @@ func (s *CallStatusSuite) TestAPeersAskForACallSomebodyAnsweredIsRefused() {
 	other, sessions, id := s.peerHolding(logged)
 	token, key := s.placedFor(id)
 	s.Require().NoError(s.router.phone.Outcomes().Answered(context.Background(), key, time.Now()))
-	_, err := s.router.phone.Outcomes().Reported(context.Background(), token, outcome.Busy, "busy")
+	_, err := s.router.phone.Outcomes().Reported(context.Background(), token, outcome.Report{Outcome: outcome.Busy, Word: "busy"})
 	s.Require().NoError(err)
 
 	s.refusesToEnd(s.askPeerToEnd(other, s.askedFor(s.customerID(), id)), logged, sessions, id)

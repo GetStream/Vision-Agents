@@ -26,6 +26,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // writeTimeout is generous because ingesting is not on anybody's conversation: the store's
@@ -46,14 +47,14 @@ func main() {
 	if *verbose {
 		level = slog.LevelDebug
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level, ReplaceAttr: store.RedactLogAttr}))
 
 	options := options{
 		customer: *customer, namespace: *namespace, size: *size, dryRun: *dryRun,
 		limits: ingest.Limits{MinChunk: *minChunk, MaxHeading: *maxHeading},
 	}
 	if err := run(options, flag.Args(), logger); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		logger.Error("knowledge stopped", "error", err)
 		os.Exit(1)
 	}
 }

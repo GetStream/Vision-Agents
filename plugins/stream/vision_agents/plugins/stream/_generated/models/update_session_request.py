@@ -147,7 +147,7 @@ class UpdateSessionRequest:
         if isinstance(_thinking, Unset):
             thinking = UNSET
         else:
-            thinking = UpdateSessionRequestThinking(_thinking)
+            thinking = UpdateSessionRequestThinking._decode(_thinking)
 
         title = d.pop("title", UNSET)
 
@@ -158,7 +158,7 @@ class UpdateSessionRequest:
         if isinstance(_verbosity, Unset):
             verbosity = UNSET
         else:
-            verbosity = UpdateSessionRequestVerbosity(_verbosity)
+            verbosity = UpdateSessionRequestVerbosity._decode(_verbosity)
 
         voice = d.pop("voice", UNSET)
 

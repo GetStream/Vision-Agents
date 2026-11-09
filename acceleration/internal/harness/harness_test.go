@@ -57,6 +57,9 @@ type stubLLM struct {
 	failures int
 	// failure is what a failing request reports, errModelDown when unset.
 	failure error
+	// refuses, if set, is what Create returns in place of a stream: an endpoint that answers
+	// the request with an error status.
+	refuses error
 	// holdCreate, if set, is waited on after the request is recorded and before a stream
 	// is returned, so a test can Cancel while Create has not come back.
 	holdCreate <-chan struct{}
@@ -90,9 +93,12 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	})
 	s.scripts[params.ID] = script
 	s.order = append(s.order, params.ID)
-	hold := s.holdCreate
+	hold, refuses := s.holdCreate, s.refuses
 	s.mu.Unlock()
 
+	if refuses != nil {
+		return nil, refuses
+	}
 	if hold != nil {
 		select {
 		case <-hold:
@@ -225,6 +231,8 @@ type HarnessSuite struct {
 
 	harness *Harness
 	events  *collector
+	// logs is what the last harness built logged, as JSON, one record a line.
+	logs *logLines
 }
 
 func TestHarnessSuite(t *testing.T) {
@@ -294,11 +302,12 @@ func stubSession(s *suite.Suite, ctx context.Context, provider *stubLLM) *llmrou
 // tools is offered, which is nothing unless a test set it first.
 func (s *HarnessSuite) build(delegating bool) {
 	s.fast = newStubLLM()
+	s.logs = &logLines{}
 	options := Options{
 		Model:  s.session(s.fast),
 		Skills: s.skills,
 		Tools:  s.tools,
-		Logger: slog.New(slog.DiscardHandler),
+		Logger: slog.New(slog.NewJSONHandler(s.logs, nil)),
 	}
 	if delegating {
 		s.slow = newStubLLM()
@@ -1955,6 +1964,10 @@ func (s *HarnessSuite) TestWorkWhoseProviderFailsMidAnswerIsAskedAgain() {
 	s.Equal("It is 12.63.", settled.Text)
 	s.Require().Len(s.slow.requests(), 2)
 	s.Equal(s.slow.requests()[0].Input, s.slow.requests()[1].Input, "the same question is put again")
+	retried := s.logs.records("asking a subagent again after its provider failed mid-answer")
+	s.Require().Len(retried, 1)
+	s.Equal("stub", retried[0]["provider"], "a search for the provider finds its failure")
+	s.Equal("stub-model", retried[0]["model"])
 }
 
 func (s *HarnessSuite) TestWorkWhoseRequestTheProviderRefusesIsNotAskedAgain() {

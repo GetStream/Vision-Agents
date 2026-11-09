@@ -142,7 +142,7 @@ class Simulation:
 
         max_turns = d.pop("max_turns")
 
-        mode = SimulationMode(d.pop("mode"))
+        mode = SimulationMode._decode(d.pop("mode"))
 
         name = d.pop("name")
 

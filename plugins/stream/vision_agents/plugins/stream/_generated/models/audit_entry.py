@@ -130,7 +130,7 @@ class AuditEntry:
         from ..models.audit_change import AuditChange
 
         d = dict(src_dict)
-        action = AuditAction(d.pop("action"))
+        action = AuditAction._decode(d.pop("action"))
 
         changes = []
         _changes = d.pop("changes")
@@ -145,9 +145,9 @@ class AuditEntry:
 
         resource_id = d.pop("resource_id")
 
-        resource_type = AuditResourceType(d.pop("resource_type"))
+        resource_type = AuditResourceType._decode(d.pop("resource_type"))
 
-        source = AuditSource(d.pop("source"))
+        source = AuditSource._decode(d.pop("source"))
 
         actor_id = d.pop("actor_id", UNSET)
 

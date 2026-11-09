@@ -249,7 +249,7 @@ func (s *EpisodeReadingSuite) TestWithTheCardsOffAChatSessionIsAsBefore() {
 	s.False(Spec{}.EpisodeCards, "a spec reads no cards unless its config says so")
 	s.Nil(s.handed(off))
 	s.Require().Len(off.Input, 2)
-	s.Equal(llm.Message{Role: llm.User, Content: "can I move it?"}, off.Input[0])
+	s.Equal(llm.Message{Role: llm.User, Content: "can I move it?", Typed: true}, off.Input[0], "written, not said on a call")
 	s.Equal(llm.System, off.Input[1].Role)
 	s.True(strings.HasPrefix(off.Input[1].Content, "[Note from the system running this call]\nToday is "), off.Input[1].Content)
 	var made []string

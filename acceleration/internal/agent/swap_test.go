@@ -216,8 +216,12 @@ func (s *AgentSuite) joinSwappable() *swappable {
 	s.T().Cleanup(conversing.Close)
 
 	s.edge = newLoopbackEdge()
+	var edge Edge = s.edge
+	if s.edgeFactory != nil {
+		edge = s.edgeFactory(s.edge)
+	}
 	s.agent, err = New(Options{
-		Edge:         s.edge,
+		Edge:         edge,
 		Instructions: "be brief",
 		CustomerID:   "acme",
 		LLM:          reasoner,

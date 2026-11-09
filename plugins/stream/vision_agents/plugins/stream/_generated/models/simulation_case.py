@@ -137,7 +137,7 @@ class SimulationCase:
 
         started_at = datetime.datetime.fromisoformat(d.pop("started_at"))
 
-        state = SimulationCaseState(d.pop("state"))
+        state = SimulationCaseState._decode(d.pop("state"))
 
         turns = d.pop("turns")
 
@@ -150,7 +150,7 @@ class SimulationCase:
         if isinstance(_ended, Unset):
             ended = UNSET
         else:
-            ended = SimulationCaseEnded(_ended)
+            ended = SimulationCaseEnded._decode(_ended)
 
         error = d.pop("error", UNSET)
 

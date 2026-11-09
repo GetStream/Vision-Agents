@@ -74,7 +74,7 @@ class SandboxLimits:
         if isinstance(_network, Unset):
             network = UNSET
         else:
-            network = SandboxLimitsNetwork(_network)
+            network = SandboxLimitsNetwork._decode(_network)
 
         sandbox_limits = cls(
             max_concurrent=max_concurrent,

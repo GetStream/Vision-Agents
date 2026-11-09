@@ -478,6 +478,7 @@ final class CreateSessionRequest {
     this.contextTruncated,
     this.custom,
     this.description,
+    this.floorControl,
     this.greeting,
     this.history,
     this.id,
@@ -553,6 +554,10 @@ final class CreateSessionRequest {
       description: switch (json['description']) {
         null => null,
         final Object value => _string(value, 'CreateSessionRequest.description'),
+      },
+      floorControl: switch (json['floor_control']) {
+        null => null,
+        final Object value => FloorControl.fromJson(value),
       },
       greeting: switch (json['greeting']) {
         null => null,
@@ -705,6 +710,7 @@ final class CreateSessionRequest {
   final bool? contextTruncated;
   final Map<String, Object?>? custom;
   final String? description;
+  final FloorControl? floorControl;
   final Greeting? greeting;
   final List<HistoryMessage>? history;
   final String? id;
@@ -749,6 +755,7 @@ final class CreateSessionRequest {
     'context_truncated': ?contextTruncated,
     'custom': ?custom,
     'description': ?description,
+    if (floorControl case final value?) 'floor_control': value.toJson(),
     if (greeting case final value?) 'greeting': value.toJson(),
     if (history case final value?) 'history': [for (final item in value) item.toJson()],
     'id': ?id,
@@ -782,6 +789,30 @@ final class CreateSessionRequest {
     if (video case final value?) 'video': value.toJson(),
     'voice': ?voice,
   };
+}
+
+/// The model that controls an agent's floor, and how long a caller may wait once they stop.
+final class FloorControl {
+  const FloorControl({this.maxWaitMs, this.model});
+
+  factory FloorControl.fromJson(Object? value) {
+    final json = _object(value, 'FloorControl');
+    return FloorControl(
+      maxWaitMs: switch (json['max_wait_ms']) {
+        null => null,
+        final Object value => _int(value, 'FloorControl.max_wait_ms'),
+      },
+      model: switch (json['model']) {
+        null => null,
+        final Object value => _string(value, 'FloorControl.model'),
+      },
+    );
+  }
+
+  final int? maxWaitMs;
+  final String? model;
+
+  Map<String, Object?> toJson() => {'max_wait_ms': ?maxWaitMs, 'model': ?model};
 }
 
 /// Continue a conversation as a new one.
@@ -1380,7 +1411,9 @@ final class Session {
     required this.createdAt,
     this.custom,
     this.description,
+    this.endFault,
     this.endReason,
+    this.endStage,
     this.forkedFrom,
     required this.id,
     this.incognito,
@@ -1446,9 +1479,17 @@ final class Session {
         null => null,
         final Object value => _string(value, 'Session.description'),
       },
+      endFault: switch (json['end_fault']) {
+        null => null,
+        final Object value => _string(value, 'Session.end_fault'),
+      },
       endReason: switch (json['end_reason']) {
         null => null,
         final Object value => _string(value, 'Session.end_reason'),
+      },
+      endStage: switch (json['end_stage']) {
+        null => null,
+        final Object value => _string(value, 'Session.end_stage'),
       },
       forkedFrom: switch (json['forked_from']) {
         null => null,
@@ -1549,7 +1590,9 @@ final class Session {
   final DateTime createdAt;
   final Map<String, Object?>? custom;
   final String? description;
+  final String? endFault;
   final String? endReason;
+  final String? endStage;
   final String? forkedFrom;
   final String id;
   final bool? incognito;
@@ -1588,7 +1631,9 @@ final class Session {
     'created_at': createdAt.toUtc().toIso8601String(),
     'custom': ?custom,
     'description': ?description,
+    'end_fault': ?endFault,
     'end_reason': ?endReason,
+    'end_stage': ?endStage,
     'forked_from': ?forkedFrom,
     'id': id,
     'incognito': ?incognito,

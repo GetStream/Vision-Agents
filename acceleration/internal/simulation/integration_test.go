@@ -324,7 +324,7 @@ func (s *IntegrationSuite) TestAskingSeveralWaysHasSeveralConversationsUnderOneR
 	}
 	// Every one of them was actually had, whatever it was judged to be.
 	for _, one := range cases {
-		s.NotEqual(store.Pending, one.State)
+		s.NotEqual(store.SimulationPending, one.State)
 		s.NotEmpty(one.CallID)
 	}
 }

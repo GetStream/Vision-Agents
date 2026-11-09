@@ -172,7 +172,7 @@ func (s *Store) StartSimulationRun(ctx context.Context, run *SimulationRun, case
 	for i := range cases {
 		cases[i].ID = newID()
 		cases[i].RunID = run.ID
-		cases[i].State = Pending
+		cases[i].State = SimulationPending
 		cases[i].StartedAt = run.StartedAt
 		if cases[i].Transcript == nil {
 			cases[i].Transcript = []SimulationLine{}
@@ -218,6 +218,9 @@ func (s *Store) FinishSimulationCase(ctx context.Context, kase SimulationCase) e
 	if kase.Transcript == nil {
 		kase.Transcript = []SimulationLine{}
 	}
+	// The error is the agent's when it stopped answering, which can be a provider's text.
+	kase.Error = SafeLogText(kase.Error)
+	kase.Transcript = redactedTranscript(kase.Transcript)
 
 	now := time.Now().UTC()
 	kase.FinishedAt = &now
@@ -231,6 +234,25 @@ func (s *Store) FinishSimulationCase(ctx context.Context, kase SimulationCase) e
 		return fmt.Errorf("store: finish simulation case: %w", err)
 	}
 	return nil
+}
+
+// redactedTranscript is a copy of transcript with each tool's result put through SafeLogText,
+// as a session's items are: a result can be a provider's text echoing the key it was sent. It
+// is a copy, because the caller's transcript is what the judge read.
+func redactedTranscript(transcript []SimulationLine) []SimulationLine {
+	out := make([]SimulationLine, len(transcript))
+	for i, line := range transcript {
+		out[i] = line
+		if len(line.Tools) == 0 {
+			continue
+		}
+		out[i].Tools = make([]SimulationTool, len(line.Tools))
+		for j, tool := range line.Tools {
+			tool.Result = SafeLogText(tool.Result)
+			out[i].Tools[j] = tool
+		}
+	}
+	return out
 }
 
 // FinishSimulationRun records how a run ended and what its conversations came to.
@@ -364,7 +386,7 @@ func (s *Store) AbandonSimulationRuns(ctx context.Context, now time.Time) error 
 		_, err := tx.NewUpdate().Model((*SimulationCase)(nil)).
 			Set("state = ?", SimulationCancelled).
 			Set("finished_at = ?", now).
-			Where("state IN (?)", bun.In([]string{Pending, SimulationRunning})).
+			Where("state IN (?)", bun.In([]string{SimulationPending, SimulationRunning})).
 			Where("run_id IN (SELECT id FROM simulation_runs WHERE state = ? AND (held_until IS NULL OR held_until < ?))",
 				SimulationRunning, now).
 			Exec(ctx)

@@ -22,7 +22,7 @@ type ResponseParams struct {
 	// ID correlates every event belonging to one response. Providers generate one when
 	// it is empty. It is not sent upstream.
 	ID string
-	// Purpose names the model's role in a call: reply, flow or subagent.
+	// Purpose names the model's role in a call: reply (PurposeReply), flow or subagent.
 	Purpose string
 	// TurnID is the caller exchange behind this request, including delegated work.
 	TurnID string
@@ -77,6 +77,9 @@ type ResponseParams struct {
 	Metadata map[string]string
 }
 
+// PurposeReply is the Purpose of the request that writes the agent's answer to a turn.
+const PurposeReply = "reply"
+
 // CallTiming is the time spent in one provider attempt.
 type CallTiming struct {
 	OperationID string
@@ -91,6 +94,10 @@ type CallTiming struct {
 	// is still billed, otherwise the provider's or the request's own failure.
 	Success   bool
 	ErrorCode string
+	// ErrorMessage is what the failure said, the provider's error body included, redacted and
+	// capped as the requests table stores it (store.SafeLogText). Empty for a call that
+	// succeeded, and for one that ended with no error of its own to tell.
+	ErrorMessage string
 	// InputTokens, CachedInputTokens and OutputTokens are what the request read and wrote,
 	// and CostMicros what it was priced at, in millionths of a dollar. Zero for a request
 	// that failed before the provider answered.

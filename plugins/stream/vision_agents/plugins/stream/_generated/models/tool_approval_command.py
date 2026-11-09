@@ -78,7 +78,7 @@ class ToolApprovalCommand:
 
         tool_call_id = d.pop("tool_call_id")
 
-        type_ = ToolApprovalCommandType(d.pop("type"))
+        type_ = ToolApprovalCommandType._decode(d.pop("type"))
 
         summary = d.pop("summary", UNSET)
 

@@ -76,7 +76,7 @@ class VoiceBinding:
         d = dict(src_dict)
         provider = d.pop("provider")
 
-        state = VoiceBindingState(d.pop("state"))
+        state = VoiceBindingState._decode(d.pop("state"))
 
         error = d.pop("error", UNSET)
 

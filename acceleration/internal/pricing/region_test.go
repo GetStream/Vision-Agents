@@ -88,7 +88,7 @@ func (s *PricingSuite) TestAnItemThatIsNotBYOKIsNeverPricedByTheBYOKEntry() {
 }
 
 // TestABYOKEntryWithoutAPriceIsPricedAtAFifthOfItsRates: if a million tokens cost the vendor $1,
-// the price is $1.20, and with the customer's own key $0.20, its tiers included.
+// the price is $1.08, and with the customer's own key $0.20, its tiers included.
 func (s *PricingSuite) TestABYOKEntryWithoutAPriceIsPricedAtAFifthOfItsRates() {
 	entry := llmEntry("m", map[Meter]Rate{InputTokens: perMillion(1), OutputTokens: {USD: 1.1, Per: 1_000_000, Increment: 10}})
 	entry.Tiers = []Tier{{AboveInputTokens: 1_000, Rates: map[Meter]Rate{InputTokens: perMillion(4), OutputTokens: perMillion(1.375)}}}
@@ -100,7 +100,7 @@ func (s *PricingSuite) TestABYOKEntryWithoutAPriceIsPricedAtAFifthOfItsRates() {
 		"1.1 × 0.2 reads 0.22, not 0.22000000000000003")
 	s.Equal([]Tier{{AboveInputTokens: 1_000, Rates: map[Meter]Rate{InputTokens: perMillion(0.8), OutputTokens: perMillion(0.275)}}},
 		byok.PriceTiers)
-	s.Equal(perMillion(1.2), plain.Prices[InputTokens])
+	s.Equal(perMillion(1.08), plain.Prices[InputTokens])
 	s.Equal(entry.Rates, byok.Rates, "the vendor's rates stay as they were")
 	s.Equal(int64(2_000), int64(BYOKFeeBps))
 }

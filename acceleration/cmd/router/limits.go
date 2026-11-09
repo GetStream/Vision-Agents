@@ -93,7 +93,8 @@ func limitNotices(settings config.Config, configs *appconfig.Store, logger *slog
 	if token == "" || channel == "" || settings.Limits.Mode == config.LimitsOff || configs.DB() == nil {
 		return nil
 	}
-	return limitnotice.New(configs.DB(), limitnotice.NewSlack(token, channel), sandboxEnvironment(), logger)
+	links := limitnotice.Links{App: settings.Limits.AppURL, Staff: settings.Limits.StaffURL}
+	return limitnotice.New(configs.DB(), limitnotice.NewSlack(token, channel), sandboxEnvironment(), links, logger)
 }
 
 // usageCounters connects to the Redis the usage service keeps its spend counters in, or nil

@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from ..models.agent_review import AgentReview
     from ..models.agent_scheduling import AgentScheduling
     from ..models.agent_tools import AgentTools
+    from ..models.floor_control import FloorControl
     from ..models.greeting import Greeting
     from ..models.left_out_connector import LeftOutConnector
     from ..models.resume_history import ResumeHistory
@@ -61,6 +62,9 @@ class AgentConfig:
             writes none and reads none. record writes each conversation's card and its summary into the person's omni-
             channel, and no session reads them. on writes them as record does, and a session starts with the person's other
             cards. Turning record into on reads what record wrote.
+        floor_control (FloorControl | Unset): The model that controls an agent's floor, and how long a caller may wait
+            once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again;
+            anything else replaces the stored choice whole.
         greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
         guardrail (str | Unset):
         harness (Harness | Unset): Which harness the agent's sessions run: what hands work to the subagent, loads
@@ -118,6 +122,7 @@ class AgentConfig:
     connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
     episode_cards: EpisodeCardsMode | Unset = UNSET
+    floor_control: FloorControl | Unset = UNSET
     greeting: Greeting | Unset = UNSET
     guardrail: str | Unset = UNSET
     harness: Harness | Unset = UNSET
@@ -181,6 +186,10 @@ class AgentConfig:
         episode_cards: str | Unset = UNSET
         if not isinstance(self.episode_cards, Unset):
             episode_cards = self.episode_cards.value
+
+        floor_control: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.floor_control, Unset):
+            floor_control = self.floor_control.to_dict()
 
         greeting: dict[str, Any] | Unset = UNSET
         if not isinstance(self.greeting, Unset):
@@ -289,6 +298,8 @@ class AgentConfig:
             field_dict["dispatch"] = dispatch
         if episode_cards is not UNSET:
             field_dict["episode_cards"] = episode_cards
+        if floor_control is not UNSET:
+            field_dict["floor_control"] = floor_control
         if greeting is not UNSET:
             field_dict["greeting"] = greeting
         if guardrail is not UNSET:
@@ -354,6 +365,7 @@ class AgentConfig:
         from ..models.agent_review import AgentReview
         from ..models.agent_scheduling import AgentScheduling
         from ..models.agent_tools import AgentTools
+        from ..models.floor_control import FloorControl
         from ..models.greeting import Greeting
         from ..models.left_out_connector import LeftOutConnector
         from ..models.resume_history import ResumeHistory
@@ -365,7 +377,7 @@ class AgentConfig:
 
         id = d.pop("id")
 
-        mode = AgentMode(d.pop("mode"))
+        mode = AgentMode._decode(d.pop("mode"))
 
         name = d.pop("name")
 
@@ -408,7 +420,14 @@ class AgentConfig:
         if isinstance(_episode_cards, Unset):
             episode_cards = UNSET
         else:
-            episode_cards = EpisodeCardsMode(_episode_cards)
+            episode_cards = EpisodeCardsMode._decode(_episode_cards)
+
+        _floor_control = d.pop("floor_control", UNSET)
+        floor_control: FloorControl | Unset
+        if isinstance(_floor_control, Unset):
+            floor_control = UNSET
+        else:
+            floor_control = FloorControl.from_dict(_floor_control)
 
         _greeting = d.pop("greeting", UNSET)
         greeting: Greeting | Unset
@@ -424,7 +443,7 @@ class AgentConfig:
         if isinstance(_harness, Unset):
             harness = UNSET
         else:
-            harness = Harness(_harness)
+            harness = Harness._decode(_harness)
 
         instructions = d.pop("instructions", UNSET)
 
@@ -464,14 +483,14 @@ class AgentConfig:
         if isinstance(_role, Unset):
             role = UNSET
         else:
-            role = AgentRole(_role)
+            role = AgentRole._decode(_role)
 
         _sandbox = d.pop("sandbox", UNSET)
         sandbox: Sandbox | Unset
         if isinstance(_sandbox, Unset):
             sandbox = UNSET
         else:
-            sandbox = Sandbox(_sandbox)
+            sandbox = Sandbox._decode(_sandbox)
 
         _sandbox_options = d.pop("sandbox_options", UNSET)
         sandbox_options: SandboxOptions | Unset
@@ -538,6 +557,7 @@ class AgentConfig:
             connectors=connectors,
             dispatch=dispatch,
             episode_cards=episode_cards,
+            floor_control=floor_control,
             greeting=greeting,
             guardrail=guardrail,
             harness=harness,

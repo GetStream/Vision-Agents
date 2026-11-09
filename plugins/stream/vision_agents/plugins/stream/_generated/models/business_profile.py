@@ -253,14 +253,18 @@ class BusinessProfile:
         if isinstance(_legal_entity_type, Unset):
             legal_entity_type = UNSET
         else:
-            legal_entity_type = BusinessProfileLegalEntityType(_legal_entity_type)
+            legal_entity_type = BusinessProfileLegalEntityType._decode(
+                _legal_entity_type
+            )
 
         _organization_type = d.pop("organization_type", UNSET)
         organization_type: BusinessProfileOrganizationType | Unset
         if isinstance(_organization_type, Unset):
             organization_type = UNSET
         else:
-            organization_type = BusinessProfileOrganizationType(_organization_type)
+            organization_type = BusinessProfileOrganizationType._decode(
+                _organization_type
+            )
 
         privacy_policy_url = d.pop("privacy_policy_url", UNSET)
 

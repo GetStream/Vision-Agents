@@ -60,6 +60,11 @@ type Episode struct {
 	Status        string     `bun:"status,notnull"`
 	StartedAt     time.Time  `bun:"started_at,notnull"`
 	EndedAt       *time.Time `bun:"ended_at"`
+	// Began, when set, is when a call began by this process's monotonic clock. OpenEpisode
+	// then dates the episode by Postgres's clock, which dates a link (user_phones.updated_at)
+	// and its boundary: that long before the statement that opens it, in place of StartedAt.
+	// Only a call names it: a thread episode's touch needs its time before the insert.
+	Began time.Time `bun:"-"`
 	// StreamAppPK is the Stream app the omni-channel is in; zero, stored as NULL, is the
 	// deployment's own.
 	StreamAppPK int64     `bun:"stream_app_pk,nullzero"`
@@ -99,7 +104,12 @@ func (s *Store) OpenEpisode(ctx context.Context, episode *Episode) (opened bool,
 	// Twice at most: a second miss is the thread's episode closed and another opened between
 	// the insert and the touch, twice over.
 	for range 2 {
-		result, err := s.db.NewInsert().Model(episode).On("CONFLICT DO NOTHING").Exec(ctx)
+		insert := s.db.NewInsert().Model(episode).On("CONFLICT DO NOTHING")
+		// bun returns a column a Value sets, so StartedAt is then the start Postgres holds.
+		if !episode.Began.IsZero() {
+			insert = insert.Value("started_at", "statement_timestamp() - make_interval(secs => ?)", time.Since(episode.Began).Seconds())
+		}
+		result, err := insert.Exec(ctx)
 		if err != nil {
 			return false, stack.Wrap(fmt.Errorf("store: open episode: %w", err))
 		}

@@ -55,6 +55,8 @@ type fakeDialer struct {
 	err     error
 	blocks  bool // the dial waits for ctx to end, like a phone nobody picks up
 	dialled chan struct{}
+	// respondsAfter, when set, is the post-dial delay the dial tells the config's Responded.
+	respondsAfter time.Duration
 }
 
 func (d *fakeDialer) dial(ctx context.Context, config sipbridge.Config) (call, error) {
@@ -62,6 +64,9 @@ func (d *fakeDialer) dial(ctx context.Context, config sipbridge.Config) (call, e
 	d.ctx, d.config = ctx, config
 	d.mu.Unlock()
 	close(d.dialled)
+	if d.respondsAfter > 0 {
+		config.Call.Responded(d.respondsAfter)
+	}
 	if d.blocks {
 		<-ctx.Done()
 		return nil, ctx.Err()
@@ -155,6 +160,8 @@ func (s *SIPTrunkSuite) TestTheBridgeIsGivenTheTrunkAndTheStreamLeg() {
 	got := s.dialer.config
 	s.dialer.mu.Unlock()
 	got.Logger = nil
+	s.NotNil(got.Call.Responded, "the bridge has somewhere to tell the post-dial delay")
+	got.Call.Responded = nil
 	want := sipbridge.Config{
 		CustomerTrunk: sipbridge.CustomerTrunk{
 			Host: "trunk.example.com", Port: 5060, Transport: "tcp", Username: "agent",
@@ -384,20 +391,20 @@ func refused(code int, reason string) error {
 }
 
 func (s *SIPTrunkSuite) TestABusyTrunkReportsBusy() {
-	s.Equal(phone.CallStatus{Result: phone.CallBusy, Word: "486"}, s.endsWith(refused(486, "Busy Here")))
+	s.Equal(phone.CallStatus{Result: phone.CallBusy, Word: "486", SIPCode: 486}, s.endsWith(refused(486, "Busy Here")))
 }
 
 func (s *SIPTrunkSuite) TestADeclineReportsBusy() {
-	s.Equal(phone.CallStatus{Result: phone.CallBusy, Word: "603"}, s.endsWith(refused(603, "Decline")))
+	s.Equal(phone.CallStatus{Result: phone.CallBusy, Word: "603", SIPCode: 603}, s.endsWith(refused(603, "Decline")))
 }
 
 func (s *SIPTrunkSuite) TestA480ReportsNoAnswer() {
-	s.Equal(phone.CallStatus{Result: phone.CallNoAnswer, Word: "480"},
+	s.Equal(phone.CallStatus{Result: phone.CallNoAnswer, Word: "480", SIPCode: 480},
 		s.endsWith(refused(480, "Temporarily Unavailable")))
 }
 
 func (s *SIPTrunkSuite) TestARequestTimeoutReportsNoAnswer() {
-	s.Equal(phone.CallStatus{Result: phone.CallNoAnswer, Word: "408"}, s.endsWith(refused(408, "Request Timeout")))
+	s.Equal(phone.CallStatus{Result: phone.CallNoAnswer, Word: "408", SIPCode: 408}, s.endsWith(refused(408, "Request Timeout")))
 }
 
 func (s *SIPTrunkSuite) TestARingTimeoutReportsNoAnswer() {
@@ -405,7 +412,7 @@ func (s *SIPTrunkSuite) TestARingTimeoutReportsNoAnswer() {
 }
 
 func (s *SIPTrunkSuite) TestAnotherRefusalReportsFailed() {
-	s.Equal(phone.CallStatus{Result: phone.CallFailed, Word: "503"}, s.endsWith(refused(503, "Service Unavailable")))
+	s.Equal(phone.CallStatus{Result: phone.CallFailed, Word: "503", SIPCode: 503}, s.endsWith(refused(503, "Service Unavailable")))
 }
 
 func (s *SIPTrunkSuite) TestADialThatFailsWithoutARefusalReportsFailed() {
@@ -413,7 +420,27 @@ func (s *SIPTrunkSuite) TestADialThatFailsWithoutARefusalReportsFailed() {
 }
 
 func (s *SIPTrunkSuite) TestAnAnsweredCallThatEndsReportsCompleted() {
-	s.Equal(phone.CallStatus{Result: phone.CallCompleted, Word: "bye"}, s.endsWith(nil))
+	s.Equal(phone.CallStatus{Result: phone.CallCompleted, Word: "bye", SIPCode: 200}, s.endsWith(nil))
+}
+
+func (s *SIPTrunkSuite) TestARingTimeoutReportsNoSIPCode() {
+	s.Zero(s.endsWith(refused(0, "")).SIPCode, "nothing answered the INVITE")
+}
+
+func (s *SIPTrunkSuite) TestTheBridgesPostDialDelayIsReportedWithHowTheCallEnded() {
+	s.dialer.respondsAfter = 1500 * time.Millisecond
+
+	s.Equal(1500*time.Millisecond, s.endsWith(refused(486, "Busy Here")).PostDialDelay)
+}
+
+func (s *SIPTrunkSuite) TestAnAnsweredCallReportsItsPostDialDelay() {
+	s.dialer.respondsAfter = 2 * time.Second
+
+	s.Equal(2*time.Second, s.endsWith(nil).PostDialDelay)
+}
+
+func (s *SIPTrunkSuite) TestACallNoResponseReachedReportsNoPostDialDelay() {
+	s.Zero(s.endsWith(errors.New("connection refused")).PostDialDelay)
 }
 
 func (s *SIPTrunkSuite) TestStoppingTheNodeWhileRingingReportsCanceled() {

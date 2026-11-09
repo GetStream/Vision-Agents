@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { formatMessage } from "stream-chat";
 import { Chat } from "stream-chat-react";
 
 import { Session, type Tools } from "@stream-io/calypso";
@@ -251,7 +252,9 @@ function screenDeps(tools: Tools): ChatScreenDeps {
     open: async (sessionId) => {
       if (!sessionId) {
         const session = await agents.agent(Assistant.agentName).sessions.create({
-          llm: Assistant.chatModel,
+          // An overwrite rather than `llm`: the router keeps it on the session, so a conversation
+          // carried on after it ended still runs on this model rather than the agent's own.
+          modelOverwrites: { llm: Assistant.chatModel },
           returnUrl: Assistant.returnUrl,
           tools,
         });
@@ -271,8 +274,9 @@ function screenDeps(tools: Tools): ChatScreenDeps {
       if (!channelId) return [];
       const [type = "agent", ...rest] = channelId.split(":");
       const channel = chatClient.channel(type, rest.join(":"));
-      await channel.query({ messages: { limit: PAGE_SIZE }, watch: false });
-      return [...channel.state.messages];
+      // A query's messages are its answer only: stream-chat 10 keeps them out of the channel's list.
+      const { messages } = await channel.query({ messages: { limit: PAGE_SIZE }, watch: false });
+      return messages.map(formatMessage);
     },
     remove: (sessionId) => sessions().delete(sessionId),
     voiceOf: (session) => VoiceSession.of(session),

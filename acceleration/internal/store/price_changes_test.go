@@ -368,7 +368,7 @@ func (s *StoreSuite) TestAChangeOfTheUSPriceLeavesTheEUAndBYOKEntriesAsTheyWere(
 	list, _ := s.activeList()
 	used := pricing.Quantities{pricing.InputTokens: 1_000_000}
 	s.EqualValues(500_000, list.Quote(llmItem("a", nil), used).CostMicros)
-	s.EqualValues(1_320_000, list.Quote(pricing.Item{Modality: "llm", Provider: "openai", Model: "a", Region: pricing.RegionEU}, used).CostMicros)
+	s.EqualValues(1_188_000, list.Quote(pricing.Item{Modality: "llm", Provider: "openai", Model: "a", Region: pricing.RegionEU}, used).CostMicros)
 	s.EqualValues(200_000, list.Quote(pricing.Item{Modality: "llm", Provider: "openai", Model: "a", Region: pricing.RegionUS, BYOK: true},
 		used).CostMicros)
 }

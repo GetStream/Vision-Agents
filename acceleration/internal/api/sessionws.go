@@ -24,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -768,6 +769,9 @@ func frameOf(event session.Event) (frame, bool) {
 		// one it always was.
 		if typed.ErrorCode != "" {
 			called["error_code"] = typed.ErrorCode
+			if typed.ErrorMessage != "" {
+				called["error_message"] = typed.ErrorMessage
+			}
 		}
 		return called, true
 
@@ -964,12 +968,14 @@ func participantOf(participant stt.Participant) frame {
 }
 
 // errorText renders a failure as the empty string when there was none, so a client can
-// read one field rather than checking whether it is there.
+// read one field rather than checking whether it is there. A provider's error can echo the
+// credential it was sent, so the text goes through the redactor the requests table keeps
+// failures by.
 func errorText(err error) string {
 	if err == nil {
 		return ""
 	}
-	return err.Error()
+	return store.SafeLogText(err.Error())
 }
 
 // withRefusal adds the code naming a refusal to an error frame for one, so a client can tell

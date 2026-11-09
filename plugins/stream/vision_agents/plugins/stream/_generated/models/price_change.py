@@ -120,7 +120,7 @@ class PriceChange:
 
         effective_at = datetime.datetime.fromisoformat(d.pop("effective_at"))
 
-        kind = PriceChangeKind(d.pop("kind"))
+        kind = PriceChangeKind._decode(d.pop("kind"))
 
         name = d.pop("name")
 

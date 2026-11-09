@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
@@ -41,6 +42,25 @@ func (s *SpecSuite) TestAConfigsReviewInstructionsAreWhatItsCallsAreReviewedBy()
 	spec := FromConfig(store.AgentConfig{CustomerID: "acme", ReviewInstructions: "Score the upsell."})
 
 	s.Equal("Score the upsell.", spec.ReviewInstructions)
+}
+
+func (s *SpecSuite) TestAConfigsMaxWaitIsWhatItsSessionsEndTurnsBy() {
+	chosen := store.FloorControl{Model: store.FloorControlChorusASR, MaxWaitMs: 900}
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", FloorControl: chosen})
+
+	s.Equal(chosen, spec.FloorControl)
+	s.Equal(audiofloor.EndOfTurn{MaxWaitMs: 900}, EndOfTurnOf(spec.FloorControl))
+	s.Equal(audiofloor.EndOfTurn{}, EndOfTurnOf(store.FloorControl{Model: store.FloorControlChorusASR}), "no wait chosen is the server's default")
+}
+
+func (s *SpecSuite) TestAConfigsFloorControlIsWhatItsSessionsAreRuledBy() {
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", FloorControl: store.FloorControl{Model: store.FloorControlChorusASR}})
+
+	s.Equal(store.FloorControl{Model: store.FloorControlChorusASR}, spec.FloorControl)
+	s.Equal(audiofloor.Act, FloorModeOf(spec.FloorControl))
+	unset := FromConfig(store.AgentConfig{CustomerID: "acme"}).FloorControl
+	s.True(unset.IsZero())
+	s.Equal(audiofloor.Off, FloorModeOf(unset), "none chosen is the default flow controller")
 }
 
 func (s *SpecSuite) TestAConfigsVariedGreetingIsVariedInTheSession() {

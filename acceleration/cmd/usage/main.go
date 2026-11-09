@@ -26,6 +26,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/alerts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/ledger"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/server"
 )
@@ -97,7 +98,7 @@ The service reads its settings from the environment:
 `
 
 func main() {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{ReplaceAttr: store.RedactLogAttr}))
 	slog.SetDefault(logger)
 	command, args := "serve", os.Args[1:]
 	if len(args) > 0 {
@@ -115,13 +116,13 @@ func main() {
 		return
 	case "healthcheck":
 		if err := healthcheck(os.Getenv("USAGE_ADDR")); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(os.Stderr, store.RedactLogText(fmt.Sprint(err)))
 			os.Exit(1)
 		}
 		return
 	case "tiers":
 		if err := tiers(context.Background(), args, os.Environ, os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(os.Stderr, store.RedactLogText(fmt.Sprint(err)))
 			os.Exit(1)
 		}
 		return
@@ -132,7 +133,7 @@ func main() {
 	}
 
 	// The SDK reads SENTRY_DSN and SENTRY_ENVIRONMENT itself; none disables reporting.
-	if err := sentry.Init(sentry.ClientOptions{Release: release, ServerName: "acceleration-usage", AttachStacktrace: true}); err != nil {
+	if err := sentry.Init(sentryOptions()); err != nil {
 		logger.Error("sentry is disabled", "error", err)
 	}
 	settings, err := load(os.Environ)
@@ -148,6 +149,12 @@ func main() {
 		os.Exit(1)
 	}
 	sentry.Flush(sentryFlushTimeout)
+}
+
+// sentryOptions are the service's Sentry options. An event carries an error's text, which can
+// hold a key, so it is redacted as the log is.
+func sentryOptions() sentry.ClientOptions {
+	return sentry.ClientOptions{Release: release, ServerName: "acceleration-usage", AttachStacktrace: true, BeforeSend: store.RedactSentryEvent}
 }
 
 // writeSpec renders the service's OpenAPI document from its operations.

@@ -111,7 +111,7 @@ class SessionSettingsRequest:
         if isinstance(_thinking, Unset):
             thinking = UNSET
         else:
-            thinking = SessionSettingsRequestThinking(_thinking)
+            thinking = SessionSettingsRequestThinking._decode(_thinking)
 
         tts = d.pop("tts", UNSET)
 
@@ -120,7 +120,7 @@ class SessionSettingsRequest:
         if isinstance(_verbosity, Unset):
             verbosity = UNSET
         else:
-            verbosity = SessionSettingsRequestVerbosity(_verbosity)
+            verbosity = SessionSettingsRequestVerbosity._decode(_verbosity)
 
         voice = d.pop("voice", UNSET)
 

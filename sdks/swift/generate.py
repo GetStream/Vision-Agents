@@ -13,8 +13,16 @@ and no Go.
 
 Only the operations a phone is allowed to call are generated. The filter is the point: an
 endpoint the spec does not mark ``x-client-accessible`` is server-side only, and a client
-SDK that had a method for one would only be offering callers a 403. ``--check`` verifies the
-filter still agrees with the spec without regenerating.
+SDK that had a method for one would only be offering callers a 403.
+
+``--check`` runs without the generator, which CI does not have: it fails if the filter names an
+operation the spec does not open to a client, or if the committed client is not the one generated
+from the current spec. Each run writes ``core/generated.json``: the sha256 of the copy it handed
+the generator (less ``info`` and ``servers``, which the generated Swift does not depend on), the
+sha256 of the ``Generated`` files it wrote, the options it ran with and, to reproduce the run,
+the generator's ``chat`` commit. ``--check`` builds the copy again, hashes the committed files
+and compares. A spec change that reaches no client operation leaves the copy as it was, and the
+check passes; a hand edit of a generated file fails it.
 
 The generator is handed a copy of the spec holding those operations, their successes and the
 schemas they reach, and nothing else: ``FailureMiddleware`` throws every other status before the
@@ -32,6 +40,7 @@ Usage:
     uv run sdks/swift/generate.py --check
 """
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -46,6 +55,8 @@ SPEC = ROOT / "acceleration" / "api" / "openapi.yaml"
 TARGET = SWIFT / "core" / "Sources" / "VisionAgentsCore"
 GENERATED = TARGET / "Generated"
 GENERATOR = ROOT.parent / "chat" / "tools" / "openapi"
+FINGERPRINT = SWIFT / "core" / "generated.json"
+STALE = "Swift client is stale: run uv run sdks/swift/generate.py"
 
 # What a client is allowed to reach: opening a conversation, finding and ending one, a guest
 # to do it as, looking something up, and the user's own scheduled tasks. Everything else about
@@ -99,6 +110,10 @@ OPTIONS = [
     "raw_representable_over_enum=true",
     "string_coding_keys=true",
 ]
+
+# Top-level keys of the spec copy that no generated file reads (a regeneration with any of
+# them changed wrote the same Swift), so an edit to one does not make the client stale.
+IGNORED = ["info", "servers"]
 
 
 def audit(spec: dict) -> list[str]:
@@ -206,6 +221,51 @@ def renamed(spec: dict) -> dict:
     return spec
 
 
+def trimmed(spec: dict) -> str:
+    """The copy of ``spec`` the generator is handed, as the text it reads."""
+    return json.dumps(renamed(client(readable(spec, spec["components"]["schemas"]))))
+
+
+def spec_hash(text: str) -> str:
+    """The sha256 of the copy handed the generator, without ``info`` and ``servers``: a
+    regeneration with either changed writes the same Swift."""
+    copy = json.loads(text)
+    for key in IGNORED:
+        copy.pop(key, None)
+    return hashlib.sha256(json.dumps(copy).encode()).hexdigest()
+
+
+def client_hash() -> str:
+    """The sha256 of the committed Swift in ``Generated``, by relative path and bytes."""
+    digest = hashlib.sha256()
+    for path in sorted(GENERATED.rglob("*.swift")):
+        if path.is_file():
+            digest.update(path.relative_to(GENERATED).as_posix().encode() + b"\0")
+            digest.update(path.read_bytes() + b"\0")
+    return digest.hexdigest()
+
+
+def fingerprint(text: str) -> dict:
+    """What the committed client is checked against."""
+    return {
+        "spec_sha256": spec_hash(text),
+        "client_sha256": client_hash(),
+        "options": OPTIONS,
+    }
+
+
+def generator_commit() -> str | None:
+    """The ``chat`` commit the generator was run from, or None when git cannot say."""
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        check=False,
+        cwd=GENERATOR,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
 def main(argv: list[str]) -> int:
     if not SPEC.exists():
         print(f"no spec at {SPEC}", file=sys.stderr)
@@ -218,8 +278,16 @@ def main(argv: list[str]) -> int:
             print(complaint, file=sys.stderr)
         return 1
 
+    text = trimmed(spec)
     if "--check" in argv:
-        print(f"{len(OPERATIONS)} client operations, none server-side only")
+        committed = json.loads(FINGERPRINT.read_text()) if FINGERPRINT.exists() else {}
+        want = fingerprint(text)
+        if any(committed.get(key) != value for key, value in want.items()):
+            print(STALE, file=sys.stderr)
+            return 1
+        print(
+            f"{len(OPERATIONS)} client operations, none server-side only, client up to date"
+        )
         return 0
 
     if not GENERATOR.exists():
@@ -230,15 +298,13 @@ def main(argv: list[str]) -> int:
     shutil.rmtree(work, ignore_errors=True)
     (work / "out").mkdir(parents=True)
 
-    trimmed = work / "openapi.json"
-    trimmed.write_text(
-        json.dumps(renamed(client(readable(spec, spec["components"]["schemas"]))))
-    )
+    copy = work / "openapi.json"
+    copy.write_text(text)
 
     command = ["go", "run", ".", "generate-client", "--language", "swift"]
     for option in OPTIONS:
         command += ["--opt", option]
-    command += ["--spec", str(trimmed), "--output", str(work / "out")]
+    command += ["--spec", str(copy), "--output", str(work / "out")]
     result = subprocess.run(command, cwd=GENERATOR)
     if result.returncode != 0:
         shutil.rmtree(work, ignore_errors=True)
@@ -259,6 +325,10 @@ def main(argv: list[str]) -> int:
     for generated in sorted((work / "out" / "models").glob("*.swift")):
         shutil.move(str(generated), str(GENERATED / "Models" / generated.name))
     shutil.rmtree(work, ignore_errors=True)
+    FINGERPRINT.write_text(
+        json.dumps(fingerprint(text) | {"generator": generator_commit()}, indent=2)
+        + "\n"
+    )
 
     print(f"regenerated {GENERATED.relative_to(ROOT)}")
     return 0

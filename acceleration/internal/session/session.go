@@ -162,7 +162,10 @@ type Session struct {
 	id      string
 	spec    Spec
 	created time.Time
-	logger  *slog.Logger
+	// began is when this process made the session, with the monotonic reading created lost to
+	// UTC and Truncate: how long the session has run, whatever the wall clock does meanwhile.
+	began  time.Time
+	logger *slog.Logger
 
 	persisted *persistent.Conversation
 	// held is the agent holding the conversation: one on the call while voice is started,
@@ -258,6 +261,9 @@ type Session struct {
 	runs        map[*agent.Agent]*presence
 	callerSeen  atomic.Bool
 	settledOnce atomic.Bool
+	// carried is what every agent run's call carried, for the silent-session count.
+	carriedMu sync.Mutex
+	carried   agent.CallAudio
 	// caller is the number of the first phone caller to join the call, set once callerHeard
 	// closes (hearCaller). The channel is made on first use.
 	callerMu    sync.Mutex
@@ -318,6 +324,16 @@ type Session struct {
 	// halted is set by a router shutting down, whose ending leaves the reply being written
 	// interrupted rather than cancelled.
 	halted atomic.Bool
+	// active is set while router_sessions_active counts the session: from the manager
+	// holding it until it has closed. agentLeft is set once its agent left the call by itself
+	// (consume). modelErred and replied are whether its model failed a turn and whether
+	// the agent answered one (observeTurn), and failure the Fault of the last model failure
+	// since its last answer.
+	active     atomic.Bool
+	agentLeft  atomic.Bool
+	modelErred atomic.Bool
+	replied    atomic.Bool
+	failure    atomic.Value
 }
 
 // recordedTurn is one turn being written down as it happens.
@@ -794,6 +810,15 @@ func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, client
 	// A worker's command on a channel it answers hands on what the person wrote there, photos
 	// and all, so only the reply is written, as Respond does (Spec.Dispatched).
 	handedOn := s.spec.Text && s.spec.Dispatched
+	if len(images) > 0 && s.reachesModel(id) {
+		// RespondTo would refuse them only after they were uploaded and shown on the person's
+		// message, as a question nothing answers. The retry of a command already taken is
+		// answered with its receipt and never reaches the model, so the session's model since
+		// changing to one that cannot see does not refuse it.
+		if err := s.current().CheckTurn(asked, true); err != nil {
+			return persistent.CommandReceipt{}, "", stack.Wrap(err)
+		}
+	}
 	var photos []persistent.Photo
 	if !handedOn {
 		var err error
@@ -846,6 +871,22 @@ func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, client
 		return receipt, "", nil
 	}
 	return receipt, s.openTurn(turnID, text), nil
+}
+
+// reachesModel is whether the command under id would be shown to the model: one not taken
+// yet, or one a dispatch worker's server is answering now (AwaitCommand). The retry of one
+// already taken is answered with its receipt.
+func (s *Session) reachesModel(id string) bool {
+	if s.persisted == nil {
+		return true
+	}
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
+	if _, err := s.persisted.Command(id); err != nil {
+		return true
+	}
+	_, waiting := s.awaiting[id]
+	return waiting
 }
 
 // photos uploads what a person sent with a command, photos and voice notes, to their
@@ -1720,6 +1761,7 @@ func (s *Session) close() error {
 	for i := len(s.closers) - 1; i >= 0; i-- {
 		s.closers[i]()
 	}
+	s.counted()
 
 	s.mu.Lock()
 	s.state = Ended
@@ -1750,6 +1792,7 @@ func (s *Session) consume(held *agent.Agent, transcript Transcript, run *presenc
 	}
 
 	transferred := false
+	lost := ""
 	for event := range held.Events() {
 		typed := transcript == nil || s.typedEvent(event)
 		if s.persisted != nil && typed {
@@ -1763,16 +1806,23 @@ func (s *Session) consume(held *agent.Agent, transcript Transcript, run *presenc
 			transferred = true
 		}
 		s.observe(run, event)
+		s.observeTurn(event, &lost)
 		s.remember(event)
 		s.record(event)
 		s.broadcast(event)
 		s.name(event)
 	}
+	s.heard(held)
 	// The agent leaves by itself once it has handed the caller over, after a warm transfer's
 	// summary, and nobody is left to report the caller leaving, so nothing else would end
 	// the session. A timeout of zero ends it off this goroutine, which closing waits for.
 	if transferred && s.current() == held {
 		s.SetTimeout(0, EndTransferred)
+	}
+	// An agent still the session's that closed while the session is not closing, with no
+	// hang-up, transfer or timeout noted, left by itself.
+	if s.current() == held && !s.closingNow() && s.EndReason() == "" {
+		s.agentLeft.Store(true)
 	}
 }
 
@@ -1832,7 +1882,7 @@ func (s *Session) write(event Event) {
 	case agent.ToolRan:
 		payload := map[string]any{"call_id": typed.ID, "arguments": typed.Arguments}
 		if typed.Err != nil {
-			payload["error"] = typed.Err.Error()
+			payload["error"] = store.SafeLogText(typed.Err.Error())
 		}
 		s.item(typed.TurnID, store.ItemToolResult, typed.Result, typed.Tool, payload)
 	case agent.LookedUp:

@@ -117,7 +117,7 @@ For each vendor announcement, one price change as JSON in `.claude/skills/check_
 
 - Every entry names its `region`; a change without one is refused. The BYOK twin is an item of its own, so a vendor's new rate is written to it too, with the same rates and its own price in force.
 - An entry replaces the item's entry whole, so it carries every rate and tier the item has, not only the one that moved.
-- It carries the item's price too (`prices`, and `price_tiers` for each of its `tiers`), with the same meters as its rates: the price in force, unchanged, as `router prices show --json` gives it. What customers are charged is the operator's decision, never this skill's; a new item takes its new rates times 1.2 and says so in `reason`.
+- It carries the item's price too (`prices`, and `price_tiers` for each of its `tiers`), with the same meters as its rates: the price in force, unchanged, as `router prices show --json` gives it. What customers are charged is the operator's decision, never this skill's; a new item takes its new rates times 1.08 (`pricing.PriceFactorBps`) and says so in `reason`.
 - `reason` says old → new with units for each model; `source` the URL and the date read; `effective_at` the vendor's date when it is in the future, else leave it out.
 - A `gone` model is withdrawn (`"withdrawn": true`, one entry for each `when` it has) only when it is also gone from `router.yaml`; otherwise report it.
 - Never a markup, and never a price moved.

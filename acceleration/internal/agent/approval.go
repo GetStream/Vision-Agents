@@ -195,7 +195,7 @@ func (a *Agent) takeApprovalQuestionsLocked() string {
 // back answers a question the model can see.
 func (a *Agent) askLocked(turnID, question string) error {
 	a.toolReply = false
-	a.speakingTurn = turnID
+	a.speakingTurn, a.keptReply = turnID, turnID
 	a.saying = question
 	said := llm.Message{Role: llm.Assistant, Content: question}
 	if callsOpen(a.history) {
@@ -342,7 +342,7 @@ func (a *Agent) tickApprovals() {
 				continue
 			}
 			note := llm.Message{Role: llm.User, Content: fmt.Sprintf(approvalSilence,
-				waiting.question, int(wait.Round(time.Second)/time.Second), waiting.call.Name, waiting.call.Name)}
+				waiting.question, int(wait.Round(time.Second)/time.Second), waiting.call.Name, waiting.call.Name), Typed: true}
 			if callsOpen(a.history) {
 				a.lateResults = append(a.lateResults, note)
 			} else {

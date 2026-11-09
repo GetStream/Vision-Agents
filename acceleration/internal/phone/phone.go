@@ -495,10 +495,18 @@ const (
 )
 
 // CallStatus is one report a vendor sent on a placed call. Word is the vendor's own, kept for
-// debugging.
+// debugging. The rest is what the report says of the carrier, zero when it says nothing
+// (internal/phone/outcome/AGENTS.md lists what each vendor reports).
 type CallStatus struct {
 	Result CallResult
 	Word   string
+	// SIPCode is the final SIP response to the call's INVITE, from a final report.
+	SIPCode int
+	// Ringing is a report that the person's phone has started ringing.
+	Ringing bool
+	// PostDialDelay is how long the INVITE waited for its first response other than 100
+	// Trying or a challenge (RFC 6076 §4.3), as the router's own bridge measured it.
+	PostDialDelay time.Duration
 }
 
 // StatusReader is a provider whose vendor posts a placed call's status to the URL it was given.

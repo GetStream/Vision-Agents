@@ -45,6 +45,8 @@ type AgentConfigPatch struct {
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
 	Calls              *AgentCalls              `json:"calls,omitempty"`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty"`
+	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"Replaces the choice whole. Left out or null, the stored choice stays; an empty object is the default flow controller again."`
+	EndOfTurn          any                      `json:"end_of_turn,omitempty" hidden:"true"` // refused: floor_control's max_wait_ms replaced it
 	Tags               *map[string]string       `json:"tags,omitempty"`
 	Video              *SessionVideo            `json:"video,omitempty"`
 }
@@ -219,7 +221,14 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	config.Scheduling = schedulingOr(config.Scheduling, patch.Scheduling)
 	config.Calls = callsOr(config.Calls, patch.Calls)
 	config.ResumeHistory = resumeHistoryOr(config.ResumeHistory, patch.ResumeHistory)
+	config.FloorControl = floorControlOr(config.FloorControl, patch.FloorControl)
 	if message, ok := schedulingComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if failure, refused := s.floorControlRefusal(patch.FloorControl, patch.EndOfTurn); refused {
+		return nil, failure
+	}
+	if _, message, ok := s.floorControlComplaint(ctx, config.FloorControl, original.FloorControl); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := callsComplaint(config.Calls); !ok {
