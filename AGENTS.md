@@ -185,6 +185,9 @@ Before you run more than one coding agent at once (parallel PRs, reviewers, fixe
 `parallel-agents` skill (`.claude/skills/parallel-agents/SKILL.md`): test databases, migration
 slots, merge order and how not to burn tokens.
 
+When a PR adds a migration, before it merges or after a rebase, read the `migration-order` skill
+(`.claude/skills/migration-order/SKILL.md`): check its version follows `accelerate` and move it if not.
+
 - Framework: pytest. Never mock.
 - `@pytest.mark.asyncio` is not needed (asyncio_mode = auto).
 - Integration tests use `@pytest.mark.integration`.
