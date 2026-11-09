@@ -3560,11 +3560,116 @@ func (s *AgentSuite) TestAnAnswerTalkedOverWhilePlayingIsToldAgain() {
 
 	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the caller was never answered")
 	owed := s.model.requests()[2]
-	s.Contains(shown(owed), "cut off before the caller heard it",
-		"an answer the caller talked over is still owed to them")
+	s.Contains(shown(owed), "talked over your last reply passing this on",
+		"an answer the caller talked over goes with the reply to what they said")
 	s.Equal(1, countOfMessages(slices.DeleteFunc(slices.Clone(owed.Input), func(m llm.Message) bool {
 		return !strings.Contains(m.Content, "It is 12.63.")
 	}), llm.User), "what came back is in the conversation once, ahead of the reply that was cut off")
+}
+
+// answerPlaying has the agent hand work over, get its answer back and start passing it on, on
+// chorus-asr, and returns the turn passing it on, still playing.
+func (s *AgentSuite) answerPlaying(participant stt.Participant) string {
+	s.actsOnChorusASR()
+	s.delegates()
+	s.join(true)
+	s.model.reply = []string{`Let me check. <ask skill="think">ferries from Spain to Porto</ask>`}
+	s.model.then = []string{"There is no ferry from Spain to Porto now."}
+	s.subagent.reply = nil
+	s.speak(participant)
+	s.eventually(s.agent.actsOnChorusASR, "chorus-asr never heard the caller")
+
+	s.says(participant, "tell me about the ferries from Spain to Porto")
+	s.eventually(func() bool {
+		requests := s.subagent.requests()
+		return len(requests) > 0 && s.subagent.script(requests[0].ID) != nil
+	}, "nothing was handed over")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the first reply never finished")
+	s.voice.mu.Lock()
+	s.voice.silent = true
+	s.voice.mu.Unlock()
+	taskID := s.subagent.requests()[0].ID
+	s.subagent.writes(taskID, "The Vigo to Porto ferry stopped in 2014.")
+	s.subagent.finishes(taskID)
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 }, "the answer was never written")
+	answer := s.model.requests()[1].ID
+	s.heardSomeOf(answer)
+	s.replyWentOut()
+	s.Require().False(s.agent.harness.Pending(), "the reply passing the answer on is playing")
+	return answer
+}
+
+// stopsOver has chorus-asr rule a stop on words, the first of the caller's utterance 2,
+// said over the agent, and waits for the reply to be abandoned.
+func (s *AgentSuite) stopsOver(participant stt.Participant, turnID, words string) {
+	stop := audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Stop}},
+		Words: words, Speaking: true, Overheard: true, Began: time.Now(), AudioMs: 700, WordsMs: 100, Utterance: 2}
+	pauseAsker{s.agent}.Overheard(participant, stop)
+	s.eventually(func() bool { return s.agent.abandonedTurn(turnID) }, "the stop was not acted on")
+	s.voiceStops(turnID)
+}
+
+// voiceStops has the voice report what it was saying of turnID as cut off, as a real one does
+// once interrupted. The stub reports nothing unless a test holds its interrupt open, and until
+// it does the agent counts the reply as still being said and starts nothing after it.
+func (s *AgentSuite) voiceStops(turnID string) {
+	s.voice.mu.Lock()
+	var ids []string
+	for _, said := range s.voice.said {
+		if strings.HasPrefix(said.ID, turnID) && !slices.Contains(ids, said.ID) {
+			ids = append(ids, said.ID)
+		}
+	}
+	s.voice.mu.Unlock()
+	s.Require().NotEmpty(ids, "the voice was never given the reply")
+	for _, id := range ids {
+		s.voice.emitter.Send(tts.SynthesisComplete{SynthesisID: id, Interrupted: true})
+	}
+}
+
+func (s *AgentSuite) TestACorrectionOverAnAnswerIsAnsweredAndTheAnswerIsNotSaidAgainOverIt() {
+	// On staging a caller said "no wait, I meant Lisbon, not Porto" over a subagent's answer
+	// about Porto, and was never answered. The stop was ruled on "no wait"; owed a turn of its
+	// own again, the answer started over at once while they were still talking; each check
+	// over it ruled a stop on more of their words, and the settled words, no more than the last
+	// of those, were set aside as the stop's. Nine times in two minutes.
+	participant := stt.Participant{ID: "alice"}
+	answer := s.answerPlaying(participant)
+
+	s.stopsOver(participant, answer, "No wait,")
+	model := s.model
+	s.never(func() bool { return len(model.requests()) > 2 }, "the answer started over while the caller was talking")
+	s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Utterance: 2,
+		Text: "No wait, I meant Lisbon, not Porto.", Provider: audiofloor.ProviderName, Language: "en", Confidence: 1})
+
+	s.eventually(func() bool { return len(model.requests()) == 3 }, "the caller was never answered")
+	reply := model.requests()[2]
+	s.True(slices.ContainsFunc(reply.Input, func(m llm.Message) bool {
+		return m.Role == llm.User && strings.Contains(m.Content, "I meant Lisbon")
+	}), "the reply after the answer is to what the caller said")
+	s.Contains(shown(reply), "talked over your last reply passing this on",
+		"what the answer passed on goes with it, to be told if it still fits")
+	s.never(func() bool { return len(model.requests()) > 3 }, "the answer was said again after the caller was answered")
+}
+
+func (s *AgentSuite) TestAStopOverAnAnswerIsNotFollowedByTheAnswerAgain() {
+	participant := stt.Participant{ID: "alice"}
+	answer := s.answerPlaying(participant)
+
+	s.stopsOver(participant, answer, "Stop.")
+	s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Utterance: 2,
+		Text: "Stop.", Provider: audiofloor.ProviderName, Language: "en", Confidence: 1})
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.reported(), func(event Event) bool {
+			d, ok := event.(Decided)
+			return ok && d.Kind == string(ActIgnore) && d.Text == "Stop."
+		})
+	}, "the stop's words were not set aside")
+
+	model := s.model
+	s.never(func() bool { return len(model.requests()) > 2 }, "the answer the caller stopped was said again")
+	s.False(s.agent.harness.Pending(), "what it passed on goes with whatever the caller says next")
 }
 
 // heardInFull has the agent hand work over, get its answer back and pass it on, and waits for
@@ -3686,6 +3791,7 @@ func (s *AgentSuite) notOwedAgain(request llm.ResponseParams, message string) {
 	told := shown(request)
 	s.NotContains(told, "Your colleague has come back", message)
 	s.NotContains(told, "cut off before the caller heard it", message)
+	s.NotContains(told, "talked over your last reply passing this on", message)
 	s.NotContains(told, "12.63", message)
 	s.False(s.agent.harness.Pending(), message)
 }
