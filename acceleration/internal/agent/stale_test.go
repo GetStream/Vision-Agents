@@ -331,8 +331,8 @@ func (s *AgentSuite) TestTheControllerIsNotAskedAboutAGreetingAHeldReplyAnswers(
 			s.model.writes(turn, "Hi, yes, I can hear you.")
 
 			s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply held for the greeting never went out")
-			s.Equal(1, len(s.flow.requests()), "the controller was asked about the greeting")
-			s.Equal(1, len(s.model.requests()), "the greeting was answered again")
+			s.Len(s.flow.requests(), 1, "the controller was asked about the greeting")
+			s.Len(s.model.requests(), 1, "the greeting was answered again")
 			s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
 			s.Equal(1, s.voicedTimes("Hi, yes, I can hear you."))
 		})
@@ -349,7 +349,7 @@ func (s *AgentSuite) TestAGreetingThatSettlesThenGrowsDropsTheHeldReply() {
 	s.greetedOver(two, s.mutters, "Hey,")
 	s.model.writes(two, "Which two do you mean?")
 	s.eventually(func() bool { return countOf[Heard](s.reported()) == 2 }, "the greeting never settled")
-	s.Equal(1, len(s.flow.requests()), "the greeting was put to the controller")
+	s.Len(s.flow.requests(), 1, "the greeting was put to the controller")
 	s.mutters(nash, "Hey. Can you help")
 
 	s.eventually(func() bool { return s.model.abandoned(two) }, "the reply to two kept going")
