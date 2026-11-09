@@ -142,6 +142,7 @@ func agentSpeaksFirst(w http.ResponseWriter, r *http.Request) {
 		UserID    string `json:"user_id"`
 		SessionID string `json:"session_id"`
 		Kind      string `json:"kind"`
+		Timezone  string `json:"timezone"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&asked); err != nil || asked.UserID == "" || asked.SessionID == "" {
 		http.Error(w, "a user_id and a session_id are required", http.StatusBadRequest)
@@ -159,12 +160,16 @@ func agentSpeaksFirst(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in := "P1D"
+	var timezone *string
+	if asked.Timezone != "" {
+		timezone = &asked.Timezone
+	}
 	created, err := client.CreateScheduledTaskWithResponse(ctx,
 		&acceleration.CreateScheduledTaskParams{XStreamUserId: &asked.UserID},
 		acceleration.CreateScheduledTaskJSONRequestBody{
 			Title:        event.title,
 			Instructions: event.instructions,
-			Schedule:     acceleration.ScheduledTaskSchedule{In: &in},
+			Schedule:     acceleration.ScheduledTaskSchedule{In: &in, Timezone: timezone},
 			SessionId:    &asked.SessionID,
 		})
 	if err != nil {
