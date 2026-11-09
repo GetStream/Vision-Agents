@@ -209,7 +209,8 @@ describe("Backend", () => {
       user: { id: "jlahey", name: "Jim Lahey" },
       token: "token-1",
     });
-    assert.equal((await backend.streamCredentials())?.token, "token-2", "asked again each time");
+    assert.equal((await backend.streamCredentials())?.token, "token-1", "kept until refused");
+    assert.equal((await backend.streamCredentials(true))?.token, "token-2", "asked again on refresh");
   });
 
   it("says a page that set its user is that user, so it reaches only their conversations", async () => {
@@ -394,7 +395,9 @@ describe("Backend", () => {
     }
   });
 
-  it("asks a token callback again on every request, so an idle client never holds a stale one", async () => {
+  it("keeps what a token callback answered until it is refused, rather than asking per request", async () => {
+    // An idle client is kept from holding a stale one by the expiry the token carries and by
+    // the retry after a 401 (tests/token.test.ts), not by asking the app's backend every time.
     let minted = 0;
     const backend = new Backend({
       url: router.url,
@@ -406,6 +409,8 @@ describe("Backend", () => {
     });
 
     assert.equal((await backend.headers())["Authorization"], "Bearer token-1");
+    assert.equal((await backend.headers())["Authorization"], "Bearer token-1");
+    assert.equal(backend.expireToken(), true, "a callback can be asked again");
     assert.equal((await backend.headers())["Authorization"], "Bearer token-2");
   });
 
