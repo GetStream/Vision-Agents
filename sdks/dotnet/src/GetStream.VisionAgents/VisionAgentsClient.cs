@@ -74,6 +74,15 @@ public sealed class VisionAgentsClient : IDisposable
     public Memories Memories => new(this);
 
     /// <summary>
+    /// The customer's spend limits, on the organization, its apps, keys, end users, teams and
+    /// usage categories. Server side only.
+    /// </summary>
+    public SpendLimits SpendLimits => new(this);
+
+    /// <summary>The organization's teams and their spend limits. Server side only.</summary>
+    public Teams Teams => new(this);
+
+    /// <summary>
     /// Speech-to-text, text-to-speech, the language model and search, on their own, under a
     /// stored router config and with cost labels on everything routed.
     /// </summary>
