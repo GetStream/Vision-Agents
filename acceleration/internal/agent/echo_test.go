@@ -111,6 +111,10 @@ func TestOnlyWordsHeardOverTheAgentAreItsEcho(t *testing.T) {
 	other.Provider = "deepgram"
 	_, echo = a.withoutEcho(other)
 	require.Zero(t, echo, "another transcriber's words are left alone")
+	other.Floor = true
+	left, echo = a.withoutEcho(other)
+	require.Equal(t, 7, echo, "another transcriber's words of an utterance chorus-asr's floor ended, timed by the floor, are weighed")
+	require.Empty(t, left)
 
 	a.voiceOut.from, a.voiceOut.to = time.Now().Add(-20*time.Second), time.Now().Add(-10*time.Second)
 	_, echo = a.withoutEcho(heard)

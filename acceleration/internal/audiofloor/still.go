@@ -38,6 +38,12 @@ import (
 // what a caller voiced over it means is the checks over the agent's to say. Words that are none
 // end nothing either: an utterance the server has written nothing of is the room alone, and
 // ending it would cut off the first word of a caller who begins as it ends.
+//
+// A floor that rules alone (NewFloor) has the server write no words: they are the other
+// transcriber's, which come as it writes them, so they move the clock on every voiced frame they
+// are the utterance's, and nothing is asked to write them. Its held check asks for the decision
+// alone, and a turn it ends has the other transcriber's words, cut at the caller's last new word,
+// as a pause's check that ends one does.
 
 // stillFor is how long the caller's words must have held still for a held check to end the turn,
 // unless the agent's point lets a caller who has finished wait longer (stillBound). It is the safe
@@ -169,12 +175,17 @@ func (t *Transcriber) checksHeld(participant stt.Participant, heard int64) {
 	scale := max(1, float64(length)*float64(frame)/float64(Window))
 	t.mu.Lock()
 	s, p := &t.still, &t.pause
+	if t.words != nil {
+		if text, ok := t.words.of(t.stillOf); ok {
+			t.wroteLocked(t.stillOf, heard, t.talked, text)
+		}
+	}
 	_, own := t.asker.(neutralAgent)
 	if t.asker == nil || own || s.inFlight || p.inFlight || p.ended != nil || p.standing != nil || p.done {
 		t.mu.Unlock()
 		return
 	}
-	track := time.Duration(t.talked-max(s.atTalked, s.askedTalked))*frame >= time.Duration(float64(heldEvery)*scale)
+	track := t.words == nil && time.Duration(t.talked-max(s.atTalked, s.askedTalked))*frame >= time.Duration(float64(heldEvery)*scale)
 	end := s.confirmed && time.Duration(heard-s.asked)*frame >= every && t.stillLocked(heard, t.talked) == ""
 	if !track && !end {
 		t.mu.Unlock()
@@ -212,7 +223,8 @@ func (t *Transcriber) newStill() {
 }
 
 // checkHeld asks the server about the utterance whose words the gate held, the decision and the
-// whole utterance's words in one request, as a pause's first check does, and ends the turn on its
+// whole utterance's words in one request, as a pause's first check does (for a floor that rules
+// alone, the decision, its words the other transcriber's so far), and ends the turn on its
 // ruling when its words have held still long enough (stillLocked) and no pause's check has ruled
 // on the pause going on: the pause's checks rule a pause the gate heard. Its words are waited for
 // before anything is ended, as they say whether it may be. An agent talking by then has the
@@ -241,11 +253,12 @@ func (t *Transcriber) checkHeld(asker Asker, c heldCheck) {
 		}
 		agent := Agent{Instructions: turn.Instructions, Tools: turn.Tools, Languages: t.languages}
 		var answer Answer
-		if answer, said, err = t.client.DecideWords(ctx, agent, turnOf(turn), turn.Audio); err != nil {
+		if answer, said, err = t.decideWords(ctx, agent, turnOf(turn), turn.Audio); err != nil {
 			return Check{}, err
 		}
 		return asker.Hearer().ruleStill(policy, answer)
 	}()
+	t.checked(err)
 	checks.WithLabelValues(outcome(err)).Inc()
 	if err != nil {
 		t.logHeld(c, checked, 0, "", err)
@@ -290,8 +303,15 @@ func (t *Transcriber) checkHeld(asker Asker, c heldCheck) {
 	if ends {
 		p.ended = &Ruled{Check: checked, Paused: c.paused, Utterance: c.utterance}
 		p.endedAt, p.participant, p.utterance = c.at, c.participant, c.utterance
-		p.words, p.noise = &text, words.Noise
-		p.audioMs, p.wordsMs = float64(c.audio.Duration.Microseconds())/1000, float64(time.Since(c.asked).Microseconds())/1000
+		if t.words != nil {
+			// Cut at the frame before the words were first seen as they stand, so that a final
+			// that brought them counts as settling them.
+			cut := pauseCheck{epoch: epoch, utterance: c.utterance, participant: c.participant, length: c.length, asked: c.asked}
+			t.cutLocked(cut, c.asked.Add(-held-frame))
+		} else {
+			p.words, p.noise = &text, words.Noise
+			p.audioMs, p.wordsMs = float64(c.audio.Duration.Microseconds())/1000, float64(time.Since(c.asked).Microseconds())/1000
+		}
 	}
 	t.mu.Unlock()
 	t.logHeld(c, checked, held, why, nil)

@@ -1403,14 +1403,8 @@ func (s *AgentSuite) replyWentOut() {
 // never answers, so the flow controller rules every turn the model is asked about, with the
 // stub transcriber standing in for chorus-asr's (pausingSTT).
 func (s *AgentSuite) actsOnChorusASR() {
-	s.actsWithAnotherTranscriber()
-	s.earsPause = true
-}
-
-// actsWithAnotherTranscriber has the agent joined next act on the chorus-asr model, at a server
-// that never answers, while another transcriber hears its callers.
-func (s *AgentSuite) actsWithAnotherTranscriber() {
 	s.floor, s.floorMode = audiofloor.New("http://127.0.0.1:1", audiofloor.Opus, nil), audiofloor.Act
+	s.earsPause = true
 }
 
 // pausingSTT is the stub transcriber standing in for chorus-asr's, which an acting agent has
@@ -4472,10 +4466,10 @@ func (s *AgentSuite) TestAReplyThatEndsWithinItsShortenedTailIsNotCut() {
 	s.Zero(s.voice.interrupted(), "the voice was stopped")
 }
 
-// The loop's contract is kept while chorus-asr hears the callers, and no longer once another
-// transcriber does, as when a session's transcriber is changed mid-call: kept, a check-in said
-// over another transcriber's line was stopped by its own echo.
-func (s *AgentSuite) TestTheContractIsKeptWhileChorusASRHearsTheCaller() {
+// The loop's contract is kept while chorus-asr rules on the callers' floor, whichever
+// transcriber writes their words: as when a session's transcriber is changed mid-call to
+// another, which a floor of chorus-asr's own hears beside.
+func (s *AgentSuite) TestTheContractIsKeptWhicheverTranscriberHearsTheCaller() {
 	s.actsOnChorusASR()
 	s.join(true)
 	participant := stt.Participant{ID: "alice"}
@@ -4495,19 +4489,17 @@ func (s *AgentSuite) TestTheContractIsKeptWhileChorusASRHearsTheCaller() {
 	s.eventually(func() bool { return countOf[ParticipantJoined](s.reported()) == 1 }, "the caller never came back")
 	s.speak(participant)
 	s.eventually(listening, "the caller who came back is not listened to")
-	s.False(s.agent.actsOnChorusASR(), "the contract was kept with another transcriber hearing the caller")
+	s.True(s.agent.actsOnChorusASR(), "the contract was dropped with another transcriber writing the caller's words")
 }
 
-// Acting on chorus-asr while another transcriber hears the callers, the loop's contract, which
-// is that of chorus-asr transcribing, isn't kept: a shortened reply plays on what the voice was
-// sent, as with every transcriber but chorus-asr.
-func (s *AgentSuite) TestAShortenedReplyPlaysOnActingWithAnotherTranscriber() {
-	s.actsWithAnotherTranscriber()
+// Acting on chorus-asr while another transcriber writes the callers' words, the loop's contract
+// is kept as it is with chorus-asr's: a shortened reply stops shortenTail after the ruling.
+func (s *AgentSuite) TestAShortenedReplyStopsWithinItsTailActingWithAnotherTranscriber() {
+	s.floorRules(endsAtOnce)
 	s.join(true)
 	participant := stt.Participant{ID: "alice"}
 	s.model.reply = nil
-	s.speak(participant)
-	s.says(participant, "what's the weather like in Lisbon this week")
+	s.asksOverTheFloor(participant, "what's the weather like in Lisbon this week")
 	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
 	s.heardSomeOf(s.model.requests()[0].ID)
 	s.replyWentOut()
@@ -4515,11 +4507,12 @@ func (s *AgentSuite) TestAShortenedReplyPlaysOnActingWithAnotherTranscriber() {
 	turnID := s.agent.floor().Speaking
 	s.Require().NotEmpty(turnID)
 
+	shortened := time.Now()
 	s.agent.perform(Action{Kind: ActShorten, Participant: participant, TurnID: turnID,
 		Interruption: interruption{cause: causeShortened, words: "and in Porto"}})
-	time.Sleep(shortenTail + 500*time.Millisecond)
-	s.Zero(countOf[Interrupted](s.reported()), "the shortened reply was cut")
-	s.Zero(s.voice.interrupted(), "the voice was stopped")
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the shortened reply played on")
+	s.GreaterOrEqual(time.Since(shortened), shortenTail, "the reply was cut before its tail")
+	s.eventually(func() bool { return s.voice.interrupted() == 1 }, "the voice kept saying the reply")
 }
 
 func (s *AgentSuite) TestAShortenedCheckInStopsAtOnce() {
