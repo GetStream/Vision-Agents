@@ -666,6 +666,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	} else {
 		logger.Warn("no redis configured, routing will not use live health", "setting", "redis.addr")
 	}
+	defer serveSaturation(pgStore, liveClient, logger)()
 	usageClient, err := newUsageClient(settings, pgStore, logger)
 	if err != nil {
 		return err
