@@ -44,6 +44,14 @@ type Options struct {
 	// not here, so a turn the policy refuses never reaches the model.
 	Guardrail string
 	// LLM is the pipeline running in the backend. Nil runs the stored config named Name.
+	//
+	// The pipeline's Config.Backend is also where the agent's sessions make their requests.
+	// Built on a client's Backend, what those requests cost reaches that client's WithUsage
+	// and WithBalanceWarning:
+	//
+	//	api, err := client.New(stream.Backend{}, client.WithUsage(record))
+	//	agent, err := agents.New(agents.Options{Name: "jean",
+	//		LLM: stream.Accelerated(stream.Config{Agent: "jean", Backend: api.Backend()})})
 	LLM *stream.Pipeline
 	// Harness is what stands between what a caller said and the model that answers them.
 	Harness *Harness
@@ -297,7 +305,9 @@ func (a *Agent) join(ctx context.Context, remote stream.Call, options ...Session
 	return &Session{Session: held, agent: a}, nil
 }
 
-// Client is the acceleration router this agent talks to.
+// Client is the generated client for the router this agent talks to, for the operations
+// this SDK has no method for yet. Like stream.Backend.Client, its operation methods carry no
+// compatibility promise.
 func (a *Agent) Client() (*acceleration.ClientWithResponses, error) {
 	backend, err := a.options.LLM.Backend()
 	if err != nil {

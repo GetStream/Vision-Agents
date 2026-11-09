@@ -2,6 +2,9 @@
 
 ## Features
 
+### Go: a refusal says how long to wait
+
+`stream.RouterError.RetryAfter` is the wait the router's `Retry-After` asked for, as seconds or a date, on a 429 `user_limit_reached` or `concurrency_limited` and a 503 `spend_check_unavailable`, and zero when it sent none. The SDK still retries nothing itself (AI-1892).
 ### A failed model call says what the provider answered
 
 The session socket's `model_call` frame and a call timeline's `model_calls` carry `error_message` beside `error_code` for a call that did not succeed: the start of the provider's error body, such as a self-hosted model's `502 failed to connect to local service`, redacted and capped as the requests table stores it. A successful call's frame is unchanged. The flow controller's and the agent's failure log lines name the `provider` and `model` (AI-2954).
@@ -398,6 +401,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### The Go SDK's helpers take a Backend, not the generated client
+
+`agents.DefineAgent`, `agents.DefineSkills`, `agents.IngestKnowledge`, `agents.SubscribeKnowledgeURLs` and `stream.NewPhone` take a `stream.Backend` where they took the generated `*acceleration.ClientWithResponses`, so using them no longer means building the generated client first. `stream.NewPhone` now returns an error too, for a backend that does not resolve. `agents.Harness.VM` is `agents.Harness.Sandbox`, the name every other SDK and the docs use. Pass `stream.Backend{}` for the environment's router, or `api.Backend()` for a client's. `stream.Backend.Client()` and `agents.Agent.Client()` still hand out the generated client, for operations the SDK has no method for yet; its operation methods carry no compatibility promise (AI-1892).
 ### Rust: the string enums are no longer `Copy`, and a `match` on one needs an `Unlisted` arm
 
 Each of the Rust SDK's 133 string enums has a new `Unlisted(String)` variant that holds a value the SDK does not list, so none of them is `Copy` any more. Clone one where you copied it, and add an `Unlisted(_)` arm to a `match` on one that has no wildcard. The Python client has no such break (AI-2951).
@@ -456,6 +462,13 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### Go: leaving a session the router already ended succeeds
+
+`stream.Pipeline.Leave`, and so `Session.Close`, failed with `websocket: close sent` for a session whose socket the router had closed, because the closed socket still read as open. The pipeline now closes its socket when watching ends, and a close that finds the socket already closed, by the router ending the session at that moment, stops the session over HTTP instead. Either way leaving returns nil (AI-1892).
+
+### Go: a client made on another client's Backend reads each answer once
+
+`client.New(api.Backend())`, which `agents` and dispatch workers do with the backend they are given, wrapped the first client's money watcher in a second one. A balance warning the first client handed to `WithBalanceWarning` was then logged as well. A client given no callback of its own (no options, or only `WithLogger`) on a backend another client already reads now shares that client's watcher, so an agent or worker built on `api.Backend()` reports what its requests cost to `api`'s callbacks, once (AI-1892).
 ### After a voice failover the kept reply no longer waits for the lost voice to close
 
 A reply or check-in kept for the voice that replaces a lost one goes to that voice as soon as it is open. Before, it waited for the lost voice to close first, up to 2 s for ElevenLabs. The agent still waits for that close when it stops (AI-2974).

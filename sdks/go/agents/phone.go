@@ -14,14 +14,15 @@ type NumberSearch = stream.NumberSearch
 
 // Phone reaches the telephony paths on the router this agent talks to.
 func (a *Agent) Phone() (*stream.Phone, error) {
-	client, err := a.Client()
+	backend, err := a.options.LLM.Backend()
 	if err != nil {
 		return nil, err
 	}
-	return stream.NewPhone(client), nil
+	return stream.NewPhone(backend)
 }
 
-// PurchaseAnyNumber buys the first number a vendor offers that matches the search.
+// PurchaseAnyNumber buys the cheapest number on offer that matches the search, and returns
+// it in E.164.
 //
 // It starts a monthly charge, so it is not something to call on every run. An agent that
 // answers the same number every day should buy it once and pass it to WaitForCall.

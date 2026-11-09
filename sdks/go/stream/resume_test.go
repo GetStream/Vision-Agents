@@ -353,6 +353,97 @@ func TestLeavingWhileReconnectingStopsIt(t *testing.T) {
 	}
 }
 
+// reopened is a router whose events socket answers the nth attempt to open it with the nth
+// answer, and every attempt past the last with the last. It counts the attempts.
+func reopened(t *testing.T, answers ...http.HandlerFunc) (*httptest.Server, *atomic.Int64) {
+	t.Helper()
+	var attempts atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := int(attempts.Add(1))
+		answers[min(n, len(answers))-1](w, r)
+	}))
+	t.Cleanup(server.Close)
+	return server, &attempts
+}
+
+// served upgrades the socket and hands it to serve.
+func served(serve func(*websocket.Conn)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		connection, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer connection.Close()
+		serve(connection)
+	}
+}
+
+// refused answers the socket with status and the router's envelope.
+func refused(status int, code string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(`{"error":{"message":"not now","type":"unavailable","code":"` + code + `"}}`))
+	}
+}
+
+// restarting is a socket the router drops while restarting, after saying where it got to.
+func restarting(connection *websocket.Conn) {
+	_ = connection.WriteJSON(Frame{"type": "resumed", "cursor": "first.0", "complete": true})
+	_ = connection.WriteJSON(Frame{"type": "responding", "cursor": "first.1"})
+	closes(connection, websocket.CloseServiceRestart, "router restarting")
+}
+
+func TestAReconnectTheRouterCannotTakeIsGivenUpWhenTheWindowEnds(t *testing.T) {
+	server, attempts := reopened(t, served(restarting), refused(http.StatusServiceUnavailable, "unavailable"))
+	pipeline := Accelerated(Config{Backend: Backend{URL: server.URL, CustomerID: "acme"}})
+	pipeline.firstRetry = 10 * time.Millisecond
+	pipeline.resumeFor = 150 * time.Millisecond
+	if err := pipeline.Watch(t.Context(), &acceleration.Session{Id: "session-1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Now()
+	got := collect(t, pipeline.Events())
+
+	if want := []string{"responding"}; !equalStrings(kinds(got), want) {
+		t.Errorf("the events were %v, want %v", kinds(got), want)
+	}
+	if attempts.Load() < 3 {
+		t.Errorf("a router that is only unavailable was tried %d times before giving up", attempts.Load())
+	}
+	if took := time.Since(started); took < 150*time.Millisecond {
+		t.Errorf("the reconnect gave up after %v, before its window ended", took)
+	}
+}
+
+func TestAReconnectTheRouterRateLimitsIsTriedAgain(t *testing.T) {
+	server, attempts := reopened(t,
+		served(restarting),
+		refused(http.StatusTooManyRequests, "rate_limited"),
+		refused(http.StatusTooManyRequests, "rate_limited"),
+		served(func(connection *websocket.Conn) {
+			_ = connection.WriteJSON(Frame{"type": "resumed", "cursor": "first.1", "complete": true})
+			_ = connection.WriteJSON(Frame{"type": "responded", "text": "Done.", "cursor": "first.2"})
+			closes(connection, websocket.CloseNormalClosure, "the session ended")
+		}),
+	)
+	pipeline := Accelerated(Config{Backend: Backend{URL: server.URL, CustomerID: "acme"}})
+	pipeline.firstRetry = 10 * time.Millisecond
+	if err := pipeline.Watch(t.Context(), &acceleration.Session{Id: "session-1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := collect(t, pipeline.Events())
+
+	if want := []string{"responding", "resumed", "responded"}; !equalStrings(kinds(got), want) {
+		t.Errorf("the events were %v, want %v: a 429 is no refusal for good", kinds(got), want)
+	}
+	if attempts.Load() != 4 {
+		t.Errorf("the socket was opened %d times, want 4", attempts.Load())
+	}
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

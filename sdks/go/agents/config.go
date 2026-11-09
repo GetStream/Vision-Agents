@@ -33,7 +33,7 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 
 	skills := a.syncedSkills()
 	if len(skills) > 0 {
-		if err := DefineSkills(ctx, client, skills); err != nil {
+		if err := defineSkills(ctx, client, skills); err != nil {
 			return nil, err
 		}
 	}
@@ -55,7 +55,7 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 		wanted.Skills = &named
 	}
 
-	return DefineAgent(ctx, client, wanted)
+	return defineAgent(ctx, client, wanted)
 }
 
 // syncFolder stores the agent's directory in one request. What the code set wins over what
@@ -534,8 +534,21 @@ func (a *Agent) syncedSkills() []Skill {
 	return nil
 }
 
-// DefineAgent stores an agent configuration, editing whichever is already under that name.
+// DefineAgent stores an agent configuration on the router backend points at, editing
+// whichever is already under that name.
 func DefineAgent(
+	ctx context.Context,
+	backend stream.Backend,
+	wanted acceleration.AgentConfigRequest,
+) (*acceleration.AgentConfig, error) {
+	client, err := backend.Client()
+	if err != nil {
+		return nil, err
+	}
+	return defineAgent(ctx, client, wanted)
+}
+
+func defineAgent(
 	ctx context.Context,
 	client *acceleration.ClientWithResponses,
 	wanted acceleration.AgentConfigRequest,
@@ -571,8 +584,17 @@ func DefineAgent(
 	return answer(created.JSON201, created.HTTPResponse, created.Body)
 }
 
-// DefineSkills stores skills, editing whichever is already under each name.
-func DefineSkills(ctx context.Context, client *acceleration.ClientWithResponses, skills []Skill) error {
+// DefineSkills stores skills on the router backend points at, editing whichever is already
+// under each name.
+func DefineSkills(ctx context.Context, backend stream.Backend, skills []Skill) error {
+	client, err := backend.Client()
+	if err != nil {
+		return err
+	}
+	return defineSkills(ctx, client, skills)
+}
+
+func defineSkills(ctx context.Context, client *acceleration.ClientWithResponses, skills []Skill) error {
 	listed, err := client.ListSkillsWithResponse(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("agents: listing skills: %w", err)
@@ -665,12 +687,16 @@ func simulationDeclarationOf(simulation Simulation) acceleration.SimulationDecla
 // one read off the router's own disk are cut the same way and replace each other.
 func IngestKnowledge(
 	ctx context.Context,
-	client *acceleration.ClientWithResponses,
+	backend stream.Backend,
 	namespace string,
 	documents []Document,
 ) error {
 	if len(documents) == 0 {
 		return nil
+	}
+	client, err := backend.Client()
+	if err != nil {
+		return err
 	}
 
 	body := acceleration.IngestKnowledgeRequest{
@@ -698,10 +724,14 @@ func IngestKnowledge(
 // backend re-reads a page it already has rather than storing a second copy of it.
 func SubscribeKnowledgeURLs(
 	ctx context.Context,
-	client *acceleration.ClientWithResponses,
+	backend stream.Backend,
 	namespace string,
 	pages []KnowledgeURL,
 ) error {
+	client, err := backend.Client()
+	if err != nil {
+		return err
+	}
 	for _, page := range pages {
 		body := acceleration.KnowledgeUrlRequest{Namespace: namespace, Url: page.URL}
 		setString(&body.Title, page.Title)
