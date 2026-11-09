@@ -492,20 +492,27 @@ func (p *Pipeline) Leave(ctx context.Context) error {
 	return failure
 }
 
-// stopOverHTTP asks the router to stop a session whose socket is gone. Only a request that
-// never reached the router fails it: a session the router already ended is refused, and
-// leaving that one is done.
+// stopOverHTTP asks the router to stop a session whose socket is gone. A session the router
+// no longer holds is a 404, and leaving that one is done; any other refusal is returned, since
+// the session may still be running.
 func (p *Pipeline) stopOverHTTP(ctx context.Context, id string) error {
 	backend, err := p.backend.Resolve()
 	if err != nil {
-		return nil
+		return err
 	}
 	client, err := backend.Client()
 	if err != nil {
+		return err
+	}
+	stopped, err := client.StopSessionWithResponse(ctx, id)
+	if err != nil {
+		return fmt.Errorf("stream: stopping session %s: %w", id, err)
+	}
+	switch stopped.StatusCode() {
+	case http.StatusNoContent, http.StatusNotFound:
 		return nil
 	}
-	_, err = client.StopSessionWithResponse(ctx, id)
-	return err
+	return refusal(stopped.HTTPResponse, stopped.Body)
 }
 
 // closedUnder reports whether err is a socket that can carry nothing more: closed here, a
