@@ -1,0 +1,57 @@
+name: Go SDK
+
+# sdks/go here is a copy of sdks/go on accelerate, where the SDK is developed (see the
+# Versioning section of sdks/go/README.md). This checks the copy the way a consumer gets it:
+# alone, with no go.work, on the oldest Go its go directive allows. GOTOOLCHAIN=local keeps
+# 1.25 from switching to a newer toolchain, which would prove nothing about 1.25.
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'sdks/go/**'
+      - '.github/workflows/sdk-go.yml'
+  pull_request:
+    paths:
+      - 'sdks/go/**'
+      - '.github/workflows/sdk-go.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdk-go-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/go
+    env:
+      GOWORK: 'off'
+      GOTOOLCHAIN: local
+      GOFLAGS: ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+          cache-dependency-path: sdks/go/go.sum
+
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Check go.mod and go.sum are tidy and verified
+        run: |
+          go mod tidy -diff
+          go mod verify
+
+      - name: Vet, the end-to-end suite included
+        run: |
+          go vet ./...
+          go vet -tags e2e .
+
+      - name: Test
+        run: go test -race ./...

@@ -1,0 +1,104 @@
+name: Release Go SDK (verify)
+
+# A Go module is released by its tag: pushing sdks/go/vX.Y.Z is the release, and the Go module
+# proxy fetches it the first time anybody asks for it. This checks the tagged copy, then asks
+# for it from an empty module outside this repository, as a consumer would. It publishes
+# nothing and creates no GitHub Release: release.yml publishes the Python packages on any
+# published release.
+on:
+  push:
+    tags: [ 'sdks/go/v*' ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: An existing tag to verify again, such as sdks/go/v0.1.0
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-sdk-go-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+  GOWORK: 'off'
+  GOTOOLCHAIN: local
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          # The whole history, to see that the tag is on main.
+          fetch-depth: 0
+
+      - name: The tag names a version on main
+        run: |
+          if ! printf '%s' "$TAG" | grep -Eq '^sdks/go/v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "$TAG is not sdks/go/vX.Y.Z"
+            exit 1
+          fi
+          git merge-base --is-ancestor HEAD origin/main || { echo "$TAG is not on main"; exit 1; }
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+          cache: false
+
+      - name: The tagged copy is tidy, vets and passes
+        working-directory: sdks/go
+        env:
+          GOFLAGS: ''
+        run: |
+          go mod tidy -diff
+          go mod verify
+          go vet ./...
+          go test -race ./...
+
+  consumer:
+    needs: check
+    runs-on: ubuntu-latest
+    env:
+      GOFLAGS: -mod=mod
+      GOPROXY: https://proxy.golang.org
+      GOSUMDB: sum.golang.org
+      GOPRIVATE: ''
+      GONOSUMDB: ''
+      GONOPROXY: ''
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          path: source
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+          cache: false
+
+      - name: Install the tagged version through the proxy and build the quickstart with it
+        run: |
+          version="${TAG#sdks/go/}"
+          consumer="$RUNNER_TEMP/consumer"
+          mkdir -p "$consumer"
+          cd "$consumer"
+          go mod init example.com/consumer
+          cp "$GITHUB_WORKSPACE/source/sdks/go/examples/quickstart/main.go" .
+          # The proxy fetches a new tag on the first request and can take minutes to answer
+          # for it, so the first attempts may find nothing yet.
+          for attempt in $(seq 1 20); do
+            if go get "github.com/GetStream/Vision-Agents/sdks/go@$version"; then
+              break
+            fi
+            if [ "$attempt" = 20 ]; then
+              echo "proxy.golang.org never served $version"
+              exit 1
+            fi
+            sleep 30
+          done
+          go build ./...
+          go list -m github.com/GetStream/Vision-Agents/sdks/go

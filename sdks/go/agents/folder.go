@@ -1,0 +1,1116 @@
+package agents
+
+import (
+	"bytes"
+	"crypto/md5"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"maps"
+	"os"
+	"path/filepath"
+	"reflect"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"gopkg.in/yaml.v3"
+)
+
+// AgentFile is what makes a directory an agent: it names it and says what it runs on.
+const AgentFile = "agent.yaml"
+
+// AgentStamp is where a directory records the fingerprint it was last synced under.
+const AgentStamp = ".agent_sync"
+
+// InstructionsFile is what an agent directory calls its system prompt.
+const InstructionsFile = "instructions.md"
+
+// GuardrailFile is what it calls the policy screening what may be asked of it.
+const GuardrailFile = "guardrail.md"
+
+// SkillFile is what a skill kept as a folder calls its frontmatter and instructions.
+const SkillFile = "SKILL.md"
+
+// SkillsDir, KnowledgeDir and SimulationsDir are what it calls the rest.
+const (
+	SkillsDir      = "skills"
+	KnowledgeDir   = "knowledge"
+	SimulationsDir = "simulations"
+)
+
+// KnowledgeURLsFile is what a knowledge directory calls the pages it is kept filled from,
+// as opposed to the files it is filled from directly.
+const KnowledgeURLsFile = "urls.yaml"
+
+// readable are the extensions a knowledge directory is read from. Anything else in there is
+// left alone: a model looks things up in prose, not in a binary.
+var readable = map[string]bool{
+	".md": true, ".mdx": true, ".txt": true, ".rst": true, ".yaml": true, ".yml": true,
+}
+
+// Document is one file from an agent's knowledge directory, as it will be ingested.
+type Document struct {
+	// Source is the path relative to the knowledge directory, which is what a passage is
+	// keyed and cited by.
+	Source string
+	Text   string
+}
+
+// KnowledgeURL is one page from knowledge/urls.yaml. A page is a subscription rather than
+// a copy: what a crawler makes of it is what ends up in the knowledge base.
+type KnowledgeURL struct {
+	URL string
+	// Title and Description are what the declaration says the page is, for a reader of the
+	// subscription. Both are optional; a page that says nothing is described by what it
+	// called itself when it was last read.
+	Title       string
+	Description string
+	// RefreshHours is how often the backend reads the page again on its own. Zero is never:
+	// it is read when it is synced, and when somebody asks.
+	RefreshHours int
+}
+
+// UnmarshalYAML reads a page written either way: the url on its own, or a mapping naming it
+// alongside what it is.
+//
+//	urls.yaml:
+//	    - https://example.com/pricing
+//	    - url: https://example.com/plans
+//	      title: Plans
+//	      description: What each plan includes.
+//	      refresh_hours: 24
+//
+// Unknown keys are refused, so a misspelt one is reported rather than dropped into a
+// subscription nobody described, and so is a url that is not http or https.
+func (k *KnowledgeURL) UnmarshalYAML(node *yaml.Node) error {
+	if err := k.decode(node); err != nil {
+		return err
+	}
+	if !strings.HasPrefix(k.URL, "http://") && !strings.HasPrefix(k.URL, "https://") {
+		return fmt.Errorf("line %d: %q is not an http or https url", keyLine(node, "url"), k.URL)
+	}
+	return nil
+}
+
+func (k *KnowledgeURL) decode(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		return node.Decode(&k.URL)
+	}
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("line %d: a page is a url, or a mapping naming one", node.Line)
+	}
+
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		key, value := node.Content[index], node.Content[index+1]
+		if key.Value == "refresh_hours" {
+			if err := value.Decode(&k.RefreshHours); err != nil {
+				return err
+			}
+			if k.RefreshHours < 1 {
+				return fmt.Errorf("line %d: refresh_hours is how many hours between reads, so it is at least 1; leave it out for never", value.Line)
+			}
+			continue
+		}
+		field := map[string]*string{
+			"url": &k.URL, "title": &k.Title, "description": &k.Description,
+		}[key.Value]
+		if field == nil {
+			return fmt.Errorf("line %d: %q is not something a page says; url, title, description and refresh_hours are", key.Line, key.Value)
+		}
+		if err := value.Decode(field); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Simulation is one conversation a simulations/*.yaml file declares, run against the agent
+// the directory is. A file holds a list of them, so related ones can share a file.
+//
+//	simulations/lunch.yaml:
+//	    - name: lunch order with a change
+//	      scenario: Order a turkey club, then swap it for a veggie wrap.
+//	      assertion: The final order is one veggie wrap.
+//	      variations: 3
+type Simulation struct {
+	Name         string            `yaml:"name" json:"name"`
+	Scenario     string            `yaml:"scenario" json:"scenario"`
+	Assertion    string            `yaml:"assertion" json:"assertion"`
+	Mode         string            `yaml:"mode" json:"mode"`
+	Variations   int               `yaml:"variations" json:"variations"`
+	MaxTurns     int               `yaml:"max_turns" json:"max_turns"`
+	CallerTarget string            `yaml:"caller_target" json:"caller_target"`
+	JudgeTarget  string            `yaml:"judge_target" json:"judge_target"`
+	CallerSTT    string            `yaml:"caller_stt" json:"caller_stt"`
+	CallerTTS    string            `yaml:"caller_tts" json:"caller_tts"`
+	CallerVoice  string            `yaml:"caller_voice" json:"caller_voice"`
+	Tags         map[string]string `yaml:"tags" json:"tags"`
+}
+
+// Settings is what agent.yaml declares.
+//
+// The rest of the directory is what the agent is told; this is what it is run with. A
+// field left out leaves whatever the config already has stored, so a model chosen in the
+// dashboard survives a sync that says nothing about it.
+type Settings struct {
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
+	Mode        string `yaml:"mode"`
+	// Region is where the agent's work is done: us or eu for now. Every model it names needs an
+	// instance there, and its knowledge base and sandbox are kept there; the router refuses a
+	// sync naming one that has none. Empty sends none, which leaves the stored region, and a
+	// new agent is in us.
+	Region string `yaml:"region"`
+	STT    string `yaml:"stt"`
+	TTS    string `yaml:"tts"`
+	// STS is nil when the declaration says nothing, and empty when it turns it off.
+	STS *string `yaml:"sts"`
+	// Voice is the voice the agent speaks in: a provider's own voice id, or one of your voices by
+	// id or by the name you gave it. Prefix it with custom: to mean only yours. A native (sts)
+	// agent takes the vendor's own voice name instead.
+	Voice   string `yaml:"voice"`
+	LLM     string `yaml:"llm"`
+	Harness string `yaml:"harness"`
+	// Role is what the agent is for in the app, beyond answering people: agent_moderator, or
+	// empty to leave the stored one. One live agent per app holds a role.
+	Role string `yaml:"role"`
+	// Subagent is the model a voice agent hands its skills to. A text agent runs on its
+	// llm alone, and the router refuses one that names it.
+	Subagent string `yaml:"subagent"`
+	Search   string `yaml:"search"`
+	// Greeting is what the agent opens the call with. Nil leaves the stored one.
+	Greeting *GreetingSettings `yaml:"greeting"`
+	Sandbox  string            `yaml:"sandbox"`
+	// SandboxOptions is how the sandbox is built and how long code may run in it.
+	SandboxOptions *SandboxSettings `yaml:"sandbox_options"`
+	// Connectors are the connectors whose tools the agent may call. Nil when the
+	// declaration says nothing, which leaves the bindings stored; empty when the
+	// file lists none, which removes them. A null entry is refused: dropping it
+	// would sync an empty list and wipe the stored bindings.
+	Connectors connectorList `yaml:"connectors"`
+	// Tools is how MCP server and connector tools are offered. Nil when the
+	// declaration says nothing about it.
+	Tools *ToolSettings `yaml:"tools"`
+	// Channels are the lines the agent answers on besides its Stream Chat channel: a
+	// WhatsApp number, a number to text, an iMessage line. Each names a number the app
+	// connected on the router, which is where the provider's credentials live.
+	Channels *ChannelsSettings `yaml:"channels"`
+	// Scheduling is whether the agent may schedule tasks for its users: reminders
+	// and check-ins it creates in conversation and carries out when they come due.
+	Scheduling *SchedulingSettings `yaml:"scheduling"`
+	// Calls are the tools the agent has on a phone call. A sync always sends them, with
+	// the defaults for what the file leaves out, so it replaces what the dashboard set.
+	Calls *CallSettings `yaml:"calls"`
+	// FloorControl is the model that controls the agent's floor, and how long a caller may
+	// wait once they stop. Nil leaves the stored choice; an empty mapping ({}) is the default
+	// flow controller again, which an agent that never chose has.
+	FloorControl *FloorControlSettings `yaml:"floor_control"`
+	Keyterms     []string              `yaml:"keyterms"`
+	Tags         map[string]string     `yaml:"tags"`
+	Video        *VideoSettings        `yaml:"video"`
+	Dispatch     *DispatchSettings     `yaml:"dispatch"`
+	// App is the application's own section of the declaration, which this SDK never reads
+	// and the backend is never sent. It is the one place an unknown key is not refused.
+	App map[string]any `yaml:"app"`
+}
+
+// ToolSettings is how MCP server and connector tools are offered, and how long what any tool
+// was given and gave back is kept.
+type ToolSettings struct {
+	// Progressive offers each tool by a summary, the first call to it returning its full
+	// description instead of running it. Nil when the declaration says nothing about it.
+	Progressive *bool `yaml:"progressive"`
+	// OutputRetention is how long the agent's sessions keep a tool's arguments and output:
+	// none, or a duration such as 12h or 30d. Nil when the declaration says nothing about it.
+	OutputRetention *string `yaml:"output_retention"`
+}
+
+// ConnectorSettings is one connector the agent binds. agent.yaml gives it as the alias
+// alone, or as a mapping naming it with the connector, the tools, and a connection.
+type ConnectorSettings struct {
+	// Name is the alias the model sees tools under.
+	Name string `yaml:"name"`
+	// Connector is the connector id. Empty means the name.
+	Connector string `yaml:"connector"`
+	// Tools are names or path.Match patterns, sent as tool_patterns. Nil, whether the
+	// key was left out or null, means every tool. An empty list is refused: it would
+	// grant nothing.
+	Tools *[]string `yaml:"tools"`
+	// Connection is an id or a label of one of the app's connections to the connector.
+	// Nil is a session binding; set, it is fixed to the connection it names.
+	Connection *string `yaml:"connection"`
+	// Required is whether a session needs this connector. Nil leaves it optional.
+	Required *bool `yaml:"required"`
+	// Sandbox is whether code in the agent's sandbox may call the connector's API with
+	// the binding's connection. False sends no sandbox key.
+	Sandbox bool `yaml:"sandbox"`
+	// RequireApproval are names or path.Match patterns of the tools whose every call waits for
+	// the session's user to allow it. Nil sends no require_approval key.
+	RequireApproval *[]string `yaml:"require_approval"`
+}
+
+// connectorKeys are the keys a connector entry may hold: the yaml tags of ConnectorSettings.
+var connectorKeys = func() []string {
+	settings := reflect.TypeFor[ConnectorSettings]()
+	keys := make([]string, settings.NumField())
+	for i := range keys {
+		keys[i] = settings.Field(i).Tag.Get("yaml")
+	}
+	return keys
+}()
+
+func (c *ConnectorSettings) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		*c = ConnectorSettings{Name: node.Value}
+	} else {
+		// A node decodes without its decoder's KnownFields, so a key it does not know is
+		// refused here. The node keeps its lines in the file, which its errors name.
+		if node.Kind == yaml.MappingNode {
+			for index := 0; index < len(node.Content); index += 2 {
+				key := node.Content[index]
+				if !slices.Contains(connectorKeys, key.Value) {
+					return fmt.Errorf("line %d: %q is not something a connector says; %s are", key.Line, key.Value,
+						strings.Join(connectorKeys, ", "))
+				}
+			}
+		}
+		type plain ConnectorSettings
+		if err := node.Decode((*plain)(c)); err != nil {
+			return err
+		}
+	}
+	if c.Name == "" {
+		return fmt.Errorf("line %d: a connector needs a name", node.Line)
+	}
+	if c.Tools != nil && len(*c.Tools) == 0 {
+		return fmt.Errorf("line %d: connector %q: tools: [] grants nothing; leave tools out for every tool", keyLine(node, "tools"), c.Name)
+	}
+	if c.Connection != nil && *c.Connection == "" {
+		return fmt.Errorf("line %d: connector %q: connection must be a connection id or label", keyLine(node, "connection"), c.Name)
+	}
+	return nil
+}
+
+// keyLine is the line of a mapping's key, or the mapping's own line when it has none.
+func keyLine(node *yaml.Node, name string) int {
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		if node.Content[index].Value == name {
+			return node.Content[index].Line
+		}
+	}
+	return node.Line
+}
+
+// connectorList is the connectors list. yaml.v3 drops a null element of a plain
+// struct slice without calling UnmarshalYAML, so the entry is walked here.
+type connectorList []ConnectorSettings
+
+func (c *connectorList) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.SequenceNode {
+		return fmt.Errorf("line %d: connectors must be a list", node.Line)
+	}
+	items := make(connectorList, 0, len(node.Content))
+	for _, item := range node.Content {
+		if item.ShortTag() == "!!null" {
+			return fmt.Errorf("line %d: a connector needs a name", item.Line)
+		}
+		var entry ConnectorSettings
+		if err := item.Decode(&entry); err != nil {
+			return err
+		}
+		items = append(items, entry)
+	}
+	*c = items
+	return nil
+}
+
+// ChannelsSettings are the lines an agent answers on outside Stream Chat.
+type ChannelsSettings struct {
+	WhatsApp *ChannelSettings `yaml:"whatsapp"`
+	SMS      *ChannelSettings `yaml:"sms"`
+	IMessage *ChannelSettings `yaml:"imessage"`
+	// Identity is how a sender becomes an end user: phone, the default, makes each number
+	// an end user of its own; link answers only a number somebody tied to an end user with
+	// a code.
+	Identity string `yaml:"identity"`
+}
+
+// SchedulingSettings is an agent's scheduled tasks: whether its users may ask
+// it to do things later, and the bounds on that.
+type SchedulingSettings struct {
+	// Enabled offers the scheduling tools to the agent. Off unless turned on:
+	// it adds four tools to every turn.
+	Enabled *bool `yaml:"enabled"`
+	// MaxTasksPerUser caps one user's active tasks. Omitted is 25.
+	MaxTasksPerUser *int `yaml:"max_tasks_per_user"`
+	// DefaultTimezone is the IANA zone a task takes when neither the user nor
+	// their session has ever named one.
+	DefaultTimezone string `yaml:"default_timezone"`
+}
+
+// CallSettings is the tools an agent on a phone call is offered.
+type CallSettings struct {
+	// EndCall lets the agent hang up. Off unless turned on.
+	EndCall *EndCallSettings `yaml:"end_call"`
+	// Press lets the agent press keys, to get through a menu. On unless turned off.
+	Press *CallToolSettings `yaml:"press"`
+	// Transfer lets the agent hand the call to one of its destinations. On unless turned off.
+	Transfer *TransferSettings `yaml:"transfer"`
+}
+
+// CallToolSettings is a call tool that is only on or off.
+type CallToolSettings struct {
+	Enabled *bool `yaml:"enabled"`
+}
+
+// EndCallSettings is when the agent ends a call.
+type EndCallSettings struct {
+	Enabled *bool `yaml:"enabled"`
+	// When is when to hang up, in the caller's terms.
+	When string `yaml:"when"`
+}
+
+// TransferSettings is where the agent may send a call.
+type TransferSettings struct {
+	Enabled      *bool                 `yaml:"enabled"`
+	Destinations []TransferDestination `yaml:"destinations"`
+}
+
+// TransferDestination is one number the agent may transfer to.
+type TransferDestination struct {
+	Name   string `yaml:"name"`
+	Number string `yaml:"number"`
+	// When is when to transfer here, in the caller's terms.
+	When string `yaml:"when"`
+	// Warm announces the caller to the person answering before connecting them.
+	Warm bool `yaml:"warm"`
+}
+
+// FloorControlSettings is the model that controls the agent's floor, hearing the caller: when
+// they have finished, and what to do about speech over the agent. MaxWaitMs is how long a
+// caller may wait once they stop; left out, the server's default point.
+//
+//	floor_control:
+//	    model: stream/chorus-asr
+//	    max_wait_ms: 800
+//
+// Each is nil when the file doesn't name it, and both are sent as written: which models there
+// are, and whether a wait needs one, is the router's to say, and it refuses stream/chorus-asr
+// when it has no chorus-asr server. An empty mapping is the default flow controller again.
+type FloorControlSettings struct {
+	// Model is the model that controls the floor; stream/chorus-asr is the one there is.
+	Model *string
+	// MaxWaitMs is the most a caller who has finished may wait for the answer, in
+	// milliseconds: the server's measured point with the fewest cut-ins within it.
+	MaxWaitMs *int
+}
+
+// UnmarshalYAML reads floor_control by hand, so that each refusal names what is wrong: a value
+// that is not a mapping, such as the string it once was, a key nobody knows, a model that is
+// not a string, or a wait that is not an integer.
+func (settings *FloorControlSettings) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return errors.New("floor_control is a mapping of model and, optionally, max_wait_ms")
+	}
+	var read FloorControlSettings
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key, value := node.Content[i].Value, node.Content[i+1]
+		if key != "model" && key != "max_wait_ms" {
+			return fmt.Errorf("%q is not a floor_control setting; model and max_wait_ms are", key)
+		}
+		if value.ShortTag() == "!!null" {
+			continue
+		}
+		switch key {
+		case "model":
+			if value.Kind != yaml.ScalarNode || value.ShortTag() != "!!str" {
+				return errors.New("floor_control.model must be a string, such as stream/chorus-asr")
+			}
+			model := value.Value
+			read.Model = &model
+		case "max_wait_ms":
+			var wait int
+			if value.Kind != yaml.ScalarNode || value.ShortTag() != "!!int" || value.Decode(&wait) != nil {
+				return errors.New("floor_control.max_wait_ms must be an integer of milliseconds")
+			}
+			read.MaxWaitMs = &wait
+		}
+	}
+	*settings = read
+	return nil
+}
+
+// ChannelSettings is one line the agent is reachable on.
+type ChannelSettings struct {
+	Number string `yaml:"number"`
+}
+
+// VideoSettings is which video a skill that captures it sees.
+// GreetingSettings is what the agent says as it joins, before anyone speaks.
+type GreetingSettings struct {
+	Text string `yaml:"text"`
+	// Mode is exact, said word for word, or variation, which the model rewords on every
+	// call. Empty is exact.
+	Mode string `yaml:"mode"`
+}
+
+type VideoSettings struct {
+	Source string `yaml:"source"`
+	// MaxFrames is how many recent frames are captured, from 1 to 8. Zero reads as one.
+	MaxFrames int `yaml:"max_frames"`
+}
+
+// SandboxSettings is how the agent's sandbox is built and how long code may run in it. Any
+// of them builds an image on top of Image, which the provider keeps.
+type SandboxSettings struct {
+	// Image is the container image to start from, which must have Python. Empty is a slim
+	// Python image.
+	Image string `yaml:"image"`
+	// Setup are shell commands run once on top of the image when it is built.
+	Setup []string `yaml:"setup"`
+	// Timeout is how long one run of code may take, such as 5m, at most 30m. Empty is 30s.
+	Timeout string `yaml:"timeout"`
+	// CPU, MemoryGB and DiskGB size the sandbox. Zero leaves the provider's default.
+	CPU      int `yaml:"cpu"`
+	MemoryGB int `yaml:"memory_gb"`
+	DiskGB   int `yaml:"disk_gb"`
+	// Network lets code in the sandbox reach the internet. Off, and with no allow list, every
+	// outbound connection is blocked.
+	Network bool `yaml:"network"`
+	// AllowedDomains and NetworkAllowList, domains and CIDR ranges, are all code in the
+	// sandbox may reach once either is set, network on or not.
+	AllowedDomains   []string `yaml:"allowed_domains"`
+	NetworkAllowList []string `yaml:"network_allow_list"`
+
+	timeout time.Duration
+}
+
+// DispatchSettings is what the agent leaves to this application's own dispatch worker,
+// each "enabled" or "disabled". With Text enabled the model does not answer what end users
+// write: the worker is handed it, and answers by creating a response on the session.
+type DispatchSettings struct {
+	IncomingCall string `yaml:"incoming_call"`
+	Text         string `yaml:"text"`
+}
+
+// Folder is an agent written down as a directory.
+//
+//	agents/jean/
+//	  agent.yaml
+//	  instructions.md
+//	  guardrail.md
+//	  skills/think.md
+//	  skills/pdf/SKILL.md
+//	  skills/pdf/scripts/fill.py
+//	  knowledge/pricing.md
+//	  knowledge/urls.yaml
+//	  simulations/lunch.yaml
+//
+// A skill is a markdown file with YAML-ish frontmatter naming what the fast model sees; the
+// body is the prompt only the subagent sees. A skill kept as a folder has that file as its
+// SKILL.md, and the files beside it are read when the model needs them; scripts among them
+// run in the sandbox, so such an agent needs one.
+type Folder struct {
+	// Path is the directory this was read from.
+	Path string
+	// Name is what agent.yaml calls the agent, or the directory's own name if it does not.
+	Name string
+	// Declaration is agent.yaml as written, which is what its fingerprint is taken over.
+	Declaration string
+	// Settings is what agent.yaml declares.
+	Settings Settings
+	// Instructions is instructions.md, or empty if there is none.
+	Instructions string
+	// Guardrail is guardrail.md, whole and unparsed, or empty if there is none. The
+	// backend parses it, so a policy this SDK has never heard of still reaches it.
+	Guardrail string
+	// Skills are the files in skills/, in name order.
+	Skills []Skill
+	// Knowledge are the readable files under knowledge/, in path order.
+	Knowledge []Document
+	// KnowledgeURLs are the pages knowledge/urls.yaml declares, in the order it lists them.
+	KnowledgeURLs []KnowledgeURL
+	// Simulations are what simulations/*.yaml declare, by file name and then as listed. Nil
+	// when there is no simulations/, which leaves the stored ones alone; empty when it has
+	// none, which deletes them.
+	Simulations []Simulation
+}
+
+// Load reads an agent directory.
+//
+// agent.yaml is what makes a directory an agent, so it is required. Everything else is
+// optional: a directory with only instructions.md beside it is a valid agent, and so is one
+// with only skills.
+func Load(path string) (*Folder, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("agents: reading %s: %w", path, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("agents: %s is not an agent directory", path)
+	}
+
+	folder := &Folder{Path: path, Name: filepath.Base(filepath.Clean(path))}
+
+	declaration, err := os.ReadFile(filepath.Join(path, AgentFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("agents: %s has no %s, so it is not an agent directory", path, AgentFile)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("agents: reading %s: %w", AgentFile, err)
+	}
+	folder.Declaration = strings.TrimSpace(string(declaration))
+	if folder.Settings, err = declare(declaration); err != nil {
+		return nil, fmt.Errorf("agents: %s: %w", filepath.Join(path, AgentFile), err)
+	}
+	if folder.Settings.Name != "" {
+		folder.Name = folder.Settings.Name
+	}
+
+	instructions, err := os.ReadFile(filepath.Join(path, InstructionsFile))
+	switch {
+	case err == nil:
+		folder.Instructions = strings.TrimSpace(string(instructions))
+	case !errors.Is(err, fs.ErrNotExist):
+		return nil, fmt.Errorf("agents: reading %s: %w", InstructionsFile, err)
+	}
+
+	policy, err := os.ReadFile(filepath.Join(path, GuardrailFile))
+	switch {
+	case err == nil:
+		folder.Guardrail = strings.TrimSpace(string(policy))
+	case !errors.Is(err, fs.ErrNotExist):
+		return nil, fmt.Errorf("agents: reading %s: %w", GuardrailFile, err)
+	}
+
+	if folder.Skills, err = loadSkills(filepath.Join(path, SkillsDir)); err != nil {
+		return nil, err
+	}
+	if folder.Knowledge, err = loadKnowledge(filepath.Join(path, KnowledgeDir)); err != nil {
+		return nil, err
+	}
+	if folder.KnowledgeURLs, err = loadKnowledgeURLs(filepath.Join(path, KnowledgeDir, KnowledgeURLsFile)); err != nil {
+		return nil, err
+	}
+	if folder.Simulations, err = loadSimulations(filepath.Join(path, SimulationsDir)); err != nil {
+		return nil, err
+	}
+	return folder, nil
+}
+
+// fill puts what the directory says into whatever the options left empty. What is written
+// in code wins, so a directory is a starting point rather than an override.
+func (f *Folder) fill(options *Options) {
+	if options.Name == "" {
+		options.Name = f.Name
+	}
+	if options.Instructions == "" {
+		options.Instructions = f.Instructions
+	}
+	if options.Guardrail == "" {
+		options.Guardrail = f.Guardrail
+	}
+
+	if len(f.Skills) == 0 {
+		return
+	}
+	if options.Harness == nil {
+		options.Harness = &Harness{Skills: f.Skills}
+		return
+	}
+	if len(options.Harness.Skills) == 0 {
+		// Copied rather than written through, since the caller's harness is a pointer they
+		// may be using for another agent too.
+		harness := *options.Harness
+		harness.Skills = f.Skills
+		options.Harness = &harness
+	}
+}
+
+// KnowledgeNamespace is where the directory's knowledge is looked up, which is the agent's
+// own name so two agents never read each other's.
+func (f *Folder) KnowledgeNamespace() string {
+	if len(f.Knowledge) == 0 && len(f.KnowledgeURLs) == 0 {
+		return ""
+	}
+	return f.Name
+}
+
+// Hash is a fingerprint of the directory. The same files produce the same hash, and the
+// Python SDK takes it the same way, so a stamp either one wrote is understood by both.
+func (f *Folder) Hash() string {
+	return fingerprint(f.Declaration, f.Instructions, f.Guardrail, f.Skills, f.Knowledge, f.KnowledgeURLs, f.Simulations)
+}
+
+func fingerprint(
+	declaration, instructions, guardrail string,
+	skills []Skill,
+	knowledge []Document,
+	pages []KnowledgeURL,
+	simulations []Simulation,
+) string {
+	hasher := md5.New()
+	io.WriteString(hasher, declaration+"\n"+instructions+"\n"+guardrail)
+
+	sorted := slices.SortedFunc(slices.Values(skills), func(a, b Skill) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+	for _, skill := range sorted {
+		// Written the way Python prints a bool and a float, which is what keeps the two
+		// SDKs' fingerprints of one directory the same.
+		captured := "False"
+		if skill.CaptureVideo {
+			captured = "True"
+		}
+		io.WriteString(hasher, "\nskill:"+skill.Name+"\n"+skill.Description+"\n"+skill.Instructions+captured+"\n")
+		if skill.Deadline > 0 {
+			seconds := strconv.FormatFloat(skill.Deadline.Seconds(), 'f', -1, 64)
+			if !strings.Contains(seconds, ".") {
+				seconds += ".0"
+			}
+			io.WriteString(hasher, seconds)
+		}
+		// Written only when there are some, so a skill without files keeps the fingerprint
+		// the Python SDK takes of it.
+		for _, file := range slices.Sorted(maps.Keys(skill.Files)) {
+			io.WriteString(hasher, "\nfile:"+file+"\n"+skill.Files[file])
+		}
+	}
+
+	documents := slices.SortedFunc(slices.Values(knowledge), func(a, b Document) int {
+		return strings.Compare(a.Source, b.Source)
+	})
+	for _, document := range documents {
+		io.WriteString(hasher, "\nknowledge:"+document.Source+"\n"+document.Text)
+	}
+	for _, page := range pages {
+		io.WriteString(hasher, "\nurl:"+page.URL+"\n"+page.Title+"\n"+page.Description)
+		// Written only when there is one, so a page without keeps the fingerprint the
+		// Python SDK takes of it.
+		if page.RefreshHours > 0 {
+			io.WriteString(hasher, "\nrefresh_hours:"+strconv.Itoa(page.RefreshHours))
+		}
+	}
+	// Written only when there is a simulations/, so a directory without one keeps the
+	// fingerprint the Python SDK takes of it.
+	if simulations != nil {
+		io.WriteString(hasher, "\nsimulations:")
+		for _, simulation := range simulations {
+			encoded, _ := json.Marshal(simulation)
+			hasher.Write(encoded)
+		}
+	}
+	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+// syncStamp is what .agent_sync holds.
+type syncStamp struct {
+	Hash     string `json:"hash"`
+	SyncedAt string `json:"synced_at"`
+}
+
+// ReadStamp is the fingerprint a directory was last synced under, or empty when it never
+// was or the stamp cannot be read.
+func ReadStamp(path string) string {
+	raw, err := os.ReadFile(filepath.Join(path, AgentStamp))
+	if err != nil {
+		return ""
+	}
+	var recorded syncStamp
+	if json.Unmarshal(raw, &recorded) != nil {
+		return ""
+	}
+	return recorded.Hash
+}
+
+// WriteStamp records what was synced and when, so a second sync can do nothing.
+func WriteStamp(path, hash string) error {
+	recorded, err := json.Marshal(syncStamp{
+		Hash:     hash,
+		SyncedAt: time.Now().UTC().Truncate(time.Second).Format("2006-01-02T15:04:05+00:00"),
+	})
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(path, AgentStamp), append(recorded, '\n'), 0o644); err != nil {
+		return fmt.Errorf("agents: writing %s: %w", AgentStamp, err)
+	}
+	return nil
+}
+
+// declare reads agent.yaml. A key nobody knows is refused rather than dropped, since a
+// misspelled llm that goes quietly is a config running on a model the file does not name.
+func declare(raw []byte) (Settings, error) {
+	var declared declaration
+	decoder := yaml.NewDecoder(bytes.NewReader(raw))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&declared); err != nil && !errors.Is(err, io.EOF) {
+		return Settings{}, err
+	}
+	if err := refuseReplaced("plugins", declared.Plugins, replacedByConnectors); err != nil {
+		return Settings{}, err
+	}
+	if err := refuseReplaced("plugin_events", declared.PluginEvents, replacedByConnectors); err != nil {
+		return Settings{}, err
+	}
+	if err := refuseReplaced("mcp_servers", declared.MCPServers, replacedByCustomConnectors); err != nil {
+		return Settings{}, err
+	}
+	settings := declared.Settings
+	if settings.Video != nil {
+		if settings.Video.MaxFrames == 0 {
+			settings.Video.MaxFrames = 1
+		}
+		if settings.Video.MaxFrames < 1 || settings.Video.MaxFrames > 8 {
+			return Settings{}, errors.New("video.max_frames must be an integer from 1 to 8")
+		}
+	}
+	if options := settings.SandboxOptions; options != nil && options.Timeout != "" {
+		timeout, err := time.ParseDuration(options.Timeout)
+		if err != nil || timeout <= 0 || timeout > 30*time.Minute {
+			return Settings{}, fmt.Errorf("sandbox_options.timeout must be a duration up to 30m, not %q", options.Timeout)
+		}
+		options.timeout = timeout
+	}
+	return settings, nil
+}
+
+// declaration is agent.yaml as written: the settings, and the keys connectors replaced,
+// read only to refuse them.
+type declaration struct {
+	Settings     `yaml:",inline"`
+	Plugins      yaml.Node `yaml:"plugins"`
+	PluginEvents yaml.Node `yaml:"plugin_events"`
+	MCPServers   yaml.Node `yaml:"mcp_servers"`
+}
+
+// What a refused key is replaced by: plugins by a catalog connector, an MCP server named
+// by URL by a custom connector made for that URL.
+const (
+	replacedByConnectors       = "plugins were replaced by connectors, so name the provider under connectors"
+	replacedByCustomConnectors = "a server named by URL is now a custom connector, so create one for its URL and name it under connectors"
+)
+
+// refuseReplaced refuses a key connectors replaced, unless it declares nothing: an empty
+// or null list was never sent, so the file syncs as it did.
+func refuseReplaced(key string, value yaml.Node, replacement string) error {
+	if value.Kind == 0 || value.Tag == "!!null" || (value.Kind == yaml.SequenceNode && len(value.Content) == 0) {
+		return nil
+	}
+	return fmt.Errorf("%s is no longer read: %s", key, replacement)
+}
+
+// loadSkills reads skills/: a skill is either a markdown file, or a folder holding a
+// SKILL.md and whatever files it comes with, nested as deep as they are.
+func loadSkills(path string) ([]Skill, error) {
+	entries, err := os.ReadDir(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("agents: reading %s: %w", path, err)
+	}
+
+	var skills []Skill
+	declared := map[string]string{}
+	for _, entry := range entries {
+		name := entry.Name()
+		file := filepath.Join(path, name)
+		switch {
+		case entry.IsDir():
+			file = filepath.Join(file, SkillFile)
+		case filepath.Ext(name) == ".md":
+			name = strings.TrimSuffix(name, ".md")
+		default:
+			continue
+		}
+
+		content, err := os.ReadFile(file)
+		if entry.IsDir() && errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("agents: %s has no %s, so it is not a skill", filepath.Join(path, entry.Name()), SkillFile)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("agents: reading %s: %w", file, err)
+		}
+		if first, taken := declared[name]; taken {
+			return nil, fmt.Errorf("agents: skill %q is both %s and %s", name, first, entry.Name())
+		}
+		declared[name] = entry.Name()
+
+		skill, err := parseSkill(name, string(content))
+		if err != nil {
+			return nil, fmt.Errorf("agents: %s: %w", file, err)
+		}
+		if entry.IsDir() {
+			if skill.Files, err = loadSkillFiles(filepath.Join(path, entry.Name())); err != nil {
+				return nil, err
+			}
+		}
+		skills = append(skills, skill)
+	}
+	return skills, nil
+}
+
+// loadSkillFiles reads every file in a skill folder but its SKILL.md, by slash path
+// relative to the folder. Nil when there are none.
+func loadSkillFiles(dir string) (map[string]string, error) {
+	var files map[string]string
+	err := filepath.WalkDir(dir, func(file string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if file != dir && skipped(entry.Name()) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.IsDir() || file == filepath.Join(dir, SkillFile) {
+			return nil
+		}
+		content, err := os.ReadFile(file)
+		if err != nil {
+			return err
+		}
+		if !utf8.Valid(content) {
+			return fmt.Errorf("%s is not text, and a skill brings only text files", file)
+		}
+		relative, err := filepath.Rel(dir, file)
+		if err != nil {
+			return err
+		}
+		if files == nil {
+			files = map[string]string{}
+		}
+		files[filepath.ToSlash(relative)] = string(content)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("agents: reading %s: %w", dir, err)
+	}
+	return files, nil
+}
+
+// skipped says whether a file or folder in a skill folder is left behind: hidden ones such
+// as .DS_Store, and the __pycache__ that running a skill's Python scripts locally leaves.
+func skipped(name string) bool {
+	return strings.HasPrefix(name, ".") || name == "__pycache__"
+}
+
+// parseSkill reads a skill file: frontmatter between --- lines, then the instructions.
+//
+// The recognised keys are name, description and deadline. A deadline is a Go duration, so
+// "30s" and "2m" both read the way they look.
+func parseSkill(name, content string) (Skill, error) {
+	skill := Skill{Name: name}
+
+	frontmatter, body, found := cutFrontmatter(content)
+	if found {
+		for line := range strings.SplitSeq(frontmatter, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			key, value, ok := strings.Cut(line, ":")
+			if !ok {
+				return skill, fmt.Errorf("%q is not a key and a value", line)
+			}
+			value = strings.Trim(strings.TrimSpace(value), `"'`)
+
+			switch strings.TrimSpace(key) {
+			case "name":
+				skill.Name = value
+			case "description":
+				skill.Description = value
+			case "capture_video":
+				if value != "true" && value != "false" {
+					return Skill{}, fmt.Errorf("capture_video must be true or false")
+				}
+				skill.CaptureVideo = value == "true"
+			case "deadline":
+				deadline, err := parseDeadline(value)
+				if err != nil {
+					return skill, err
+				}
+				skill.Deadline = deadline
+			}
+		}
+	}
+
+	skill.Instructions = strings.TrimSpace(body)
+	if skill.Description == "" {
+		return skill, errors.New("a skill needs a description, since it is all the fast model sees")
+	}
+	if skill.Instructions == "" {
+		return skill, errors.New("a skill needs instructions, since they are what the subagent answers under")
+	}
+	return skill, nil
+}
+
+// parseDeadline takes a Go duration, and a bare number as seconds.
+func parseDeadline(value string) (time.Duration, error) {
+	if seconds, err := strconv.ParseFloat(value, 64); err == nil {
+		return time.Duration(seconds * float64(time.Second)), nil
+	}
+	deadline, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("%q is not a deadline", value)
+	}
+	return deadline, nil
+}
+
+// cutFrontmatter separates a leading --- block from the body.
+func cutFrontmatter(content string) (frontmatter, body string, found bool) {
+	trimmed := strings.TrimLeft(content, "\ufeff \t\r\n")
+	if !strings.HasPrefix(trimmed, "---") {
+		return "", content, false
+	}
+
+	rest := strings.TrimPrefix(trimmed, "---")
+	rest = strings.TrimLeft(rest, "\r\n")
+	frontmatter, body, found = strings.Cut(rest, "\n---")
+	if !found {
+		return "", content, false
+	}
+	return frontmatter, strings.TrimLeft(body, "-\r\n"), true
+}
+
+func loadKnowledge(path string) ([]Document, error) {
+	root, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("agents: reading %s: %w", path, err)
+	}
+	if !root.IsDir() {
+		return nil, fmt.Errorf("agents: %s is not a directory", path)
+	}
+
+	var documents []Document
+	err = filepath.WalkDir(path, func(file string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !readable[strings.ToLower(filepath.Ext(entry.Name()))] {
+			return nil
+		}
+		// The declaration of what pages to read is not itself something to look things up
+		// in. Only the one at the root is the declaration; deeper, urls.yaml is a document
+		// like any other.
+		if file == filepath.Join(path, KnowledgeURLsFile) {
+			return nil
+		}
+
+		content, err := os.ReadFile(file)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(string(content)) == "" {
+			return nil
+		}
+
+		source, err := filepath.Rel(path, file)
+		if err != nil {
+			return err
+		}
+		documents = append(documents, Document{
+			Source: filepath.ToSlash(source),
+			Text:   string(content),
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("agents: reading %s: %w", path, err)
+	}
+	return documents, nil
+}
+
+// loadKnowledgeURLs reads the pages a knowledge base is kept filled from.
+//
+// A bad url is refused here rather than when it is subscribed, since a directory that
+// cannot be turned into a knowledge base is worth hearing about before anything is written.
+func loadKnowledgeURLs(path string) ([]KnowledgeURL, error) {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("agents: reading %s: %w", path, err)
+	}
+
+	var pages []KnowledgeURL
+	if err := yaml.Unmarshal(raw, &pages); err != nil {
+		return nil, fmt.Errorf("agents: %s: %w", path, err)
+	}
+	return pages, nil
+}
+
+// loadSimulations reads every .yaml and .yml file in simulations/, each a list of
+// simulations. A key nobody knows is refused, as in agent.yaml, and so is a name two
+// simulations share, since a sync finds a simulation by its name.
+func loadSimulations(path string) ([]Simulation, error) {
+	entries, err := os.ReadDir(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("agents: reading %s: %w", path, err)
+	}
+
+	simulations := []Simulation{}
+	named := map[string]string{}
+	for _, entry := range entries {
+		extension := strings.ToLower(filepath.Ext(entry.Name()))
+		if entry.IsDir() || (extension != ".yaml" && extension != ".yml") {
+			continue
+		}
+
+		file := filepath.Join(path, entry.Name())
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("agents: reading %s: %w", file, err)
+		}
+		// Pointers keep a null entry in its place, so entry i is node i, whose lines the
+		// errors name; a node decodes without KnownFields, so the file is read twice.
+		var listed []*Simulation
+		decoder := yaml.NewDecoder(bytes.NewReader(raw))
+		decoder.KnownFields(true)
+		if err := decoder.Decode(&listed); err != nil && !errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("agents: %s: %w", file, err)
+		}
+		var nodes []yaml.Node
+		if err := yaml.Unmarshal(raw, &nodes); err != nil {
+			return nil, fmt.Errorf("agents: %s: %w", file, err)
+		}
+
+		for index, simulation := range listed {
+			if simulation == nil {
+				continue
+			}
+			node := &nodes[index]
+			switch {
+			case simulation.Name == "":
+				return nil, fmt.Errorf("agents: %s: line %d: a simulation needs a name", file, keyLine(node, "name"))
+			case simulation.Scenario == "":
+				return nil, fmt.Errorf("agents: %s: line %d: simulation %q needs a scenario", file, keyLine(node, "scenario"), simulation.Name)
+			case simulation.Assertion == "":
+				return nil, fmt.Errorf("agents: %s: line %d: simulation %q needs an assertion", file, keyLine(node, "assertion"), simulation.Name)
+			case simulation.Mode != "" && simulation.Mode != "text" && simulation.Mode != "audio":
+				return nil, fmt.Errorf("agents: %s: line %d: simulation %q is text or audio, not %q", file, keyLine(node, "mode"), simulation.Name, simulation.Mode)
+			}
+			if first, taken := named[simulation.Name]; taken {
+				return nil, fmt.Errorf("agents: %s: line %d: simulation %q is also declared in %s", file, keyLine(node, "name"), simulation.Name, first)
+			}
+			named[simulation.Name] = entry.Name()
+			simulations = append(simulations, *simulation)
+		}
+	}
+	return simulations, nil
+}

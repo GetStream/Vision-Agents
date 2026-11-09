@@ -1,0 +1,1799 @@
+package client
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
+	"reflect"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
+
+	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/stream"
+	"github.com/GetStream/Vision-Agents/sdks/go/tools"
+)
+
+// router is a stand-in for the acceleration backend: the resource endpoints this package
+// talks to, and the socket a session is watched on. A real HTTP server with a real WebSocket
+// upgrader, so what is under test is the exchange rather than a description of it.
+type router struct {
+	*httptest.Server
+
+	mu sync.Mutex
+	// asked is every request that arrived, as "METHOD /path?query", in order.
+	asked []string
+	// bodies are the decoded JSON bodies, keyed by "METHOD /path".
+	bodies map[string]map[string]any
+
+	// configs are the stored agent configs a name is resolved against.
+	configs []acceleration.AgentConfig
+	// sessions is what a list or a search answers with.
+	sessions []acceleration.Session
+	// items is every page of response items, each handed out for the cursor naming it.
+	items [][]acceleration.AgentResponseItem
+	// frames are what the session's socket was sent, close aside.
+	frames []map[string]any
+}
+
+func newRouter(t *testing.T) *router {
+	t.Helper()
+
+	backend := &router{bodies: map[string]map[string]any{}}
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /v1/agents/configs", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		backend.mu.Lock()
+		stored := backend.configs
+		backend.mu.Unlock()
+		if stored == nil {
+			stored = []acceleration.AgentConfig{}
+		}
+		answer(w, http.StatusOK, stored)
+	})
+
+	mux.HandleFunc("PATCH /v1/agents/configs/{id}", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		backend.mu.Lock()
+		defer backend.mu.Unlock()
+		sent := backend.bodies[r.Method+" "+r.URL.Path]
+		for i, config := range backend.configs {
+			if config.Id != r.PathValue("id") {
+				continue
+			}
+			if guardrail, ok := sent["guardrail"].(string); ok {
+				backend.configs[i].Guardrail = &guardrail
+			}
+			answer(w, http.StatusOK, backend.configs[i])
+			return
+		}
+		answer(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: "no such agent config"}})
+	})
+
+	mux.HandleFunc("GET /v1/settings/app", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusOK, acceleration.AppSettings{Stream: acceleration.StreamSettings{
+			Tenancy: "deployment", WritesInto: "deployment_app", ChannelType: "present", CallType: "missing",
+		}})
+	})
+
+	mux.HandleFunc("POST /v1/agents/sessions", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		created := acceleration.Session{
+			Id: "session-1", AgentId: "agent-1", UserId: "jean", State: "running",
+			ConversationId: ptr("agent:session-1"), CreatedAt: time.Now(),
+		}
+		backend.mu.Lock()
+		if backend.bodies[r.Method+" "+r.URL.Path]["start_voice"] == true {
+			created.CallType, created.CallId = backend.callIn(r, created.Id)
+		}
+		backend.mu.Unlock()
+		answer(w, http.StatusCreated, created)
+	})
+
+	mux.HandleFunc("POST /v1/agents/sessions/{id}/voice", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		backend.mu.Lock()
+		callType, callID := backend.callIn(r, r.PathValue("id"))
+		backend.mu.Unlock()
+		answer(w, http.StatusOK, acceleration.Session{
+			Id: r.PathValue("id"), AgentId: "agent-1", UserId: "jean", State: "running",
+			CallType: callType, CallId: callID, CreatedAt: time.Now(),
+		})
+	})
+
+	mux.HandleFunc("DELETE /v1/agents/sessions/{id}/voice", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusOK, acceleration.Session{
+			Id: r.PathValue("id"), AgentId: "agent-1", UserId: "jean", State: "running",
+			CreatedAt: time.Now(),
+		})
+	})
+
+	mux.HandleFunc("POST /v1/agents/sessions/query", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusOK, acceleration.SessionPage{Items: backend.stored()})
+	})
+
+	mux.HandleFunc("POST /v1/agents/sessions/{id}/fork", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusCreated, acceleration.Session{
+			Id: "session-2", AgentId: "agent-1", UserId: "jean", State: "running",
+			ForkedFrom: ptr(r.PathValue("id")), CreatedAt: time.Now(),
+		})
+	})
+
+	mux.HandleFunc("PATCH /v1/agents/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		// A target that does not route is refused, and the session carries on as it was.
+		backend.mu.Lock()
+		asked := backend.bodies[r.Method+" "+r.URL.Path]["llm"]
+		backend.mu.Unlock()
+		if asked == "nobody/nothing" {
+			answer(w, http.StatusBadRequest, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: "nothing routes to nobody/nothing"}})
+			return
+		}
+		answer(w, http.StatusOK, acceleration.Session{
+			Id: r.PathValue("id"), AgentId: "agent-1", UserId: "jean", State: "running",
+			CreatedAt: time.Now(),
+		})
+	})
+
+	mux.HandleFunc("POST /v1/agents/sessions/{id}/responses", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusAccepted, acceleration.AgentResponse{
+			Id: "response-1", SessionId: r.PathValue("id"), Status: "running",
+			Said: ptr("Is Stream better?"), CreatedAt: time.Now(),
+		})
+	})
+
+	mux.HandleFunc("GET /v1/agents/sessions/{id}/responses", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusOK, acceleration.AgentResponsePage{Items: []acceleration.AgentResponse{{
+			Id: "response-1", SessionId: r.PathValue("id"), Status: "completed",
+			CreatedAt: time.Now(),
+		}}})
+	})
+
+	mux.HandleFunc("GET /v1/agents/sessions/{id}/responses/items", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusOK, backend.page(r.URL.Query().Get("cursor")))
+	})
+
+	mux.HandleFunc("POST /v1/agents/sessions/{id}/rewind", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		// A persistent conversation is what the real router refuses to rewind.
+		if r.PathValue("id") == "persistent" {
+			answer(w, http.StatusBadRequest, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+				Message: "a persistent conversation keeps its transcript in Chat"}})
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("DELETE /v1/agents/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		if r.PathValue("id") == "someone-elses" {
+			w.Header().Set(stream.RequestIDHeader, "request-1")
+			answer(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+				Message: "unknown session", Type: acceleration.ErrorTypeNotFound, Code: "session_not_found",
+				DocUrl: "https://getstream.io/agents/docs/api/errors/#session_not_found",
+			}})
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("DELETE /v1/agents/sessions/{id}/memories", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		if r.PathValue("id") == "someone-elses" {
+			answer(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: "unknown session"}})
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("DELETE /v1/agents/users/{user_id}/memories", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("PUT /v1/agents/users/{user_id}", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		backend.mu.Lock()
+		phone, _ := backend.bodies["PUT "+r.URL.Path]["phone"].(string)
+		backend.mu.Unlock()
+		switch {
+		case phone == "+15550100199":
+			answer(w, http.StatusConflict, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+				Type: "conflict", Code: "phone_taken", Message: "the phone number is linked to another user of this app",
+			}})
+		case phone == "":
+			answer(w, http.StatusOK, acceleration.AgentUser{UserId: r.PathValue("user_id")})
+		default:
+			answer(w, http.StatusOK, acceleration.AgentUser{UserId: r.PathValue("user_id"), Phone: ptr("+15550100100")})
+		}
+	})
+
+	mux.HandleFunc("GET /v1/agents/users/{user_id}", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusOK, acceleration.AgentUser{UserId: r.PathValue("user_id"), Phone: ptr("+15550100100"),
+			IncludePhoneHistory: ptr(true)})
+	})
+
+	mux.HandleFunc("POST /v1/agents/guests", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusCreated, acceleration.GuestUser{
+			Id: "guest-1", Token: "guest-token", Name: ptr("Guest"),
+		})
+	})
+
+	mux.HandleFunc("POST /v1/detection", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusOK, acceleration.DetectionResult{
+			Id: "det_1", Status: acceleration.DetectionStatusCompleted, CostMicros: 750,
+			Detections: []acceleration.DetectedObject{{
+				Label: "package", Confidence: 0.9,
+				Box: acceleration.DetectionBox{XMin: 0.1, YMin: 0.2, XMax: 0.5, YMax: 0.6},
+			}},
+		})
+	})
+
+	mux.HandleFunc("POST /v1/agents/guests/claim", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusOK, acceleration.ClaimGuestResult{
+			GuestId: "guest-1", UserId: "jean", SessionsMoved: 3,
+		})
+	})
+
+	mux.HandleFunc("GET /v1/agents/sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		connection, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer connection.Close()
+		for {
+			var frame map[string]any
+			if err := connection.ReadJSON(&frame); err != nil || frame["type"] == "close" {
+				return
+			}
+			backend.mu.Lock()
+			backend.frames = append(backend.frames, frame)
+			backend.mu.Unlock()
+		}
+	})
+
+	backend.Server = httptest.NewServer(mux)
+	t.Cleanup(backend.Close)
+	return backend
+}
+
+// client is a client pointed at this router, acting for the app itself.
+func (r *router) client(t *testing.T) *Client {
+	t.Helper()
+	api, err := New(stream.Backend{URL: r.URL, CustomerID: "acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return api
+}
+
+func (r *router) record(request *http.Request) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	line := request.Method + " " + request.URL.Path
+	if query := request.URL.RawQuery; query != "" {
+		r.asked = append(r.asked, line+"?"+query)
+	} else {
+		r.asked = append(r.asked, line)
+	}
+
+	if request.Body != nil {
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err == nil {
+			r.bodies[line] = body
+		}
+	}
+}
+
+func (r *router) stored() []acceleration.Session {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.sessions == nil {
+		return []acceleration.Session{}
+	}
+	return r.sessions
+}
+
+// page hands out the prepared page a cursor names, with the cursor to the one after it.
+// No cursor is the first page.
+func (r *router) page(cursor string) acceleration.AgentResponseItemPage {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	at := 0
+	if cursor != "" {
+		fmt.Sscanf(cursor, "page-%d", &at)
+	}
+	if at >= len(r.items) {
+		return acceleration.AgentResponseItemPage{Items: []acceleration.AgentResponseItem{}}
+	}
+	page := acceleration.AgentResponseItemPage{Items: r.items[at]}
+	if at+1 < len(r.items) {
+		page.HasMore = true
+		page.NextCursor = ptr(fmt.Sprintf("page-%d", at+1))
+	}
+	return page
+}
+
+// query is the query string of the one request to a path, failing when none arrived.
+func (r *router) query(t *testing.T, method, path string) url.Values {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, line := range r.asked {
+		before, after, split := strings.Cut(line, "?")
+		if before != method+" "+path {
+			continue
+		}
+		if !split {
+			return url.Values{}
+		}
+		values, err := url.ParseQuery(after)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return values
+	}
+	t.Fatalf("nothing was asked of %s %s; got %v", method, path, r.asked)
+	return nil
+}
+
+// body is the JSON body sent to a path.
+func (r *router) body(t *testing.T, method, path string) map[string]any {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	body, sent := r.bodies[method+" "+path]
+	if !sent {
+		t.Fatalf("nothing was posted to %s %s", method, path)
+	}
+	return body
+}
+
+// callIn is the call a request named, else agent:<session id>, as the router answers it.
+// The caller holds r.mu.
+func (r *router) callIn(request *http.Request, session string) (string, string) {
+	named, _ := r.bodies[request.Method+" "+request.URL.Path]["call"].(map[string]any)
+	if named == nil {
+		return "agent", session
+	}
+	callType, _ := named["type"].(string)
+	callID, _ := named["id"].(string)
+	return callType, callID
+}
+
+// requests counts how many times a path was asked for, whatever the query.
+func (r *router) requests(method, path string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	counted := 0
+	for _, line := range r.asked {
+		if before, _, _ := strings.Cut(line, "?"); before == method+" "+path {
+			counted++
+		}
+	}
+	return counted
+}
+
+func TestASessionIsOpenedAgainstTheAgentByName(t *testing.T) {
+	backend := newRouter(t)
+	agent := backend.client(t).Agent("docs")
+
+	session, err := agent.Sessions.Create(t.Context(), SessionOptions{
+		Title:       "Is Stream better?",
+		Description: "The comparison question, again",
+		ProjectID:   "docs",
+		Custom:      map[string]any{"ticket": "4721"},
+		Tags:        map[string]string{"customer_id": "123"},
+		ModelOverwrites: &acceleration.ModelOverwrites{
+			Thinking: thinking("high"),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(t.Context())
+
+	body := backend.body(t, "POST", "/v1/agents/sessions")
+	if body["agent"] != "docs" {
+		t.Errorf("the session was opened against %v", body["agent"])
+	}
+	if body["title"] != "Is Stream better?" || body["project_id"] != "docs" {
+		t.Errorf("the labels went over as %v", body)
+	}
+	if _, asked := body["start_voice"]; asked {
+		t.Error("a session that asks for no voice should be held in writing")
+	}
+	if tags, _ := body["tags"].(map[string]any); tags["customer_id"] != "123" {
+		t.Errorf("the tags went over as %v", body["tags"])
+	}
+	overwrites, _ := body["model_overwrites"].(map[string]any)
+	if overwrites["thinking"] != "high" {
+		t.Errorf("the model overwrites went over as %v", body["model_overwrites"])
+	}
+	if session.ID() != "session-1" {
+		t.Errorf("the session is %q", session.ID())
+	}
+}
+
+func TestASessionAskedToStartVoiceIsOnItsCall(t *testing.T) {
+	backend := newRouter(t)
+
+	session := onCall(t, backend)
+
+	if backend.body(t, "POST", "/v1/agents/sessions")["start_voice"] != true {
+		t.Error("starting voice was not asked for")
+	}
+	if !session.Voice.Started() {
+		t.Error("the session does not know it is on its call")
+	}
+}
+
+func TestStartingVoiceAsksTheRouterToJoinTheSessionsCall(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+	if _, err := session.Video(); err == nil {
+		t.Fatal("a session held in writing handed back a call")
+	}
+
+	started, err := session.Voice.Start(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if asked := backend.requests("POST", "/v1/agents/sessions/session-1/voice"); asked != 1 {
+		t.Errorf("the router was asked %d times", asked)
+	}
+	if started.CallId != "session-1" || !session.Voice.Started() {
+		t.Errorf("voice started on %q", started.CallId)
+	}
+}
+
+// A person's answer to a call held for their approval goes down the session's socket.
+func TestAnApprovalAnswerGoesDownTheSessionsSocket(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	if err := session.AnswerApproval("call-1", "request-1", false, "Not now"); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]any{"type": "tool_approval", "tool_call_id": "call-1", "request_id": "request-1", "allowed": false, "summary": "Not now"}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		backend.mu.Lock()
+		sent := slices.Clone(backend.frames)
+		backend.mu.Unlock()
+		if slices.ContainsFunc(sent, func(frame map[string]any) bool { return reflect.DeepEqual(frame, want) }) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the router was sent %v, want %v", sent, want)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestASessionOpenedOnANamedCallAsksTheRouterToJoinIt(t *testing.T) {
+	backend := newRouter(t)
+
+	session, err := backend.client(t).Agent("docs").Sessions.Create(t.Context(), SessionOptions{
+		StartVoice: true, Call: &acceleration.SessionCall{Type: "default", Id: "practice-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close(t.Context()) })
+
+	sent := backend.body(t, "POST", "/v1/agents/sessions")["call"]
+	if want := map[string]any{"type": "default", "id": "practice-1"}; !reflect.DeepEqual(sent, want) {
+		t.Errorf("the router was asked to join %v", sent)
+	}
+	if session.Created().CallId != "practice-1" {
+		t.Errorf("the session is on %q", session.Created().CallId)
+	}
+}
+
+func TestStartingVoiceOnANamedCallAsksTheRouterToJoinIt(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	started, err := session.Voice.Start(t.Context(), OnCall("default", "practice-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sent := backend.body(t, "POST", "/v1/agents/sessions/session-1/voice")["call"]
+	if want := map[string]any{"type": "default", "id": "practice-1"}; !reflect.DeepEqual(sent, want) {
+		t.Errorf("the router was asked to join %v", sent)
+	}
+	if started.CallType != "default" || started.CallId != "practice-1" {
+		t.Errorf("voice started on %s:%s", started.CallType, started.CallId)
+	}
+}
+
+// The control: starting voice with no call names none, and the router picks the call.
+func TestStartingVoiceWithNoCallNamesNone(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	if _, err := session.Voice.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if sent, named := backend.body(t, "POST", "/v1/agents/sessions/session-1/voice")["call"]; named {
+		t.Errorf("a call was named: %v", sent)
+	}
+}
+
+func TestVideoIsTheNamedCallVoiceStartedOn(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+	if _, err := session.Voice.Start(t.Context(), OnCall("default", "practice-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	if asked := videoCallAsked(t, session); asked != "/video/call/default/practice-1" {
+		t.Errorf("the video call asked Stream for %s", asked)
+	}
+}
+
+func TestVideoIsTheNamedCallTheSessionOpenedOn(t *testing.T) {
+	backend := newRouter(t)
+	session, err := backend.client(t).Agent("docs").Sessions.Create(t.Context(), SessionOptions{
+		StartVoice: true, Call: &acceleration.SessionCall{Type: "default", Id: "practice-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close(t.Context()) })
+
+	if asked := videoCallAsked(t, session); asked != "/video/call/default/practice-1" {
+		t.Errorf("the video call asked Stream for %s", asked)
+	}
+}
+
+// The control: voice started with no call is on the session's own call, agent:<session id>.
+func TestVideoIsTheSessionsOwnCallWhenNoneWasNamed(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+	if _, err := session.Voice.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if asked := videoCallAsked(t, session); asked != "/video/call/agent/session-1" {
+		t.Errorf("the video call asked Stream for %s", asked)
+	}
+}
+
+func TestStoppingVoiceCarriesTheConversationOnInWriting(t *testing.T) {
+	backend := newRouter(t)
+	session := onCall(t, backend)
+
+	if _, err := session.Voice.Stop(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	if asked := backend.requests("DELETE", "/v1/agents/sessions/session-1/voice"); asked != 1 {
+		t.Errorf("the router was asked %d times", asked)
+	}
+	if session.Voice.Started() {
+		t.Error("the session still thinks it is on its call")
+	}
+}
+
+func TestAnIncognitoSessionAsksToKeepNothing(t *testing.T) {
+	backend := newRouter(t)
+	agent := backend.client(t).Agent("docs")
+
+	session, err := agent.Sessions.Create(t.Context(), SessionOptions{Incognito: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(t.Context())
+
+	body := backend.body(t, "POST", "/v1/agents/sessions")
+	if body["incognito"] != true {
+		t.Error("incognito was not asked for")
+	}
+}
+
+func TestHistoryTheCallerKeptGoesOverInOrder(t *testing.T) {
+	backend := newRouter(t)
+	agent := backend.client(t).Agent("docs")
+	ann := "Ann"
+
+	session, err := agent.Sessions.Create(t.Context(), SessionOptions{
+		Incognito: true,
+		History: []acceleration.HistoryMessage{
+			{Role: acceleration.HistoryRoleUser, Text: "Where is order 4471?", Name: &ann},
+			{Role: acceleration.HistoryRoleAssistant, Text: "It ships on Friday."},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(t.Context())
+
+	history, _ := backend.body(t, "POST", "/v1/agents/sessions")["history"].([]any)
+	if len(history) != 2 {
+		t.Fatalf("the history went over as %v", history)
+	}
+	first, _ := history[0].(map[string]any)
+	second, _ := history[1].(map[string]any)
+	if first["role"] != "user" || first["text"] != "Where is order 4471?" || first["name"] != "Ann" {
+		t.Errorf("the first message went over as %v", first)
+	}
+	if second["role"] != "assistant" || second["text"] != "It ships on Friday." {
+		t.Errorf("the second message went over as %v", second)
+	}
+}
+
+func TestInstructionsGoOverOnlyWhenGiven(t *testing.T) {
+	for given, sent := range map[string]any{"": nil, "Be a customer whose order never came.": "Be a customer whose order never came."} {
+		backend := newRouter(t)
+		agent := backend.client(t).Agent("docs")
+
+		session, err := agent.Sessions.Create(t.Context(), SessionOptions{Instructions: given})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close(t.Context())
+
+		if body := backend.body(t, "POST", "/v1/agents/sessions"); body["instructions"] != sent {
+			t.Errorf("instructions %q went over as %v", given, body["instructions"])
+		}
+	}
+}
+
+func TestTheTeamGoesOverOnlyWhenGiven(t *testing.T) {
+	for given, sent := range map[string]any{"": nil, "finance": "finance"} {
+		backend := newRouter(t)
+		agent := backend.client(t).Agent("docs")
+
+		session, err := agent.Sessions.Create(t.Context(), SessionOptions{Team: given})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close(t.Context())
+
+		if body := backend.body(t, "POST", "/v1/agents/sessions"); body["team"] != sent {
+			t.Errorf("team %q went over as %v", given, body["team"])
+		}
+	}
+}
+
+func TestConnectorBindingsNameAConnectionPerAlias(t *testing.T) {
+	backend := newRouter(t)
+	agent := backend.client(t).Agent("docs")
+
+	session, err := agent.Sessions.Create(t.Context(), SessionOptions{
+		ConnectorBindings: map[string]string{"crm": "connection-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(t.Context())
+
+	chosen, _ := backend.body(t, "POST", "/v1/agents/sessions")["connector_bindings"].([]any)
+	if len(chosen) != 1 {
+		t.Fatalf("the connector bindings went over as %v", chosen)
+	}
+	if first, _ := chosen[0].(map[string]any); first["name"] != "crm" || first["connection_id"] != "connection-1" {
+		t.Errorf("the binding went over as %v", first)
+	}
+}
+
+func TestAReturnURLGoesOverAsTheSessionsReturnURL(t *testing.T) {
+	backend := newRouter(t)
+	agent := backend.client(t).Agent("docs")
+
+	session, err := agent.Sessions.Create(t.Context(), SessionOptions{ReturnURL: "https://app.example/connectors/done"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(t.Context())
+
+	if body := backend.body(t, "POST", "/v1/agents/sessions"); body["return_url"] != "https://app.example/connectors/done" {
+		t.Errorf("return_url went over as %v", body["return_url"])
+	}
+}
+
+func TestNoReturnURLSendsNone(t *testing.T) {
+	backend := newRouter(t)
+	agent := backend.client(t).Agent("docs")
+
+	session, err := agent.Sessions.Create(t.Context(), SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(t.Context())
+
+	if body := backend.body(t, "POST", "/v1/agents/sessions"); body["return_url"] != nil {
+		t.Errorf("a session with no ReturnURL sent return_url %v", body["return_url"])
+	}
+}
+
+func TestQueryingNarrowsToTheAgentAndTheFiltersGiven(t *testing.T) {
+	backend := newRouter(t)
+	backend.sessions = []acceleration.Session{{Id: "session-1", State: "closed"}}
+
+	listed, err := backend.client(t).Agent("docs").Sessions.Query(t.Context(), Query{
+		ProjectID: "docs",
+		UserID:    "jean",
+		Modality:  "video",
+		Limit:     50,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Items) != 1 || listed.Items[0].Id != "session-1" {
+		t.Fatalf("the list came back as %v", listed)
+	}
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/query")
+	filter, _ := body["filter"].(map[string]any)
+	for field, want := range map[string]string{
+		"agent":      "docs",
+		"project_id": "docs",
+		"user_id":    "jean",
+		"modality":   "video",
+	} {
+		if got := filter[field]; got != want {
+			t.Errorf("%s went over as %v rather than %q", field, got, want)
+		}
+	}
+	if _, sent := filter["text"]; sent {
+		t.Error("a listing was sent as a search")
+	}
+	if body["limit"] != float64(50) {
+		t.Errorf("the limit went over as %v", body["limit"])
+	}
+	// The first page is asked for without a cursor rather than with an empty one.
+	if _, sent := body["cursor"]; sent {
+		t.Error("a cursor nobody asked for was sent")
+	}
+}
+
+func TestQueryingTheNextPageSendsTheCursor(t *testing.T) {
+	backend := newRouter(t)
+
+	if _, err := backend.client(t).Agent("docs").Sessions.Query(t.Context(), Query{
+		Cursor: "next-page",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := backend.body(t, "POST", "/v1/agents/sessions/query")["cursor"]; got != "next-page" {
+		t.Errorf("the cursor went over as %v", got)
+	}
+}
+
+func TestSearchingCarriesThePhraseAlongsideTheFilters(t *testing.T) {
+	backend := newRouter(t)
+	backend.sessions = []acceleration.Session{{Id: "session-1", State: "closed"}}
+
+	if _, err := backend.client(t).Agent("docs").Sessions.Search(t.Context(),
+		"sendbird comparison", Query{UserID: "jean"}); err != nil {
+		t.Fatal(err)
+	}
+
+	filter, _ := backend.body(t, "POST", "/v1/agents/sessions/query")["filter"].(map[string]any)
+	text, _ := filter["text"].(map[string]any)
+	if text["$q"] != "sendbird comparison" {
+		t.Errorf("the phrase went over as %v", filter["text"])
+	}
+	if filter["agent"] != "docs" || filter["user_id"] != "jean" {
+		t.Errorf("the filters went over as %v", filter)
+	}
+}
+
+func TestAskingSomethingNamesTheTurnItIsAnsweredAs(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	answer, err := session.Responses.Create(t.Context(), "Is Stream better than Sendbird?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer.ID() != "response-1" {
+		t.Errorf("the turn is %q", answer.ID())
+	}
+	if answer.Status() != "running" {
+		t.Errorf("the turn is %q", answer.Status())
+	}
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/session-1/responses")
+	if body["text"] != "Is Stream better than Sendbird?" {
+		t.Errorf("the question went over as %v", body["text"])
+	}
+	if id, _ := body["request_id"].(string); id == "" {
+		t.Error("a question goes with a request id, so a retry of it is answered once")
+	}
+}
+
+func TestImagesAndClipsGoOverWithTheQuestion(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	if _, err := session.Responses.Create(t.Context(), "Is the item damaged?",
+		Image{URL: "https://example.com/receipt.png", Detail: acceleration.ImageSourceDetailHigh},
+		Clip{URL: "https://example.com/unboxing.mp4", MaxFrames: 12},
+		Clip{URL: "https://example.com/return.mp4"},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/session-1/responses")
+	images, _ := json.Marshal(body["images"])
+	if string(images) != `[{"detail":"high","url":"https://example.com/receipt.png"}]` {
+		t.Errorf("the images went over as %s", images)
+	}
+	videos, _ := json.Marshal(body["videos"])
+	if string(videos) != `[{"max_frames":12,"url":"https://example.com/unboxing.mp4"},{"url":"https://example.com/return.mp4"}]` {
+		t.Errorf("the videos went over as %s", videos)
+	}
+	if _, carried := body["request_id"]; carried {
+		t.Error("a question with photos goes without a request id, so a photo may be a link")
+	}
+}
+
+func TestAQuestionWithClipsAndNoPhotosGoesOverWithARequestID(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	if _, err := session.Responses.Create(t.Context(), "What happens here?", Clip{URL: "https://example.com/unboxing.mp4"}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/session-1/responses")
+	if id, _ := body["request_id"].(string); len(id) != 32 {
+		t.Errorf("a question with clips went with request id %v, so a personal conversation refuses it", body["request_id"])
+	}
+}
+
+func TestAVoiceNoteGoesOverWithTheQuestionAndItsRequestID(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	if _, err := session.Responses.Create(t.Context(), "", VoiceNote{URL: "https://example.com/note.m4a"}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/session-1/responses")
+	audio, _ := json.Marshal(body["audio"])
+	if string(audio) != `{"url":"https://example.com/note.m4a"}` {
+		t.Errorf("the voice note went over as %s", audio)
+	}
+	if text, sent := body["text"]; !sent || text != "" {
+		t.Errorf("the text went over as %v, sent %v", text, sent)
+	}
+	if id, _ := body["request_id"].(string); id == "" {
+		t.Error("the router uploads a voice note to the conversation itself, so it goes with a request id")
+	}
+}
+
+func TestALengthAndAnEffortGoOverWithTheQuestion(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	if _, err := session.Responses.Create(t.Context(), "Plan my week",
+		MaxOutputTokens(800), ReasoningEffort("high"),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/session-1/responses")
+	if body["max_output_tokens"] != float64(800) {
+		t.Errorf("the limit went over as %v", body["max_output_tokens"])
+	}
+	if body["reasoning_effort"] != "high" {
+		t.Errorf("the effort went over as %v", body["reasoning_effort"])
+	}
+	if id, _ := body["request_id"].(string); id == "" {
+		t.Error("a question with settings is still text only, so it goes with a request id")
+	}
+}
+
+func TestWhatThePersonDidInAReplysUIGoesOverWithTheirWords(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	if _, err := session.Responses.Create(t.Context(), "Update the plan", UIAction{
+		"message_id": "reply-1", "format": "a2ui", "name": "update_plan",
+		"payload": map[string]any{"pace": "relaxed"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/session-1/responses")
+	action, _ := json.Marshal(body["ui_action"])
+	if string(action) != `{"format":"a2ui","message_id":"reply-1","name":"update_plan","payload":{"pace":"relaxed"}}` {
+		t.Errorf("the action went over as %s", action)
+	}
+	if id, _ := body["request_id"].(string); id == "" {
+		t.Error("an action goes with the person's words, so the question still has a request id")
+	}
+}
+
+func TestAClipOnDiskIsSentInline(t *testing.T) {
+	for name, kind := range map[string]string{"unboxing.webm": "video/webm", "unboxing": "video/mp4"} {
+		path := filepath.Join(t.TempDir(), name)
+		if err := os.WriteFile(path, []byte("clip"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		clip, err := ClipFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "data:" + kind + ";base64,Y2xpcA=="; clip.URL != want {
+			t.Errorf("%s went over as %q, want %q", name, clip.URL, want)
+		}
+	}
+}
+
+func TestATurnsItemsAreNarrowedToThatTurn(t *testing.T) {
+	backend := newRouter(t)
+	backend.items = [][]acceleration.AgentResponseItem{{
+		{ResponseId: "response-1", Ordinal: 0, Kind: "said", Text: ptr("Is Stream better?")},
+	}}
+	session := open(t, backend)
+
+	answer, err := session.Responses.Create(t.Context(), "Is Stream better?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := answer.Items.All(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Kind != "said" {
+		t.Fatalf("the items came back as %v", items)
+	}
+
+	query := backend.query(t, "GET", "/v1/agents/sessions/session-1/responses/items")
+	if query.Get("response_id") != "response-1" {
+		t.Errorf("the items were asked for with response_id %q", query.Get("response_id"))
+	}
+}
+
+func TestTheSessionsItemsAreEveryTurnsRatherThanOnes(t *testing.T) {
+	backend := newRouter(t)
+	backend.items = [][]acceleration.AgentResponseItem{{{ResponseId: "response-1", Kind: "said"}}}
+	session := open(t, backend)
+
+	if _, err := session.Responses.Items.All(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	query := backend.query(t, "GET", "/v1/agents/sessions/session-1/responses/items")
+	if _, narrowed := query["response_id"]; narrowed {
+		t.Error("the session's own items were narrowed to one turn")
+	}
+}
+
+func TestUnwindingFollowsTheCursorUntilTheLastPage(t *testing.T) {
+	backend := newRouter(t)
+	// The last page says there is no more, so a fourth request would mean the stream is
+	// asking for a page it has already been told does not exist.
+	backend.items = [][]acceleration.AgentResponseItem{
+		items("response-1", 0, 2), items("response-1", 2, 2), items("response-1", 4, 1),
+	}
+	session := open(t, backend)
+
+	stream := session.Responses.Items.Unwind(t.Context(), 2)
+	read := 0
+	for item := range stream.Items() {
+		if item.Ordinal != read {
+			t.Errorf("item %d arrived at ordinal %d", read, item.Ordinal)
+		}
+		read++
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	if read != 5 {
+		t.Errorf("%d items were unwound", read)
+	}
+	if asked := backend.requests("GET", "/v1/agents/sessions/session-1/responses/items"); asked != 3 {
+		t.Errorf("the items were asked for %d times", asked)
+	}
+}
+
+func TestUnwindingAbandonedHalfwaySaysItWasCancelled(t *testing.T) {
+	backend := newRouter(t)
+	// Every page says there is more, so only cancelling ends the stream.
+	backend.items = [][]acceleration.AgentResponseItem{
+		items("response-1", 0, 2), items("response-1", 2, 2), items("response-1", 4, 2), items("response-1", 6, 2),
+	}
+	session := open(t, backend)
+	ctx, cancel := context.WithCancel(t.Context())
+
+	stream := session.Responses.Items.Unwind(ctx, 2)
+	<-stream.Items()
+	cancel()
+	deadline := time.After(5 * time.Second)
+	for open := true; open; {
+		select {
+		case _, open = <-stream.Items():
+		case <-deadline:
+			t.Fatal("the stream was still open after its context was cancelled")
+		}
+	}
+
+	if !errors.Is(stream.Err(), context.Canceled) {
+		t.Errorf("an abandoned stream ended with %v, want context.Canceled", stream.Err())
+	}
+}
+
+func TestACancelledRequestReturnsTheContextsError(t *testing.T) {
+	asked := make(chan struct{})
+	waiting := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		close(asked)
+		<-r.Context().Done()
+	}))
+	t.Cleanup(waiting.Close)
+	api, err := New(stream.Backend{URL: waiting.URL, CustomerID: "acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() {
+		<-asked
+		cancel()
+	}()
+
+	_, err = api.Agent("docs").Config(ctx)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("a request cancelled in flight returned %v, want context.Canceled", err)
+	}
+}
+
+func TestUnwindingReportsWhyItStoppedRatherThanLookingLikeTheEnd(t *testing.T) {
+	// A router that refuses, so the stream closes without having run out. A closed channel
+	// on its own cannot tell the two apart, which is what Err is for.
+	refusing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, http.StatusNotFound, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: "no such session"}})
+	}))
+	t.Cleanup(refusing.Close)
+
+	api, err := New(stream.Backend{URL: refusing.URL, CustomerID: "acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stream := api.Agent("docs").Sessions.Responses("session-1").Items.Unwind(t.Context(), 0)
+	for range stream.Items() {
+		t.Error("an item arrived from a router that refused")
+	}
+	if stream.Err() == nil {
+		t.Fatal("the stream ended as though it had run out")
+	}
+}
+
+func TestRewindingCarriesOnFromTheResponseGiven(t *testing.T) {
+	// A call, because a text conversation is kept in Chat and the router refuses to rewind
+	// it: forking it at the response is what a text conversation does instead.
+	backend := newRouter(t)
+	session := onCall(t, backend)
+
+	if err := session.Responses.Rewind(t.Context(), "response-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/session-1/rewind")
+	if body["response_id"] != "response-1" {
+		t.Errorf("the rewind went over as %v", body)
+	}
+}
+
+func TestARewindTheRouterRefusesSaysWhy(t *testing.T) {
+	backend := newRouter(t)
+	responses := backend.client(t).Agent("docs").Sessions.Responses("persistent")
+
+	err := responses.Rewind(t.Context(), "response-1")
+	if err == nil || !strings.Contains(err.Error(), "transcript in Chat") {
+		t.Fatalf("the refusal came back as %v", err)
+	}
+}
+
+func TestAResponseThatWasNeverRecordedCannotBeRewoundTo(t *testing.T) {
+	backend := newRouter(t)
+	session := onCall(t, backend)
+
+	if err := session.Responses.Rewind(t.Context(), ""); err == nil {
+		t.Fatal("a response with no id was rewound to")
+	}
+	if asked := backend.requests("POST", "/v1/agents/sessions/session-1/rewind"); asked != 0 {
+		t.Errorf("the router was asked %d times", asked)
+	}
+}
+
+func TestDeletingASessionsMemoriesAsksForThatSessionsAlone(t *testing.T) {
+	backend := newRouter(t)
+	session := onCall(t, backend)
+
+	if err := session.DeleteMemories(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if asked := backend.requests("DELETE", "/v1/agents/sessions/session-1/memories"); asked != 1 {
+		t.Errorf("the router was asked %d times", asked)
+	}
+	if asked := backend.requests("DELETE", "/v1/agents/sessions/session-1"); asked != 0 {
+		t.Error("deleting what a session remembered must not end it")
+	}
+}
+
+func TestDeletingASessionAsksTheRouterToDeleteIt(t *testing.T) {
+	backend := newRouter(t)
+	session := onCall(t, backend)
+
+	if err := session.Delete(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if asked := backend.requests("DELETE", "/v1/agents/sessions/session-1"); asked != 1 {
+		t.Errorf("the router was asked %d times", asked)
+	}
+}
+
+func TestAnotherCustomersSessionIsNotDeleted(t *testing.T) {
+	backend := newRouter(t)
+
+	err := backend.client(t).Agent("docs").Sessions.Delete(t.Context(), "someone-elses")
+	if err == nil || !strings.Contains(err.Error(), "unknown session") {
+		t.Fatalf("the refusal came back as %v", err)
+	}
+}
+
+func TestARefusalCarriesEverythingTheRouterSaid(t *testing.T) {
+	backend := newRouter(t)
+
+	err := backend.client(t).Agent("docs").Sessions.Delete(t.Context(), "someone-elses")
+
+	var refused *stream.RouterError
+	if !errors.As(err, &refused) {
+		t.Fatalf("the refusal came back as %v", err)
+	}
+	got := stream.RouterError{
+		Status: refused.Status, Type: refused.Type, Code: refused.Code, Message: refused.Message,
+		DocURL: refused.DocURL, RequestID: refused.RequestID, Operation: refused.Operation,
+	}
+	want := stream.RouterError{
+		Status: http.StatusNotFound, Type: "not_found", Code: "session_not_found",
+		Message:   "unknown session",
+		DocURL:    "https://getstream.io/agents/docs/api/errors/#session_not_found",
+		RequestID: "request-1",
+		Operation: "deleting session someone-elses",
+	}
+	if got != want {
+		t.Errorf("the refusal was read as %+v, want %+v", got, want)
+	}
+	if err.Error() != "client: deleting session someone-elses: unknown session" {
+		t.Errorf("the refusal says %q", err)
+	}
+}
+
+func TestAnotherCustomersSessionsMemoriesAreRefused(t *testing.T) {
+	backend := newRouter(t)
+
+	err := backend.client(t).Agent("docs").Sessions.DeleteMemories(t.Context(), "someone-elses")
+	if err == nil || !strings.Contains(err.Error(), "unknown session") {
+		t.Fatalf("the refusal came back as %v", err)
+	}
+}
+
+func TestTruncatingDeletesEverythingAboutOneUser(t *testing.T) {
+	backend := newRouter(t)
+
+	if err := backend.client(t).Memories().Truncate(t.Context(), "user 123"); err != nil {
+		t.Fatal(err)
+	}
+	if asked := backend.requests("DELETE", "/v1/agents/users/user 123/memories"); asked != 1 {
+		t.Errorf("the router was asked %v", backend.asked)
+	}
+}
+
+func TestTruncatingNobodyIsRefusedBeforeTheRouter(t *testing.T) {
+	backend := newRouter(t)
+
+	if err := backend.client(t).Memories().Truncate(t.Context(), ""); err == nil {
+		t.Fatal("an empty user id was truncated")
+	}
+	if len(backend.asked) != 0 {
+		t.Errorf("the router was asked %v", backend.asked)
+	}
+}
+
+// Catches a number sent under another name, and the router's answer dropped for what was sent.
+func TestLinkingAUserSendsTheNumberAndReturnsTheRoutersForm(t *testing.T) {
+	backend := newRouter(t)
+
+	kept, err := backend.client(t).Users().LinkPhone(t.Context(), "anya", "+1 555 010 0100")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept != "+15550100100" {
+		t.Errorf("the number came back as %q", kept)
+	}
+	if sent := backend.body(t, "PUT", "/v1/agents/users/anya"); sent["phone"] != "+1 555 010 0100" {
+		t.Errorf("the router was sent %v", sent)
+	}
+}
+
+// Catches an unlink sent as an empty body, which the router refuses, rather than a null.
+func TestUnlinkingAUserSendsANullNumber(t *testing.T) {
+	backend := newRouter(t)
+
+	if err := backend.client(t).Users().UnlinkPhone(t.Context(), "anya"); err != nil {
+		t.Fatal(err)
+	}
+	sent := backend.body(t, "PUT", "/v1/agents/users/anya")
+	if phone, ok := sent["phone"]; !ok || phone != nil {
+		t.Errorf("the router was sent %v", sent)
+	}
+}
+
+// Catches a number another user holds coming back as success, or without the router's code.
+func TestATakenNumberIsTheRoutersConflict(t *testing.T) {
+	backend := newRouter(t)
+
+	_, err := backend.client(t).Users().LinkPhone(t.Context(), "bob", "+15550100199")
+
+	var refused *stream.RouterError
+	if !errors.As(err, &refused) || refused.Status != http.StatusConflict || refused.Code != "phone_taken" {
+		t.Fatalf("the refusal came back as %v", err)
+	}
+}
+
+// Catches a link with history that sends both fields, which the router refuses, or neither, which
+// keeps what the same number had: all of it, from a time, and from the request on.
+func TestLinkingWithHistorySendsOneOfItsFields(t *testing.T) {
+	since := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		history PhoneHistory
+		sent    map[string]any
+	}{
+		{PhoneHistory{All: true}, map[string]any{"phone": "+15550100100", "include_phone_history": true}},
+		{PhoneHistory{Since: since}, map[string]any{"phone": "+15550100100", "phone_history_since": "2026-11-02T00:00:00Z"}},
+		{PhoneHistory{}, map[string]any{"phone": "+15550100100", "include_phone_history": false}},
+	} {
+		backend := newRouter(t)
+
+		if _, err := backend.client(t).Users().LinkPhoneWithHistory(t.Context(), "anya", "+15550100100", c.history); err != nil {
+			t.Fatal(err)
+		}
+		if sent := backend.body(t, "PUT", "/v1/agents/users/anya"); !reflect.DeepEqual(sent, c.sent) {
+			t.Errorf("%+v: the router was sent %v", c.history, sent)
+		}
+	}
+}
+
+// Catches a read that drops what the router keeps of the link, or asks it for nobody.
+func TestGettingAUserAnswersTheirLink(t *testing.T) {
+	backend := newRouter(t)
+
+	user, err := backend.client(t).Users().Get(t.Context(), "anya")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user.UserId != "anya" || user.Phone == nil || *user.Phone != "+15550100100" || user.IncludePhoneHistory == nil || !*user.IncludePhoneHistory {
+		t.Errorf("the user came back as %+v", user)
+	}
+	if asked := backend.requests("GET", "/v1/agents/users/anya"); asked != 1 {
+		t.Errorf("the router was asked %d times", asked)
+	}
+	nobody := newRouter(t)
+	if _, err := nobody.client(t).Users().Get(t.Context(), ""); err == nil || len(nobody.asked) != 0 {
+		t.Errorf("an empty user id was read: %v, %v", err, nobody.asked)
+	}
+}
+
+// Catches an empty user id or number sent to the router, where an empty number would unlink.
+func TestLinkingNobodyOrNoNumberIsRefusedBeforeTheRouter(t *testing.T) {
+	backend := newRouter(t)
+
+	if _, err := backend.client(t).Users().LinkPhone(t.Context(), "", "+15550100100"); err == nil {
+		t.Error("an empty user id was linked")
+	}
+	if _, err := backend.client(t).Users().LinkPhone(t.Context(), "anya", ""); err == nil {
+		t.Error("an empty number was sent")
+	}
+	if err := backend.client(t).Users().UnlinkPhone(t.Context(), ""); err == nil {
+		t.Error("an empty user id was unlinked")
+	}
+	if _, err := backend.client(t).Users().LinkPhoneWithHistory(t.Context(), "anya", "", PhoneHistory{All: true}); err == nil {
+		t.Error("an empty number was sent with its history")
+	}
+	if len(backend.asked) != 0 {
+		t.Errorf("the router was asked %v", backend.asked)
+	}
+}
+
+func TestUpdatingASessionPatchesOnlyWhatWasNamed(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	thinking := acceleration.UpdateSessionRequestThinkingHigh
+	updated, err := session.Update(t.Context(), SessionUpdate{
+		Title:    ptr("Pricing"),
+		Llm:      ptr("openai/gpt-5"),
+		Voice:    ptr(""),
+		Thinking: &thinking,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Id != "session-1" {
+		t.Errorf("the router answered for %q", updated.Id)
+	}
+
+	if asked := backend.requests("PATCH", "/v1/agents/sessions/session-1"); asked != 1 {
+		t.Fatalf("the session was patched %d times", asked)
+	}
+	body := backend.body(t, "PATCH", "/v1/agents/sessions/session-1")
+	want := map[string]any{"title": "Pricing", "llm": "openai/gpt-5", "voice": "", "thinking": "high"}
+	if len(body) != len(want) {
+		t.Errorf("the update went over as %v, want %v", body, want)
+	}
+	for key, value := range want {
+		if body[key] != value {
+			t.Errorf("%s went over as %v, want %v", key, body[key], value)
+		}
+	}
+}
+
+func TestAConversationNotBeingHeldCanStillBeRenamed(t *testing.T) {
+	backend := newRouter(t)
+
+	_, err := backend.client(t).Agent("docs").Sessions.Update(t.Context(), "ended-1",
+		SessionUpdate{Title: ptr("Pricing")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body := backend.body(t, "PATCH", "/v1/agents/sessions/ended-1"); body["title"] != "Pricing" {
+		t.Errorf("the rename went over as %v", body)
+	}
+}
+
+func TestAnUpdateTheRouterRefusesSaysWhy(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	_, err := session.Update(t.Context(), SessionUpdate{Llm: ptr("nobody/nothing")})
+	if err == nil || !strings.Contains(err.Error(), "nothing routes to nobody/nothing") {
+		t.Fatalf("the refusal came back as %v", err)
+	}
+}
+
+func TestForkingAtAResponseBranchesFromThere(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	forked, err := session.Fork(t.Context(), ForkOptions{ResponseID: "response-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer forked.Close(t.Context())
+
+	if body := backend.body(t, "POST", "/v1/agents/sessions/session-1/fork"); body["response_id"] != "response-1" {
+		t.Errorf("response_id went over as %v", body["response_id"])
+	}
+}
+
+func TestForkingContinuesTheConversationAsANewOne(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	forked, err := session.Fork(t.Context(), ForkOptions{
+		Title:           "With a harder model",
+		ModelOverwrites: &acceleration.ModelOverwrites{Llm: ptr("openai/gpt-5")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer forked.Close(t.Context())
+
+	if forked.ID() != "session-2" {
+		t.Errorf("the fork is %q", forked.ID())
+	}
+	if forked.Responses.Items == session.Responses.Items {
+		t.Error("the fork is reading the parent's items")
+	}
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/session-1/fork")
+	if body["title"] != "With a harder model" {
+		t.Errorf("the fork's title went over as %v", body["title"])
+	}
+	// The history comes across by default, so an absent field and a true one mean the same
+	// thing and only the refusal is worth sending.
+	if _, sent := body["messages"]; sent {
+		t.Error("messages was sent for a fork that wanted the history")
+	}
+}
+
+func TestForkingWithoutMessagesSaysSo(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	forked, err := session.Fork(t.Context(), ForkOptions{WithoutMessages: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer forked.Close(t.Context())
+
+	if body := backend.body(t, "POST", "/v1/agents/sessions/session-1/fork"); body["messages"] != false {
+		t.Errorf("messages went over as %v", body["messages"])
+	}
+}
+
+func TestAForkInheritsTheParentsFunctions(t *testing.T) {
+	backend := newRouter(t)
+	agent := backend.client(t).Agent("docs")
+	if err := register(agent.Tools(), "get_weather"); err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := agent.Sessions.Create(t.Context(), SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(t.Context())
+
+	forked, err := session.Fork(t.Context(), ForkOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer forked.Close(t.Context())
+
+	registered := forked.Tools().List()
+	if len(registered) != 1 || registered[0].Name != "get_weather" {
+		t.Errorf("the fork offers %v", registered)
+	}
+}
+
+func TestTheModelIsOfferedTheAgentsFunctions(t *testing.T) {
+	backend := newRouter(t)
+	agent := backend.client(t).Agent("docs")
+	if err := register(agent.Tools(), "get_weather"); err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := agent.Sessions.Create(t.Context(), SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(t.Context())
+
+	declared, _ := backend.body(t, "POST", "/v1/agents/sessions")["tools"].([]any)
+	if len(declared) != 1 {
+		t.Fatalf("the session declared %v", declared)
+	}
+	if tool, _ := declared[0].(map[string]any); tool["name"] != "get_weather" {
+		t.Errorf("the declared tool is %v", declared[0])
+	}
+}
+
+func TestAnAgentIsLookedUpByTheNameItIsConfiguredUnder(t *testing.T) {
+	backend := newRouter(t)
+	backend.configs = []acceleration.AgentConfig{{Id: "config-1", Name: "docs"}}
+
+	config, err := backend.client(t).Agent("docs").Config(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config == nil || config.Id != "config-1" {
+		t.Fatalf("the config came back as %v", config)
+	}
+	if name := backend.query(t, "GET", "/v1/agents/configs").Get("name"); name != "docs" {
+		t.Errorf("the config was asked for by %q", name)
+	}
+}
+
+func TestUpdatingAConfigSendsOnlyWhatChanged(t *testing.T) {
+	backend := newRouter(t)
+	instructions := "be brief"
+	backend.configs = []acceleration.AgentConfig{{Id: "config-1", Name: "docs", Instructions: &instructions}}
+	policy := "Only answer questions about Acme."
+
+	config, err := backend.client(t).Agent("docs").UpdateConfig(t.Context(),
+		acceleration.AgentConfigPatch{Guardrail: &policy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Guardrail == nil || *config.Guardrail != policy {
+		t.Errorf("the guardrail came back as %v", config.Guardrail)
+	}
+	if config.Instructions == nil || *config.Instructions != instructions {
+		t.Errorf("the instructions came back as %v", config.Instructions)
+	}
+	sent := backend.body(t, "PATCH", "/v1/agents/configs/config-1")
+	if len(sent) != 1 {
+		t.Errorf("the patch sent %v rather than only the guardrail", sent)
+	}
+}
+
+func TestUpdatingAnAgentNothingIsStoredUnderFails(t *testing.T) {
+	backend := newRouter(t)
+	policy := "Only answer questions about Acme."
+
+	_, err := backend.client(t).Agent("nowhere").UpdateConfig(t.Context(),
+		acceleration.AgentConfigPatch{Guardrail: &policy})
+	if err == nil || !strings.Contains(err.Error(), "nowhere") {
+		t.Errorf("updating an agent nobody stored answered %v", err)
+	}
+}
+
+func TestANameNothingIsStoredUnderIsNoConfigRatherThanAFailure(t *testing.T) {
+	backend := newRouter(t)
+
+	config, err := backend.client(t).Agent("nowhere").Config(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config != nil {
+		t.Errorf("a name nothing matches returned %v", config)
+	}
+}
+
+func TestAGuestIsMintedWithATokenToHold(t *testing.T) {
+	backend := newRouter(t)
+
+	guest, err := backend.client(t).GuestUser(t.Context(), GuestOptions{Name: "Guest"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if guest.Id != "guest-1" || guest.Token != "guest-token" {
+		t.Fatalf("the guest came back as %v", guest)
+	}
+	if name := backend.body(t, "POST", "/v1/agents/guests")["name"]; name != "Guest" {
+		t.Errorf("the guest was minted as %v", name)
+	}
+}
+
+func TestActingAsAGuestIsTheGuestsToken(t *testing.T) {
+	backend := newRouter(t)
+	// A guest holds a token rather than a customer id, so the backend it acts through has to
+	// be one that sends tokens at all.
+	api, err := New(stream.Backend{URL: backend.URL, Authenticate: true, APIKey: "key", APISecret: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	as, err := api.AsGuest(&Guest{Id: "guest-1", Token: "guest-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if as.Backend().UserID != "guest-1" || as.Backend().Token != "guest-token" {
+		t.Errorf("the guest client is acting as %v", as.Backend().UserID)
+	}
+	if as.ServerSide() {
+		t.Error("a client acting for a guest is not the app itself")
+	}
+	if !api.ServerSide() {
+		t.Error("the client the guest came from stopped being the app itself")
+	}
+}
+
+func TestClaimingAGuestMovesTheirConversations(t *testing.T) {
+	backend := newRouter(t)
+
+	claimed, err := backend.client(t).ClaimGuestUser(t.Context(), "guest-1", "jean")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.SessionsMoved != 3 {
+		t.Errorf("%d conversations moved", claimed.SessionsMoved)
+	}
+	body := backend.body(t, "POST", "/v1/agents/guests/claim")
+	if body["guest_id"] != "guest-1" || body["user_id"] != "jean" {
+		t.Errorf("the claim went over as %v", body)
+	}
+}
+
+func TestClaimingNeedsBothTheGuestAndTheAccount(t *testing.T) {
+	backend := newRouter(t)
+
+	if _, err := backend.client(t).ClaimGuestUser(t.Context(), "guest-1", ""); err == nil {
+		t.Error("a claim with nobody to claim for was allowed")
+	}
+	if backend.requests("POST", "/v1/agents/guests/claim") != 0 {
+		t.Error("the router was asked to claim a guest for nobody")
+	}
+}
+
+func TestAnImageComesBackAsTheBoxesFoundInIt(t *testing.T) {
+	backend := newRouter(t)
+
+	found, err := backend.client(t).Detect(t.Context(), []byte{0xff, 0xd8},
+		&acceleration.DetectionOptions{Target: ptr("detection-open"), Classes: &[]string{"package"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found.Detections) != 1 || found.Detections[0].Label != "package" {
+		t.Errorf("found %v", found.Detections)
+	}
+	body := backend.body(t, "POST", "/v1/detection")
+	if body["image"] != "/9g=" {
+		t.Errorf("the image went over as %v", body["image"])
+	}
+	if sent := body["options"].(map[string]any); sent["target"] != "detection-open" {
+		t.Errorf("the options went over as %v", sent)
+	}
+}
+
+func TestDetectingNeedsAnImage(t *testing.T) {
+	backend := newRouter(t)
+
+	if _, err := backend.client(t).Detect(t.Context(), nil, nil); err == nil {
+		t.Error("a detection with nothing to look at was allowed")
+	}
+	if backend.requests("POST", "/v1/detection") != 0 {
+		t.Error("the router was asked to look at nothing")
+	}
+}
+
+func TestSetUserRefusesAUserWithNothingToProveIt(t *testing.T) {
+	backend := newRouter(t)
+	api := backend.client(t)
+
+	if _, err := api.SetUser("", "token"); err == nil {
+		t.Error("a user with no id was allowed")
+	}
+	if _, err := api.SetUser("jean", ""); err == nil {
+		t.Error("a user with no token was allowed")
+	}
+}
+
+func TestChatIsRefusedForAConversationThatKeepsNoTranscript(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+	// What the router said it opened is what the session reports, so this stands in for an
+	// incognito conversation: neither has a channel to read.
+	session.created.ConversationId = nil
+
+	if _, err := session.Chat(); err == nil {
+		t.Error("a session with no transcript handed back a channel")
+	}
+}
+
+func TestVideoIsRefusedForAConversationHeldInWriting(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	if _, err := session.Video(); err == nil {
+		t.Error("a written conversation handed back a call")
+	}
+}
+
+// videoCallAsked is the path, past the API version, that the session's video call asks
+// Stream for, from a Stream that only records it.
+func videoCallAsked(t *testing.T, session *Session) string {
+	t.Helper()
+	asked := make(chan string, 1)
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case asked <- r.URL.Path:
+		default:
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(fake.Close)
+	t.Setenv("STREAM_BASE_URL", fake.URL)
+	t.Setenv(stream.APIKeyEnv, "key")
+	t.Setenv(stream.APISecretEnv, "secret")
+
+	video, err := session.Video()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = video.Call.Get(t.Context(), nil)
+	select {
+	case path := <-asked:
+		return strings.TrimPrefix(path, "/api/v2")
+	default:
+		t.Fatal("the video call asked Stream nothing")
+		return ""
+	}
+}
+
+// open is a session on the router, closed when the test ends.
+func open(t *testing.T, backend *router) *Session {
+	t.Helper()
+	session, err := backend.client(t).Agent("docs").Sessions.Create(t.Context(), SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close(t.Context()) })
+	return session
+}
+
+// onCall is a session opened on a call rather than held in writing.
+func onCall(t *testing.T, backend *router) *Session {
+	t.Helper()
+	session, err := backend.client(t).Agent("docs").Sessions.Create(t.Context(), SessionOptions{StartVoice: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close(t.Context()) })
+	return session
+}
+
+// items is a page of response items numbered from an ordinal.
+func items(response string, from, count int) []acceleration.AgentResponseItem {
+	page := make([]acceleration.AgentResponseItem, 0, count)
+	for at := range count {
+		page = append(page, acceleration.AgentResponseItem{
+			ResponseId: response, Ordinal: from + at, Kind: "response_text",
+			Text: ptr(fmt.Sprintf("part %d", from+at)),
+		})
+	}
+	return page
+}
+
+func answer(w http.ResponseWriter, status int, body any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+func ptr[T any](value T) *T { return &value }
+
+func thinking(effort string) *acceleration.ModelOverwritesThinking {
+	value := acceleration.ModelOverwritesThinking(effort)
+	return &value
+}
+
+// register adds one function, so a test about what a conversation offers the model does not
+// have to spell out a schema to make the point.
+func register(registry *tools.Registry, name string) error {
+	return tools.Register(registry, name, "What the weather is",
+		func(_ context.Context, in struct {
+			Location string `json:"location" schema:"the city"`
+		}) (any, error) {
+			return "raining in " + in.Location, nil
+		})
+}
+
+func TestTheAppsSettingsSayWhereItsWorkIsWritten(t *testing.T) {
+	backend := newRouter(t)
+
+	settings, err := backend.client(t).Settings().App(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.Stream.WritesInto != "deployment_app" || settings.Stream.CallType != "missing" {
+		t.Errorf("the settings came back as %+v", settings.Stream)
+	}
+	if asked := backend.requests("GET", "/v1/settings/app"); asked != 1 {
+		t.Errorf("the router was asked %v", backend.asked)
+	}
+}
