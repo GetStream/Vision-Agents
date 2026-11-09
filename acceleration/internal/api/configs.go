@@ -29,9 +29,11 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 	"github.com/danielgtaylor/huma/v2"
 )
 
@@ -162,6 +164,9 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 		return nil, invalidRequest(message)
 	}
 	if message, ok := callsComplaint(config.Calls); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := teamTagComplaint(config.Tags, nil); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := outputRetentionComplaint(config); !ok {
@@ -296,6 +301,9 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 		return nil, invalidRequest(message)
 	}
 	if message, ok := callsComplaint(config.Calls); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := teamTagComplaint(config.Tags, existing.Tags); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := outputRetentionComplaint(config); !ok {
@@ -1922,7 +1930,7 @@ type AgentConfigRequest struct {
 	Skills             *[]string                `json:"skills,omitempty" doc:"Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set."`
 	Sts                *string                  `json:"sts,omitempty" doc:"A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade."`
 	Stt                *string                  `json:"stt,omitempty" doc:"A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it."`
-	Tags               *map[string]string       `json:"tags,omitempty" doc:"Cost labels, carried onto every request a session using it makes. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds."`
+	Tags               *map[string]string       `json:"tags,omitempty" doc:"Cost labels, carried onto every request a session using it makes. The team tag is also the team those sessions are counted under, its spend limits included, when whoever opens one names none: neither the caller's token nor the session's team field. It is 1 to 59 letters, digits, _ . and -, and a config naming another team tag is refused. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds."`
 	Subagent           *string                  `json:"subagent,omitempty" doc:"The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default subagent."`
 	Tts                *string                  `json:"tts,omitempty"`
 	Video              *SessionVideo            `json:"video,omitempty"`
@@ -2262,6 +2270,18 @@ func outputRetentionOf(stored options.Retention, tools *AgentTools) options.Rete
 // outputRetentionComplaint refuses a tool output retention out of bounds.
 func outputRetentionComplaint(config store.AgentConfig) (string, bool) {
 	return toolOutputRetentionComplaint("tools.output_retention", config.ToolOutputRetention)
+}
+
+// teamTagComplaint refuses a team tag that cannot be a team's name, since the tag is the team
+// the agent's sessions are counted under (session.TeamTag). One the config already held is let
+// through, so a config saved before the tag was a team can still be changed in other ways.
+func teamTagComplaint(tags, prior map[string]string) (string, bool) {
+	team, tagged := tags[session.TeamTag]
+	if !tagged || team == prior[session.TeamTag] || usage.CheckTeam(strings.TrimSpace(team)) == nil {
+		return "", true
+	}
+	return fmt.Sprintf("tags.%s %q is not a team: the team the agent's sessions are counted under is 1 to %d letters, digits, _ . and -",
+		session.TeamTag, team, usage.MaxTeamLength), false
 }
 
 // progressiveOf is whether tools are offered progressively once tools is written over

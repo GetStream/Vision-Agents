@@ -653,6 +653,20 @@ api.Teams().SetLimit(ctx, client.TeamLimit{Team: "finance", Interval: client.Wee
 amount, err := client.ParseUSD("12.50") // from a form or a config file
 ```
 
+Work counts under a team, and so against its limits, three ways. Whichever comes first wins,
+and a session is counted under one team at most:
+
+1. The team signed into the end user's token. A session cannot be moved off it, so a `Team`
+   naming another is refused with a 400.
+2. `client.SessionOptions{Team: "finance"}`, from a backend. A device sending a team is
+   refused with a 403.
+3. The agent's tag, `tags: team: finance` in its `agent.yaml`. A tag that is no team name is
+   refused when the agent is synced.
+
+```go
+session, err := docs.Sessions.Create(ctx, client.SessionOptions{Team: "finance", UserID: "jean"})
+```
+
 What the router answers is in micros too: `client.USD(limit.LimitMicros)` prints as `$20000.00`.
 Work a limit refuses is a `*stream.RouterError` of 402 `spend_limit_reached`, or 429
 `user_limit_reached` for one end user's.

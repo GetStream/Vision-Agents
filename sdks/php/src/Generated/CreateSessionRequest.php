@@ -95,6 +95,8 @@ final readonly class CreateSessionRequest
         public ?SessionVideo $video = null,
         // The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. P...
         public ?string $voice = null,
+        // The team the session's work is counted under, its team spend limits included, as team:<name> is among a tok...
+        public ?string $team = null,
     ) {
     }
 
@@ -146,6 +148,7 @@ final readonly class CreateSessionRequest
             userName: array_key_exists('user_name', $data) && $data['user_name'] !== null ? Json::string($data, 'user_name') : null,
             video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
             voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
+            team: array_key_exists('team', $data) && $data['team'] !== null ? Json::string($data, 'team') : null,
         );
     }
 
@@ -282,6 +285,9 @@ final readonly class CreateSessionRequest
         }
         if ($this->voice !== null) {
             $out['voice'] = $this->voice;
+        }
+        if ($this->team !== null) {
+            $out['team'] = $this->team;
         }
         return $out;
     }

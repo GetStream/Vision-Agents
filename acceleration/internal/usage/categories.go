@@ -3,6 +3,7 @@ package usage
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -51,6 +52,34 @@ func Team(categories []string) string {
 		}
 	}
 	return ""
+}
+
+// CheckTeam says why name cannot be a team's, or nil: 1 to MaxTeamLength letters, digits,
+// _ . and -.
+func CheckTeam(name string) error {
+	if name == "" {
+		return errors.New("usage: a team needs a name")
+	}
+	return CheckCategories([]string{TeamPrefix + name})
+}
+
+// WithTeam is categories counted under team as well, sorted as a principal's are. Categories
+// that already name a team are returned as they are: a team the caller's token signed is not
+// moved by one somebody else chose. A team that would make them more than MaxCategories, or
+// that CheckTeam refuses, is an error.
+func WithTeam(categories []string, team string) ([]string, error) {
+	if team == "" || Team(categories) != "" {
+		return categories, nil
+	}
+	if err := CheckTeam(team); err != nil {
+		return nil, err
+	}
+	joined := append(slices.Clone(categories), TeamPrefix+team)
+	slices.Sort(joined)
+	if err := CheckCategories(joined); err != nil {
+		return nil, err
+	}
+	return joined, nil
 }
 
 // TeamOf is the team a category names, and whether it is the team's at all.

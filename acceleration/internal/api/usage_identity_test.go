@@ -242,6 +242,89 @@ func (s *UsageIdentitySuite) TestASpendFilterNamingTwoTeamsIsRefused() {
 	s.Equal(codeInvalidUsageCategories, answered.Error.Code)
 }
 
+// An agent tagged with a team counts the sessions of a caller who names none under it, as a
+// token naming that team would.
+func (s *UsageIdentitySuite) TestAnAgentsTeamTagCountsItsSessionsUnderTheTeam() {
+	config := s.taggedConfig(map[string]string{"team": "support"})
+	opener := s.userWith([]string{"project:onboarding"}, "")
+	request := textSession(nil)
+	request.ConfigId = &config
+	opened := opener.createSession(request)
+
+	s.respond(opener, opened.Id, "hello")
+
+	for _, row := range s.sessionRows(opened.Id, 1) {
+		s.Equal([]string{"project:onboarding", "team:support"}, row.UsageCategories)
+	}
+	s.Equal(int64(1), s.spentCount("team=support"))
+}
+
+// The team a token was signed for is the session's, whatever the agent is tagged with.
+func (s *UsageIdentitySuite) TestATokensTeamIsNotMovedByTheAgentsTeamTag() {
+	config := s.taggedConfig(map[string]string{"team": "support"})
+	opener := s.userWith(nil, "finance")
+	request := textSession(nil)
+	request.ConfigId = &config
+	opened := opener.createSession(request)
+
+	s.respond(opener, opened.Id, "hello")
+
+	for _, row := range s.sessionRows(opened.Id, 1) {
+		s.Equal([]string{"team:finance"}, row.UsageCategories)
+	}
+}
+
+// A backend names the session's team over the agent's tag, and the session keeps it for the
+// turns a device asks afterwards.
+func (s *UsageIdentitySuite) TestABackendNamesTheTeamASessionIsCountedUnder() {
+	config := s.taggedConfig(map[string]string{"team": "support"})
+	owner := s.data.createUser()
+	request := textSession(nil)
+	request.ConfigId, request.Team = &config, pointerTo("finance")
+	opened := s.serverClient.actingFor(owner).createSession(request)
+
+	s.respond(s.serverClient.actingFor(owner), opened.Id, "hello")
+
+	for _, row := range s.sessionRows(opened.Id, 1) {
+		s.Equal([]string{"team:finance"}, row.UsageCategories)
+	}
+}
+
+func (s *UsageIdentitySuite) TestATeamASessionCannotBeCountedUnderIsRefused() {
+	request := textSession(nil)
+	request.Team = pointerTo("finance")
+	status, message := s.userWith(nil, "").failure(http.MethodPost, "/v1/agents/sessions", request)
+	s.Equal(http.StatusForbidden, status, message)
+	s.Contains(message, "team is sent server-side")
+
+	signed := s.signedIn(jwt.MapClaims{"server": true, "team": "sales"}, auth.AuthTypeServer, server, "")
+	status, message = signed.failure(http.MethodPost, "/v1/agents/sessions", request)
+	s.Equal(http.StatusBadRequest, status, message)
+	s.Contains(message, `the team "sales" the token was signed for`)
+
+	request.Team = pointerTo("fin:ance")
+	status, message = s.serverClient.failure(http.MethodPost, "/v1/agents/sessions", request)
+	s.Equal(http.StatusBadRequest, status, message)
+}
+
+func (s *UsageIdentitySuite) TestAConfigWhoseTeamTagIsNoTeamIsRefused() {
+	status, message := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
+		Name: "agent-" + s.utils.uuid(), Llm: pointerTo("en-low-latency"), Tags: &map[string]string{"team": "customer support"},
+	})
+
+	s.Equal(http.StatusBadRequest, status, message)
+	s.Contains(message, `tags.team "customer support" is not a team`)
+}
+
+// taggedConfig is the id of an agent config of the suite's app with tags.
+func (s *UsageIdentitySuite) taggedConfig(tags map[string]string) string {
+	var created AgentConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
+		Name: "agent-" + s.utils.uuid(), Llm: pointerTo("en-low-latency"), Tags: &tags,
+	}, &created))
+	return created.Id
+}
+
 // userWith is a new user of the app whose token names usage categories and a team.
 func (s *UsageIdentitySuite) userWith(categories []string, team string) *testClient {
 	id := s.utils.uuid()

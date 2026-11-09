@@ -3,15 +3,18 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 	"github.com/danielgtaylor/huma/v2"
 )
 
@@ -116,6 +119,10 @@ var errDeviceInstructions = forbidden("instructions are sent server-side: what t
 var errDeviceFloorControl = forbidden("floor_control is sent server-side: whether a model rules when " +
 	"the agent answers is the app's to decide, which a device may not")
 
+// errDeviceTeam refuses a team named by an end user's device.
+var errDeviceTeam = forbidden("team is sent server-side: a device's work is counted under the team its " +
+	"token was signed for, and naming another would spend that team's budget")
+
 var errDeviceResumeHistory = forbidden("resume_history is sent server-side: how much of a " +
 	"conversation the model is sent is billed to the app, which a device may not decide")
 
@@ -143,6 +150,14 @@ func refuseSessionRequest(ctx context.Context, request CreateSessionRequest) (AP
 	if plan := request.Phone; plan != nil && plan.Voicemail != nil &&
 		plan.Voicemail.Action == VoicemailActionLeaveMessage && strings.TrimSpace(value(plan.Voicemail.Message)) == "" {
 		return invalidRequest("phone.voicemail.message is required to leave a message"), true
+	}
+	if team := request.Team; team != nil {
+		if err := usage.CheckTeam(*team); err != nil {
+			return invalidRequest(fmt.Sprintf("team %q is not 1 to %d letters, digits, _ . and -", *team, usage.MaxTeamLength)), true
+		}
+		if signed := routing.AttributionFrom(ctx).Team(); signed != "" && signed != *team {
+			return invalidRequest(fmt.Sprintf("team %q is not the team %q the token was signed for, which the session is counted under", *team, signed)), true
+		}
 	}
 	// A zone nobody knows is refused where it is named, rather than at the first task
 	// that would have run in it.
@@ -239,6 +254,9 @@ func refuseServerSideFields(ctx context.Context, request CreateSessionRequest) (
 	}
 	if request.FloorControl != nil && !ServerSideFrom(ctx) {
 		return errDeviceFloorControl, true
+	}
+	if request.Team != nil && !ServerSideFrom(ctx) {
+		return errDeviceTeam, true
 	}
 	if request.Memory != nil && value(request.Memory.UserId) != "" && !ServerSideFrom(ctx) {
 		if !KindFrom(ctx).Verified() {

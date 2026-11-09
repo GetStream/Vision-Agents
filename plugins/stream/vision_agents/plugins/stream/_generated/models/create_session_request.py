@@ -147,6 +147,11 @@ class CreateSessionRequest:
             name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of
             yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A
             native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI.
+        team (str | Unset): The team the session's work is counted under, its team spend limits included, as team:<name>
+            is among a token's usage categories: 1 to 59 letters, digits, _ . and -. Left out, the session is counted under
+            the team the caller's token names, else the agent config's team tag. A token naming another team is refused with
+            a 400: the team a token was signed for is not moved. Server-side only: a device sending it is refused with a
+            403, since its team is the one its token was signed for.
     """
 
     agent: str | Unset = UNSET
@@ -191,6 +196,7 @@ class CreateSessionRequest:
     user_name: str | Unset = "Vision Agent"
     video: SessionVideo | Unset = UNSET
     voice: str | Unset = UNSET
+    team: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -317,6 +323,8 @@ class CreateSessionRequest:
 
         voice = self.voice
 
+        team = self.team
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -404,6 +412,8 @@ class CreateSessionRequest:
             field_dict["video"] = video
         if voice is not UNSET:
             field_dict["voice"] = voice
+        if team is not UNSET:
+            field_dict["team"] = team
 
         return field_dict
 
@@ -581,6 +591,8 @@ class CreateSessionRequest:
 
         voice = d.pop("voice", UNSET)
 
+        team = d.pop("team", UNSET)
+
         create_session_request = cls(
             agent=agent,
             agent_id=agent_id,
@@ -624,6 +636,7 @@ class CreateSessionRequest:
             user_name=user_name,
             video=video,
             voice=voice,
+            team=team,
         )
 
         create_session_request.additional_properties = d

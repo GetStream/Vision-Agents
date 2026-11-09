@@ -44,6 +44,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
 
 // EdgeFactory opens the transport a session's agent talks over.
@@ -386,6 +387,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	if spec.Attribution.APIKey == "" {
 		spec.Attribution = routing.AttributionFrom(ctx)
 	}
+	categories, err := usage.WithTeam(spec.Attribution.UsageCategories, spec.Team)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("session: counting the session under team %q: %w", spec.Team, err))
+	}
+	spec.Attribution.UsageCategories = categories
 	spec.Attribution.SessionID = spec.ID
 	// Refuse unsupported voice modes before opening a call or persistent resource.
 	if spec.Native() && m.options.STS == nil {
