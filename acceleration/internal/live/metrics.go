@@ -9,10 +9,10 @@ import (
 	"github.com/redis/rueidis"
 )
 
-// readPerPod is what every Redis metric's help ends with: what a monitor reads across router
-// generations and pods.
-const readPerPod = " Only the router generation serving /metrics is read, since a draining one stops serving it, " +
-	"so a hand-over restarts the series and never adds two generations up: read a pod's own, and the max over pods."
+// readPerPod is what every Redis metric's help ends with: why a hand-over does not look like
+// saturation.
+const readPerPod = " Only the router generation serving /metrics is read, as a draining one stops serving it, so a " +
+	"hand-over never adds two generations up."
 
 // commandBuckets are client_golang's default buckets, which start at 5 ms, with three below
 // them: Redis on the router's own network answers in well under 5 ms, so the default's first
@@ -32,15 +32,16 @@ func newRedisMetrics() redisMetrics {
 			Namespace: "router",
 			Name:      "redis_command_seconds",
 			Help: "Round trips to Redis, one command or one pipeline each, from sent to answered, by client: shared, " +
-				"or shard for this shard's own Redis. Subscriptions are not counted." + readPerPod,
+				"or shard for this shard's own Redis. Subscriptions are not counted. Alert on a quantile per pod and " +
+				"client." + readPerPod,
 			Buckets: commandBuckets,
 		}, []string{"client"}),
 		errors: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: "router",
 			Name:      "redis_command_errors_total",
 			Help: "Round trips to Redis that failed: a connection lost or refused, a timeout, or an error reply. A missing " +
-				"key is not one, nor a command its caller cancelled. Read it as a rate: it starts at zero in each " +
-				"generation." + readPerPod,
+				"key is not one, nor a command its caller cancelled. Alert on its rate per pod: it starts at zero in " +
+				"each generation." + readPerPod,
 		}, []string{"client"}),
 	}
 }

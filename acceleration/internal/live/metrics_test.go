@@ -106,7 +106,8 @@ func (s *LiveSuite) TestAMissingKeyIsNoError() {
 	missing := "metrics-" + rand.Text()
 
 	s.Require().True(rueidis.IsRedisNil(redis.Do(s.ctx, redis.B().Get().Key(missing).Build()).Error()))
-	for _, result := range redis.DoMulti(s.ctx, redis.B().Get().Key(missing).Build(), redis.B().Get().Key(missing).Build()) {
+	get := redis.B().Get().Key(missing).Build()
+	for _, result := range redis.DoMulti(s.ctx, get, redis.B().Get().Key(missing).Build()) {
 		s.Require().True(rueidis.IsRedisNil(result.Error()))
 	}
 
@@ -124,7 +125,8 @@ func (s *LiveSuite) TestAnErrorReplyIsAnErrorWhereverItIsInAPipeline() {
 	s.Equal(1.0, s.redisSeries(client)["router_redis_command_errors_total shared"])
 
 	// The failure is the second of the pipeline's answers, after a missing key.
-	results := redis.DoMulti(s.ctx, redis.B().Get().Key("metrics-"+rand.Text()).Build(), redis.B().Incr().Key(word).Build())
+	missing := redis.B().Get().Key("metrics-" + rand.Text()).Build()
+	results := redis.DoMulti(s.ctx, missing, redis.B().Incr().Key(word).Build())
 	s.Require().Error(results[1].Error())
 	s.Equal(2.0, s.redisSeries(client)["router_redis_command_errors_total shared"])
 }

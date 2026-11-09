@@ -69,8 +69,8 @@ func serveMetrics(addr string, logger *slog.Logger) (stop, handOver func()) {
 }
 
 // serveSaturation adds the Postgres pools' and the Redis connections' metrics to what /metrics
-// serves, for whichever of the two the router has, until the returned function takes them out.
-// A test runs routers one after another in one process, and the next one's are its own.
+// serves, for whichever of the two the router has. stop takes them out again, so a router started
+// after this one in the same process, as tests start them, serves its own.
 func serveSaturation(pgStore *store.Store, liveClient *live.Client, logger *slog.Logger) (stop func()) {
 	var collectors []prometheus.Collector
 	if pgStore != nil {
@@ -84,7 +84,7 @@ func serveSaturation(pgStore *store.Store, liveClient *live.Client, logger *slog
 		// One registry holds one series of a name and labels, so a second router running in
 		// the same process, as an overlapping test runs, serves the first one's alone.
 		if err := prometheus.Register(collector); err != nil {
-			logger.Warn("could not serve a pool's metrics", "error", err)
+			logger.Warn("could not serve saturation metrics", "error", err)
 			continue
 		}
 		registered = append(registered, collector)

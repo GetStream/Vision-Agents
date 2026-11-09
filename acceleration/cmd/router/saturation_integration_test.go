@@ -36,8 +36,9 @@ func saturationMetrics() []string {
 	families, _ := prometheus.DefaultGatherer.Gather()
 	var found []string
 	for _, family := range families {
-		if strings.HasPrefix(family.GetName(), "router_db_pool_") || strings.HasPrefix(family.GetName(), "router_redis_command_") {
-			found = append(found, family.GetName())
+		name := family.GetName()
+		if strings.HasPrefix(name, "router_db_pool_") || strings.HasPrefix(name, "router_redis_command_") {
+			found = append(found, name)
 		}
 	}
 	return found
