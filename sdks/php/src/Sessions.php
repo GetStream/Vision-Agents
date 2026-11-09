@@ -35,6 +35,10 @@ final readonly class Sessions
      * @param ?string $id up to 64 letters, digits, - and _ to hold the session by; null lets the
      *     router generate one, and one already taken is refused with 409
      * @param array<string, mixed>|null $custom anything of the caller's own a later query can match on
+     * @param ?string $team the team the conversation's work is counted under, its team spend
+     *     limits included, for a backend opening one for a team. Null is the team the caller's
+     *     token names, else the agent's `tags: team`. Server side only: a device sending one is
+     *     refused with 403, and a token signed for another team with 400
      */
     public function create(
         ?string $title = null,
@@ -46,8 +50,10 @@ final readonly class Sessions
         ?bool $startVoice = null,
         ?string $userId = null,
         ?string $id = null,
+        ?string $team = null,
     ): Session {
         $request = new CreateSessionRequest(
+            team: $team === null ? null : UsageCategories::checkTeam($team),
             id: $id,
             startVoice: $startVoice,
             agent: $this->agent,

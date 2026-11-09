@@ -35,6 +35,8 @@ final readonly class Client
     public Backend $backend;
     public Memories $memories;
     public Simulations $simulations;
+    public SpendLimits $spendLimits;
+    public Teams $teams;
     private ClientInterface $http;
     private RequestFactoryInterface $requests;
     private StreamFactoryInterface $streams;
@@ -51,6 +53,8 @@ final readonly class Client
         $this->http = $http ?? Http::client();
         $this->memories = new Memories($this);
         $this->simulations = new Simulations($this);
+        $this->spendLimits = new SpendLimits($this);
+        $this->teams = new Teams($this, $this->spendLimits);
     }
 
     /**
