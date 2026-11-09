@@ -54,6 +54,11 @@ A table variable the deployment leaves unset is served too, as one series at 0 u
 ### The router's metrics show its own API requests
 
 `/metrics` has `router_http_requests_total{method,route,status}`, every request the API answered by route template and status class, and `router_http_request_seconds`, how long request/response answers took to begin. Sockets and streams are counted but not timed (#1786).
+
+### API latency on /metrics without the route label
+
+`router_api_latency_seconds{status}` is `router_http_request_seconds` with the `status` class as its only label and the same buckets, so a monitor or an SLO reads API latency at a few series per pod instead of one per route. The class is the API's own (`2xx` to `5xx`) or one a connection proxy passes on from a provider, so at most 8 classes are timed, 112 series per pod. The route-keyed histogram is unchanged (AI-3032).
+
 ### A server sends a person's photos on respond
 
 `POST /v1/agents/sessions/{id}/respond` takes `images`, as `createResponse` and the session socket's `respond` already did. With a `request_id` they are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, and the model sees them with that question alone. A retry with the same id, text and photos is the same question. Unlike `createResponse`, the answer is still the command's receipt with the person's and the reply's message ids, and `client_id` still addresses the install's tools, so a server that sends what a person typed on their behalf can now send what they photographed too. Text and photos together are held to the same 1 MiB as on `createResponse` when no voice note is sent. In the PHP and Python SDKs, whose generated request classes take positional arguments, `images` comes after `request_id`: their generators now keep each parameter where it was released and add new ones after, so `new RespondRequest('question', null, 'device-1', 'request-1')` and `RespondRequest("question", UNSET, "device-1", "request-1")` still mean what they did.

@@ -62,10 +62,19 @@ var (
 		// Prometheus' defaults, 5 ms to 10 s: an answer slower than 10 s is slow whatever its exact time.
 		Buckets: prometheus.DefBuckets,
 	}, []string{"method", "route", "status"})
+	httpStatusSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "router",
+		Name:      "api_latency_seconds",
+		Help: "How long the API took to begin its answer, by status class only: router_http_request_seconds without the " +
+			"method and route labels, so a cheap SLO can read API latency without them. A socket and a streamed answer " +
+			"are left out",
+		// The same buckets as router_http_request_seconds.
+		Buckets: prometheus.DefBuckets,
+	}, []string{"status"})
 )
 
 // withMetrics counts each request the API answers in httpRequests and times the answers that
-// are a response in httpRequestSeconds.
+// are a response in httpRequestSeconds and, by status class alone, in httpStatusSeconds.
 //
 // It sits inside withTrace, which seeds the route context the mux fills in: the route label is
 // the template the request matched in routes, since its path carries session and config ids, a
@@ -141,6 +150,7 @@ func (m *meteredResponse) observe(routes *chi.Mux, r *http.Request, finished boo
 		return
 	}
 	httpRequestSeconds.WithLabelValues(method, route, class).Observe(m.answered.Seconds())
+	httpStatusSeconds.WithLabelValues(class).Observe(m.answered.Seconds())
 }
 
 // routeLabel is the template of the route in routes that served r. A request answered before it
