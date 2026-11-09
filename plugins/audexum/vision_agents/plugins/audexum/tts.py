@@ -58,7 +58,6 @@ class TTS(tts.TTS):
         self._own_session = session is None
         # Every in-flight synthesis, so stop_audio() can cancel concurrent calls.
         self._pending: set[asyncio.Task] = set()
-        self._stopped: set[asyncio.Task] = set()
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -76,22 +75,23 @@ class TTS(tts.TTS):
         task = asyncio.ensure_future(self._synthesize(text))
         self._pending.add(task)
         try:
-            return await task
+            # asyncio.wait() raises only when *this* caller is cancelled and
+            # never cancels the inner task itself, so the two cases stay
+            # distinct on every Python version (no Task.cancelling(), 3.11+).
+            await asyncio.wait({task})
         except asyncio.CancelledError:
-            # Swallow only a cancel that stop_audio() requested; the caller being
-            # cancelled itself must still propagate (Task.cancelling: 3.11+).
-            cancelling = getattr(asyncio.current_task(), "cancelling", None)
-            if task not in self._stopped or (cancelling is not None and cancelling()):
-                raise
+            task.cancel()
+            raise
+        finally:
+            self._pending.discard(task)
+        if task.cancelled():  # only stop_audio() cancels it
             return PcmData.from_numpy(
                 np.zeros(0, dtype=np.int16),
                 sample_rate=24000,
                 channels=1,
                 format=AudioFormat.S16,
             )
-        finally:
-            self._pending.discard(task)
-            self._stopped.discard(task)
+        return task.result()
 
     async def _synthesize(self, text: str) -> PcmData:
         session = await self._get_session()
@@ -113,22 +113,28 @@ class TTS(tts.TTS):
                 )
             audio = await resp.read()
 
-        with wave.open(io.BytesIO(audio), "rb") as wf:
-            if wf.getsampwidth() != 2:
-                raise RuntimeError("Audexum TTS returned non 16-bit WAV audio")
-            samples = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
-            return PcmData.from_numpy(
-                samples,
-                sample_rate=wf.getframerate(),
-                channels=wf.getnchannels(),
-                format=AudioFormat.S16,
-            )
+        try:
+            with wave.open(io.BytesIO(audio), "rb") as wf:
+                width = wf.getsampwidth()
+                frames = wf.readframes(wf.getnframes())
+                rate, channels = wf.getframerate(), wf.getnchannels()
+        except (wave.Error, EOFError) as e:
+            raise RuntimeError(
+                f"Audexum TTS returned invalid WAV audio ({len(audio)} bytes): {e}"
+            ) from e
+        if width != 2:
+            raise RuntimeError("Audexum TTS returned non 16-bit WAV audio")
+        return PcmData.from_numpy(
+            np.frombuffer(frames, dtype=np.int16),
+            sample_rate=rate,
+            channels=channels,
+            format=AudioFormat.S16,
+        )
 
     async def stop_audio(self) -> None:
         """Cancel every in-flight synthesis request; their output is discarded."""
         for task in list(self._pending):
             if not task.done():
-                self._stopped.add(task)
                 task.cancel()
         logger.debug("Audexum TTS stop requested")
 

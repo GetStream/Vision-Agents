@@ -78,7 +78,7 @@ class TestAudexumTTS:
             await tts.stop_audio()
             results = await asyncio.gather(first, second)
             assert [len(pcm.samples) for pcm in results] == [0, 0]
-            assert not tts._pending and not tts._stopped
+            assert not tts._pending
         finally:
             release.set()
             await tts.close()
@@ -146,9 +146,6 @@ class TestAudexumTTS:
             release.set()
             await server.close()
 
-    @pytest.mark.skipif(
-        not hasattr(asyncio.Task, "cancelling"), reason="Task.cancelling() is 3.11+"
-    )
     async def test_caller_cancel_in_same_tick_as_stop_propagates(self) -> None:
         release = asyncio.Event()
 
@@ -200,6 +197,23 @@ class TestAudexumTTS:
             assert seen["body"]["response_format"] == "wav"
             assert pcm.sample_rate == 24000
             assert len(pcm.samples) == 2400
+        finally:
+            await tts.close()
+            await server.close()
+
+    @pytest.mark.parametrize("body", [b'{"error": "oops"}', _wav()[:20]])
+    async def test_invalid_wav_raises_with_context(self, body: bytes) -> None:
+        async def handler(request: web.Request) -> web.Response:
+            return web.Response(body=body, content_type="audio/wav")
+
+        app = web.Application()
+        app.router.add_post("/v1/audio/speech", handler)
+        server = TestServer(app)
+        await server.start_server()
+        tts = audexum.TTS(api_key="k", base_url=str(server.make_url("/v1")))
+        try:
+            with pytest.raises(RuntimeError, match="Audexum TTS returned invalid WAV"):
+                await tts.stream_audio("Hello")
         finally:
             await tts.close()
             await server.close()
