@@ -1925,7 +1925,14 @@ func (a *Agent) consumeCadence(p *pipeline) {
 				continue
 			}
 			a.logHeard("turn", ready.Participant.ID, "turn", ready.ID)
-			a.act([]Action{a.converse.Settled(ready, a.floor())})
+			greeted := a.converse.greetedBy(ready.Participant.ID)
+			action := a.converse.Settled(ready, a.floor())
+			a.act([]Action{action})
+			// The greeting's settling was the hold's last chance to be released: past it, what
+			// is held goes out now if it is still owed, or is let go of.
+			if greeted != "" && action.Kind != ActReleaseUnheard && a.converse.greetedBy(ready.Participant.ID) == "" {
+				a.releaseUnheard(greeted, time.Now())
+			}
 		case <-p.ctx.Done():
 			return
 		}
@@ -4054,11 +4061,7 @@ func (a *Agent) dropUnheard(participant stt.Participant, turnID string, why inte
 		stale, a.unheard = a.unheard, unheardReply{}
 		// What the hold kept was counted as being said, and none of it will be.
 		if a.heldLocked(turnID) {
-			a.unsentLocked(a.held)
-			a.held = nil
-			if a.releasing != nil {
-				a.releasing.Stop()
-			}
+			a.letGoLocked()
 		}
 		a.missed = stale
 		// The tools an interruption cancels are cancelled before the speech is dropped, as
@@ -4075,6 +4078,15 @@ func (a *Agent) dropUnheard(participant stt.Participant, turnID string, why inte
 	a.logger.Info("dropped a reply the caller said more over before hearing any of it",
 		"turn", turnID, "participant", participant.ID,
 		"gap_ms", time.Since(stale.decidedAt).Milliseconds(), "sent_to_voice", sent)
+}
+
+// letGoLocked lets go of the reply held, none of which will be sent. Agent.mu must be held.
+func (a *Agent) letGoLocked() {
+	a.unsentLocked(a.held)
+	a.held = nil
+	if a.releasing != nil {
+		a.releasing.Stop()
+	}
 }
 
 // holdUnheard keeps an unheard reply from the voice while the caller's lone greeting may
@@ -4143,6 +4155,11 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 	// none of it was heard.
 	outstanding := a.generating || a.audioOutstandingLocked(turnID) || a.heldLocked(turnID)
 	a.abandoned[turnID] = struct{}{}
+	// A reply held for a lone greeting is never released once abandoned, and what it holds
+	// was counted as being said.
+	if a.heldLocked(turnID) && a.held.greeting {
+		a.letGoLocked()
+	}
 	// Acting on chorus-asr, giving the caller the floor silences everything the agent is
 	// saying (README, "The loop's contract"), and the turn it is on may not be all of it: it
 	// takes a turn of its own, to say what a tool came back with, while the reply before is

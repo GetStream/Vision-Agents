@@ -322,7 +322,15 @@ func (p pauseAsker) Overheard(participant stt.Participant, ruled audiofloor.Rule
 			"participant", participant.ID, "text", left, "floor", ruled.Ruling.Floor)
 		return
 	}
-	a.act(a.converse.Overheard(ruled.Ruling, participant, left, ruled.Utterance, a.answerHeardBefore(ruled.Began), a.floor()))
+	state := a.floor()
+	// The reply held for the caller's lone greeting answers it, and a stop on it would cut
+	// that reply, as the flow controller is not asked about it either.
+	if held := a.converse.greetedBy(participant.ID); held != "" && held == state.Unheard.turnID && greetsAlone(left) {
+		a.logger.Debug("a check over the agent ruled on a greeting the held reply answers, which is no reason to stop",
+			"participant", participant.ID, "text", left, "floor", ruled.Ruling.Floor)
+		return
+	}
+	a.act(a.converse.Overheard(ruled.Ruling, participant, left, ruled.Utterance, a.answerHeardBefore(ruled.Began), state))
 }
 
 // GivenWay says the agent has given the floor up to the caller over the turn it is on: it

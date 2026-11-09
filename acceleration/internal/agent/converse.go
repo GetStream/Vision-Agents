@@ -695,16 +695,18 @@ func greetsAlone(saying string) bool {
 // none of was held for it: the reply is the answer to it. The controller is not asked, as
 // every ruling it gives breaks that: stop cuts the reply, continue answers the greeting a
 // second time, wait lets the reply go and may then cut it.
+// Words that are not that, or a reply no longer unheard, end the record: they are a turn as
+// any other.
 func (c *converse) answeredByHeld(ready candidate, state floor) (Action, bool) {
 	participantID := ready.Participant.ID
-	c.mu.Lock()
-	turnID := c.greeted[participantID]
-	if turnID != state.Unheard.turnID {
-		delete(c.greeted, participantID)
+	turnID := c.greetedBy(participantID)
+	if turnID == "" {
+		return Action{}, false
 	}
-	c.mu.Unlock()
-	if turnID == "" || turnID != state.Unheard.turnID ||
-		!greetsAlone(unrepeated(ready.Text, c.cadence.Repeating(participantID))) {
+	if turnID != state.Unheard.turnID || !greetsAlone(unrepeated(ready.Text, c.cadence.Repeating(participantID))) {
+		c.mu.Lock()
+		delete(c.greeted, participantID)
+		c.mu.Unlock()
 		return Action{}, false
 	}
 	if !c.cadence.Resolve(ready.ID, false) {
@@ -731,6 +733,13 @@ func (c *converse) answeredByHeld(ready candidate, state floor) (Action, bool) {
 	}), true
 }
 
+// greetedBy is the turn whose unheard reply a participant's lone greeting holds, if any.
+func (c *converse) greetedBy(participantID string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.greeted[participantID]
+}
+
 // supersede abandons a ruling asked for about words that have since changed.
 func (c *converse) supersede(participant stt.Participant, candidateID string) Action {
 	return c.decide(Action{
@@ -743,11 +752,12 @@ func (c *converse) supersede(participant stt.Participant, candidateID string) Ac
 
 // Settled registers a turn whose words have stopped changing and asks for a ruling on it.
 func (c *converse) Settled(ready candidate, state floor) Action {
-	if spent, ok := c.stopSpent(ready); ok {
-		return spent
-	}
+	// Ahead of a stop's words: a stop on a greeting a held reply answers is not acted on.
 	if released, ok := c.answeredByHeld(ready, state); ok {
 		return released
+	}
+	if spent, ok := c.stopSpent(ready); ok {
+		return spent
 	}
 	c.mu.Lock()
 	if !state.Quiet {
