@@ -353,44 +353,38 @@ func (s *ConnectionToolsSuite) TestATokenTheProviderRefusesMovesTheConnectionToN
 }
 
 // TestAValidateTheProviderRefusesLogsItsStatusAndMessageNotTheToken: the provider answers a 4xx
-// that repeats the bearer token. The validate logs one WARN line with the connection, the
-// connector, the provider's status and its words, cut out of the token, and answers as it
-// always has (the fixed sentence and the stored row), with none of the provider's text.
+// whose JSON-RPC error repeats the bearer token, padded past the 1 KiB a line keeps. The validate
+// logs one WARN line with the connection, the connector, the provider's status and its words, cut
+// out of the token and to 1 KiB, and answers as it always has (the fixed sentence and the stored
+// row, as on b3b76357c), with none of the provider's text.
 func (s *ConnectionToolsSuite) TestAValidateTheProviderRefusesLogsItsStatusAndMessageNotTheToken() {
 	for _, status := range []int{http.StatusUnauthorized, http.StatusBadRequest} {
 		s.Run(strconv.Itoa(status), func() {
 			token := "tok-" + s.utils.uuid()
-			connector := s.connector(bearer.Name, "")
-			id := s.connectionTo(connector)
-			s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, token), nil))
-			s.provider.AnswerMCPEchoing(status)
-			s.T().Cleanup(func() { s.provider.AnswerMCP(0) })
 
-			validation := s.validate(id)
+			validation, connection, _ := s.echoCredential(bearer.Name, status, token)
 
-			// The answer is the one the base gives (b3b76357c): the fixed sentence, no provider text.
 			s.Equal(validationNeedsReauthorization, string(validation.Status))
 			s.Equal(codeCredentialRejected, validation.Code)
 			s.Equal("The provider rejected the stored token or key; replace it with PUT /v1/agents/connections/{id}/credentials", validation.Error)
-			stored := s.get(id).LastValidation
-			s.Require().NotNil(stored)
-			s.Equal(validationNeedsReauthorization, string(stored.Status))
-			s.Equal(codeCredentialRejected, stored.Code)
-			s.Equal(validation.Error, stored.Error)
+			s.Require().NotNil(connection.LastValidation)
+			s.Equal(validationNeedsReauthorization, string(connection.LastValidation.Status))
+			s.Equal(codeCredentialRejected, connection.LastValidation.Code)
+			s.Equal(validation.Error, connection.LastValidation.Error)
 
 			var lines []string
 			for line := range strings.Lines(s.logged.String()) {
-				if strings.Contains(line, " connection="+id+" ") && strings.Contains(line, "refused by the provider") {
+				if strings.Contains(line, " connection="+connection.ID+" ") && strings.Contains(line, "refused by the provider") {
 					lines = append(lines, line)
 				}
 			}
 			s.Require().Len(lines, 1, "one line for the refused validate")
 			s.Contains(lines[0], "level=WARN")
-			s.Contains(lines[0], " connector="+connector+" ")
+			s.Contains(lines[0], " connector="+connection.ConnectorID+" ")
 			s.Contains(lines[0], " provider_status="+strconv.Itoa(status)+" ")
-			s.Contains(lines[0], " provider_message=\"mcp: connect to "+connector+": ", "the source's error")
-			s.Contains(lines[0], " provider_body=\""+http.StatusText(status)+": Bearer [redacted]", "the provider's own words")
-			s.NotContains(s.logged.String(), token, "no line holds the token")
+			s.Contains(lines[0], `echoed Bearer [redacted] `, "the provider's own words")
+			s.NotContains(lines[0], strings.Repeat("x", maxStoredErrorBytes), "cut to 1 KiB")
+			s.False(strings.Contains(s.logged.String(), token), "no line holds the token")
 		})
 	}
 }
@@ -401,8 +395,7 @@ func (s *ConnectionToolsSuite) TestAValidateTheProviderAnswersWithA429Or5xxLogsN
 	for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
 		s.Run(strconv.Itoa(status), func() {
 			id := s.connected(bearer.Name)
-			s.provider.AnswerMCPEchoing(status)
-			s.T().Cleanup(func() { s.provider.AnswerMCP(0) })
+			s.answerMCP(status)
 
 			s.Equal(validationFailed, string(s.validate(id).Status))
 

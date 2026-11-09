@@ -286,8 +286,6 @@ type Server struct {
 	account string
 	// mcpStatus is what every MCP request is answered with (AnswerMCP); zero answers them.
 	mcpStatus int
-	// mcpEchoes adds the request's Authorization header to that answer (AnswerMCPEchoing).
-	mcpEchoes bool
 	// mcpInstructions are what the MCP endpoint says about using its tools (InstructMCP).
 	mcpInstructions string
 	// mcpHeaders are the headers of every request that reached the MCP endpoint, in order
