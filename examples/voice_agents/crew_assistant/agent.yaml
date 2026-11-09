@@ -1,0 +1,8 @@
+name: crew_assistant
+description: Crew, the assistant a restaurant's team members talk to from their phone.
+llm: gemini/gemini-3.8-flash
+stt: deepgram/flux-general-en
+tts: inworld/inworld-tts-2-flash
+greeting:
+  text: Hey, it's Crew. What do you need before, during or after your shift?
+  mode: exact
