@@ -20,7 +20,6 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -450,7 +449,7 @@ func (s *Server) checkConnection(ctx context.Context, connection store.Connector
 				// validationAfter answers a fixed sentence with none of the provider's words, so this line keeps them.
 				s.logger.Warn("a validate's credential was refused by the provider", "connection", connection.ID,
 					"connector", connection.ConnectorID, "provider_status", answered.status(),
-					"provider_message", session.ProviderMessage(err, exchange.Redact),
+					"provider_message", core.LoggedMessage(err, exchange.Redact),
 					"provider_body", core.LoggedBody(exchange.ErrorBody()))
 				// The 401 path's move (core.Transports invalidates a refused credential nothing
 				// renews), so the row and the validate say the same: replace the token or key.
