@@ -415,6 +415,47 @@ func (s *ConnectionToolsSuite) TestAValidateLogsNoTokenTheProviderEchoedJSONEsca
 	}
 }
 
+// TestARefusedValidatesBodyKeepsItsURLsToTheirHost: provider_body is the start of the body as a
+// log line has it (core.LoggedBody), so a URL in it, whose path or query may carry a token,
+// keeps only its scheme and host.
+func (s *ConnectionToolsSuite) TestARefusedValidatesBodyKeepsItsURLsToTheirHost() {
+	id := s.refusedBy(http.StatusUnauthorized, "tok-"+s.utils.uuid(), func(string) string {
+		return "Bad credentials, see https://docs.example/errors/e1?sig=docsig"
+	})
+
+	s.Equal(validationNeedsReauthorization, string(s.validate(id).Status))
+
+	line := s.refusedLine(id)
+	s.Contains(line, "see https://docs.example")
+	s.NotContains(line, "/errors/e1")
+	s.NotContains(line, "docsig")
+}
+
+// TestAnOAuthConnectionTheProviderRefusesLogsNoRefusal: only a static credential is refused on a
+// validate (refusedStatic); an OAuth grant the provider answers with a 4xx is not, so no line
+// says it was.
+func (s *ConnectionToolsSuite) TestAnOAuthConnectionTheProviderRefusesLogsNoRefusal() {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusBadRequest} {
+		s.Run(strconv.Itoa(status), func() {
+			refusing := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.ReadAll(r.Body)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"Bad credentials"}}`)
+			}))
+			s.T().Cleanup(refusing.Close)
+			id := s.connectionTo(s.connectorWith(oauth2code.Name, refusing.URL+"/mcp"))
+			s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.importedGrant(s.token, "chat:write"), nil))
+
+			s.validate(id)
+
+			for line := range strings.Lines(s.logged.String()) {
+				s.False(strings.Contains(line, " connection="+id+" ") && strings.Contains(line, "refused by the provider"), line)
+			}
+		})
+	}
+}
+
 // TestAValidateTheProviderAnswersWithA429Or5xxLogsNoRefusal: a 429 says to wait and a 5xx says
 // nothing about the credential (refusedStatic), so the token is not refused and no line says it was.
 func (s *ConnectionToolsSuite) TestAValidateTheProviderAnswersWithA429Or5xxLogsNoRefusal() {
