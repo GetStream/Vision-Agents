@@ -171,11 +171,16 @@ func (s *RefusedReviewSuite) TestAResumeOpeningOnARefusedTurnIsWithheld() {
 		storedResponse{said: injected, status: store.ResponseRefused},
 		storedResponse{said: "Where is order 3825?", status: store.ResponseCompleted},
 	)
-	s.Equal(agent.WithheldInput, s.recorded(customer).Opening(s.ctx, cid))
+	said, at := s.recorded(customer).Opening(s.ctx, cid)
+	s.Equal(agent.WithheldInput, said)
+	// When it was said, which a link's boundary is held against (conversation.Restore.Since).
+	s.WithinDuration(time.Now().Add(-time.Hour), at, time.Minute)
 
 	// A conversation that opened with nothing refused opens with what was said, as before.
 	customer, cid = s.conversed(storedResponse{said: "Where is order 3825?", status: store.ResponseCompleted})
-	s.Equal("Where is order 3825?", s.recorded(customer).Opening(s.ctx, cid))
+	said, at = s.recorded(customer).Opening(s.ctx, cid)
+	s.Equal("Where is order 3825?", said)
+	s.WithinDuration(time.Now().Add(-time.Hour), at, time.Minute)
 }
 
 func (b *lockedBuffer) String() string {

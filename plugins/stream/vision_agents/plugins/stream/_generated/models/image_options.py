@@ -98,7 +98,7 @@ class ImageOptions:
         if isinstance(_output_format, Unset):
             output_format = UNSET
         else:
-            output_format = ImageOptionsOutputFormat(_output_format)
+            output_format = ImageOptionsOutputFormat._decode(_output_format)
 
         providers = cast(list[str], d.pop("providers", UNSET))
 

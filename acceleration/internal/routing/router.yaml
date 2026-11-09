@@ -837,6 +837,20 @@ stt:
         trains_on_data: "no"
         retention: none
 
+    # A chorus-asr server this deployment runs (internal/audiofloor), built only where
+    # ROUTER_CHORUS_ASR_URL names one. Its words come at each pause and the flow controller
+    # says whether the caller has finished, which a shortcut's caller would not expect, so
+    # it declares zxx as the mock below does and is reached only by naming it outright.
+    - provider: stream
+      model: chorus-asr
+      description: "The chorus-asr model writing what was said, on the server that rules on the floor."
+      local: true
+      languages: [zxx]
+      realtime: true
+      data_policy:
+        trains_on_data: "no"
+        retention: none
+
     # The load benchmark's stand-in, built only where mock_providers is on. Everything
     # about this entry is chosen to keep it out of the way of real traffic: zxx is the ISO
     # code for "no linguistic content", so no shortcut asking for a language reaches it,
@@ -3221,24 +3235,20 @@ search:
       realtime: true
       tier: high-quality
 
-    # Sonar reads the pages and writes the answer, so this is a language model in the
-    # middle of a conversation and is priced and timed like one. The rate is the $5 per
-    # 1,000 request fee at low context plus an allowance for the tokens a search-shaped
-    # question spends, which is what makes it an estimate rather than a published number.
+    # Sonar searches the web and writes the answer, so this is a language model in the
+    # middle of a conversation and is priced and timed like one: through Perplexity's
+    # Agent API, its tokens and each web search it runs, which the row counts as a request.
     - provider: perplexity
       model: sonar
-      description: "Reads the pages and writes the answer, so it is timed and priced like a language model."
+      description: "Searches the web and writes the answer, so it is timed and priced like a language model."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
 
-    # Sonar Pro searches more widely before it answers and costs more per request to do it.
-    - provider: perplexity
-      model: sonar-pro
-      description: "Sonar that searches more widely before it answers, at a higher price."
-      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
-      realtime: true
-      tier: high-quality
+  retired:
+    # Perplexity ended Sonar Chat Completions on 2026-09-27, and the Agent API has no Sonar
+    # Pro model.
+    perplexity/sonar-pro: perplexity/sonar
 
   aliases:
     # Whichever provider answers quickest, in whatever language. The shorthand a session
@@ -3444,8 +3454,9 @@ image:
       supports: [size, aspect_ratio, seed, negative_prompt, format]
 
     # Gemini 3.1 Flash Image, asked for 1K pictures. Google bills output images at $60 per
-    # million tokens, which it quotes as $0.067 a 1K picture on the standard tier
-    # (ai.google.dev/gemini-api/docs/pricing, read 2026-09-24). It takes a shape and
+    # million tokens, 1120 of them a 1K picture, so $0.0672, and the prompt at $0.50 and any
+    # thinking or words at $3 per million tokens on the standard tier
+    # (ai.google.dev/gemini-api/docs/pricing, read 2026-11-04). It takes a shape and
     # nothing else. input_modalities records that it can also be shown a picture, for the
     # edit endpoint that is not built yet.
     - provider: google
@@ -3582,4 +3593,106 @@ detection:
 
     multilingual-high-accuracy:
       languages: [en]
+      tier: high-quality
+
+ocr:
+  providers:
+    # Mistral OCR 4.1, Mistral's model built for documents: a page in, Markdown out, tables
+    # included, at $4 per 1,000 pages (docs.mistral.ai/models/ocr-4-1, read 2026-11-04). The
+    # pinned id rather than mistral-ocr-latest, which moves to the next model at its price.
+    # API data is not used for training (docs.mistral.ai/admin/monitor-comply/privacy-data-
+    # controls) and is kept 30 rolling days for abuse monitoring unless the organisation has
+    # Zero Data Retention, which covers /v1/ocr (legal.mistral.ai/terms/privacy-policy, both
+    # read 2026-11-04).
+    - provider: mistral
+      model: mistral-ocr-4-1
+      description: "Mistral OCR 4.1. Built for documents: scans, forms, tables and handwriting. Billed by the page."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: false
+      tier: high-quality
+      data_policy:
+        trains_on_data: "no"
+        retention: 30d
+
+    # Vision language models asked to transcribe the page, billed by the token at their LLM
+    # rates. A dense page is about 1,500 input and 2,500 output tokens, so a page costs about
+    # $0.0014 on GPT-6 Luna and $0.011 on Gemini 3.8 Flash. Their data terms are the ones
+    # their llm entries give.
+    - provider: openai
+      model: gpt-6-luna
+      description: "GPT-6 Luna asked to transcribe the page. Cheap, and a fallback for Mistral OCR."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: false
+      tier: low-latency
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+
+    # Claude Haiku 5.5 at Luna's rates, a fallback that sees for the pages and pictures read
+    # with their figures summarised. It thinks before it answers, so a page takes more
+    # output tokens than on Luna. The data terms are its llm entry's.
+    - provider: anthropic
+      model: claude-haiku-5-5
+      description: "Claude Haiku 5.5 asked to transcribe the page, or summarise its figures."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: false
+      tier: low-latency
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: 30d
+
+    - provider: gemini
+      model: gemini-3.8-flash
+      description: "Gemini 3.8 Flash asked to transcribe the page. Strong on small print, dearer than Luna."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: false
+      tier: low-latency
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+
+  aliases:
+    # The default: Mistral OCR, failing over to the two vision models and nothing else, so a
+    # page never goes to a model that cannot read one.
+    ocr-default:
+      title: OCR
+      description: "Mistral OCR, with GPT-6 Luna and Gemini 3.8 Flash as fallbacks."
+      only: [mistral/mistral-ocr-4-1, openai/gpt-6-luna, gemini/gemini-3.8-flash]
+      prefer: mistral/mistral-ocr-4-1
+
+    ocr-vision:
+      title: OCR by a vision model
+      description: "A vision language model transcribes the page, cheapest first."
+      require_input_modalities: [image]
+      prefer: openai/gpt-6-luna
+
+    # What knowledge reads a scanned page, a page with charts or diagrams, or a picture in an
+    # office file with: a model that can say what a chart or a diagram shows, the strongest
+    # for the money first, which is the order the providers are listed in above. Mistral OCR
+    # is last, for a scan's text when no vision model answers; a reading of figures alone
+    # never goes to it.
+    ocr-figures:
+      title: OCR with figures summarised
+      description: "GPT-6 Luna reads the page and summarises its charts, diagrams and pictures, with Claude Haiku 5.5, Gemini 3.8 Flash and then Mistral OCR as fallbacks."
+      only: [openai/gpt-6-luna, anthropic/claude-haiku-5-5, gemini/gemini-3.8-flash, mistral/mistral-ocr-4-1]
+      prefer: openai/gpt-6-luna
+
+    # The four shortcuts every modality answers to.
+    en-low-latency:
+      languages: [en]
+      tier: low-latency
+
+    multilingual-low-latency:
+      multilingual: true
+      tier: low-latency
+
+    en-high-accuracy:
+      languages: [en]
+      tier: high-quality
+
+    multilingual-high-accuracy:
+      multilingual: true
       tier: high-quality

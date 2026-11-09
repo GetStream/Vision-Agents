@@ -865,6 +865,7 @@ func documentHandWritten(api huma.API) {
 			"so an imported plugin connection has to be authorized again. The audio behind a voice " +
 			"sample and a call recording lives in an object bucket rather than in this database; the " +
 			"rows naming those objects are here, and copying the bucket is yours to do.\n" +
+			"A router with shards cannot be the source of a move and answers 400 `not_configured`.\n" +
 			"Server-side only, and refused entirely when the router runs with " +
 			"ROUTER_AUTH_MODE=noauth, where naming a customer is all it takes to be one.",
 		Responses: map[string]*huma.Response{
@@ -872,7 +873,7 @@ func documentHandWritten(api huma.API) {
 			"400": {Ref: "#/components/responses/BadRequest"},
 			"401": {Ref: "#/components/responses/Unauthorized"},
 			"403": {Ref: "#/components/responses/Forbidden"},
-			"503": {Description: "This deployment has no database to export from.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
+			"503": {Description: "This deployment has no database to export from, or cannot record changes; or a write that was open when the export started is still open after 30 seconds: try again.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
 		},
 	})
 	document.AddOperation(&huma.Operation{
@@ -885,9 +886,16 @@ func documentHandWritten(api huma.API) {
 			"whatever the file says, so an export from one app cannot be imported into another's " +
 			"rows, and rows belonging to a customer through a parent are only written where that " +
 			"parent is the caller's.\n" +
-			"Importing is idempotent: the same export applied twice leaves what applying it once " +
-			"would.\n" +
+			"An export's rows are written as the source had them, so an export is refused with 409 " +
+			"`conflict`, before any of its rows is written, for an app that already has a row here in a " +
+			"table of the shared database: it would undo what was done here since. `full=true` writes it " +
+			"over them anyway, and importing the same export twice that way leaves what importing it once " +
+			"would. Changes are applied whatever the app holds. An import that stopped partway is run again " +
+			"with `full=true`, since the app then holds its first rows.\n" +
 			"Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.",
+		Parameters: []*huma.Param{
+			{Name: "full", In: "query", Description: "Write an export's rows over what an app that already has data here holds.", Schema: &huma.Schema{Type: huma.TypeBoolean, Default: false}},
+		},
 		RequestBody: &huma.RequestBody{
 			Required: true,
 			Content: map[string]*huma.MediaType{
@@ -899,7 +907,50 @@ func documentHandWritten(api huma.API) {
 			"400": {Ref: "#/components/responses/BadRequest"},
 			"401": {Ref: "#/components/responses/Unauthorized"},
 			"403": {Ref: "#/components/responses/Forbidden"},
+			"409": {Description: "The file carries an export's rows, the app already has data here and `full` is not true.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
 			"503": {Description: "This deployment has no database to import into.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
+		},
+	})
+	document.AddOperation(&huma.Operation{
+		OperationID: "uploadKnowledgeFile",
+		Method:      http.MethodPost,
+		Path:        knowledgeFilesPath,
+		Summary:     "Upload a file to a knowledge base, to be read in the background",
+		Description: "A PDF, a Word document (DOCX or DOC), an Excel workbook (XLSX), an RTF or OpenDocument " +
+			"text file, or Markdown or plain text, of at most 50 MB, sent as multipart/form-data in a part " +
+			"named file. It is read by its bytes, whatever it is called. A file whose first bytes are none " +
+			"of these, such as a photo, is refused at once.\n" +
+			"The answer is 202 once the file is kept: the document is pending, and is read in the " +
+			"background into Markdown that keeps its headings, lists and tables, each passage saying the " +
+			"page it is from. A page that is only a scan is read from its picture through the router's " +
+			"ocr-default, billed per page. Poll `getKnowledgeDocument` until its state is indexed, or " +
+			"failed with an error saying why: a password, a damaged file, or no text at all.\n" +
+			"The passages are keyed by `source`, the file's name unless it is given, so uploading the " +
+			"same source again replaces the document; its old passages are still looked up until the " +
+			"new file has been read. The file itself is deleted once read. Server-side only.",
+		Parameters: []*huma.Param{
+			{Name: "namespace", In: "query", Required: true, Description: "The knowledge base to read the file into.", Schema: &huma.Schema{Type: huma.TypeString, MinLength: itemLimit(1)}},
+			{Name: "source", In: "query", Description: "What the document is called and its passages keyed by. The file part's filename when left out.", Schema: &huma.Schema{Type: huma.TypeString, MaxLength: itemLimit(maxKnowledgeSource)}},
+		},
+		RequestBody: &huma.RequestBody{
+			Required: true,
+			Content: map[string]*huma.MediaType{
+				"multipart/form-data": {Schema: &huma.Schema{
+					Type:     huma.TypeObject,
+					Required: []string{"file"},
+					Properties: map[string]*huma.Schema{
+						"file": {Type: huma.TypeString, Format: "binary", Description: "The file, at most 50 MB."},
+					},
+				}},
+			},
+		},
+		Responses: map[string]*huma.Response{
+			"202": {Description: "The document, pending until its file is read", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[IndexedKnowledgeDocument](), true, "")}}},
+			"400": {Ref: "#/components/responses/BadRequest"},
+			"401": {Ref: "#/components/responses/Unauthorized"},
+			"403": {Ref: "#/components/responses/Forbidden"},
+			"413": {Description: "The file is over 50 MB.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
+			"503": {Description: "This deployment does not take files for knowledge, or could not keep this one.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
 		},
 	})
 	document.AddOperation(&huma.Operation{
@@ -914,6 +965,7 @@ func documentHandWritten(api huma.API) {
 			"Changes are only recorded for an app that has exported, and only for as long as the " +
 			"deployment's retention window. A cursor older than what is still kept is answered 410, " +
 			"which means export again.\n" +
+			"A router with shards cannot be the source of a move and answers 400 `not_configured`.\n" +
 			"Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.",
 		Parameters: []*huma.Param{
 			{Name: "after", In: "query", Description: "The cursor the last page ended at.", Schema: &huma.Schema{Type: huma.TypeInteger, Format: "int64"}},

@@ -73,8 +73,8 @@ func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) erro
 var configColumns = []string{
 	"name", "role", "mode", "region", "stt", "tts", "sts", "voice", "llm", "subagent",
 	"video_source", "video_max_frames", "search", "instructions", "greeting", "greeting_mode", "guardrail", "review_instructions",
-	"skills", "plugins", "connectors", "left_out_connectors", "plugin_events", "mcp_servers", "channels", "scheduling", "calls", "keyterms", "visible_tools", "knowledge_namespace", "sandbox", "sandbox_options", "harness", "tags",
-	"dispatch_incoming_call", "dispatch_text", "episode_cards", "progressive_tools", "tool_output_retention", "resume_history", "sync_hash", "updated_at",
+	"skills", "connectors", "left_out_connectors", "channels", "scheduling", "calls", "keyterms", "visible_tools", "knowledge_namespace", "sandbox", "sandbox_options", "harness", "tags",
+	"dispatch_incoming_call", "dispatch_text", "episode_cards", "episode_cards_record", "progressive_tools", "tool_output_retention", "resume_history", "floor_control", "sync_hash", "updated_at",
 }
 
 // UpdateAgentConfig replaces a config a customer holds. Every field is written, so an
@@ -548,20 +548,11 @@ func normalizeConfig(config *AgentConfig) {
 	if config.Skills == nil {
 		config.Skills = []string{}
 	}
-	if config.Plugins == nil {
-		config.Plugins = []PluginEntry{}
-	}
 	if config.Connectors == nil {
 		config.Connectors = []ConnectorBinding{}
 	}
 	if config.LeftOutConnectors == nil {
 		config.LeftOutConnectors = []LeftOutConnector{}
-	}
-	if config.PluginEvents == nil {
-		config.PluginEvents = []PluginEvent{}
-	}
-	if config.MCPServers == nil {
-		config.MCPServers = []MCPServer{}
 	}
 	if config.Keyterms == nil {
 		config.Keyterms = []string{}

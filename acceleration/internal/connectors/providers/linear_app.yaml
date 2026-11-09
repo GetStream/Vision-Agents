@@ -22,8 +22,9 @@
 #        none], code_challenge_methods_supported [S256], no registration_endpoint.
 id: linear_app
 # A new revision for any change to what this file says; see AGENTS.md. 2 (AI-2082) adds sandbox,
-# so code in a session's sandbox reads Linear's GraphQL API with the connection's token.
-revision: 2
+# so code in a session's sandbox reads Linear's GraphQL API with the connection's token. 3 lists
+# the tools that only read.
+revision: 3
 name: Linear (own OAuth app)
 category: Project management
 description: Search issues and projects, read workspace context, update work, and call Linear's GraphQL API with your own Linear OAuth app.
@@ -79,6 +80,54 @@ rate_limit:
 sources:
   - kind: mcp
     endpoint: mcp
+    # The tools that only read: linear.yaml's read_only_tools (revision 3), which come from the
+    # tools/list of the same server, https://mcp.linear.app/mcp, with its reasons for each tool
+    # it lists and leaves out (extract_images and search_documentation among them). Both lists
+    # change together. A binding with sandbox set still sends data out, as code calls the
+    # whole GraphQL API.
+    read_only_tools:
+      - get_attachment
+      - list_agent_skills
+      - get_agent_skill
+      - list_comments
+      - list_cycles
+      - list_custom_views
+      - get_document
+      - list_documents
+      - get_issue
+      - list_issues
+      - list_issue_statuses
+      - get_issue_status
+      - list_issue_labels
+      - list_projects
+      - get_project
+      - list_project_labels
+      - list_release_pipelines
+      - list_releases
+      - get_release
+      - list_release_notes
+      - get_release_note
+      - list_milestones
+      - get_milestone
+      - get_notifications
+      - list_teams
+      - get_team
+      - get_triage_responsibility
+      - list_templates
+      - get_template
+      - list_users
+      - get_user
+      - get_workspace
+      - get_diff
+      - list_diffs
+      - get_diff_threads
+      - whoami
+      - list_customers
+      - list_customer_needs
+      - list_initiatives
+      - get_initiative
+      - list_initiative_labels
+      - get_status_updates
 # Code in a session's sandbox reads a placeholder from LINEAR_ACCESS_TOKEN, and the sandbox's
 # egress puts the connection's token in its place only in a request header to these hosts
 # ([secrets]), so code sends «Authorization: Bearer $LINEAR_ACCESS_TOKEN», the header [oauth]

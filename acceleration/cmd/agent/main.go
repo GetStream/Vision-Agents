@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent/streamedge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
@@ -102,6 +104,8 @@ func main() {
 		"how long a reply may say nothing before the same request is asked of another candidate as well, 0 asks once")
 	flag.DurationVar(&options.flowHedge, "flow-hedge", config.Defaults().Agent.FlowHedge,
 		"how long a flow decision may say nothing before it is asked of another candidate as well, 0 asks once")
+	flag.StringVar(&options.floorControl, "floor-control", "",
+		"the model that controls the agent's floor: stream/chorus-asr, which needs ROUTER_CHORUS_ASR_URL, or empty for the default flow controller")
 	verbose := flag.Bool("verbose", false, "log lifecycle events")
 	flag.Parse()
 
@@ -109,11 +113,11 @@ func main() {
 	if *verbose {
 		level = slog.LevelDebug
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	logger := newLogger(os.Stderr, level)
 	slog.SetDefault(logger)
 
 	if err := run(options, logger); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		logger.Error("agent stopped", "error", err)
 		os.Exit(1)
 	}
 }
@@ -144,6 +148,7 @@ type options struct {
 	chatTimings    bool
 	replyHedge     time.Duration
 	flowHedge      time.Duration
+	floorControl   string
 
 	number       string
 	vendor       string
@@ -184,6 +189,12 @@ func (o options) agent() string {
 	return o.callID
 }
 
+// newLogger is the agent's logger, which writes text to w and takes every credential out of
+// what it prints: a provider's error can echo the key it was sent.
+func newLogger(w io.Writer, level slog.Level) *slog.Logger {
+	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level, ReplaceAttr: store.RedactLogAttr}))
+}
+
 func run(options options, logger *slog.Logger) error {
 	if options.callID == "" {
 		return errors.New("-call is required")
@@ -192,7 +203,15 @@ func run(options options, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	routers, cleanup, err := buildRouters(ctx, options.replyHedge, options.flowHedge, logger)
+	floor, err := openAudioFloor(logger)
+	if err != nil {
+		return err
+	}
+	floorMode, err := floorControlOf(options.floorControl, floor)
+	if err != nil {
+		return err
+	}
+	routers, cleanup, err := buildRouters(ctx, options.replyHedge, options.flowHedge, floor, logger)
 	if err != nil {
 		return err
 	}
@@ -270,6 +289,8 @@ func run(options options, logger *slog.Logger) error {
 		Store:          routers.store,
 		Live:           routers.live,
 		Logger:         logger,
+		AudioFloor:     floor,
+		AudioFloorMode: floorMode,
 	})
 	if err != nil {
 		return err
@@ -295,7 +316,7 @@ func run(options options, logger *slog.Logger) error {
 		defer transcript.Close()
 	}
 
-	go report(voiceAgent, transcript)
+	go report(voiceAgent.Events(), transcript, os.Stderr)
 
 	if err := voiceAgent.Join(ctx); err != nil {
 		return err
@@ -418,10 +439,11 @@ func openBrowser(link string) error {
 	}
 }
 
-// report prints the conversation as it happens and stores it. Interim work is left to
-// -verbose logging: what a reader wants is what was said.
-func report(voiceAgent *agent.Agent, transcript *chatlog.Log) {
-	for event := range voiceAgent.Events() {
+// report prints the conversation as it happens and stores it, its failures to stderr with
+// any key a provider echoed in them taken out. Interim work is left to -verbose logging: what
+// a reader wants is what was said.
+func report(events <-chan agent.Event, transcript *chatlog.Log, stderr io.Writer) {
+	for event := range events {
 		if transcript != nil {
 			transcript.Record(event)
 		}
@@ -447,12 +469,12 @@ func report(voiceAgent *agent.Agent, transcript *chatlog.Log) {
 			fmt.Printf("  pressed %s\n", typed.Digits)
 		case agent.ToolRan:
 			if typed.Err != nil {
-				fmt.Fprintf(os.Stderr, "  %s failed: %v\n", typed.Tool, typed.Err)
+				fmt.Fprintf(stderr, "  %s failed: %s\n", typed.Tool, store.RedactLogText(fmt.Sprint(typed.Err)))
 			}
 		case agent.Interrupted:
 			fmt.Println("(interrupted)")
 		case agent.Error:
-			fmt.Fprintf(os.Stderr, "%s failed: %v\n", typed.Context, typed.Err)
+			fmt.Fprintf(stderr, "%s failed: %s\n", typed.Context, store.RedactLogText(fmt.Sprint(typed.Err)))
 		}
 	}
 }
@@ -476,6 +498,36 @@ func speaker(heard agent.Heard) string {
 	return "someone"
 }
 
+// openAudioFloor is the chorus-asr server the router's settings name (ROUTER_CHORUS_ASR_URL
+// and the rest), read as the router reads them, or nil. A setting no longer read is warned of,
+// as the router warns of it.
+func openAudioFloor(logger *slog.Logger) (*audiofloor.Client, error) {
+	settings, _, err := config.Load("")
+	if err != nil {
+		return nil, err
+	}
+	for _, retired := range settings.Retired {
+		logger.Warn(retired)
+	}
+	return audiofloor.Open(settings.Agent), nil
+}
+
+// floorControlOf is the agent's floor control as -floor-control names it: stream/chorus-asr,
+// which needs a chorus-asr server to ask, or empty for the default flow controller.
+func floorControlOf(named string, floor *audiofloor.Client) (audiofloor.Mode, error) {
+	switch named {
+	case "":
+		return audiofloor.Off, nil
+	case string(store.FloorControlChorusASR):
+		if floor == nil {
+			return "", errors.New("-floor-control stream/chorus-asr needs a chorus-asr server (ROUTER_CHORUS_ASR_URL)")
+		}
+		return audiofloor.Act, nil
+	default:
+		return "", fmt.Errorf("-floor-control is stream/chorus-asr, or empty for the default flow controller, got %q", named)
+	}
+}
+
 // routers is the three modalities an agent needs, plus the store its turns are recorded
 // in when one is configured.
 type routers struct {
@@ -487,8 +539,9 @@ type routers struct {
 }
 
 // buildRouters wires all three routers, using Postgres and Redis when they are configured.
-// The demo is useful without them: it just stops recording usage.
-func buildRouters(ctx context.Context, replyHedge, flowHedge time.Duration, logger *slog.Logger) (routers, func(), error) {
+// The demo is useful without them: it just stops recording usage. A chorus-asr server, when
+// there is one, is a transcriber agents can name.
+func buildRouters(ctx context.Context, replyHedge, flowHedge time.Duration, floor *audiofloor.Client, logger *slog.Logger) (routers, func(), error) {
 	config, err := routing.LoadConfig(os.Getenv(configEnvVar))
 	if err != nil {
 		return routers{}, nil, err
@@ -531,9 +584,13 @@ func buildRouters(ctx context.Context, replyHedge, flowHedge time.Duration, logg
 		closers = append(closers, liveClient.Close)
 	}
 
+	transcribers := sttrouter.DefaultRegistry()
+	if floor != nil {
+		sttrouter.RegisterAudioFloor(transcribers, floor)
+	}
 	transcriber, err := sttrouter.New(sttrouter.Options{
 		Config:   config[routing.STT],
-		Registry: sttrouter.DefaultRegistry(),
+		Registry: transcribers,
 		Store:    pgStore,
 		Live:     liveClient,
 		Logger:   logger,

@@ -31,6 +31,8 @@ final readonly class CreateSessionRequest
         public ?array $custom = null,
         // A longer note about the conversation, searched alongside the title.
         public ?string $description = null,
+        // The model that controls the floor in this session, and how long a caller may wait once they stop, over the...
+        public ?FloorControl $floorControl = null,
         // What the agent opens the call with, over what the config says.
         public ?Greeting $greeting = null,
         // The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlive...
@@ -93,6 +95,8 @@ final readonly class CreateSessionRequest
         public ?SessionVideo $video = null,
         // The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. P...
         public ?string $voice = null,
+        // The team the session's work is counted under, its team spend limits included, as team:<name> is among a tok...
+        public ?string $team = null,
     ) {
     }
 
@@ -111,6 +115,7 @@ final readonly class CreateSessionRequest
             contextTruncated: array_key_exists('context_truncated', $data) && $data['context_truncated'] !== null ? Json::bool($data, 'context_truncated') : null,
             custom: array_key_exists('custom', $data) && $data['custom'] !== null ? Json::object($data, 'custom') : null,
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
+            floorControl: array_key_exists('floor_control', $data) && $data['floor_control'] !== null ? FloorControl::fromArray(Json::object($data, 'floor_control')) : null,
             greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Greeting::fromArray(Json::object($data, 'greeting')) : null,
             history: array_key_exists('history', $data) && $data['history'] !== null ? array_map(HistoryMessage::fromArray(...), Json::objects($data, 'history')) : null,
             id: array_key_exists('id', $data) && $data['id'] !== null ? Json::string($data, 'id') : null,
@@ -143,6 +148,7 @@ final readonly class CreateSessionRequest
             userName: array_key_exists('user_name', $data) && $data['user_name'] !== null ? Json::string($data, 'user_name') : null,
             video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
             voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
+            team: array_key_exists('team', $data) && $data['team'] !== null ? Json::string($data, 'team') : null,
         );
     }
 
@@ -180,6 +186,9 @@ final readonly class CreateSessionRequest
         }
         if ($this->description !== null) {
             $out['description'] = $this->description;
+        }
+        if ($this->floorControl !== null) {
+            $out['floor_control'] = $this->floorControl->toArray();
         }
         if ($this->greeting !== null) {
             $out['greeting'] = $this->greeting->toArray();
@@ -276,6 +285,9 @@ final readonly class CreateSessionRequest
         }
         if ($this->voice !== null) {
             $out['voice'] = $this->voice;
+        }
+        if ($this->team !== null) {
+            $out['team'] = $this->team;
         }
         return $out;
     }

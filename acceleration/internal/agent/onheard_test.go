@@ -31,7 +31,8 @@ func (s *AgentSuite) toldBeforeReported(told <-chan Heard, release func(), text 
 	case <-time.After(settleFor):
 		s.FailNow("the owner was never told what was heard")
 	}
-	s.Never(func() bool { return countOf[Heard](s.reported()) > 0 }, 200*time.Millisecond, 5*time.Millisecond,
+	events := s.events
+	s.Never(func() bool { return countOf[Heard](events.seen()) > 0 }, 200*time.Millisecond, 5*time.Millisecond,
 		"the words were reported heard before the owner was told of them")
 	release()
 	s.eventually(func() bool { return countOf[Heard](s.reported()) == 1 }, "the words were never reported heard")

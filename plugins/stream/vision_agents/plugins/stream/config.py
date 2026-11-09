@@ -32,6 +32,7 @@ from ._generated.models import (
     ConnectionOwnerType,
     DispatchSetting,
     ErrorResponse,
+    FloorControl,
     Greeting,
     GreetingMode,
     Harness,
@@ -409,6 +410,14 @@ async def _declare_settings(
         if settings.scheduling.default_timezone:
             scheduling.default_timezone = settings.scheduling.default_timezone
         body.scheduling = scheduling
+    if settings.floor_control is not None:
+        # As written, each key only when named; empty is the default flow controller again.
+        floor_control = FloorControl()
+        if settings.floor_control.model is not None:
+            floor_control.model = settings.floor_control.model
+        if settings.floor_control.max_wait_ms is not None:
+            floor_control.max_wait_ms = settings.floor_control.max_wait_ms
+        body.floor_control = floor_control
     if settings.keyterms:
         body.keyterms = settings.keyterms
     if settings.sandbox:

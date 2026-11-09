@@ -26,6 +26,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
 
 // Recall names a conversation to read history out of. Both halves are needed because a
@@ -149,6 +150,11 @@ type Spec struct {
 	// Tags are the caller's own cost labels, carried onto every request the session
 	// makes.
 	Tags routing.Tags
+	// Team is the team the session's work is counted under, its limits included, when the
+	// caller that opened it names none: a server-side caller's own choice, or else the agent
+	// config's TeamTag. A team the caller's token signed is never moved by it. Not read from
+	// Tags, which a device may send.
+	Team string
 
 	// Incognito holds the conversation and records nothing about it: no session row, no
 	// turns, no transcript. It is the one field that makes a session unfindable afterwards,
@@ -243,10 +249,13 @@ type Spec struct {
 	// DispatchText hands what an end user writes to the customer's dispatch worker rather
 	// than the model, from the agent's config. The model answers only the server.
 	DispatchText bool
-	// EpisodeCards has a phone call write its episode card into the caller's omni-channel,
-	// and a session on a thread channel or a phone call start with the person's other cards,
-	// from the agent's config. Off, the session does what it did before the cards existed.
-	EpisodeCards bool
+	// EpisodeCards has a session on a thread channel, an app chat or a phone call start with
+	// the person's other cards, and a phone call write its episode card into the caller's
+	// omni-channel, from the agent's config: the on mode. EpisodeCardsRecord has the call
+	// write its card while no session reads any: the record mode (WritesCards). Both off, the
+	// session does what it did before the cards existed.
+	EpisodeCards       bool
+	EpisodeCardsRecord bool
 	// ProgressiveTools offers plugin, MCP server and connector tools by a summary, and
 	// answers the first call to each with its full description instead of running it.
 	ProgressiveTools bool
@@ -258,6 +267,10 @@ type Spec struct {
 	// ResumeHistory is how a conversation the session carries on is handed back to the
 	// model: the session request's, else the agent config's. Zero is the router's default.
 	ResumeHistory store.ResumeHistory
+	// FloorControl is the model that controls the floor, and how long a caller may wait once
+	// they stop: the session request's, else the agent config's. Zero is the default flow
+	// controller.
+	FloorControl store.FloorControl
 	// Scheduling is the agent config's scheduled-task settings: whether the
 	// scheduling tools are offered, and the defaults a task takes.
 	Scheduling store.AgentScheduling
@@ -404,14 +417,28 @@ func FromConfig(config store.AgentConfig) Spec {
 		Harness:            config.Harness,
 		DispatchText:       config.DispatchText,
 		EpisodeCards:       config.EpisodeCards,
+		EpisodeCardsRecord: config.EpisodeCardsRecord,
 		ProgressiveTools:   config.ProgressiveTools,
 		ResumeHistory:      config.ResumeHistory,
+		FloorControl:       config.FloorControl,
 		Scheduling:         config.Scheduling,
 		Calls:              config.Calls,
 		Tags:               routing.Tags(config.Tags),
+		Team:               configTeam(config.Tags),
 		// The config's alone until Manager.Create holds it to the policies.
 		ToolOutputRetention: config.ToolOutputRetention,
 	}
+}
+
+// configTeam is the team a config's tags name. One that is no team's name is left out rather
+// than failing every session of an agent saved before the tag was a team: config writes
+// refuse it now, and it stays a cost label.
+func configTeam(tags map[string]string) string {
+	team := strings.TrimSpace(tags[TeamTag])
+	if usage.CheckTeam(team) != nil {
+		return ""
+	}
+	return team
 }
 
 // Normalize fills in the defaults a caller left out and reports what cannot be defaulted.
@@ -603,6 +630,12 @@ func (s Spec) KeyedAgentID() string {
 	return joinedCallID(s.CallID)
 }
 
+// WritesCards is whether the session's agent config writes episode cards: on or record
+// (store.AgentConfig.WritesCards).
+func (s Spec) WritesCards() bool {
+	return s.EpisodeCards || s.EpisodeCardsRecord
+}
+
 // Call is a Stream call: its type and its id.
 type Call struct {
 	Type string
@@ -746,6 +779,10 @@ func (s Spec) Native() bool { return s.STSTarget != "" }
 // projectTag is the cost label a project is carried as, which is the one the stats rollups
 // already break spend down by.
 const projectTag = "project"
+
+// TeamTag is the agent config's cost label that is also the team its work is counted under
+// (Spec.Team).
+const TeamTag = "team"
 
 // applyOverwrites folds what the caller asked to change about the models into the targets.
 //

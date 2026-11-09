@@ -6,8 +6,8 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.contact import Contact
-from ...models.contacts_request import ContactsRequest
+from ...models.add_contacts_request import AddContactsRequest
+from ...models.add_contacts_response import AddContactsResponse
 from ...models.error_response import ErrorResponse
 from ...types import Response
 
@@ -15,7 +15,7 @@ from ...types import Response
 def _get_kwargs(
     id: str,
     *,
-    body: ContactsRequest,
+    body: AddContactsRequest,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
@@ -36,14 +36,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorResponse | list[Contact] | None:
+) -> AddContactsResponse | ErrorResponse | None:
     if response.status_code == 201:
-        response_201 = []
-        _response_201 = response.json()
-        for response_201_item_data in _response_201:
-            response_201_item = Contact.from_dict(response_201_item_data)
-
-            response_201.append(response_201_item)
+        response_201 = AddContactsResponse.from_dict(response.json())
 
         return response_201
 
@@ -72,6 +67,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = ErrorResponse.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 500:
         response_500 = ErrorResponse.from_dict(response.json())
 
@@ -90,7 +90,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorResponse | list[Contact]]:
+) -> Response[AddContactsResponse | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -103,25 +103,26 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: ContactsRequest,
-) -> Response[ErrorResponse | list[Contact]]:
+    body: AddContactsRequest,
+) -> Response[AddContactsResponse | ErrorResponse]:
     """Add people to ring
 
-     Contacts are added rather than replaced, so a campaign can be topped up while it is running. Each
-    may carry instructions of their own, which the agent is told along with whatever its config already
-    says.
+     A draft only: once launched, the list is fixed (409 campaign_locked). Up to 1,000 a request. Each
+    number is stored in E.164, read in default_country when it has no country code. A row that cannot be
+    rung, or repeats a number the campaign holds, is refused and the rest are added: refused says which
+    and why.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The resource, as returned when it was created.
-        body (ContactsRequest):
+        body (AddContactsRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | list[Contact]]
+        Response[AddContactsResponse | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -140,25 +141,26 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: ContactsRequest,
-) -> ErrorResponse | list[Contact] | None:
+    body: AddContactsRequest,
+) -> AddContactsResponse | ErrorResponse | None:
     """Add people to ring
 
-     Contacts are added rather than replaced, so a campaign can be topped up while it is running. Each
-    may carry instructions of their own, which the agent is told along with whatever its config already
-    says.
+     A draft only: once launched, the list is fixed (409 campaign_locked). Up to 1,000 a request. Each
+    number is stored in E.164, read in default_country when it has no country code. A row that cannot be
+    rung, or repeats a number the campaign holds, is refused and the rest are added: refused says which
+    and why.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The resource, as returned when it was created.
-        body (ContactsRequest):
+        body (AddContactsRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | list[Contact]
+        AddContactsResponse | ErrorResponse
     """
 
     return sync_detailed(
@@ -172,25 +174,26 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: ContactsRequest,
-) -> Response[ErrorResponse | list[Contact]]:
+    body: AddContactsRequest,
+) -> Response[AddContactsResponse | ErrorResponse]:
     """Add people to ring
 
-     Contacts are added rather than replaced, so a campaign can be topped up while it is running. Each
-    may carry instructions of their own, which the agent is told along with whatever its config already
-    says.
+     A draft only: once launched, the list is fixed (409 campaign_locked). Up to 1,000 a request. Each
+    number is stored in E.164, read in default_country when it has no country code. A row that cannot be
+    rung, or repeats a number the campaign holds, is refused and the rest are added: refused says which
+    and why.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The resource, as returned when it was created.
-        body (ContactsRequest):
+        body (AddContactsRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | list[Contact]]
+        Response[AddContactsResponse | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -207,25 +210,26 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: ContactsRequest,
-) -> ErrorResponse | list[Contact] | None:
+    body: AddContactsRequest,
+) -> AddContactsResponse | ErrorResponse | None:
     """Add people to ring
 
-     Contacts are added rather than replaced, so a campaign can be topped up while it is running. Each
-    may carry instructions of their own, which the agent is told along with whatever its config already
-    says.
+     A draft only: once launched, the list is fixed (409 campaign_locked). Up to 1,000 a request. Each
+    number is stored in E.164, read in default_country when it has no country code. A row that cannot be
+    rung, or repeats a number the campaign holds, is refused and the rest are added: refused says which
+    and why.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The resource, as returned when it was created.
-        body (ContactsRequest):
+        body (AddContactsRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | list[Contact]
+        AddContactsResponse | ErrorResponse
     """
 
     return (

@@ -28,9 +28,9 @@ type AgentConfigPatch struct {
 	Greeting           *Greeting                `json:"greeting,omitempty" doc:"Replaces the greeting whole. An empty text removes it."`
 	Guardrail          *string                  `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail."`
 	Skills             *[]string                `json:"skills,omitempty"`
-	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
-	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
-	McpServers         *[]McpServer             `json:"mcp_servers,omitempty" deprecated:"true" doc:"No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	Plugins            *[]retiredPlugin         `json:"plugins,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	PluginEvents       *[]map[string]any        `json:"plugin_events,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	McpServers         *[]map[string]any        `json:"mcp_servers,omitempty" deprecated:"true" doc:"No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing."`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" maxItems:"64" doc:"The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out."`
 	Channels           *AgentChannels           `json:"channels,omitempty"`
 	Keyterms           *[]string                `json:"keyterms,omitempty"`
@@ -40,11 +40,13 @@ type AgentConfigPatch struct {
 	SandboxOptions     *SandboxOptions          `json:"sandbox_options,omitempty"`
 	Harness            *Harness                 `json:"harness,omitempty"`
 	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
-	EpisodeCards       *bool                    `json:"episode_cards,omitempty"`
+	EpisodeCards       *EpisodeCardsMode        `json:"episode_cards,omitempty"`
 	Tools              *AgentTools              `json:"tools,omitempty"`
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
 	Calls              *AgentCalls              `json:"calls,omitempty"`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty"`
+	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"Replaces the choice whole. Left out or null, the stored choice stays; an empty object is the default flow controller again."`
+	EndOfTurn          any                      `json:"end_of_turn,omitempty" hidden:"true"` // refused: floor_control's max_wait_ms replaced it
 	Tags               *map[string]string       `json:"tags,omitempty"`
 	Video              *SessionVideo            `json:"video,omitempty"`
 }
@@ -75,6 +77,15 @@ func (Harness) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "Harness", "Which harness the agent's sessions run: what hands "+
 		"work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on "+
 		"the agent, never on a session. Omit it for the default, the only one there is.", string(Default))
+}
+
+func (EpisodeCardsMode) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "EpisodeCardsMode", "What the agent does with episode cards, the same for every "+
+		"channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel "+
+		"connections. off writes none and reads none. record writes each conversation's card and its summary into "+
+		"the person's omni-channel, and no session reads them. on writes them as record does, and a session starts "+
+		"with the person's other cards. Turning record into on reads what record wrote.",
+		string(EpisodeCardsOff), string(EpisodeCardsRecord), string(EpisodeCardsOn))
 }
 
 func (AgentRole) Schema(registry huma.Registry) *huma.Schema {
@@ -137,8 +148,6 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	original := config
 	heard := config.STT
 	was := sandboxOfConfig(config)
-	// The row may still name them from before they were refused; a patch writes none.
-	config.Plugins, config.PluginEvents, config.MCPServers = nil, nil, nil
 
 	if message, ok := configComplaint(ctx, AgentConfigRequest{
 		Name:           override(config.Name, patch.Name),
@@ -204,13 +213,22 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		config.Harness, _ = harnessOf(patch.Harness)
 	}
 	applyDispatch(&config, patch.Dispatch)
-	config.EpisodeCards = override(config.EpisodeCards, patch.EpisodeCards)
+	if patch.EpisodeCards != nil {
+		setEpisodeCards(&config, *patch.EpisodeCards)
+	}
 	config.ProgressiveTools = progressiveOf(config.ProgressiveTools, patch.Tools)
 	config.ToolOutputRetention = outputRetentionOf(config.ToolOutputRetention, patch.Tools)
 	config.Scheduling = schedulingOr(config.Scheduling, patch.Scheduling)
 	config.Calls = callsOr(config.Calls, patch.Calls)
 	config.ResumeHistory = resumeHistoryOr(config.ResumeHistory, patch.ResumeHistory)
+	config.FloorControl = floorControlOr(config.FloorControl, patch.FloorControl)
 	if message, ok := schedulingComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if failure, refused := s.floorControlRefusal(patch.FloorControl, patch.EndOfTurn); refused {
+		return nil, failure
+	}
+	if _, message, ok := s.floorControlComplaint(ctx, config.FloorControl, original.FloorControl); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := callsComplaint(config.Calls); !ok {
@@ -220,6 +238,9 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		return nil, invalidRequest(message)
 	}
 	config.Tags = override(config.Tags, patch.Tags)
+	if message, ok := teamTagComplaint(config.Tags, original.Tags); !ok {
+		return nil, invalidRequest(message)
+	}
 	if patch.Video != nil {
 		config.VideoSource = override(config.VideoSource, patch.Video.Source)
 		config.VideoMaxFrames = override(config.VideoMaxFrames, patch.Video.MaxFrames)

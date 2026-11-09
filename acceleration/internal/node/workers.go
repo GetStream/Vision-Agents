@@ -225,23 +225,21 @@ func (w *Workers) RunHosted(ctx context.Context, customerID, agentID string, cal
 	return reply.Parts, nil
 }
 
-// AssignMessage gives a message to one of the customer's workers, here if any is connected
-// and otherwise on a node where one is, and returns the worker it went to.
+// AssignMessage gives a message to one of the customer's workers, here if one connected here
+// takes messages and otherwise on a node where one is connected, and returns the worker it
+// went to. A worker here that only hosts tools is passed over, and with nobody elsewhere the
+// pool here says why it could not take the message.
 func (w *Workers) AssignMessage(ctx context.Context, customerID string, message dispatch.Message) (string, error) {
-	if len(w.pool.Workers(customerID)) > 0 {
+	addresses, err := w.waitingFor(ctx, customerID, dispatch.Messages)
+	if err != nil {
+		return "", err
+	}
+	if len(addresses) == 0 {
 		worker, err := w.pool.AssignMessage(customerID, message)
 		if err != nil {
 			return "", err
 		}
 		return worker.ID, nil
-	}
-
-	addresses, err := w.directory.Waiting(ctx, customerID)
-	if err != nil {
-		return "", err
-	}
-	if len(addresses) == 0 {
-		return "", dispatch.ErrNoWorkers
 	}
 	reply, err := w.ask(ctx, addresses[rand.IntN(len(addresses))], workRequest{
 		Kind: messageKind, CustomerID: customerID, Message: &message,
@@ -250,6 +248,14 @@ func (w *Workers) AssignMessage(ctx context.Context, customerID string, message 
 		return "", err
 	}
 	return reply.WorkerID, nil
+}
+
+// waitingFor is the other nodes to carry work of a kind to: none when a worker here takes it.
+func (w *Workers) waitingFor(ctx context.Context, customerID string, kind dispatch.Kind) ([]string, error) {
+	if w.pool.Takes(customerID, kind) {
+		return nil, nil
+	}
+	return w.directory.Waiting(ctx, customerID)
 }
 
 // ask carries a request to another node and waits for what came of it. A hosted call's

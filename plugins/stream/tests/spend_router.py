@@ -16,6 +16,8 @@ WINDOW_END = "2026-11-02T00:00:00Z"
 
 # The ids a limit's subject is named by, in the order the router lists them.
 IDS = ("app_id", "api_key", "user_id", "team", "category")
+# A query names a key api_key_id, since api_key there is the proxy's credential.
+QUERY_NAMES = {"api_key": "api_key_id"}
 APP_SUBJECTS = ("app", "app_category", "app_team")
 
 
@@ -187,7 +189,9 @@ class SpendRouter:
 
     async def _usage(self, request: web.Request) -> web.Response:
         await self._record(request)
-        lists = {name: request.query.getall(name, []) for name in IDS}
+        lists = {
+            name: request.query.getall(QUERY_NAMES.get(name, name), []) for name in IDS
+        }
         count = max([len(values) for values in lists.values()] + [1])
         answered = []
         for i in range(count):
@@ -246,7 +250,8 @@ async def served() -> AsyncIterator[SpendRouter]:
 def matches(row: dict[str, Any], query: MultiDictProxy[str]) -> bool:
     """Whether a listed row passes the filters a list was sent with."""
     for name in ("subject", "level", "interval", "state", *IDS):
-        if name in query and row.get(name) != query[name]:
+        sent = QUERY_NAMES.get(name, name)
+        if sent in query and row.get(name) != query[sent]:
             return False
     return True
 

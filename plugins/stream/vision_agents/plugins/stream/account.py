@@ -86,7 +86,7 @@ class Usage:
         value of ``group_by``.
 
         Args:
-            group_by: ``"modality"``, who asked (``"who:app"``, ``"who:api_key"``,
+            group_by: ``"modality"``, who asked (``"who:app"``, ``"who:origin"``,
                 ``"who:user"``, ``"who:team"`` or ``"who:category"``), or a cost label.
             scope: The app's spend, or every app's of the organization (server side only).
             limit: How many values keep a series of their own; the rest are summed.
@@ -96,7 +96,7 @@ class Usage:
         """
         if team is not None:
             check_team(team)
-        query: dict[str, Any] = _set(api_key=api_key, user_id=user_id, team=team)
+        query: dict[str, Any] = _set(origin=api_key, user_id=user_id, team=team)
         if tags:
             query["tag"] = list(tags)
         if categories:

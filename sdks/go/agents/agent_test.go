@@ -610,6 +610,45 @@ func TestSyncSendsTheSchedulingTheAgentDeclared(t *testing.T) {
 	}
 }
 
+// agent.yaml's floor_control goes as written, a model the router does not know and an empty
+// mapping included, and a file that names none, or null, sends none, so the stored choice stays.
+func TestSyncSendsTheFloorControlTheAgentDeclared(t *testing.T) {
+	for _, c := range []struct {
+		declared string
+		want     *acceleration.FloorControl
+	}{
+		{"floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n",
+			&acceleration.FloorControl{Model: pointer("stream/chorus-asr"), MaxWaitMs: pointer(int64(800))}},
+		{"floor_control:\n  model: stream/chorus-asr\n", &acceleration.FloorControl{Model: pointer("stream/chorus-asr")}},
+		{"floor_control: {model: other}\n", &acceleration.FloorControl{Model: pointer("other")}},
+		{"floor_control: {}\n", &acceleration.FloorControl{}},
+		{"floor_control:\n", nil},
+		{"floor_control: ~\n", nil},
+		{"llm: openai/gpt-5.6\n", nil},
+	} {
+		root := filepath.Join(t.TempDir(), "concierge")
+		write(t, root, "agent.yaml", c.declared)
+		router := newBackend(t)
+		agent := agentOn(t, router, Options{Dir: root})
+
+		if _, err := agent.Sync(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+
+		router.mu.Lock()
+		got := router.syncs[0].FloorControl
+		router.mu.Unlock()
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%q: floor_control went as %s, not %s", c.declared, describe(got), describe(c.want))
+		}
+	}
+}
+
+func describe(floorControl *acceleration.FloorControl) string {
+	raw, _ := json.Marshal(floorControl)
+	return string(raw)
+}
+
 func TestAFolderDeclaresCalls(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
 	write(t, root, "agent.yaml", `calls:
@@ -1759,3 +1798,5 @@ func connectionPage(next string, items ...acceleration.Connection) acceleration.
 	}
 	return page
 }
+
+func pointer[T any](value T) *T { return &value }

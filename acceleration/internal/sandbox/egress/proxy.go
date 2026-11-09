@@ -353,8 +353,8 @@ func (p *Proxy) tunnel(conn net.Conn, t tunnel) {
 
 // inner forwards one request in t's tunnel: a GET or a HEAD, or one a grant's reads list (to a
 // GraphQL read, with queries alone; to a SQL read, one SELECT, as the host's dry run of it
-// says). It reads the grants again for each, and after a dry run, so after Delete no request
-// goes out on a tunnel the credential opened.
+// says; to an LFS read, a download). It reads the grants again for each, and after a dry run, so
+// after Delete no request goes out on a tunnel the credential opened.
 func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		host := strings.ToLower(r.Host)
@@ -364,35 +364,41 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		// Host decides which site of the address gets the request; one other than the
 		// tunnel's could be another tenant's (domain fronting).
 		if host != t.host {
-			refuse(w, t.label, r.Method, decisionDeniedHost, http.StatusMisdirectedRequest, "egress: Host is not the host the tunnel was opened to")
+			refuseRequest(w, r, t.label, decisionDeniedHost, http.StatusMisdirectedRequest, "egress: Host is not the host the tunnel was opened to")
 			return
 		}
 		// An upgraded connection's bytes would pass without the response rewrite.
 		if r.Header.Get("Upgrade") != "" {
-			refuse(w, t.label, r.Method, decisionDeniedRequest, http.StatusNotImplemented, "egress: protocol upgrades are not proxied")
+			refuseRequest(w, r, t.label, decisionDeniedRequest, http.StatusNotImplemented, "egress: protocol upgrades are not proxied")
 			return
 		}
 		record, _, err := p.lookup(r.Context(), t.credential)
 		if err != nil {
 			p.logger.Warn("the sandbox egress proxy could not read a sandbox's grants", "error", err)
-			refuse(w, t.label, r.Method, decisionError, http.StatusServiceUnavailable, "egress: the sandbox's grants cannot be read just now")
+			refuseRequest(w, r, t.label, decisionError, http.StatusServiceUnavailable, "egress: the sandbox's grants cannot be read just now")
 			return
 		}
 		// No record, after Delete or expiry, grants nothing.
 		if !record.granted(host) {
-			refuse(w, t.label, r.Method, decisionDeniedHost, http.StatusForbidden, "egress: the sandbox's grant for this host has ended")
+			refuseRequest(w, r, t.label, decisionDeniedHost, http.StatusForbidden, "egress: the sandbox's grant for this host has ended")
 			return
 		}
 		logger := p.logger.With("session", record.Session, "host", host)
 		// Code in the sandbox reads a granted host; it writes through the connector's tools, which
 		// a binding can make ask the user first. The answer tells the model so.
-		reads, graphQL, sql := record.reads(host, r.Method, r.URL)
+		reads, graphQL, sql, lfs := record.reads(host, r.Method, r.URL)
+		unlisted, said := !reads && lfsAPI(r.URL.Path), logger
 		if name := overrider(r.Header); name != "" {
 			reads, logger = false, logger.With("why", "a method override header: "+name)
 		}
 		if graphQL {
 			// Its error names the check alone, never the body's bytes.
 			if err := onlyQueries(r); err != nil {
+				reads, logger = false, logger.With("why", err.Error())
+			}
+		}
+		if lfs {
+			if err := onlyDownloads(r); err != nil {
 				reads, logger = false, logger.With("why", err.Error())
 			}
 		}
@@ -404,10 +410,14 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 			}
 		}
 		// A body read to its end fills r.Trailer, which ReverseProxy sends on with the rest, so
-		// the trailer is checked after every body read (GraphQL's and a SQL read's), before the
-		// dry run.
+		// the trailer is checked after every body read (GraphQL's, a SQL read's and an LFS
+		// read's), before the dry run.
 		if name := overrider(r.Trailer); name != "" {
 			reads, logger = false, logger.With("why", "a method override trailer: "+name)
+		}
+		// A refusal logs one why: the LFS one only when no check above gave its own.
+		if unlisted && logger == said {
+			logger = logger.With("why", "a Git LFS request that no read lists")
 		}
 		if !reads {
 			p.refuseWrite(w, r, t, logger, record.readsSQL(host), why)
@@ -443,7 +453,7 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 			if errors.Is(err, sandbox.ErrNoCredential) {
 				status = http.StatusUnauthorized
 			}
-			refuse(w, t.label, r.Method, decisionError, status, "egress: the connection gives no token: "+grant.Binding)
+			refuseRequest(w, r, t.label, decisionError, status, "egress: the connection gives no token: "+grant.Binding)
 			return
 		}
 		pairs := echoes(token, grant.Placeholder)
@@ -523,7 +533,7 @@ func (p *Proxy) refuseWrite(w http.ResponseWriter, r *http.Request, t tunnel, lo
 	default:
 		refused += ": code in the sandbox only reads through a connector; write with the connector's tools"
 	}
-	refuse(w, t.label, r.Method, decisionDeniedMethod, http.StatusForbidden, refused)
+	refuseRequest(w, r, t.label, decisionDeniedMethod, http.StatusForbidden, refused)
 }
 
 // selectsOrRefuse asks the host's dry run whether the request to a SQL read, query, is one

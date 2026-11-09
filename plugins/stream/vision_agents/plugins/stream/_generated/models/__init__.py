@@ -6,6 +6,8 @@ from .account_balance_warning_source import AccountBalanceWarningSource
 from .account_status import AccountStatus
 from .activity_bucket import ActivityBucket
 from .activity_granularity import ActivityGranularity
+from .add_contacts_request import AddContactsRequest
+from .add_contacts_response import AddContactsResponse
 from .add_trunk_number_request import AddTrunkNumberRequest
 from .add_trunk_number_request_tags import AddTrunkNumberRequestTags
 from .agent_calls import AgentCalls
@@ -13,8 +15,14 @@ from .agent_changes import AgentChanges
 from .agent_channels import AgentChannels
 from .agent_config import AgentConfig
 from .agent_config_patch import AgentConfigPatch
+from .agent_config_patch_mcp_servers_item import AgentConfigPatchMcpServersItem
+from .agent_config_patch_plugin_events_item import AgentConfigPatchPluginEventsItem
+from .agent_config_patch_plugins_item_type_1 import AgentConfigPatchPluginsItemType1
 from .agent_config_patch_tags import AgentConfigPatchTags
 from .agent_config_request import AgentConfigRequest
+from .agent_config_request_mcp_servers_item import AgentConfigRequestMcpServersItem
+from .agent_config_request_plugin_events_item import AgentConfigRequestPluginEventsItem
+from .agent_config_request_plugins_item_type_1 import AgentConfigRequestPluginsItemType1
 from .agent_config_request_tags import AgentConfigRequestTags
 from .agent_config_tags import AgentConfigTags
 from .agent_connector_binding import AgentConnectorBinding
@@ -81,11 +89,31 @@ from .call_token import CallToken
 from .call_token_request import CallTokenRequest
 from .call_tokens import CallTokens
 from .call_usage import CallUsage
+from .calling_hours import CallingHours
+from .calling_hours_windows import CallingHoursWindows
+from .calling_window import CallingWindow
 from .campaign import Campaign
+from .campaign_analytics import CampaignAnalytics
+from .campaign_analytics_call_outcomes import CampaignAnalyticsCallOutcomes
+from .campaign_analytics_outcomes import CampaignAnalyticsOutcomes
+from .campaign_attempt import CampaignAttempt
+from .campaign_dial_day import CampaignDialDay
+from .campaign_next import CampaignNext
+from .campaign_next_end import CampaignNextEnd
+from .campaign_outcome import CampaignOutcome
+from .campaign_page import CampaignPage
 from .campaign_request import CampaignRequest
 from .campaign_request_tags import CampaignRequestTags
+from .campaign_route import CampaignRoute
+from .campaign_sequence import CampaignSequence
 from .campaign_state import CampaignState
+from .campaign_step import CampaignStep
 from .campaign_tags import CampaignTags
+from .campaign_time_zone import CampaignTimeZone
+from .campaign_time_zone_mode import CampaignTimeZoneMode
+from .campaign_type import CampaignType
+from .campaign_voicemail import CampaignVoicemail
+from .campaign_voicemail_action import CampaignVoicemailAction
 from .cancel_price_change_input import CancelPriceChangeInput
 from .candidate import Candidate
 from .channel_account import ChannelAccount
@@ -168,13 +196,18 @@ from .connector_setup import ConnectorSetup
 from .connector_setup_step import ConnectorSetupStep
 from .connector_tool_grant import ConnectorToolGrant
 from .contact import Contact
-from .contact_state import ContactState
-from .contacts_request import ContactsRequest
-from .contacts_request_contacts_item import ContactsRequestContactsItem
+from .contact_attempt import ContactAttempt
+from .contact_counts import ContactCounts
+from .contact_input import ContactInput
+from .contact_input_variables import ContactInputVariables
+from .contact_page import ContactPage
+from .contact_stage import ContactStage
+from .contact_variables import ContactVariables
 from .cost_source import CostSource
 from .create_opt_out_request import CreateOptOutRequest
 from .create_opt_out_request_source import CreateOptOutRequestSource
 from .create_response_request import CreateResponseRequest
+from .create_response_request_ui_action import CreateResponseRequestUiAction
 from .create_run_request import CreateRunRequest
 from .create_run_request_tags import CreateRunRequestTags
 from .create_scheduled_task_request import CreateScheduledTaskRequest
@@ -210,13 +243,17 @@ from .detection_request_tags import DetectionRequestTags
 from .detection_result import DetectionResult
 from .detection_status import DetectionStatus
 from .dispatch_setting import DispatchSetting
+from .duplicate_campaign_request import DuplicateCampaignRequest
+from .duplicate_campaign_request_contacts import DuplicateCampaignRequestContacts
 from .effective_quota import EffectiveQuota
 from .end_call_settings import EndCallSettings
 from .endpointing import Endpointing
+from .episode_cards_mode import EpisodeCardsMode
 from .equals_type_1 import EqualsType1
 from .error_detail import ErrorDetail
 from .error_response import ErrorResponse
 from .error_type import ErrorType
+from .floor_control import FloorControl
 from .fork_session_request import ForkSessionRequest
 from .fork_session_request_custom import ForkSessionRequestCustom
 from .generated_image import GeneratedImage
@@ -258,11 +295,13 @@ from .invocation_argument import InvocationArgument
 from .invocation_argument_type import InvocationArgumentType
 from .invocation_error_type import InvocationErrorType
 from .knowledge_document import KnowledgeDocument
+from .knowledge_document_state import KnowledgeDocumentState
 from .knowledge_passage import KnowledgePassage
 from .knowledge_url import KnowledgeUrl
 from .knowledge_url_declaration import KnowledgeUrlDeclaration
 from .knowledge_url_request import KnowledgeUrlRequest
 from .knowledge_url_state import KnowledgeUrlState
+from .launch_campaign_request import LaunchCampaignRequest
 from .left_out_connector import LeftOutConnector
 from .library_voice import LibraryVoice
 from .library_voices import LibraryVoices
@@ -297,8 +336,6 @@ from .manage_limit_grant_input import ManageLimitGrantInput
 from .manage_limit_input import ManageLimitInput
 from .manage_limit_reset_input import ManageLimitResetInput
 from .manage_status import ManageStatus
-from .mcp_server import McpServer
-from .mcp_server_branding import McpServerBranding
 from .modality import Modality
 from .model_call_timing import ModelCallTiming
 from .model_overwrites import ModelOverwrites
@@ -306,6 +343,12 @@ from .model_overwrites_thinking import ModelOverwritesThinking
 from .model_overwrites_verbosity import ModelOverwritesVerbosity
 from .model_tokens import ModelTokens
 from .number_search_result import NumberSearchResult
+from .ocr_error_code import OcrErrorCode
+from .ocr_options import OcrOptions
+from .ocr_request import OcrRequest
+from .ocr_request_tags import OcrRequestTags
+from .ocr_result import OcrResult
+from .ocr_status import OcrStatus
 from .offered_tool import OfferedTool
 from .offered_tool_parameters import OfferedToolParameters
 from .offered_tools import OfferedTools
@@ -324,9 +367,6 @@ from .place_call_request_custom import PlaceCallRequestCustom
 from .place_call_request_headers import PlaceCallRequestHeaders
 from .place_call_request_tags import PlaceCallRequestTags
 from .placed_call import PlacedCall
-from .plugin_event import PluginEvent
-from .plugin_event_arguments import PluginEventArguments
-from .plugin_with_options import PluginWithOptions
 from .policy import Policy
 from .policy_budget import PolicyBudget
 from .policy_data_policy import PolicyDataPolicy
@@ -381,6 +421,8 @@ from .quota_level import QuotaLevel
 from .rcs_profile import RCSProfile
 from .recording_source import RecordingSource
 from .recording_status import RecordingStatus
+from .refused_contact import RefusedContact
+from .refused_reason import RefusedReason
 from .respond_request import RespondRequest
 from .resume_history import ResumeHistory
 from .review_actor import ReviewActor
@@ -427,7 +469,9 @@ from .session_call import SessionCall
 from .session_call_outcome import SessionCallOutcome
 from .session_connector_binding import SessionConnectorBinding
 from .session_custom import SessionCustom
+from .session_end_fault import SessionEndFault
 from .session_end_reason import SessionEndReason
+from .session_end_stage import SessionEndStage
 from .session_filter import SessionFilter
 from .session_filter_custom import SessionFilterCustom
 from .session_memory import SessionMemory
@@ -499,6 +543,9 @@ from .stt_options_overwrites import SttOptionsOverwrites
 from .subject_usage import SubjectUsage
 from .suspend_telephony_request import SuspendTelephonyRequest
 from .sync_agent_request import SyncAgentRequest
+from .sync_agent_request_mcp_servers_item import SyncAgentRequestMcpServersItem
+from .sync_agent_request_plugin_events_item import SyncAgentRequestPluginEventsItem
+from .sync_agent_request_plugins_item_type_1 import SyncAgentRequestPluginsItemType1
 from .sync_agent_request_tags import SyncAgentRequestTags
 from .sync_agent_result import SyncAgentResult
 from .tag_key_summary import TagKeySummary
@@ -544,6 +591,7 @@ from .update_session_request_custom import UpdateSessionRequestCustom
 from .update_session_request_thinking import UpdateSessionRequestThinking
 from .update_session_request_verbosity import UpdateSessionRequestVerbosity
 from .update_sip_trunk_request import UpdateSipTrunkRequest
+from .upload_knowledge_file_body import UploadKnowledgeFileBody
 from .usage_event import UsageEvent
 from .usage_event_attributes import UsageEventAttributes
 from .usage_event_page import UsageEventPage
@@ -583,6 +631,8 @@ __all__ = (
     "AccountStatus",
     "ActivityBucket",
     "ActivityGranularity",
+    "AddContactsRequest",
+    "AddContactsResponse",
     "AddTrunkNumberRequest",
     "AddTrunkNumberRequestTags",
     "AgentCalls",
@@ -590,8 +640,14 @@ __all__ = (
     "AgentChannels",
     "AgentConfig",
     "AgentConfigPatch",
+    "AgentConfigPatchMcpServersItem",
+    "AgentConfigPatchPluginEventsItem",
+    "AgentConfigPatchPluginsItemType1",
     "AgentConfigPatchTags",
     "AgentConfigRequest",
+    "AgentConfigRequestMcpServersItem",
+    "AgentConfigRequestPluginEventsItem",
+    "AgentConfigRequestPluginsItemType1",
     "AgentConfigRequestTags",
     "AgentConfigTags",
     "AgentConnectorBinding",
@@ -654,11 +710,31 @@ __all__ = (
     "CallTokenRequest",
     "CallTokens",
     "CallUsage",
+    "CallingHours",
+    "CallingHoursWindows",
+    "CallingWindow",
     "Campaign",
+    "CampaignAnalytics",
+    "CampaignAnalyticsCallOutcomes",
+    "CampaignAnalyticsOutcomes",
+    "CampaignAttempt",
+    "CampaignDialDay",
+    "CampaignNext",
+    "CampaignNextEnd",
+    "CampaignOutcome",
+    "CampaignPage",
     "CampaignRequest",
     "CampaignRequestTags",
+    "CampaignRoute",
+    "CampaignSequence",
     "CampaignState",
+    "CampaignStep",
     "CampaignTags",
+    "CampaignTimeZone",
+    "CampaignTimeZoneMode",
+    "CampaignType",
+    "CampaignVoicemail",
+    "CampaignVoicemailAction",
     "CancelPriceChangeInput",
     "Candidate",
     "ChannelAccount",
@@ -741,13 +817,18 @@ __all__ = (
     "ConnectorSetupStep",
     "ConnectorToolGrant",
     "Contact",
-    "ContactState",
-    "ContactsRequest",
-    "ContactsRequestContactsItem",
+    "ContactAttempt",
+    "ContactCounts",
+    "ContactInput",
+    "ContactInputVariables",
+    "ContactPage",
+    "ContactStage",
+    "ContactVariables",
     "CostSource",
     "CreateOptOutRequest",
     "CreateOptOutRequestSource",
     "CreateResponseRequest",
+    "CreateResponseRequestUiAction",
     "CreateRunRequest",
     "CreateRunRequestTags",
     "CreateScheduledTaskRequest",
@@ -783,13 +864,17 @@ __all__ = (
     "DetectionResult",
     "DetectionStatus",
     "DispatchSetting",
+    "DuplicateCampaignRequest",
+    "DuplicateCampaignRequestContacts",
     "EffectiveQuota",
     "EndCallSettings",
     "Endpointing",
+    "EpisodeCardsMode",
     "EqualsType1",
     "ErrorDetail",
     "ErrorResponse",
     "ErrorType",
+    "FloorControl",
     "ForkSessionRequest",
     "ForkSessionRequestCustom",
     "GeneratedImage",
@@ -829,11 +914,13 @@ __all__ = (
     "InvocationArgumentType",
     "InvocationErrorType",
     "KnowledgeDocument",
+    "KnowledgeDocumentState",
     "KnowledgePassage",
     "KnowledgeUrl",
     "KnowledgeUrlDeclaration",
     "KnowledgeUrlRequest",
     "KnowledgeUrlState",
+    "LaunchCampaignRequest",
     "LeftOutConnector",
     "LibraryVoice",
     "LibraryVoices",
@@ -868,8 +955,6 @@ __all__ = (
     "ManageLimitInput",
     "ManageLimitResetInput",
     "ManageStatus",
-    "McpServer",
-    "McpServerBranding",
     "Modality",
     "ModelCallTiming",
     "ModelOverwrites",
@@ -877,6 +962,12 @@ __all__ = (
     "ModelOverwritesVerbosity",
     "ModelTokens",
     "NumberSearchResult",
+    "OcrErrorCode",
+    "OcrOptions",
+    "OcrRequest",
+    "OcrRequestTags",
+    "OcrResult",
+    "OcrStatus",
     "OfferedTool",
     "OfferedToolParameters",
     "OfferedTools",
@@ -895,9 +986,6 @@ __all__ = (
     "PlaceCallRequestHeaders",
     "PlaceCallRequestTags",
     "PlacedCall",
-    "PluginEvent",
-    "PluginEventArguments",
-    "PluginWithOptions",
     "Policy",
     "PolicyBudget",
     "PolicyDataPolicy",
@@ -952,6 +1040,8 @@ __all__ = (
     "RCSProfile",
     "RecordingSource",
     "RecordingStatus",
+    "RefusedContact",
+    "RefusedReason",
     "RespondRequest",
     "ResumeHistory",
     "ReviewActor",
@@ -998,7 +1088,9 @@ __all__ = (
     "SessionCallOutcome",
     "SessionConnectorBinding",
     "SessionCustom",
+    "SessionEndFault",
     "SessionEndReason",
+    "SessionEndStage",
     "SessionFilter",
     "SessionFilterCustom",
     "SessionMemory",
@@ -1070,6 +1162,9 @@ __all__ = (
     "SubjectUsage",
     "SuspendTelephonyRequest",
     "SyncAgentRequest",
+    "SyncAgentRequestMcpServersItem",
+    "SyncAgentRequestPluginEventsItem",
+    "SyncAgentRequestPluginsItemType1",
     "SyncAgentRequestTags",
     "SyncAgentResult",
     "TagKeySummary",
@@ -1115,6 +1210,7 @@ __all__ = (
     "UpdateSessionRequestThinking",
     "UpdateSessionRequestVerbosity",
     "UpdateSipTrunkRequest",
+    "UploadKnowledgeFileBody",
     "UsageEvent",
     "UsageEventAttributes",
     "UsageEventPage",

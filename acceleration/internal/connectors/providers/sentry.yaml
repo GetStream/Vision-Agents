@@ -16,8 +16,9 @@
 #         [S256], authorization_response_iss_parameter_supported true,
 #         client_id_metadata_document_supported true.
 id: sentry
-# A new revision for any change to what this file says; see AGENTS.md.
-revision: 1
+# A new revision for any change to what this file says; see AGENTS.md. 2 lists the tools that
+# only read.
+revision: 2
 # [plugin]
 name: Sentry
 category: Engineering
@@ -43,3 +44,61 @@ client:
 sources:
   - kind: mcp
     endpoint: mcp
+    # The tools that only read. [mcp] names none, so the names are from the server's source,
+    # getsentry/sentry-mcp at 02ca9bfab1357742ed742c40f4af6c7ed9c41981 (opened 2026-11-05):
+    # packages/mcp-core/src/toolDefinitions.json lists 76 tools, and tools/exposure.ts serves
+    # each one directly. Each tool below sets «readOnlyHint: true» in tools/catalog
+    # (get_ai_conversation_details and search_ai_conversations are aliases, in
+    # tools/catalog/index.ts, of get_agent_conversation_details and
+    # search_agent_conversations). Their regionUrl reaches only Sentry's own hosts
+    # (internal/tool-helpers/validate-region-url.ts), and get_sentry_resource reads only the
+    # organization and ids from the URL it is given (internal/url-helpers.ts). Left out: every
+    # tool whose readOnlyHint is false (those that create, update, delete, link, note, add,
+    # remove, run Seer or send feedback); search_events, search_errors, search_logs,
+    # search_metrics, search_profiles, search_replays, search_traces, search_issues and
+    # search_issue_events, which take the model's question in natural language that «a
+    # configured agent translates» with a model provider outside Sentry
+    # (internal/agents); and search_docs and get_doc, which read Sentry's public
+    # documentation, outside the account, as linear.yaml leaves out search_documentation.
+    # A tool added later is left out too.
+    read_only_tools:
+      - find_alert_rules
+      - find_dashboards
+      - find_dropped_events
+      - find_dsns
+      - find_metric_monitors
+      - find_monitors
+      - find_organizations
+      - find_projects
+      - find_releases
+      - find_teams
+      - find_uptime_monitors
+      - get_agent_conversation_details
+      - get_ai_conversation_details
+      - get_alert_options
+      - get_alert_rule
+      - get_dashboard_details
+      - get_event_attachment
+      - get_event_stacktrace
+      - get_issue_activity
+      - get_issue_breadcrumbs
+      - get_issue_details
+      - get_issue_tag_values
+      - get_issue_user_reports
+      - get_latest_base_snapshot
+      - get_metric_monitor_details
+      - get_monitor_details
+      - get_profile
+      - get_profile_details
+      - get_release_details
+      - get_replay_details
+      - get_sentry_mcp_info
+      - get_sentry_resource
+      - get_snapshot
+      - get_snapshot_image
+      - get_span_details
+      - get_trace_details
+      - get_uptime_monitor_details
+      - search_agent_conversations
+      - search_ai_conversations
+      - whoami

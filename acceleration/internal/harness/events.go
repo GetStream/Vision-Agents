@@ -70,6 +70,9 @@ type Decided struct {
 	// Ruler is whose answer the decision is, or Deadline or Unusable. Empty when no model's
 	// answer was read for another reason.
 	Ruler Ruler
+	// Again is how long a Hearer that waited would have the caller given before it is asked
+	// again: its model is fitted to be asked that often. Zero keeps the cadence's own.
+	Again time.Duration
 }
 
 // Ruler is which model a decision came from.
@@ -86,6 +89,8 @@ const (
 	// Unusable is no model either: the controller's answer could not be read, and the
 	// decision is the default for it.
 	Unusable Ruler = "unusable"
+	// Heard is the Hearer, a model that heard the caller's audio.
+	Heard Ruler = "heard"
 )
 
 func (d Decided) Valid() bool {

@@ -12,6 +12,7 @@ import (
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -64,22 +65,128 @@ func (s *UserPhonesSuite) TestAnSMSFromALinkedNumberReadsTheUsersChatCard() {
 	s.Equal(chat, s.omniChannel(s.person))
 }
 
-// Catches a link that leaves the person on two omni-channels, joins onto the newer one, or
-// reads only the cards of the reader's own omni-channel: the SMS came first, so its
-// omni-channel is the older, and the chat's card stays where it was written.
-func (s *UserPhonesSuite) TestALinkJoinsTheChatOntoTheOlderSMSOmniChannel() {
+// Catches a link that leaves the person on two omni-channels or joins onto the newer one: the
+// number's row is made after the link, by its first SMS, and the user's chat row made after it
+// takes its omni-channel, the older.
+func (s *UserPhonesSuite) TestAChatRowMadeAfterTheLinkJoinsTheOlderSMSOmniChannel() {
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "hi"), time.Now()))
 	s.NotContains(s.took(1)[0].text, chatSummary)
 	sms := s.omniChannel(s.person)
-	chat := s.chatCard()
+	s.chatCard()
 
-	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "is it still on?"), time.Now()))
 
 	s.Contains(s.took(2)[1].text, chatSummary)
 	s.Equal(sms, s.omniChannel(s.person))
 	s.Equal(sms, s.chatOmniChannel())
-	s.Len(s.chat.Stored(chat), 1, "the chat's card did not move")
+}
+
+// Catches a link that joins the number's history to the user: the number texted before the
+// link (a former holder, or the user before the customer vouched for them), and the user's app
+// chat would read that SMS card once linked.
+func (s *UserPhonesSuite) TestALinkedUserReadsNoneOfTheNumbersSMSFromBeforeTheLink() {
+	s.textedBeforeTheLink()
+	s.chatCard()
+
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
+
+	s.Equal([]string{store.EpisodeChat}, s.chatReads(s.user), "the user's own chat card alone")
+}
+
+// Catches a fix that leaves the number off the user for good: an SMS after the link joins the
+// user's omni-channel, so the user's chat reads its card and the SMS reads the chat's.
+func (s *UserPhonesSuite) TestAnSMSAfterTheLinkReachesTheUsersChat() {
+	s.textedBeforeTheLink()
+	s.chatCard()
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "is it still on?"), time.Now()))
+
+	s.Contains(s.took(2)[1].text, chatSummary)
+	s.ElementsMatch([]string{store.EpisodeSMS, store.EpisodeChat}, s.chatReads(s.user))
+	s.Equal(s.chatOmniChannel(), s.omniChannel(s.person))
+}
+
+// Catches a number given to somebody else that carries its last holder's SMS: anya texted from
+// it while linked, the customer unlinked her and linked bob, and bob's chat would read her SMS
+// card, which the unlink left with the number.
+func (s *UserPhonesSuite) TestAUserLinkedToANumberSomebodyHadBeforeReadsNoneOfTheirSMS() {
+	s.chatCard()
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "this is anya"), time.Now()))
+	s.took(1)
+	s.idle()
+	s.Require().ElementsMatch([]string{store.EpisodeSMS, store.EpisodeChat}, s.chatReads(s.user), "linked, her SMS is hers")
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": null}`, nil))
+	bob := "bob-" + s.utils.uuid()
+	s.chatCardOf(bob, "Bob asked about his bill.")
+
+	s.Require().Equal(http.StatusOK, s.put(bob, `{"phone": "`+s.person+`"}`, nil))
+
+	s.Equal([]string{store.EpisodeChat}, s.chatReads(bob), "bob's own chat card alone")
+}
+
+// The control: the same link again leaves everything as it was, the cards of the SMS written
+// since the first included, as the probe of this test at 3b7a53f97 (before this change)
+// answered.
+func (s *UserPhonesSuite) TestTheSameLinkAgainKeepsTheCardsWrittenSinceTheFirst() {
+	s.chatCard()
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "first"), time.Now()))
+	s.took(1)
+	s.idle()
+	omni := s.omniChannel(s.person)
+
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
+
+	s.ElementsMatch([]string{store.EpisodeSMS, store.EpisodeChat}, s.chatReads(s.user))
+	s.Equal(omni, s.omniChannel(s.person))
+	s.Equal(omni, s.chatOmniChannel())
+}
+
+// Under a config with episode_cards off the channel bridge writes no row and no episode for an
+// SMS (AI-2856; the probe of this test at 3b7a53f97 answered one row and one episode), the link
+// is stored all the same, and the SMS after it is answered with no cards read.
+func (s *UserPhonesSuite) TestAConfigWithoutCardsLinksWithNoEpisodeOfTheNumber() {
+	s.config.EpisodeCards = false
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "hi"), time.Now()))
+	s.took(1)
+
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "is it still on?"), time.Now()))
+
+	s.NotContains(s.took(2)[1].text, "earlier episodes")
+	s.Zero(s.episodes())
+	var rows int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM contact_map WHERE customer_id = ?", s.customerID()).Scan(&rows))
+	s.Zero(rows)
+	s.Equal([]string{s.person}, s.links())
+}
+
+// Catches a link made while the config had episode_cards off, which set none of the number's
+// SMS aside: once the config turns the cards on, the user's chat would read the SMS the number
+// sent before the link, while the cards were on. It reads its own card, and the number's SMS
+// after the link.
+func (s *UserPhonesSuite) TestCardsTurnedOnAfterTheLinkReadNoneOfTheNumbersSMSFromBeforeIt() {
+	s.textedBeforeTheLink()
+	s.chatCard()
+	s.config.EpisodeCards = false
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
+	var aside int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM contact_map WHERE customer_id = ? AND address LIKE 'retired:%'", s.customerID()).Scan(&aside))
+	s.Require().Zero(aside, "nothing set aside under off")
+	s.config.EpisodeCards = true
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+
+	s.Equal([]string{store.EpisodeChat}, s.chatReads(s.user), "the user's own chat card alone")
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "is it still on?"), time.Now()))
+	s.Contains(s.took(2)[1].text, chatSummary)
+	s.ElementsMatch([]string{store.EpisodeSMS, store.EpisodeChat}, s.chatReads(s.user), "the SMS after the link is the user's")
 }
 
 // The control: without a link the SMS reads no chat card and keeps its own omni-channel, as
@@ -101,12 +208,14 @@ func (s *UserPhonesSuite) TestAPutAnswersTheNumberInE164AndIsIdempotent() {
 	formatted := s.person[:2] + " (" + s.person[2:5] + ") " + s.person[5:8] + "-" + s.person[8:]
 
 	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+formatted+`"}`, &user))
-	s.Equal(AgentUser{UserID: s.user, Phone: &s.person}, user, "the router's form, not the one sent")
+	s.Equal(AgentUser{UserID: s.user, Phone: &s.person, PhoneHistorySince: user.PhoneHistorySince}, user, "the router's form, not the one sent")
 	s.Require().Equal([]string{s.person}, s.links(), "kept as an SMS from it names it")
+	first := user.PhoneHistorySince
+	s.Require().NotNil(first, "from the link on")
 	user = AgentUser{}
 	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, &user))
 
-	s.Equal(AgentUser{UserID: s.user, Phone: &s.person}, user)
+	s.Equal(AgentUser{UserID: s.user, Phone: &s.person, PhoneHistorySince: first}, user)
 	s.Equal([]string{s.person}, s.links())
 }
 
@@ -157,10 +266,13 @@ func (s *UserPhonesSuite) TestAnUnlinkedNumberReadsNoneOfTheUsersCards() {
 	s.Require().Equal(http.StatusOK, s.put(bob, `{"phone": "`+s.person+`"}`, nil))
 	s.NotEqual(anya, s.chatOmniChannelOf(bob), "bob is not on anya's omni-channel")
 	s.Equal(anya, s.chatOmniChannel(), "anya is not on bob's")
+	// A number is given to somebody else long after its last SMS, once its episode closed.
+	s.idle()
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "bob here"), time.Now()))
 	turns = s.took(3)
-	s.NotContains(s.cardsBefore(turns[2].text, "first"), chatSummary, "bob's SMS reads none of anya's cards")
-	s.Contains(s.cardsBefore(turns[2].text, "first"), "Bob asked about his bill.")
+	s.NotContains(turns[2].text, chatSummary, "bob's SMS reads none of anya's cards")
+	s.NotContains(turns[2].text, "user: first", "nor what the number texted before his link")
+	s.Contains(turns[2].text, "Bob asked about his bill.")
 }
 
 // Catches a new number that leaves the old one on the user's omni-channel: the old number
@@ -176,9 +288,9 @@ func (s *UserPhonesSuite) TestAnOldNumberLinkedToAnotherUserJoinsNoneOfTheFirstU
 	s.Require().Equal(http.StatusOK, s.put(bob, `{"phone": "`+s.person+`"}`, nil))
 
 	s.NotEqual(s.chatOmniChannel(), s.chatOmniChannelOf(bob))
-	s.NotEqual(s.chatOmniChannel(), s.omniChannel(s.person))
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "bob here"), time.Now()))
 	s.NotContains(s.took(2)[1].text, chatSummary, "the old number reads none of anya's cards")
+	s.NotEqual(s.chatOmniChannel(), s.omniChannel(s.person))
 }
 
 // Catches a number that is not E.164 stored as a link no SMS could ever match, and a body of
@@ -221,7 +333,8 @@ func (s *UserPhonesSuite) TestAnotherCustomerLinksItsOwnUser() {
 
 // Catches a link kept for the customer rather than for the Stream app the request acts in:
 // the same user id in a second app is another person, who may have a number of their own, and
-// a number the first app's user holds is free in the second.
+// a number the first app's user holds is free in the second. A GET reads the link of the app the
+// request acts in, not another app's.
 func (s *UserPhonesSuite) TestTheSameUserInASecondStreamAppIsAnotherPerson() {
 	second := s.utils.number()
 	s.giveApp(s.customerID(), 7101, "key-"+s.utils.uuid())
@@ -230,6 +343,10 @@ func (s *UserPhonesSuite) TestTheSameUserInASecondStreamAppIsAnotherPerson() {
 
 	s.Equal(http.StatusOK, s.put(s.user, `{"phone": "`+second+`"}`, nil))
 	s.Equal(http.StatusOK, s.put("other-"+s.utils.uuid(), `{"phone": "`+s.person+`"}`, nil))
+	var got AgentUser
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/users/"+s.user, "", &got))
+	s.Require().NotNil(got.Phone, "app 7102's link")
+	s.Equal(second, *got.Phone, "app 7102's link")
 
 	var apps []int64
 	s.Require().NoError(s.store.DB().NewSelect().Table("user_phones").Column("stream_app_pk").
@@ -244,6 +361,188 @@ func (s *UserPhonesSuite) TestAnEndUserCannotLinkAUser() {
 
 	s.Equal(http.StatusForbidden, status)
 	s.Empty(s.links())
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
+	status, _ = s.client.call(http.MethodGet, "/v1/agents/users/"+s.user, "")
+	s.Equal(http.StatusForbidden, status, "nor read whose number a user has")
+}
+
+// The ticket's example on the customer's line: the number texts before the link, the customer
+// links the user to it with each request, and the number texts again. Catches a boundary that
+// one of the two reads ignores: the SMS session's thread history (the model recites it) and the
+// user's chat cards.
+func (s *UserPhonesSuite) TestTheLinksHistoryDecidesWhatTheThreadAndTheChatRead() {
+	turns := 0
+	for _, c := range []struct {
+		fields string
+		reads  bool
+	}{
+		{"", false}, {`, "include_phone_history": false`, false}, {`, "include_phone_history": true`, true},
+		{`, "phone_history_since": "` + time.Now().Add(-time.Minute).UTC().Format(time.RFC3339) + `"`, true},
+		{`, "include_phone_history": false, "phone_history_since": "` + time.Now().Add(-time.Minute).UTC().Format(time.RFC3339) + `"`, true},
+	} {
+		s.user, s.person = "user-"+s.utils.uuid(), s.utils.number()
+		s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "allergic to penicillin"), time.Now()))
+		turns++
+		s.took(turns)
+		s.idle()
+		s.chatCard()
+
+		s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"`+c.fields+`}`, nil))
+
+		s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "what do you know about me?"), time.Now()))
+		turns++
+		s.Equal(c.reads, strings.Contains(s.took(turns)[turns-1].text, "penicillin"), "the thread, %s", c.fields)
+		sms := 1
+		if c.reads {
+			sms = 2
+		}
+		s.Equal(sms, countOf(s.chatReads(s.user), store.EpisodeSMS), "the chat, %s", c.fields)
+	}
+}
+
+// Catches a request whose two fields say two things, a boundary in the future, a word on a
+// number's past with no number, and fields of the wrong shape, taken as a link.
+func (s *UserPhonesSuite) TestAPhoneHistoryThatSaysNothingSureIsRefused() {
+	for _, body := range []string{
+		`"include_phone_history": true, "phone_history_since": "2026-11-02T00:00:00Z"`,
+		`"phone_history_since": "` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `"`,
+	} {
+		status, payload := s.serverClient.call(http.MethodPut, "/v1/agents/users/"+s.user, `{"phone": "`+s.person+`", `+body+`}`)
+		s.Equal(http.StatusBadRequest, status, body)
+		s.Contains(string(payload), "phone_history_since", body)
+		s.Contains(string(payload), string(ErrorTypeInvalidRequest), body)
+	}
+	status, payload := s.serverClient.call(http.MethodPut, "/v1/agents/users/"+s.user, `{"phone": null, "include_phone_history": false}`)
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(payload), "need a phone")
+	for _, body := range []string{`"include_phone_history": "yes"`, `"phone_history_since": "2026-11-02"`, `"phone_history_since": 1762041600`} {
+		status, payload := s.serverClient.call(http.MethodPut, "/v1/agents/users/"+s.user, `{"phone": "`+s.person+`", `+body+`}`)
+		s.Equal(http.StatusBadRequest, status, body)
+		s.Contains(string(payload), codeValidationFailed, body)
+	}
+	s.Empty(s.links())
+}
+
+// Catches a GET that answers another field than the one stored, and a re-PUT with neither field
+// that moves what is stored.
+func (s *UserPhonesSuite) TestAGetAnswersTheStoredBoundary() {
+	get := func() AgentUser {
+		var user AgentUser
+		s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/users/"+s.user, "", &user))
+		return user
+	}
+	s.Equal(AgentUser{UserID: s.user}, get(), "no link")
+	all := true
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`", "include_phone_history": true}`, nil))
+	s.Equal(AgentUser{UserID: s.user, Phone: &s.person, IncludePhoneHistory: &all}, get())
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
+	s.Equal(AgentUser{UserID: s.user, Phone: &s.person, IncludePhoneHistory: &all}, get(), "neither field keeps it")
+	since := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
+	var put AgentUser
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`", "phone_history_since": "2026-11-02T03:00:00+03:00"}`, &put))
+	s.Equal(AgentUser{UserID: s.user, Phone: &s.person, PhoneHistorySince: &since}, put)
+	s.Equal(put, get())
+}
+
+// LinqSandboxSuite is the Linq line of a customer the sandbox holds, under an agent with
+// episode_cards on: before each reply, and each scheduled delivery, the bridge asks dlc.Gate
+// about the person a chat's replies reach, the contact map row of the chat's episode
+// (channelbridge.replyTo), and the sandbox lists only the test's person.
+type LinqSandboxSuite struct {
+	linqLine
+
+	person string
+}
+
+func TestLinqSandboxSuite(t *testing.T) {
+	runSuite(t, new(LinqSandboxSuite))
+}
+
+func (s *LinqSandboxSuite) SetupSuite() {
+	s.database = "linq_sandbox"
+	s.sandbox = dlc.Sandbox{Enabled: true, Recipients: 2}
+	s.linqLine.SetupSuite()
+}
+
+func (s *LinqSandboxSuite) SetupTest() {
+	s.linqLine.SetupTest()
+	s.config.EpisodeCards = true
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	s.person = s.utils.number()
+	s.Require().NoError(s.store.SetSandboxRecipients(context.Background(), s.customerID(), []string{s.person}))
+}
+
+// Catches a one-to-one chat under a config with episode_cards off, which opens no episode, whose
+// replies would reach nobody the sandbox lists: the person a chat's replies reach is its
+// episode's row, and with none it is the person who started the chat
+// (store.ChannelThreadStarter), as the sender admit checked. Its reply and a scheduled delivery
+// go out (AI-2856).
+func (s *LinqSandboxSuite) TestAOneToOneChatUnderAConfigWithTheCardsOffIsAnswered() {
+	s.config.EpisodeCards = false
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	chat := s.utils.uuid()
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, s.person, "hi"), time.Now()))
+
+	s.Equal(chat, s.took(1)[0].chat, "the reply")
+	s.Zero(s.rows("SELECT count(*) FROM episodes WHERE customer_id = ?"), "no episode")
+	s.NoError(s.reachable(s.threadChannel(chat)), "a scheduled delivery into the chat")
+}
+
+// A group chat under a config with episode_cards off has no episode and no one person, and its
+// replies and scheduled deliveries reach the person who started it (store.ChannelThreadStarter),
+// whom the sandbox lists, as base 518ac7e9f's did through the episode it opened whatever the
+// config said (AI-2856 R1.1). Catches a group chat with no episode whose replies reach nobody,
+// so the sandbox holds them back.
+func (s *LinqSandboxSuite) TestAGroupChatUnderAConfigWithTheCardsOffIsAnswered() {
+	s.config.EpisodeCards = false
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	chat := s.utils.uuid()
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.chatSays(s.received(chat, s.line, s.person, "hi"), true), time.Now()))
+
+	s.Equal(chat, s.took(1)[0].chat, "the reply")
+	s.Zero(s.rows("SELECT count(*) FROM episodes WHERE customer_id = ?"), "no episode")
+	s.NoError(s.reachable(s.threadChannel(chat)), "a scheduled delivery into the chat")
+}
+
+// Catches a link that leaves a chat's replies to its set-aside row's address, retired:<id>,
+// which the sandbox does not list: the customer links the person's number to a user while
+// their iMessage chat is going on, and the chat's next reply, and a scheduled delivery into
+// it, are held back.
+func (s *LinqSandboxSuite) TestAChatWhoseNumberIsLinkedMidConversationIsStillAnswered() {
+	chat := s.utils.uuid()
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, s.person, "hi"), time.Now()))
+	s.took(1)
+	s.Require().Eventually(func() bool { return s.rows("SELECT count(*) FROM episodes WHERE customer_id = ?") == 1 },
+		settleFor, 10*time.Millisecond, "the chat's episode")
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/users/user-"+s.utils.uuid(),
+		`{"phone": "`+s.person+`"}`, nil))
+	s.Require().Equal(1, s.rows("SELECT count(*) FROM contact_map WHERE customer_id = ? AND address LIKE 'retired:%'"),
+		"the link set the chat's row aside")
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, s.person, "still there?"), time.Now()))
+
+	s.Equal(chat, s.took(2)[1].chat, "the reply after the link")
+	s.NoError(s.reachable(s.threadChannel(chat)), "a scheduled delivery into the chat")
+}
+
+// rows is the count a query of the test's customer answers.
+func (s *LinqSandboxSuite) rows(query string) int {
+	var count int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(), query, s.customerID()).Scan(&count))
+	return count
+}
+
+// countOf is how many of sources are source.
+func countOf(sources []string, source string) int {
+	n := 0
+	for _, each := range sources {
+		if each == source {
+			n++
+		}
+	}
+	return n
 }
 
 // cardsBefore is what a turn's session was handed before the thread's history: the recited
@@ -252,6 +551,42 @@ func (s *UserPhonesSuite) cardsBefore(reply, first string) string {
 	at := strings.Index(reply, "user: "+first+"\n")
 	s.Require().NotEqual(-1, at, "the reply recites the thread's first message")
 	return reply[:at]
+}
+
+// textedBeforeTheLink has the test's number text the agent before any link, and its episode
+// close as idle.
+func (s *UserPhonesSuite) textedBeforeTheLink() {
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "hi, this is carl"), time.Now()))
+	s.took(1)
+	s.idle()
+}
+
+// idle closes the test customer's open episodes, as the idle sweeper does an hour after their
+// last message, so the next message opens an episode of its own.
+func (s *UserPhonesSuite) idle() {
+	_, err := s.store.DB().ExecContext(context.Background(),
+		"UPDATE episodes SET status = ?, ended_at = now() WHERE customer_id = ? AND status = 'in_progress'",
+		store.EpisodeEnded, s.customerID())
+	s.Require().NoError(err)
+}
+
+// chatReads are the sources of the cards a session of the user's app chat reads, newest first:
+// their stream_user row and the cards of its omni-channel (omnichannel.Cards.Context), none
+// left out.
+func (s *UserPhonesSuite) chatReads(user string) []string {
+	person, err := omnichannel.StreamUser(s.hookApp(), user)
+	s.Require().NoError(err)
+	contact, err := s.store.Contact(context.Background(), s.customerID(), s.config.ID, store.ContactStreamUser, person.Address)
+	s.Require().NoError(err)
+	cards, err := s.store.EpisodeCards(context.Background(), store.CardsQuery{
+		CustomerID: s.customerID(), AgentConfigID: s.config.ID, ConversationID: contact.ConversationID, Limit: 100,
+	})
+	s.Require().NoError(err)
+	var sources []string
+	for _, card := range cards {
+		sources = append(sources, card.Source)
+	}
+	return sources
 }
 
 // put sends a PUT of the user with the raw body as the app's backend, and decodes the answer.

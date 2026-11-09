@@ -9,11 +9,14 @@ final class SessionPhone: Sendable, Codable, JSONEncodable {
     let vendor: String?
     /// The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at.
     let vendorCallId: String?
+    /// What the agent does when an answering machine picks up.
+    let voicemail: SessionVoicemail?
 
-    init(number: String, vendor: String? = nil, vendorCallId: String? = nil) {
+    init(number: String, vendor: String? = nil, vendorCallId: String? = nil, voicemail: SessionVoicemail? = nil) {
         self.number = number
         self.vendor = vendor
         self.vendorCallId = vendorCallId
+        self.voicemail = voicemail
     }
 
     init(from decoder: Decoder) throws {
@@ -21,6 +24,7 @@ final class SessionPhone: Sendable, Codable, JSONEncodable {
         self.number = try container.decode(String.self, forKey: .number)
         self.vendor = try container.decodeIfPresent(String.self, forKey: .vendor)
         self.vendorCallId = try container.decodeIfPresent(String.self, forKey: .vendorCallId)
+        self.voicemail = try container.decodeIfPresent(SessionVoicemail.self, forKey: .voicemail)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -28,6 +32,7 @@ final class SessionPhone: Sendable, Codable, JSONEncodable {
         try container.encode(number, forKey: .number)
         try container.encodeIfPresent(vendor, forKey: .vendor)
         try container.encodeIfPresent(vendorCallId, forKey: .vendorCallId)
+        try container.encodeIfPresent(voicemail, forKey: .voicemail)
     }
 
 }
@@ -36,12 +41,14 @@ extension SessionPhone: Hashable {
     static func == (lhs: SessionPhone, rhs: SessionPhone) -> Bool {
         lhs.number == rhs.number &&
         lhs.vendor == rhs.vendor &&
-        lhs.vendorCallId == rhs.vendorCallId
+        lhs.vendorCallId == rhs.vendorCallId &&
+        lhs.voicemail == rhs.voicemail
     }
 
     func hash(into hasher: inout Hasher) {
         hasher.combine(number)
         hasher.combine(vendor)
         hasher.combine(vendorCallId)
+        hasher.combine(voicemail)
     }
 }

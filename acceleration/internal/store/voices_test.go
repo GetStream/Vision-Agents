@@ -3,7 +3,9 @@
 package store
 
 import (
+	"crypto/rand"
 	"errors"
+	"strings"
 )
 
 func (s *StoreSuite) TestAVoiceIsReadBackByIdAndByTheNameItWasGiven() {
@@ -105,4 +107,27 @@ func (s *StoreSuite) TestABindingOfADeletedVoiceIsNoLongerHandedOut() {
 
 	_, err := s.store.ReadyVoiceBinding(s.ctx, "acme", voice.ID, "elevenlabs")
 	s.True(errors.Is(err, ErrNoVoice))
+}
+
+// A failed binding's error is a provider's refusal, up to 2048 bytes of its body, which can
+// echo the key it was sent, and the caller reads it back: it is kept without the key, and cut
+// as the requests table cuts an error. One with no key is kept as it was.
+func (s *StoreSuite) TestAFailedBindingsErrorIsKeptWithoutTheKeyItEchoed() {
+	key := "sk-test-" + rand.Text()
+	for failure, kept := range map[string]string{
+		"elevenlabs: 401 Unauthorized\nAuthorization: Bearer " + key: "elevenlabs: 401 Unauthorized\n[redacted]",
+		"elevenlabs: too quiet":   "elevenlabs: too quiet",
+		strings.Repeat("x", 9000): strings.Repeat("x", 2048) + "… [truncated]",
+	} {
+		voice := Voice{CustomerID: "acme", Name: "founder " + rand.Text()}
+		s.Require().NoError(s.store.CreateVoice(s.ctx, &voice))
+
+		binding := VoiceBinding{VoiceID: voice.ID, Provider: "elevenlabs", State: VoiceFailed, Error: failure}
+		s.Require().NoError(s.store.SaveVoiceBinding(s.ctx, &binding))
+
+		bindings, err := s.store.VoiceBindings(s.ctx, voice.ID)
+		s.Require().NoError(err)
+		s.Require().Len(bindings, 1)
+		s.Equal(kept, bindings[0].Error)
+	}
 }

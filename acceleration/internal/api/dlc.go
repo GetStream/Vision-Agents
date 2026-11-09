@@ -792,7 +792,7 @@ type OptOut struct {
 	Id        string        `json:"id"`
 	Recipient string        `json:"recipient" doc:"The number, in E.164."`
 	Channel   OptOutChannel `json:"channel"`
-	Source    string        `json:"source" doc:"keyword when they texted STOP, otherwise api or dashboard."`
+	Source    string        `json:"source" doc:"keyword when they texted STOP, campaign when they asked a campaign call not to call again, otherwise api or dashboard."`
 	CreatedAt time.Time     `json:"created_at"`
 }
 

@@ -29,6 +29,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -36,8 +38,11 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
+
+var tracer = tracing.Tracer("routing")
 
 // Provider is the little a router needs from a model provider: it can be opened, closed
 // and named. Everything that makes a modality itself lives on the modality's own
@@ -597,6 +602,9 @@ func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []
 
 	alias, ok := r.config.Aliases[target]
 	if !ok {
+		if instead, retired := r.config.Retired[target]; retired {
+			return nil, Refused(stack.Wrap(fmt.Errorf("routing: %s is retired; ask for %s instead", target, instead)))
+		}
 		return nil, Refused(stack.Wrap(fmt.Errorf("routing: unknown target %q", target)))
 	}
 
@@ -671,7 +679,7 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 // the only one the walk met, it is returned as is, with that candidate's config, as a
 // caller of Select that used the provider itself would have reported it. Otherwise every
 // candidate's error is joined in the order met; a refusal among them keeps ErrRequest, as
-// in Select.
+// in Select. A candidate the walk moves past on a failure counts in router_failovers_total.
 func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, ProviderConfig) error) (ProviderConfig, error) {
 	if request.CustomerID == "" {
 		return ProviderConfig{}, stack.Wrap(errors.New("routing: customer id is required"))
@@ -747,6 +755,11 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 	// its own block, so serving there would drop the overwrite in silence. From then on
 	// only that vendor's candidates are tried, and if none reads it the request is refused.
 	overwritten := ""
+	// moved is the candidate the walk last moved past on a failure, a failover once another
+	// candidate is started in its place.
+	var moved *failover
+	// vendorFailed is whether a candidate on the deployment's own key failed at its vendor.
+	vendorFailed := false
 	for _, candidate := range candidates {
 		if overwritten != "" && candidate.Config.Provider != overwritten {
 			continue
@@ -770,14 +783,20 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 			}
 		}
 
+		if moved != nil {
+			countFailover(r.modality, *moved)
+		}
 		provider, err := r.startCandidate(ctx, request, candidate)
 		started := err == nil
+		stage := failoverStart
 		if started {
 			if err = use(provider, candidate.Config); err == nil {
 				return candidate.Config, nil
 			}
 			used, usedErr = candidate.Config, err
+			stage = failoverUse
 		}
+		moved = &failover{config: candidate.Config, stage: stage, reason: failoverReason(candidate.Config, err, ctx.Err() != nil)}
 		met = append(met, fmt.Errorf("%s: %w", candidate.Config.Name(), err))
 		if errors.Is(err, ErrRequest) {
 			// One vendor's models refuse the same voice in the same words, and saying it
@@ -797,6 +816,7 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 			r.logger.Warn("provider failed to start, trying the next candidate",
 				"modality", r.modality, "target", request.Target, "provider", candidate.Config.Name(), "error", err)
 		}
+		vendorFailed = vendorFailed || moved.reason == failoverVendor
 		failures = append(failures, fmt.Errorf("%s: %w", candidate.Config.Name(), err))
 	}
 
@@ -811,8 +831,11 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 	if len(refusals) > 0 {
 		return ProviderConfig{}, stack.Wrap(errors.Join(refusals...))
 	}
-	return ProviderConfig{}, stack.Wrap(fmt.Errorf("routing: every candidate for %q failed: %w",
-		request.Target, errors.Join(failures...)))
+	err = fmt.Errorf("routing: every candidate for %q failed: %w", request.Target, errors.Join(failures...))
+	if vendorFailed {
+		err = vendorsFailed{err: err}
+	}
+	return ProviderConfig{}, stack.Wrap(err)
 }
 
 // Admit asks the customer's policies whether they may spend anything, and what their
@@ -1065,7 +1088,14 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 			return zero, stack.Wrap(err)
 		}
 	}
-	if err := provider.Start(ctx); err != nil {
+	started, span := tracer.Start(ctx, "routing.provider.start", trace.WithAttributes(
+		attribute.String("routing.modality", string(r.modality)),
+		attribute.String("routing.provider", candidate.Config.Provider),
+		attribute.String("routing.model", candidate.Config.Model)))
+	err = provider.Start(started)
+	tracing.Fail(span, err)
+	span.End()
+	if err != nil {
 		provider.Close()
 		r.recorder.Record(candidate.Config, Stat{
 			Owner:        request.Owner(),

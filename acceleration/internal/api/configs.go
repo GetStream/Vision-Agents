@@ -3,6 +3,7 @@ package api
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -28,9 +29,11 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 	"github.com/danielgtaylor/huma/v2"
 )
 
@@ -50,9 +53,20 @@ var (
 		"custom connector, so create one for its URL and name it under connectors")
 )
 
+// retiredPlugin is one entry of a request's plugins: a catalog id or an object, as a client
+// sent before connectors. Nothing in it is read, but its shape is still checked, so an entry
+// that never was one, such as a number, is refused by the schema (validation_failed) as before.
+type retiredPlugin struct{ json.RawMessage }
+
+func (retiredPlugin) Schema(huma.Registry) *huma.Schema {
+	return &huma.Schema{OneOf: []*huma.Schema{{Type: huma.TypeString}, {Type: huma.TypeObject}}}
+}
+
 // retiredComplaint is the refusal of a save naming any plugin, plugin event or MCP server, or
-// nil. An empty list names nothing, so a client that sends one saves as before.
-func retiredComplaint(plugins *[]PluginEntry, events *[]PluginEvent, servers *[]McpServer) error {
+// nil. An empty list names nothing, so a client that sends one saves as before. The entries
+// of plugin_events and mcp_servers are objects, as they were: a non-object one is refused by
+// the schema.
+func retiredComplaint(plugins *[]retiredPlugin, events, servers *[]map[string]any) error {
 	switch {
 	case plugins != nil && len(*plugins) > 0:
 		return errPluginsRetired
@@ -63,10 +77,6 @@ func retiredComplaint(plugins *[]PluginEntry, events *[]PluginEvent, servers *[]
 	}
 	return nil
 }
-
-// mcpBrandingTimeout is how long saving a config waits for its MCP servers to describe
-// themselves.
-const mcpBrandingTimeout = 5 * time.Second
 
 // listAgentConfigs returns the calling customer's configs, newest first.
 func (s *Server) listAgentConfigs(ctx context.Context, request *listAgentConfigsRequest) (*listAgentConfigsResponse, error) {
@@ -147,7 +157,16 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	if message, ok := schedulingComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
+	if failure, refused := s.floorControlRefusal(request.Body.FloorControl, request.Body.EndOfTurn); refused {
+		return nil, failure
+	}
+	if _, message, ok := s.floorControlComplaint(ctx, config.FloorControl, store.FloorControl{}); !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok := callsComplaint(config.Calls); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := teamTagComplaint(config.Tags, nil); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := outputRetentionComplaint(config); !ok {
@@ -249,7 +268,7 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	// Kept for the same reason: a client that does not know the setting must not turn the
 	// cards off by saving.
 	if request.Body.EpisodeCards == nil {
-		config.EpisodeCards = existing.EpisodeCards
+		config.EpisodeCards, config.EpisodeCardsRecord = existing.EpisodeCards, existing.EpisodeCardsRecord
 	}
 	// Kept for the same reason: a client that does not know the role must not take it away
 	// from the agent the chat worker looks for by it.
@@ -271,10 +290,20 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	config.Scheduling = schedulingOr(existing.Scheduling, request.Body.Scheduling)
 	config.Calls = callsOr(existing.Calls, request.Body.Calls)
 	config.ResumeHistory = resumeHistoryOr(existing.ResumeHistory, request.Body.ResumeHistory)
+	config.FloorControl = floorControlOr(existing.FloorControl, request.Body.FloorControl)
 	if message, ok := schedulingComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
+	if failure, refused := s.floorControlRefusal(request.Body.FloorControl, request.Body.EndOfTurn); refused {
+		return nil, failure
+	}
+	if _, message, ok := s.floorControlComplaint(ctx, config.FloorControl, existing.FloorControl); !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok := callsComplaint(config.Calls); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := teamTagComplaint(config.Tags, existing.Tags); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := outputRetentionComplaint(config); !ok {
@@ -999,10 +1028,7 @@ func bindingSendsOut(binding store.ConnectorBinding, manifest core.Manifest) ([]
 		return unheld, len(unheld) > 0
 	}
 	for _, tool := range binding.Tools {
-		sends := slices.ContainsFunc(manifest.Sources, func(source core.SourceRule) bool {
-			return source.SendsOutTool(tool.Name)
-		})
-		if sends && !binding.RequiresApproval(tool.Name) {
+		if manifest.SendsOutTool(tool.Name) && !binding.RequiresApproval(tool.Name) {
 			unheld = append(unheld, tool.Name)
 		}
 	}
@@ -1521,7 +1547,9 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		config.VideoMaxFrames = value(request.Video.MaxFrames)
 	}
 	applyDispatch(&config, request.Dispatch)
-	config.EpisodeCards = value(request.EpisodeCards)
+	if request.EpisodeCards != nil {
+		setEpisodeCards(&config, *request.EpisodeCards)
+	}
 	if request.Tools != nil {
 		config.ProgressiveTools = value(request.Tools.Progressive)
 		config.ToolOutputRetention = options.Retention(value(request.Tools.OutputRetention))
@@ -1529,6 +1557,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 	config.Scheduling = schedulingOf(request.Scheduling)
 	config.Calls = callsOf(request.Calls)
 	config.ResumeHistory = resumeHistoryOr(store.ResumeHistory{}, request.ResumeHistory)
+	config.FloorControl = floorControlOr(store.FloorControl{}, request.FloorControl)
 	config.ReviewInstructions = reviewOf("", request.Review)
 	return config
 }
@@ -1612,13 +1641,14 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	}
 	rendered.Harness = &named
 	rendered.Dispatch = dispatchOf(config)
-	episodeCards := config.EpisodeCards
+	episodeCards := episodeCardsOf(config)
 	rendered.EpisodeCards = &episodeCards
 	progressive := config.ProgressiveTools
 	rendered.Tools = &AgentTools{Progressive: &progressive, OutputRetention: optional(string(config.ToolOutputRetention))}
 	rendered.Scheduling = renderedScheduling(config.Scheduling)
 	rendered.Calls = renderedCalls(config.Calls)
 	rendered.ResumeHistory = renderedResumeHistory(config.ResumeHistory)
+	rendered.FloorControl = renderedFloorControl(config.FloorControl)
 	if len(config.Skills) > 0 {
 		skills := config.Skills
 		rendered.Skills = &skills
@@ -1870,7 +1900,7 @@ type deleteAgentConfigRequest struct {
 // AgentConfigRequest is the AgentConfigRequest schema.
 type AgentConfigRequest struct {
 	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
-	EpisodeCards       *bool                    `json:"episode_cards,omitempty" doc:"Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. An app chat's agent channel that anybody else is a member of or wrote in reads none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays."`
+	EpisodeCards       *EpisodeCardsMode        `json:"episode_cards,omitempty" doc:"What this agent does with episode cards, for each phone call under it, each run of messages a Stream user writes to it in an agent channel of the app chat, and each thread of its SMS, WhatsApp, iMessage and Slack channel connections. record and on write the conversation's card, and its summary once it ends, into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number, the app chat's Stream user id or the Slack user. Only on reads them: a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any. off by default, and then a conversation writes no card and a session runs as it always did. Left out on an update, the stored setting stays."`
 	Greeting           *Greeting                `json:"greeting,omitempty"`
 	Guardrail          *string                  `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered."`
 	Harness            *Harness                 `json:"harness,omitempty"`
@@ -1887,9 +1917,11 @@ type AgentConfigRequest struct {
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. Left out on an update, the stored settings stay."`
 	Calls              *AgentCalls              `json:"calls,omitempty" doc:"The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and press are on and end_call is off. On an update, a tool left out keeps its stored settings and a tool sent replaces its settings whole."`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty" doc:"How a conversation is handed back to the model when a session under this agent carries it on: reopened, resumed by id, joined by voice or forked. Each field set here wins over the app's and the organization's policy, and a session request's wins over this; a field set nowhere is the router's default: replies as text, the newest 100 turns within 60000 characters. Left out on an update, the stored settings stay."`
-	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
-	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
-	McpServers         *[]McpServer             `json:"mcp_servers,omitempty" deprecated:"true" doc:"No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. A session request's wins over this. Left out or null on a create, the default flow controller; left out or null on an update, the stored choice stays; an empty object is the default flow controller again."`
+	EndOfTurn          any                      `json:"end_of_turn,omitempty" hidden:"true"` // refused: floor_control's max_wait_ms replaced it
+	Plugins            *[]retiredPlugin         `json:"plugins,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	PluginEvents       *[]map[string]any        `json:"plugin_events,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	McpServers         *[]map[string]any        `json:"mcp_servers,omitempty" deprecated:"true" doc:"No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing."`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" maxItems:"64" doc:"The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused."`
 	Channels           *AgentChannels           `json:"channels,omitempty" doc:"Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels."`
 	Sandbox            *Sandbox                 `json:"sandbox,omitempty"`
@@ -1898,7 +1930,7 @@ type AgentConfigRequest struct {
 	Skills             *[]string                `json:"skills,omitempty" doc:"Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set."`
 	Sts                *string                  `json:"sts,omitempty" doc:"A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade."`
 	Stt                *string                  `json:"stt,omitempty" doc:"A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it."`
-	Tags               *map[string]string       `json:"tags,omitempty" doc:"Cost labels, carried onto every request a session using it makes. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds."`
+	Tags               *map[string]string       `json:"tags,omitempty" doc:"Cost labels, carried onto every request a session using it makes. The team tag is also the team those sessions are counted under, its spend limits included, when whoever opens one names none: neither the caller's token nor the session's team field. It is 1 to 59 letters, digits, _ . and -, and a config naming another team tag is refused. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds."`
 	Subagent           *string                  `json:"subagent,omitempty" doc:"The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default subagent."`
 	Tts                *string                  `json:"tts,omitempty"`
 	Video              *SessionVideo            `json:"video,omitempty"`
@@ -1910,7 +1942,7 @@ type AgentConfigRequest struct {
 type AgentConfig struct {
 	CreatedAt          time.Time                `json:"created_at"`
 	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
-	EpisodeCards       *bool                    `json:"episode_cards,omitempty" doc:"Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, or a phone call starts with the person's other cards."`
+	EpisodeCards       *EpisodeCardsMode        `json:"episode_cards,omitempty" doc:"What this agent does with episode cards. record and on write a card into the person's omni-channel for each phone call, app chat conversation and SMS, WhatsApp, iMessage or Slack thread under this agent. Only on has each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in start with the person's other cards. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any."`
 	Greeting           *Greeting                `json:"greeting,omitempty"`
 	Guardrail          *string                  `json:"guardrail,omitempty"`
 	Harness            *Harness                 `json:"harness,omitempty"`
@@ -1928,6 +1960,7 @@ type AgentConfig struct {
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
 	Calls              *AgentCalls              `json:"calls,omitempty"`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty"`
+	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. Absent for the default flow controller."`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" doc:"The bindings exactly as they were written. Absent when there are none."`
 	LeftOutConnectors  *[]LeftOutConnector      `json:"left_out_connectors,omitempty" readOnly:"true" doc:"The connectors agent.yaml names that the last sync left out, because the app has no connection by the id or label they name: an agent that runs without them until the connection exists and it syncs again. Only a sync writes them. Absent when there are none."`
 	Channels           *AgentChannels           `json:"channels,omitempty"`
@@ -1988,6 +2021,24 @@ type ResumeHistory struct {
 func (*ResumeHistory) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "How a conversation is handed back to the model when a session carries it on."
 	return schema
+}
+
+// episodeCardsOf is the mode a config's two columns store: episode_cards is on, whatever
+// episode_cards_record says, as the previous release reads it.
+func episodeCardsOf(config store.AgentConfig) EpisodeCardsMode {
+	switch {
+	case config.EpisodeCards:
+		return EpisodeCardsOn
+	case config.EpisodeCardsRecord:
+		return EpisodeCardsRecord
+	}
+	return EpisodeCardsOff
+}
+
+// setEpisodeCards stores mode as the config's two columns (episodeCardsOf).
+func setEpisodeCards(config *store.AgentConfig, mode EpisodeCardsMode) {
+	config.EpisodeCards = mode == EpisodeCardsOn
+	config.EpisodeCardsRecord = mode == EpisodeCardsRecord
 }
 
 // resumeHistoryOr writes the fields a caller sent over stored: a field left out keeps
@@ -2221,6 +2272,18 @@ func outputRetentionComplaint(config store.AgentConfig) (string, bool) {
 	return toolOutputRetentionComplaint("tools.output_retention", config.ToolOutputRetention)
 }
 
+// teamTagComplaint refuses a team tag that cannot be a team's name, since the tag is the team
+// the agent's sessions are counted under (session.TeamTag). One the config already held is let
+// through, so a config saved before the tag was a team can still be changed in other ways.
+func teamTagComplaint(tags, prior map[string]string) (string, bool) {
+	team, tagged := tags[session.TeamTag]
+	if !tagged || team == prior[session.TeamTag] || usage.CheckTeam(strings.TrimSpace(team)) == nil {
+		return "", true
+	}
+	return fmt.Sprintf("tags.%s %q is not a team: the team the agent's sessions are counted under is 1 to %d letters, digits, _ . and -",
+		session.TeamTag, team, usage.MaxTeamLength), false
+}
+
 // progressiveOf is whether tools are offered progressively once tools is written over
 // stored: what it says, or stored when it says nothing.
 func progressiveOf(stored bool, tools *AgentTools) bool {
@@ -2285,7 +2348,7 @@ func (ConnectorOnInterrupt) Schema(registry huma.Registry) *huma.Schema {
 }
 
 // ConnectorBindingEvent is one MCP event a binding subscribes to on its connection's server.
-// The cap of 32 on a binding's events is plugin_events', a choice that is unverified.
+// The cap of 32 on a binding's events, the maxItems on its Events field, is a choice that is unverified.
 type ConnectorBindingEvent struct {
 	Event        string          `json:"event" minLength:"1" doc:"The event's name, as the server's events/list gives it, such as issue.created."`
 	Arguments    *map[string]any `json:"arguments,omitempty" doc:"The event's filters, as its inputSchema describes them."`

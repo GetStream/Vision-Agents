@@ -20,6 +20,7 @@ Usage:
     uv run plugins/stream/generate.py
 """
 
+import re
 import shutil
 import subprocess
 import sys
@@ -32,6 +33,9 @@ SPEC = PLUGIN.parents[1] / "acceleration" / "api" / "openapi.yaml"
 PACKAGE = PLUGIN / "vision_agents" / "plugins" / "stream"
 GENERATED = PACKAGE / "_generated"
 STAFF_TAG = "Staff"
+# Templates that replace the generator's own: an enum read from an answer keeps a value this
+# client does not list yet, rather than raising, so a router that adds one breaks no reader.
+TEMPLATES = PLUGIN / "templates"
 
 CONFIG = """
 project_name_override: _generated
@@ -64,6 +68,7 @@ def main() -> int:
                 del item[method]
         if not item:
             del document["paths"][path]
+    keep_released_order(document["components"]["schemas"], released_orders())
     http_spec = work / "http-openapi.yaml"
     http_spec.write_text(yaml.safe_dump(document, sort_keys=False))
 
@@ -81,6 +86,8 @@ def main() -> int:
             str(http_spec),
             "--config",
             str(config),
+            "--custom-template-path",
+            str(TEMPLATES),
             "--output-path",
             str(work / "out"),
             "--overwrite",
@@ -98,6 +105,39 @@ def main() -> int:
 
     print(f"regenerated {GENERATED.relative_to(PLUGIN.parents[1])}")
     return 0
+
+
+def released_orders() -> dict[str, list[str]]:
+    """The wire names of each committed model's fields, in the order its attrs class takes them.
+
+    from_dict pops every field in that order, under its wire name.
+    """
+    orders: dict[str, list[str]] = {}
+    for path in (GENERATED / "models").glob("*.py"):
+        source = path.read_text()
+        named = re.search(r"^class (\w+)", source, re.MULTILINE)
+        if named:
+            orders[named.group(1)] = re.findall(r'd\.pop\("([^"]+)"', source)
+    return orders
+
+
+def keep_released_order(schemas: dict, orders: dict[str, list[str]]) -> None:
+    """Puts each schema's properties in the order its committed model takes them, new ones last.
+
+    The spec lists properties alphabetically and an attrs class takes its fields positionally,
+    required ones first, in the spec's order. A new property would otherwise shift those after
+    it, and a positional call written against an earlier release would pass its arguments to
+    the wrong fields.
+    """
+    for name, schema in schemas.items():
+        released = orders.get(name)
+        properties = schema.get("properties")
+        if not released or not isinstance(properties, dict):
+            continue
+        place = {wire: index for index, wire in enumerate(released)}
+        schema["properties"] = dict(
+            sorted(properties.items(), key=lambda item: place.get(item[0], len(place)))
+        )
 
 
 if __name__ == "__main__":

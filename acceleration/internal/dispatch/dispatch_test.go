@@ -494,6 +494,50 @@ func (s *PoolSuite) TestAWorkerThatOnlyHostsToolsIsHandedNothing() {
 	s.Empty(s.answered(tools))
 }
 
+// Takes is what decides whether work stays on this node or is carried to another, so a
+// worker here that would refuse the work must not keep it here (AI-2719).
+func (s *PoolSuite) TestAWorkerTakesOnlyTheKindsItHandles() {
+	for _, tc := range []struct {
+		name    string
+		handles [][]Kind
+		kind    Kind
+		takes   bool
+	}{
+		{name: "no worker", kind: Messages, takes: false},
+		{name: "an older worker naming no kinds takes every kind", handles: [][]Kind{nil}, kind: Messages, takes: true},
+		{name: "a tool host takes no message", handles: [][]Kind{{}}, kind: Messages, takes: false},
+		{name: "a tool host takes no call", handles: [][]Kind{{}}, kind: Calls, takes: false},
+		{name: "a worker for calls takes no message", handles: [][]Kind{{Calls}}, kind: Messages, takes: false},
+		{name: "a worker for messages takes a message", handles: [][]Kind{{Messages}}, kind: Messages, takes: true},
+		{name: "a worker for messages beside a tool host", handles: [][]Kind{{}, {Messages}}, kind: Messages, takes: true},
+	} {
+		s.Run(tc.name, func() {
+			pool := NewPool()
+			for _, handles := range tc.handles {
+				pool.Register("acme", Registration{Capacity: 1, Handles: handles})
+			}
+			s.Equal(tc.takes, pool.Takes("acme", tc.kind))
+		})
+	}
+}
+
+func (s *PoolSuite) TestAFullWorkerStillTakesItsKindOfWork() {
+	// Full is a reason to wait for room, not to carry the work to a node whose worker never
+	// said it has any.
+	worker, _ := s.reporting("acme", 1)
+	_, err := s.pool.AssignMessage("acme", Message{ChannelID: "chat-1"})
+	s.Require().NoError(err)
+	s.Require().True(worker.full())
+
+	s.True(s.pool.Takes("acme", Messages))
+}
+
+func (s *PoolSuite) TestAnotherCustomersWorkerTakesNothingForThisOne() {
+	s.waiting("globex", 1)
+
+	s.False(s.pool.Takes("acme", Messages))
+}
+
 func (s *PoolSuite) TestWhatAnOlderWorkerLastSaidStandsInForWhatItIsHolding() {
 	// It never reports work finished, so this is the only number it gives. Taking turns
 	// while it says it is nearly full would pile work onto it.

@@ -30,6 +30,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -66,7 +67,7 @@ func main() {
 	arguments := os.Args[2:]
 
 	if err := run(command, arguments); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "error: %s\n", store.RedactLogText(fmt.Sprint(err)))
 		os.Exit(1)
 	}
 }
@@ -424,6 +425,7 @@ func press(ctx context.Context, arguments []string) error {
 	vendor := flags.String("vendor", "telnyx", "vendor carrying the call")
 	callID := flags.String("call-id", "", "the vendor call id dialling returned")
 	digits := flags.String("digits", "", "what to press, e.g. 1 or 4123")
+	customer := flags.String("customer", "demo", "customer that placed the call")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
@@ -437,7 +439,7 @@ func press(ctx context.Context, arguments []string) error {
 	}
 	defer cleanup()
 
-	if err := service.SendDigits(ctx, *vendor, *callID, *digits); err != nil {
+	if err := service.SendDigits(ctx, *customer, *vendor, *callID, *digits); err != nil {
 		return err
 	}
 	fmt.Printf("pressed %s on %s\n", *digits, *callID)
@@ -627,10 +629,16 @@ func release(ctx context.Context, arguments []string) error {
 	return nil
 }
 
+// newLogger is the command's logger, which writes warnings to w with every credential taken out
+// of them: a vendor's error can echo the key it was sent.
+func newLogger(w io.Writer) *slog.Logger {
+	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelWarn, ReplaceAttr: store.RedactLogAttr}))
+}
+
 // build wires the service from the environment. Everything but the vendor registry is
 // optional, so searching for a number works with nothing but a vendor key.
 func build(ctx context.Context) (*phone.Service, func(), error) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	logger := newLogger(os.Stderr)
 
 	registry, _, err := registry()
 	if err != nil {

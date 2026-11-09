@@ -104,6 +104,17 @@ func (w *watcher) transport(base *http.Client) *http.Client {
 	return wrapped
 }
 
+// heardBy is the watcher already reading what client answers, or nil.
+func heardBy(client *http.Client) *watcher {
+	if client == nil {
+		return nil
+	}
+	if reading, ok := client.Transport.(watched); ok {
+		return reading.watcher
+	}
+	return nil
+}
+
 type watched struct {
 	next    http.RoundTripper
 	watcher *watcher

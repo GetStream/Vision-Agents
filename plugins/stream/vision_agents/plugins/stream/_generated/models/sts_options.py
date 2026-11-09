@@ -207,7 +207,7 @@ class StsOptions:
         if isinstance(_turn_detection, Unset):
             turn_detection = UNSET
         else:
-            turn_detection = StsOptionsTurnDetection(_turn_detection)
+            turn_detection = StsOptionsTurnDetection._decode(_turn_detection)
 
         voice = d.pop("voice", UNSET)
 

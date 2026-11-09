@@ -64,9 +64,10 @@ func (s *SuspensionSuite) TestStaffSeeWhyAnAppIsSuspendedUntilTheyLiftIt() {
 
 	s.Require().Equal(http.StatusNoContent, s.staff.do(http.MethodDelete, s.path(), nil, nil))
 	s.Equal(http.StatusNotFound, s.staff.do(http.MethodGet, s.path(), nil, nil))
-	status, _ := s.serverClient.failure(http.MethodPost, "/v1/phone/calls",
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/phone/calls",
 		PlaceCallRequest{From: "+15125551234", To: "+15550001111"})
 	s.Equal(http.StatusBadRequest, status, "a lifted app gets past the suspension, then fails for want of Stream")
+	s.Contains(failure, "no Stream app")
 }
 
 func (s *SuspensionSuite) TestLiftingAnAppThatIsNotSuspendedIsNotFound() {

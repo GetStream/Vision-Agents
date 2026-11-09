@@ -18,6 +18,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
@@ -43,6 +44,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
 
 // EdgeFactory opens the transport a session's agent talks over.
@@ -101,6 +103,10 @@ type ManagerOptions struct {
 	// FlowJudge is the Classifier target every agent's flow controller asks in place of a
 	// language model. Empty keeps the language model.
 	FlowJudge string
+	// AudioFloor is optional, and is the chorus-asr model an agent's flow controller asks as
+	// its own floor control says (Spec.FloorControl). An agent that chose none asks it
+	// nothing about turns.
+	AudioFloor *audiofloor.Client
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
 	// SpeculativeReplies has every agent start its reply before the flow controller has
@@ -276,7 +282,8 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		}
 		manager.logs = newLogRecorder(options.Store, options.Logger)
 		manager.calls = newCallRecorder(options.Store, options.Logger)
-		manager.outcomes = outcome.NewKeeper(options.Store, time.Now)
+		// Read only: the phone service's keeper is what counts calls, so this one names no vendors.
+		manager.outcomes = outcome.NewKeeper(options.Store, time.Now, nil, options.Logger)
 		written = newSessionRecorder(options.Store, options.Logger)
 		manager.records = written
 		manager.reviews = newReviewer(options.LLM, options.Store, options.Logger)
@@ -285,7 +292,7 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		}
 	}
 	manager.titles = newTitler(options.LLM, written, options.Logger)
-	manager.cards = newCallCards(options.Store, options.Stream, options.Logger)
+	manager.cards = newCallCards(options.Store, manager.outcomes, options.Stream, options.Logger)
 	switch {
 	case options.Writer != nil:
 		manager.runtime = routing.NewRecorderOn(routing.Runtime, options.Writer, options.Pricer, options.Logger)
@@ -349,6 +356,7 @@ func (m *Manager) newSession(spec Spec, conv *persistent.Conversation, skills ha
 		// Postgres keeps microseconds. The live session sorts by the same instant as its
 		// row, or a cursor taken from one would hand the other back on the next page.
 		created:       opening.Truncate(time.Microsecond),
+		began:         time.Now(),
 		logger:        m.logger,
 		watchers:      map[uint64]*watcher{},
 		detachedGrace: m.options.DetachedGrace,
@@ -371,13 +379,19 @@ func (m *Manager) newSession(spec Spec, conv *persistent.Conversation, skills ha
 // The agent is joined before this returns, so a caller that gets a session back has one
 // that is already listening. A failure anywhere unwinds what was opened: a half-joined
 // session would hold a model session and a place in a call that nobody holds a handle to.
-func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
+func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure error) {
+	began := time.Now()
 	if err := spec.Normalize(); err != nil {
 		return nil, stack.Wrap(err)
 	}
 	if spec.Attribution.APIKey == "" {
 		spec.Attribution = routing.AttributionFrom(ctx)
 	}
+	categories, err := usage.WithTeam(spec.Attribution.UsageCategories, spec.Team)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("session: counting the session under team %q: %w", spec.Team, err))
+	}
+	spec.Attribution.UsageCategories = categories
 	spec.Attribution.SessionID = spec.ID
 	// Refuse unsupported voice modes before opening a call or persistent resource.
 	if spec.Native() && m.options.STS == nil {
@@ -446,10 +460,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	spec.StreamApp = stream.Identity.StreamApp
 	if err := m.keepable(ctx, spec, stream); err != nil {
-		return nil, err
+		return nil, refusedAtStart(spec, began, err)
 	}
 	if err := m.callable(ctx, spec, stream); err != nil {
-		return nil, stack.Wrap(err)
+		return nil, stack.Wrap(refusedAtStart(spec, began, err))
 	}
 	// In app mode a session with no Stream app at all is pinned to none, rather than left
 	// unpinned, which reads as the deployment's own app and would let that app's hooks and
@@ -488,7 +502,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if m.options.ResumeHistories != nil {
 		spec.ResumeHistory = spec.ResumeHistory.Over(m.options.ResumeHistories.ResumeHistory(ctx, spec.CustomerID))
 	}
-	reading := m.restoring(ctx, spec)
+	reading, err := m.restoring(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
 	if spec.PersistConversation {
 		service, err := m.Conversations()
 		if err != nil {
@@ -631,6 +648,17 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 	}()
 	created := m.newSession(spec, conv, skills, opening, runtime)
+	// A session held ends where it closes (Session.counted); one never held ends here,
+	// unless it was turned away for a router shutting down or for a session already held
+	// under its id (a redelivered hook): neither is a session that failed.
+	turnedAway := false
+	startup := newStartup(spec, began)
+	defer func() {
+		if !opened && !turnedAway {
+			endCounter(createFailure(failure)).Inc()
+			startup.Failed()
+		}
+	}()
 	fail := func() {
 		runtime.Cancel()
 		created.Close()
@@ -780,6 +808,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			ControllerTarget:   spec.ControllerTarget,
 			Judge:              m.options.Classifier,
 			JudgeTarget:        m.options.FlowJudge,
+			AudioFloor:         m.options.AudioFloor,
+			AudioFloorMode:     m.floorMode(created.id, spec),
+			EndOfTurn:          EndOfTurnOf(spec.FloorControl),
 			Skills:             skills,
 			Telephony:          line,
 			Destinations:       spec.destinations(),
@@ -913,7 +944,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// Join takes the background rather than the request's context: the conversation
 	// outlives the HTTP call that asked for it, and a session cancelled when the request
 	// returned would hang up on the caller immediately.
-	if err := built.Join(context.WithoutCancel(ctx)); err != nil {
+	if err := built.Join(agent.WithStartup(context.WithoutCancel(ctx), startup)); err != nil {
 		fail()
 		return nil, stack.Wrap(err)
 	}
@@ -948,7 +979,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// The turns held until now, the greeting's among them, are written after it.
 	if created.records != nil {
 		created.closers = append(created.closers, func() {
-			m.records.Closed(created.id, time.Now().UTC(), created.endReason())
+			m.records.Closed(created.id, time.Now().UTC(), created.kept())
 		})
 		m.records.Opened(sessionRow(created), toolRows(created))
 		created.startRecording()
@@ -957,15 +988,19 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
+		turnedAway = true
 		fail()
 		return nil, stack.Wrap(errors.New("session: the manager is shut down"))
 	}
 	if held, raced := m.sessions[created.id]; raced && !replaces(spec, held) {
 		m.mu.Unlock()
+		turnedAway = true
 		fail()
 		return nil, stack.Wrap(ErrSessionExists)
 	}
 	m.sessions[created.id] = created
+	sessionsActive.Inc()
+	created.active.Store(true)
 	m.mu.Unlock()
 
 	// Said after the session is here to be found, so a peer that forwards a request on
@@ -2177,13 +2212,22 @@ func (m *Manager) keepable(ctx context.Context, spec Spec, stream streamapp.Boun
 	}
 	switch readiness.ChannelType {
 	case streamapp.TypeMissing:
-		return fmt.Errorf("session: this app's Stream app has no %s channel type to keep the conversation in", streamapp.AgentChannelType)
+		return ErrNoAgentChannelType
 	case streamapp.TypeUnsafe:
-		return fmt.Errorf("session: this app's Stream app lets clients make, change or join %s channels, "+
-			"so a conversation kept there could be rewritten by anybody: restrict the channel type's grants", streamapp.AgentChannelType)
+		return ErrUnsafeAgentChannelType
 	}
 	return nil
 }
+
+// ErrNoAgentChannelType is a conversation to keep in a Stream app of the customer's own that
+// has no agent channel type.
+var ErrNoAgentChannelType = fmt.Errorf("session: this app's Stream app has no %s channel type to keep the conversation in",
+	streamapp.AgentChannelType)
+
+// ErrUnsafeAgentChannelType is a conversation to keep in a Stream app of the customer's own
+// whose agent channel type lets clients make, change or join channels.
+var ErrUnsafeAgentChannelType = fmt.Errorf("session: this app's Stream app lets clients make, change or join %s channels, "+
+	"so a conversation kept there could be rewritten by anybody: restrict the channel type's grants", streamapp.AgentChannelType)
 
 // ErrNoAgentCallType is a session that would join an agent call in a Stream app of the
 // customer's own that has no agent call type, which Stream refuses the call for.

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -63,6 +64,11 @@ type Recorded struct {
 	Voice string
 }
 
+// Used is the text spoken and the audio it made, the meters a recording is priced on.
+func (r Recorded) Used() pricing.Quantities {
+	return pricing.Quantities{pricing.Characters: r.Characters, pricing.AudioMs: r.AudioDurationMs}
+}
+
 // Recorder speaks a whole text into one file.
 //
 // Start and Close are what routing.Provider asks for rather than anything this needs: an
@@ -76,4 +82,11 @@ type Recorder interface {
 	Provider() string
 	// Model is the model identifier used in stats.
 	Model() string
+}
+
+// Checked is a Recorder that can tell a recording it will refuse without asking its vendor,
+// such as a text longer than one request takes. The recording router checks first, so a
+// refusal that is the caller's to fix leaves no row saying the vendor was asked.
+type Checked interface {
+	Check(recording Recording) error
 }

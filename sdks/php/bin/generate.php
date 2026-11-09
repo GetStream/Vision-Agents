@@ -102,8 +102,14 @@ function classOf(string $name, array $schema, array $schemas): array
         $field['required'] = in_array($wire, $required, true);
         $fields[] = $field;
     }
-    // Required parameters come first so a caller can pass them positionally.
-    usort($fields, static fn (array $a, array $b): int => $b['required'] <=> $a['required']);
+    // Required parameters come first so a caller can pass them positionally, and a parameter the
+    // class already had keeps its place: the spec lists properties alphabetically, so a new one
+    // would otherwise shift those after it and a positional call written against an earlier
+    // release would pass its arguments to the wrong parameters. New ones follow, in spec order
+    // (usort is stable).
+    $released = array_flip(releasedParameters($name));
+    $place = static fn (array $field): int => $released[str($field['php'])] ?? PHP_INT_MAX;
+    usort($fields, static fn (array $a, array $b): int => [$b['required'], $place($a)] <=> [$a['required'], $place($b)]);
 
     $params = [];
     $hydrate = [];
@@ -132,6 +138,22 @@ function classOf(string $name, array $schema, array $schemas): array
         . "    public function toArray(): array\n    {\n        \$out = [];\n" . implode('', $serialize) . "        return \$out;\n    }\n}\n";
     $out[$name] = $source;
     return $out;
+}
+
+/**
+ * The constructor parameters of the class as committed in src/Generated, in order: the positions
+ * callers already use. Empty for a class not generated before.
+ *
+ * @return list<string>
+ */
+function releasedParameters(string $class): array
+{
+    $source = @file_get_contents(TARGET . '/' . $class . '.php');
+    if ($source === false || preg_match('/public function __construct\((.*?)\n    \) \{/s', $source, $constructor) !== 1) {
+        return [];
+    }
+    preg_match_all('/^        public [^$\n]*\$(\w+)/m', $constructor[1], $parameters);
+    return $parameters[1];
 }
 
 /**

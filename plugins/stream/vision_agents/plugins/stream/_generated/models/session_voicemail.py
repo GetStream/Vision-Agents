@@ -48,7 +48,7 @@ class SessionVoicemail:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        action = VoicemailAction(d.pop("action"))
+        action = VoicemailAction._decode(d.pop("action"))
 
         message = d.pop("message", UNSET)
 

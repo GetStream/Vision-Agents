@@ -76,7 +76,7 @@ class Authorization:
 
         id = d.pop("id")
 
-        kind = AuthorizationKind(d.pop("kind"))
+        kind = AuthorizationKind._decode(d.pop("kind"))
 
         launch_url = d.pop("launch_url")
 

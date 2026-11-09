@@ -1,16 +1,13 @@
 package campaign
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -62,7 +59,7 @@ func (s *CampaignSuite) TestACampaignSessionJoinsTheCallItRang() {
 	// The route sends whoever answers into the call of the session the call was placed
 	// for, so the session is opened under that id, with voice.
 	request := placing(store.Campaign{CustomerID: "customer-1", FromNumber: "+15550000001"},
-		store.Contact{ID: "contact-7", ToNumber: "+15550000002"})
+		store.Contact{ID: "contact-7", ToNumber: "+15550000002"}, Step{})
 	s.Empty(request.SessionID)
 
 	spec := session.Spec{Text: true, CustomerID: "customer-1"}
@@ -78,32 +75,14 @@ func (s *CampaignSuite) TestACampaignsCallsAreOwnedByWhoeverScheduledIt() {
 	campaign := store.Campaign{CustomerID: "customer-1", FromNumber: "+15550000001",
 		APIKey: "key-a", UserID: "u1", UsageCategories: []string{"project:outreach"}}
 
-	request := placing(campaign, store.Contact{ID: "contact-7", ToNumber: "+15550000002"})
+	request := placing(campaign, store.Contact{ID: "contact-7", ToNumber: "+15550000002"}, Step{})
 
 	s.Equal(routing.Attribution{APIKey: "key-a", UserID: "u1", UsageCategories: []string{"project:outreach"}},
 		request.Owner.Attribution)
 }
 
 func (s *CampaignSuite) TestACampaignThatNamesNoKeyLeavesItForTheWriterToReport() {
-	request := placing(store.Campaign{CustomerID: "customer-1", UserID: "u1"}, store.Contact{ID: "contact-7"})
+	request := placing(store.Campaign{CustomerID: "customer-1", UserID: "u1"}, store.Contact{ID: "contact-7"}, Step{})
 
 	s.Empty(request.Owner.APIKey, "a gap the writer counts and logs, not a job of the router's")
-}
-
-func (s *CampaignSuite) TestAContactWhoseCallWentUnansweredBeforeItsSessionOpenedIsDone() {
-	refused := stack.Wrap(&session.CallUnansweredError{Outcome: outcome.Busy})
-
-	finished := unopened(store.Contact{ID: "contact-7", State: store.Done}, "session-1", refused)
-
-	s.Equal(store.Done, finished.State)
-	s.Equal("session-1", finished.CallID, "the outcome is read by the call id")
-	s.Empty(finished.Error)
-}
-
-func (s *CampaignSuite) TestAContactWhoseSessionFailedToOpenIsFailed() {
-	finished := unopened(store.Contact{ID: "contact-7", State: store.Done}, "session-1", errors.New("no agent call type"))
-
-	s.Equal(store.Failed, finished.State)
-	s.Equal("no agent call type", finished.Error)
-	s.Empty(finished.CallID)
 }

@@ -25,7 +25,7 @@ edits them.
 | [Inbound calls and dispatch](dispatch.md)      | sprint 14            | Built; round robin, two vendors can be rung |
 | [Direct and acceleration first](architectures.md) | sprints 8, 14     | Both shapes work; only Go can host tools |
 | [Transfer and IVR navigation](transfer.md)     | sprint 7             | Built on tool calling; DTMF at Telnyx only |
-| [Campaigns](campaigns.md)                      | sprint 9             | Built; no page in the dashboard         |
+| [Campaigns](campaigns.md)                      | sprint 9             | Built as a dialer: leases, calling hours, retries, outcomes; one step per sequence |
 | [Shared trunks](shared-trunks.md)              | after sprint 17      | Built for Twilio, Telnyx and SIP trunks; five vendors still dial a trunk per call |
 | [Scheduled tasks](scheduled-tasks.md)          | after sprint 17      | Built; delivered to the conversation, SMS, WhatsApp, iMessage or a phone call, with quiet hours |
 | [Simulate and test](simulations.md)            | sprint 16            | Built for text and audio; nothing schedules one |

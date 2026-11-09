@@ -27,5 +27,6 @@ func TestMoondreamIntegrationSuite(t *testing.T) {
 		},
 		Requires:      []string{APIKeyEnvVar},
 		ReportsBilled: true,
+		BillsTokens:   true,
 	}})
 }

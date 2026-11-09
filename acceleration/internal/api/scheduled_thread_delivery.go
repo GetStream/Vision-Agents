@@ -24,12 +24,14 @@ import (
 //	  connection removed                                        connection_removed, final
 //	  opted out                                                 channel_unreachable, final
 //	  sandbox gate                                              channel_unreachable
+//	  the organization may not pay (dlc.ErrUnpaid)              its code, such as insufficient_credits, final
 //	  past WhatsApp's 24 h, no template                         outside_window, final
 //	lease the thread's turn (store.TakeChannelThreadTurn)       another turn: wait
 //	the session on the channel, else threadSpec on the task's config
 //	Session.FollowUp("st_<run>"), wait for its reply            no_reply, reply_failed
 //	  ("st_<run>_r1" once st_<run> was cancelled or interrupted: replyCommand)
 //	Bridge.Send the reply, held from Bridge.Reply                opted out: channel_unreachable, final
+//	                                                            may not pay: its code, final
 //	                                                            thread removed meanwhile: thread_gone, final
 //	                                                            refused: delivery_failed
 //	close the session it opened; let go of the lease
@@ -91,12 +93,12 @@ func (s *Server) deliverOnThread(ctx context.Context, delivery scheduledDelivery
 	// A retried occurrence whose turn the thread already holds is a duplicate follow-up, which
 	// runs nothing (Session.FollowUp); its reply is read back, and sent unless it went out.
 	_, _, retried := found.FollowUpReply(delivery.CommandID)
-	if err := followUpWithin(turn, found, delivery); err != nil {
+	if err := s.followUpWithin(turn, found, delivery); err != nil {
 		return "", "", err
 	}
 	// The reply as the conversation stored it, with its files: as it finished, or read back
 	// for a follow-up that finished on an earlier attempt.
-	reply, err := readBackReply(turn, found, delivery.CommandID)
+	reply, err := s.readBackReply(turn, found, delivery.CommandID)
 	if err != nil {
 		return "", "", err
 	}
@@ -142,9 +144,9 @@ func (s *Server) taskThreadSession(ctx context.Context, delivery scheduledDelive
 }
 
 // threadUnreachable is the failure a run records for a thread the bridge would not reply on.
-// A removed thread or line, an opted-out person and a person past the window stay so until
-// somebody acts (the window opens again only when the person writes), so another attempt
-// would only repeat them.
+// A removed thread or line, an opted-out person, a person past the window and an organization
+// that may not pay (unpaid) stay so until somebody acts (the window opens again only when the
+// person writes), so another attempt would only repeat them.
 func threadUnreachable(err error) error {
 	switch {
 	case errors.Is(err, store.ErrNoChannelThread):
@@ -158,5 +160,5 @@ func threadUnreachable(err error) error {
 	case errors.Is(err, channelbridge.ErrOutsideWindow):
 		return undeliveredFinally(scheduling.ReasonOutsideWindow, err)
 	}
-	return err
+	return unpaid(err)
 }

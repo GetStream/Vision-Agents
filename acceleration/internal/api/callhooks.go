@@ -14,6 +14,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -214,7 +215,7 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	// A suspension that cannot be read refuses the call too: it is there to stop fraud that
 	// costs money.
 	if _, err := s.store.TelephonySuspension(r.Context(), number.CustomerID); !errors.Is(err, store.ErrNotSuspended) {
-		s.refuseArrivingCall(r.Context(), number, callType, callID, "refused an arriving call to a suspended app",
+		s.refuseArrivingCall(r.Context(), number, callType, callID, event.SessionID, "refused an arriving call to a suspended app",
 			"call", event.CallCid, "customer", number.CustomerID, "error", err)
 		return
 	}
@@ -222,7 +223,7 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	// so an organization that may not pay has nobody answer.
 	if err := s.gate.Admit(r.Context(), number.CustomerID); err != nil {
 		answer, _ := moneyError(err)
-		s.refuseArrivingCall(r.Context(), number, callType, callID, "refused an arriving call to an organization that may not pay for it",
+		s.refuseArrivingCall(r.Context(), number, callType, callID, event.SessionID, "refused an arriving call to an organization that may not pay for it",
 			"call", event.CallCid, "customer", number.CustomerID, "code", answer.Code)
 		return
 	}
@@ -235,7 +236,7 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	// it on this node.
 	if number.ConfigID != "" {
 		if s.sessions == nil {
-			s.refuseArrivingCall(r.Context(), number, callType, callID, "refused an arriving call to a number with an agent on a router that runs no sessions",
+			s.refuseArrivingCall(r.Context(), number, callType, callID, event.SessionID, "refused an arriving call to a number with an agent on a router that runs no sessions",
 				"call", event.CallCid, "customer", number.CustomerID, "number", number.E164, "config", number.ConfigID)
 			return
 		}
@@ -247,7 +248,7 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	if s.dispatch == nil {
 		return
 	}
-	if elsewhere, _ := s.forwardedToWorkers(r.Context(), s.replayed(r, payload), number.CustomerID); elsewhere {
+	if elsewhere, _ := s.forwardedToWorkers(r.Context(), s.replayed(r, payload), number.CustomerID, dispatch.Calls); elsewhere {
 		return
 	}
 
@@ -270,6 +271,8 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 		s.logger.Error("nobody could answer an arriving call",
 			"call", event.CallCid, "customer", number.CustomerID,
 			"number", number.E164, "error", err)
+		s.refuseArrivingCall(r.Context(), number, callType, callID, event.SessionID, "refused an arriving call no worker could take",
+			"call", event.CallCid, "customer", number.CustomerID, "number", number.E164)
 		return
 	}
 	s.pinHook(origin, number.CustomerID, event.CallCid)
@@ -288,7 +291,7 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 func (s *Server) answerWithAgent(ctx context.Context, sessions *session.Manager, origin hookOrigin, event callEvent, number store.PhoneNumber, callType, callID string) {
 	config, err := s.configs.AgentConfig(ctx, number.CustomerID, number.ConfigID)
 	if err != nil {
-		s.refuseArrivingCall(ctx, number, callType, callID, "refused an arriving call to a number whose agent is gone",
+		s.refuseArrivingCall(ctx, number, callType, callID, event.SessionID, "refused an arriving call to a number whose agent is gone",
 			"call", event.CallCid, "customer", number.CustomerID, "number", number.E164,
 			"config", number.ConfigID, "error", err)
 		return
@@ -327,7 +330,7 @@ func (s *Server) answerWithAgent(ctx context.Context, sessions *session.Manager,
 		s.logger.Error("nobody could answer an arriving call",
 			"call", event.CallCid, "customer", number.CustomerID,
 			"number", number.E164, "config", number.ConfigID, "error", err)
-		s.refuseArrivingCall(ctx, number, callType, callID, "refused an arriving call its agent could not answer",
+		s.refuseArrivingCall(ctx, number, callType, callID, event.SessionID, "refused an arriving call its agent could not answer",
 			"call", event.CallCid, "customer", number.CustomerID, "number", number.E164, "config", number.ConfigID)
 		return
 	}
@@ -370,12 +373,15 @@ const endRefusedTimeout = 10 * time.Second
 // bridge has answered the caller by the time the call's session starts (the caller is its
 // first participant), so a call left alone would run until the caller hung up, and the vendor
 // bills its seconds; it is ended off the request, so the hook still answers at once.
-func (s *Server) refuseArrivingCall(ctx context.Context, number store.PhoneNumber, callType, callID, why string, attributes ...any) {
+func (s *Server) refuseArrivingCall(ctx context.Context, number store.PhoneNumber, callType, callID, streamSession, why string, attributes ...any) {
 	s.logger.Info(why+"; ending it", attributes...)
 	if s.phone == nil {
 		return
 	}
 	ctx = context.WithoutCancel(ctx)
+	// The caller's leg, its Stream session's, ends with the call, on whichever node Stream's
+	// events reach, and is counted failed there. Beside the end, so a slow Redis does not keep the caller on the line.
+	go s.phone.Refused(ctx, number.CustomerID, number.StreamAppPK, callType, callID, streamSession)
 	go func() {
 		ctx, cancel := context.WithTimeout(ctx, endRefusedTimeout)
 		defer cancel()
@@ -387,8 +393,8 @@ func (s *Server) refuseArrivingCall(ctx context.Context, number store.PhoneNumbe
 }
 
 // endCallEpisodes closes the episodes of an ended call and has them summarized off the request
-// (omnichannel.Closer.EndCall, T55). Only a call under an agent config with episode_cards on
-// has one; any other call matches no row, so nothing is written and no Stream is reached, and
+// (omnichannel.Closer.EndCall, T55). Only a call under an agent config with episode_cards record
+// or on has one; any other call matches no row, so nothing is written and no Stream is reached, and
 // the answer is the 200 it was before. A failure is logged and answered 200 as well: Stream
 // retries a non-2xx, and the episode is read by its last lines until it closes.
 func (s *Server) endCallEpisodes(r *http.Request, origin hookOrigin, event callEvent) {
@@ -414,6 +420,17 @@ func callerOf(event callEvent) string {
 	return phoneCallerOf(event).number
 }
 
+// phoneNumberOf is phone.CallerNumber in E.164, as every other number in the API is, when the
+// carrier wrote it with 00 for the plus. One that does not say it is international is kept as
+// it came, since its country cannot be told.
+func phoneNumberOf(participantID string) (string, bool) {
+	number, ok := phone.CallerNumber(participantID)
+	if person, err := omnichannel.Phone(number); ok && err == nil {
+		return person.Address, true
+	}
+	return number, ok
+}
+
 // phoneCaller is the phone in a call, and its user session there.
 type phoneCaller struct {
 	number        string
@@ -426,7 +443,7 @@ func phoneCallerOf(event callEvent) phoneCaller {
 		return phoneCaller{}
 	}
 	for _, participant := range event.Call.Session.Participants {
-		if caller, ok := phone.CallerNumber(participant.User.ID); ok {
+		if caller, ok := phoneNumberOf(participant.User.ID); ok {
 			return phoneCaller{number: caller, UserSessionID: participant.UserSessionID}
 		}
 	}
@@ -457,7 +474,7 @@ func (s *Server) phoneJoinedOrLeft(r *http.Request, origin hookOrigin, eventType
 	participant := event.Participant.UserSessionID
 	var err error
 	if eventType == getstream.EventTypeCallSessionParticipantJoined {
-		number, _ := phone.CallerNumber(event.Participant.User.ID)
+		number, _ := phoneNumberOf(event.Participant.User.ID)
 		err = s.phone.Connect(r.Context(), origin.scope(), callType, callID, event.SessionID, participant, number,
 			eventTime(event.CreatedAt))
 	} else {

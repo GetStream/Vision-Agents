@@ -196,6 +196,39 @@ func (s *RunsSuite) TestASpentLimitIsAPaymentRequired() {
 	s.Contains(failure.Message, "the daily limit of $0.00 on app "+s.customerID())
 }
 
+// An agent tagged with a team is refused by the team's limit, though nobody's token names it.
+func (s *RunsSuite) TestATeamLimitRefusesTheAgentTaggedWithTheTeam() {
+	s.useApp(s.data.createApp())
+	limit := store.Limit{
+		Subject: usage.SubjectCategory, Level: store.LevelOrganization, OrganizationID: s.app.organization.ID,
+		Category: usage.TeamPrefix + "support", Interval: usage.Daily, LimitMicros: 1_000, UpdatedBy: "test",
+	}
+	s.Require().NoError(s.store.CreateLimit(s.T().Context(), &limit, store.LimitAudit{CustomerID: s.customerID(), Source: store.AuditSourceAPI}))
+	s.Require().NoError(s.store.RecordRequest(s.T().Context(), &store.Request{
+		Modality: "llm", CustomerID: s.customerID(), Provider: "echo", Model: "echo-model", UsageCategories: []string{"team:support"},
+		StartedAt: time.Now().UTC(), CostMicros: 5_000, Billable: true, Success: true,
+	}))
+	var tagged, untagged AgentConfig
+	for config, tags := range map[*AgentConfig]map[string]string{&tagged: {"team": "support"}, &untagged: {}} {
+		s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
+			Name: "agent-" + s.utils.uuid(), Llm: pointerTo("echo/echo-model"), Tags: &tags,
+		}, config))
+	}
+
+	// The limit is measured in the background, so the run that warms the team may pass.
+	s.Require().Eventually(func() bool {
+		status, _ := s.serverClient.call(http.MethodPost, "/v1/agents/runs", CreateRunRequest{ConfigId: tagged.Id, Input: "hello"})
+		return status != http.StatusOK
+	}, 5*time.Second, 50*time.Millisecond)
+	status, failure := s.runFails(CreateRunRequest{ConfigId: tagged.Id, Input: "hello"})
+
+	s.Equal(http.StatusPaymentRequired, status)
+	s.Equal(codeSpendLimitReached, failure.Code)
+	s.Contains(failure.Message, "on team support")
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/runs", CreateRunRequest{ConfigId: untagged.Id, Input: "hello"})
+	s.Equal(http.StatusOK, status, "an agent with no team is not the team's: %s", payload)
+}
+
 func (s *RunsSuite) TestARunOverTheAppsLimitIsToldWhenToRetry() {
 	s.useApp(s.data.createApp())
 	finished := s.holdRun(s.config("holding/holding-model"))

@@ -68,7 +68,7 @@ class CreditEntry:
 
         id = d.pop("id")
 
-        kind = CreditEntryKind(d.pop("kind"))
+        kind = CreditEntryKind._decode(d.pop("kind"))
 
         reference = d.pop("reference", UNSET)
 

@@ -103,8 +103,15 @@ type MessageRule struct {
 	// the same place in Each, so a message is read together with the entries around it.
 	Each string `yaml:"each,omitempty" json:"each,omitempty"`
 	// Match is values a message must have to be read, compared as exact strings, such as an
-	// event type. A message that differs is not one this block reads.
+	// event type. A message that differs is not one this block reads, unless Also reads it.
 	Match map[string]string `yaml:"match,omitempty" json:"match,omitempty"`
+	// Also is other kinds of message the block reads, each by its own match and text, such as
+	// WhatsApp's photo, whose text is its caption (AI-2133). A message that differs from Match
+	// is read by the first whose match it has, with that one's text, and only when that text
+	// is not empty or the kind's media finds its file: a video without a caption, which the
+	// agent is not handed, gives it nothing to answer. Every other path is the block's. A build
+	// before Also (a rollback) ignores it and reads Match alone.
+	Also []MessageKind `yaml:"also,omitempty" json:"also,omitempty"`
 	// SkipIfPresent is paths whose presence means the message is not a person's, such as
 	// one the connector's own bot posted.
 	SkipIfPresent []string `yaml:"skip_if_present,omitempty" json:"skip_if_present,omitempty"`
@@ -129,10 +136,23 @@ type MessageRule struct {
 	// Media is where the files sent with a message are, such as Linq's media parts (AI-2094).
 	// Absent: a message is read without files, as before.
 	Media *MediaRule `yaml:"media,omitempty" json:"media,omitempty"`
+	// MediaLookup is where a file a message names by its id (MediaRule.ID) is (AI-2740).
+	MediaLookup *MediaLookup `yaml:"media_lookup,omitempty" json:"media_lookup,omitempty"`
 	// Addressed is when a message speaks to the connection's own account, such as its bot in
 	// a channel of people. A message that does not starts no thread: it is answered only on a
 	// thread already linked. Empty: every message does, as before (AI-989).
 	Addressed *AddressRule `yaml:"addressed,omitempty" json:"addressed,omitempty"`
+}
+
+// MessageKind is one kind of message MessageRule.Also reads: the values it has, compared as
+// MessageRule.Match's, the path of its text, and where its one file is.
+type MessageKind struct {
+	Match map[string]string `yaml:"match" json:"match"`
+	Text  string            `yaml:"text" json:"text"`
+	// Media is the message's one file, such as WhatsApp's image (AI-2740): its paths read one
+	// value of the message, as Text does, with no [*] past Each. It is the kind's files in place
+	// of MessageRule.Media's. Absent: the block's.
+	Media *MediaRule `yaml:"media,omitempty" json:"media,omitempty"`
 }
 
 // MediaRule is where each file of a message is: URL and MIMEType are paths through the same
@@ -140,9 +160,25 @@ type MessageRule struct {
 // TextParts does. A file is an element where both are found; one with only one of them, such
 // as a text part or a link card, is not a file.
 type MediaRule struct {
-	URL      string `yaml:"url" json:"url"`
+	URL string `yaml:"url,omitempty" json:"url"`
+	// ID is, in place of URL, the path of the provider's id for the file, for a provider that
+	// names no URL a file can be read at, only an id MessageRule.MediaLookup finds it by.
+	ID       string `yaml:"id,omitempty" json:"id,omitempty"`
 	MIMEType string `yaml:"mime_type" json:"mime_type"`
 }
+
+// MediaLookup is where a file a message names by its id is: the GET of URL, with {id} the
+// file's id, answers JSON whose File is the file's URL, which must be an https URL on Host.
+// Both requests carry the connection's own credential, so Host is the one host besides URL's
+// it is sent to: a file URL on any other is not requested (AI-2740).
+type MediaLookup struct {
+	URL  string `yaml:"url" json:"url"`
+	File string `yaml:"file" json:"file"`
+	Host string `yaml:"host" json:"host"`
+}
+
+// lookupID is the name a media lookup's URL takes the file's id by.
+const lookupID = "id"
 
 // element is the path of the element a media path reads in: the path up to its last [*].
 func element(path string) string {
@@ -207,7 +243,7 @@ func (rule MessageRule) mention(metadata map[string]string) (string, bool) {
 // IsZero is whether the block declares no messages, so encoding/json (omitzero) and yaml.v3
 // (omitempty) leave it out.
 func (rule MessageRule) IsZero() bool {
-	return rule.Each == "" && len(rule.Match) == 0 && len(rule.SkipIfPresent) == 0 && rule.ProviderUnitID == "" &&
+	return rule.Each == "" && len(rule.Match) == 0 && len(rule.Also) == 0 && len(rule.SkipIfPresent) == 0 && rule.ProviderUnitID == "" &&
 		len(rule.ThreadKey) == 0 && rule.AuthorID == "" && rule.ProviderMessageID == "" && rule.Text == "" &&
 		rule.TextParts == "" && rule.Media == nil && rule.Addressed == nil
 }
@@ -566,6 +602,20 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 	if c.Format == FormatForm && msgs.Each != "" {
 		fail("channel.messages.each", "a form holds one message")
 	}
+	// checkSource is the name and path a media rule names its file by: one of url and id, an id
+	// only with a media lookup to find the file by.
+	checkSource := func(field string, media *MediaRule) (name, path string, ok bool) {
+		switch {
+		case (media.URL == "") == (media.ID == ""):
+			fail(field, "names its file by exactly one of url and id")
+			return "", "", false
+		case media.ID != "" && msgs.MediaLookup == nil:
+			fail(field+".id", "needs channel.messages.media_lookup to find the file by")
+		case media.ID != "":
+			return "id", media.ID, true
+		}
+		return "url", media.URL, true
+	}
 	if c.Challenge != "" {
 		checkPath("channel.challenge", c.Challenge)
 		if strings.Contains(c.Challenge, "[*]") {
@@ -586,6 +636,45 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 		checkPath("channel.messages.match."+path, path)
 		if msgs.Match[path] == "" {
 			fail("channel.messages.match."+path, "is empty: an absent value is skip_if_present's")
+		}
+	}
+	if len(msgs.Also) > 0 && len(msgs.Match) == 0 {
+		fail("channel.messages.also", "needs messages.match: without one every message is read by it")
+	}
+	for i, kind := range msgs.Also {
+		field := fmt.Sprintf("channel.messages.also[%d]", i)
+		if len(kind.Match) == 0 {
+			fail(field+".match", "is empty: without one every message is this kind")
+		}
+		for _, path := range slices.Sorted(maps.Keys(kind.Match)) {
+			checkPath(field+".match."+path, path)
+			if kind.Match[path] == "" {
+				fail(field+".match."+path, "is empty: an absent value is skip_if_present's")
+			}
+		}
+		checkPath(field+".text", kind.Text)
+		if media := kind.Media; media != nil {
+			if name, source, ok := checkSource(field+".media", media); ok {
+				checkPath(field+".media."+name, source)
+			}
+			checkPath(field+".media.mime_type", media.MIMEType)
+		}
+	}
+	if lookup := msgs.MediaLookup; lookup != nil {
+		field := "channel.messages.media_lookup"
+		if names, err := placeholderNames(lookup.URL); err == nil && !slices.Contains(names, lookupID) {
+			fail(field+".url", "%q names no {%s}, so it would find every file at one URL", lookup.URL, lookupID)
+		} else if err := m.checkTemplate(lookup.URL, inputs, captures, map[string]bool{lookupID: true}); err != nil {
+			fail(field+".url", "%v", err)
+		}
+		if _, err := parsePath(lookup.File); err != nil {
+			fail(field+".file", "%v", err)
+		} else if strings.Contains(lookup.File, "[*]") {
+			fail(field+".file", "a lookup answers one file, so it has no [*]")
+		}
+		if parsed, err := url.Parse("https://" + lookup.Host); lookup.Host == "" || err != nil || parsed.Host != lookup.Host ||
+			parsed.Port() != "" || lookup.Host != strings.ToLower(lookup.Host) {
+			fail(field+".host", "%q is not a lowercase host name alone, with no scheme, port, path or userinfo", lookup.Host)
 		}
 	}
 	for i, path := range msgs.SkipIfPresent {
@@ -649,10 +738,13 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 			checkParts("channel.messages.text_parts", msgs.TextParts)
 		}
 		if media := msgs.Media; media != nil {
-			checkParts("channel.messages.media.url", media.URL)
+			name, source, ok := checkSource("channel.messages.media", media)
+			if ok {
+				checkParts("channel.messages.media."+name, source)
+			}
 			checkParts("channel.messages.media.mime_type", media.MIMEType)
-			if strings.Contains(media.URL, "[*]") && strings.Contains(media.MIMEType, "[*]") && element(media.URL) != element(media.MIMEType) {
-				fail("channel.messages.media", "url %q and mime_type %q differ up to their last [*], so they are not one file's", media.URL, media.MIMEType)
+			if ok && strings.Contains(source, "[*]") && strings.Contains(media.MIMEType, "[*]") && element(source) != element(media.MIMEType) {
+				fail("channel.messages.media", "%s %q and mime_type %q differ up to their last [*], so they are not one file's", name, source, media.MIMEType)
 			}
 		}
 	}
@@ -962,13 +1054,29 @@ func (rule SignalRule) read(root any, connectorID string) ([]Signal, error) {
 // read reads the message at one binding of the each path. skipped is set when the message is
 // not one the block reads, naming the rule that left it out.
 func (rule MessageRule) read(root any, bound []int) (message ChannelMessage, skipped string, err error) {
-	for _, path := range slices.Sorted(maps.Keys(rule.Match)) {
-		value, found, err := readPath(root, path, bound)
-		if err != nil {
-			return ChannelMessage{}, "", err
+	differs, err := mismatch(root, bound, rule.Match)
+	if err != nil {
+		return ChannelMessage{}, "", err
+	}
+	// caption is the text of the also entry that reads the message, when one does. A message
+	// that differs from match was never read before also, so a shape also cannot read, such as
+	// a caption that is an object, leaves it out as before instead of failing the delivery
+	// with the messages beside it, as media leaves out a file it cannot read.
+	// kindMedia is the also entry's media rule, when it has one, and file what it found.
+	caption := ""
+	var kindMedia *MediaRule
+	var file []Media
+	if differs != "" {
+		for _, kind := range rule.Also {
+			if other, err := mismatch(root, bound, kind.Match); err != nil || other != "" {
+				continue
+			}
+			caption, _, _ = readPath(root, kind.Text, bound)
+			kindMedia, file = kind.Media, kind.Media.file(root, bound)
+			break
 		}
-		if !found || value != rule.Match[path] {
-			return ChannelMessage{}, "match " + path, nil
+		if caption == "" && len(file) == 0 {
+			return ChannelMessage{}, "match " + differs, nil
 		}
 	}
 	for _, path := range rule.SkipIfPresent {
@@ -1023,13 +1131,17 @@ func (rule MessageRule) read(root any, bound []int) (message ChannelMessage, ski
 	case missingPart != "":
 		return ChannelMessage{}, "no thread_key part " + missingPart, nil
 	}
-	text, err := rule.text(root, bound)
-	if err != nil {
-		return ChannelMessage{}, "", err
+	text := caption
+	if text == "" {
+		if text, err = rule.text(root, bound); err != nil {
+			return ChannelMessage{}, "", err
+		}
 	}
-	media, err := rule.media(root, bound)
-	if err != nil {
-		return ChannelMessage{}, "", err
+	media := file
+	if kindMedia == nil {
+		if media, err = rule.media(root, bound); err != nil {
+			return ChannelMessage{}, "", err
+		}
 	}
 	direct := false
 	if rule.Addressed != nil && len(rule.Addressed.Match) > 0 {
@@ -1056,6 +1168,21 @@ func (rule MessageRule) read(root any, bound []int) (message ChannelMessage, ski
 	}, "", nil
 }
 
+// mismatch is the first path of match, in order, whose value the message bound gives does
+// not have, or "" when it has them all.
+func mismatch(root any, bound []int, match map[string]string) (string, error) {
+	for _, path := range slices.Sorted(maps.Keys(match)) {
+		value, found, err := readPath(root, path, bound)
+		if err != nil {
+			return "", err
+		}
+		if !found || value != match[path] {
+			return path, nil
+		}
+	}
+	return "", nil
+}
+
 // text is a message's text: every value at text_parts joined by a newline when it is set,
 // else the value at text. A newline, because two pieces are two of the person's bubbles, which a space
 // would run into one sentence: Linq refuses two text parts in a row, so they come with
@@ -1076,7 +1203,11 @@ func (rule MessageRule) media(root any, bound []int) ([]Media, error) {
 	if rule.Media == nil {
 		return nil, nil
 	}
-	elements, err := enumerate(root, element(rule.Media.URL))
+	source := rule.Media.URL
+	if rule.Media.ID != "" {
+		source = rule.Media.ID
+	}
+	elements, err := enumerate(root, element(source))
 	if err != nil {
 		return nil, err
 	}
@@ -1087,7 +1218,7 @@ func (rule MessageRule) media(root any, bound []int) ([]Media, error) {
 		}
 		// An element whose url or mime type is not a value is no file; it must not drop the
 		// message's text with it.
-		source, hasURL, err := readPath(root, rule.Media.URL, at)
+		value, hasSource, err := readPath(root, source, at)
 		if err != nil {
 			continue
 		}
@@ -1095,11 +1226,41 @@ func (rule MessageRule) media(root any, bound []int) ([]Media, error) {
 		if err != nil {
 			continue
 		}
-		if hasURL && hasMIME {
-			media = append(media, Media{URL: source, MIMEType: mime})
+		if hasSource && hasMIME {
+			media = append(media, rule.Media.named(value, mime))
 		}
 	}
 	return media, nil
+}
+
+// file is the one file of a message an also kind's media rule reads, when both its source and
+// its mime type are found: none for a nil rule, and none for a value that is no string, as
+// media leaves out a file it cannot read.
+func (m *MediaRule) file(root any, bound []int) []Media {
+	if m == nil {
+		return nil
+	}
+	source := m.URL
+	if m.ID != "" {
+		source = m.ID
+	}
+	value, hasSource, err := readPath(root, source, bound)
+	if err != nil || !hasSource {
+		return nil
+	}
+	mime, hasMIME, err := readPath(root, m.MIMEType, bound)
+	if err != nil || !hasMIME {
+		return nil
+	}
+	return []Media{m.named(value, mime)}
+}
+
+// named is the file whose source, its URL or its id as the rule says, is value.
+func (m *MediaRule) named(value, mime string) Media {
+	if m.ID != "" {
+		return Media{ID: value, MIMEType: mime}
+	}
+	return Media{URL: value, MIMEType: mime}
 }
 
 // Reply is the URL and JSON body that send one reply, from the channel block's templates. A
@@ -1146,6 +1307,60 @@ func (m ResolvedManifest) Reply(r ReplyValues) (string, []byte, error) {
 		return "", nil, stack.Wrap(err)
 	}
 	return target, body, nil
+}
+
+// MediaLookupURL is the URL that answers where the file a message names by id is: the media
+// lookup's URL with {id} filled as a reply's values from a message are, so the id can neither
+// move the request to another host nor remove a path segment (render).
+func (m ResolvedManifest) MediaLookupURL(id string) (string, error) {
+	lookup, err := m.mediaLookup()
+	if err != nil {
+		return "", err
+	}
+	manifest := Manifest{Vars: m.vars, Capture: m.Capture}
+	target, complete, err := manifest.render(lookup.URL, m.Inputs, m.Metadata, map[string]string{lookupID: id})
+	if err != nil {
+		return "", stack.Wrap(fmt.Errorf("manifest %q: channel.messages.media_lookup.url: %w", m.ConnectorID, err))
+	}
+	if !complete {
+		return "", stack.Wrap(fmt.Errorf("manifest %q: channel.messages.media_lookup.url names a value the connection has not captured", m.ConnectorID))
+	}
+	return target, nil
+}
+
+// MediaFile is the file URL a media lookup's answer names at its file path. The connection's
+// credential goes with the request for it, so anything but an https URL on the lookup's host,
+// with no userinfo and no port, is refused before any request is made.
+func (m ResolvedManifest) MediaFile(answer []byte) (string, error) {
+	lookup, err := m.mediaLookup()
+	if err != nil {
+		return "", err
+	}
+	root, err := decodeBody(FormatJSON, answer)
+	if err != nil {
+		return "", stack.Wrap(fmt.Errorf("manifest %q: a media lookup answered something other than a JSON object: %w", m.ConnectorID, err))
+	}
+	value, found, err := readPath(root, lookup.File, nil)
+	if err != nil || !found {
+		return "", stack.Wrap(fmt.Errorf("manifest %q: a media lookup's answer has no %s", m.ConnectorID, lookup.File))
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Port() != "" || !strings.EqualFold(parsed.Hostname(), lookup.Host) {
+		host := ""
+		if err == nil {
+			host = parsed.Host
+		}
+		return "", stack.Wrap(fmt.Errorf("manifest %q: a media lookup named a file at %q, not an https URL on %s alone", m.ConnectorID, host, lookup.Host))
+	}
+	return value, nil
+}
+
+// mediaLookup is the manifest's media lookup, or an error when it has none.
+func (m ResolvedManifest) mediaLookup() (MediaLookup, error) {
+	if m.Channel == nil || m.Channel.Messages.MediaLookup == nil {
+		return MediaLookup{}, stack.Wrap(fmt.Errorf("manifest %q has no channel.messages.media_lookup", m.ConnectorID))
+	}
+	return *m.Channel.Messages.MediaLookup, nil
 }
 
 // fillBody fills every string of a body template.

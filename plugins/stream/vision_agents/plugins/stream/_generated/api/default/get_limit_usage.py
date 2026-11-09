@@ -15,7 +15,7 @@ def _get_kwargs(
     *,
     subject: LimitSubject,
     app_id: list[str] | None | Unset = UNSET,
-    api_key: list[str] | None | Unset = UNSET,
+    api_key_id: list[str] | None | Unset = UNSET,
     user_id: list[str] | None | Unset = UNSET,
     team: list[str] | None | Unset = UNSET,
     category: list[str] | None | Unset = UNSET,
@@ -36,15 +36,15 @@ def _get_kwargs(
         json_app_id = app_id
     params["app_id"] = json_app_id
 
-    json_api_key: list[str] | None | Unset
-    if isinstance(api_key, Unset):
-        json_api_key = UNSET
-    elif isinstance(api_key, list):
-        json_api_key = api_key
+    json_api_key_id: list[str] | None | Unset
+    if isinstance(api_key_id, Unset):
+        json_api_key_id = UNSET
+    elif isinstance(api_key_id, list):
+        json_api_key_id = api_key_id
 
     else:
-        json_api_key = api_key
-    params["api_key"] = json_api_key
+        json_api_key_id = api_key_id
+    params["api_key_id"] = json_api_key_id
 
     json_user_id: list[str] | None | Unset
     if isinstance(user_id, Unset):
@@ -157,7 +157,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     subject: LimitSubject,
     app_id: list[str] | None | Unset = UNSET,
-    api_key: list[str] | None | Unset = UNSET,
+    api_key_id: list[str] | None | Unset = UNSET,
     user_id: list[str] | None | Unset = UNSET,
     team: list[str] | None | Unset = UNSET,
     category: list[str] | None | Unset = UNSET,
@@ -168,9 +168,9 @@ def sync_detailed(
     effective amount, its baseline since a reset and its room, and for the organization the operator's
     spend hard limit, which is what admission refuses first, the same on every subject. Up to 100
     subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app,
-    api_key, user_id, team or category), and send app_id once for subjects within one app or once per
-    subject, so every list has one value or one per subject. One subject answers a list of one. Spend is
-    read from the usage records, so it is what admission counts within a few seconds.
+    api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app
+    or once per subject, so every list has one value or one per subject. One subject answers a list of
+    one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 
     Server-side only: one server-side credential of any app changes every limit of its organization, and
     a request that is not server-side, reads included, answers 403 server_side_only.
@@ -182,7 +182,9 @@ def sync_detailed(
             it.
         app_id (list[str] | None | Unset): The app of each subject, for every subject but
             organization, category and team. One goes with every subject.
-        api_key (list[str] | None | Unset): The key of each subject, for subject api_key.
+        api_key_id (list[str] | None | Unset): The key of each subject, for subject api_key. Named
+            api_key_id because api_key in the query is the caller's credential, which Stream's proxy
+            requires on every call.
         user_id (list[str] | None | Unset): The end user of each subject, for subject user.
         team (list[str] | None | Unset): The team of each subject, for subject team or app_team.
         category (list[str] | None | Unset): The usage category of each subject, for subject
@@ -199,7 +201,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         subject=subject,
         app_id=app_id,
-        api_key=api_key,
+        api_key_id=api_key_id,
         user_id=user_id,
         team=team,
         category=category,
@@ -217,7 +219,7 @@ def sync(
     client: AuthenticatedClient | Client,
     subject: LimitSubject,
     app_id: list[str] | None | Unset = UNSET,
-    api_key: list[str] | None | Unset = UNSET,
+    api_key_id: list[str] | None | Unset = UNSET,
     user_id: list[str] | None | Unset = UNSET,
     team: list[str] | None | Unset = UNSET,
     category: list[str] | None | Unset = UNSET,
@@ -228,9 +230,9 @@ def sync(
     effective amount, its baseline since a reset and its room, and for the organization the operator's
     spend hard limit, which is what admission refuses first, the same on every subject. Up to 100
     subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app,
-    api_key, user_id, team or category), and send app_id once for subjects within one app or once per
-    subject, so every list has one value or one per subject. One subject answers a list of one. Spend is
-    read from the usage records, so it is what admission counts within a few seconds.
+    api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app
+    or once per subject, so every list has one value or one per subject. One subject answers a list of
+    one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 
     Server-side only: one server-side credential of any app changes every limit of its organization, and
     a request that is not server-side, reads included, answers 403 server_side_only.
@@ -242,7 +244,9 @@ def sync(
             it.
         app_id (list[str] | None | Unset): The app of each subject, for every subject but
             organization, category and team. One goes with every subject.
-        api_key (list[str] | None | Unset): The key of each subject, for subject api_key.
+        api_key_id (list[str] | None | Unset): The key of each subject, for subject api_key. Named
+            api_key_id because api_key in the query is the caller's credential, which Stream's proxy
+            requires on every call.
         user_id (list[str] | None | Unset): The end user of each subject, for subject user.
         team (list[str] | None | Unset): The team of each subject, for subject team or app_team.
         category (list[str] | None | Unset): The usage category of each subject, for subject
@@ -260,7 +264,7 @@ def sync(
         client=client,
         subject=subject,
         app_id=app_id,
-        api_key=api_key,
+        api_key_id=api_key_id,
         user_id=user_id,
         team=team,
         category=category,
@@ -272,7 +276,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     subject: LimitSubject,
     app_id: list[str] | None | Unset = UNSET,
-    api_key: list[str] | None | Unset = UNSET,
+    api_key_id: list[str] | None | Unset = UNSET,
     user_id: list[str] | None | Unset = UNSET,
     team: list[str] | None | Unset = UNSET,
     category: list[str] | None | Unset = UNSET,
@@ -283,9 +287,9 @@ async def asyncio_detailed(
     effective amount, its baseline since a reset and its room, and for the organization the operator's
     spend hard limit, which is what admission refuses first, the same on every subject. Up to 100
     subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app,
-    api_key, user_id, team or category), and send app_id once for subjects within one app or once per
-    subject, so every list has one value or one per subject. One subject answers a list of one. Spend is
-    read from the usage records, so it is what admission counts within a few seconds.
+    api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app
+    or once per subject, so every list has one value or one per subject. One subject answers a list of
+    one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 
     Server-side only: one server-side credential of any app changes every limit of its organization, and
     a request that is not server-side, reads included, answers 403 server_side_only.
@@ -297,7 +301,9 @@ async def asyncio_detailed(
             it.
         app_id (list[str] | None | Unset): The app of each subject, for every subject but
             organization, category and team. One goes with every subject.
-        api_key (list[str] | None | Unset): The key of each subject, for subject api_key.
+        api_key_id (list[str] | None | Unset): The key of each subject, for subject api_key. Named
+            api_key_id because api_key in the query is the caller's credential, which Stream's proxy
+            requires on every call.
         user_id (list[str] | None | Unset): The end user of each subject, for subject user.
         team (list[str] | None | Unset): The team of each subject, for subject team or app_team.
         category (list[str] | None | Unset): The usage category of each subject, for subject
@@ -314,7 +320,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         subject=subject,
         app_id=app_id,
-        api_key=api_key,
+        api_key_id=api_key_id,
         user_id=user_id,
         team=team,
         category=category,
@@ -330,7 +336,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     subject: LimitSubject,
     app_id: list[str] | None | Unset = UNSET,
-    api_key: list[str] | None | Unset = UNSET,
+    api_key_id: list[str] | None | Unset = UNSET,
     user_id: list[str] | None | Unset = UNSET,
     team: list[str] | None | Unset = UNSET,
     category: list[str] | None | Unset = UNSET,
@@ -341,9 +347,9 @@ async def asyncio(
     effective amount, its baseline since a reset and its room, and for the organization the operator's
     spend hard limit, which is what admission refuses first, the same on every subject. Up to 100
     subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app,
-    api_key, user_id, team or category), and send app_id once for subjects within one app or once per
-    subject, so every list has one value or one per subject. One subject answers a list of one. Spend is
-    read from the usage records, so it is what admission counts within a few seconds.
+    api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app
+    or once per subject, so every list has one value or one per subject. One subject answers a list of
+    one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 
     Server-side only: one server-side credential of any app changes every limit of its organization, and
     a request that is not server-side, reads included, answers 403 server_side_only.
@@ -355,7 +361,9 @@ async def asyncio(
             it.
         app_id (list[str] | None | Unset): The app of each subject, for every subject but
             organization, category and team. One goes with every subject.
-        api_key (list[str] | None | Unset): The key of each subject, for subject api_key.
+        api_key_id (list[str] | None | Unset): The key of each subject, for subject api_key. Named
+            api_key_id because api_key in the query is the caller's credential, which Stream's proxy
+            requires on every call.
         user_id (list[str] | None | Unset): The end user of each subject, for subject user.
         team (list[str] | None | Unset): The team of each subject, for subject team or app_team.
         category (list[str] | None | Unset): The usage category of each subject, for subject
@@ -374,7 +382,7 @@ async def asyncio(
             client=client,
             subject=subject,
             app_id=app_id,
-            api_key=api_key,
+            api_key_id=api_key_id,
             user_id=user_id,
             team=team,
             category=category,

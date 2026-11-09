@@ -156,6 +156,9 @@ func (s *TelnyxChannelSuite) TestAnSMSIsAnsweredFromTheCustomersNumber() {
 // A person's number is one thread, so their texts are one thread channel and one episode card,
 // source sms, in the omni-channel the contact map gives the number (T41).
 func (s *TelnyxChannelSuite) TestANumbersTextsAreOneThreadChannelAndOneSMSCard() {
+	// record writes the card as on does (AI-2856).
+	s.config.EpisodeCardsRecord = true
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
 	person := "+13125550001"
 	s.deliver(s.received(s.line, person, "first"), time.Now())
 	s.deliver(s.received(s.line, person, "second"), time.Now())

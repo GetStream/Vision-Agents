@@ -309,6 +309,55 @@ describe("loadFolder", () => {
     );
   });
 
+  it("reads floor_control as written, an empty one included, and nothing when it says nothing", async () => {
+    for (const [declared, chosen] of [
+      [
+        "floor_control:\n  model: stream/chorus-asr # the one there is\n  max_wait_ms: 800\n",
+        { model: "stream/chorus-asr", max_wait_ms: 800 },
+      ],
+      ["floor_control: {model: 'stream/chorus-asr'}\n", { model: "stream/chorus-asr" }],
+      ["floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: ~\n", { model: "stream/chorus-asr" }],
+      // Which models there are, and whether a wait needs one, is the router's to say.
+      ["floor_control: {model: other}\n", { model: "other" }],
+      ["floor_control: {max_wait_ms: 800}\n", { max_wait_ms: 800 }],
+      ["floor_control: {}\n", {}],
+    ] as const) {
+      const folder = await loadFolder(await agentDir({ "agent.yaml": `name: concierge\n${declared}` }));
+
+      assert.deepEqual(folder.settings?.floorControl, chosen, declared);
+    }
+    for (const declared of ["", "floor_control:\n", "floor_control: ~\n", "floor_control:\n  # later\n"]) {
+      const folder = await loadFolder(await agentDir({ "agent.yaml": `name: concierge\n${declared}` }));
+
+      assert.deepEqual(folder.settings, { name: "concierge" }, declared);
+    }
+  });
+
+  it("refuses a floor_control that is not a mapping of model and max_wait_ms, naming what is wrong", async () => {
+    for (const [declaration, reason] of [
+      // The string it once was.
+      ["floor_control: stream/chorus-asr\n", /floor_control is a mapping of model and, optionally, max_wait_ms/],
+      ["floor_control: [stream/chorus-asr]\n", /floor_control is a mapping/],
+      ["floor_control:\n  - stream/chorus-asr\n", /floor_control is a mapping/],
+      ["floor_control: true\n", /floor_control is a mapping/],
+      ["floor_control: 1\n", /floor_control is a mapping/],
+      ["floor_control:\n  model: stream/chorus-asr\n  mode: act\n", /unknown floor_control setting "mode"/],
+      ["floor_control: {model: stream/chorus-asr, preset: fast}\n", /unknown floor_control setting "preset"/],
+      ["floor_control:\n  model: [stream/chorus-asr]\n", /floor_control\.model must be a string/],
+      ["floor_control:\n  model:\n    name: stream/chorus-asr\n", /floor_control\.model is one value/],
+      ["floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: soon\n", /floor_control\.max_wait_ms must be a whole number/],
+      ["floor_control: {model: stream/chorus-asr, max_wait_ms: 800.5}\n", /floor_control\.max_wait_ms must be a whole number/],
+      // What max_wait_ms replaced.
+      ["end_of_turn:\n  max_wait_ms: 900\n", /declares "end_of_turn", which is not something an agent has/],
+    ] as const) {
+      await assert.rejects(
+        async () => loadFolder(await agentDir({ "agent.yaml": declaration })),
+        reason,
+        declaration,
+      );
+    }
+  });
+
   it("tells channels that say nothing from ones that are empty", async () => {
     const without = await loadFolder(await agentDir({ "agent.yaml": "name: concierge\n" }));
     const nothing = await loadFolder(

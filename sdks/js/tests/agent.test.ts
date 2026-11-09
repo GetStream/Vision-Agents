@@ -818,6 +818,32 @@ describe("Agent", () => {
         assert.notEqual(one["hash"], other["hash"]);
       });
 
+      it("sends floor_control as written, and none when agent.yaml names none, so the stored choice stays", async () => {
+        for (const [declared, chosen] of [
+          [
+            "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n",
+            { model: "stream/chorus-asr", max_wait_ms: 800 },
+          ],
+          ["floor_control: {model: stream/chorus-asr}\n", { model: "stream/chorus-asr" }],
+          // Sent rather than dropped: the router refuses what it does not know, naming why.
+          ["floor_control: {model: other, max_wait_ms: 0}\n", { model: "other", max_wait_ms: 0 }],
+          // An empty one is the default flow controller again.
+          ["floor_control: {}\n", {}],
+          ["llm: llm-fast\n", undefined],
+          ["floor_control:\n", undefined],
+          ["floor_control: null\n", undefined],
+        ] as const) {
+          const body = await synced(`name: jean\n${declared}`);
+
+          assert.deepEqual(body["floor_control"], chosen, declared);
+          assert.equal("floor_control" in body, chosen !== undefined, declared);
+        }
+
+        const one = await synced("name: jean\nfloor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 900\n");
+        const other = await synced("name: jean\nfloor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 1200\n");
+        assert.notEqual(one["hash"], other["hash"], "a changed max_wait_ms would not sync");
+      });
+
       it("sends how the sandbox is built and what it may reach", async () => {
         const body = await synced(
           [

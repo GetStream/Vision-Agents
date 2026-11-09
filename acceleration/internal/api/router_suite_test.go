@@ -45,9 +45,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
@@ -65,6 +65,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/extract"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/files"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -75,6 +77,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/ocrrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/siptrunk"
@@ -296,7 +299,9 @@ type RouterSuite struct {
 	vision    *scriptedLLM
 	holding   *scriptedLLM
 	knowledge *knowledgeBase
-	memories  *keptMemories
+	// knowledgeBucket is where an uploaded knowledge file waits to be read.
+	knowledgeBucket *blob.Bucket
+	memories        *keptMemories
 	// voice keeps what every stub voice was told to say. Each socket is given a stub voice
 	// and transcriber of its own, so one a test left open cannot read what the next test
 	// sends; newestVoice and newestEars are the last the router started, read through
@@ -349,6 +354,9 @@ type RouterSuite struct {
 	// connectors is what connector adapters the router has, for a suite about connectors to
 	// set before it starts the harness. Empty has none.
 	connectors core.Registry
+	// audioFloor is the router's chorus-asr server, for a suite about floor control to set
+	// before it starts the harness. Nil is none.
+	audioFloor *audiofloor.Client
 	// connectorsOff gives the router no connector keyring, transports or limiter, as a deployment with
 	// ROUTER_CONNECTORS_ENABLED unset has, for a control suite to set before it starts the
 	// harness. The suite's store, resolver and sealer are still built.
@@ -571,8 +579,11 @@ func (s *RouterSuite) SetupSuite() {
 	s.T().Cleanup(s.assertEveryRowNamesAKey)
 	if s.database != "" {
 		// Only a suite's own database is emptied, never the shared one. A run killed by
-		// -timeout skips its cleanups, and the database outlives it.
+		// -timeout skips its cleanups, and the database outlives it. A queued inbound row it
+		// left is claimed once its lease lapses, before SetupTest has made the channel fakes.
 		_, err := pgStore.DB().NewDelete().Model((*store.ScheduledTask)(nil)).Where("true").Exec(ctx)
+		s.Require().NoError(err)
+		_, err = pgStore.DB().NewDelete().Model((*store.ChannelInbound)(nil)).Where("true").Exec(ctx)
 		s.Require().NoError(err)
 	}
 
@@ -655,6 +666,7 @@ func (s *RouterSuite) SetupSuite() {
 		routing.DecisionModel: streams.DecisionModel,
 		routing.Image:         streams.Image,
 		routing.Detection:     streams.Detection,
+		routing.OCR:           streams.OCR,
 	}
 
 	if s.forwardHTTP != nil {
@@ -708,6 +720,7 @@ func (s *RouterSuite) SetupSuite() {
 	if s.manageOff {
 		manageKey = ""
 	}
+	knowledgeBase := s.knowledgeWriter(policies)
 	server := s.newNode(s.shard, logger, Options{
 		Routers:   s.modalities,
 		Pricer:    s.serverPricer(logger),
@@ -723,7 +736,6 @@ func (s *RouterSuite) SetupSuite() {
 		// App mode is served only behind a gateway that declares kinds.
 		ProxyDeclaresKind: s.appMode,
 		Phone:             s.telephony(logger),
-		Campaigns:         s.campaigns(sessions, logger),
 		Simulations:       s.simulations(sessions, streams, logger),
 		Channels:          s.inbound,
 		DLC:               s.registrations(listener, logger),
@@ -731,9 +743,10 @@ func (s *RouterSuite) SetupSuite() {
 		OpsKey:            suiteOpsKey,
 		ManageKey:         manageKey,
 		Secrets:           s.sealer,
-		Knowledge:         s.knowledgeWriter(policies),
+		Knowledge:         knowledgeBase,
 		KnowledgeLimits:   s.knowledgeLimits,
 		KnowledgeURLs:     s.pages(redisAddr),
+		KnowledgeFiles:    s.knowledgeFiles(redisAddr, knowledgeBase, streams.OCR),
 		Voices:            s.voiceService(),
 		VoiceLibrary:      voices.NewCatalogue(),
 		Dispatch:          s.dispatch,
@@ -750,6 +763,7 @@ func (s *RouterSuite) SetupSuite() {
 		TelnyxPublicKey:    s.telnyxPublicKey,
 		ChatInboundKeys:    s.chatInboundKeys,
 		TelnyxConnectionID: s.telnyxConnectionID,
+		AudioFloor:         s.audioFloor,
 		Logger:             logger,
 		// The connector events endpoint revokes through the suite's resolver.
 		ConnectorResolver:     s.resolver,
@@ -776,6 +790,9 @@ func (s *RouterSuite) SetupSuite() {
 	if bridge, built := s.bridge.(*channelbridge.Bridge); built {
 		bridge.Start(context.Background(), s.answerQueued)
 	}
+	// No campaign dialer, unlike cmd/router: suites share a database, and one suite's dialer
+	// would ring every other suite's running campaigns. A suite that dials builds its own over
+	// a database of its own (AdmissionSuite.dialer).
 }
 
 // answerQueued is the hand-off cmd/router gives the inbound worker (Server.AnswerQueued). It
@@ -971,6 +988,9 @@ func (s *RouterSuite) channelBridgeOptions(logger *slog.Logger) channelbridge.Op
 		RetryBackoff:   []time.Duration{10 * time.Millisecond, 10 * time.Millisecond},
 		InboundRetries: []time.Duration{10 * time.Millisecond, 10 * time.Millisecond, 500 * time.Millisecond},
 		InboundPoll:    10 * time.Millisecond,
+		// A photo whose download stalls is cut in 2 s, not the production 10 s, well inside
+		// the settleFor a test waits for its caption's answer.
+		DownloadTimeout: 2 * time.Second,
 	}
 	if s.forwarder != nil {
 		options.Unanswered = s.forwarder.ForwardUnanswered
@@ -1320,13 +1340,19 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	s.Require().NoError(err)
 	s.T().Cleanup(detecting.Close)
 
+	reading, err := ocrrouter.New(ocrrouter.Options{
+		Config: ocrConfig(), Registry: ocrRegistry(), Store: s.store, Live: s.live, Gate: gate, Logger: logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(reading.Close)
+
 	conversing, err := stsrouterStub()
 	s.Require().NoError(err)
 	s.T().Cleanup(conversing.Close)
 
 	return &Streams{
 		STT: transcriber, TTS: speaker, LLM: reasoner, STS: conversing,
-		Search: finding, DecisionModel: judging, Image: imaging, Detection: detecting,
+		Search: finding, DecisionModel: judging, Image: imaging, Detection: detecting, OCR: reading,
 		Transcriptions: transcriptions, Speech: recordings,
 	}
 }
@@ -1582,19 +1608,11 @@ func (s *RouterSuite) telephonySealedBy(sealer *auth.Sealer, apps phone.Apps, lo
 		Sealer:    sealer,
 		SIPTrunks: siptrunk.New(siptrunk.Options{Logger: logger}),
 		Apps:      apps,
+		Redis:     s.live.Redis(),
 		Logger:    logger,
 	})
 	s.Require().NoError(err)
 	return service
-}
-
-func (s *RouterSuite) campaigns(sessions *session.Manager, logger *slog.Logger) *campaign.Runner {
-	runner, err := campaign.New(campaign.Options{
-		Store: s.store, Phone: s.telephony(logger), Sessions: sessions, Logger: logger,
-	})
-	s.Require().NoError(err)
-	s.T().Cleanup(runner.Close)
-	return runner
 }
 
 func (s *RouterSuite) simulations(sessions *session.Manager, streams *Streams, logger *slog.Logger) *simulation.Runner {
@@ -1649,6 +1667,33 @@ func (s *RouterSuite) pages(redisAddr string) *urls.Service {
 		Queue:         fmt.Sprintf("knowledge-%d", n),
 		Reader:        pageReader{},
 		Knowledge:     metered.NewKnowledge(newKnowledgeBase(), s.metering, nil),
+		Limits:        s.knowledgeLimits,
+		CheckInterval: 10 * time.Millisecond,
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(service.Start())
+	s.T().Cleanup(func() { s.Require().NoError(service.Close()) })
+	return service
+}
+
+// knowledgeFiles reads the files uploaded to the suite's knowledge bases into the same base
+// the knowledge API writes, from a bucket in a directory of its own, on a queue of its own
+// as pages' is, with scans read by the suite's OCR stubs.
+func (s *RouterSuite) knowledgeFiles(redisAddr string, base *metered.Knowledge, scans *ocrrouter.Router) *files.Service {
+	bucket, err := blob.Open(context.Background(), "file://"+s.T().TempDir())
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { s.Require().NoError(bucket.Close()) })
+	s.knowledgeBucket = bucket
+
+	n := redisDB.Add(1)
+	service, err := files.New(files.Options{
+		Store:         s.store,
+		Redis:         asynq.RedisClientOpt{Addr: redisAddr, DB: int(n)%15 + 1},
+		Queue:         fmt.Sprintf("knowledge-files-%d", n),
+		Bucket:        bucket,
+		Extractor:     extract.New(extract.Options{}),
+		Knowledge:     base,
+		OCR:           scans,
 		Limits:        s.knowledgeLimits,
 		CheckInterval: 10 * time.Millisecond,
 	})

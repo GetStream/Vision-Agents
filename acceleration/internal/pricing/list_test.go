@@ -620,12 +620,12 @@ func (s *PricingSuite) TestPricedIsTheCostTimesTheFactor() {
 
 	priced := Priced(entry)
 
-	s.Equal(map[Meter]Rate{InputTokens: perMillion(1.65), OutputTokens: {USD: 1.32, Per: 1_000_000, Increment: 10}}, priced.Prices,
-		"1.1 × 1.2 reads 1.32, not 1.3200000000000003")
-	s.Equal([]Tier{{AboveInputTokens: 1_000, Rates: map[Meter]Rate{InputTokens: perMillion(4.8), OutputTokens: perMillion(1.2)}}}, priced.PriceTiers)
+	s.Equal(map[Meter]Rate{InputTokens: perMillion(1.485), OutputTokens: {USD: 1.188, Per: 1_000_000, Increment: 10}}, priced.Prices,
+		"1.1 × 1.08 reads 1.188, not 1.1880000000000002")
+	s.Equal([]Tier{{AboveInputTokens: 1_000, Rates: map[Meter]Rate{InputTokens: perMillion(4.32), OutputTokens: perMillion(1.08)}}}, priced.PriceTiers)
 	s.Equal(entry.Rates, priced.Rates, "the vendor's rates stay as they were")
 	s.Nil(entry.Prices, "the entry handed in is not changed")
-	s.Equal(int64(12_000), int64(PriceFactorBps))
+	s.Equal(int64(10_800), int64(PriceFactorBps))
 
 	own := entry
 	own.Prices = map[Meter]Rate{InputTokens: perMillion(9), OutputTokens: perMillion(9)}
@@ -644,7 +644,7 @@ func (s *PricingSuite) TestAQuotedAmountIsResoldAtTheFactor() {
 	s.False(quote.Billable)
 	resold := list.Quoted(number, 1_000_003)
 
-	s.Equal(int64(1_200_004), resold.CostMicros, "1,000,003 × 1.2 = 1,200,003.6, rounded once")
+	s.Equal(int64(1_080_003), resold.CostMicros, "1,000,003 × 1.08 = 1,080,003.24, rounded once")
 	s.Equal(int64(1_000_003), resold.BaseCostMicros)
 	s.Equal("phone-telnyx-number-us", resold.SKU)
 	s.Equal(QuotedVersion, resold.Version)

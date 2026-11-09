@@ -24,7 +24,7 @@ tier that reads pages before answering rather than the one that hands them over.
 
 | Option | Exa | Tavily | Perplexity | Brave | Linkup |
 | --- | --- | --- | --- | --- | --- |
-| `depth` | `type`: `fast`, `auto`, `neural` | `search_depth`: `basic`, `advanced` | `sonar` vs `sonar-pro` | one tier | `depth`: `standard`, `deep` |
+| `depth` | `type`: `fast`, `auto`, `neural` | `search_depth`: `basic`, `advanced` | `search` vs `sonar` | one tier | `depth`: `standard`, `deep` |
 | `results` | `numResults` | `max_results` | `max_results` | `count` | — |
 | `include_domains` | `includeDomains` | `include_domains` | `search_domain_filter` | `site:` in the query | `includeDomains` |
 | `exclude_domains` | `excludeDomains` | `exclude_domains` | `-domain` in the filter | `site:` in the query | `excludeDomains` |

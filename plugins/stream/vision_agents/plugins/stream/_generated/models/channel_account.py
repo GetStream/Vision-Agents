@@ -86,7 +86,7 @@ class ChannelAccount:
 
         id = d.pop("id")
 
-        kind = ChannelKind(d.pop("kind"))
+        kind = ChannelKind._decode(d.pop("kind"))
 
         number = d.pop("number")
 

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/rueidis"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
@@ -47,6 +48,8 @@ type Service struct {
 	publicURL string
 	// outcomes keeps how each placed call ended. Nil without a store.
 	outcomes *outcome.Keeper
+	// redis keeps the arriving calls the router refused (Refused). Nil marks none.
+	redis rueidis.Client
 	// unanswered ends the session of a placed call nobody will answer. Nil leaves it to the
 	// session's start timeout.
 	unanswered func(ctx context.Context, customerID, sessionID string)
@@ -88,7 +91,11 @@ type ServiceOptions struct {
 	// vendors say so rather than placing a call nothing will answer.
 	PublicURL string
 	// Now is the clock call legs are timed by. Nil is the wall clock.
-	Now    func() time.Time
+	Now func() time.Time
+	// Redis is where an arriving call the router refused is marked (Refused), for the node
+	// that ends its leg, whichever it is, to count it failed. Without it such a call is
+	// counted completed.
+	Redis  rueidis.Client
 	Logger *slog.Logger
 }
 
@@ -112,10 +119,15 @@ func NewService(options ServiceOptions) (*Service, error) {
 		gate:      options.Gate,
 		publicURL: strings.TrimSuffix(options.PublicURL, "/"),
 		clock:     options.Now,
+		redis:     options.Redis,
 		logger:    options.Logger,
 	}
 	if options.Store != nil {
-		service.outcomes = outcome.NewKeeper(options.Store, service.now)
+		vendors := []string{SIPTrunkVendor}
+		for _, vendor := range options.Registry.Vendors() {
+			vendors = append(vendors, vendor.Vendor)
+		}
+		service.outcomes = outcome.NewKeeper(options.Store, service.now, vendors, options.Logger)
 	}
 	return service, nil
 }
@@ -156,8 +168,9 @@ type Apps interface {
 	ForAppRemoving(ctx context.Context, customer string, app int64) (*Stream, error)
 }
 
-// errNoStream is a service with no Stream app to make lines in.
-var errNoStream = errors.New("phone: no stream credentials")
+// ErrNoStream is a service with no Stream app to make lines in: a deployment without Stream
+// credentials.
+var ErrNoStream = errors.New("phone: no stream credentials")
 
 // Suspended returns ErrSuspended for an app Stream staff stopped from using the phone. A
 // suspension that cannot be read refuses too: it is there to stop fraud that costs money.
@@ -198,7 +211,7 @@ func (s *Service) streamFor(ctx context.Context, customer string) (*Stream, int6
 		return s.apps.For(ctx, customer)
 	}
 	if s.stream == nil {
-		return nil, 0, errNoStream
+		return nil, 0, ErrNoStream
 	}
 	return s.stream, 0, nil
 }
@@ -209,7 +222,7 @@ func (s *Service) streamForApp(ctx context.Context, customer string, app int64) 
 		return s.apps.ForApp(ctx, customer, app)
 	}
 	if s.stream == nil {
-		return nil, errNoStream
+		return nil, ErrNoStream
 	}
 	return s.stream, nil
 }
@@ -220,7 +233,7 @@ func (s *Service) streamToRemove(ctx context.Context, customer string, app int64
 		return s.apps.ForAppRemoving(ctx, customer, app)
 	}
 	if s.stream == nil {
-		return nil, errNoStream
+		return nil, ErrNoStream
 	}
 	return s.stream, nil
 }
@@ -294,7 +307,7 @@ type Offers struct {
 func (s *Service) SearchAll(ctx context.Context, search Search) (Offers, error) {
 	usable := s.registry.Available()
 	if len(usable) == 0 {
-		return Offers{}, stack.Wrap(errors.New("phone: no vendor has the credentials to be searched"))
+		return Offers{}, stack.Wrap(NotConfigured(errors.New("phone: no vendor has the credentials to be searched")))
 	}
 
 	type answer struct {
@@ -486,7 +499,9 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 	if err := s.store.RecordNumber(ctx, &held); err != nil {
 		// The number is bought either way, so saying so is more useful than failing and
 		// leaving the caller thinking it was not.
-		return held, stack.Wrap(fmt.Errorf("phone: %s was bought but not recorded: %w", held.E164, err))
+		// Support finds the number at the vendor by its order, and the log holds no number.
+		return held, stack.Wrap(fmt.Errorf("phone: a number bought from %s as %q was not recorded: %w",
+			held.Vendor, held.VendorID, err))
 	}
 	return held, nil
 }
@@ -719,11 +734,11 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 		return Attached{}, stack.Wrap(err)
 	}
 	if held.Vendor == SIPTrunkVendor {
-		return Attached{}, stack.Wrap(errors.New("phone: inbound calls to a number on the customer's own sip trunk are not supported"))
+		return Attached{}, stack.Wrap(Invalid(errors.New("phone: inbound calls to a number on the customer's own sip trunk are not supported")))
 	}
 	stream, pin, err := s.streamFor(ctx, attachment.CustomerID)
-	if errors.Is(err, errNoStream) {
-		return Attached{}, stack.Wrap(errors.New("phone: attaching a number needs stream credentials"))
+	if errors.Is(err, ErrNoStream) {
+		return Attached{}, stack.Wrap(marked{errors.New("phone: attaching a number needs stream credentials"), ErrNoStream})
 	}
 	if err != nil {
 		return Attached{}, err
@@ -931,7 +946,7 @@ type CallRequest struct {
 
 // errCustomKept is a call into a session whose call is already there with other custom data:
 // the call keeps the custom it was created with, so the agent in it would not read this one.
-var errCustomKept = errors.New("phone: the session's call already carries other custom data; leave custom out or use a new session")
+var errCustomKept = Invalid(errors.New("phone: the session's call already carries other custom data; leave custom out or use a new session"))
 
 // Placed is a call that is on its way, and where to meet it.
 type Placed struct {
@@ -985,8 +1000,8 @@ func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Pl
 		return Placed{}, stack.Wrap(err)
 	}
 	stream, pin, err := s.streamFor(ctx, request.Owner.CustomerID)
-	if errors.Is(err, errNoStream) {
-		return Placed{}, stack.Wrap(errors.New("phone: placing a call needs stream credentials"))
+	if errors.Is(err, ErrNoStream) {
+		return Placed{}, stack.Wrap(marked{errors.New("phone: placing a call needs stream credentials"), ErrNoStream})
 	}
 	if err != nil {
 		return Placed{}, err
@@ -995,7 +1010,10 @@ func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Pl
 		return Placed{}, stack.Wrap(errors.New("phone: placing a call needs a database to know who holds the number"))
 	}
 	if request.To == "" {
-		return Placed{}, stack.Wrap(errors.New("phone: a call needs someone to call"))
+		return Placed{}, stack.Wrap(Invalid(errors.New("phone: a call needs someone to call")))
+	}
+	if request.From == "" {
+		return Placed{}, stack.Wrap(Invalid(errors.New("phone: a call needs one of your numbers to call from")))
 	}
 
 	held, err := s.store.Number(ctx, request.Owner.CustomerID, request.From)
@@ -1018,8 +1036,8 @@ func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Pl
 	// A term the vendor cannot express is refused rather than dropped: a call placed
 	// without the ring timeout that was asked for is not the call that was asked for.
 	if missing := outbound.Unsupported(provider); len(missing) > 0 {
-		return Placed{}, stack.Wrap(fmt.Errorf("phone: %s cannot place a call with %s",
-			held.Vendor, joinFeatures(missing)))
+		return Placed{}, stack.Wrap(Invalid(fmt.Errorf("phone: %s cannot place a call with %s",
+			held.Vendor, joinFeatures(missing))))
 	}
 
 	allowedIPs, err := s.allowlistFor(held.Vendor)
@@ -1033,7 +1051,7 @@ func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Pl
 	} else if held, ok := conversation.SessionID(sessionID); ok {
 		sessionID = held
 	} else {
-		return Placed{}, stack.Wrap(fmt.Errorf("phone: the session id %q is not one a session can have", sessionID))
+		return Placed{}, stack.Wrap(Invalid(fmt.Errorf("phone: the session id %q is not one a session can have", sessionID)))
 	}
 	callID, callType := sessionID, defaultCallType
 
@@ -1184,7 +1202,13 @@ func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Pl
 		if shared {
 			s.forgetCallResource(ctx, resource)
 		}
-		s.forgetOutcome(ctx, token, callID)
+		// The vendor was asked: dialMeter reserves nothing, so routing.Call fails only in the dial.
+		// A request that went away mid-dial is no refusal, though: the phone may be ringing.
+		if ctx.Err() == nil {
+			s.forgetRefused(ctx, token, held.Vendor, callID)
+		} else {
+			s.forgetOutcome(ctx, token, callID)
+		}
 		return Placed{}, stack.Wrap(err)
 	}
 
@@ -1196,7 +1220,7 @@ func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Pl
 	// The vendor bills the call from when the person answers, which is when their phone joins
 	// the Stream call: the leg rings until then, and one never answered is not billed.
 	s.OpenLeg(ctx, request.Owner, store.CallLeg{
-		StreamAppPK: pin, CallType: callType, CallID: callID, Vendor: held.Vendor,
+		StreamAppPK: pin, CallType: callType, CallID: callID, Vendor: held.Vendor, VendorCallID: dialed.VendorCallID,
 		Direction: store.Outbound, LocalNumber: request.From, RemoteNumber: request.To,
 	}, false)
 	sites := placedSites{streamSIPHost: BridgeHost(outbound.Bridge.URI)}
@@ -1230,6 +1254,14 @@ func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Pl
 // on a request that may be gone, and logs a failure rather than mask the one it follows.
 func (s *Service) forgetOutcome(ctx context.Context, token, callID string) {
 	if err := s.outcomes.Failed(context.WithoutCancel(ctx), token); err != nil {
+		s.logger.Error("could not forget a call that did not place", "call", callID, "error", err)
+	}
+}
+
+// forgetRefused is forgetOutcome for a call the vendor was asked to dial and refused, which is
+// counted as refused.
+func (s *Service) forgetRefused(ctx context.Context, token, vendor, callID string) {
+	if err := s.outcomes.Refused(context.WithoutCancel(ctx), token, vendor); err != nil {
 		s.logger.Error("could not forget a call that did not place", "call", callID, "error", err)
 	}
 }
@@ -1336,9 +1368,9 @@ func (s *Service) park(
 	outbound Outbound,
 ) (string, error) {
 	if s.publicURL == "" {
-		return "", stack.Wrap(fmt.Errorf(
+		return "", stack.Wrap(NotConfigured(fmt.Errorf(
 			"phone: %s fetches its call plan when the person answers, so it needs a "+
-				"public url to fetch it from, and none is configured", vendor))
+				"public url to fetch it from, and none is configured", vendor)))
 	}
 
 	token := uuid.NewString()
@@ -1480,7 +1512,10 @@ func (s *Service) report(ctx context.Context, token string, status CallStatus) (
 	if err != nil {
 		return outcome.Call{}, err
 	}
-	call, err := s.outcomes.Reported(ctx, token, reported, status.Word)
+	call, err := s.outcomes.Reported(ctx, token, outcome.Report{
+		Outcome: reported, Word: status.Word, SIPCode: status.SIPCode, Ringing: status.Ringing,
+		PostDialDelay: status.PostDialDelay,
+	})
 	if errors.Is(err, outcome.ErrUnknownCall) {
 		return outcome.Call{}, stack.Wrap(ErrUnknownStatus)
 	}
@@ -1596,10 +1631,10 @@ func trunkAllowlist(vendor Vendor) ([]string, error) {
 		return nil, nil
 	}
 	if len(vendor.Signalling) == 0 {
-		return nil, stack.Wrap(fmt.Errorf(
+		return nil, stack.Wrap(NotConfigured(fmt.Errorf(
 			"phone: %s cannot send a password to a trunk, so the trunk has to know its "+
 				"signalling addresses, and none are declared for it",
-			vendor.Vendor))
+			vendor.Vendor)))
 	}
 	return vendor.Signalling, nil
 }
@@ -1635,8 +1670,8 @@ func (s *Service) allowlistFor(vendor string) ([]string, error) {
 // sharedLine is the line a call from the number goes out on, or false when the call makes a
 // trunk and rule of its own: the vendor cannot name the call on its leg, there is no key to
 // seal a shared trunk's password with, the number was attached before its password was
-// kept, or it is attached in another app. A number lined in another app only to place calls
-// moves its line here.
+// kept, it is attached in another app, or Stream routes it through a rule or trunk its line
+// did not make. A number lined in another app only to place calls moves its line here.
 func (s *Service) sharedLine(ctx context.Context, stream *Stream, pin int64, provider Provider, held store.PhoneNumber) (TrunkLine, bool, error) {
 	if StreamLegOf(provider) != StreamLegShared {
 		return TrunkLine{}, false, nil
@@ -1649,7 +1684,8 @@ func (s *Service) sharedLine(ctx context.Context, stream *Stream, pin int64, pro
 		}
 	}
 	line, err := s.line(ctx, stream, pin, held)
-	if errors.Is(err, ErrNoSealer) || errors.Is(err, store.ErrNoStoredBridge) || errors.Is(err, errLinedElsewhere) {
+	if errors.Is(err, ErrNoSealer) || errors.Is(err, store.ErrNoStoredBridge) ||
+		errors.Is(err, errLinedElsewhere) || errors.Is(err, errRoutedElsewhere) {
 		return TrunkLine{}, false, nil
 	}
 	if err != nil {
@@ -1734,8 +1770,8 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 	// The human is routed into the call the agent is on, so the trunk is made in the app
 	// that call is in.
 	stream, err := s.streamForApp(ctx, request.Owner.CustomerID, request.StreamApp)
-	if errors.Is(err, errNoStream) {
-		return Dialed{}, stack.Wrap(errors.New("phone: transferring a call needs stream credentials"))
+	if errors.Is(err, ErrNoStream) {
+		return Dialed{}, stack.Wrap(marked{errors.New("phone: transferring a call needs stream credentials"), ErrNoStream})
 	}
 	if err != nil {
 		return Dialed{}, err
@@ -1744,10 +1780,13 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 		return Dialed{}, stack.Wrap(errors.New("phone: transferring a call needs a database to know who holds the number"))
 	}
 	if request.CallID == "" {
-		return Dialed{}, stack.Wrap(errors.New("phone: a transfer needs the call to transfer into"))
+		return Dialed{}, stack.Wrap(Invalid(errors.New("phone: a transfer needs the call to transfer into")))
 	}
 	if request.To == "" {
-		return Dialed{}, stack.Wrap(errors.New("phone: a transfer needs someone to transfer to"))
+		return Dialed{}, stack.Wrap(Invalid(errors.New("phone: a transfer needs someone to transfer to")))
+	}
+	if request.From == "" {
+		return Dialed{}, stack.Wrap(Invalid(errors.New("phone: a transfer needs one of your numbers to dial from")))
 	}
 
 	held, err := s.store.Number(ctx, request.Owner.CustomerID, request.From)
@@ -1859,7 +1898,8 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 	// they answer.
 	s.OpenLeg(ctx, request.Owner, store.CallLeg{
 		StreamAppPK: request.StreamApp, CallType: callType, CallID: request.CallID, Vendor: held.Vendor,
-		Direction: store.Outbound, LocalNumber: request.From, RemoteNumber: request.To,
+		VendorCallID: placed.VendorCallID,
+		Direction:    store.Outbound, LocalNumber: request.From, RemoteNumber: request.To,
 	}, false)
 	if !shared {
 		if err := s.store.RecordCallResource(ctx, resource); err != nil {
@@ -1878,13 +1918,24 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 //
 // The call is named by the id its vendor gave when it was dialled. An inbound call has no
 // such id here, because it arrived at Stream rather than being made from this service, so
-// only calls placed from here can be pressed at.
-func (s *Service) SendDigits(ctx context.Context, vendor, vendorCallID, digits string) error {
+// only calls placed from here can be pressed at. The vendor accounts are shared, so a call
+// customerID did not place is ErrCallNotFound, as one nobody placed is.
+func (s *Service) SendDigits(ctx context.Context, customerID, vendor, vendorCallID, digits string) error {
 	if vendorCallID == "" {
-		return stack.Wrap(errors.New("phone: pressing digits needs the call to press them on"))
+		return stack.Wrap(Invalid(errors.New("phone: pressing digits needs the call to press them on")))
 	}
 	if err := ValidateDigits(digits); err != nil {
 		return err
+	}
+	if s.store == nil {
+		return stack.Wrap(errors.New("phone: pressing digits needs a database"))
+	}
+	placed, err := s.store.PlacedCallLeg(ctx, customerID, vendor, vendorCallID)
+	if err != nil {
+		return err
+	}
+	if !placed {
+		return stack.Wrap(ErrCallNotFound)
 	}
 	provider, err := s.provider(vendor)
 	if err != nil {

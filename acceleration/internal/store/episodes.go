@@ -60,6 +60,11 @@ type Episode struct {
 	Status        string     `bun:"status,notnull"`
 	StartedAt     time.Time  `bun:"started_at,notnull"`
 	EndedAt       *time.Time `bun:"ended_at"`
+	// Began, when set, is when a call began by this process's monotonic clock. OpenEpisode
+	// then dates the episode by Postgres's clock, which dates a link (user_phones.updated_at)
+	// and its boundary: that long before the statement that opens it, in place of StartedAt.
+	// Only a call names it: a thread episode's touch needs its time before the insert.
+	Began time.Time `bun:"-"`
 	// StreamAppPK is the Stream app the omni-channel is in; zero, stored as NULL, is the
 	// deployment's own.
 	StreamAppPK int64     `bun:"stream_app_pk,nullzero"`
@@ -99,7 +104,12 @@ func (s *Store) OpenEpisode(ctx context.Context, episode *Episode) (opened bool,
 	// Twice at most: a second miss is the thread's episode closed and another opened between
 	// the insert and the touch, twice over.
 	for range 2 {
-		result, err := s.db.NewInsert().Model(episode).On("CONFLICT DO NOTHING").Exec(ctx)
+		insert := s.db.NewInsert().Model(episode).On("CONFLICT DO NOTHING")
+		// bun returns a column a Value sets, so StartedAt is then the start Postgres holds.
+		if !episode.Began.IsZero() {
+			insert = insert.Value("started_at", "statement_timestamp() - make_interval(secs => ?)", time.Since(episode.Began).Seconds())
+		}
+		result, err := insert.Exec(ctx)
 		if err != nil {
 			return false, stack.Wrap(fmt.Errorf("store: open episode: %w", err))
 		}
@@ -133,7 +143,9 @@ func (s *Store) OpenEpisode(ctx context.Context, episode *Episode) (opened bool,
 // touchThreadEpisodeQuery sets the last message of the thread's episode in progress, and
 // reads the episode. open holds the episode's row until the message commits, so a sweep
 // skips it meanwhile (closeIdleEpisodesQuery), and a touch that waited for a close finds the
-// episode no longer open.
+// episode no longer open. A message's time is when it was made or queued, so a message tried
+// again after a later one keeps the later one's time: the episode stays open from its last
+// message on.
 const touchThreadEpisodeQuery = `
 WITH open AS (
     SELECT id FROM episodes
@@ -142,7 +154,8 @@ WITH open AS (
 ), touched AS (
     INSERT INTO episode_activity (episode_id, last_message_at)
     SELECT id, ? FROM open
-    ON CONFLICT (episode_id) DO UPDATE SET last_message_at = excluded.last_message_at
+    ON CONFLICT (episode_id) DO UPDATE
+    SET last_message_at = GREATEST(episode_activity.last_message_at, excluded.last_message_at)
     RETURNING episode_id
 )
 SELECT ep.* FROM episodes AS ep JOIN touched ON touched.episode_id = ep.id`
@@ -172,7 +185,7 @@ const leasedWithContact = `, leased AS (
     RETURNING episode_id, summary_lease_until
 )
 SELECT closed.*, leased.summary_lease_until,
-    cm.conversation_id, cm.agent_config_id, cm.kind AS contact_kind, cm.address AS contact_address
+    cm.conversation_id, cm.agent_config_id, cm.kind AS contact_kind, ` + reachedAt + ` AS contact_address
 FROM closed
 JOIN leased ON leased.episode_id = closed.id
 JOIN contact_map AS cm ON cm.id = closed.contact_id`
@@ -277,7 +290,7 @@ WITH due AS (
     RETURNING act.episode_id, act.summary_lease_until
 )
 SELECT ep.*, leased.summary_lease_until,
-    cm.conversation_id, cm.agent_config_id, cm.kind AS contact_kind, cm.address AS contact_address
+    cm.conversation_id, cm.agent_config_id, cm.kind AS contact_kind, ` + reachedAt + ` AS contact_address
 FROM leased
 JOIN episodes AS ep ON ep.id = leased.episode_id
 JOIN contact_map AS cm ON cm.id = ep.contact_id`
@@ -320,15 +333,26 @@ func (s *Store) FinishEpisodeSummary(ctx context.Context, customerID, id, status
 	return nil
 }
 
-// AnyEpisodeCards reports whether an agent config of any customer has episode_cards on, so
-// its calls may have episodes to close.
-func (s *Store) AnyEpisodeCards(ctx context.Context) (bool, error) {
-	var on bool
-	err := s.db.NewRaw("SELECT EXISTS (SELECT 1 FROM agent_configs WHERE episode_cards AND deleted_at IS NULL)").Scan(ctx, &on)
-	if err != nil {
-		return false, stack.Wrap(fmt.Errorf("store: any episode cards: %w", err))
+// anyEpisodeToSweepQuery is whether the idle sweeper has, or may get, an episode to close or
+// summarize: an agent config that writes episode cards, on or record (AgentConfig.WritesCards),
+// whose calls and app chats open episodes; a thread or chat episode still in progress
+// (episodes_open_thread), whatever its config says now; or a summary lease still held
+// (episode_activity_summary_lease).
+const anyEpisodeToSweepQuery = `
+SELECT EXISTS (SELECT 1 FROM agent_configs WHERE (episode_cards OR episode_cards_record) AND deleted_at IS NULL)
+    OR EXISTS (SELECT 1 FROM episodes WHERE status = 'in_progress' AND session_id IS NULL)
+    OR EXISTS (SELECT 1 FROM episode_activity WHERE summary_lease_until IS NOT NULL)`
+
+// AnyEpisodeToSweep reports whether an agent config of any customer has episode_cards on or
+// record, so its calls and app chats may open episodes, or whether an episode opened before is still to
+// close or to summarize: one that a config opened with the cards on and has turned them off
+// since closes as any other (AI-2771).
+func (s *Store) AnyEpisodeToSweep(ctx context.Context) (bool, error) {
+	var due bool
+	if err := s.db.NewRaw(anyEpisodeToSweepQuery).Scan(ctx, &due); err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: any episode to sweep: %w", err))
 	}
-	return on, nil
+	return due, nil
 }
 
 // EpisodeCard is an episode as a session reads its card: the episode, and until when its
@@ -366,7 +390,9 @@ type CardsQuery struct {
 
 // EpisodeCards are the newest episodes of one person, for one agent of a customer: those of
 // the contact map rows of that customer and agent that point at the person's omni-channel,
-// never another customer's or another agent's.
+// never another customer's or another agent's, and none a number linked to a user started
+// before its link's boundary (historyBoundary). A boundary before the link's own time reads the
+// rows the link set aside of its number too (setAsideRead).
 func (s *Store) EpisodeCards(ctx context.Context, query CardsQuery) ([]EpisodeCard, error) {
 	if query.CustomerID == "" || query.AgentConfigID == "" || query.ConversationID == "" || query.Limit <= 0 {
 		return nil, stack.Wrap(errors.New("store: a customer, an agent config, an omni-channel and a limit are required"))
@@ -374,18 +400,27 @@ func (s *Store) EpisodeCards(ctx context.Context, query CardsQuery) ([]EpisodeCa
 	var cards []EpisodeCard
 	err := s.db.NewSelect().Model(&cards).
 		ColumnExpr("ep.*").
-		ColumnExpr("cm.kind AS contact_kind, cm.address AS contact_address, cm.agent_config_id").
+		ColumnExpr("cm.kind AS contact_kind, "+reachedAt+" AS contact_address, cm.agent_config_id").
 		// LEAST ignores NULLs, so Until is nil only when both are.
 		ColumnExpr(`LEAST(ep.ended_at, (SELECT min(nx.started_at) FROM episodes AS nx
 			WHERE nx.customer_id = ep.customer_id AND nx.thread_channel = ep.thread_channel
 			AND nx.started_at > ep.started_at)) AS until`).
-		Join("JOIN contact_map AS cm ON cm.id = ep.contact_id").
+		Join(`JOIN (SELECT cm.* FROM contact_map AS cm WHERE cm.customer_id = ?0 AND cm.agent_config_id = ?1
+			AND cm.conversation_id = ?2
+			UNION ALL `+setAsideRead+`) AS cm ON cm.id = ep.contact_id`,
+			query.CustomerID, query.AgentConfigID, query.ConversationID, s.streamPins().deployment(), ContactStreamUser, ContactPhone).
 		Where("ep.customer_id = ?", query.CustomerID).
 		Where("cm.customer_id = ?", query.CustomerID).
 		Where("cm.agent_config_id = ?", query.AgentConfigID).
-		Where("cm.conversation_id = ?", query.ConversationID).
 		Where("ep.thread_channel <> ?", query.ExceptThread).
 		Where("ep.session_id IS DISTINCT FROM ?", query.ExceptSession).
+		// What a linked number said before its link is not the user's, however the config came
+		// to have episode_cards on: retireHistory sets it aside only under a config that wrote
+		// cards, on or record, at the link. The link is found as linkOf finds a number's, a
+		// set-aside row's by its number (reachedAt); no other kind of row has an E.164 address.
+		Where(`NOT EXISTS (SELECT 1 FROM user_phones AS up `+historyJoin+` WHERE up.customer_id = cm.customer_id
+			AND up.stream_app_pk = COALESCE(NULLIF(cm.stream_app_pk, ?), 0) AND up.phone = `+reachedAt+`
+			AND ep.started_at < `+historyBoundary+`)`, s.streamPins().deployment()).
 		OrderExpr("ep.started_at DESC").
 		Limit(query.Limit).
 		Scan(ctx)

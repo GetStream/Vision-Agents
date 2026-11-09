@@ -1,11 +1,11 @@
-import { LiveReasoning, type Session } from "@stream-io/calypso";
-import type { Channel, Event, LocalMessage } from "stream-chat";
+import { LiveReasoning, type Session, type UIAction } from "@stream-io/calypso";
+import type { Channel, LocalMessage } from "stream-chat";
 import type { AIMessageRating } from "stream-chat-react/ai-components";
 
 import { messageOf } from "./errors";
 import { photoSources } from "./photos";
 import { Store } from "./store";
-import { workingLabel } from "./voicePresence";
+import { troubleText, workingLabel } from "./voicePresence";
 
 /** How many messages are read at a time. */
 export const PAGE_SIZE = 30;
@@ -57,11 +57,20 @@ export class AgentChat extends Store<AgentChatSnapshot> {
     });
   }
 
-  /** Opens the session's channel and starts following it. */
+  /**
+   * Opens the session's channel and starts following it. The chat owns the session from here: one
+   * that cannot be opened lets go of what it started following and closes the session, since
+   * nobody else holds either.
+   */
   static async open(session: Session): Promise<AgentChat> {
     const { channel } = await session.chat();
     const chat = new AgentChat(session, channel as Channel);
-    await chat.follow();
+    try {
+      await chat.follow();
+    } catch (cause) {
+      await chat.close().catch(() => undefined);
+      throw cause;
+    }
     return chat;
   }
 
@@ -86,11 +95,15 @@ export class AgentChat extends Store<AgentChatSnapshot> {
       return true;
     }
     const lastReply = [...this.get().messages].reverse().find(isAgentReply);
-    return lastReply?.generating === true;
+    return lastReply?.custom.generating === true;
   }
 
-  /** Asks, with the photos picked for it and, when `thinkHarder`, more time to reason. */
-  async ask(text: string, photos: readonly File[] = [], thinkHarder = false): Promise<void> {
+  /**
+   * Asks, with the photos picked for it and, when `thinkHarder`, more time to reason. A question
+   * that is what the person did in a reply's UI carries it as `uiAction`, which the router keeps
+   * on their message and tells the model after their words.
+   */
+  async ask(text: string, photos: readonly File[] = [], thinkHarder = false, uiAction?: UIAction): Promise<void> {
     const messages = this.get().messages;
     this.update({ failure: undefined, askedAfter: messages[messages.length - 1]?.id ?? "" });
     try {
@@ -98,6 +111,7 @@ export class AgentChat extends Store<AgentChatSnapshot> {
       await this.session.responses.create(text, {
         ...(images.length > 0 ? { images } : {}),
         ...(thinkHarder ? { reasoningEffort: "high" } : {}),
+        ...(uiAction ? { uiAction } : {}),
       });
     } catch (cause) {
       this.update({ failure: messageOf(cause), askedAfter: undefined });
@@ -114,13 +128,11 @@ export class AgentChat extends Store<AgentChatSnapshot> {
     }
   }
 
-  /** Loads the messages before the oldest one loaded. */
+  /** Loads the messages before the oldest one loaded. The paginator's state says when they are in. */
   async loadOlderMessages(): Promise<void> {
-    const oldest = this.get().messages[0]?.id;
-    if (!oldest) return;
+    if (!this.channel.messagePaginator.hasMoreTail) return;
     try {
-      const page = await this.channel.query({ messages: { limit: PAGE_SIZE, id_lt: oldest } });
-      this.update({ messages: [...this.channel.state.messages], hasOlderMessages: page.messages.length >= PAGE_SIZE });
+      await this.channel.messagePaginator.toTail();
     } catch (cause) {
       this.update({ failure: messageOf(cause) });
     }
@@ -145,26 +157,38 @@ export class AgentChat extends Store<AgentChatSnapshot> {
   }
 
   private async follow(): Promise<void> {
-    // Every event rather than the list kept for us: each live update carries its own window of
+    // Every update rather than the list kept for us: each live update carries its own window of
     // the reply's thinking, and folding them into one would lose all but the last.
-    const subscription = this.channel.on((event: Event) => {
-      if (event.type === "message.updated" && event.message) {
-        this.reasoning.read(event.message as { id: string; reasoning?: unknown });
-        this.update({ reasoningVersion: this.get().reasoningVersion + 1 });
-      }
-      if (event.type === "message.new" || event.type === "message.updated" || event.type === "message.deleted") {
-        this.update({ messages: [...this.channel.state.messages] });
-      }
+    const updates = this.channel.on("message.updated", (event) => {
+      this.reasoning.read(event.message);
+      this.update({ reasoningVersion: this.get().reasoningVersion + 1 });
     });
-    this.stops.push(() => subscription.unsubscribe());
+    this.stops.push(() => updates.unsubscribe());
+    // The messages are the paginator's: new, updated and deleted ones, and older pages, land there.
+    const paginator = this.channel.messagePaginator;
+    paginator.pageSize = PAGE_SIZE;
+    this.stops.push(
+      paginator.state.subscribeWithSelector(
+        ({ items, hasMoreTail }) => ({ items, hasMoreTail }),
+        ({ items, hasMoreTail }) => this.update({ messages: [...(items ?? [])], hasOlderMessages: hasMoreTail }),
+      ),
+    );
     // What the agent is doing changes the activity and whether it is answering.
     this.stops.push(this.session.state.subscribe(() => this.update({})));
+    // A turn the agent could not answer leaves an empty reply, so say why rather than show nothing.
+    let failureAt = this.session.conversation.get().failureAt;
+    this.stops.push(
+      this.session.conversation.subscribe(() => {
+        const failure = this.session.conversation.get();
+        if (failure.failureAt <= failureAt) return;
+        failureAt = failure.failureAt;
+        this.update({ failure: troubleText(failure.failureContext), askedAfter: undefined });
+      }),
+    );
+    // On screen, so it is reloaded after a reconnect: a channel that is only watched is not.
+    this.stops.push(this.channel.activate());
 
-    const watched = await this.channel.watch({ messages: { limit: PAGE_SIZE } });
-    this.update({
-      messages: [...this.channel.state.messages],
-      hasOlderMessages: (watched.messages?.length ?? 0) >= PAGE_SIZE,
-    });
+    await this.channel.watch({ messages: { limit: PAGE_SIZE } });
   }
 
   /** Whether the reply to the latest question shows anything yet: a step or some text. */
@@ -179,23 +203,31 @@ export class AgentChat extends Store<AgentChatSnapshot> {
     const { askedAfter, messages } = this.get();
     const last = messages[messages.length - 1];
     if (askedAfter === undefined || !last || last.id === askedAfter) return false;
-    return !isAgentReply(last) || (last.generating === true && !this.replyHasBegun());
+    return !isAgentReply(last) || (last.custom.generating === true && !this.replyHasBegun());
   }
 }
 
 /** A reply the agent wrote, which Stream's AI components render. */
 export function isAgentReply(message: LocalMessage): boolean {
-  return message.ai_generated === true;
+  return message.custom.ai_generated === true;
 }
 
-/** A reply with nothing to show yet: no text and no steps. */
+/** A reply with nothing to show yet: no text, no steps and no UI. */
 function isEmptyReply(message: LocalMessage): boolean {
-  return !message.text && !(message.attachments ?? []).some((each) => each.type === "ai_reasoning" || each.type === "ai_tool_call");
+  return (
+    !message.text &&
+    !message.custom.ai_ui &&
+    !(message.attachments ?? []).some((each) => each.type === "ai_reasoning" || each.type === "ai_tool_call")
+  );
 }
 
 declare module "stream-chat" {
   interface CustomMessageData {
     ai_generated?: boolean;
     generating?: boolean;
+    /** The UI the agent wrote for a reply, which shows in place of its text. */
+    ai_ui?: { v?: number; format: string; version?: string; status?: string; content: unknown };
+    /** What the person did in a reply's UI, on their message that says it. */
+    ai_ui_action?: Record<string, unknown>;
   }
 }

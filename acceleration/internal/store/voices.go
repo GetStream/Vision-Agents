@@ -205,6 +205,9 @@ func (s *Store) SaveVoiceBinding(ctx context.Context, binding *VoiceBinding) err
 		return stack.Wrap(errors.New("store: a binding needs a voice and a provider"))
 	}
 
+	// A provider's refusal can echo the key it was sent, and a caller reads this back.
+	binding.Error = SafeLogText(binding.Error)
+
 	now := time.Now().UTC()
 	binding.UpdatedAt = now
 	if binding.ID == "" {

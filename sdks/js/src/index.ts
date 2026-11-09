@@ -19,12 +19,14 @@ export {
   DEFAULT_URL,
   REGION_ENV,
   URL_ENV,
+  USAGE_CATEGORIES_HEADER,
   regionUrl,
   signToken,
   type BackendOptions,
   type StreamCredentials,
   type StreamUser,
   type TokenSource,
+  type UserTokenOptions,
   type WebSocketConstructor,
   type WebSocketLike,
 } from "./backend.js";
@@ -47,6 +49,22 @@ export { ScheduledTasks, type ScheduledTaskQuery } from "./scheduled-tasks.js";
 export { Router, type RouterOptions } from "./router.js";
 
 export {
+  SpendLimits,
+  type GrantFilter,
+  type GrantSpec,
+  type LimitFilter,
+  type LimitInterval,
+  type LimitLevel,
+  type LimitReset,
+  type LimitSpec,
+  type LimitSubject,
+  type LimitTarget,
+  type SubjectIds,
+} from "./spend-limits.js";
+export { Teams, type TeamLimit, type TeamLimitTarget } from "./teams.js";
+export { USD, type Amount } from "./usd.js";
+
+export {
   Sessions,
   type CreateSessionOptions,
   type SessionQuery,
@@ -59,6 +77,7 @@ export {
   Responses,
   type CreateResponseOptions,
   type ImageSource,
+  type UIAction,
 } from "./responses.js";
 
 export {

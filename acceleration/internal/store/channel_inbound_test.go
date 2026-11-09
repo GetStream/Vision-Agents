@@ -104,19 +104,53 @@ func (s *StoreSuite) TestAClaimedInboundMessageHasEverythingItWasQueuedWith() {
 }
 
 // The row keys a file by its own names, not by core.Media's field names, which a rename would
-// change under the rows queued before it.
+// change under the rows queued before it. A file named by its id keeps it, with its type under
+// a key of its own and an empty mime_type, so an older build writes no image with an empty
+// image_url for it (AI-2740); one with a URL is stored as before it.
 func (s *StoreSuite) TestAnInboundMessagesMediaIsStoredUnderItsOwnKeys() {
+	files := []core.Media{{URL: "https://files.example.com/a.png", MIMEType: "image/png"}, {ID: "1003383421387256", MIMEType: "image/jpeg"}}
 	s.inbound("thread-one", "1759740000.000100", func(message *ChannelInbound) {
-		message.Media = []core.Media{{URL: "https://files.example.com/a.png", MIMEType: "image/png"}}
+		message.Media = files
 	})
 
 	var media string
 	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
 		"SELECT media::text FROM channel_thread_inbound WHERE channel_id = 'thread-one'").Scan(&media))
 
-	s.JSONEq(`[{"url": "https://files.example.com/a.png", "mime_type": "image/png"}]`, media)
-	s.Equal([]core.Media{{URL: "https://files.example.com/a.png", MIMEType: "image/png"}},
-		s.claimedOne(s.base, "1759740000.000100").Message().Media)
+	s.JSONEq(`[{"url": "https://files.example.com/a.png", "mime_type": "image/png"},
+		{"url": "", "mime_type": "", "id": "1003383421387256", "id_mime_type": "image/jpeg"}]`, media)
+	s.Equal(files, s.claimedOne(s.base, "1759740000.000100").Message().Media)
+}
+
+// The media an attempt saves is what the row's next claim reads: a photo named by id keeps
+// where Stream Chat stored its upload under a key of its own, its url and mime_type still
+// empty, so a build from before it reads the row as it did and writes no image (AI-2757). A
+// worker whose lease was taken over saves nothing.
+func (s *StoreSuite) TestAnInboundMessagesUploadsAreSavedOnlyUnderTheRowsLease() {
+	byID := core.Media{ID: "1003383421387256", MIMEType: "image/jpeg"}
+	s.inbound("thread-one", "1759740000.000100", func(message *ChannelInbound) {
+		message.Media = []core.Media{byID}
+	})
+	stale := s.claimedOne(s.base, "1759740000.000100")
+	current := s.claimedOne(s.base.Add(time.Minute), "1759740000.000100")
+	uploaded := []core.Media{{ID: "1003383421387256", MIMEType: "image/png", Uploaded: "https://cdn.example.com/photo-1.png"}}
+
+	saved, err := s.store.SaveChannelInboundMedia(s.ctx, stale, uploaded)
+	s.Require().NoError(err)
+	s.False(saved, "the lease is another worker's")
+	saved, err = s.store.SaveChannelInboundMedia(s.ctx, current, uploaded)
+	s.Require().NoError(err)
+	s.True(saved)
+
+	var media string
+	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
+		"SELECT media::text FROM channel_thread_inbound WHERE channel_id = 'thread-one'").Scan(&media))
+	s.JSONEq(`[{"url": "", "mime_type": "", "id": "1003383421387256", "id_mime_type": "image/png",
+		"uploaded": "https://cdn.example.com/photo-1.png"}]`, media)
+	s.Equal(uploaded, s.claimedOne(s.base.Add(2*time.Minute), "1759740000.000100").Message().Media)
+	state, attempts := s.inboundState("thread-one", "1759740000.000100")
+	s.Equal(ChannelInboundQueued, state)
+	s.Zero(attempts, "saving the media records no attempt")
 }
 
 func (s *StoreSuite) TestAnInboundMessageWithNoMediaAndNoForwardIsClaimedWithNeither() {
@@ -631,12 +665,12 @@ func (s *StoreSuite) inboundClaims(channelID string) []string {
 
 // waitedRow is the row AcceptChannelInbound's waited callback makes of a reply in thread-one. It
 // touches no table: the transaction holds the thread channel's row.
-func (s *StoreSuite) waitedRow(reply core.InboundMessage) (ChannelInbound, error) {
+func (s *StoreSuite) waitedRow(reply core.InboundMessage) (ChannelInbound, bool, error) {
 	return ChannelInbound{
 		ChannelID: "thread-one", ProviderMessageID: reply.ProviderMessageID, CustomerID: "acme-app", ConnectorID: reply.ConnectorID,
 		ProviderUnitID: reply.ProviderUnitID, ThreadKey: reply.ThreadKey, ConfigID: "config-one", ConfigName: "Ada",
 		AuthorID: reply.AuthorID, Text: reply.Text, Raw: reply.Raw, NextAttemptAt: s.base,
-	}, nil
+	}, true, nil
 }
 
 func (s *StoreSuite) TestAnAcceptedInboundMessageIsClaimedAndQueuedOnce() {
@@ -674,6 +708,31 @@ func (s *StoreSuite) TestTheRepliesThatWaitedAreQueuedAfterTheMessageThatStartsT
 	s.Empty(left)
 }
 
+// A reply waited does not queue is dropped: it waits no more and is neither claimed nor queued,
+// and the message and the other replies are queued as before (AI-2743).
+func (s *StoreSuite) TestAWaitingReplyWaitedDoesNotQueueIsDroppedAndTheOthersAreQueued() {
+	message := s.inboundMessage("thread-one", "1759740000.000100")
+	for _, id := range []string{"1759740000.000200", "1759740000.000300"} {
+		_, err := s.store.WaitChannelThreadMessage(s.ctx, "acme-app", waiting(message.ThreadKey, id))
+		s.Require().NoError(err)
+	}
+
+	fresh, err := s.store.AcceptChannelInbound(s.ctx, message, func(reply core.InboundMessage) (ChannelInbound, bool, error) {
+		row, _, err := s.waitedRow(reply)
+		return row, reply.ProviderMessageID != "1759740000.000200", err
+	})
+
+	s.Require().NoError(err)
+	s.True(fresh)
+	s.Equal([]string{"1759740000.000100", "1759740000.000300"}, s.inboundClaims("thread-one"))
+	var queued []string
+	s.Require().NoError(s.store.DB().NewRaw("SELECT provider_message_id FROM channel_thread_inbound WHERE channel_id = 'thread-one' ORDER BY seq").Scan(s.ctx, &queued))
+	s.Equal([]string{"1759740000.000100", "1759740000.000300"}, queued)
+	left, err := takeWaitingChannelThreadMessages(s.ctx, s.store.db, "acme-app", "acme", "T0000TEAM", message.ThreadKey)
+	s.Require().NoError(err)
+	s.Empty(left, "the dropped reply waits no more")
+}
+
 // A failure after the claim and the take, here a waited reply's row, leaves the message unclaimed
 // and unqueued, and its replies waiting, for the provider's retry to take them all.
 func (s *StoreSuite) TestAFailedAcceptLeavesNoClaimNoRowAndTheRepliesWaiting() {
@@ -681,8 +740,8 @@ func (s *StoreSuite) TestAFailedAcceptLeavesNoClaimNoRowAndTheRepliesWaiting() {
 	_, err := s.store.WaitChannelThreadMessage(s.ctx, "acme-app", waiting(message.ThreadKey, "1759740000.000200"))
 	s.Require().NoError(err)
 
-	_, err = s.store.AcceptChannelInbound(s.ctx, message, func(core.InboundMessage) (ChannelInbound, error) {
-		return ChannelInbound{}, errors.New("synthetic read failure")
+	_, err = s.store.AcceptChannelInbound(s.ctx, message, func(core.InboundMessage) (ChannelInbound, bool, error) {
+		return ChannelInbound{}, false, errors.New("synthetic read failure")
 	})
 
 	s.Require().ErrorContains(err, "synthetic read failure")

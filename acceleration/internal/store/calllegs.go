@@ -598,3 +598,25 @@ func (s *Store) RecordedUsage(ctx context.Context, usageIDs []uuid.UUID) (map[uu
 	}
 	return recorded, nil
 }
+
+// PlacedCallLeg reports whether customerID placed the outbound leg vendor knows as
+// vendorCallID, a call or a transfer, on whichever shard holds it.
+func (s *Store) PlacedCallLeg(ctx context.Context, customerID, vendor, vendorCallID string) (bool, error) {
+	_, err := whicheverShard(ctx, s, func(ctx context.Context, db bun.IDB) (int64, error) {
+		var id int64
+		err := db.NewSelect().Model((*CallLeg)(nil)).Column("cl.id").
+			Where("cl.vendor_call_id = ?", vendorCallID).
+			Where("cl.customer_id = ?", customerID).
+			Where("cl.vendor = ?", vendor).
+			Limit(1).
+			Scan(ctx, &id)
+		return id, err
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: placed call leg: %w", err))
+	}
+	return true, nil
+}

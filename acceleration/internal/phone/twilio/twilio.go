@@ -126,7 +126,7 @@ func New(options Options) (*Provider, error) {
 // SearchNumbers returns numbers Twilio is offering in a country.
 func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]phone.Available, error) {
 	if search.Country == "" {
-		return nil, stack.Wrap(errors.New("twilio: a country is required to search for numbers"))
+		return nil, stack.Wrap(phone.Invalid(errors.New("twilio: a country is required to search for numbers")))
 	}
 
 	query := url.Values{}
@@ -163,7 +163,7 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 	}
 	resource, ok := resources[kind]
 	if !ok {
-		return nil, stack.Wrap(fmt.Errorf("twilio: does not sell %s numbers", kind))
+		return nil, stack.Wrap(phone.Invalid(fmt.Errorf("twilio: does not sell %s numbers", kind)))
 	}
 	path := fmt.Sprintf("/2010-04-01/Accounts/%s/AvailablePhoneNumbers/%s/%s.json",
 		p.accountSID, strings.ToUpper(search.Country), resource)
@@ -383,9 +383,9 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 	if outbound.RingTimeout > 0 {
 		seconds := int(outbound.RingTimeout.Seconds())
 		if seconds > maxRingSeconds {
-			return phone.Dialed{}, stack.Wrap(fmt.Errorf(
+			return phone.Dialed{}, stack.Wrap(phone.Invalid(fmt.Errorf(
 				"twilio: %ds is longer than the %ds twilio will ring for",
-				seconds, maxRingSeconds))
+				seconds, maxRingSeconds)))
 		}
 		form.Set("Timeout", strconv.Itoa(seconds))
 	}
@@ -413,7 +413,9 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 }
 
 // ReadStatus reads the form Twilio posts to a call's StatusCallback. A CallStatus that does
-// not end the call is a report that is not final.
+// not end the call is a report that is not final. SipResponseCode is the final SIP response,
+// sent with a final CallStatus (https://www.twilio.com/docs/voice/api/call-resource); one that
+// is no number is left out.
 func (p *Provider) ReadStatus(contentType string, body []byte) (phone.CallStatus, error) {
 	if media, _, err := mime.ParseMediaType(contentType); err != nil || media != "application/x-www-form-urlencoded" {
 		return phone.CallStatus{}, stack.Wrap(fmt.Errorf("twilio: a call status is a form, not %q", contentType))
@@ -426,7 +428,8 @@ func (p *Provider) ReadStatus(contentType string, body []byte) (phone.CallStatus
 	if word == "" {
 		return phone.CallStatus{}, stack.Wrap(errors.New("twilio: a call status without a CallStatus"))
 	}
-	return phone.CallStatus{Result: finalStatuses[word], Word: word}, nil
+	code, _ := strconv.Atoi(form.Get("SipResponseCode"))
+	return phone.CallStatus{Result: finalStatuses[word], Word: word, SIPCode: code}, nil
 }
 
 // ReadMachine reads the form Twilio posts to a call's AsyncAmdStatusCallback.

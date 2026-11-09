@@ -213,7 +213,7 @@ class UseCase:
 
         name = d.pop("name")
 
-        status = UseCaseStatus(d.pop("status"))
+        status = UseCaseStatus._decode(d.pop("status"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 

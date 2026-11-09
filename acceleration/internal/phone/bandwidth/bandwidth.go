@@ -148,20 +148,20 @@ func New(options Options) (*Provider, error) {
 // inventory.
 func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]phone.Available, error) {
 	if search.Country == "" {
-		return nil, stack.Wrap(errors.New("bandwidth: a country is required to search for numbers"))
+		return nil, stack.Wrap(phone.Invalid(errors.New("bandwidth: a country is required to search for numbers")))
 	}
 	if country := strings.ToUpper(search.Country); country != "US" && country != "CA" {
-		return nil, stack.Wrap(fmt.Errorf("bandwidth: only the north american inventory is wrapped here, not %s", country))
+		return nil, stack.Wrap(phone.Invalid(fmt.Errorf("bandwidth: only the north american inventory is wrapped here, not %s", country)))
 	}
 	if search.Type != "" && search.Type != phone.Local {
-		return nil, stack.Wrap(fmt.Errorf("bandwidth: only local numbers are wrapped here, not %s", search.Type))
+		return nil, stack.Wrap(phone.Invalid(fmt.Errorf("bandwidth: only local numbers are wrapped here, not %s", search.Type)))
 	}
 	if search.AreaCode == "" && search.Locality == "" && search.AdministrativeArea == "" {
-		return nil, stack.Wrap(errors.New("bandwidth: a search needs an area code, a city or a state"))
+		return nil, stack.Wrap(phone.Invalid(errors.New("bandwidth: a search needs an area code, a city or a state")))
 	}
 	// Bandwidth requires a state alongside a city, because a city name is not unique.
 	if search.Locality != "" && search.AdministrativeArea == "" {
-		return nil, stack.Wrap(errors.New("bandwidth: searching a city needs the state it is in"))
+		return nil, stack.Wrap(phone.Invalid(errors.New("bandwidth: searching a city needs the state it is in")))
 	}
 
 	// enableTNDetail is what turns a bare list of numbers into ones that say where they
@@ -224,8 +224,8 @@ func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Numb
 		return phone.Number{}, stack.Wrap(errors.New("bandwidth: a number is required"))
 	}
 	if p.siteID == "" {
-		return phone.Number{}, stack.Wrap(errors.New("bandwidth: " + siteIDEnvVar +
-			" is required to order a number, since an order is billed to a site"))
+		return phone.Number{}, stack.Wrap(phone.NotConfigured(errors.New("bandwidth: " + siteIDEnvVar +
+			" is required to order a number, since an order is billed to a site")))
 	}
 
 	request := orderRequest{
@@ -295,9 +295,9 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 			"bandwidth: fetches its call plan when the person answers, so it needs somewhere to fetch it from"))
 	}
 	if p.applicationID == "" {
-		return phone.Dialed{}, stack.Wrap(fmt.Errorf(
+		return phone.Dialed{}, stack.Wrap(phone.NotConfigured(fmt.Errorf(
 			"bandwidth: placing a call needs %s, which buying a number does not",
-			applicationIDEnvVar))
+			applicationIDEnvVar)))
 	}
 
 	request := callRequest{
@@ -322,7 +322,9 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 }
 
 // ReadStatus reads the JSON Bandwidth posts to a call's disconnectUrl. Only a disconnect event
-// ends the call; any other event is a report that is not final.
+// ends the call; any other event is a report that is not final. sipResponseCode is the SIP
+// response that rejected the call, sent only for a rejection
+// (https://dev.bandwidth.com/docs/voice/webhooks/disconnect).
 func (p *Provider) ReadStatus(contentType string, body []byte) (phone.CallStatus, error) {
 	if media, _, err := mime.ParseMediaType(contentType); err != nil || media != "application/json" {
 		return phone.CallStatus{}, stack.Wrap(fmt.Errorf("bandwidth: a call status is json, not %q", contentType))
@@ -344,7 +346,19 @@ func (p *Provider) ReadStatus(contentType string, body []byte) (phone.CallStatus
 	if !ok {
 		result = phone.CallFailed
 	}
-	return phone.CallStatus{Result: result, Word: event.Cause}, nil
+	return phone.CallStatus{Result: result, Word: event.Cause, SIPCode: sipResponseCode(body)}, nil
+}
+
+// sipResponseCode is the sipResponseCode of an event ReadStatus has read, zero when it has none
+// or one that is no number: the cause alone is what the call's outcome is decided from, so an
+// odd code must not refuse it. The field is all that can fail to decode, and then stays empty.
+func sipResponseCode(body []byte) int {
+	var event struct {
+		SIPResponseCode json.Number `json:"sipResponseCode"`
+	}
+	_ = json.Unmarshal(body, &event)
+	code, _ := strconv.Atoi(event.SIPResponseCode.String())
+	return code
 }
 
 // finalStatuses are the disconnect causes that are not a failure.

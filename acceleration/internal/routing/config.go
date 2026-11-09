@@ -61,6 +61,10 @@ const (
 	// is one unit of work, and the vendors differ in what they can find, what it costs and
 	// how long it takes.
 	Detection Modality = "detection"
+	// OCR is the text of a picture of a page. It is routed like detection: one page is one
+	// unit of work, and OCR models and vision language models will both read it, at
+	// different prices and speeds.
+	OCR Modality = "ocr"
 	// Memory, Knowledge and Phone are recorded but not routed: there is one memory store,
 	// one knowledge base and one vendor per number, so there is nothing to choose
 	// between. They are modalities so what they cost shows up in the same reporting as
@@ -420,6 +424,9 @@ func (a Alias) matches(provider ProviderConfig) bool {
 type ModalityConfig struct {
 	Providers []ProviderConfig `yaml:"providers"`
 	Aliases   map[string]Alias `yaml:"aliases"`
+	// Retired names a model that is no longer offered and the target to ask for instead,
+	// so a caller still pinned to it is told where to go rather than that it never existed.
+	Retired map[string]string `yaml:"retired"`
 	// aliasOrder is the order the aliases were written in, which a map forgets.
 	aliasOrder []string
 }
@@ -712,7 +719,25 @@ func (c ModalityConfig) validate() error {
 			return fmt.Errorf("alias %s prefers %s, which does not meet its own requirements", name, alias.Prefer)
 		}
 	}
+
+	for _, name := range slices.Sorted(maps.Keys(c.Retired)) {
+		if c.declares(name) {
+			return fmt.Errorf("%s is retired and still declared", name)
+		}
+		if instead := c.Retired[name]; !c.declares(instead) {
+			return fmt.Errorf("%s is retired for %s, which is not declared", name, instead)
+		}
+	}
 	return nil
+}
+
+// declares reports whether target is a provider/model or a shortcut of this modality.
+func (c ModalityConfig) declares(target string) bool {
+	if _, ok := c.Provider(target); ok {
+		return true
+	}
+	_, ok := c.Aliases[target]
+	return ok
 }
 
 // Config is the whole capability configuration, one section per modality. A modality the

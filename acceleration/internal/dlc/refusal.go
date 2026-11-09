@@ -1,6 +1,9 @@
 package dlc
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 const (
 	codeOptedOut         = "opted_out"
@@ -23,6 +26,12 @@ func (r *refusal) Error() string { return r.err.Error() }
 func (r *refusal) Unwrap() error { return r.err }
 
 func refused(code string, err error) error { return &refusal{code: code, err: err} }
+
+// NewRefusal is a refusal of the gate with the given code, for a test of what a caller does
+// with one: the gate itself needs a database to refuse.
+func NewRefusal(code string) error {
+	return refused(code, fmt.Errorf("%w: %s", ErrRefused, code))
+}
 
 // RefusalCode is which rule of the gate refused err, or "" when err is no refusal of the gate
 // with a code.

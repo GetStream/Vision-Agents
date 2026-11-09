@@ -12,11 +12,13 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/extract"
 )
 
 // DefaultChunk is how much of a document goes in one passage. It is small enough that
@@ -42,6 +44,10 @@ type Limits struct {
 // maxSource is the longest source the API takes, in characters.
 const maxSource = 256
 
+// maxPageLabel is the longest a passage's pages make its source: " > p. " and a range of
+// two five-digit pages.
+const maxPageLabel = len(" > p. 99999-99999")
+
 // SizeMultiple is how many times larger than a document its passages can be: a passage, its
 // source and its id over what is left of the passage once the repeated heading is in. With
 // no minimum chunk, or no room under the heading, nothing bounds it, and it is +Inf.
@@ -50,11 +56,11 @@ func (l Limits) SizeMultiple() float64 {
 	if l.MinChunk == 0 || room <= 0 {
 		return math.Inf(1)
 	}
-	return float64(l.MinChunk+maxSource+len(" > ")+l.MaxHeading+maxID) / float64(room)
+	return float64(l.MinChunk+maxSource+maxPageLabel+len(" > ")+l.MaxHeading+maxID) / float64(room)
 }
 
 // DefaultLimits are the limits a router has unless configured otherwise. With them, a
-// document's passages are at most about (500 + name + 3 + 128 + 63) / (500 - 133) times
+// document's passages are at most about (500 + name + 17 + 3 + 128 + 63) / (500 - 133) times
 // its size: the passage, its source and its id over what is left once the repeated
 // heading line is in. A name is at most 256 characters, which is about 2.6 for 256 bytes
 // and 4.7 for 1,024.
@@ -213,6 +219,13 @@ type passage struct {
 // split cuts a document at its headings, and cuts long sections again at paragraph
 // boundaries so no passage is longer than a model should be handed at once.
 //
+// A document read from a PDF or an office file marks where each page starts
+// (extract.PageMarker), and a passage's source says which pages it is from, so an answer
+// can say where in a manual to look. A new page ends a passage once it holds as much as
+// one cut for its size would, so one passage is mostly one page; a page of a few words
+// is kept with the next rather than stored alone, which would multiply the document as
+// tiny paragraphs do.
+//
 // The heading is repeated at the top of every piece of a section it was cut from. Without
 // it the second half of a long section is prose with nothing saying what it is about,
 // which is exactly what full-text search needs to match on. Only its first
@@ -225,21 +238,41 @@ func split(name, content string, size int, limits Limits) []passage {
 	// held says current has something under its heading. A passage of only the heading
 	// would not be stored, so one that is not held is never flushed to make room.
 	held := false
+	// first and last are the pages current is from, zero when the document has none.
+	first, last := 0, 0
+	room := limits.MinChunk - limits.MaxHeading
 
 	flush := func() {
 		text := strings.TrimSpace(current.String())
 		current.Reset()
+		pages := pageLabel(first, last)
+		first = last
 		if !prose(text) {
 			return
 		}
-		source := name
+		source := name + pages
 		if heading != "" {
-			source = name + " > " + heading
+			source += " > " + heading
 		}
 		passages = append(passages, passage{source: source, text: text})
 	}
 
 	for _, block := range blocks(content) {
+		if page, ok := extract.PageOf(block); ok {
+			if held && current.Len() >= room {
+				flush()
+				if heading != "" {
+					current.WriteString("## " + heading + "\n\n")
+				}
+				held = false
+				first = page
+			}
+			if first == 0 {
+				first = page
+			}
+			last = page
+			continue
+		}
 		if title, ok := headingOf(block); ok {
 			flush()
 			heading = clip(title, limits.MaxHeading)
@@ -262,22 +295,45 @@ func split(name, content string, size int, limits Limits) []passage {
 	return passages
 }
 
+// pageLabel is what a passage from pages first to last adds to its source.
+func pageLabel(first, last int) string {
+	switch {
+	case first == 0:
+		return ""
+	case last == first:
+		return " > p. " + strconv.Itoa(first)
+	}
+	return " > p. " + strconv.Itoa(first) + "-" + strconv.Itoa(last)
+}
+
 // rows cuts a paragraph too long to be a passage on its own at its line breaks. A table
 // or a long list has no blank line to cut at, so without this a section written as one
 // runs back whole however long it is. Fenced code is left alone, because half a code
 // block answers nothing.
+//
+// Every piece of a table opens with its header, so the rows of a later piece still say
+// which column is the price.
 func rows(block string, size int) []string {
 	if len(block) <= size || strings.HasPrefix(strings.TrimSpace(block), "```") {
 		return []string{block}
 	}
 
+	lines := strings.Split(block, "\n")
+	var header []string
+	if len(lines) > 2 && strings.HasPrefix(lines[0], "|") && tableRule.MatchString(lines[1]) && len(lines[0])+len(lines[1]) < size/2 {
+		header = lines[:2]
+	}
 	var pieces []string
 	var current []string
 	length := 0
-	for _, line := range strings.Split(block, "\n") {
+	for i, line := range lines {
 		if length > 0 && length+len(line) > size {
 			pieces = append(pieces, strings.Join(current, "\n"))
 			current, length = nil, 0
+			if header != nil && i > len(header) {
+				current = append(current, header...)
+				length = len(header[0]) + len(header[1]) + 2
+			}
 		}
 		current = append(current, line)
 		length += len(line) + 1
@@ -287,6 +343,9 @@ func rows(block string, size int) []string {
 	}
 	return pieces
 }
+
+// tableRule is the line under a Markdown table's header.
+var tableRule = regexp.MustCompile(`^\|( *:?-+:? *\|)+ *$`)
 
 // blocks cuts a document into paragraphs. Fenced code is kept whole: a blank line inside
 // a code block is part of the code rather than a break in the prose.

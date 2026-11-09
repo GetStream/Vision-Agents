@@ -16,6 +16,89 @@ export const AUTHENTICATE_ENV = "STREAM_ACCELERATION_AUTHENTICATE";
 const TOKEN_VALIDITY_SECONDS = 60 * 60;
 
 /**
+ * Where a router with no proxy in front of it reads the team and usage categories, the team
+ * as team:<name>, joined with commas. Behind the proxy they are claims on the token instead,
+ * and the proxy deletes this header.
+ */
+export const USAGE_CATEGORIES_HEADER = "X-Stream-Usage-Categories";
+
+/**
+ * The rule the router and the proxy hold usage categories to. A team is a category of its
+ * own, team:<name>, which is why its name is shorter and has no ':'.
+ */
+const TEAM_PREFIX = "team:";
+const MAX_CATEGORIES = 10;
+const TEAM = /^[A-Za-z0-9_.-]{1,59}$/;
+const CATEGORY = /^[A-Za-z0-9_.:-]{1,64}$/;
+
+/** The team, or a ConfigurationError naming why the router would refuse it. */
+export function checkTeam(team: string): string {
+  if (typeof team !== "string" || !TEAM.test(team)) {
+    throw new ConfigurationError(
+      `team ${JSON.stringify(team)} is not 1 to 59 characters of A-Z, a-z, 0-9, _ . and -`,
+    );
+  }
+  return team;
+}
+
+/** The usage category, or a ConfigurationError naming why the router would refuse it. */
+export function checkCategory(category: string): string {
+  if (typeof category !== "string" || !CATEGORY.test(category)) {
+    throw new ConfigurationError(
+      `usage category ${JSON.stringify(category)} is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -`,
+    );
+  }
+  // In any case, as the proxy reads it: Team:finance would be a second team.
+  if (category.slice(0, TEAM_PREFIX.length).toLowerCase() === TEAM_PREFIX) {
+    throw new ConfigurationError(
+      `usage category ${JSON.stringify(category)} names a team: pass it as team instead`,
+    );
+  }
+  return category;
+}
+
+/**
+ * The categories each once and sorted, as the proxy keeps them, or a ConfigurationError
+ * naming the one the router would refuse.
+ */
+function checkedCategories(team: string | undefined, categories: readonly string[]): readonly string[] {
+  if (typeof categories === "string") {
+    throw new ConfigurationError(
+      `usageCategories is a list of categories, not the one string ${JSON.stringify(categories)}`,
+    );
+  }
+  const kept = [...new Set(categories.map(checkCategory))].sort();
+  if (team !== undefined) {
+    checkTeam(team);
+  }
+  const count = kept.length + (team === undefined ? 0 : 1);
+  if (count > MAX_CATEGORIES) {
+    throw new ConfigurationError(
+      `at most ${MAX_CATEGORIES} usage categories, the team included; these are ${count}`,
+    );
+  }
+  return kept;
+}
+
+/** The `team` and `usage_categories` claims, each only when there is one. */
+function categoryClaims(team: string | undefined, categories: readonly string[]): Record<string, unknown> {
+  return {
+    ...(team ? { team } : {}),
+    ...(categories.length > 0 ? { usage_categories: [...categories] } : {}),
+  };
+}
+
+/** What a user token is minted with beside the user it names. */
+export interface UserTokenOptions {
+  /** The team the user's work is counted under, such as `finance`. */
+  team?: string;
+  /** The customer's own groupings the user's work is counted against. */
+  usageCategories?: readonly string[];
+  /** How long it lasts. Defaults to an hour. */
+  validitySeconds?: number;
+}
+
+/**
  * The shape of a region name, such as us-east4 or europe-west4. Only the shape is checked:
  * which regions are served is the hosted router's to say, so offering another needs no
  * release of this SDK.
@@ -145,6 +228,22 @@ export interface BackendOptions {
    * Falls back to `STREAM_ACCELERATION_AUTHENTICATE`.
    */
   authenticate?: boolean;
+  /**
+   * The customer's team the work is counted under, such as `finance`: its spend and its spend
+   * limits. 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
+   *
+   * Signed into every token minted here, and sent in `X-Stream-Usage-Categories` to a router
+   * with no proxy in front of it. A token handed in carries whatever it was signed with, so
+   * neither this nor `usageCategories` can be passed beside one: mint it with
+   * `createUserToken` instead.
+   */
+  team?: string;
+  /**
+   * The customer's own groupings the work is counted against, such as `project:onboarding`:
+   * at most 10 together with the team, each 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -,
+   * and none starting `team:`. Kept sorted, each once. Carried the way `team` is.
+   */
+  usageCategories?: readonly string[];
   /** Used for every request. Defaults to the global fetch. */
   fetch?: typeof fetch;
   /** Used for every socket. Defaults to the global WebSocket. */
@@ -164,6 +263,10 @@ export class Backend {
   readonly apiKey: string;
   /** Whether the credential is spelled for Stream's proxy rather than for the router. */
   readonly authenticate: boolean;
+  /** The team the work is counted under, or undefined. */
+  readonly team: string | undefined;
+  /** The usage categories the work is counted against, sorted, each once. */
+  readonly usageCategories: readonly string[];
   /** Whether the router is told the customer rather than shown a credential. */
   private readonly byCustomer: boolean;
   /**
@@ -181,6 +284,14 @@ export class Backend {
    */
   private userIdValue: string;
   private token: TokenSource | undefined;
+  /**
+   * What a token function last answered, kept until the router refuses it or it is about
+   * to expire. Fetching one per request would put the app's own backend on the path of
+   * every call this SDK makes.
+   */
+  private fetched: string | undefined;
+  /** The fetch in flight, shared by every request that needs a token while it runs. */
+  private fetching: Promise<string> | undefined;
   private user: StreamUser | undefined;
   /** The end user `actingFor` named, sent beside this backend's own credential. */
   private actingForValue = "";
@@ -188,6 +299,11 @@ export class Backend {
   private readonly webSocketImpl: WebSocketConstructor | undefined;
 
   constructor(options: BackendOptions = {}) {
+    this.team = options.team || undefined;
+    this.usageCategories = checkedCategories(this.team, options.usageCategories ?? []);
+    if (options.token && this.carriesCategories) {
+      throw new ConfigurationError(CATEGORIES_BESIDE_TOKEN);
+    }
     this.url = routerUrl(options).replace(/\/+$/, "");
     this.customerId = options.customerId ?? env(CUSTOMER_ENV) ?? "";
     // The same reasoning as the secret below: naming a customer is choosing the way a
@@ -267,9 +383,13 @@ export class Backend {
     if (!token) {
       throw new ConfigurationError(`there is no token for ${named.id} to hold`);
     }
+    if (this.carriesCategories) {
+      throw new ConfigurationError(CATEGORIES_BESIDE_TOKEN);
+    }
     this.user = named;
     this.userIdValue = named.id;
     this.token = token;
+    this.forgetToken();
     // The same reasoning as the constructor's, and it has to be here as well because this
     // is the shape a page is written in: the token arrives after the client was built, so
     // there was nothing to suppress an ambient secret at construction. Without this a
@@ -289,6 +409,78 @@ export class Backend {
     this.user = undefined;
     this.userIdValue = "";
     this.token = undefined;
+    this.forgetToken();
+  }
+
+  /**
+   * Drops the token a token function last answered, so the next request asks it again.
+   *
+   * `refused` is the token the router turned down, where the caller knows it. Only that one is
+   * forgotten: when a newer token is already held or being fetched, because another request
+   * that was refused got there first, it is kept, and the retry goes with it. Otherwise a burst
+   * of requests refused together would each throw away the token the one before had fetched,
+   * and a refusal arriving late would throw away a good one.
+   *
+   * Answers whether a request sent again would carry a different token, which is what a
+   * retry after a 401 is for. It would not when the token was handed in as a string, which
+   * is the only one there is, nor when requests carry no user token at all: a router
+   * reached by customer id is never shown it, and a backend holding the secret mints its
+   * own. The client calls this when the router answers 401, and retries once if it says so.
+   */
+  expireToken(refused?: string): boolean {
+    if (typeof this.token !== "function" || !this.presentsUserToken) {
+      return false;
+    }
+    const newer =
+      refused !== undefined &&
+      (this.fetched !== undefined ? this.fetched !== refused : this.fetching !== undefined);
+    if (!newer) {
+      this.forgetToken();
+    }
+    return true;
+  }
+
+  private get carriesCategories(): boolean {
+    return this.team !== undefined || this.usageCategories.length > 0;
+  }
+
+  /** The team and categories as a router with no proxy in front of it reads them. */
+  private categoryHeader(): Record<string, string> {
+    if (this.authenticate || !this.carriesCategories) {
+      return {};
+    }
+    const named = [...this.usageCategories, ...(this.team ? [TEAM_PREFIX + this.team] : [])];
+    return { [USAGE_CATEGORIES_HEADER]: named.sort().join(",") };
+  }
+
+  /**
+   * A token for one end user's device to hold, naming their team and usage categories.
+   *
+   * The claims are fixed when it is signed, so a device holding it cannot move its own work
+   * to another team or category: a team has no members list anywhere, the token is the
+   * membership. Server side only, because it is signed with the secret.
+   */
+  async createUserToken(userId: string, options: UserTokenOptions = {}): Promise<string> {
+    if (!this.apiSecret) {
+      throw new ConfigurationError(
+        "a user token is signed with the app's secret, which only a backend holds",
+      );
+    }
+    if (!userId) {
+      throw new ConfigurationError("a user token needs the user's id");
+    }
+    const validity = options.validitySeconds ?? TOKEN_VALIDITY_SECONDS;
+    if (!(validity > 0)) {
+      throw new ConfigurationError("a user token has to be valid for some seconds");
+    }
+    const team = options.team || undefined;
+    const categories = checkedCategories(team, options.usageCategories ?? []);
+    return signToken({ user_id: userId, ...categoryClaims(team, categories) }, this.apiSecret, validity);
+  }
+
+  /** Whether requests and sockets carry the end user's token, rather than none or a minted one. */
+  private get presentsUserToken(): boolean {
+    return !this.byCustomer && (this.authenticate || !this.apiSecret);
   }
 
   /**
@@ -302,6 +494,10 @@ export class Backend {
     const acting = Object.assign(Object.create(Backend.prototype) as Backend, this);
     acting.userIdValue = "";
     acting.user = undefined;
+    // A cache of its own: a fetch the original started settles into the original's fields,
+    // so a copied one would be held here forever.
+    acting.fetched = undefined;
+    acting.fetching = undefined;
     acting.actingForValue = userId;
     return acting;
   }
@@ -362,9 +558,10 @@ export class Backend {
   /**
    * What every request to the router carries.
    *
-   * Minted per call, so a client left idle longer than a token lasts does not wake up
-   * holding an expired one. `anonymously` sends the key alone, for a guest asked for by
-   * nobody yet.
+   * A token minted here is minted per call, so a client left idle longer than a token lasts
+   * does not wake up holding an expired one. A token function's answer is kept instead, and
+   * asked for again after a 401 (see `userToken`). `anonymously` sends the key alone, for a
+   * guest asked for by nobody yet.
    */
   async headers(anonymously = false): Promise<Record<string, string>> {
     if (anonymously) {
@@ -373,11 +570,12 @@ export class Backend {
         : { "X-Api-Key": this.apiKey, "Stream-Auth-Type": "anonymous" };
     }
     this.assertCredentialed();
-    const acting: Record<string, string> = this.actingForValue
-      ? { "X-Stream-User-Id": this.actingForValue }
-      : {};
+    const beside: Record<string, string> = {
+      ...(this.actingForValue ? { "X-Stream-User-Id": this.actingForValue } : {}),
+      ...this.categoryHeader(),
+    };
     if (this.byCustomer) {
-      return { "X-Customer-Id": this.customerId, ...acting };
+      return { "X-Customer-Id": this.customerId, ...beside };
     }
 
     if (this.authenticate) {
@@ -388,11 +586,11 @@ export class Backend {
         api_key: this.apiKey,
         "stream-auth-type": "jwt",
         Authorization: `Bearer ${await this.proxyToken()}`,
-        ...acting,
+        ...beside,
       };
     }
 
-    const headers: Record<string, string> = { "X-Api-Key": this.apiKey, ...acting };
+    const headers: Record<string, string> = { "X-Api-Key": this.apiKey, ...beside };
     if (this.apiSecret) {
       headers["Authorization"] = `Bearer ${await this.serverToken()}`;
       headers["Stream-Auth-Type"] = "server";
@@ -489,7 +687,7 @@ export class Backend {
    * as well before chat or video can connect. A server-side backend gets a token minted for the user it is acting for rather than its
    * own server token, because a chat client connects as somebody.
    */
-  async streamCredentials(): Promise<StreamCredentials | undefined> {
+  async streamCredentials(refresh = false): Promise<StreamCredentials | undefined> {
     if (!this.apiKey) {
       return undefined;
     }
@@ -498,6 +696,12 @@ export class Backend {
       return undefined;
     }
     if (this.token) {
+      // Stream's clients ask again only when the token they hold has expired, so the one
+      // kept here is no answer to them: `refresh` asks the token function for a new one. A
+      // fetch already under way is that new one, so it is waited for rather than started over.
+      if (refresh && !this.fetching) {
+        this.forgetToken();
+      }
       return { apiKey: this.apiKey, user, token: await this.userToken() };
     }
     if (!this.apiSecret) {
@@ -506,7 +710,7 @@ export class Backend {
     return {
       apiKey: this.apiKey,
       user,
-      token: await signToken({ user_id: user.id }, this.apiSecret),
+      token: await signToken({ user_id: user.id, ...this.categoryClaims() }, this.apiSecret),
     };
   }
 
@@ -517,7 +721,7 @@ export class Backend {
    * user to hold. Which of its users a backend is acting for goes in a header instead.
    */
   private serverToken(): Promise<string> {
-    return signToken({ server: true }, this.apiSecret);
+    return signToken({ server: true, ...this.categoryClaims() }, this.apiSecret);
   }
 
   /**
@@ -532,10 +736,18 @@ export class Backend {
       return this.userToken();
     }
     return this.userId
-      ? signToken({ user_id: this.userId }, this.apiSecret)
+      ? signToken({ user_id: this.userId, ...this.categoryClaims() }, this.apiSecret)
       : this.serverToken();
   }
 
+  /**
+   * The end user's token: the one handed in, or what the token function answered.
+   *
+   * A function is asked once and its answer kept, until the router refuses it (the client
+   * calls `expireToken` on a 401), it is within a minute of the expiry it carries, or
+   * `setUser` or `clearUser` changes whose it is. Requests that need one while it is being
+   * fetched wait for the same fetch rather than starting their own.
+   */
   private async userToken(): Promise<string> {
     const source = this.token;
     if (typeof source === "string") {
@@ -544,7 +756,69 @@ export class Backend {
     if (!source) {
       throw new ConfigurationError("there is no token to authenticate with");
     }
-    return source();
+    if (this.fetched !== undefined && !expiresSoon(this.fetched)) {
+      return this.fetched;
+    }
+    if (!this.fetching) {
+      const fetching = (async () => source())();
+      this.fetching = fetching;
+      // Kept only if nothing replaced the user or expired the token while it was fetched:
+      // otherwise it is somebody else's, or the one that was just refused.
+      fetching.then(
+        (token) => {
+          if (this.fetching === fetching) {
+            this.fetched = token;
+            this.fetching = undefined;
+          }
+        },
+        () => {
+          if (this.fetching === fetching) {
+            this.fetching = undefined;
+          }
+        },
+      );
+    }
+    return this.fetching;
+  }
+
+  private categoryClaims(): Record<string, unknown> {
+    return categoryClaims(this.team, this.usageCategories);
+  }
+
+  private forgetToken(): void {
+    this.fetched = undefined;
+    this.fetching = undefined;
+  }
+}
+
+const CATEGORIES_BESIDE_TOKEN =
+  "a token handed in carries the team and usage categories it was signed with; " +
+  "mint it with createUserToken(userId, { team, usageCategories })";
+
+/** How long before the expiry a token carries it is fetched again rather than sent. */
+const EXPIRY_MARGIN_MS = 60_000;
+
+/**
+ * Whether a token says it expires within the margin.
+ *
+ * Read rather than trusted: nothing is verified here, the point is only to not open a
+ * socket with a token the router is about to refuse, since a browser cannot read the
+ * status a refused socket was answered with and so cannot retry it the way a request is.
+ * A token that is not a JWT, or carries no expiry, never expires as far as this is concerned.
+ */
+function expiresSoon(token: string, now = Date.now()): boolean {
+  const payload = token.split(".")[1];
+  if (!payload) {
+    return false;
+  }
+  try {
+    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const claims = JSON.parse(atob(base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "="))) as {
+      exp?: unknown;
+    };
+    return typeof claims.exp === "number" && claims.exp * 1000 - now < EXPIRY_MARGIN_MS;
+  } catch {
+    return false;
   }
 }
 

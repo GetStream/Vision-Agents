@@ -9,6 +9,7 @@ from typing_extensions import Self
 
 from ..models.agent_mode import AgentMode
 from ..models.agent_role import AgentRole
+from ..models.episode_cards_mode import EpisodeCardsMode
 from ..models.harness import Harness
 from ..models.sandbox import Sandbox
 from ..types import UNSET, Unset
@@ -16,16 +17,23 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.agent_calls import AgentCalls
     from ..models.agent_channels import AgentChannels
+    from ..models.agent_config_request_mcp_servers_item import (
+        AgentConfigRequestMcpServersItem,
+    )
+    from ..models.agent_config_request_plugin_events_item import (
+        AgentConfigRequestPluginEventsItem,
+    )
+    from ..models.agent_config_request_plugins_item_type_1 import (
+        AgentConfigRequestPluginsItemType1,
+    )
     from ..models.agent_config_request_tags import AgentConfigRequestTags
     from ..models.agent_connector_binding import AgentConnectorBinding
     from ..models.agent_dispatch import AgentDispatch
     from ..models.agent_review import AgentReview
     from ..models.agent_scheduling import AgentScheduling
     from ..models.agent_tools import AgentTools
+    from ..models.floor_control import FloorControl
     from ..models.greeting import Greeting
-    from ..models.mcp_server import McpServer
-    from ..models.plugin_event import PluginEvent
-    from ..models.plugin_with_options import PluginWithOptions
     from ..models.resume_history import ResumeHistory
     from ..models.sandbox_options import SandboxOptions
     from ..models.session_video import SessionVideo
@@ -51,14 +59,14 @@ class AgentConfigRequest:
             connector, is refused.
         dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
             /v1/dispatch. Omitted settings are disabled.
-        episode_cards (bool | Unset): Whether each phone call under this agent, and each run of messages a Stream user
-            writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an
-            agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id.
-            On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the
-            person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a
-            summary, or the last lines of the episode's channel while there is none. An app chat's agent channel that
-            anybody else is a member of or wrote in reads none. Off by default, and then a session runs as it always did.
-            Left out on an update, the stored setting stays.
+        episode_cards (EpisodeCardsMode | Unset): What the agent does with episode cards, the same for every channel:
+            its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off
+            writes none and reads none. record writes each conversation's card and its summary into the person's omni-
+            channel, and no session reads them. on writes them as record does, and a session starts with the person's other
+            cards. Turning record into on reads what record wrote.
+        floor_control (FloorControl | Unset): The model that controls an agent's floor, and how long a caller may wait
+            once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again;
+            anything else replaces the stored choice whole.
         greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
         guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or
             llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the
@@ -72,16 +80,18 @@ class AgentConfigRequest:
         knowledge_namespace (str | Unset): What the agent may look things up in. Empty means it knows only what it was
             told.
         llm (str | Unset): The model holding the conversation.
-        mcp_servers (list[McpServer] | Unset): No longer read: a server named by URL is now a custom connector, so
-            create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names
-            nothing.
+        mcp_servers (list[AgentConfigRequestMcpServersItem] | Unset): No longer read: a server named by URL is now a
+            custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an
+            empty one names nothing.
         mode (AgentMode | Unset): Whether the agent is spoken to or written to. A voice agent joins a call, transcribes
             what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither
             speech target and a session created from it needs no call to join.
-        plugin_events (list[PluginEvent] | Unset): No longer read: plugins were replaced by connectors, so name the
-            provider under connectors. A non-empty list is refused (400); an empty one names nothing.
-        plugins (list[PluginWithOptions | str] | Unset): No longer read: plugins were replaced by connectors, so name
-            the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
+        plugin_events (list[AgentConfigRequestPluginEventsItem] | Unset): No longer read: plugins were replaced by
+            connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names
+            nothing.
+        plugins (list[AgentConfigRequestPluginsItemType1 | str] | Unset): No longer read: plugins were replaced by
+            connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names
+            nothing.
         region (str | Unset): Where the agent's work is done: us or eu for now. Every model its sessions run, its
             knowledge base and its sandbox are in it, and none of its work is served in another region. A config naming a
             model with no instance there, a knowledge_namespace kept in another region, or a sandbox where none runs there
@@ -113,10 +123,12 @@ class AgentConfigRequest:
         subagent (str | Unset): The slower model a voice agent hands its skills to, while the voice model keeps talking.
             Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the
             default subagent.
-        tags (AgentConfigRequestTags | Unset): Cost labels, carried onto every request a session using it makes. A
-            config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel
-            connection and subscribes to no event, which stay with the live config, and it may bind a channel connection
-            another config binds.
+        tags (AgentConfigRequestTags | Unset): Cost labels, carried onto every request a session using it makes. The
+            team tag is also the team those sessions are counted under, its spend limits included, when whoever opens one
+            names none: neither the caller's token nor the session's team field. It is 1 to 59 letters, digits, _ . and -,
+            and a config naming another team tag is refused. A config tagged draft_of, naming the config it copies, is a
+            test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live
+            config, and it may bind a channel connection another config binds.
         tools (AgentTools | Unset): How an agent is offered its tools, and how long what they were given and gave back
             is kept.
         tts (str | Unset):
@@ -137,7 +149,8 @@ class AgentConfigRequest:
     channels: AgentChannels | Unset = UNSET
     connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
-    episode_cards: bool | Unset = UNSET
+    episode_cards: EpisodeCardsMode | Unset = UNSET
+    floor_control: FloorControl | Unset = UNSET
     greeting: Greeting | Unset = UNSET
     guardrail: str | Unset = UNSET
     harness: Harness | Unset = UNSET
@@ -145,10 +158,10 @@ class AgentConfigRequest:
     keyterms: list[str] | Unset = UNSET
     knowledge_namespace: str | Unset = UNSET
     llm: str | Unset = UNSET
-    mcp_servers: list[McpServer] | Unset = UNSET
+    mcp_servers: list[AgentConfigRequestMcpServersItem] | Unset = UNSET
     mode: AgentMode | Unset = UNSET
-    plugin_events: list[PluginEvent] | Unset = UNSET
-    plugins: list[PluginWithOptions | str] | Unset = UNSET
+    plugin_events: list[AgentConfigRequestPluginEventsItem] | Unset = UNSET
+    plugins: list[AgentConfigRequestPluginsItemType1 | str] | Unset = UNSET
     region: str | Unset = UNSET
     resume_history: ResumeHistory | Unset = UNSET
     review: AgentReview | Unset = UNSET
@@ -170,7 +183,9 @@ class AgentConfigRequest:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.plugin_with_options import PluginWithOptions
+        from ..models.agent_config_request_plugins_item_type_1 import (
+            AgentConfigRequestPluginsItemType1,
+        )
 
         name = self.name
 
@@ -193,7 +208,13 @@ class AgentConfigRequest:
         if not isinstance(self.dispatch, Unset):
             dispatch = self.dispatch.to_dict()
 
-        episode_cards = self.episode_cards
+        episode_cards: str | Unset = UNSET
+        if not isinstance(self.episode_cards, Unset):
+            episode_cards = self.episode_cards.value
+
+        floor_control: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.floor_control, Unset):
+            floor_control = self.floor_control.to_dict()
 
         greeting: dict[str, Any] | Unset = UNSET
         if not isinstance(self.greeting, Unset):
@@ -238,7 +259,7 @@ class AgentConfigRequest:
             plugins = []
             for plugins_item_data in self.plugins:
                 plugins_item: dict[str, Any] | str
-                if isinstance(plugins_item_data, PluginWithOptions):
+                if isinstance(plugins_item_data, AgentConfigRequestPluginsItemType1):
                     plugins_item = plugins_item_data.to_dict()
                 else:
                     plugins_item = plugins_item_data
@@ -319,6 +340,8 @@ class AgentConfigRequest:
             field_dict["dispatch"] = dispatch
         if episode_cards is not UNSET:
             field_dict["episode_cards"] = episode_cards
+        if floor_control is not UNSET:
+            field_dict["floor_control"] = floor_control
         if greeting is not UNSET:
             field_dict["greeting"] = greeting
         if guardrail is not UNSET:
@@ -384,16 +407,23 @@ class AgentConfigRequest:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.agent_calls import AgentCalls
         from ..models.agent_channels import AgentChannels
+        from ..models.agent_config_request_mcp_servers_item import (
+            AgentConfigRequestMcpServersItem,
+        )
+        from ..models.agent_config_request_plugin_events_item import (
+            AgentConfigRequestPluginEventsItem,
+        )
+        from ..models.agent_config_request_plugins_item_type_1 import (
+            AgentConfigRequestPluginsItemType1,
+        )
         from ..models.agent_config_request_tags import AgentConfigRequestTags
         from ..models.agent_connector_binding import AgentConnectorBinding
         from ..models.agent_dispatch import AgentDispatch
         from ..models.agent_review import AgentReview
         from ..models.agent_scheduling import AgentScheduling
         from ..models.agent_tools import AgentTools
+        from ..models.floor_control import FloorControl
         from ..models.greeting import Greeting
-        from ..models.mcp_server import McpServer
-        from ..models.plugin_event import PluginEvent
-        from ..models.plugin_with_options import PluginWithOptions
         from ..models.resume_history import ResumeHistory
         from ..models.sandbox_options import SandboxOptions
         from ..models.session_video import SessionVideo
@@ -431,7 +461,19 @@ class AgentConfigRequest:
         else:
             dispatch = AgentDispatch.from_dict(_dispatch)
 
-        episode_cards = d.pop("episode_cards", UNSET)
+        _episode_cards = d.pop("episode_cards", UNSET)
+        episode_cards: EpisodeCardsMode | Unset
+        if isinstance(_episode_cards, Unset):
+            episode_cards = UNSET
+        else:
+            episode_cards = EpisodeCardsMode._decode(_episode_cards)
+
+        _floor_control = d.pop("floor_control", UNSET)
+        floor_control: FloorControl | Unset
+        if isinstance(_floor_control, Unset):
+            floor_control = UNSET
+        else:
+            floor_control = FloorControl.from_dict(_floor_control)
 
         _greeting = d.pop("greeting", UNSET)
         greeting: Greeting | Unset
@@ -447,7 +489,7 @@ class AgentConfigRequest:
         if isinstance(_harness, Unset):
             harness = UNSET
         else:
-            harness = Harness(_harness)
+            harness = Harness._decode(_harness)
 
         instructions = d.pop("instructions", UNSET)
 
@@ -458,11 +500,13 @@ class AgentConfigRequest:
         llm = d.pop("llm", UNSET)
 
         _mcp_servers = d.pop("mcp_servers", UNSET)
-        mcp_servers: list[McpServer] | Unset = UNSET
+        mcp_servers: list[AgentConfigRequestMcpServersItem] | Unset = UNSET
         if _mcp_servers is not UNSET:
             mcp_servers = []
             for mcp_servers_item_data in _mcp_servers:
-                mcp_servers_item = McpServer.from_dict(mcp_servers_item_data)
+                mcp_servers_item = AgentConfigRequestMcpServersItem.from_dict(
+                    mcp_servers_item_data
+                )
 
                 mcp_servers.append(mcp_servers_item)
 
@@ -471,35 +515,39 @@ class AgentConfigRequest:
         if isinstance(_mode, Unset):
             mode = UNSET
         else:
-            mode = AgentMode(_mode)
+            mode = AgentMode._decode(_mode)
 
         _plugin_events = d.pop("plugin_events", UNSET)
-        plugin_events: list[PluginEvent] | Unset = UNSET
+        plugin_events: list[AgentConfigRequestPluginEventsItem] | Unset = UNSET
         if _plugin_events is not UNSET:
             plugin_events = []
             for plugin_events_item_data in _plugin_events:
-                plugin_events_item = PluginEvent.from_dict(plugin_events_item_data)
+                plugin_events_item = AgentConfigRequestPluginEventsItem.from_dict(
+                    plugin_events_item_data
+                )
 
                 plugin_events.append(plugin_events_item)
 
         _plugins = d.pop("plugins", UNSET)
-        plugins: list[PluginWithOptions | str] | Unset = UNSET
+        plugins: list[AgentConfigRequestPluginsItemType1 | str] | Unset = UNSET
         if _plugins is not UNSET:
             plugins = []
             for plugins_item_data in _plugins:
 
-                def _parse_plugins_item(data: object) -> PluginWithOptions | str:
+                def _parse_plugins_item(
+                    data: object,
+                ) -> AgentConfigRequestPluginsItemType1 | str:
                     try:
                         if not isinstance(data, dict):
                             raise TypeError()
-                        componentsschemas_plugin_entry_type_1 = (
-                            PluginWithOptions.from_dict(data)
+                        plugins_item_type_1 = (
+                            AgentConfigRequestPluginsItemType1.from_dict(data)
                         )
 
-                        return componentsschemas_plugin_entry_type_1
+                        return plugins_item_type_1
                     except (TypeError, ValueError, AttributeError, KeyError):
                         pass
-                    return cast(PluginWithOptions | str, data)
+                    return cast(AgentConfigRequestPluginsItemType1 | str, data)
 
                 plugins_item = _parse_plugins_item(plugins_item_data)
 
@@ -526,14 +574,14 @@ class AgentConfigRequest:
         if isinstance(_role, Unset):
             role = UNSET
         else:
-            role = AgentRole(_role)
+            role = AgentRole._decode(_role)
 
         _sandbox = d.pop("sandbox", UNSET)
         sandbox: Sandbox | Unset
         if isinstance(_sandbox, Unset):
             sandbox = UNSET
         else:
-            sandbox = Sandbox(_sandbox)
+            sandbox = Sandbox._decode(_sandbox)
 
         _sandbox_options = d.pop("sandbox_options", UNSET)
         sandbox_options: SandboxOptions | Unset
@@ -593,6 +641,7 @@ class AgentConfigRequest:
             connectors=connectors,
             dispatch=dispatch,
             episode_cards=episode_cards,
+            floor_control=floor_control,
             greeting=greeting,
             guardrail=guardrail,
             harness=harness,

@@ -83,7 +83,7 @@ class ClassifyQuestion:
         d = dict(src_dict)
         instructions = d.pop("instructions")
 
-        type_ = ClassifyQuestionType(d.pop("type"))
+        type_ = ClassifyQuestionType._decode(d.pop("type"))
 
         levels = cast(list[str], d.pop("levels", UNSET))
 

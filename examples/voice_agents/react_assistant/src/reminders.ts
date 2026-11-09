@@ -64,3 +64,29 @@ function schedule(reminder: Reminder): void {
     }, wait),
   );
 }
+
+/** One day of the person's calendar: when it is, and what is on it, if anything. */
+export type CalendarDay = { date: Date; events: string[] };
+
+/**
+ * The days from `start` to `end`, at most two weeks of them, each with what Juno's calendar
+ * has on it.
+ */
+export function calendarDays(start: Date, end: Date): CalendarDay[] {
+  const days: CalendarDay[] = [];
+  let day = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  // A plan the agent wrote ending before it starts is read as its first day.
+  const latest = end > start ? end : start;
+  const last = new Date(latest.getFullYear(), latest.getMonth(), latest.getDate());
+  while (day <= last && days.length < 14) {
+    days.push({
+      date: day,
+      events: remindersOn(day).map(
+        (reminder) =>
+          `${new Date(reminder.due).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} ${reminder.title}`,
+      ),
+    });
+    day = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
+  }
+  return days;
+}
