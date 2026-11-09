@@ -4056,10 +4056,6 @@ func (a *Agent) dropUnheard(participant stt.Participant, turnID string, why inte
 			return false
 		}
 		stale, a.unheard = a.unheard, unheardReply{}
-		// What the hold kept was counted as being said, and none of it will be.
-		if a.heldLocked(turnID) {
-			a.letGoLocked()
-		}
 		a.missed = stale
 		// The tools an interruption cancels are cancelled before the speech is dropped, as
 		// they are when the caller talks over a reply: an end_call waiting on its goodbye

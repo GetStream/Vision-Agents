@@ -108,6 +108,46 @@ func (s *AgentSuite) TestALoneGreetingThatGrowsIntoARequestDropsTheUnheardReply(
 	s.oneDropSince(dropped)
 }
 
+// A reply written in full and held for a greeting that grows was passing on an answer the
+// caller never heard: dropping it leaves that answer owed.
+func (s *AgentSuite) TestAnAnswerAHeldReplyWasPassingOnIsStillOwedOnceItIsDropped() {
+	s.delegates()
+	s.join(true)
+	s.model.reply = nil
+	s.model.replyOn = map[int][]string{1: {`Let me check. <ask skill="think">15% of 84.20</ask>`}}
+	s.subagent.reply = nil
+	dropped := testutil.ToFloat64(staleReplies)
+	s.speak(nash)
+	s.says(nash, "what is 15% of 84.20")
+	s.eventually(func() bool {
+		requests := s.subagent.requests()
+		return len(requests) > 0 && s.subagent.script(requests[0].ID) != nil
+	}, "nothing was handed over")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the first reply never finished")
+	// The caller talking keeps the answer for the reply to them.
+	s.mutters(nash, "and two")
+	taskID := s.subagent.requests()[0].ID
+	s.subagent.writes(taskID, "It is 12.63.")
+	s.subagent.finishes(taskID)
+	s.eventually(func() bool { return countOf[TaskSettled](s.reported()) == 1 }, "the task never settled")
+	s.says(nash, "and two")
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the caller was never answered")
+	two := s.model.requests()[1].ID
+	s.Require().Contains(shown(s.model.requests()[1]), "It is 12.63.", "the reply to the caller never carried the answer")
+
+	s.greetedOver(two, s.mutters, "Hey,")
+	s.model.writes(two, "That comes to 12.63.")
+	s.model.finishes(two)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 }, "the held reply was never written")
+	s.mutters(nash, "Hey. And three")
+	s.oneDropSince(dropped)
+	s.says(nash, "Hey. And three")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the newer words were never answered")
+	s.Contains(shown(s.model.requests()[2]), "talked over your last reply passing this on",
+		"the answer the dropped reply was passing on is owed with the reply to what the caller said")
+}
+
 func (s *AgentSuite) TestALoneGreetingFromAnotherCallerDoesNotHoldTheReply() {
 	s.join(true)
 	s.flow.then = []string{`{"disposition":"wait","floor":"continue"}`}
