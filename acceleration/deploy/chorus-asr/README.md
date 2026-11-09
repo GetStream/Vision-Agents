@@ -840,6 +840,13 @@ never ended the utterance; the new one wrote both replacements and the final.
   at its own pace, so a caller who talks on for longer than the cap without a pause it
   writes at is cut off. The policy was fitted to pauses timed from the voice, which
   `stream/chorus-asr` keeps in every mode.
+- With another transcriber, a server that answers none of three checks in a row over 8 s
+  hands the participant's turns to that transcriber, which ends them as it would with no
+  floor. The floor asks the server again 10 s later, then at waits doubling to a minute, and
+  takes the turns back at the caller's next quiet moment (500 ms, with nothing the other
+  transcriber has yet to settle) once it answers. A check over the agent that runs out of its
+  shorter deadline counts neither way. `router_chorus_asr_floor_handovers_total` counts the
+  handovers, `to` the transcriber and back to `chorus-asr`.
 - The transcriber's speech gate was not measured on calls. Over noise as loud as -48 dBFS
   a pause is heard about 200 ms late, once the detector's score has let go of the voice,
   and a sudden loud noise can score as speech. The gate is absolute: somebody else talking
