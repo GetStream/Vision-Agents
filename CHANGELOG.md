@@ -466,6 +466,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### Go: leaving reports a stop the router refused
+
+When `stream.Pipeline.Leave` (and so `Session.Close`) stops a session over HTTP because its socket is gone, a refusal other than 404 is now returned as a `*stream.RouterError` instead of nil, since the session may still be running. A 404, a session the router no longer holds, still counts as left (AI-1892).
+
 ### Go: leaving a session the router already ended succeeds
 
 `stream.Pipeline.Leave`, and so `Session.Close`, failed with `websocket: close sent` for a session whose socket the router had closed, because the closed socket still read as open. The pipeline now closes its socket when watching ends, and a close that finds the socket already closed, by the router ending the session at that moment, stops the session over HTTP instead. Either way leaving returns nil (AI-1892).
