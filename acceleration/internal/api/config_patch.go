@@ -238,6 +238,9 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		return nil, invalidRequest(message)
 	}
 	config.Tags = override(config.Tags, patch.Tags)
+	if message, ok := teamTagComplaint(config.Tags, original.Tags); !ok {
+		return nil, invalidRequest(message)
+	}
 	if patch.Video != nil {
 		config.VideoSource = override(config.VideoSource, patch.Video.Source)
 		config.VideoMaxFrames = override(config.VideoMaxFrames, patch.Video.MaxFrames)

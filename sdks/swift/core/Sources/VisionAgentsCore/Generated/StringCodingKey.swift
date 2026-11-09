@@ -169,6 +169,7 @@ extension StringCodingKey {
     static let tags: StringCodingKey = "tags"
     static let target: StringCodingKey = "target"
     static let taskId: StringCodingKey = "task_id"
+    static let team: StringCodingKey = "team"
     static let temperature: StringCodingKey = "temperature"
     static let text: StringCodingKey = "text"
     static let thinking: StringCodingKey = "thinking"

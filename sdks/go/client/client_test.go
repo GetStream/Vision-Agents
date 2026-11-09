@@ -671,6 +671,23 @@ func TestInstructionsGoOverOnlyWhenGiven(t *testing.T) {
 	}
 }
 
+func TestTheTeamGoesOverOnlyWhenGiven(t *testing.T) {
+	for given, sent := range map[string]any{"": nil, "finance": "finance"} {
+		backend := newRouter(t)
+		agent := backend.client(t).Agent("docs")
+
+		session, err := agent.Sessions.Create(t.Context(), SessionOptions{Team: given})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close(t.Context())
+
+		if body := backend.body(t, "POST", "/v1/agents/sessions"); body["team"] != sent {
+			t.Errorf("team %q went over as %v", given, body["team"])
+		}
+	}
+}
+
 func TestConnectorBindingsNameAConnectionPerAlias(t *testing.T) {
 	backend := newRouter(t)
 	agent := backend.client(t).Agent("docs")

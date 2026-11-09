@@ -60,6 +60,11 @@ type SessionOptions struct {
 	// UserID is who the conversation belongs to, for a backend opening one on somebody's
 	// behalf. A client acting for a user leaves it empty: the token already says who.
 	UserID string
+	// Team is the team the conversation's work is counted under, its team spend limits
+	// included, for a backend opening one for a team: 1 to 59 letters, digits, _ . and -.
+	// Empty is the team the caller's token names, else the agent's tags: team. A token
+	// signed for another team is refused. Server side only.
+	Team string
 	// ConnectorBindings are the connections to use for the agent's connector bindings chosen
 	// per session, by alias. Each must be the caller's own; a binding with the agent's fixed
 	// connection cannot be given one.
@@ -295,6 +300,7 @@ func (s *Sessions) requestOf(options SessionOptions) acceleration.CreateSessionR
 		Call:            options.Call,
 		Instructions:    pointer(options.Instructions),
 		UserId:          pointer(options.UserID),
+		Team:            pointer(options.Team),
 		ReturnUrl:       pointer(options.ReturnURL),
 		Timezone:        pointer(options.Timezone),
 	}

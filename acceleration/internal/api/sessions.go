@@ -608,6 +608,9 @@ func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, 
 		spec.Attribution = routing.AttributionFrom(ctx)
 		spec.Attribution.APIKey, spec.Attribution.UsageCategories = row.APIKey, row.UsageCategories
 	}
+	// Its team too: the one it was opened under is in those categories, and a team the config
+	// was tagged with since does not move a conversation already under way.
+	spec.Team = ""
 	// The row keeps the call voice was last on, which voice goes back to once started.
 	return spec.Holding(session.Call{Type: row.CallType, ID: row.CallID}), nil
 }
@@ -685,6 +688,10 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	spec.Text = !value(request.StartVoice) && request.Phone == nil
 	if request.Call != nil {
 		spec.CallType, spec.CallID = request.Call.Type, request.Call.Id
+	}
+	// Over the config's team tag: the backend opening it knows which team the work is for.
+	if request.Team != nil {
+		spec.Team = *request.Team
 	}
 	// The conversation is kept in Stream Chat unless it is incognito, which Normalize turns
 	// off, so any Chat client can read it back, typed and spoken.
