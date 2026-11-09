@@ -302,6 +302,21 @@ func (s *AgentSuite) TestAHeldReplyIsNotLetGoBeforeTheCallerHoldPasses() {
 	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply held for the greeting never went out")
 }
 
+// The greeting's settling can be dealt with before the hold for it is made, as the
+// transcript and the cadence are read apart: the hold is then made with nothing left to
+// settle, and still ends.
+func (s *AgentSuite) TestAHoldMadeAfterItsGreetingSettledStillLetsTheReplyGoOut() {
+	s.join(true)
+	turn := s.answering("Hello? Hello. Hello.")
+
+	s.agent.perform(Action{Kind: ActHoldUnheard, Participant: nash, TurnID: turn, Text: "Hello?"})
+	s.Require().True(s.holding(turn), "the reply was never held")
+	s.model.writes(turn, "Hi, yes, I can hear you.")
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply held with no greeting left to settle never went out")
+	s.Equal(1, s.voicedTimes("Hi, yes, I can hear you."))
+}
+
 // Every ruling the controller could give on the greeting breaks the held reply: stop cuts
 // it, continue answers the greeting a second time, wait lets it go and may cut it.
 func (s *AgentSuite) TestTheControllerIsNotAskedAboutAGreetingAHeldReplyAnswers() {

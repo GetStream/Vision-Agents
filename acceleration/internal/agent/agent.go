@@ -2051,7 +2051,11 @@ func (a *Agent) perform(action Action) {
 		if !a.holdUnheard(action.TurnID) {
 			a.converse.wentOnUnheard(action.Participant.ID)
 			a.dropUnheard(action.Participant, action.TurnID, interruption{cause: causeUnheard, words: action.Text})
+			return
 		}
+		// The greeting can settle before the hold is made, as the cadence is read apart from
+		// the transcript, and then nothing else would let the reply go.
+		a.releaseUnheard(action.TurnID, time.Now().Add(callerHold))
 
 	case ActReleaseUnheard:
 		a.releaseUnheard(action.TurnID, action.At)
@@ -4117,8 +4121,8 @@ func (a *Agent) holdUnheard(turnID string) bool {
 	return true
 }
 
-// releaseUnheard lets a reply held for a caller's lone greeting go out at at, unless it was
-// let go of by then.
+// releaseUnheard lets a reply held for a caller's lone greeting go out at the time given, or
+// later if it was already to go out later, unless it was let go of by then.
 func (a *Agent) releaseUnheard(turnID string, at time.Time) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -4126,6 +4130,10 @@ func (a *Agent) releaseUnheard(turnID string, at time.Time) {
 	if a.closed || held == nil || !held.greeting || held.turnID != turnID {
 		return
 	}
+	if at.Before(held.releaseAt) {
+		at = held.releaseAt
+	}
+	held.releaseAt = at
 	if a.releasing != nil {
 		a.releasing.Stop()
 	}
