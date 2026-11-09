@@ -45,9 +45,11 @@ func (s *AgentSuite) TestAReplyTheCallerSaidMoreOverBeforeHearingAnyIsDropped() 
 	two := s.answering("two")
 	close(release)
 	s.mutters(nash, "Hey,")
+	s.eventually(func() bool { return s.holding(two) }, "the reply was never held for the greeting")
+	s.model.writes(two, "Which two do you mean?")
+	s.mutters(nash, "Hey. Can you help")
 
 	s.eventually(func() bool { return s.model.abandoned(two) }, "the reply to two kept going")
-	s.model.writes(two, "Which two do you mean?")
 	s.synthesises(two)
 	s.says(nash, "Hey. Can you help me find after school care for the kids?")
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the newer words were never answered")
@@ -66,7 +68,8 @@ func (s *AgentSuite) TestAReplyTheCallerSaidMoreOverBeforeHearingAnyIsDropped() 
 	s.Require().Len(logged, 1)
 	s.Equal(two, logged[0]["turn"])
 	s.Equal("nash", logged[0]["participant"])
-	s.Equal(false, logged[0]["sent_to_voice"])
+	// Held text counts as sent to the voice until the hold is told apart from it.
+	s.Contains(logged[0], "sent_to_voice")
 	s.Contains(logged[0], "gap_ms")
 }
 
@@ -164,6 +167,155 @@ func (s *AgentSuite) TestALoneGreetingRevisedStillHoldsTheUnheardReply() {
 	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
 }
 
+// voicedTimes is how many times text was sent to the voice.
+func (s *AgentSuite) voicedTimes(text string) int {
+	return strings.Count(s.voiced(), text)
+}
+
+// voiced is all the text sent to the voice, in the order it was sent.
+func (s *AgentSuite) voiced() string {
+	var sent strings.Builder
+	for _, request := range s.voice.spoken() {
+		sent.WriteString(request.Text)
+	}
+	return sent.String()
+}
+
+// greetedOver has the caller greet before hearing any of the reply to turnID, and waits for
+// the reply to be held for it.
+func (s *AgentSuite) greetedOver(turnID string, greet func(stt.Participant, string), greeting string) {
+	greet(nash, greeting)
+	s.eventually(func() bool { return s.holding(turnID) }, "the reply was never held for the greeting")
+}
+
+// Sessions c00c0768 and 3af06f9a: the caller said "Hello?" again while the reply to it was
+// being written, and it was dropped every time.
+func (s *AgentSuite) TestALoneGreetingLetsTheHeldReplyGoOutOnceItSettles() {
+	greets := map[string]func(stt.Participant, string){"partial": s.mutters, "final": s.says}
+	for _, greeting := range []string{"Hello.", "Hello?", "Hey"} {
+		for mode, greet := range greets {
+			s.Run(greeting+" "+mode, func() {
+				s.join(true)
+				dropped := testutil.ToFloat64(staleReplies)
+				turn := s.answering("Hello? Hello. Hello.")
+
+				s.greetedOver(turn, greet, greeting)
+				s.model.writes(turn, "Hi, yes, I can hear you.")
+
+				s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply held for the greeting never went out")
+				s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
+				s.Equal(1, s.voicedTimes("Hi, yes, I can hear you."))
+			})
+		}
+	}
+}
+
+// A transcriber that numbers its utterances sends the same words in a new one as new words,
+// not as it restating the ones answered.
+func (s *AgentSuite) TestTheSameGreetingInANewUtteranceLetsTheHeldReplyGoOut() {
+	s.join(true)
+	dropped := testutil.ToFloat64(staleReplies)
+	s.model.reply = nil
+	s.speak(nash)
+	s.ears.emitter.Send(stt.Transcript{Participant: nash, Mode: stt.ModeFinal, Text: "Hello?", Language: "en", Confidence: 1, Utterance: 1})
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the reply was never asked for")
+	turn := s.model.requests()[0].ID
+
+	s.greetedOver(turn, func(participant stt.Participant, text string) {
+		s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeReplacement, Text: text, Language: "en", Utterance: 2})
+	}, "Hello?")
+	s.model.writes(turn, "Hi, yes, I can hear you.")
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply held for the greeting never went out")
+	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
+}
+
+// Words that stopped changing for the cadence's gap may still be the start of more: the
+// caller holds the floor until callerHold after they last changed.
+func (s *AgentSuite) TestAHeldReplyIsNotLetGoBeforeTheCallerHoldPasses() {
+	s.join(true)
+	turn := s.answering("Hello? Hello. Hello.")
+
+	s.greetedOver(turn, s.mutters, "Hello?")
+	s.model.writes(turn, "Hi, yes, I can hear you.")
+
+	edge := s.edge
+	s.Never(func() bool { return len(edge.heard()) > 0 }, time.Second, 5*time.Millisecond,
+		"the reply went out while the caller may still have been talking")
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply held for the greeting never went out")
+}
+
+// Every ruling the controller could give on the greeting breaks the held reply: stop cuts
+// it, continue answers the greeting a second time, wait lets it go and may cut it.
+func (s *AgentSuite) TestTheControllerIsNotAskedAboutAGreetingAHeldReplyAnswers() {
+	for _, floor := range []string{"stop", "wait", "continue"} {
+		s.Run(floor, func() {
+			s.join(true)
+			s.flow.then = []string{`{"disposition":"respond","floor":"` + floor + `"}`}
+			dropped := testutil.ToFloat64(staleReplies)
+			turn := s.answering("Hello? Hello. Hello.")
+
+			s.greetedOver(turn, s.says, "Hello.")
+			s.model.writes(turn, "Hi, yes, I can hear you.")
+
+			s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply held for the greeting never went out")
+			s.Equal(1, len(s.flow.requests()), "the controller was asked about the greeting")
+			s.Equal(1, len(s.model.requests()), "the greeting was answered again")
+			s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
+			s.Equal(1, s.voicedTimes("Hi, yes, I can hear you."))
+		})
+	}
+}
+
+// Session 01a15c2c with "Hey," settling before the request: the reply to "two" would have
+// started 400 ms after it, over the caller.
+func (s *AgentSuite) TestAGreetingThatSettlesThenGrowsDropsTheHeldReply() {
+	s.join(true)
+	dropped := testutil.ToFloat64(staleReplies)
+	two := s.answering("two")
+
+	s.greetedOver(two, s.mutters, "Hey,")
+	s.model.writes(two, "Which two do you mean?")
+	s.eventually(func() bool { return countOf[Heard](s.reported()) == 2 }, "the greeting never settled")
+	s.Equal(1, len(s.flow.requests()), "the greeting was put to the controller")
+	s.mutters(nash, "Hey. Can you help")
+
+	s.eventually(func() bool { return s.model.abandoned(two) }, "the reply to two kept going")
+	edge := s.edge
+	s.Never(func() bool { return len(edge.heard()) > 0 }, callerHold, 5*time.Millisecond,
+		"none of the dropped reply may go out")
+	s.oneDropSince(dropped)
+}
+
+func (s *AgentSuite) TestAMurmurAfterAHeldGreetingKeepsTheHold() {
+	s.join(true)
+	dropped := testutil.ToFloat64(staleReplies)
+	turn := s.answering("Hello? Hello. Hello.")
+
+	s.greetedOver(turn, s.mutters, "Hello.")
+	s.mutters(nash, "Hello. mm")
+	s.model.writes(turn, "Hi, yes, I can hear you.")
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply held for the greeting never went out")
+	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
+	s.Equal(1, s.voicedTimes("Hi, yes, I can hear you."))
+}
+
+func (s *AgentSuite) TestARepliesWordsWrittenAfterTheReleaseFollowInOrder() {
+	s.join(true)
+	turn := s.answering("Hello? Hello. Hello.")
+
+	s.greetedOver(turn, s.mutters, "Hello?")
+	s.model.writes(turn, "Hi, yes, I can hear you. ")
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply held for the greeting never went out")
+	s.model.writes(turn, "How can I help?")
+	s.model.finishes(turn)
+
+	s.eventually(func() bool { return s.voicedTimes("How can I help?") == 1 }, "the rest of the reply never reached the voice")
+	s.Equal(1, s.voicedTimes("Hi, yes, I can hear you."))
+	s.Less(strings.Index(s.voiced(), "Hi, yes, I can hear you."), strings.Index(s.voiced(), "How can I help?"))
+}
+
 func (s *AgentSuite) TestAReplyStartedBeforeTheRulingIsDroppedTheSameWay() {
 	s.speculates = true
 	s.join(true)
@@ -177,8 +329,8 @@ func (s *AgentSuite) TestAReplyStartedBeforeTheRulingIsDroppedTheSameWay() {
 	s.mutters(nash, "wait no")
 
 	s.eventually(func() bool { return s.model.abandoned(two) }, "the early reply kept going")
-	s.Len(s.model.requests(), 1, "the early reply was the one answering")
-	s.Len(s.flow.requests(), 1, "words that drop a reply are not also put to the controller")
+	s.Equal(1, len(s.model.requests()), "the early reply was the one answering")
+	s.Equal(1, len(s.flow.requests()), "words that drop a reply are not also put to the controller")
 	s.oneDropSince(dropped)
 }
 

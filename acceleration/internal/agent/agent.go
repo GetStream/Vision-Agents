@@ -460,6 +460,9 @@ type Agent struct {
 	// held is the reply a voice replacing a lost one is to say, and what of it that voice
 	// has still to be sent. Nil while no voice is replaced or it has been sent all of it.
 	held *heldReply
+	// releasing lets a reply held for a caller's lone greeting go out once they no longer
+	// hold the floor. A drop or the call's end stops it.
+	releasing *time.Timer
 	// saying is the reply as the caller has heard it so far, so a controller ruling on
 	// words that overlap it can tell a correction from the line echoing back. It is the
 	// spoken text as it streams, or the whole phrase for a greeting or a murmur.
@@ -1486,6 +1489,9 @@ func (a *Agent) close() error {
 	a.mu.Lock()
 	a.closed = true
 	cancel := a.cancel
+	if a.releasing != nil {
+		a.releasing.Stop()
+	}
 	a.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -2042,6 +2048,9 @@ func (a *Agent) perform(action Action) {
 			a.converse.wentOnUnheard(action.Participant.ID)
 			a.dropUnheard(action.Participant, action.TurnID, interruption{cause: causeUnheard, words: action.Text})
 		}
+
+	case ActReleaseUnheard:
+		a.releaseUnheard(action.TurnID, action.At)
 
 	case ActShorten:
 		a.shorten(action.Participant, action.TurnID, action.Interruption)
@@ -4047,6 +4056,9 @@ func (a *Agent) dropUnheard(participant stt.Participant, turnID string, why inte
 		if a.heldLocked(turnID) {
 			a.unsentLocked(a.held)
 			a.held = nil
+			if a.releasing != nil {
+				a.releasing.Stop()
+			}
 		}
 		a.missed = stale
 		// The tools an interruption cancels are cancelled before the speech is dropped, as
@@ -4079,6 +4091,28 @@ func (a *Agent) holdUnheard(turnID string) bool {
 	}
 	a.held = &heldReply{turnID: turnID, written: !a.generating, greeting: true}
 	return true
+}
+
+// releaseUnheard lets a reply held for a caller's lone greeting go out at at, unless it was
+// let go of by then.
+func (a *Agent) releaseUnheard(turnID string, at time.Time) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	held := a.held
+	if a.closed || held == nil || !held.greeting || held.turnID != turnID {
+		return
+	}
+	if a.releasing != nil {
+		a.releasing.Stop()
+	}
+	a.releasing = time.AfterFunc(time.Until(at), func() {
+		a.mu.Lock()
+		voice, gone := a.tts, a.closed || a.held != held
+		a.mu.Unlock()
+		if !gone {
+			a.sayAgain(voice, held)
+		}
+	})
 }
 
 // interrupt abandons the reply being spoken because a participant started talking.

@@ -56,6 +56,9 @@ const (
 	// ActHoldUnheard keeps an unheard reply from the voice while the lone greeting its caller
 	// said over it may still grow into more.
 	ActHoldUnheard ActionKind = "hold_unheard"
+	// ActReleaseUnheard lets the reply held for a lone greeting go out once the greeting has
+	// settled: it is the answer to it.
+	ActReleaseUnheard ActionKind = "release_unheard"
 	// ActFail is a judgement that could not be made.
 	ActFail ActionKind = "fail"
 )
@@ -132,6 +135,8 @@ type Action struct {
 	Unanswered string
 	// Err is why a judgement could not be made.
 	Err error
+	// At is when a held reply may go out: the caller holds the floor until then.
+	At time.Time
 }
 
 // floor is what the agent is doing at the moment a judgement has to be made.
@@ -254,6 +259,9 @@ type converse struct {
 	// stops is, for each participant, the utterance a check over the agent stopped it on
 	// while they talked on, and the words it was ruled on (Overheard): spent on the stop.
 	stops map[string]stoppedOn
+	// greeted is the turn whose unheard reply each participant's lone greeting holds, until
+	// the greeting settles or they go on.
+	greeted map[string]string
 }
 
 // stoppedOn is an utterance a stop over the agent was ruled on, and the words so far it was
@@ -356,6 +364,7 @@ func newConverse(
 		queuedSaid:   map[string]string{},
 		repeated:     map[string]string{},
 		stops:        map[string]stoppedOn{},
+		greeted:      map[string]string{},
 	}
 }
 
@@ -628,6 +637,9 @@ func (c *converse) stale(transcript stt.Transcript, saying string, state floor) 
 		return Action{}, false
 	}
 	if greetsAlone(said) {
+		c.mu.Lock()
+		c.greeted[transcript.Participant.ID] = state.Unheard.turnID
+		c.mu.Unlock()
 		return c.decide(Action{
 			Kind:        ActHoldUnheard,
 			Reason:      "the caller said a lone greeting before hearing any of the reply, which may be them waiting for it",
@@ -669,12 +681,54 @@ func (c *converse) wentOnUnheard(participantID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.wentOn[participantID] = time.Now()
+	delete(c.greeted, participantID)
 }
 
-// greetsAlone reports whether words are nothing but a greeting that takes the floor alone.
+// greetsAlone reports whether words are nothing but a greeting that takes the floor alone,
+// with any murmur around it.
 func greetsAlone(saying string) bool {
-	fields := wordList(saying)
+	fields := slices.DeleteFunc(wordList(saying), func(field string) bool { return murmurs[field] })
 	return len(fields) == 1 && (fields[0] == "hello" || fields[0] == "hey")
+}
+
+// answeredByHeld deals with a lone greeting that settled while the reply its caller had heard
+// none of was held for it: the reply is the answer to it. The controller is not asked, as
+// every ruling it gives breaks that: stop cuts the reply, continue answers the greeting a
+// second time, wait lets the reply go and may then cut it.
+func (c *converse) answeredByHeld(ready candidate, state floor) (Action, bool) {
+	participantID := ready.Participant.ID
+	c.mu.Lock()
+	turnID := c.greeted[participantID]
+	if turnID != state.Unheard.turnID {
+		delete(c.greeted, participantID)
+	}
+	c.mu.Unlock()
+	if turnID == "" || turnID != state.Unheard.turnID ||
+		!greetsAlone(unrepeated(ready.Text, c.cadence.Repeating(participantID))) {
+		return Action{}, false
+	}
+	if !c.cadence.Resolve(ready.ID, false) {
+		return Action{}, true
+	}
+	c.mu.Lock()
+	delete(c.greeted, participantID)
+	c.mu.Unlock()
+	shown, line := c.closeLine(participantID, ready.Text, true)
+	sendHeard(c.emitter, c.onHeard, Heard{
+		Participant: ready.Participant,
+		Text:        shown,
+		Language:    ready.Language,
+		LineID:      line,
+	})
+	return c.decide(Action{
+		Kind:        ActReleaseUnheard,
+		Reason:      "the caller's lone greeting settled, and the reply held for it answers it",
+		Participant: ready.Participant,
+		TurnID:      turnID,
+		Text:        shown,
+		LineID:      line,
+		At:          ready.RevisedAt.Add(callerHold),
+	}), true
 }
 
 // supersede abandons a ruling asked for about words that have since changed.
@@ -691,6 +745,9 @@ func (c *converse) supersede(participant stt.Participant, candidateID string) Ac
 func (c *converse) Settled(ready candidate, state floor) Action {
 	if spent, ok := c.stopSpent(ready); ok {
 		return spent
+	}
+	if released, ok := c.answeredByHeld(ready, state); ok {
+		return released
 	}
 	c.mu.Lock()
 	if !state.Quiet {
