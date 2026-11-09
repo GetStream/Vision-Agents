@@ -215,7 +215,8 @@ type Notice struct {
 const whatsappWindow = 24 * time.Hour
 
 // ErrUnreachable is a notice the channel would refuse its user now: they never wrote on it, opted
-// out or are outside its window, or the agent has no line there. Any other error is the router's own.
+// out or are outside its window, or the agent has no line there. dlc.ErrUnpaid is the organization
+// that may not pay for the text. Any other error is the router's own.
 var ErrUnreachable = errors.New("channels: the user cannot be reached on this channel")
 
 // Notify sends text and files to one end user on a channel they already talk to the
@@ -395,7 +396,7 @@ func (s *Service) answer(account store.ChannelAccount, line Account, provider Pr
 	defer unlock()
 
 	if err := s.gate.Allow(ctx, account.CustomerID, account.Kind, message.From); err != nil {
-		s.logger.Info("not answering a channel message", "channel", account.Kind, "reason", err)
+		s.logGateRefusal("not answering a channel message", account.CustomerID, account.Kind, err)
 		return
 	}
 
@@ -554,7 +555,7 @@ func (s *Service) send(ctx context.Context, created *session.Session, owner rout
 		}
 		// A sandboxed app can reach its daily limit halfway through a turn.
 		if err := s.gate.Allow(ctx, customerID, string(line.Kind), message.From); err != nil {
-			s.logger.Info("not writing back on a channel", "channel", line.Kind, "reason", err)
+			s.logGateRefusal("not writing back on a channel", customerID, string(line.Kind), err)
 			continue
 		}
 		// Only a reply the provider took counts against the day: an outage uses none of it.
@@ -587,6 +588,18 @@ func filesOf(attached []sandbox.Attachment) []File {
 		files = append(files, File{Name: one.Name, MimeType: one.MIME, URL: one.URL})
 	}
 	return files
+}
+
+// logGateRefusal logs why the gate kept an inbound text or its reply from going on. The customer
+// loses it until the organization pays when dlc.ErrUnpaid refuses, so that is a warning naming the
+// customer; the refusal says why and names no number. Any other refusal names the recipient's
+// number in its text (dlc.Gate), so it is logged by its code only.
+func (s *Service) logGateRefusal(message, customerID, channel string, err error) {
+	if errors.Is(err, dlc.ErrUnpaid) {
+		s.logger.Warn(message, "channel", channel, "customer", customerID, "reason", err)
+		return
+	}
+	s.logger.Info(message, "channel", channel, "reason", dlc.RefusalCode(err))
 }
 
 // answering is who a reply to somebody who wrote is billed to: the app, under the origin of a

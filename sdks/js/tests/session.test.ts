@@ -1025,6 +1025,42 @@ describe("Session", () => {
     await session.close();
   });
 
+  // stream-chat 10 names the connected user `userId`, and keeps `userID` only as a deprecated
+  // alias of it.
+  it("refuses a chat client connected as somebody else when it names the user as userId", async () => {
+    const page = new Client({ url: router.url, customerId: "local", apiKey: "vak_live_x" });
+    await page.setUser({ id: "john" }, "token-for-john");
+    page.use({
+      chat: {
+        userId: "jane",
+        channel: (type: string, id: string) => ({ type, id }),
+        connectUser: async () => undefined,
+        disconnectUser: async () => undefined,
+      },
+    });
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: {
+        id: "sess_1",
+        conversation_id: "agent:support-1",
+        user_id: "john",
+        agent_id: "john",
+        state: "live",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    });
+    const opening = Session.open(page, {});
+    await router.socket();
+    const session = await opening;
+
+    await assert.rejects(session.chat(), (error: Error) => {
+      assert.ok(error instanceof ConfigurationError);
+      assert.match(error.message, /connected as jane but setUser named john/);
+      return true;
+    });
+    await session.close();
+  });
+
   it("says what chat needs before connecting a client with no Stream key", async () => {
     router.serve("POST", "/v1/agents/sessions", {
       status: 201,

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,6 +38,8 @@ type utterance struct {
 	// reply's message. Agent.mu guards both.
 	text    string
 	message MessageSpan
+	// closed is set once a streaming voice was told the utterance is over. Agent.mu guards it.
+	closed bool
 	// published is set once any of its audio went to the edge.
 	published atomic.Bool
 	// publishedUs is how much of its audio went to the edge, in microseconds.
@@ -168,6 +171,11 @@ func (a *Agent) synthesize(voice *ttsrouter.Session, turnID string, request tts.
 func (a *Agent) sending(turnID, synthesisID, text string, message MessageSpan) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.sendingLocked(turnID, synthesisID, text, message)
+}
+
+// sendingLocked is sending with Agent.mu held.
+func (a *Agent) sendingLocked(turnID, synthesisID, text string, message MessageSpan) {
 	heard := a.heard[synthesisID]
 	if heard == nil {
 		if _, done := a.finished[synthesisID]; done {
@@ -212,6 +220,73 @@ func (a *Agent) forgetUtterancesLocked() {
 	a.finishedOrder = a.finishedOrder[:0]
 }
 
+// unsaidUtterance is what a voice replacing a lost one is to be sent of an utterance: its
+// synthesis, the text and where that is in the reply's message, and whether it ends the
+// utterance. counts is whether it is an utterance being said rather than more of one, and
+// counted whether that is counted now.
+type unsaidUtterance struct {
+	synthesisID string
+	text        string
+	message     MessageSpan
+	final       bool
+	counts      bool
+	counted     bool
+}
+
+// heldReply is a reply the voice that replaces a lost one goes on with, and what of it that
+// voice has still to be sent, in the order of the reply's message: what the lost voice said
+// none of, and what was written for it while the next was opened. written is whether the
+// model had finished writing it when the voice was lost, and lostAt when that was.
+type heldReply struct {
+	turnID  string
+	unsaid  []unsaidUtterance
+	written bool
+	lostAt  time.Time
+}
+
+// hold keeps a request for a reply held for the voice replacing a lost one, which would
+// otherwise go to the lost voice or ahead of what is held, and reports whether it did.
+// counted is whether the request was counted as being said.
+func (a *Agent) hold(turnID string, request tts.Request, message MessageSpan, counted bool) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.heldLocked(turnID) {
+		// A voice lost once it was told the utterance is over hands that on with it.
+		if heard := a.heard[request.ID]; heard != nil && request.Final && request.Text == "" {
+			heard.closed = true
+		}
+		return false
+	}
+	a.held.unsaid = append(a.held.unsaid, unsaidUtterance{
+		synthesisID: request.ID, text: request.Text, message: message, final: request.Final,
+		counts: counted, counted: counted,
+	})
+	return true
+}
+
+// heldLocked reports whether a turn is held for the voice that replaces a lost one.
+// Agent.mu must be held.
+func (a *Agent) heldLocked(turnID string) bool {
+	return a.held != nil && a.held.turnID == turnID
+}
+
+// unsaidLocked is every utterance of a turn the voice has not finished, in the order of the
+// reply's message. A streaming voice's utterance of a reply still being written is not over
+// until it was told so. Agent.mu must be held.
+func (a *Agent) unsaidLocked(turnID string, streaming bool) []unsaidUtterance {
+	var unsaid []unsaidUtterance
+	for _, heard := range a.heard {
+		if heard.turnID == turnID {
+			unsaid = append(unsaid, unsaidUtterance{
+				synthesisID: heard.synthesisID, text: heard.text, message: heard.message,
+				final: !streaming || !a.generating || heard.closed, counts: true,
+			})
+		}
+	}
+	slices.SortFunc(unsaid, func(x, y unsaidUtterance) int { return x.message.Start - y.message.Start })
+	return unsaid
+}
+
 // cutShort is the utterance of a turn being heard when it was cut off, how many
 // milliseconds of it had been, and where all it had been sent is in the reply's message.
 type cutShort struct {
@@ -245,6 +320,66 @@ func (a *Agent) cutShortLocked(turnID string, now time.Time) cutShort {
 	heardMs, _ := cut.heardBy(now)
 	message := cut.message
 	return cutShort{synthesisID: cut.synthesisID, heardMs: heardMs, message: &message}
+}
+
+// replyHeardLocked is reply, the message of the turn the agent is saying, as far as the caller
+// has heard it by now, and whether the agent could tell. The router has no word timing: an
+// utterance is heard from when the edge's track took its first audible frame, never more than
+// was published (heardBy), and what the voice says in that time is told by its speaking rate on
+// this call, from the syntheses it finished whole; before one has finished the agent can't
+// tell. Utterances of the turn ahead of the one being played were heard whole, none of a turn
+// whose audio has not gone out was, and all of one whose every utterance has finished was, but
+// for what the edge still had queued. It is cut back to a whole word. The rate is the voice's
+// saying it: one that replaced another can't tell until it has finished a synthesis whole.
+// Agent.mu must be held.
+func (a *Agent) replyHeardLocked(reply string, now time.Time) (string, bool) {
+	turnID := a.speakingTurn
+	if turnID == "" || a.voicedMs == 0 || a.ratedVoice != a.tts {
+		return "", false
+	}
+	if a.voiced != turnID {
+		return "", true
+	}
+	var playing *utterance
+	var latest int64
+	start := -1
+	for _, heard := range a.heard {
+		if heard.turnID != turnID {
+			continue
+		}
+		if start < 0 || heard.message.Start < start {
+			start = heard.message.Start
+		}
+		if pulled := heard.pulledAt.Load(); pulled > latest {
+			playing, latest = heard, pulled
+		}
+	}
+	runes := []rune(reply)
+	end := len(runes)
+	switch {
+	case start < 0:
+	case playing == nil:
+		end = start
+	default:
+		heardMs, _ := playing.heardBy(now)
+		share := 1.0
+		if voiced := utf8.RuneCountInString(playing.text); voiced > 0 {
+			share = min(1, heardMs*a.voicedChars/a.voicedMs/float64(voiced))
+		}
+		end = playing.message.Start + int(share*float64(playing.message.End-playing.message.Start))
+	}
+	return wholeWords(runes, max(0, min(end, len(runes)))), true
+}
+
+// wholeWords is text up to end, without the word end falls part way through.
+func wholeWords(text []rune, end int) string {
+	inWord := func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
+	if end < len(text) && end > 0 && inWord(text[end]) && inWord(text[end-1]) {
+		for end > 0 && !unicode.IsSpace(text[end-1]) {
+			end--
+		}
+	}
+	return strings.TrimSpace(string(text[:end]))
 }
 
 // heardBefore reports an utterance that is about to be reported spoken as being heard, if

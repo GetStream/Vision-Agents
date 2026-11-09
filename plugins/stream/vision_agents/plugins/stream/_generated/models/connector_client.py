@@ -73,14 +73,14 @@ class ConnectorClient:
         if isinstance(_alg, Unset):
             alg = UNSET
         else:
-            alg = ConnectorClientAlg(_alg)
+            alg = ConnectorClientAlg._decode(_alg)
 
         _auth_method = d.pop("auth_method", UNSET)
         auth_method: ConnectorClientAuthMethod | Unset
         if isinstance(_auth_method, Unset):
             auth_method = UNSET
         else:
-            auth_method = ConnectorClientAuthMethod(_auth_method)
+            auth_method = ConnectorClientAuthMethod._decode(_auth_method)
 
         def _parse_registration(
             data: object,
@@ -95,8 +95,10 @@ class ConnectorClient:
                 registration_type_0 = []
                 _registration_type_0 = data
                 for registration_type_0_item_data in _registration_type_0:
-                    registration_type_0_item = ConnectorClientRegistrationMethod(
-                        registration_type_0_item_data
+                    registration_type_0_item = (
+                        ConnectorClientRegistrationMethod._decode(
+                            registration_type_0_item_data
+                        )
                     )
 
                     registration_type_0.append(registration_type_0_item)

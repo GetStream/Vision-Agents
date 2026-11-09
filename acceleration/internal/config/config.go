@@ -121,7 +121,22 @@ type Config struct {
 	Usage       Usage       `koanf:"usage"`
 	Knowledge   Knowledge   `koanf:"knowledge"`
 	Limits      Limits      `koanf:"limits"`
+	// Retired says, of each setting the deployment set that is no longer read, what took its
+	// place. The router warns of each once at start, and neither refuses to start over one
+	// nor acts on it.
+	Retired []string `koanf:"-"`
 }
+
+// chorusASRModeRetired is what took the place of agent.chorus_asr_mode, which once had every
+// agent on the router shadow or act on chorus-asr: each agent opts in itself.
+const chorusASRModeRetired = "agent.chorus_asr_mode (ROUTER_CHORUS_ASR_MODE) is no longer read, and stream/chorus-asr controls " +
+	"no agent's floor of the router's accord: an agent opts in with floor_control: {model: stream/chorus-asr} on its config or in its agent.yaml"
+
+// minOverlapTimeout and maxOverlapTimeout bound agent.chorus_asr_overlap_timeout.
+const (
+	minOverlapTimeout = 100 * time.Millisecond
+	maxOverlapTimeout = 450 * time.Millisecond
+)
 
 // Knowledge is the knowledge store's settings.
 type Knowledge struct {
@@ -162,6 +177,17 @@ const (
 type Limits struct {
 	// Mode is enforce, shadow or off. Empty is enforce.
 	Mode LimitsMode `koanf:"mode"`
+	// SlackToken and SlackChannel are where the operator is told the first time each
+	// organization is refused at its credit, the spend hard limit or its own spend limits: a
+	// bot token holding chat:write, and the id of a channel the bot is a member of. Either
+	// empty tells nobody.
+	SlackToken   string `koanf:"slack_token"`
+	SlackChannel string `koanf:"slack_channel"`
+	// AppURL and StaffURL are the pages each Slack notice links to, as URLs in which
+	// {organization} and {app} stand for the organization's and the app's ids: the app's own
+	// page, and the operator's. Either empty links nothing.
+	AppURL   string `koanf:"app_url"`
+	StaffURL string `koanf:"staff_url"`
 }
 
 // Usage is the usage service the router ships the rows it writes to. An empty URL is none:
@@ -370,6 +396,26 @@ type Agent struct {
 	// FlowJudge routes the flow controller to a decision model, such as
 	// typesafe/jev-latest, in place of a language model. Empty keeps the language model.
 	FlowJudge string `koanf:"flow_judge"`
+	// AudioFloorURL is a chorus-asr server (internal/audiofloor), which it makes available:
+	// its model transcribes for an agent that names stream/chorus-asr as its transcriber, and
+	// rules the floor of an agent whose floor control opts in (store.FloorControl). It rules
+	// no agent's floor of the router's accord. AudioFloorAudio is how the audio is sent: opus
+	// (the default) or pcm, for debugging. AudioFloorInterims says whether its transcriber
+	// writes the words so far while the caller talks: on (the default) or off, for a server
+	// short of transcription lanes, where the words come at the turn's end. AudioFloorAPIKey
+	// is sent as a bearer token on every request to a server behind a gateway that asks for
+	// one.
+	AudioFloorURL      string `koanf:"chorus_asr_url"`
+	AudioFloorAPIKey   string `koanf:"chorus_asr_api_key"`
+	AudioFloorAudio    string `koanf:"chorus_asr_audio"`
+	AudioFloorInterims string `koanf:"chorus_asr_interims"`
+	// AudioFloorOverlapTimeout is how long the router waits for the server to rule on a
+	// caller talking over the agent, before the flow controller rules instead: 250ms by
+	// default, from 100ms to 450ms, as the agent stops within 800 ms of the caller's first
+	// word and the first such check is asked 350 ms into it. A server that needs longer needs
+	// to be faster. The checks of a pause keep the flow controller's own share of its deadline
+	// (harness.HearDeadline).
+	AudioFloorOverlapTimeout time.Duration `koanf:"chorus_asr_overlap_timeout"`
 }
 
 // Connectors is whether agents may reach the customer's accounts elsewhere.
@@ -547,11 +593,16 @@ var variables = map[string]string{
 	"agent.reply_hedge":         "ROUTER_REPLY_HEDGE",
 	"agent.flow_hedge":          "ROUTER_FLOW_HEDGE",
 	"agent.flow_judge":          "ROUTER_FLOW_JUDGE",
+	"agent.chorus_asr_url":      "ROUTER_CHORUS_ASR_URL",
+	"agent.chorus_asr_api_key":  "ROUTER_CHORUS_ASR_API_KEY",
+	"agent.chorus_asr_audio":    "ROUTER_CHORUS_ASR_AUDIO",
+	"agent.chorus_asr_interims": "ROUTER_CHORUS_ASR_INTERIMS",
 	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
 	"episodes.idle_after":       "ROUTER_EPISODES_IDLE_AFTER",
 	"models.private_endpoints":  "ROUTER_MODELS_PRIVATE_ENDPOINTS",
 
+	"agent.chorus_asr_overlap_timeout":  "ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT",
 	"connectors.proxy_calls_per_minute": "ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE",
 	"runs.concurrent_per_app":           "ROUTER_RUNS_CONCURRENT_PER_APP",
 
@@ -581,7 +632,11 @@ var variables = map[string]string{
 	"usage.manage_key": "ROUTER_USAGE_MANAGE_KEY",
 	"usage.redis_url":  "ROUTER_USAGE_REDIS_URL",
 
-	"limits.mode": "ROUTER_LIMITS_MODE",
+	"limits.mode":          "ROUTER_LIMITS_MODE",
+	"limits.slack_token":   "ROUTER_LIMITS_SLACK_TOKEN",
+	"limits.slack_channel": "ROUTER_LIMITS_SLACK_CHANNEL",
+	"limits.app_url":       "ROUTER_LIMITS_APP_URL",
+	"limits.staff_url":     "ROUTER_LIMITS_STAFF_URL",
 
 	"knowledge.min_chunk":   "ROUTER_KNOWLEDGE_MIN_CHUNK",
 	"knowledge.max_heading": "ROUTER_KNOWLEDGE_MAX_HEADING",
@@ -610,7 +665,8 @@ func Defaults() Config {
 		// can come to millions of tokens.
 		RateLimit: RateLimit{MessagesPerDay: 200, TokensPerDay: 5_000_000},
 		DataMove:  DataMove{Retention: 7 * 24 * time.Hour},
-		Agent:     Agent{ReplyHedge: 1200 * time.Millisecond, FlowHedge: 400 * time.Millisecond},
+		Agent: Agent{ReplyHedge: 1200 * time.Millisecond, FlowHedge: 400 * time.Millisecond,
+			AudioFloorOverlapTimeout: 250 * time.Millisecond},
 		// One hour is Kanat's decision of 2026-10-07 (D4, wave 3b), not a measurement:
 		// unverified against any traffic. The only external bound is maxEpisodeIdle.
 		Episodes:    Episodes{IdleAfter: time.Hour},
@@ -701,6 +757,9 @@ func Load(path string) (Config, string, error) {
 	if err := k.Unmarshal("", &config); err != nil {
 		return Config{}, "", fmt.Errorf("config: %s: %w", name, err)
 	}
+	if os.Getenv("ROUTER_CHORUS_ASR_MODE") != "" || k.Exists("agent.chorus_asr_mode") {
+		config.Retired = append(config.Retired, chorusASRModeRetired)
+	}
 	if config.Limits.Mode == "" {
 		config.Limits.Mode = LimitsEnforce
 	}
@@ -759,6 +818,38 @@ func (c Config) validate() error {
 	if c.RateLimit.MessagesPerDay < 0 || c.RateLimit.TokensPerDay < 0 {
 		return fmt.Errorf("config: a daily limit cannot be negative, got %d messages and %d tokens",
 			c.RateLimit.MessagesPerDay, c.RateLimit.TokensPerDay)
+	}
+	if c.Agent.AudioFloorURL != "" {
+		// The client appends its paths and queries to it, so a query or fragment of its own
+		// would be sent as part of them.
+		server, err := url.Parse(c.Agent.AudioFloorURL)
+		switch {
+		case err != nil:
+			return fmt.Errorf("config: agent.chorus_asr_url (ROUTER_CHORUS_ASR_URL): %w", err)
+		case server.Scheme != "http" && server.Scheme != "https", server.Host == "":
+			return fmt.Errorf("config: agent.chorus_asr_url (ROUTER_CHORUS_ASR_URL) is the server's http or https address, got %q", c.Agent.AudioFloorURL)
+		case server.RawQuery != "" || server.Fragment != "":
+			return fmt.Errorf("config: agent.chorus_asr_url (ROUTER_CHORUS_ASR_URL) takes no query or fragment, got %q", c.Agent.AudioFloorURL)
+		}
+	}
+	switch c.Agent.AudioFloorAudio {
+	case "", "opus", "pcm":
+	default:
+		return fmt.Errorf("config: agent.chorus_asr_audio (ROUTER_CHORUS_ASR_AUDIO) is opus or pcm, got %q", c.Agent.AudioFloorAudio)
+	}
+	switch c.Agent.AudioFloorInterims {
+	case "", "on", "off":
+	default:
+		return fmt.Errorf("config: agent.chorus_asr_interims (ROUTER_CHORUS_ASR_INTERIMS) is on or off, got %q", c.Agent.AudioFloorInterims)
+	}
+	// The agent stops within 800 ms of a caller's first word over it, and the first check is
+	// asked 350 ms into it: a longer wait than 450 ms can't keep that line whatever the server
+	// says, and one under 100 ms gives up on an in-cluster TPU with four calls at once.
+	if wait := c.Agent.AudioFloorOverlapTimeout; wait < minOverlapTimeout || wait > maxOverlapTimeout {
+		return fmt.Errorf("config: agent.chorus_asr_overlap_timeout (ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT) is from %s to %s, got %s: "+
+			"the agent stops within 800 ms of the caller's first word over it and the first check is asked 350 ms in, "+
+			"so a longer wait can't keep that line, and a server that needs one needs to be faster",
+			minOverlapTimeout, maxOverlapTimeout, wait)
 	}
 	switch c.Stream.Tenancy {
 	case "", TenancyDeployment:
@@ -1099,7 +1190,11 @@ func (c Config) export() error {
 		"usage.manage_key": c.Usage.ManageKey,
 		"usage.redis_url":  c.Usage.RedisURL,
 
-		"limits.mode": string(c.Limits.Mode),
+		"limits.mode":          string(c.Limits.Mode),
+		"limits.slack_token":   c.Limits.SlackToken,
+		"limits.slack_channel": c.Limits.SlackChannel,
+		"limits.app_url":       c.Limits.AppURL,
+		"limits.staff_url":     c.Limits.StaffURL,
 
 		"knowledge.min_chunk":   fmt.Sprint(c.Knowledge.MinChunk),
 		"knowledge.max_heading": fmt.Sprint(c.Knowledge.MaxHeading),

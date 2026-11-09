@@ -1,9 +1,11 @@
+import re
 from pathlib import Path
 
 import pytest
 from vision_agents.plugins.stream.folder import (
     ChannelSettings,
     ConnectorSettings,
+    FloorControlSettings,
     GreetingSettings,
     ToolSettings,
     SandboxSettings,
@@ -855,6 +857,86 @@ class TestFolder:
         )
 
         with pytest.raises(ValueError, match="channels.whatsapp needs a number"):
+            load(root)
+
+    @pytest.mark.parametrize(
+        "declared, chosen",
+        [
+            (
+                "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n",
+                FloorControlSettings(model="stream/chorus-asr", max_wait_ms=800),
+            ),
+            (
+                "floor_control: {model: stream/chorus-asr}\n",
+                FloorControlSettings(model="stream/chorus-asr"),
+            ),
+            # Which models there are, and whether a wait needs one, is the router's to say.
+            ("floor_control: {model: other}\n", FloorControlSettings(model="other")),
+            (
+                "floor_control: {max_wait_ms: 800}\n",
+                FloorControlSettings(max_wait_ms=800),
+            ),
+            ("floor_control: {model: ~, max_wait_ms: ~}\n", FloorControlSettings()),
+            ("floor_control: {}\n", FloorControlSettings()),
+            ("floor_control:\n", None),
+            ("floor_control: ~\n", None),
+            ("llm: llm-fast\n", None),
+        ],
+    )
+    def test_the_floor_control_is_read_as_written(
+        self, tmp_path: Path, declared: str, chosen: FloorControlSettings | None
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n" + declared)
+
+        assert load(root).settings.floor_control == chosen
+
+    @pytest.mark.parametrize(
+        "declared, reason",
+        [
+            # The string it once was.
+            (
+                "floor_control: stream/chorus-asr\n",
+                "floor_control is a mapping of model and, optionally, max_wait_ms",
+            ),
+            ("floor_control: [stream/chorus-asr]\n", "floor_control is a mapping"),
+            ("floor_control: true\n", "floor_control is a mapping"),
+            ("floor_control: 1\n", "floor_control is a mapping"),
+            (
+                "floor_control: {model: stream/chorus-asr, mode: act}\n",
+                "unknown floor_control setting: mode",
+            ),
+            (
+                "floor_control: {model: stream/chorus-asr, preset: fast}\n",
+                "unknown floor_control setting: preset",
+            ),
+            (
+                "floor_control: {model: [stream/chorus-asr]}\n",
+                "floor_control.model must be a string",
+            ),
+            ("floor_control: {model: 1}\n", "floor_control.model must be a string"),
+            (
+                "floor_control: {model: stream/chorus-asr, max_wait_ms: soon}\n",
+                "floor_control.max_wait_ms must be a whole number",
+            ),
+            (
+                "floor_control: {model: stream/chorus-asr, max_wait_ms: 800.5}\n",
+                "floor_control.max_wait_ms must be a whole number",
+            ),
+            # What max_wait_ms replaced.
+            (
+                "end_of_turn:\n  max_wait_ms: 900\n",
+                "declares 'end_of_turn', which is not something an agent has",
+            ),
+        ],
+    )
+    def test_a_floor_control_that_cannot_be_read_is_refused(
+        self, tmp_path: Path, declared: str, reason: str
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n" + declared)
+
+        with pytest.raises(ValueError, match=re.escape(reason)):
             load(root)
 
     def test_a_list_setting_given_as_one_word_is_refused(self, tmp_path: Path):

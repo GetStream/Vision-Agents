@@ -12,9 +12,12 @@ T = TypeVar("T", bound="AgentConfigRequestTags")
 
 @_attrs_define
 class AgentConfigRequestTags:
-    """Cost labels, carried onto every request a session using it makes. A config tagged draft_of, naming the config it
-    copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with
-    the live config, and it may bind a channel connection another config binds.
+    """Cost labels, carried onto every request a session using it makes. The team tag is also the team those sessions are
+    counted under, its spend limits included, when whoever opens one names none: neither the caller's token nor the
+    session's team field. It is 1 to 59 letters, digits, _ . and -, and a config naming another team tag is refused. A
+    config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection
+    and subscribes to no event, which stay with the live config, and it may bind a channel connection another config
+    binds.
 
     """
 

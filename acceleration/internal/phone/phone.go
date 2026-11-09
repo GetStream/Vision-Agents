@@ -41,6 +41,9 @@ const maxInitialDigits = 32
 // think a number was bought when it was not.
 var ErrNotImplemented = errors.New("phone: not implemented for this vendor")
 
+// ErrCallNotFound is a call the customer did not place from here.
+var ErrCallNotFound = errors.New("phone: no such call")
+
 // ErrAddressRequired is a number the vendor sells only with a verified address, which is not
 // supported: numbers outside the US and Canada.
 var ErrAddressRequired = errors.New("phone: this number needs a verified address")
@@ -63,6 +66,28 @@ var ErrSuspended = errors.New("phone: this app's telephony is suspended; contact
 // ErrNotDialable is a number no call may be placed to: not a full E.164 number, or one refused
 // as a destination. A caller that holds a list of numbers can tell it from a failed call.
 var ErrNotDialable = errors.New("phone: not dialable")
+
+// ErrInvalid is a request that cannot be carried out as it was asked, such as a search filter
+// a vendor cannot apply, a ring timeout it does not allow, or a vendor this deployment holds
+// no credentials for. Its message says what to change. A failure of the router's own, such as
+// a database that failed, is never one.
+var ErrInvalid = errors.New("phone: invalid request")
+
+// Invalid marks err as ErrInvalid without changing its message.
+func Invalid(err error) error { return marked{err, ErrInvalid} }
+
+// ErrNotConfigured is a vendor, or every vendor, this deployment has no credentials for, or a
+// setting a vendor needs that the deployment lacks: the operator's to fix, not the request's.
+var ErrNotConfigured = errors.New("phone: not configured")
+
+// NotConfigured marks err as ErrNotConfigured without changing its message.
+func NotConfigured(err error) error { return marked{err, ErrNotConfigured} }
+
+// marked is err that is also kind, with err's own message.
+type marked struct{ err, kind error }
+
+func (e marked) Error() string        { return e.err.Error() }
+func (e marked) Is(target error) bool { return target == e.kind }
 
 // premiumPrefixes are the North American codes billed to the caller at a premium rate, which
 // is how toll fraud turns a stolen account into money.
@@ -470,10 +495,18 @@ const (
 )
 
 // CallStatus is one report a vendor sent on a placed call. Word is the vendor's own, kept for
-// debugging.
+// debugging. The rest is what the report says of the carrier, zero when it says nothing
+// (internal/phone/outcome/AGENTS.md lists what each vendor reports).
 type CallStatus struct {
 	Result CallResult
 	Word   string
+	// SIPCode is the final SIP response to the call's INVITE, from a final report.
+	SIPCode int
+	// Ringing is a report that the person's phone has started ringing.
+	Ringing bool
+	// PostDialDelay is how long the INVITE waited for its first response other than 100
+	// Trying or a challenge (RFC 6076 §4.3), as the router's own bridge measured it.
+	PostDialDelay time.Duration
 }
 
 // StatusReader is a provider whose vendor posts a placed call's status to the URL it was given.
@@ -547,7 +580,7 @@ func (o Outbound) Unsupported(provider Provider) []CallFeature {
 // Validate reports whether the call can be placed as described.
 func (o Outbound) Validate() error {
 	if o.From == "" || o.To == "" {
-		return stack.Wrap(errors.New("phone: a call needs a from and a to"))
+		return stack.Wrap(Invalid(errors.New("phone: a call needs a from and a to")))
 	}
 	if err := Dialable(o.To); err != nil {
 		return err
@@ -556,15 +589,15 @@ func (o Outbound) Validate() error {
 		return err
 	}
 	if o.RingTimeout < 0 {
-		return stack.Wrap(errors.New("phone: a call cannot ring for less than no time"))
+		return stack.Wrap(Invalid(errors.New("phone: a call cannot ring for less than no time")))
 	}
 	if o.InitialDigits != "" {
 		if err := ValidateDigits(o.InitialDigits); err != nil {
 			return err
 		}
 		if len(o.InitialDigits) > maxInitialDigits {
-			return stack.Wrap(fmt.Errorf("phone: %d digits is more than the %d every vendor takes on answer",
-				len(o.InitialDigits), maxInitialDigits))
+			return stack.Wrap(Invalid(fmt.Errorf("phone: %d digits is more than the %d every vendor takes on answer",
+				len(o.InitialDigits), maxInitialDigits)))
 		}
 	}
 	return nil
@@ -688,14 +721,14 @@ func (n *notImplemented) err() error {
 // silent no-op on the call.
 func ValidateDigits(digits string) error {
 	if digits == "" {
-		return stack.Wrap(errors.New("phone: pressing needs digits to press"))
+		return stack.Wrap(Invalid(errors.New("phone: pressing needs digits to press")))
 	}
 	for _, key := range digits {
 		switch {
 		case key >= '0' && key <= '9', key >= 'A' && key <= 'D',
 			key == '*', key == '#', key == 'w', key == 'W':
 		default:
-			return stack.Wrap(fmt.Errorf("phone: %q is not something a keypad can press", string(key)))
+			return stack.Wrap(Invalid(fmt.Errorf("phone: %q is not something a keypad can press", string(key))))
 		}
 	}
 	return nil

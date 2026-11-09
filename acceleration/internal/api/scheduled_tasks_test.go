@@ -372,6 +372,8 @@ type ScheduledTasksSuite struct {
 	runReads *runReads
 	// worker is the test's running worker, if it started one.
 	worker *scheduling.Scheduler
+	// attempts counts the deliveries the test's worker has started, a retry included.
+	attempts atomic.Int32
 }
 
 // runReads counts the queries a pool sends to scheduled_task_runs while on.
@@ -485,7 +487,12 @@ func (s *ScheduledTasksSuite) tasksOf(user *testClient) []store.ScheduledTask {
 // runWorker starts the scheduled-task worker over the suite's store,
 // delivering through the suite's own router, as every router does.
 func (s *ScheduledTasksSuite) runWorker() {
-	worker := scheduling.NewScheduler(s.store, s.router.DeliverScheduledTask, slog.New(slog.DiscardHandler))
+	s.attempts.Store(0)
+	deliver := func(ctx context.Context, claimed store.ClaimedScheduledTask) (string, string, error) {
+		s.attempts.Add(1)
+		return s.router.DeliverScheduledTask(ctx, claimed)
+	}
+	worker := scheduling.NewScheduler(s.store, deliver, slog.New(slog.DiscardHandler))
 	worker.Start(context.Background())
 	s.worker = worker
 	s.router.SetSchedulerKick(worker.Kick)
@@ -3213,7 +3220,7 @@ func (s *ScheduledTasksSuite) TestATaskTextedOnWhatsAppArrivesThere() {
 
 // seedSMSLine gives the app a text line the way buying the number and
 // connecting it would, without Telnyx on the line to be pointed anywhere.
-func (s *ScheduledTasksSuite) seedSMSLine(number string) {
+func (s *RouterSuite) seedSMSLine(number string) {
 	ctx := context.Background()
 	s.Require().NoError(s.store.RecordNumber(ctx, &store.PhoneNumber{
 		CustomerID: s.customerID(), E164: number, Vendor: "telnyx",
@@ -3494,7 +3501,7 @@ func (s *ScheduledTasksSuite) TestACallThatOutlastsTheWaitIsUserOnCall() {
 	found, live := s.router.sessions.Get(opened.Id, s.ownerOf(user))
 	s.Require().True(live)
 
-	err := waitOutCall(context.Background(), found, 0)
+	err := s.router.waitOutCall(context.Background(), found, 0)
 	s.Equal(scheduling.ReasonOnACall, scheduling.ReasonOf(err), "%v", err)
 }
 
@@ -3572,7 +3579,7 @@ func (s *ScheduledTasksSuite) TestAFailureOnEveryChannelIsListedUnderTheFirstCha
 }
 
 // retryAtOnce has a failed occurrence tried again straight away, twice.
-func (s *ScheduledTasksSuite) retryAtOnce() {
+func (s *RouterSuite) retryAtOnce() {
 	retries := scheduling.DeliveryRetries
 	scheduling.DeliveryRetries = []time.Duration{time.Millisecond, time.Millisecond}
 	s.T().Cleanup(func() { scheduling.DeliveryRetries = retries })
@@ -3728,10 +3735,12 @@ func (s *ScheduledTasksSuite) TestARetryWaitsForAReplyStillBeingWritten() {
 
 	// The first attempt gives up on the reply once the window is spent, and
 	// the retry straight after it finds the turn still running; the reply is
-	// written a second into the retry's own window.
+	// written once the retry has claimed the occurrence, inside its own window.
 	s.Eventually(func() bool { return s.model().turnsOn("<scheduled_task") == 1 },
 		30*time.Second, 50*time.Millisecond, "the occurrence never ran its turn")
-	time.Sleep(scheduledReplyWindow + time.Second)
+	// The retry is the worker's second delivery of the occurrence, in the same claim.
+	s.Eventually(func() bool { return s.attempts.Load() >= 2 },
+		30*time.Second, 50*time.Millisecond, "the occurrence was never delivered again")
 	release()
 
 	run := s.delivered(task)
@@ -3783,11 +3792,19 @@ func (s *ScheduledTasksSuite) TestATurnWhoseProviderBrokeAsItWasCancelledRunsAga
 	// cancelling it until the failure has finished the reply, the order the race can take. A
 	// failure that is dropped never does, so the hold ends after two seconds.
 	s.model().breakHeld(func() {
-		for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+		tick := time.NewTicker(10 * time.Millisecond)
+		defer tick.Stop()
+		deadline := time.NewTimer(2 * time.Second)
+		defer deadline.Stop()
+		for {
 			if state, _, _ := found.FollowUpReply(command); state == "failed" {
 				return
 			}
-			time.Sleep(10 * time.Millisecond)
+			select {
+			case <-deadline.C:
+				return
+			case <-tick.C:
+			}
 		}
 	})
 	_, err := s.cutOff(s.router, task, run, found.Interrupt)

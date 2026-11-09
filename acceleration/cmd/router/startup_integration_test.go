@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -350,6 +352,114 @@ func (s *RouterStartSuite) TestAStartingRouterAsksTheVendorAfterItsCampaignsUnti
 	// 10 s, as for the phone sweep above: only scheduling under load.
 	s.Eventually(func() bool { return !strings.Contains(goroutines(), "dlc.(*Service).Run+") },
 		10*time.Second, 50*time.Millisecond, "the vendor was still asked after the router stopped")
+}
+
+// A router handed a listening socket (listen_fd) serves its API on it, not on listen address,
+// and a router taking over for an old one, which is what a handed socket means, waits for the
+// sandbox proxy address the old router still holds and serves the proxy there once it lets go.
+func (s *RouterStartSuite) TestARouterHandedASocketServesOnItAndWaitsForTheProxyAddressTheOldRouterHolds() {
+	settings := s.proxySettings()
+	// The address a router that ignored the socket would take instead: not the socket's.
+	settings.Addr = "127.0.0.1:0"
+	public, fd := s.handedSocket()
+	settings.ListenFD = fd
+	old := s.heldAddress()
+	settings.CodeSandbox.ProxyAddr = old.Addr().String()
+
+	stop := s.start(settings)
+
+	s.Eventually(func() bool { return healthy(public) }, 10*time.Second, 50*time.Millisecond,
+		"nothing answered on the socket the router was handed")
+	// The old router lets go of the proxy address, as a draining router does through
+	// handOverProxy.
+	s.Require().NoError(old.Close())
+	s.Eventually(func() bool { return servesProxy(settings.CodeSandbox.ProxyAddr) }, 10*time.Second, 50*time.Millisecond,
+		"the router handed a socket did not take the proxy address the old router let go of")
+	s.Require().NoError(stop())
+}
+
+// The control: a router handed no socket takes its listen address, and an address the proxy
+// wants that another process holds fails its start, as on base, where a held address always
+// did. Only a router handed a socket waits for it.
+func (s *RouterStartSuite) TestARouterHandedNoSocketFailsOnAProxyAddressAnotherProcessHolds() {
+	settings := s.proxySettings()
+	s.Require().Zero(settings.ListenFD, "listen_fd is off unless it is set")
+	settings.Addr = "127.0.0.1:0"
+	held := s.heldAddress()
+	settings.CodeSandbox.ProxyAddr = held.Addr().String()
+
+	stopped := make(chan struct{})
+	var runErr error
+	go func() {
+		runErr = run(settings, slog.New(slog.DiscardHandler))
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+		s.Require().EqualError(runErr, "listen tcp "+held.Addr().String()+": bind: address already in use")
+	case <-time.After(15 * time.Second):
+		s.NoError(syscall.Kill(os.Getpid(), syscall.SIGTERM))
+		<-stopped
+		s.Require().Fail("the router waited for a proxy address it was not handed a socket to take over")
+	}
+}
+
+// proxySettings is a router that serves the sandbox egress proxy: it needs redis, connectors
+// and so a keyring.
+func (s *RouterStartSuite) proxySettings() config.Config {
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" {
+		s.T().Skip("ROUTER_REDIS_ADDR not set")
+	}
+	settings := s.settings
+	settings.Redis.Addr = address
+	settings.Auth.KEK = "listen-fd-key"
+	settings.Connectors.Enabled = true
+	settings.CodeSandbox.ProxyCACert, settings.CodeSandbox.ProxyCAKey = newCA(s.T())
+	return settings
+}
+
+// handedSocket is a listening socket as a supervisor holds one for the routers it starts, and
+// the descriptor of its copy handed to a router, which closes that copy when it is done with it.
+// The supervisor's own stays open, so the socket keeps listening after the router.
+func (s *RouterStartSuite) handedSocket() (address string, fd int) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	file, err := listener.(*net.TCPListener).File()
+	s.Require().NoError(err)
+	address = listener.Addr().String()
+	s.Require().NoError(listener.Close())
+	s.T().Cleanup(func() { _ = file.Close() })
+	fd, err = syscall.Dup(int(file.Fd()))
+	s.Require().NoError(err)
+	return address, fd
+}
+
+// heldAddress is a loopback address another process holds, on a port below the ephemeral ranges
+// of Linux (32768-60999) and macOS (49152-65535), so nothing else takes it once it is let go.
+func (s *RouterStartSuite) heldAddress() net.Listener {
+	for range 100 {
+		offset, err := rand.Int(rand.Reader, big.NewInt(12768))
+		s.Require().NoError(err)
+		holder, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", 20000+offset.Int64()))
+		if err == nil {
+			s.T().Cleanup(func() { _ = holder.Close() })
+			return holder
+		}
+	}
+	s.Require().FailNow("no free port between 20000 and 32767")
+	return nil
+}
+
+// healthy is whether the router's API answers on address.
+func healthy(address string) bool {
+	client := http.Client{Timeout: time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
+	response, err := client.Get("http://" + address + "/health")
+	if err != nil {
+		return false
+	}
+	_ = response.Body.Close()
+	return response.StatusCode == http.StatusOK
 }
 
 // start runs the router as its serve command does, and waits for its public listener: a stop

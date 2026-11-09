@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 const (
@@ -41,7 +43,7 @@ func main() {
 	flag.Parse()
 
 	if err := run(*query, splitHandles(*handles), *days, *model, *timeout); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "error: %s\n", store.RedactLogText(fmt.Sprint(err)))
 		os.Exit(1)
 	}
 }

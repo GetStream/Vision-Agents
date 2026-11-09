@@ -150,6 +150,21 @@ func (s *MeteringSuite) transfer(callID, human string) {
 	s.Require().NoError(err)
 }
 
+func (s *MeteringSuite) TestTheCustomerWhoTransferredCanPressDigitsOnTheTransferLeg() {
+	s.transfer("call-"+uuid.NewString(), "+15125550124")
+
+	s.Require().NoError(s.service.SendDigits(s.ctx, s.customer, s.vendor.vendor, s.vendor.vendor+"-call", "12"))
+	s.Equal([]string{s.vendor.vendor + "-call:12"}, s.vendor.pressed)
+}
+
+func (s *MeteringSuite) TestAnotherCustomerCannotPressDigitsOnATransferLeg() {
+	s.transfer("call-"+uuid.NewString(), "+15125550124")
+
+	err := s.service.SendDigits(s.ctx, "customer-"+uuid.NewString(), s.vendor.vendor, s.vendor.vendor+"-call", "12")
+	s.ErrorIs(err, ErrCallNotFound)
+	s.Empty(s.vendor.pressed)
+}
+
 // legsOf is the legs of the call, open or ended, by direction.
 func (s *MeteringSuite) legsOf(callID string) map[string]store.CallLeg {
 	var legs []store.CallLeg
@@ -738,7 +753,7 @@ func (s *MeteringSuite) TestABoughtNumberIsBilledItsFirstMonth() {
 	s.Require().NoError(err)
 
 	month := s.row(ModelNumber)
-	s.Equal(int64(1_200_000), month.CostMicros, "the price the vendor quoted, resold at the factor")
+	s.Equal(int64(1_080_000), month.CostMicros, "the price the vendor quoted, resold at the factor")
 	s.Equal(int64(1_000_000), month.BaseCostMicros, "the price the vendor quoted")
 	s.True(month.Billable)
 	s.Equal("key-a", month.APIKey, "the month it was bought in is the buyer's")
@@ -754,7 +769,7 @@ func (s *MeteringSuite) TestANumberWhosePriceIsOnlyInItsOfferIsBilledTheOffer() 
 	s.Require().NoError(err)
 
 	s.Equal(int64(1_500_000), bought.MonthlyCostMicros, "the number's own offer")
-	s.Equal(int64(1_800_000), s.row(ModelNumber).CostMicros)
+	s.Equal(int64(1_620_000), s.row(ModelNumber).CostMicros)
 }
 
 func (s *MeteringSuite) TestANumberWithNoPriceIsBillableWorkWithNoPrice() {

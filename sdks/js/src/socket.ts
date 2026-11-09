@@ -38,6 +38,28 @@ export class Socket {
     this.socket.addEventListener("error", this.finish);
   }
 
+  /**
+   * Opens a socket on a path of the router, credentials included, and tries once more with a
+   * fresh token if it is refused.
+   *
+   * A browser is not told why an upgrade was refused, so a token the router no longer takes
+   * looks like any other refusal: when a token function is what the socket carried, it is
+   * asked for a new one and the socket dialled again. Once, for the same reason a request is
+   * retried once: a second refusal is not the token being old.
+   */
+  static async dial(backend: Backend, path: string, query: Record<string, string> = {}): Promise<Socket> {
+    const url = await backend.socketURL(path, query);
+    try {
+      return await Socket.open(backend, url);
+    } catch (cause) {
+      const carried = new URL(url).searchParams.get("token") ?? undefined;
+      if (!backend.expireToken(carried)) {
+        throw cause;
+      }
+      return Socket.open(backend, await backend.socketURL(path, query));
+    }
+  }
+
   /** Dials the router and resolves once the upgrade is through. */
   static open(backend: Backend, url: string): Promise<Socket> {
     return new Promise((resolve, reject) => {

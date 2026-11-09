@@ -102,7 +102,7 @@ func New(options Options) (*Provider, error) {
 // SearchNumbers returns numbers Telnyx is offering in a country.
 func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]phone.Available, error) {
 	if search.Country == "" {
-		return nil, stack.Wrap(errors.New("telnyx: a country is required to search for numbers"))
+		return nil, stack.Wrap(phone.Invalid(errors.New("telnyx: a country is required to search for numbers")))
 	}
 
 	// Telnyx filters with bracketed query parameters rather than a request body.
@@ -239,7 +239,7 @@ func (p *Provider) ConfigureInbound(ctx context.Context, inbound phone.Inbound) 
 		return err
 	}
 	if p.connectionID == "" {
-		return stack.Wrap(errors.New("telnyx: a connection id is required to route calls to the bridge"))
+		return stack.Wrap(phone.NotConfigured(errors.New("telnyx: a connection id is required to route calls to the bridge")))
 	}
 	id, err := p.idFor(ctx, inbound.E164)
 	if err != nil {
@@ -260,23 +260,23 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		return phone.Dialed{}, stack.Wrap(fmt.Errorf("telnyx: %w", err))
 	}
 	if p.connectionID == "" {
-		return phone.Dialed{}, stack.Wrap(errors.New("telnyx: a connection id is required to place a call"))
+		return phone.Dialed{}, stack.Wrap(phone.NotConfigured(errors.New("telnyx: a connection id is required to place a call")))
 	}
 
 	// Unsupported is not consulted on every path here, so a term Telnyx would drop is
 	// refused.
 	seconds := int(outbound.RingTimeout.Seconds())
 	if outbound.RingTimeout > 0 && (seconds < minRingSeconds || seconds > maxRingSeconds) {
-		return phone.Dialed{}, stack.Wrap(fmt.Errorf("telnyx: telnyx rings for %d to %d seconds, not %d",
-			minRingSeconds, maxRingSeconds, seconds))
+		return phone.Dialed{}, stack.Wrap(phone.Invalid(fmt.Errorf("telnyx: telnyx rings for %d to %d seconds, not %d",
+			minRingSeconds, maxRingSeconds, seconds)))
 	}
 	if len(outbound.Headers) > 0 {
-		return phone.Dialed{}, stack.Wrap(errors.New(
-			"telnyx: custom SIP headers are not known to reach the person on a TeXML call"))
+		return phone.Dialed{}, stack.Wrap(phone.Invalid(errors.New(
+			"telnyx: custom SIP headers are not known to reach the person on a TeXML call")))
 	}
 	if !p.PlaysDigits(outbound.InitialDigits) {
-		return phone.Dialed{}, stack.Wrap(fmt.Errorf("telnyx: TeXML plays only %q, not %q",
-			playableDigits, outbound.InitialDigits))
+		return phone.Dialed{}, stack.Wrap(phone.Invalid(fmt.Errorf("telnyx: TeXML plays only %q, not %q",
+			playableDigits, outbound.InitialDigits)))
 	}
 
 	// The person is called from one of this service's numbers, and once they answer the
@@ -293,6 +293,7 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 	}
 	if outbound.StatusURL != "" {
 		request.StatusCallback, request.StatusCallbackMethod = outbound.StatusURL, http.MethodPost
+		request.StatusCallbackEvent = statusCallbackEvents
 	}
 	if outbound.MachineURL != "" {
 		request.MachineDetection, request.DetectionMode, request.AsyncAmd = "DetectMessageEnd", "Premium", true
@@ -316,7 +317,10 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 }
 
 // ReadStatus reads the form Telnyx posts to a TeXML call's StatusCallback, whose CallStatus
-// words are Twilio's. One that does not end the call is a report that is not final.
+// words are Twilio's. One that does not end the call is a report that is not final: "ringing"
+// says the phone is ringing. SipHangupCause is the SIP code of the hangup, sent with the
+// completed callback (https://developers.telnyx.com/api-reference/callbacks/texml-call-completed);
+// one that is no number is left out.
 func (p *Provider) ReadStatus(contentType string, body []byte) (phone.CallStatus, error) {
 	if media, _, err := mime.ParseMediaType(contentType); err != nil || media != "application/x-www-form-urlencoded" {
 		return phone.CallStatus{}, stack.Wrap(fmt.Errorf("telnyx: a call status is a form, not %q", contentType))
@@ -329,7 +333,8 @@ func (p *Provider) ReadStatus(contentType string, body []byte) (phone.CallStatus
 	if word == "" {
 		return phone.CallStatus{}, stack.Wrap(errors.New("telnyx: a call status without a CallStatus"))
 	}
-	return phone.CallStatus{Result: finalStatuses[word], Word: word}, nil
+	code, _ := strconv.Atoi(form.Get("SipHangupCause"))
+	return phone.CallStatus{Result: finalStatuses[word], Word: word, SIPCode: code, Ringing: word == "ringing"}, nil
 }
 
 // ReadMachine reads the form Telnyx posts to a TeXML call's AsyncAmdStatusCallback.
@@ -400,7 +405,7 @@ func (p *Provider) priceOf(ctx context.Context, e164 string) (int64, error) {
 			return dollarsToMicros(number.CostInformation.MonthlyCost), nil
 		}
 	}
-	return 0, stack.Wrap(fmt.Errorf("telnyx: %s is not for sale", e164))
+	return 0, stack.Wrap(phone.Invalid(fmt.Errorf("telnyx: %s is not for sale", e164)))
 }
 
 // idFor finds Telnyx's own identifier for a number this account owns, which is what
@@ -606,6 +611,12 @@ type numberUpdate struct {
 // playableDigits are the keys TeXML's <Play digits> takes, w being half a second's pause.
 const playableDigits = "0123456789*#w"
 
+// statusCallbackEvents are the call events Telnyx posts to a call's StatusCallback: "ringing"
+// for the carrier KPIs' post-dial delay, and "completed" for how the call ended. It is a
+// string of events separated by a space, and "completed" alone is its default
+// (https://developers.telnyx.com/api-reference/texml-rest-commands/initiate-an-outbound-call).
+const statusCallbackEvents = "ringing completed"
+
 // texmlCall is a TeXML call on one application. Telnyx's names here are case-sensitive.
 type texmlCall struct {
 	From  string `json:"From"`
@@ -615,9 +626,14 @@ type texmlCall struct {
 	// Telnyx does not document it for this call, but accepts it: checked on a live call
 	// 2026-10-13, which stopped ringing after the time sent.
 	Timeout int `json:"Timeout,omitempty"`
-	// StatusCallback is where Telnyx posts the call's status, as a form, once it ends.
+	// StatusCallback is where Telnyx posts the call's status, as a form, when it rings and once it ends.
 	StatusCallback       string `json:"StatusCallback,omitempty"`
 	StatusCallbackMethod string `json:"StatusCallbackMethod,omitempty"`
+	// StatusCallbackEvent names the events that are posted to StatusCallback.
+	// Telnyx lists it only for the account-scoped Calls endpoint
+	// (https://developers.telnyx.com/api-reference/texml-rest-commands/initiate-an-outbound-call),
+	// not for this connection-scoped one. The form follows the former. Unverified on a live call.
+	StatusCallbackEvent string `json:"StatusCallbackEvent,omitempty"`
 	// MachineDetection and the four after it ask for answering machine detection that
 	// reports to AsyncAmdStatusCallback while the call goes on, as Twilio's do. DetectionMode
 	// Premium is the more accurate model: Regular calls some mobile voicemail boxes unknown.

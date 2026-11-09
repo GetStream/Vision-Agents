@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -159,6 +160,8 @@ func (s *TransferSuite) answers() *Session {
 }
 
 func (s *TransferSuite) TestACallTransferredColdEndsItsSessionAsTransferred() {
+	transferred, dropped, failed := endCounter(EndTransferred), endCounter(EndAgentFailed), endCounter(EndModelFailed)
+	before, droppedBefore, failedBefore := testutil.ToFloat64(transferred), testutil.ToFloat64(dropped), testutil.ToFloat64(failed)
 	created := s.answers()
 	events, detach := created.Watch()
 	defer detach()
@@ -185,7 +188,11 @@ func (s *TransferSuite) TestACallTransferredColdEndsItsSessionAsTransferred() {
 	s.Require().Eventually(func() bool {
 		return created.State() == Ended && !s.manager.Running(created.ID())
 	}, settleFor, 20*time.Millisecond, "the session outlived the agent that left on the transfer")
-	s.Equal(EndTransferred, created.endReason())
+	s.Equal(EndTransferred, created.EndReason())
+	// The agent leaves the call by itself on a transfer, which is no agent dropping out.
+	s.Equal(before+1, testutil.ToFloat64(transferred), "the transfer was not counted")
+	s.Equal(droppedBefore, testutil.ToFloat64(dropped), "the transfer was counted as the agent dropping out")
+	s.Equal(failedBefore, testutil.ToFloat64(failed), "the transfer was counted as the model failing")
 	s.NotEmpty(s.asked("/sip/inbound_trunks"), "the transfer made no line at the suite's Stream")
 	s.Empty(s.asked("/mark_ended"), "the call the caller was handed over on was ended")
 }

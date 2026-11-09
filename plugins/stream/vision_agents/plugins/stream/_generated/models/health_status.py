@@ -52,7 +52,7 @@ class HealthStatus:
         d = dict(src_dict)
         dependencies = HealthStatusDependencies.from_dict(d.pop("dependencies"))
 
-        status = HealthStatusStatus(d.pop("status"))
+        status = HealthStatusStatus._decode(d.pop("status"))
 
         health_status = cls(
             dependencies=dependencies,

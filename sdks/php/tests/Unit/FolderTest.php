@@ -276,6 +276,73 @@ final class FolderTest extends TestCase
         Folder::load($this->dir);
     }
 
+    /**
+     * end_of_turn is gone: its one knob is floor_control's max_wait_ms.
+     */
+    public function testRefusesAnEndOfTurn(): void
+    {
+        $this->write('agent.yaml', "end_of_turn:\n  max_wait_ms: 900\n");
+
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('"end_of_turn" is not something agent.yaml declares');
+        Folder::load($this->dir);
+    }
+
+    /**
+     * @return iterable<string, array{string, ?array<string, mixed>}>
+     */
+    public static function floorControls(): iterable
+    {
+        yield 'model and wait' => ["floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n", ['max_wait_ms' => 800, 'model' => 'stream/chorus-asr']];
+        yield 'model alone' => ["floor_control: {model: stream/chorus-asr}\n", ['model' => 'stream/chorus-asr']];
+        yield 'a null wait' => ["floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: ~\n", ['model' => 'stream/chorus-asr']];
+        yield 'a wait for the router to judge' => ["floor_control: {max_wait_ms: 800}\n", ['max_wait_ms' => 800]];
+        yield 'empty, the default flow controller again' => ["floor_control: {}\n", []];
+        yield 'no value' => ["floor_control:\n", null];
+        yield 'null' => ["floor_control: ~\n", null];
+        yield 'left out' => ["llm: openai/gpt-5.6\n", null];
+    }
+
+    /**
+     * floor_control is read as written; which models there are is the router's to say.
+     *
+     * @param ?array<string, mixed> $chosen
+     */
+    #[DataProvider('floorControls')]
+    public function testReadsFloorControlAsWritten(string $declaration, ?array $chosen): void
+    {
+        $this->write('agent.yaml', $declaration);
+
+        self::assertSame($chosen, Folder::load($this->dir)->settings->floorControl?->toArray());
+    }
+
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function refusedFloorControls(): iterable
+    {
+        $mapping = 'floor_control is a mapping of model and, optionally, max_wait_ms';
+        yield 'the string it once was' => ["floor_control: stream/chorus-asr\n", $mapping];
+        yield 'a list' => ["floor_control: [stream/chorus-asr]\n", $mapping];
+        yield 'an empty list' => ["floor_control: []\n", $mapping];
+        yield 'a boolean' => ["floor_control: true\n", $mapping];
+        yield 'a number' => ["floor_control: 1\n", $mapping];
+        yield 'an unknown key' => ["floor_control:\n  model: stream/chorus-asr\n  mode: act\n", '"mode" is not a floor_control setting; model and max_wait_ms are'];
+        yield 'a model that is not a string' => ["floor_control:\n  model: 1\n", 'floor_control.model must be a string'];
+        yield 'a wait that is not a number' => ["floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: soon\n", 'floor_control.max_wait_ms must be an integer'];
+        yield 'a fractional wait' => ["floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800.5\n", 'floor_control.max_wait_ms must be an integer'];
+    }
+
+    #[DataProvider('refusedFloorControls')]
+    public function testRefusesAFloorControlThatCannotBeRead(string $declaration, string $message): void
+    {
+        $this->write('agent.yaml', $declaration);
+
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage($message);
+        Folder::load($this->dir);
+    }
+
     public function testReadsConnectorsAsWritten(): void
     {
         $this->write('agent.yaml', "connectors:\n  - linear\n  - name: issues\n    connector: linear\n    tools: [search]\n    connection: prod\n    required: false\n");

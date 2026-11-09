@@ -5,13 +5,16 @@ use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use reqwest::Method;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde_json::json;
 
-use crate::backend::{Backend, ClientOptions};
+use crate::backend::{Backend, ClientOptions, checked_categories, sign_for, with_usage};
 use crate::error::{Error, Result};
+use crate::limits::SpendLimits;
 use crate::router::Router;
 use crate::sessions::{AgentRef, Memories};
 use crate::simulations::Simulations;
 use crate::socket::Socket;
+use crate::teams::Teams;
 use crate::types;
 
 /// The router, held once: where it is and who is calling it.
@@ -92,8 +95,57 @@ impl Client {
             token: Some(token.to_string()),
             user_id: Some(user_id.to_string()),
             authenticate: Some(backend.authenticate),
+            team: None,
+            usage_categories: Vec::new(),
             http: Some(self.inner.http.clone()),
         })
+    }
+
+    /// A token for one end user to hold, naming their team and usage categories, valid for
+    /// `validity_seconds`. Needs the secret.
+    ///
+    /// The claims are fixed when it is signed, so a device holding it cannot move its own
+    /// work to another team or category. A team has no members list anywhere: a user is in
+    /// the team their token names.
+    pub fn user_token(
+        &self,
+        user_id: &str,
+        team: Option<&str>,
+        usage_categories: &[&str],
+        validity_seconds: u64,
+    ) -> Result<String> {
+        let backend = &self.inner.backend;
+        if backend.api_secret.is_empty() {
+            return Err(Error::configuration(
+                "a user token is signed with the app's secret, which only a backend holds",
+            ));
+        }
+        if user_id.is_empty() {
+            return Err(Error::configuration("a user token needs the user's id"));
+        }
+        if validity_seconds == 0 {
+            return Err(Error::configuration(
+                "a user token has to be valid for some seconds",
+            ));
+        }
+        let team = team.filter(|team| !team.is_empty());
+        let categories = checked_categories(team, usage_categories)?;
+        sign_for(
+            with_usage(json!({"user_id": user_id}), team, &categories),
+            &backend.api_secret,
+            validity_seconds,
+        )
+    }
+
+    /// The customer's spend limits: on the organization, its apps, keys, end users, teams
+    /// and usage categories. Server side only.
+    pub fn spend_limits(&self) -> SpendLimits {
+        SpendLimits::new(self.clone())
+    }
+
+    /// The organization's teams and their spend limits. Server side only.
+    pub fn teams(&self) -> Teams {
+        Teams::new(self.spend_limits())
     }
 
     /// This client's own credential, speaking for `user_id` without minting a token for them.

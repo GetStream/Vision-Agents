@@ -13,7 +13,7 @@ import (
 // price list's first load from the price files, and the items a release adds that the database
 // has never priced) is priced at it once, when it is written, and an amount a vendor quotes
 // outright is resold at it. No price already written ever moves with it.
-const PriceFactorBps = 12_000
+const PriceFactorBps = 10_800
 
 // BYOKFeeBps is what work done with the customer's own key is sold at, in basis points of what
 // it costs at the vendor's rates, wherever no price is written down: the vendor bills the

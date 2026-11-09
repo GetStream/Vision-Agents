@@ -21,6 +21,11 @@ type InboundAudio struct {
 // up mid-reply ends the reply, which is no failure of the agent's.
 var ErrCallLeft = errors.New("the call has been left")
 
+// ErrNoVideo is an edge's Join that the call refused because the customer's Stream account has
+// Video off, or the Stream server their app is on runs none. Every call in that app is refused
+// the same way, which is the app's setup and no failure of the router's.
+var ErrNoVideo = errors.New("agent: the call's Stream app has no video")
+
 // Edge is where the conversation happens. It is deliberately four methods wide, so the
 // agent's flow can be exercised in-process against a loopback rather than only against a
 // real call.

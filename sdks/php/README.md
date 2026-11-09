@@ -134,6 +134,20 @@ stored config instead of sending it again. The fingerprint is the Go SDK's, so e
 the same directory. An unknown key in `agent.yaml`, `urls.yaml` or a simulations file is
 refused rather than ignored.
 
+`floor_control:` is the model that controls the agent's floor, and how long a caller may wait
+once they stop:
+
+```yaml
+floor_control:
+  model: stream/chorus-asr
+  max_wait_ms: 800      # optional; the server's default point otherwise
+```
+
+It is sent as written, and `{}` is the default flow controller again. Left out, the stored choice
+stays, and an agent that never chose has the default flow controller; the router refuses
+`stream/chorus-asr` without a chorus-asr server, and a `max_wait_ms` shorter than every point it
+measured.
+
 ```php
 $agent->knowledge()->addUrl('https://example.com/pricing', title: 'Pricing', refreshHours: 24);
 ```
@@ -319,6 +333,59 @@ $run = $client->simulations->runs->get($run->id);   // until its state is no lon
 ```
 
 Also `get`, `list`, `update`, `delete`, and `runs->list`, `runs->cancel`.
+
+## Spend limits and teams
+
+A backend caps what the organization, its apps, keys, end users, teams and usage categories may
+spend in each day, week, two weeks or month (server side only). Amounts are `Usd`, and exact:
+the router counts in millionths of a dollar, and so does `Usd`. There is no float constructor;
+`Usd::parse('12.50')` reads one from a form or a config file.
+
+```php
+use GetStream\VisionAgents\{Backend, Client, Usd};
+use GetStream\VisionAgents\Generated\{LimitInterval, LimitSubject};
+
+$limits = $client->spendLimits;
+$limits->create(LimitSubject::Organization, LimitInterval::Monthly, Usd::dollars(20_000));
+
+// Every key of app 1234 may spend $50 a day, and the CI key $10.
+$limits->create(LimitSubject::ApiKey, LimitInterval::Daily, Usd::dollars(50), appId: '1234');
+$limits->create(LimitSubject::ApiKey, LimitInterval::Daily, Usd::dollars(10), appId: '1234', apiKey: 'mz7kq2xa9b', note: 'CI key');
+$ci = $limits->list(LimitSubject::ApiKey, appId: '1234', apiKey: 'mz7kq2xa9b')[0];
+$limits->setAmount($ci->id, Usd::dollars(25));
+$limits->delete($ci->id);
+
+// Every user of app 1234 may spend $20 a day, and user-42 $50.
+$limits->create(LimitSubject::User, LimitInterval::Daily, Usd::dollars(20), appId: '1234');
+$limits->create(LimitSubject::User, LimitInterval::Daily, Usd::dollars(50), appId: '1234', userId: 'user-42');
+
+// Created or changed, whichever the team needs.
+$client->teams->setLimit('finance', LimitInterval::Monthly, Usd::dollars(8_000));
+
+$session = $client->agent('docs')->sessions->create(team: 'finance', userId: 'jean');
+$finance = new Client(new Backend(team: 'finance'));
+
+$limits->reset(LimitSubject::User, 'refunded a runaway job', [LimitInterval::Weekly], appId: '1234', userId: 'user-42');
+```
+
+Work counts under a team, and so against its limits, three ways. Whichever comes first wins,
+and a session is counted under one team at most:
+
+1. The team signed into the end user's token, such as one from
+   `$client->backend->userToken('user-42', team: 'finance')`. A session cannot be moved off
+   it, so a `team` naming another is refused with a 400.
+2. `sessions->create(team: 'finance')`, from a backend. A device sending a team is refused
+   with a 403.
+3. The agent's tag: `tags: team: finance` in its `agent.yaml` counts that agent's sessions
+   under the team. A tag that is no team name is refused when the agent is synced.
+
+A client built with a `team` (and `usageCategories`) signs them into every token it mints, and
+sends them in `X-Stream-Usage-Categories` to a router with no proxy in front of it; a token
+handed in already carries its own, so neither can be passed beside one. What the router answers
+is in micros too: `(string) Usd::micros($limit->limitMicros)` is `$20000.00`. Work a limit
+refuses is a `RouterException` of 402 `spend_limit_reached`, or 429 `user_limit_reached` for one
+end user's. `$client->teams` also has `list`, `removeLimit` and `usage`, and
+`$client->spendLimits` has `get`, `setNote`, `update` and `usage`.
 
 ## Shapes and failures
 

@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -670,9 +669,20 @@ func (s *Server) setStatus(ctx context.Context, input *statusInput, status usage
 
 // UsageEventPage is one page of an organization's usage events.
 type UsageEventPage struct {
-	Items      []usage.Event `json:"items"`
-	HasMore    bool          `json:"has_more"`
-	NextCursor string        `json:"next_cursor,omitempty"`
+	Items      []UsageEvent `json:"items"`
+	HasMore    bool         `json:"has_more"`
+	NextCursor string       `json:"next_cursor,omitempty"`
+}
+
+// UsageEvent is a usage event as recorded, with who started the work under its public name,
+// origin.
+type UsageEvent struct {
+	usage.Event
+	Origin string `json:"origin" doc:"Who started the work: the public key it was started with, or the origin of work no key started, such as hook:chat."`
+	// APIKey hides the recorded event's api_key, origin's old name: a field of the outer
+	// struct wins over the embedded one of the same name, so it is left out of the answer and
+	// of the schema.
+	APIKey *string `json:"api_key,omitempty" hidden:"true"`
 }
 
 type listUsageInput struct {
@@ -682,8 +692,7 @@ type listUsageInput struct {
 	To       time.Time `query:"to" doc:"Events that happened before this instant."`
 	Meter    string    `query:"meter" doc:"The event's kind of work, such as llm or runtime."`
 	AppID    string    `query:"app_id"`
-	APIKeyID string    `query:"api_key_id" doc:"Only events started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is an app's credential across Stream's APIs, and Stream's staff gateway refuses it."`
-	APIKey   string    `query:"api_key" deprecated:"true" doc:"The old name of api_key_id, still read for one release. Given with api_key_id, it must name the same key."`
+	Origin   string    `query:"origin" doc:"Only events started with this public API key, or by this origin of work no key started, such as hook:chat."`
 	UserID   string    `query:"user_id" doc:"Needs app_id: a user id is only unique within its app."`
 	Team     string    `query:"team" doc:"A team name, 1 to 64 characters of A-Z, a-z, 0-9, _ . -: the events with the category team:<name>. Not with category."`
 	Category string    `query:"category" doc:"Events with this usage category among theirs."`
@@ -699,12 +708,9 @@ func (s *Server) listUsage(ctx context.Context, input *listUsageInput) (*listUsa
 	}
 	filter := ledger.UsageFilter{
 		OrganizationID: input.OrganizationID, From: input.From, To: input.To, Meter: input.Meter,
-		AppID: input.AppID, APIKey: cmp.Or(input.APIKeyID, input.APIKey), UserID: input.UserID, Category: input.Category,
-		Limit: input.Limit,
+		AppID: input.AppID, APIKey: input.Origin, UserID: input.UserID, Category: input.Category, Limit: input.Limit,
 	}
 	switch {
-	case input.APIKeyID != "" && input.APIKey != "" && input.APIKeyID != input.APIKey:
-		return nil, invalidRequest("api_key_id and api_key name two different keys: api_key is the old name of api_key_id, so give one of them")
 	case input.UserID != "" && input.AppID == "":
 		return nil, invalidRequest("user_id needs app_id: a user id is only unique within its app")
 	case input.Team != "" && input.Category != "":
@@ -725,11 +731,11 @@ func (s *Server) listUsage(ctx context.Context, input *listUsageInput) (*listUsa
 	if err != nil {
 		return nil, s.failed(err, "list usage")
 	}
-	page := UsageEventPage{Items: make([]usage.Event, 0, len(rows)), HasMore: more}
+	page := UsageEventPage{Items: make([]UsageEvent, 0, len(rows)), HasMore: more}
 	for _, row := range rows {
 		event := row.Event()
 		event.OccurredAt = event.OccurredAt.UTC()
-		page.Items = append(page.Items, event)
+		page.Items = append(page.Items, UsageEvent{Event: event, Origin: event.APIKey})
 	}
 	if more {
 		last := rows[len(rows)-1]

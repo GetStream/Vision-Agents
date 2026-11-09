@@ -341,6 +341,57 @@ final class AgentTest extends TestCase
         self::assertSame(['text' => 'enabled'], $this->router->to('POST', '/v1/agents/sync')[0]->json()['dispatch']);
     }
 
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function floorControls(): iterable
+    {
+        yield 'model and wait' => ["floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n", '{"max_wait_ms":800,"model":"stream/chorus-asr"}'];
+        yield 'model alone' => ["floor_control: {model: stream/chorus-asr}\n", '{"model":"stream/chorus-asr"}'];
+        yield 'empty, the default flow controller again' => ["floor_control: {}\n", '{}'];
+        yield 'a model for the router to refuse' => ["floor_control:\n  model: other\n", '{"model":"other"}'];
+    }
+
+    /**
+     * agent.yaml's floor_control goes as written, an empty one as {} rather than [].
+     */
+    #[DataProvider('floorControls')]
+    public function testSyncSendsTheFloorControlTheAgentDeclared(string $declared, string $sent): void
+    {
+        $this->folder();
+        file_put_contents($this->dir . '/agent.yaml', "name: jean\n" . $declared);
+        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
+
+        (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
+
+        self::assertStringContainsString('"floor_control":' . $sent, $this->router->to('POST', '/v1/agents/sync')[0]->body);
+    }
+
+    /**
+     * A file that names no floor_control sends none, so the stored choice stays.
+     */
+    #[DataProvider('noFloorControl')]
+    public function testSyncSendsNoFloorControlWhenAgentYamlNamesNone(string $declared): void
+    {
+        $this->folder();
+        file_put_contents($this->dir . '/agent.yaml', "name: jean\n" . $declared);
+        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
+
+        (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
+
+        self::assertArrayNotHasKey('floor_control', $this->router->to('POST', '/v1/agents/sync')[0]->json());
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function noFloorControl(): iterable
+    {
+        yield 'left out' => ["llm: openai/gpt-5.6\n"];
+        yield 'no value' => ["floor_control:\n"];
+        yield 'null' => ["floor_control: ~\n"];
+    }
+
     public function testSyncSendsHowTheSandboxIsBuiltAndWhatItMayReach(): void
     {
         $this->folder();

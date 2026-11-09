@@ -24,7 +24,7 @@ func (s *SessionSuite) endedForVoicemail(created *Session) {
 	s.eventually(func() bool {
 		return created.State() == Ended && !s.manager.Running(created.ID())
 	}, "the session did not end for the answering machine")
-	s.Equal(EndVoicemail, created.endReason())
+	s.Equal(EndVoicemail, created.EndReason())
 }
 
 // saidText is every line the voice was asked to say.
@@ -41,7 +41,7 @@ func (s *SessionSuite) carriesOn(created *Session, said int) {
 	never(s.T(), func() bool {
 		return created.State() == Ended || !s.manager.Running(created.ID()) || len(s.voice.spoken()) != said
 	}, 4*testTimeout, 5*time.Millisecond, "the report changed the conversation")
-	s.Empty(created.endReason())
+	s.Empty(created.EndReason())
 }
 
 func (s *SessionSuite) TestAMachineWhoseGreetingEndedHearsTheMessageThenTheSessionEnds() {
@@ -278,7 +278,7 @@ func (s *SessionSuite) TestAHeldHangUpGoesThroughWhenAPersonPicksUp() {
 
 	s.eventually(func() bool { return created.State() == Ended && !s.manager.Running(created.ID()) },
 		"the held hang-up never went through")
-	s.Equal(EndAgentHangup, created.endReason())
+	s.Equal(EndAgentHangup, created.EndReason())
 }
 
 func (s *SessionSuite) TestTheCallerSpeakingToTheAgentLetsItHangUp() {
@@ -288,7 +288,7 @@ func (s *SessionSuite) TestTheCallerSpeakingToTheAgentLetsItHangUp() {
 
 	s.eventually(func() bool { return created.State() == Ended && !s.manager.Running(created.ID()) },
 		"the agent could not hang up on a caller who spoke to it")
-	s.Equal(EndAgentHangup, created.endReason())
+	s.Equal(EndAgentHangup, created.EndReason())
 }
 
 // The agent may hang up on the caller before the session has taken their words from it: the
@@ -300,13 +300,13 @@ func (s *SessionSuite) TestAnAgentHangingUpOnTheCallerBeforeTheSessionTookTheirW
 	s.T().Cleanup(release)
 
 	s.callerSays("who is this?")
-	s.eventually(func() bool { return created.endReason() != "" || s.toldOf("call-1") },
+	s.eventually(func() bool { return created.EndReason() != "" || s.toldOf("call-1") },
 		"the agent never asked to hang up")
 	release()
 
 	s.eventually(func() bool { return created.State() == Ended && !s.manager.Running(created.ID()) },
 		"the agent could not hang up on a caller who spoke to it")
-	s.Equal(EndAgentHangup, created.endReason())
+	s.Equal(EndAgentHangup, created.EndReason())
 }
 
 // toldOf reports whether the model was told what came of the tool call id.

@@ -237,6 +237,29 @@ class TestTeamsAndCategories:
         sent = trusted.client().get_async_httpx_client().headers
         assert sent[USAGE_CATEGORIES_HEADER] == "team:finance"
 
+    def test_a_router_carries_the_clients_team(self):
+        direct = stream.Client(
+            url="http://router", api_key="key", api_secret="secret", team="finance"
+        ).router("dentist_ai")
+        sent = direct.client().get_async_httpx_client().headers
+        assert sent[USAGE_CATEGORIES_HEADER] == "team:finance"
+        assert direct.backend.headers[USAGE_CATEGORIES_HEADER] == "team:finance"
+
+        proxied = stream.Client(
+            url="http://router",
+            api_key="key",
+            api_secret="secret",
+            authenticate=True,
+            team="finance",
+        ).router("dentist_ai")
+        for headers in (
+            proxied.client().get_async_httpx_client().headers,
+            proxied.backend.headers,
+        ):
+            assert USAGE_CATEGORIES_HEADER not in headers
+            token = headers["Authorization"].removeprefix("Bearer ")
+            assert _verified(token, "secret")["team"] == "finance"
+
     def test_a_user_token_cannot_be_minted_without_a_secret(self):
         device = stream.Client(url="http://router", api_key="key", token="jean-token")
         trusted = stream.Client(url="http://router", customer_id="acme")

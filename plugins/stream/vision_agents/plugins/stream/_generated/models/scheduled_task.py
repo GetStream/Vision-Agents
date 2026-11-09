@@ -153,7 +153,7 @@ class ScheduledTask:
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
-        created_by = ScheduledTaskCreatedBy(d.pop("created_by"))
+        created_by = ScheduledTaskCreatedBy._decode(d.pop("created_by"))
 
         deliver_to = cast(list[str], d.pop("deliver_to"))
 
@@ -179,7 +179,7 @@ class ScheduledTask:
 
         session_id = d.pop("session_id")
 
-        state = ScheduledTaskState(d.pop("state"))
+        state = ScheduledTaskState._decode(d.pop("state"))
 
         title = d.pop("title")
 

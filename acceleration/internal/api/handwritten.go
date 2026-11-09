@@ -865,6 +865,7 @@ func documentHandWritten(api huma.API) {
 			"so an imported plugin connection has to be authorized again. The audio behind a voice " +
 			"sample and a call recording lives in an object bucket rather than in this database; the " +
 			"rows naming those objects are here, and copying the bucket is yours to do.\n" +
+			"A router with shards cannot be the source of a move and answers 400 `not_configured`.\n" +
 			"Server-side only, and refused entirely when the router runs with " +
 			"ROUTER_AUTH_MODE=noauth, where naming a customer is all it takes to be one.",
 		Responses: map[string]*huma.Response{
@@ -872,7 +873,7 @@ func documentHandWritten(api huma.API) {
 			"400": {Ref: "#/components/responses/BadRequest"},
 			"401": {Ref: "#/components/responses/Unauthorized"},
 			"403": {Ref: "#/components/responses/Forbidden"},
-			"503": {Description: "This deployment has no database to export from, changes cannot be recorded, or a write that was open when the export started is still open after 30 seconds: try again.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
+			"503": {Description: "This deployment has no database to export from, or cannot record changes; or a write that was open when the export started is still open after 30 seconds: try again.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
 		},
 	})
 	document.AddOperation(&huma.Operation{
@@ -885,9 +886,16 @@ func documentHandWritten(api huma.API) {
 			"whatever the file says, so an export from one app cannot be imported into another's " +
 			"rows, and rows belonging to a customer through a parent are only written where that " +
 			"parent is the caller's.\n" +
-			"Importing is idempotent: the same export applied twice leaves what applying it once " +
-			"would.\n" +
+			"An export's rows are written as the source had them, so an export is refused with 409 " +
+			"`conflict`, before any of its rows is written, for an app that already has a row here in a " +
+			"table of the shared database: it would undo what was done here since. `full=true` writes it " +
+			"over them anyway, and importing the same export twice that way leaves what importing it once " +
+			"would. Changes are applied whatever the app holds. An import that stopped partway is run again " +
+			"with `full=true`, since the app then holds its first rows.\n" +
 			"Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.",
+		Parameters: []*huma.Param{
+			{Name: "full", In: "query", Description: "Write an export's rows over what an app that already has data here holds.", Schema: &huma.Schema{Type: huma.TypeBoolean, Default: false}},
+		},
 		RequestBody: &huma.RequestBody{
 			Required: true,
 			Content: map[string]*huma.MediaType{
@@ -899,6 +907,7 @@ func documentHandWritten(api huma.API) {
 			"400": {Ref: "#/components/responses/BadRequest"},
 			"401": {Ref: "#/components/responses/Unauthorized"},
 			"403": {Ref: "#/components/responses/Forbidden"},
+			"409": {Description: "The file carries an export's rows, the app already has data here and `full` is not true.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
 			"503": {Description: "This deployment has no database to import into.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
 		},
 	})
@@ -956,6 +965,7 @@ func documentHandWritten(api huma.API) {
 			"Changes are only recorded for an app that has exported, and only for as long as the " +
 			"deployment's retention window. A cursor older than what is still kept is answered 410, " +
 			"which means export again.\n" +
+			"A router with shards cannot be the source of a move and answers 400 `not_configured`.\n" +
 			"Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.",
 		Parameters: []*huma.Param{
 			{Name: "after", In: "query", Description: "The cursor the last page ended at.", Schema: &huma.Schema{Type: huma.TypeInteger, Format: "int64"}},

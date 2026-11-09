@@ -284,9 +284,6 @@ components:
       properties:
         agent_id:
           type: string
-        api_key:
-          description: The public key the work was started with, or the origin of work no key started, such as hook:chat.
-          type: string
         app_id:
           type: string
         attributes:
@@ -313,6 +310,9 @@ components:
           type: string
         occurred_at:
           format: date-time
+          type: string
+        origin:
+          description: 'Who started the work: the public key it was started with, or the origin of work no key started, such as hook:chat.'
           type: string
         provider:
           type: string
@@ -351,7 +351,7 @@ components:
         - usage_id
         - occurred_at
         - app_id
-        - api_key
+        - origin
         - usage_categories
         - meter
         - quantities
@@ -907,6 +907,93 @@ components:
       required:
         - fail_mode
       type: object
+    UsageEvent:
+      additionalProperties: true
+      properties:
+        agent_id:
+          type: string
+        app_id:
+          type: string
+        attributes:
+          additionalProperties:
+            type: string
+          type: object
+        base_cost_micros:
+          format: int64
+          type: integer
+        billable:
+          type: boolean
+        byok:
+          type: boolean
+        call_id:
+          type: string
+        cost_micros:
+          format: int64
+          type: integer
+        error_code:
+          type: string
+        meter:
+          type: string
+        model:
+          type: string
+        occurred_at:
+          format: date-time
+          type: string
+        organization_id:
+          type: string
+        organization_tier:
+          type: string
+        origin:
+          description: 'Who started the work: the public key it was started with, or the origin of work no key started, such as hook:chat.'
+          type: string
+        price_version:
+          type: string
+        provider:
+          type: string
+        purpose:
+          type: string
+        quantities:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
+        region:
+          type: string
+        session_id:
+          type: string
+        sku:
+          type: string
+        source:
+          type: string
+        success:
+          type: boolean
+        tags:
+          additionalProperties:
+            type: string
+          type: object
+        usage_categories:
+          items:
+            type: string
+          nullable: true
+          type: array
+        usage_id:
+          type: string
+        user_id:
+          type: string
+      required:
+        - origin
+        - usage_id
+        - occurred_at
+        - organization_id
+        - organization_tier
+        - app_id
+        - meter
+        - quantities
+        - cost_micros
+        - billable
+        - success
+        - source
+      type: object
     UsageEventPage:
       additionalProperties: true
       properties:
@@ -914,7 +1001,7 @@ components:
           type: boolean
         items:
           items:
-            $ref: '#/components/schemas/Event'
+            $ref: '#/components/schemas/UsageEvent'
           nullable: true
           type: array
         next_cursor:
@@ -1290,20 +1377,12 @@ paths:
           name: app_id
           schema:
             type: string
-        - description: Only events started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is an app's credential across Stream's APIs, and Stream's staff gateway refuses it.
+        - description: Only events started with this public API key, or by this origin of work no key started, such as hook:chat.
           explode: false
           in: query
-          name: api_key_id
+          name: origin
           schema:
-            description: Only events started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is an app's credential across Stream's APIs, and Stream's staff gateway refuses it.
-            type: string
-        - description: The old name of api_key_id, still read for one release. Given with api_key_id, it must name the same key.
-          explode: false
-          in: query
-          name: api_key
-          schema:
-            deprecated: true
-            description: The old name of api_key_id, still read for one release. Given with api_key_id, it must name the same key.
+            description: Only events started with this public API key, or by this origin of work no key started, such as hook:chat.
             type: string
         - description: 'Needs app_id: a user id is only unique within its app.'
           explode: false
@@ -1963,20 +2042,12 @@ paths:
           name: app_id
           schema:
             type: string
-        - description: Only events started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is an app's credential across Stream's APIs, and Stream's staff gateway refuses it.
+        - description: Only events started with this public API key, or by this origin of work no key started, such as hook:chat.
           explode: false
           in: query
-          name: api_key_id
+          name: origin
           schema:
-            description: Only events started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is an app's credential across Stream's APIs, and Stream's staff gateway refuses it.
-            type: string
-        - description: The old name of api_key_id, still read for one release. Given with api_key_id, it must name the same key.
-          explode: false
-          in: query
-          name: api_key
-          schema:
-            deprecated: true
-            description: The old name of api_key_id, still read for one release. Given with api_key_id, it must name the same key.
+            description: Only events started with this public API key, or by this origin of work no key started, such as hook:chat.
             type: string
         - description: 'Needs app_id: a user id is only unique within its app.'
           explode: false

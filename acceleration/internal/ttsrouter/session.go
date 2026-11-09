@@ -219,6 +219,9 @@ func (s *Session) Provider() string { return s.config.Provider }
 // Model is the model serving this session.
 func (s *Session) Model() string { return s.config.Model }
 
+// Config is the routing identity of the provider serving this session.
+func (s *Session) Config() routing.ProviderConfig { return s.config }
+
 // Voice is the voice speaking, the provider's default included. Empty when the provider
 // cannot say.
 func (s *Session) Voice() string {

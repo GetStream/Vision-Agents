@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"reflect"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,6 +40,10 @@ type router struct {
 	conversation string
 	// watchedWith is the query the socket was opened with.
 	watchedWith url.Values
+	// stopped are the sessions asked to stop over HTTP rather than over their socket.
+	stopped []string
+	// stopWith is the status a stop over HTTP is answered with; zero is 204.
+	stopWith int
 
 	// serve is what the socket does once a client is on it.
 	serve func(t *testing.T, connection *websocket.Conn)
@@ -72,6 +78,20 @@ func newRouter(t *testing.T, serve func(*testing.T, *websocket.Conn)) *router {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(created)
+	})
+
+	mux.HandleFunc("POST /v1/agents/sessions/{id}/stop", func(w http.ResponseWriter, r *http.Request) {
+		backend.mu.Lock()
+		backend.stopped = append(backend.stopped, r.PathValue("id"))
+		status := backend.stopWith
+		backend.mu.Unlock()
+		if status == 0 {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = fmt.Fprintf(w, `{"error":{"type":"internal","code":"stop_%d","message":"the router said %d"}}`, status, status)
 	})
 
 	mux.HandleFunc("GET /v1/agents/configs", func(w http.ResponseWriter, _ *http.Request) {
@@ -638,6 +658,129 @@ func TestLeavingWaitsForTheRouterToEndTheSession(t *testing.T) {
 	}
 	if !slices.Contains(kinds, "left") {
 		t.Fatalf("the client hung up before the router ended the session: got %v", kinds)
+	}
+}
+
+func TestLeavingTwiceClosesTheSessionOnce(t *testing.T) {
+	var closes atomic.Int64
+	backend := newRouter(t, func(t *testing.T, connection *websocket.Conn) {
+		hold(t, connection)
+		closes.Add(1)
+		_ = connection.WriteJSON(map[string]any{"type": "left"})
+	})
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := pipeline.Leave(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := pipeline.Leave(t.Context()); err != nil {
+		t.Errorf("leaving a session already left failed: %v", err)
+	}
+
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if closes.Load() != 1 || len(backend.stopped) != 0 {
+		t.Errorf("the session was closed %d times over its socket and %v over HTTP, want once",
+			closes.Load(), backend.stopped)
+	}
+	if pipeline.Session() != nil {
+		t.Error("a pipeline that left still holds its session")
+	}
+}
+
+func TestLeavingASessionWhoseSocketIsGoneStopsItOverHTTP(t *testing.T) {
+	backend := newRouter(t, func(_ *testing.T, connection *websocket.Conn) {
+		_ = connection.WriteJSON(map[string]any{"type": "joined"})
+		_ = connection.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, "done here"))
+	})
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
+		t.Fatal(err)
+	}
+	for range pipeline.Events() {
+	}
+
+	if err := pipeline.Leave(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if !slices.Equal(backend.stopped, []string{"session-1"}) {
+		t.Errorf("the sessions stopped over HTTP were %v, want session-1", backend.stopped)
+	}
+}
+
+func TestLeavingASessionWhoseSocketIsGoneReportsARefusedStop(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		want   int
+	}{
+		{name: "a session the router no longer holds is left", status: http.StatusNotFound},
+		{name: "a forbidden stop is an error", status: http.StatusForbidden, want: http.StatusForbidden},
+		{name: "a failed stop is an error", status: http.StatusInternalServerError, want: http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := newRouter(t, func(_ *testing.T, connection *websocket.Conn) {
+				_ = connection.WriteJSON(map[string]any{"type": "joined"})
+				_ = connection.WriteMessage(websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "done here"))
+			})
+			backend.stopWith = tc.status
+			pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+			if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
+				t.Fatal(err)
+			}
+			for range pipeline.Events() {
+			}
+
+			err := pipeline.Leave(t.Context())
+
+			var refused *RouterError
+			switch {
+			case tc.want == 0 && err != nil:
+				t.Fatalf("leaving failed: %v", err)
+			case tc.want != 0 && !errors.As(err, &refused):
+				t.Fatalf("leaving answered %v, want the router's refusal", err)
+			case tc.want != 0 && refused.Status != tc.want:
+				t.Errorf("the refusal's status is %d, want %d", refused.Status, tc.want)
+			}
+		})
+	}
+}
+
+func TestLeavingAsTheRouterClosesTheSocketStopsTheSessionOverHTTP(t *testing.T) {
+	// The router's close frame has been read, and answered, before the socket is marked
+	// closed: the window between Leave reading it as open and sending on it.
+	backend := newRouter(t, func(_ *testing.T, connection *websocket.Conn) {
+		_ = connection.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, "done here"))
+		_, _, _ = connection.ReadMessage()
+	})
+	socket := NewSocket(Backend{URL: backend.URL}.SocketURL("/v1/agents/sessions/session-1/events"), nil, nil, nil)
+	if err := socket.Open(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := socket.Read(); err == nil {
+		t.Fatal("the router's close frame was not read")
+	}
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	pipeline.session = &acceleration.Session{Id: "session-1"}
+	pipeline.socket = socket
+
+	if err := pipeline.Leave(t.Context()); err != nil {
+		t.Fatalf("leaving a session the router was ending failed: %v", err)
+	}
+
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if !slices.Equal(backend.stopped, []string{"session-1"}) {
+		t.Errorf("the sessions stopped over HTTP were %v, want session-1", backend.stopped)
 	}
 }
 

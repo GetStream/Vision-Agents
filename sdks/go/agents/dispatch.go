@@ -44,7 +44,8 @@ const defaultTurnTimeout = 5 * time.Minute
 // per conversation.
 type DispatchOptions struct {
 	// Backend is which router to wait on and who is billed. Its zero value reads the
-	// environment.
+	// environment. A client's Backend has what Answer's requests cost reach that client's
+	// WithUsage and WithBalanceWarning.
 	Backend stream.Backend
 	// Capacity is how much work to hold at once. Zero takes the router's assumption.
 	Capacity int

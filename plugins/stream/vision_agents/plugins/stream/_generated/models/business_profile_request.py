@@ -224,7 +224,7 @@ class BusinessProfileRequest:
         if isinstance(_legal_entity_type, Unset):
             legal_entity_type = UNSET
         else:
-            legal_entity_type = BusinessProfileRequestLegalEntityType(
+            legal_entity_type = BusinessProfileRequestLegalEntityType._decode(
                 _legal_entity_type
             )
 
@@ -233,7 +233,7 @@ class BusinessProfileRequest:
         if isinstance(_organization_type, Unset):
             organization_type = UNSET
         else:
-            organization_type = BusinessProfileRequestOrganizationType(
+            organization_type = BusinessProfileRequestOrganizationType._decode(
                 _organization_type
             )
 

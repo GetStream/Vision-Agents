@@ -24,8 +24,10 @@ final readonly class AgentConfig
         /** @var list<AgentConnectorBinding>|null */
         public ?array $connectors = null,
         public ?AgentDispatch $dispatch = null,
-        // Whether each phone call and each app chat conversation under this agent writes an episode card into the per...
-        public ?bool $episodeCards = null,
+        // What this agent does with episode cards. record and on write a card into the person's omni-channel for each...
+        public EpisodeCardsMode|string|null $episodeCards = null,
+        // The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop....
+        public ?FloorControl $floorControl = null,
         public ?Greeting $greeting = null,
         public ?string $guardrail = null,
         public Harness|string|null $harness = null,
@@ -81,7 +83,8 @@ final readonly class AgentConfig
             channels: array_key_exists('channels', $data) && $data['channels'] !== null ? AgentChannels::fromArray(Json::object($data, 'channels')) : null,
             connectors: array_key_exists('connectors', $data) && $data['connectors'] !== null ? array_map(AgentConnectorBinding::fromArray(...), Json::objects($data, 'connectors')) : null,
             dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
-            episodeCards: array_key_exists('episode_cards', $data) && $data['episode_cards'] !== null ? Json::bool($data, 'episode_cards') : null,
+            episodeCards: array_key_exists('episode_cards', $data) && $data['episode_cards'] !== null ? Json::enum($data, 'episode_cards', EpisodeCardsMode::class) : null,
+            floorControl: array_key_exists('floor_control', $data) && $data['floor_control'] !== null ? FloorControl::fromArray(Json::object($data, 'floor_control')) : null,
             greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Greeting::fromArray(Json::object($data, 'greeting')) : null,
             guardrail: array_key_exists('guardrail', $data) && $data['guardrail'] !== null ? Json::string($data, 'guardrail') : null,
             harness: array_key_exists('harness', $data) && $data['harness'] !== null ? Json::enum($data, 'harness', Harness::class) : null,
@@ -138,7 +141,10 @@ final readonly class AgentConfig
             $out['dispatch'] = $this->dispatch->toArray();
         }
         if ($this->episodeCards !== null) {
-            $out['episode_cards'] = $this->episodeCards;
+            $out['episode_cards'] = Json::enumValue($this->episodeCards);
+        }
+        if ($this->floorControl !== null) {
+            $out['floor_control'] = $this->floorControl->toArray();
         }
         if ($this->greeting !== null) {
             $out['greeting'] = $this->greeting->toArray();

@@ -176,17 +176,17 @@ impl Client {
     /// The campaigns the calling customer has
     ///
     /// `GET /v1/agents/campaigns` (`listCampaigns`).
-    pub async fn list_campaigns(&self) -> Result<Vec<types::Campaign>> {
+    pub async fn list_campaigns(&self, query: &ListCampaignsQuery) -> Result<types::CampaignPage> {
         self.send(
             Method::GET,
             "/v1/agents/campaigns",
-            None::<&()>,
+            Some(query),
             None::<&()>,
             "listCampaigns",
         )
         .await
     }
-    /// Define a list of people to ring
+    /// Make a draft campaign
     ///
     /// `POST /v1/agents/campaigns` (`createCampaign`).
     pub async fn create_campaign(&self, body: &types::CampaignRequest) -> Result<types::Campaign> {
@@ -199,7 +199,7 @@ impl Client {
         )
         .await
     }
-    /// One campaign
+    /// One campaign, with its contacts counted by stage
     ///
     /// `GET /v1/agents/campaigns/{id}` (`getCampaign`).
     pub async fn get_campaign(&self, id: &str) -> Result<types::Campaign> {
@@ -212,14 +212,61 @@ impl Client {
         )
         .await
     }
-    /// Who a campaign is ringing, and how far it has got
+    /// Change a campaign's settings
+    ///
+    /// `PATCH /v1/agents/campaigns/{id}` (`updateCampaign`).
+    pub async fn update_campaign(
+        &self,
+        id: &str,
+        body: &types::CampaignRequest,
+    ) -> Result<types::Campaign> {
+        self.send(
+            Method::PATCH,
+            &format!("/v1/agents/campaigns/{id}", id = segment(id)),
+            None::<&()>,
+            Some(body),
+            "updateCampaign",
+        )
+        .await
+    }
+    /// Delete a campaign and its contacts
+    ///
+    /// `DELETE /v1/agents/campaigns/{id}` (`deleteCampaign`).
+    pub async fn delete_campaign(&self, id: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!("/v1/agents/campaigns/{id}", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "deleteCampaign",
+        )
+        .await
+    }
+    /// How a campaign's calls went
+    ///
+    /// `GET /v1/agents/campaigns/{id}/analytics` (`getCampaignAnalytics`).
+    pub async fn get_campaign_analytics(&self, id: &str) -> Result<types::CampaignAnalytics> {
+        self.send(
+            Method::GET,
+            &format!("/v1/agents/campaigns/{id}/analytics", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "getCampaignAnalytics",
+        )
+        .await
+    }
+    /// Who a campaign rings, and how far it has got
     ///
     /// `GET /v1/agents/campaigns/{id}/contacts` (`listCampaignContacts`).
-    pub async fn list_campaign_contacts(&self, id: &str) -> Result<Vec<types::Contact>> {
+    pub async fn list_campaign_contacts(
+        &self,
+        id: &str,
+        query: &ListCampaignContactsQuery,
+    ) -> Result<types::ContactPage> {
         self.send(
             Method::GET,
             &format!("/v1/agents/campaigns/{id}/contacts", id = segment(id)),
-            None::<&()>,
+            Some(query),
             None::<&()>,
             "listCampaignContacts",
         )
@@ -231,14 +278,99 @@ impl Client {
     pub async fn add_campaign_contacts(
         &self,
         id: &str,
-        body: &types::ContactsRequest,
-    ) -> Result<Vec<types::Contact>> {
+        body: &types::AddContactsRequest,
+    ) -> Result<types::AddContactsResponse> {
         self.send(
             Method::POST,
             &format!("/v1/agents/campaigns/{id}/contacts", id = segment(id)),
             None::<&()>,
             Some(body),
             "addCampaignContacts",
+        )
+        .await
+    }
+    /// Remove every contact of a draft
+    ///
+    /// `DELETE /v1/agents/campaigns/{id}/contacts` (`deleteCampaignContacts`).
+    pub async fn delete_campaign_contacts(&self, id: &str) -> Result<()> {
+        self.send(
+            Method::DELETE,
+            &format!("/v1/agents/campaigns/{id}/contacts", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "deleteCampaignContacts",
+        )
+        .await
+    }
+    /// One contact, with every dial made to them
+    ///
+    /// `GET /v1/agents/campaigns/{id}/contacts/{contact_id}` (`getCampaignContact`).
+    pub async fn get_campaign_contact(&self, id: &str, contact_id: &str) -> Result<types::Contact> {
+        self.send(
+            Method::GET,
+            &format!(
+                "/v1/agents/campaigns/{id}/contacts/{contact_id}",
+                id = segment(id),
+                contact_id = segment(contact_id)
+            ),
+            None::<&()>,
+            None::<&()>,
+            "getCampaignContact",
+        )
+        .await
+    }
+    /// Ring a contact no more
+    ///
+    /// `POST /v1/agents/campaigns/{id}/contacts/{contact_id}/stop` (`stopCampaignContact`).
+    pub async fn stop_campaign_contact(
+        &self,
+        id: &str,
+        contact_id: &str,
+    ) -> Result<types::Contact> {
+        self.send(
+            Method::POST,
+            &format!(
+                "/v1/agents/campaigns/{id}/contacts/{contact_id}/stop",
+                id = segment(id),
+                contact_id = segment(contact_id)
+            ),
+            None::<&()>,
+            None::<&()>,
+            "stopCampaignContact",
+        )
+        .await
+    }
+    /// Make a draft with a campaign's settings
+    ///
+    /// `POST /v1/agents/campaigns/{id}/duplicate` (`duplicateCampaign`).
+    pub async fn duplicate_campaign(
+        &self,
+        id: &str,
+        body: &types::DuplicateCampaignRequest,
+    ) -> Result<types::Campaign> {
+        self.send(
+            Method::POST,
+            &format!("/v1/agents/campaigns/{id}/duplicate", id = segment(id)),
+            None::<&()>,
+            Some(body),
+            "duplicateCampaign",
+        )
+        .await
+    }
+    /// Launch a draft
+    ///
+    /// `POST /v1/agents/campaigns/{id}/launch` (`launchCampaign`).
+    pub async fn launch_campaign(
+        &self,
+        id: &str,
+        body: &types::LaunchCampaignRequest,
+    ) -> Result<types::Campaign> {
+        self.send(
+            Method::POST,
+            &format!("/v1/agents/campaigns/{id}/launch", id = segment(id)),
+            None::<&()>,
+            Some(body),
+            "launchCampaign",
         )
         .await
     }
@@ -255,16 +387,29 @@ impl Client {
         )
         .await
     }
-    /// Start ringing
+    /// Ring people again
     ///
-    /// `POST /v1/agents/campaigns/{id}/start` (`startCampaign`).
-    pub async fn start_campaign(&self, id: &str) -> Result<types::Campaign> {
+    /// `POST /v1/agents/campaigns/{id}/resume` (`resumeCampaign`).
+    pub async fn resume_campaign(&self, id: &str) -> Result<types::Campaign> {
         self.send(
             Method::POST,
-            &format!("/v1/agents/campaigns/{id}/start", id = segment(id)),
+            &format!("/v1/agents/campaigns/{id}/resume", id = segment(id)),
             None::<&()>,
             None::<&()>,
-            "startCampaign",
+            "resumeCampaign",
+        )
+        .await
+    }
+    /// End a campaign for good
+    ///
+    /// `POST /v1/agents/campaigns/{id}/stop` (`stopCampaign`).
+    pub async fn stop_campaign(&self, id: &str) -> Result<types::Campaign> {
+        self.send(
+            Method::POST,
+            &format!("/v1/agents/campaigns/{id}/stop", id = segment(id)),
+            None::<&()>,
+            None::<&()>,
+            "stopCampaign",
         )
         .await
     }
@@ -2099,6 +2244,19 @@ impl Client {
         )
         .await
     }
+    /// Get a user's phone link
+    ///
+    /// `GET /v1/agents/users/{user_id}` (`getUser`).
+    pub async fn get_user(&self, user_id: &str) -> Result<types::AgentUser> {
+        self.send(
+            Method::GET,
+            &format!("/v1/agents/users/{user_id}", user_id = segment(user_id)),
+            None::<&()>,
+            None::<&()>,
+            "getUser",
+        )
+        .await
+    }
     /// Link a user to a phone number
     ///
     /// `PUT /v1/agents/users/{user_id}` (`updateUser`).
@@ -2385,11 +2543,15 @@ impl Client {
     /// Write an export, or a batch of changes, into this deployment
     ///
     /// `POST /v1/data/import` (`importData`).
-    pub async fn import_data(&self, body: &serde_json::Value) -> Result<types::DataImport> {
+    pub async fn import_data(
+        &self,
+        query: &ImportDataQuery,
+        body: &serde_json::Value,
+    ) -> Result<types::DataImport> {
         self.send(
             Method::POST,
             "/v1/data/import",
-            None::<&()>,
+            Some(query),
             Some(body),
             "importData",
         )
@@ -4137,6 +4299,35 @@ pub struct GetCallEventsQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
 }
+/// The query string `listCampaigns` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListCampaignsQuery {
+    /// Only the campaigns in this state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    /// Up to 200. Omitted is 50.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The next_cursor of the previous page, sent with the same state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+/// The query string `listCampaignContacts` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListCampaignContactsQuery {
+    /// Up to 200. Omitted is 50.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The next_cursor of the previous page, sent with the same filters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    /// Only the contacts at this stage.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
+    /// Only the contacts whose number contains this.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub number: Option<String>,
+}
 /// The query string `listAgentConfigs` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct ListAgentConfigsQuery {
@@ -4417,6 +4608,13 @@ pub struct ListDataChangesQuery {
     pub after: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+}
+/// The query string `importData` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ImportDataQuery {
+    /// Write an export's rows over what an app that already has data here holds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full: Option<bool>,
 }
 /// The query string `getActivePriceList` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -4729,7 +4927,7 @@ pub struct GetAgentStatsQuery {
 /// The query string `getSpend` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct GetSpendQuery {
-    /// "modality", who asked (who:app, who:api_key, who:user, who:team or who:category), or the cost label to group by.
+    /// "modality", who asked (who:app, who:origin, who:user, who:team or who:category), or the cost label to group by.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_by: Option<String>,
     /// How many values keep a series of their own.
@@ -4749,9 +4947,9 @@ pub struct GetSpendQuery {
     /// Only count requests carrying every one of these cost labels, each written "key:value". Repeat for several.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
-    /// Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+    /// Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key_id: Option<String>,
+    pub origin: Option<String>,
     /// Only count usage for this end user of the app.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
@@ -4815,9 +5013,9 @@ pub struct ListUsageEventsQuery {
     /// Only this kind of work, such as llm or runtime.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meter: Option<String>,
-    /// Only work started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+    /// Only work started with this public API key, or by this origin of work no key started, such as hook:chat.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key_id: Option<String>,
+    pub origin: Option<String>,
     /// Only work for this end user of the app. With scope=organization it needs app_id, since a user id is only unique within its app.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,

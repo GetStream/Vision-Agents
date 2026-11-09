@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"log/slog"
 	"os"
 	"regexp"
@@ -79,6 +80,12 @@ type cadence struct {
 	// marksEnds says the transcriber has sent a final, so it is one that says when a turn
 	// has ended.
 	marksEnds bool
+	// endedBy is the transcriber whose finals are the model's end of the turn, the
+	// chorus-asr transcriber an agent acting on the model has ask about each pause, empty
+	// when there is none. Its final is the end the agent's end-of-turn point ruled, and the
+	// words never change after it, so it is put at once (endedLocked). So is a final of
+	// another transcriber's words chorus-asr's floor ended (stt.Transcript.Floor).
+	endedBy string
 }
 
 type cadenceSpeaker struct {
@@ -264,11 +271,14 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 	current.ended = transcript.Mode == stt.ModeFinal
 	c.marksEnds = c.marksEnds || current.ended
 	final := transcript.Mode == stt.ModeFinal && !incompleteIdentifier(text)
+	ruled := c.endedLocked(transcript)
 	if sameWords(current.text, text) {
 		// The transcriber finalizing words already waited on means they have stopped, so
 		// the wait is cut short. It is never lengthened: a final that arrives late must
 		// not hold back words that already held still.
-		if final && current.timer != nil && current.candidateID == "" {
+		if ruled && current.timer != nil && current.candidateID == "" {
+			c.scheduleLocked(current, 0)
+		} else if final && current.timer != nil && current.candidateID == "" {
 			c.scheduleLocked(current, c.finalGapLocked())
 		}
 		return "", ""
@@ -307,6 +317,9 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 		// the last digit lands passes a tool the identifier without it.
 		delay = c.retry
 	}
+	if ruled {
+		delay = 0
+	}
 	c.scheduleLocked(current, delay)
 	c.logger.Debug("heard more, waiting for the words to stop changing",
 		"participant", transcript.Participant.ID, "mode", transcript.Mode, "text", text,
@@ -317,6 +330,16 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 // Resolve records what became of a candidate. Waiting retries the same words after a
 // longer pause; every other decision commits them and starts the next utterance cleanly.
 func (c *cadence) Resolve(candidateID string, wait bool) bool {
+	return c.resolve(candidateID, wait, 0)
+}
+
+// Retry waits on a candidate as Resolve does, but puts the same words again after again
+// rather than the usual retry, when it is set.
+func (c *cadence) Retry(candidateID string, again time.Duration) bool {
+	return c.resolve(candidateID, true, again)
+}
+
+func (c *cadence) resolve(candidateID string, wait bool, again time.Duration) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -326,7 +349,7 @@ func (c *cadence) Resolve(candidateID string, wait bool) bool {
 		}
 		current.candidateID = ""
 		if wait {
-			retry := c.retry
+			retry := cmp.Or(again, c.retry)
 			// The end the transcriber marked while the words were being judged is the
 			// longer pause the wait was for.
 			if current.ended && !current.askedEnded {
@@ -498,6 +521,14 @@ func (c *cadence) Close() {
 			current.timer.Stop()
 		}
 	}
+}
+
+// endedLocked reports whether transcript is a final the model ended its turn on, which is put
+// at once: the end-of-turn policy has had its wait, a number dictated with pauses included,
+// which its points were measured on, and the floor sends one final an utterance, so the words
+// will not change, whichever transcriber wrote them. The caller holds the lock.
+func (c *cadence) endedLocked(transcript stt.Transcript) bool {
+	return c.endedBy != "" && transcript.Final() && (transcript.Provider == c.endedBy || transcript.Floor)
 }
 
 // finalGapLocked is the wait for words a transcriber has finalized, with any grace still owed

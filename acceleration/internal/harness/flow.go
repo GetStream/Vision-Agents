@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -73,6 +74,14 @@ type FlowTurn struct {
 	// Reply is what the agent is currently saying, so the controller can tell a cough
 	// overlapping a read-back from a caller who is correcting it.
 	Reply string
+	// Heard is how much of Reply the caller has heard by now, as the agent's voice has played
+	// it, when Measured says the agent could tell; otherwise Reply stands for it.
+	Heard    string
+	Measured bool
+	// Unsaid says the agent is on a turn that has written and said nothing yet, such as the
+	// answer after a tool's result before its first words: Reply is then the agent's line
+	// before it, which was said whole, and the agent has so far said nothing of the turn.
+	Unsaid bool
 	// Unfinished says the words are what has been heard so far of an utterance still in
 	// progress, so the only question is who keeps the floor rather than what to answer.
 	Unfinished bool
@@ -90,12 +99,25 @@ type FlowTurn struct {
 	// what they had said, so they are giving one thought in parts and a part that sounds
 	// complete may not be the end of it.
 	InParts bool
+	// Audio and Tools are for a Hearer: the speaker's last 16 s, and the tools the
+	// customer declared.
+	Audio Audio
+	Tools []llm.Tool
+	// Paused is how long the words had held still when they were put, and FirstPause says
+	// no earlier pause in the speaker's turn was waited out: what a Hearer ends a turn on.
+	Paused     time.Duration
+	FirstPause bool
+	// ParticipantID is the speaker's own, stable ID, which a Hearer counts their checks by:
+	// Participant is how the prompt calls them, and two speakers may be called alike.
+	ParticipantID string
 }
 
 type flow struct {
 	model *llmrouter.Session
 	// judge, when set, is asked in place of model.
-	judge       Judge
+	judge Judge
+	// hearer, when set, is asked first, and judge or model only when it can't answer.
+	hearer      Hearer
 	emitter     *Emitter
 	logger      *slog.Logger
 	onModelCall func(llm.CallTiming)
@@ -250,6 +272,9 @@ func (f *flow) run(asked *candidate) {
 	defer f.running.Done()
 	defer f.advance(turn.ID)
 
+	if f.hearer != nil && f.runHearer(asked) {
+		return
+	}
 	if f.judge != nil {
 		f.runJudge(asked)
 		return
@@ -278,7 +303,7 @@ func (f *flow) run(asked *candidate) {
 		if f.yieldExpiredOverlap(asked) {
 			return
 		}
-		f.logger.Error("flow controller failed", "error", err)
+		f.logger.Error("flow controller failed", "provider", model.Provider(), "model", model.Model(), "error", err)
 		f.emitter.Send(Decided{
 			CandidateID: turn.ID,
 			TookMs:      millis(time.Since(asked.askedAt)),
@@ -485,7 +510,9 @@ func (f *flow) consume(asked *candidate, stream *llm.Stream, primary *llmrouter.
 			// answered: the ruling carries the timeout, as one for a Create that timed out does.
 			err = fmt.Errorf("harness: decide flow: %w", asked.ctx.Err())
 		}
-		f.logger.Error("flow controller failed", "error", err)
+		// The failing stream may come from a hedge or a failover, another provider behind the session.
+		f.logger.Error("flow controller failed", "provider", cmp.Or(response.Provider, primary.Provider()),
+			"model", cmp.Or(response.Model, primary.Model()), "error", err)
 		f.emitter.Send(Decided{CandidateID: candidateID, TookMs: took, Err: err})
 		return
 	}

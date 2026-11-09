@@ -111,6 +111,23 @@ type Settings struct {
 	// queued for its stream destinations, so whatever sends them looks at once. Nil leaves them
 	// to its next look.
 	Notified func()
+	// LimitHit is told of every refusal of an organization at its credit, Stream's spend hard
+	// limit or its own spend limits, and in shadow of every one that would have been, on the
+	// admission's goroutine: it must not block. Nil tells nobody.
+	LimitHit func(LimitHit)
+}
+
+// LimitHit is an organization refused at a money limit, or one that would have been in shadow.
+type LimitHit struct {
+	OrganizationID string
+	AppID          string
+	Tier           string
+	// Kind is store.LimitNoCredit, store.LimitSpendHardLimit or store.LimitSpendLimit.
+	Kind string
+	// Enforced says the work was refused; false is shadow, which admitted it.
+	Enforced bool
+	// Message is the refusal as the caller is, or would have been, answered.
+	Message string
 }
 
 // Defaults of Settings.

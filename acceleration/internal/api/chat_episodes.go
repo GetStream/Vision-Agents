@@ -20,8 +20,8 @@ const chatCardTimeout = 30 * time.Second
 // chatEpisode opens the episode a person's message in an agent channel of the app chat is in,
 // in the person's omni-channel, and writes its card when the message opened it. answering is
 // the spec of the agent that answers the message: the running session's, or the config the
-// channel's owner holds (chatEpisodeUnopened). Only a config with episode_cards on has any:
-// off, nothing here reads or writes. A thread channel's episode is the channel bridge's, an
+// channel's owner holds (chatEpisodeUnopened). Only a config that writes cards, episode_cards
+// on or record (Spec.WritesCards), has any: off, nothing here reads or writes. A thread channel's episode is the channel bridge's, an
 // omni-channel is where cards are written and never where an episode starts, and a session on
 // a call has its call's card, whose lines a chat episode in the same channel would cut short
 // (store.EpisodeCards, until).
@@ -31,7 +31,10 @@ const chatCardTimeout = 30 * time.Second
 // the channel's id for every session a message here reaches (ByAgentWhere) and for the one a
 // worker opens for it (Manager.handedOut). It is the rule a session reads the cards by
 // (omnichannel.Between). The members are the ones Stream sends with the message; none sent is
-// no person, and opens nothing. The episode starts when Stream made the message that opened
+// no person, and opens nothing. The person is only who a token Stream checked says, so an app
+// Stream says checks no tokens, or one it could not be asked about, opens nothing either, as a
+// session reads no card there (session.callCards.checksTokens): a client there may write as
+// anybody, into anybody's omni-channel. The episode starts when Stream made the message that opened
 // it, so the summary, which reads the lines from the start on (omnichannel.linesOf), holds it:
 // the open comes after it, on the router's clock.
 //
@@ -41,7 +44,7 @@ const chatCardTimeout = 30 * time.Second
 // writes no second card. An episode or a card that fails costs the card, not the answer: it
 // is logged and the message is answered all the same.
 func (s *Server) chatEpisode(ctx context.Context, origin hookOrigin, event messageEvent, answering session.Spec) {
-	if s.chatCards == nil || !answering.EpisodeCards || answering.Incognito || answering.CallID != "" ||
+	if s.chatCards == nil || !answering.WritesCards() || answering.Incognito || answering.CallID != "" ||
 		strings.HasPrefix(event.ChannelID, conversation.ThreadChannelPrefix) || omnichannel.IsOmniChannel(event.ChannelID) {
 		return
 	}
@@ -53,6 +56,11 @@ func (s *Server) chatEpisode(ctx context.Context, origin hookOrigin, event messa
 	}
 	if !omnichannel.Between(event.members(), event.Message.User.ID, event.ChannelID) {
 		s.logger.Info("no episode card for a message in a channel that is not the person's alone", "channel", event.ChannelID,
+			"stream_app", origin.app)
+		return
+	}
+	if !s.checksTokens(ctx, origin, answering.CustomerID) {
+		s.logger.Info("no episode card for a message in an app that does not check tokens", "channel", event.ChannelID,
 			"stream_app", origin.app)
 		return
 	}
@@ -85,6 +93,25 @@ func (s *Server) chatEpisode(ctx context.Context, origin hookOrigin, event messa
 				"customer", answering.CustomerID, "episode", opened.Episode.ID, "error", err)
 		}
 	})
+}
+
+// checksTokens reports whether Stream says the app a hook came from, as the customer acts in
+// it, checks the tokens it is sent (streamapp.Clients.ChecksTokens). An app that could not be
+// asked is taken as one that does not. Asking takes at most omnichannel.ReadTimeout, as a
+// session's read of the cards does: the message is handed on after it.
+func (s *Server) checksTokens(ctx context.Context, origin hookOrigin, customer string) bool {
+	ctx, cancel := context.WithTimeout(ctx, omnichannel.ReadTimeout)
+	defer cancel()
+	bound, err := s.streamForApp(ctx, customer, origin.app, false)
+	checks := false
+	if err == nil {
+		checks, err = s.stream.ChecksTokens(ctx, bound)
+	}
+	if err != nil {
+		s.logger.Warn("could not ask Stream whether an app checks tokens, so no episode card is written",
+			"customer", customer, "stream_app", origin.app, "error", err)
+	}
+	return checks
 }
 
 // chatEpisodeUnopened is chatEpisode for a message nothing runs for, which a worker is handed:

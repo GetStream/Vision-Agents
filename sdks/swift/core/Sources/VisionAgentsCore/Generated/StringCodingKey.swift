@@ -18,6 +18,7 @@ struct StringCodingKey: CodingKey, ExpressibleByStringLiteral {
 }
 
 extension StringCodingKey {
+    static let action: StringCodingKey = "action"
     static let agent: StringCodingKey = "agent"
     static let agentId: StringCodingKey = "agent_id"
     static let allowTitle: StringCodingKey = "allow_title"
@@ -59,7 +60,9 @@ extension StringCodingKey {
     static let displayTitle: StringCodingKey = "display_title"
     static let durationSeconds: StringCodingKey = "duration_seconds"
     static let end: StringCodingKey = "end"
+    static let endFault: StringCodingKey = "end_fault"
     static let endReason: StringCodingKey = "end_reason"
+    static let endStage: StringCodingKey = "end_stage"
     static let error: StringCodingKey = "error"
     static let excludeDomains: StringCodingKey = "exclude_domains"
     static let executor: StringCodingKey = "executor"
@@ -67,6 +70,7 @@ extension StringCodingKey {
     static let field: StringCodingKey = "field"
     static let filter: StringCodingKey = "filter"
     static let finishedAt: StringCodingKey = "finished_at"
+    static let floorControl: StringCodingKey = "floor_control"
     static let forkedFrom: StringCodingKey = "forked_from"
     static let greeting: StringCodingKey = "greeting"
     static let gte: StringCodingKey = "$gte"
@@ -98,6 +102,7 @@ extension StringCodingKey {
     static let maxOutputTokens: StringCodingKey = "max_output_tokens"
     static let maxTokens: StringCodingKey = "max_tokens"
     static let maxToolRounds: StringCodingKey = "max_tool_rounds"
+    static let maxWaitMs: StringCodingKey = "max_wait_ms"
     static let memory: StringCodingKey = "memory"
     static let message: StringCodingKey = "message"
     static let messages: StringCodingKey = "messages"
@@ -164,6 +169,7 @@ extension StringCodingKey {
     static let tags: StringCodingKey = "tags"
     static let target: StringCodingKey = "target"
     static let taskId: StringCodingKey = "task_id"
+    static let team: StringCodingKey = "team"
     static let temperature: StringCodingKey = "temperature"
     static let text: StringCodingKey = "text"
     static let thinking: StringCodingKey = "thinking"
@@ -191,4 +197,5 @@ extension StringCodingKey {
     static let video: StringCodingKey = "video"
     static let videos: StringCodingKey = "videos"
     static let voice: StringCodingKey = "voice"
+    static let voicemail: StringCodingKey = "voicemail"
 }

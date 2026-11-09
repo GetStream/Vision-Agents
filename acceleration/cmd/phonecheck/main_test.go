@@ -1,6 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"crypto/rand"
+	"errors"
+	"os"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -8,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/cmd/phonecheck/person"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // fakeProviders offers the fake adapter and hands back the one parseRun made.
@@ -109,4 +115,40 @@ func TestAnUnknownSIPLookupPlaceIsRefused(t *testing.T) {
 
 func TestAProviderWordThatIsAFlagValueIsNotTheProvider(t *testing.T) {
 	assert.Equal(t, "fake", providerName([]string{"-region", "provider", "-provider", "fake"}))
+}
+
+// A provider that echoes the request's headers in its error puts the key into what phonecheck
+// logs; in either format the line keeps the reason and not the key, and the stack only where
+// the handler prints it: text does, JSON prints an error's Error().
+func TestTheLogKeepsAProvidersReasonAndNotTheKeyItEchoed(t *testing.T) {
+	key := rand.Text()
+	failure := stack.Wrap(errors.New("telnyx: 401 Unauthorized\nrequest headers: Authorization: Bearer KEY" + key))
+	for format, want := range map[string]string{
+		"text": `error="telnyx: 401 Unauthorized\nrequest headers: [redacted]\n`,
+		"json": `"error":"telnyx: 401 Unauthorized\nrequest headers: [redacted]"}`,
+	} {
+		var out bytes.Buffer
+		newLogger(format, &out).Error("run failed", "error", failure)
+		require.NotContains(t, out.String(), key, format)
+		require.Contains(t, out.String(), want, format)
+	}
+}
+
+// What main prints for a failure has a key taken out of it: a provider that names one is
+// unknown, and the refusal is printed without it.
+func TestTheFailureIsPrintedWithoutTheKeyInIt(t *testing.T) {
+	if provider := os.Getenv("PHONECHECK_MAIN_TEST_PROVIDER"); provider != "" {
+		os.Args = []string{"phonecheck", "outbound", "-provider", provider}
+		main()
+		return
+	}
+	key := rand.Text()
+	command := exec.Command(os.Args[0], "-test.run=^TestTheFailureIsPrintedWithoutTheKeyInIt$")
+	command.Env = append(os.Environ(), "PHONECHECK_MAIN_TEST_PROVIDER=Bearer sk-test-"+key)
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	require.Error(t, command.Run(), "phonecheck took a provider it does not know")
+
+	require.NotContains(t, stderr.String(), key)
+	require.Equal(t, "unknown provider \"[redacted]\"\n", stderr.String())
 }

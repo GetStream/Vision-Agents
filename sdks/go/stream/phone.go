@@ -39,9 +39,13 @@ type Phone struct {
 	client *acceleration.ClientWithResponses
 }
 
-// NewPhone reaches the telephony paths on a router.
-func NewPhone(client *acceleration.ClientWithResponses) *Phone {
-	return &Phone{client: client}
+// NewPhone reaches the telephony paths on the router backend points at.
+func NewPhone(backend Backend) (*Phone, error) {
+	client, err := backend.Client()
+	if err != nil {
+		return nil, err
+	}
+	return &Phone{client: client}, nil
 }
 
 // PurchaseAnyNumber buys the cheapest number on offer that matches the search.

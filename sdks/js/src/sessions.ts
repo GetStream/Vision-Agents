@@ -1,4 +1,5 @@
 import type { Client, Schemas } from "./client.js";
+import { checkTeam } from "./backend.js";
 import { ConfigurationError } from "./errors.js";
 import { Responses } from "./responses.js";
 import { Session, type ForkOptions, type SessionOptions } from "./session.js";
@@ -38,6 +39,13 @@ export interface SessionSpec
    * stored zone, then the agent config's default, to decide.
    */
   timezone?: string;
+  /**
+   * The team the conversation's work is counted under, its team spend limits included, for a
+   * backend opening one for a team: 1 to 59 letters, digits, _ . and -. Left out, it is the
+   * team the caller's token names, else the agent's `tags: team`. A token signed for another
+   * team is refused with a 400. Server side only: a device sending one is refused with a 403.
+   */
+  team?: string;
 }
 
 /** Opening a session, plus how it is watched. */
@@ -101,7 +109,8 @@ export class Sessions {
    * otherwise.
    */
   async create(options: CreateSessionOptions = {}): Promise<Session> {
-    const { tools, interim, decisions, watch, modelOverwrites, timezone, memory, returnUrl, ...rest } = options;
+    const { tools, interim, decisions, watch, modelOverwrites, timezone, memory, returnUrl, team, ...rest } =
+      options;
     const zone = timezone ?? deviceTimezone();
     const request: Schemas["CreateSessionRequest"] = {
       agent: this.agent,
@@ -110,6 +119,7 @@ export class Sessions {
       ...(zone ? { timezone: zone } : {}),
       ...(memory ? { memory: this.memoryOf(memory) } : {}),
       ...(returnUrl ? { return_url: returnUrl } : {}),
+      ...(team ? { team: checkTeam(team) } : {}),
     };
     return Session.open(this.client, request, watching({ tools, interim, decisions, watch }));
   }
