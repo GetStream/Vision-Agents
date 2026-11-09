@@ -447,7 +447,7 @@ func (s *Server) checkConnection(ctx context.Context, connection store.Connector
 		listed, err := source.Discover(observed, binding)
 		if err != nil {
 			if refusedStatic(s.connectors.Schemes, connection.AuthScheme, answered.status()) {
-				// The answer is not in the validate's: validationAfter says a fixed sentence.
+				// validationAfter answers a fixed sentence with none of the provider's words, so this line keeps them.
 				s.logger.Warn("a validate's credential was refused by the provider", "connection", connection.ID,
 					"connector", connection.ConnectorID, "provider_status", answered.status(),
 					"provider_message", session.ProviderMessage(err, exchange.Redact),
