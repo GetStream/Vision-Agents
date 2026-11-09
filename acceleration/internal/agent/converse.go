@@ -139,13 +139,13 @@ type Action struct {
 	At time.Time
 	// Unhold is the reply held for the speaker's lone greeting that a settled turn ended
 	// without releasing it.
-	Unhold unhold
+	Unhold endedHold
 }
 
-// unhold is a reply held for a lone greeting that a settled turn ended. grew is whether the
+// endedHold is a reply held for a lone greeting that a settled turn ended. grew is whether the
 // words were more than the greeting, which drops it; otherwise the reply is no longer the
 // unheard one, and goes out if it is still owed.
-type unhold struct {
+type endedHold struct {
 	turnID string
 	grew   bool
 }
@@ -708,24 +708,24 @@ func greetsAlone(saying string) bool {
 // second time, wait lets the reply go and may then cut it.
 // Words that are not that, or a reply no longer unheard, end the hold, which it reports
 // unless the caller going on ended it first: the words are a turn as any other.
-func (c *converse) answeredByHeld(ready candidate, state floor) (Action, bool, unhold) {
+func (c *converse) answeredByHeld(ready candidate, state floor) (Action, bool, endedHold) {
 	participantID := ready.Participant.ID
 	turnID := c.greetedBy(participantID)
 	if turnID == "" {
-		return Action{}, false, unhold{}
+		return Action{}, false, endedHold{}
 	}
 	lone := greetsAlone(unrepeated(ready.Text, c.cadence.Repeating(participantID)))
 	if turnID != state.Unheard.turnID || !lone {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		if c.greeted[participantID] != turnID {
-			return Action{}, false, unhold{}
+			return Action{}, false, endedHold{}
 		}
 		delete(c.greeted, participantID)
-		return Action{}, false, unhold{turnID: turnID, grew: !lone}
+		return Action{}, false, endedHold{turnID: turnID, grew: !lone}
 	}
 	if !c.cadence.Resolve(ready.ID, false) {
-		return Action{}, true, unhold{}
+		return Action{}, true, endedHold{}
 	}
 	c.mu.Lock()
 	delete(c.greeted, participantID)
@@ -745,7 +745,7 @@ func (c *converse) answeredByHeld(ready candidate, state floor) (Action, bool, u
 		Text:        shown,
 		LineID:      line,
 		At:          ready.RevisedAt.Add(callerHold),
-	}), true, unhold{}
+	}), true, endedHold{}
 }
 
 // greetedBy is the turn whose unheard reply a participant's lone greeting holds, if any.

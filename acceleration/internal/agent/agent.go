@@ -4081,7 +4081,7 @@ func (a *Agent) dropUnheard(participant stt.Participant, turnID string, why inte
 // release, as nothing else will: words that grew drop it as stale does, and a reply no longer
 // unheard goes out now if it is still owed. stale only acts on the unheard reply, so it does
 // not race the release.
-func (a *Agent) unhold(participant stt.Participant, ended unhold) {
+func (a *Agent) unhold(participant stt.Participant, ended endedHold) {
 	if !ended.grew {
 		a.releaseUnheard(ended.turnID, time.Now())
 		return
