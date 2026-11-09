@@ -586,6 +586,31 @@ class TestSessions:
         body = router.body("POST", "/v1/agents/sessions")
         assert body["timezone"] == "Europe/Amsterdam"
 
+    async def test_a_team_goes_over_as_the_sessions_team(
+        self, api: stream.Client, router: Router
+    ):
+        session = await api.agent("docs").sessions.create(
+            stream.SessionOptions(team="finance")
+        )
+        await session.close()
+
+        assert router.body("POST", "/v1/agents/sessions")["team"] == "finance"
+
+    async def test_no_team_sends_none(self, api: stream.Client, router: Router):
+        session = await api.agent("docs").sessions.create(stream.SessionOptions())
+        await session.close()
+
+        assert "team" not in router.body("POST", "/v1/agents/sessions")
+
+    @pytest.mark.parametrize("team", ["fin ance", "team:finance", "x" * 60])
+    async def test_a_team_the_router_would_refuse_is_refused_before_sending(
+        self, api: stream.Client, router: Router, team: str
+    ):
+        with pytest.raises(ValueError, match="not 1 to 59"):
+            await api.agent("docs").sessions.create(stream.SessionOptions(team=team))
+
+        assert router.requests("POST", "/v1/agents/sessions") == 0
+
     async def test_no_timezone_sends_none(self, api: stream.Client, router: Router):
         session = await api.agent("docs").sessions.create(stream.SessionOptions())
         await session.close()

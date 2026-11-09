@@ -10,7 +10,7 @@ from typing import Any, AsyncIterator, Optional, Union
 
 from vision_agents.core.llm.function_registry import FunctionRegistry, ToolPolicy
 
-from ._backend import API_KEY_ENV, API_SECRET_ENV, Backend
+from ._backend import API_KEY_ENV, API_SECRET_ENV, Backend, check_team
 from ._generated.api.default import (
     create_session,
     delete_session,
@@ -124,6 +124,10 @@ class SessionOptions:
             records none of it. Up to 100 messages. Server side only.
         user_id: Who the conversation belongs to, for a backend opening one on somebody's
             behalf. A client acting for a user leaves it empty: the token already says who.
+        team: The team the conversation's work is counted under, its team spend limits
+            included, for a backend opening one for a team: 1 to 59 of ``A-Za-z0-9_.-``.
+            Empty is the team the caller's token names, else the agent's ``tags: team``.
+            A token signed for another team is refused. Server side only.
         connector_bindings: The connection to use for each of the agent's connector
             bindings chosen per session, by alias. Each must be the caller's own connection;
             a binding with the agent's fixed connection cannot be given one.
@@ -153,6 +157,7 @@ class SessionOptions:
     phone: Optional[SessionPhone] = None
     history: Optional[list[HistoryMessage]] = None
     user_id: str = ""
+    team: str = ""
     connector_bindings: Optional[dict[str, str]] = None
     return_url: str = ""
     timezone: str = ""
@@ -381,6 +386,8 @@ class Sessions:
             request.history = options.history
         if options.user_id:
             request.user_id = options.user_id
+        if options.team:
+            request.team = check_team(options.team)
         if options.connector_bindings:
             request.connector_bindings = [
                 SessionConnectorBinding(name=name, connection_id=connection_id)
