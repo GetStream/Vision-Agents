@@ -2,7 +2,7 @@ import type { BackendOptions } from "./backend.js";
 import { Client, type Schemas } from "./client.js";
 import { Dispatch } from "./dispatch.js";
 import { DEFAULT_CALL_TYPE, Edge } from "./edge.js";
-import { ConfigurationError, RouterError } from "./errors.js";
+import { ConfigurationError, RouterError, SocketClosedError } from "./errors.js";
 import { Session, type SessionOptions } from "./session.js";
 import { Tools } from "./tools.js";
 import type { InboundCall, InboundMessage } from "./inbound.js";
@@ -487,7 +487,7 @@ export class Agent {
     });
     const running = dispatch.run();
     const stopped = running.then(() => {
-      throw new RouterError(0, "waitForCall", "stopped waiting before anybody rang");
+      throw new SocketClosedError("the router stopped handing over calls before anybody rang");
     });
     // Stopping after the call arrived ends `run` too, which is not a failure.
     stopped.catch(() => undefined);
@@ -506,7 +506,7 @@ export class Agent {
       }
     }
     await session.close();
-    throw new RouterError(0, "waitForCall", "the call ended before anybody rang");
+    throw new SocketClosedError("the call ended before the caller said anything");
   }
 
   /**

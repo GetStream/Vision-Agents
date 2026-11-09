@@ -486,7 +486,17 @@ export class Session {
    * of this client shares.
    */
   chat(): Promise<SessionChat> {
-    this.chatPeer ??= this.openChat();
+    if (!this.chatPeer) {
+      const opening = this.openChat();
+      this.chatPeer = opening;
+      // A failure is not kept: the next call tries again, since what failed may have been the
+      // network, or a `setUser` that had not happened yet.
+      opening.catch(() => {
+        if (this.chatPeer === opening) {
+          this.chatPeer = undefined;
+        }
+      });
+    }
     return this.chatPeer;
   }
 
@@ -499,7 +509,16 @@ export class Session {
    * asking for one says so.
    */
   video(): Promise<SessionVideo> {
-    this.videoPeer ??= this.openVideo();
+    if (!this.videoPeer) {
+      const opening = this.openVideo();
+      this.videoPeer = opening;
+      // Not kept when it fails, for the same reason as chat's, and so a failed join can be tried again.
+      opening.catch(() => {
+        if (this.videoPeer === opening) {
+          this.videoPeer = undefined;
+        }
+      });
+    }
     return this.videoPeer;
   }
 

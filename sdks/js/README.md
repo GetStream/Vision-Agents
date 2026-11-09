@@ -98,6 +98,15 @@ went wrong. Branch on `code` (`not_configured`, `validation_failed`, ...) or `ty
 message, and expect codes you do not know; quote `requestId` to support, since a 500 says only
 "something went wrong".
 
+A request that never got an answer is a `RouterError` with status 0, its network error as
+`cause`; one the caller aborted rejects with the signal's own `AbortError`, and a call missing a
+path parameter with a `ConfigurationError`, so neither looks like something worth retrying.
+A request that is safe to send twice (GET, PUT, DELETE, and `responses.create`, which the router
+answers once per request id) is sent again after a network failure or a 429, 502, 503 or 504,
+up to `maxRetries` times (2 unless the client says), waiting longer each time and as long as
+`Retry-After` asks. To ask again yourself after a failure that may have reached the router,
+pass the same `requestId` to `responses.create`.
+
 ## Spend limits and teams
 
 A backend caps what the organization, its apps, keys, end users, teams and usage categories may
@@ -360,6 +369,12 @@ await dispatch.run();
 worker rather than queueing behind it. Several workers can wait at once, and the work is
 shared between them. Each call and message is reported `done` to the router when its handler
 returns, with the error when it throws, which is what frees the room it took.
+
+A connection that drops, as one does when the network blinks or the router is redeployed, is
+dialled again with a growing wait, while the calls already being handled carry on. After
+`maxReconnects` tries in a row (10 unless the worker says) `run` rejects with the error, so a
+supervisor can restart the process; a router closing the connection on purpose ends `run`
+normally.
 
 A message usually arrives here only when no agent is running on its channel — one written to
 an agent that is already running is answered by the router from that session, because that

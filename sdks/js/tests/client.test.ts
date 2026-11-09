@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
-import { Client, RouterError } from "../src/index.js";
+import { Client, ConfigurationError, RouterError } from "../src/index.js";
 import { TestRouter } from "./router.js";
 
 describe("Client", () => {
@@ -47,7 +47,10 @@ describe("Client", () => {
   it("refuses to send a template with a parameter missing", async () => {
     await assert.rejects(
       () => api.get("/v1/agents/sessions/{id}", { path: {} as { id: string } }),
-      (raised: RouterError) => {
+      (raised: unknown) => {
+        // A mistake in the call rather than a router that could not be reached, so nothing
+        // retrying on status 0 sends it again.
+        assert.ok(raised instanceof ConfigurationError);
         assert.match(raised.message, /needs a id/);
         return true;
       },
@@ -233,23 +236,100 @@ describe("Client", () => {
     );
   });
 
-  it("reports a router it could not reach as no status at all", async () => {
-    const unreachable = new Client({ url: "http://127.0.0.1:1", customerId: "local" });
+  it("reports a router it could not reach as no status at all, with what failed underneath", async () => {
+    const unreachable = new Client({ url: "http://127.0.0.1:1", customerId: "local", maxRetries: 0 });
 
     await assert.rejects(
       () => unreachable.get("/health"),
-      (raised: RouterError) => {
+      (raised: unknown) => {
+        assert.ok(raised instanceof RouterError);
         assert.equal(raised.status, 0);
         assert.match(raised.message, /could not reach the router/);
+        assert.ok(raised.cause instanceof Error, "the network error is kept as the cause");
         return true;
       },
     );
   });
 
-  it("stops a request when the caller aborts it", async () => {
+  it("stops a request when the caller aborts it, and says it was aborted rather than unreachable", async () => {
     const stop = new AbortController();
     stop.abort();
 
-    await assert.rejects(() => api.get("/health", { signal: stop.signal }));
+    await assert.rejects(
+      () => api.get("/health", { signal: stop.signal }),
+      (raised: unknown) => {
+        assert.ok(!(raised instanceof RouterError), "an abort is not a router that could not be reached");
+        assert.equal((raised as Error).name, "AbortError");
+        return true;
+      },
+    );
+  });
+
+  describe("a transient failure", () => {
+    it("sends a GET again once the router is back", async () => {
+      router.serve("GET", "/v1/agents/configs", (_, calls) =>
+        calls === 0 ? { status: 503 } : { body: [{ id: "cfg_1", name: "john" }] },
+      );
+
+      const configs = await api.get("/v1/agents/configs");
+
+      assert.equal(configs[0]?.name, "john");
+      assert.equal(router.requestsTo("GET", "/v1/agents/configs").length, 2);
+    });
+
+    it("waits as long as Retry-After asks before sending again", async () => {
+      router.serve("GET", "/v1/agents/configs", (_, calls) =>
+        calls === 0 ? { status: 429, headers: { "Retry-After": "1" } } : { body: [] },
+      );
+
+      const started = Date.now();
+      await api.get("/v1/agents/configs");
+
+      assert.ok(Date.now() - started >= 950, "sent again before the router said it could take it");
+      assert.equal(router.requestsTo("GET", "/v1/agents/configs").length, 2);
+    });
+
+    it("is reported after the retries run out, as the last answer", async () => {
+      const once = new Client({ url: router.url, customerId: "local", maxRetries: 1 });
+      router.serve("GET", "/v1/agents/calls", { status: 502 });
+
+      await assert.rejects(() => once.get("/v1/agents/calls"), (raised: unknown) => {
+        assert.ok(raised instanceof RouterError);
+        assert.equal(raised.status, 502);
+        return true;
+      });
+      assert.equal(router.requestsTo("GET", "/v1/agents/calls").length, 2);
+    });
+
+    it("is not retried for a POST, which may already have done what it asked", async () => {
+      router.serve("POST", "/v1/agents/sessions", { status: 503 });
+
+      await assert.rejects(() => api.post("/v1/agents/sessions", { body: {} }), RouterError);
+
+      assert.equal(router.requestsTo("POST", "/v1/agents/sessions").length, 1);
+    });
+
+    it("is not retried when it is the router saying the request is wrong", async () => {
+      router.serve("GET", "/v1/agents/calls", { status: 500 });
+
+      await assert.rejects(() => api.get("/v1/agents/calls"), RouterError);
+
+      assert.equal(router.requestsTo("GET", "/v1/agents/calls").length, 1);
+    });
+
+    it("stops waiting to retry when the caller aborts", async () => {
+      router.serve("GET", "/v1/agents/calls", { status: 429, headers: { "Retry-After": "20" } });
+      const stop = new AbortController();
+
+      const asking = api.get("/v1/agents/calls", { signal: stop.signal });
+      setTimeout(() => stop.abort(), 50);
+
+      await assert.rejects(asking, (raised: unknown) => (raised as Error).name === "AbortError");
+      assert.equal(router.requestsTo("GET", "/v1/agents/calls").length, 1);
+    });
+  });
+
+  it("refuses a retry count that is not one", () => {
+    assert.throws(() => new Client({ url: router.url, customerId: "local", maxRetries: -1 }), ConfigurationError);
   });
 });

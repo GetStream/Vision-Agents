@@ -1,7 +1,7 @@
 import type { Agent } from "./agent.js";
 import type { BackendOptions } from "./backend.js";
 import { Client } from "./client.js";
-import { ConfigurationError, HostingRefusedError } from "./errors.js";
+import { ConfigurationError, HostingRefusedError, SocketClosedError } from "./errors.js";
 import type { AgentHandle } from "./handle.js";
 import { callOf, messageOf, type InboundCall, type InboundMessage } from "./inbound.js";
 import { createResponse, type AgentResponse } from "./responses.js";
@@ -19,6 +19,13 @@ const DEFAULT_REPORT_EVERY_MS = 15_000;
 /** How long a round trip is waited for before the last figure is left standing. */
 const PING_TIMEOUT_MS = 5_000;
 
+/** How many times in a row a dropped connection is dialled again when the worker does not say. */
+const DEFAULT_MAX_RECONNECTS = 10;
+
+/** The first wait before dialling again; each one after doubles it, up to `MAX_RECONNECT_MS`. */
+const BASE_RECONNECT_MS = 500;
+const MAX_RECONNECT_MS = 30_000;
+
 export interface DispatchOptions {
   /** The router to wait on. */
   client?: Client | BackendOptions;
@@ -31,6 +38,13 @@ export interface DispatchOptions {
   capacity?: number;
   /** How often to report load. */
   reportEveryMs?: number;
+  /**
+   * How many times in a row the router is dialled again after the connection dropped, waiting
+   * longer before each, before `run` gives up with the error that dropped it. A connection the
+   * router says it is ready on starts the count again. Defaults to 10; 0 ends `run` with the
+   * error the first time.
+   */
+  maxReconnects?: number;
 }
 
 /** What to do with an arriving call. */
@@ -91,6 +105,7 @@ export class Dispatch {
   workerId = "";
 
   private readonly reportEveryMs: number;
+  private readonly maxReconnects: number;
   private readonly running = new Set<Promise<void>>();
   /** The hosted calls running, by session and id, which is what `tool_cancel` names. */
   private readonly hostedCalls = new Map<string, AbortController>();
@@ -107,11 +122,13 @@ export class Dispatch {
    * A channel is one conversation, so the session that answered the last message on it is
    * the one that knows what has been said and should answer the next.
    */
-  private readonly answering = new Map<string, Session>();
+  private readonly answering = new Map<string, Promise<Session>>();
   private onCallHandler: CallHandler | undefined;
   private onMessageHandler: MessageHandler | undefined;
   private readonly hosted: Hosting[] = [];
   private socket: Socket | undefined;
+  /** Aborted by `stop`, which also ends a wait to dial again. */
+  private stopping: AbortController | undefined;
   private pong: ((at: number) => void) | undefined;
   /** The last round trip measured, from this side, because this is the side audio crosses. */
   private latencyMs = 0;
@@ -122,6 +139,10 @@ export class Dispatch {
       throw new ConfigurationError("a worker that can hold no calls cannot answer any");
     }
     this.reportEveryMs = options.reportEveryMs ?? DEFAULT_REPORT_EVERY_MS;
+    this.maxReconnects = options.maxReconnects ?? DEFAULT_MAX_RECONNECTS;
+    if (!Number.isInteger(this.maxReconnects) || this.maxReconnects < 0) {
+      throw new ConfigurationError(`maxReconnects is a count of attempts, not ${String(options.maxReconnects)}`);
+    }
     this.client =
       options.client instanceof Client ? options.client : new Client(options.client ?? {});
   }
@@ -180,8 +201,9 @@ export class Dispatch {
    *
    * A channel is one conversation. The second message on it goes to the session that
    * answered the first, which is still open and knows what has been said; only a channel
-   * nothing is answering calls `create`. Sessions are kept until this worker stops waiting,
-   * so a conversation is not restarted between messages.
+   * nothing is answering calls `create`. A session is kept while it lasts, so a conversation
+   * is not restarted between messages, and forgotten once it has ended. Two messages arriving
+   * on one channel together share the session the first one opens rather than opening two.
    */
   async sessionFor(
     message: InboundMessage,
@@ -192,15 +214,36 @@ export class Dispatch {
         "a session is already holding this conversation; answer it there with answer",
       );
     }
-    const open = this.answering.get(message.channelId);
-    if (open?.live) {
-      return open;
+    const channel = message.channelId;
+    while (true) {
+      const pending = this.answering.get(channel);
+      if (!pending) {
+        break;
+      }
+      const open = await pending.catch(() => undefined);
+      if (open?.live) {
+        return open;
+      }
+      // Ended or failed. Another message waiting on the same one may already have replaced it,
+      // in which case that is the one to wait for.
+      if (this.answering.get(channel) === pending) {
+        this.answering.delete(channel);
+      }
     }
 
-    const agent = await create();
-    const session = await agent.reply(message);
-    this.answering.set(message.channelId, session);
-    return session;
+    // Set before anything is awaited, so a message arriving meanwhile finds it.
+    const opening = (async () => (await create()).reply(message))();
+    this.answering.set(channel, opening);
+    const forget = () => {
+      if (this.answering.get(channel) === opening) {
+        this.answering.delete(channel);
+      }
+    };
+    opening.then(
+      (session) => void session.wait().catch(() => undefined).finally(forget),
+      forget,
+    );
+    return opening;
   }
 
   /**
@@ -218,11 +261,21 @@ export class Dispatch {
     }
     const acting = new Client(this.client.backend.actingFor(message.userId));
     const images = (message.images ?? []).map(({ url }) => ({ url }));
-    return createResponse(acting, message.sessionId, message.text, { images }, message.requestId);
+    return createResponse(acting, message.sessionId, message.text, {
+      images,
+      ...(message.requestId ? { requestId: message.requestId } : {}),
+    });
   }
 
   /**
-   * Waits for calls and messages until the router closes the connection or `signal` aborts.
+   * Waits for calls and messages until the router closes the connection, `stop` is called or
+   * `signal` aborts.
+   *
+   * A connection that drops rather than closes, as one does when the network blinks or the
+   * router is redeployed, is dialled again with a growing wait between tries, and work already
+   * being handled carries on meanwhile. After `maxReconnects` tries in a row that do not get a
+   * working connection back, `run` rejects with the error that dropped it. The first connection
+   * is not retried: a worker that cannot reach the router at all is misconfigured, and says so.
    *
    * Work still being handled is waited for on the way out, because dropping a call would
    * hang up on whoever is talking. Throws `HostingRefusedError` if the router refuses the
@@ -236,19 +289,82 @@ export class Dispatch {
       );
     }
 
-    const socket = await Socket.dial(this.client.backend, "/v1/dispatch", this.waiting());
-    this.socket = socket;
+    const stopper = new AbortController();
+    this.stopping = stopper;
+    const stopping = signal ? AbortSignal.any([signal, stopper.signal]) : stopper.signal;
+    // What a hosted call runs under: the caller's signal alone, so `stop` lets one finish.
+    const hostedSignal = signal ?? new AbortController().signal;
+    const reporting = setInterval(() => void this.report(), this.reportEveryMs);
 
+    try {
+      let socket = await Socket.dial(this.client.backend, "/v1/dispatch", this.waiting());
+      let failures = 0;
+      while (true) {
+        if (await this.serve(socket, stopping, hostedSignal)) {
+          failures = 0;
+        }
+        const dropped = socket.closedBy;
+        // Stopped, or closed by the router on purpose: either way there is nothing to go back to.
+        if (stopping.aborted || !dropped) {
+          return;
+        }
+
+        let reconnected: Socket | undefined;
+        let failure: Error = dropped;
+        while (!reconnected) {
+          if (failures >= this.maxReconnects) {
+            throw failure;
+          }
+          failures += 1;
+          await wait(reconnectDelay(failures), stopping);
+          if (stopping.aborted) {
+            return;
+          }
+          try {
+            reconnected = await Socket.dial(this.client.backend, "/v1/dispatch", this.waiting());
+          } catch (cause) {
+            // A configuration that cannot work is not going to start working on the next try.
+            if (!(cause instanceof SocketClosedError)) {
+              throw cause;
+            }
+            failure = cause;
+          }
+        }
+        socket = reconnected;
+      }
+    } finally {
+      clearInterval(reporting);
+      await this.drain();
+      this.answering.clear();
+      this.socket?.close();
+      this.socket = undefined;
+      if (this.stopping === stopper) {
+        this.stopping = undefined;
+      }
+    }
+  }
+
+  /** Stops waiting. Work already being handled is still waited for by `run`. */
+  stop(): void {
+    this.stopping?.abort();
+    this.socket?.close();
+  }
+
+  /**
+   * Reads one connection until it closes, and answers whether the router said it was ready on
+   * it, which is what makes a reconnect count as having worked.
+   */
+  private async serve(socket: Socket, stopping: AbortSignal, hostedSignal: AbortSignal): Promise<boolean> {
+    this.socket = socket;
     const close = () => socket.close();
-    signal?.addEventListener("abort", close, { once: true });
+    stopping.addEventListener("abort", close, { once: true });
     // A signal that aborted while the socket was still being opened would otherwise be
     // missed, because a listener added to an aborted signal is never called.
-    if (signal?.aborted) {
+    if (stopping.aborted) {
       close();
     }
-    const reporting = setInterval(() => void this.report(), this.reportEveryMs);
-    const stopping = signal ?? new AbortController().signal;
 
+    let ready = false;
     try {
       for await (const message of socket.messages()) {
         if (message instanceof Uint8Array) {
@@ -263,11 +379,12 @@ export class Dispatch {
             this.write(text(message, "work_id"), messageOf(message));
             break;
           case "ready":
+            ready = true;
             this.workerId = typeof message["worker_id"] === "string" ? message["worker_id"] : "";
             this.declare();
             break;
           case "tool_call":
-            this.runHosted(message, stopping);
+            this.runHosted(message, hostedSignal);
             break;
           case "tool_held":
             this.holds.answer(text(message, "id"), true);
@@ -293,18 +410,9 @@ export class Dispatch {
         }
       }
     } finally {
-      clearInterval(reporting);
-      signal?.removeEventListener("abort", close);
-      await this.drain();
-      this.answering.clear();
-      socket.close();
-      this.socket = undefined;
+      stopping.removeEventListener("abort", close);
     }
-  }
-
-  /** Stops waiting. Work already being handled is still waited for by `run`. */
-  stop(): void {
-    this.socket?.close();
+    return ready;
   }
 
   /**
@@ -402,9 +510,7 @@ export class Dispatch {
   private runHosted(frame: Frame, signal: AbortSignal): void {
     const id = text(frame, "id");
     const name = text(frame, "name");
-    const offer = this.hosted.find((one) =>
-      one.tools.declared().some((tool) => tool.name === name),
-    );
+    const offer = this.hosted.find((one) => one.tools.has(name));
     // id is tool_call_id under the name a router from before it reads.
     if (!offer) {
       this.tell({ type: "tool_result", tool_call_id: id, id, error: `this worker does not run ${name}` });
@@ -504,4 +610,27 @@ export class Dispatch {
 /** A hosted call's id within its session: two sessions' models can pick the same one. */
 function hostedKey(frame: Frame): string {
   return `${text(frame, "session_id")}/${text(frame, "id")}`;
+}
+
+/** How long to wait before reconnect attempt `attempt` (from 1), half of it random. */
+function reconnectDelay(attempt: number): number {
+  const ceiling = Math.min(MAX_RECONNECT_MS, BASE_RECONNECT_MS * 2 ** (attempt - 1));
+  return ceiling / 2 + Math.random() * (ceiling / 2);
+}
+
+/** Waits, or stops waiting as soon as `signal` aborts. */
+function wait(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener("abort", done, { once: true });
+  });
 }

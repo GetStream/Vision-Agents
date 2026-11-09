@@ -36,9 +36,11 @@ export class RouterError extends Error {
       readonly code?: string | undefined;
       readonly docUrl?: string | undefined;
       readonly requestId?: string | undefined;
+      /** What failed underneath, such as the network error a request that never arrived hit. */
+      readonly cause?: unknown;
     } = {},
   ) {
-    super(message);
+    super(message, detail.cause === undefined ? undefined : { cause: detail.cause });
     this.name = "RouterError";
     this.status = status;
     this.operation = operation;
