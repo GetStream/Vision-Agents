@@ -177,7 +177,7 @@ type failure struct {
 	// to say it (heldByTheRouter); "" for every other call.
 	message string
 	// redact is the call's core.Exchange.Redact, for what the error the call returned says
-	// (providerMessage); nil for a call that sent nothing through an Exchange.
+	// (ProviderMessage); nil for a call that sent nothing through an Exchange.
 	redact func(string) string
 }
 
@@ -195,7 +195,7 @@ func answerOf(exchange *core.Exchange) failure {
 //
 // A call that failed or was refused also leaves one Warn line, "connector call failed", on the
 // session's logger: the row's names and id, the provider's HTTP status, and what the provider
-// or the refusal said (providerMessage of err, the error the call returned, without what the
+// or the refusal said (ProviderMessage of err, the error the call returned, without what the
 // call's Exchange redacts: an echoed token or request path, AI-1244). It also names the
 // host the last request went to (provider_host) and the start of a 4xx's or a 5xx's body
 // (provider_body, through providerBody), and, when that answer had them, its WWW-Authenticate
@@ -236,7 +236,7 @@ func (d *dispatcher) record(r route, call llm.ToolCall, started time.Time, how f
 	connectorCallSeconds.WithLabelValues(connector).Observe(took.Seconds())
 	message, body := how.message, providerBody(how.body)
 	if message == "" {
-		message = providerMessage(err, how.redact)
+		message = ProviderMessage(err, how.redact)
 	}
 	// A call that answered has no failure to say: no status, no message. The body is "" unless
 	// the last answer was a 4xx or a 5xx (core.Exchange.ErrorBody).

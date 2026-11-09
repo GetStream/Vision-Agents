@@ -7,7 +7,7 @@ import "github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core
 // sentence while a gateway's HTML page cannot fill the log.
 const providerMessageBytes = 1 << 10
 
-// providerMessage is what err, the error a failed call returned, says, for its log line: the
+// ProviderMessage is what err, the error a failed call returned, says, for its log line: the
 // tool's own words for an MCP isError (core.ToolError, whose Error is its Message), the SDK's
 // or the JSON-RPC error's text, or the refusal's reason (dispatcher.recheck). Empty for nil.
 //
@@ -20,12 +20,13 @@ const providerMessageBytes = 1 << 10
 // out the last request's path and query and the strings of its credential, since the MCP
 // client puts a JSON-RPC error's message, and a tool its isError text, in the error, and a
 // provider may echo either there (AI-1244). It is then cut to providerMessageBytes at a UTF-8
-// boundary.
+// boundary. The dispatcher logs it for a session's tool call, and a connection's validate for a
+// credential the provider refused (api.checkConnection).
 //
 // Example: `Post "https://crm.example/mcp?access_token=x": EOF` is logged as
 // `Post "https://crm.example": EOF`, and `invalid token <the token> for /primary/mcp` as
 // `invalid token [redacted] for [redacted]`.
-func providerMessage(err error, redact func(string) string) string {
+func ProviderMessage(err error, redact func(string) string) string {
 	if err == nil {
 		return ""
 	}

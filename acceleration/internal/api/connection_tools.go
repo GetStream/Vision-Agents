@@ -20,6 +20,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -434,15 +435,23 @@ func (s *Server) checkConnection(ctx context.Context, connection store.Connector
 		Manifest:   manifest,
 		HTTP:       &client,
 	}
+	// The source's requests carry an Exchange, which redacts the provider's words for the log
+	// line of a refused credential, as a session's tool call does (session.dispatcher.send).
+	observed, exchange := core.WithExchange(ctx)
 	var specs []core.ToolSpec
 	for _, kind := range sourceKinds(manifest) {
 		source, found := s.connectors.ToolSources[kind]
 		if !found {
 			return failed(connection, fmt.Sprintf("this deployment has no %s tool source", kind)), nil
 		}
-		listed, err := source.Discover(ctx, binding)
+		listed, err := source.Discover(observed, binding)
 		if err != nil {
 			if refusedStatic(s.connectors.Schemes, connection.AuthScheme, answered.status()) {
+				// The answer is not in the validate's: validationAfter says a fixed sentence.
+				s.logger.Warn("a validate's credential was refused by the provider", "connection", connection.ID,
+					"connector", connection.ConnectorID, "provider_status", answered.status(),
+					"provider_message", session.ProviderMessage(err, exchange.Redact),
+					"provider_body", core.LoggedBody(exchange.ErrorBody()))
 				// The 401 path's move (core.Transports invalidates a refused credential nothing
 				// renews), so the row and the validate say the same: replace the token or key.
 				// Invalidate leaves a connection whose credentials changed since Resolve alone.

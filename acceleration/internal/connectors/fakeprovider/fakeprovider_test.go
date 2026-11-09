@@ -372,6 +372,29 @@ func (s *FakeProviderSuite) TestAnswerMCPAnswersEveryMCPRequestWithItsStatusUnti
 	s.Equal(http.StatusOK, s.call(srv, first["access_token"].(string)).StatusCode)
 }
 
+func (s *FakeProviderSuite) TestAnswerMCPEchoingRepeatsTheTokenInTheBodyUntilAnswerMCPResets() {
+	srv := fakeprovider.New(s.T())
+	answer := func() (int, string) {
+		request, err := http.NewRequest(http.MethodPost, srv.URL+fakeprovider.PathMCP, strings.NewReader(`{}`))
+		s.Require().NoError(err)
+		request.Header.Set("Authorization", "Bearer tok-1")
+		response, err := srv.Client().Do(request)
+		s.Require().NoError(err)
+		defer response.Body.Close()
+		body, err := io.ReadAll(response.Body)
+		s.Require().NoError(err)
+		return response.StatusCode, string(body)
+	}
+	srv.AnswerMCPEchoing(http.StatusUnauthorized)
+	status, body := answer()
+	s.Equal(http.StatusUnauthorized, status)
+	s.Equal("Unauthorized: Bearer tok-1\n", body)
+	srv.AnswerMCP(http.StatusBadRequest)
+	status, body = answer()
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("Bad Request\n", body)
+}
+
 func (s *FakeProviderSuite) TestRateLimitedRefusesARefreshWith429AndSpendsNothing() {
 	srv := fakeprovider.New(s.T())
 	first := s.connect(srv, nil)

@@ -73,7 +73,15 @@ var tools = []map[string]any{
 func (s *Server) AnswerMCP(status int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.mcpStatus = status
+	s.mcpStatus, s.mcpEchoes = status, false
+}
+
+// AnswerMCPEchoing is AnswerMCP, with a body that repeats the bearer token the request carried
+// after the reason phrase, as a provider that quotes the credential it refuses does (AI-2966).
+func (s *Server) AnswerMCPEchoing(status int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mcpStatus, s.mcpEchoes = status, true
 }
 
 // InstructMCP has the MCP endpoint answer server/discover with instructions about using its
@@ -91,7 +99,11 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	s.mcpHeaders = append(s.mcpHeaders, r.Header.Clone())
 	if s.mcpStatus != 0 {
-		http.Error(w, http.StatusText(s.mcpStatus), s.mcpStatus)
+		text := http.StatusText(s.mcpStatus)
+		if s.mcpEchoes {
+			text += ": " + r.Header.Get("Authorization")
+		}
+		http.Error(w, text, s.mcpStatus)
 		return
 	}
 	metadata := `resource_metadata="` + s.URL + PathProtectedResource + `"`

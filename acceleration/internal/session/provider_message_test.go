@@ -16,7 +16,7 @@ import (
 )
 
 // ProviderMessageSuite is what a "connector call failed" line says of the error a call
-// returned (providerMessage, AI-1242): the provider's or the refusal's words, with no URL's
+// returned (ProviderMessage, AI-1242): the provider's or the refusal's words, with no URL's
 // path or query, cut to 1 KiB.
 type ProviderMessageSuite struct {
 	suite.Suite
@@ -32,11 +32,11 @@ const queryToken = "query-token-must-not-print"
 func (s *ProviderMessageSuite) TestAToolErrorIsTheToolsOwnWords() {
 	err := stack.Wrap(&core.ToolError{Message: "the record is locked"})
 
-	s.Equal("the record is locked", providerMessage(err, nil))
+	s.Equal("the record is locked", ProviderMessage(err, nil))
 }
 
 func (s *ProviderMessageSuite) TestNoErrorIsNoMessage() {
-	s.Empty(providerMessage(nil, nil))
+	s.Empty(ProviderMessage(nil, nil))
 }
 
 // TestARedactedURLStillKeepsItsHost: the URLs are cut before redact runs, so a URL whose path
@@ -45,14 +45,14 @@ func (s *ProviderMessageSuite) TestARedactedURLStillKeepsItsHost() {
 	redact := strings.NewReplacer("/primary/mcp", "[redacted]", queryToken, "[redacted]").Replace
 	err := errors.New(`Post "https://crm.example/primary/mcp": invalid token ` + queryToken)
 
-	s.Equal(`Post "https://crm.example": invalid token [redacted]`, providerMessage(err, redact))
+	s.Equal(`Post "https://crm.example": invalid token [redacted]`, ProviderMessage(err, redact))
 }
 
 func (s *ProviderMessageSuite) TestAURLErrorKeepsOnlyItsHost() {
 	sending := &url.Error{Op: "Post", URL: "https://user:pass@crm.example/mcp/v1?access_token=" + queryToken + "#frag", Err: io.EOF}
 	err := stack.Wrap(fmt.Errorf("mcp: crm__whoami: %w", sending))
 
-	s.Equal(`mcp: crm__whoami: Post "https://crm.example": EOF`, providerMessage(err, nil))
+	s.Equal(`mcp: crm__whoami: Post "https://crm.example": EOF`, ProviderMessage(err, nil))
 }
 
 // TestAURLTheSDKFlattenedIntoTextKeepsOnlyItsHost: the MCP SDK wraps a failed reconnect with
@@ -61,25 +61,25 @@ func (s *ProviderMessageSuite) TestAURLTheSDKFlattenedIntoTextKeepsOnlyItsHost()
 	sending := &url.Error{Op: "Get", URL: "https://crm.example/mcp?access_token=" + queryToken, Err: io.EOF}
 	err := fmt.Errorf("standalone SSE request failed (session ID: s1): %v", sending)
 
-	s.Equal(`standalone SSE request failed (session ID: s1): Get "https://crm.example": EOF`, providerMessage(err, nil))
+	s.Equal(`standalone SSE request failed (session ID: s1): Get "https://crm.example": EOF`, ProviderMessage(err, nil))
 }
 
 // An unparseable URL (the %zz) is replaced whole, its query token with it.
 func (s *ProviderMessageSuite) TestAURLThatDoesNotParseIsReplacedWhole() {
 	err := errors.New(`Get "https://crm.example/%zz?access_token=` + queryToken + `": EOF`)
 
-	s.Equal(`Get "<url>": EOF`, providerMessage(err, nil))
+	s.Equal(`Get "<url>": EOF`, ProviderMessage(err, nil))
 }
 
 func (s *ProviderMessageSuite) TestAnUppercaseSchemeKeepsOnlyItsHost() {
 	err := errors.New(`Get "HTTPS://crm.example/mcp?access_token=` + queryToken + `": EOF`)
 
-	s.Equal(`Get "https://crm.example": EOF`, providerMessage(err, nil))
+	s.Equal(`Get "https://crm.example": EOF`, ProviderMessage(err, nil))
 }
 
 // The one KiB is 1024 bytes, not whatever providerMessageBytes holds.
 func (s *ProviderMessageSuite) TestAMessageIsCutTo1024Bytes() {
-	message := providerMessage(&core.ToolError{Message: strings.Repeat("a", 5000)}, nil)
+	message := ProviderMessage(&core.ToolError{Message: strings.Repeat("a", 5000)}, nil)
 
 	s.Len(message, 1024)
 }
@@ -87,7 +87,7 @@ func (s *ProviderMessageSuite) TestAMessageIsCutTo1024Bytes() {
 // Text that is not UTF-8 (nothing but continuation bytes) is cut at most UTFMax-1 bytes
 // before the limit, not back to nothing.
 func (s *ProviderMessageSuite) TestTextThatIsNotUTF8IsStillCutNearTheLimit() {
-	message := providerMessage(&core.ToolError{Message: strings.Repeat("\x80", 5000)}, nil)
+	message := ProviderMessage(&core.ToolError{Message: strings.Repeat("\x80", 5000)}, nil)
 
 	s.Len(message, 1024-(utf8.UTFMax-1))
 }
@@ -96,7 +96,7 @@ func (s *ProviderMessageSuite) TestAMessageOverOneKiBIsCutAtARuneBoundary() {
 	// 1023 bytes, then a 3-byte rune across the limit: the cut leaves the rune out whole.
 	err := &core.ToolError{Message: strings.Repeat("a", providerMessageBytes-1) + "€ and more"}
 
-	message := providerMessage(err, nil)
+	message := ProviderMessage(err, nil)
 
 	s.Equal(strings.Repeat("a", providerMessageBytes-1), message)
 	s.True(utf8.ValidString(message))
@@ -105,7 +105,7 @@ func (s *ProviderMessageSuite) TestAMessageOverOneKiBIsCutAtARuneBoundary() {
 func (s *ProviderMessageSuite) TestAMessageOfOneKiBIsKeptWhole() {
 	text := strings.Repeat("a", providerMessageBytes-3) + "€"
 
-	s.Equal(text, providerMessage(&core.ToolError{Message: text}, nil))
+	s.Equal(text, ProviderMessage(&core.ToolError{Message: text}, nil))
 }
 
 // TestABodyThatEndsInsideARuneLosesThatRune: the transport keeps 1 KiB of a body
