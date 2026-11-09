@@ -406,6 +406,67 @@ voice.speak("hello", |audio| play(audio.pcm)).await?;
 are the batch jobs. Options passed to any of them (`diarize`, `keyterms`, `voice`, ...)
 override that field of the config.
 
+## Spend limits and teams
+
+A backend caps what the organization, its apps, keys, end users, teams and usage categories may
+spend in each day, week, two weeks or month. Amounts are `Usd`, exact: the router counts in
+millionths of a dollar, and so does `Usd`. There is no constructor from a float.
+
+```rust
+use vision_agents::types::{CreateSessionRequest, LimitInterval, LimitSubject};
+use vision_agents::{Client, ClientOptions, Limit, LimitFilter, Reset, TeamLimit, Tools, Usd};
+
+let api = Client::from_env()?;
+let limits = api.spend_limits();
+limits.create(&Limit::new(LimitSubject::Organization, LimitInterval::Monthly, Usd::dollars(20_000))).await?;
+
+// Every key of app 1234 may spend $50 a day, and the CI key $10.
+limits.create(&Limit::new(LimitSubject::ApiKey, LimitInterval::Daily, Usd::dollars(50)).app_id("1234")).await?;
+limits.create(&Limit::new(LimitSubject::ApiKey, LimitInterval::Daily, Usd::dollars(10))
+    .app_id("1234").api_key("mz7kq2xa9b").note("CI key")).await?;
+let ci = limits.list(&LimitFilter { api_key: Some("mz7kq2xa9b".into()), ..Default::default() }).await?;
+limits.set_amount(ci[0].id, Usd::dollars(25)).await?;
+limits.delete(ci[0].id).await?;
+
+// Every user of app 1234 may spend $20 a day, and user-42 $50.
+limits.create(&Limit::new(LimitSubject::User, LimitInterval::Daily, Usd::dollars(20)).app_id("1234")).await?;
+limits.create(&Limit::new(LimitSubject::User, LimitInterval::Daily, Usd::dollars(50))
+    .app_id("1234").user_id("user-42")).await?;
+
+// Created or changed, whichever the team needs.
+api.teams().set_limit(&TeamLimit::new("finance", LimitInterval::Monthly, Usd::dollars(8_000))).await?;
+
+let session = api.agent("docs").sessions.create(
+    CreateSessionRequest { team: Some("finance".into()), ..Default::default() },
+    Tools::new(),
+).await?;
+let finance = Client::new(ClientOptions { team: Some("finance".into()), ..Default::default() })?;
+
+limits.reset(&Reset::new(LimitSubject::User, "refunded a failed run")
+    .app_id("1234").user_id("user-42").intervals([LimitInterval::Weekly])).await?;
+
+let amount: Usd = "12.50".parse()?; // from a form or a config file
+```
+
+The level of a limit is the most specific id it names: `User` with only an app id is the
+default for every user of the app, and with a user id that user's own. A team or category with
+an app id is the one within that app. What the router answers is micros too:
+`Usd::from_micros(limit.limit_micros)` prints as `$20000.00`. Work a limit refuses is an
+`Error::Router` of 402 `spend_limit_reached`, or 429 `user_limit_reached` for one end user's.
+
+Work counts under a team, and so against its limits, three ways. Whichever comes first wins,
+and a session is counted under one team at most:
+
+1. The team signed into the caller's token: `ClientOptions::team` and `usage_categories` are
+   signed into every token this client mints, and sent as `X-Stream-Usage-Categories` to a
+   router with no proxy in front of it. `api.user_token("user-42", Some("finance"), &[], 3600)`
+   mints one for a device. A session cannot be moved off it, so a `team` naming another is
+   refused with a 400.
+2. `team` on `CreateSessionRequest`, or `Agent::team`, from a backend. A device sending a team
+   is refused with a 403.
+3. The agent's tag: `tags: team: finance` in its `agent.yaml` counts that agent's sessions
+   under the team.
+
 ## Stream
 
 There is no Stream server SDK here. The official `getstream` crate is a preview that pulls in
