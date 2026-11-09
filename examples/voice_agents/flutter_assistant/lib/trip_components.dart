@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show OverflowBoxFit;
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
@@ -305,53 +306,60 @@ class _TripMapState extends State<TripMap> {
       borderRadius: BorderRadius.circular(16),
       child: SizedBox(
         height: 220,
-        child: FlutterMap(
-          mapController: _map,
-          options: MapOptions(
-            initialCenter: const LatLng(0, 0),
-            initialZoom: 1,
-            initialCameraFit: places.isEmpty ? null : _fit(places),
-            interactionOptions: const InteractionOptions(
-              flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+        // A2UI's rows and columns measure their children by dry layout, which the map's
+        // LayoutBuilder cannot answer. This takes the room it is given without asking it.
+        child: OverflowBox(
+          fit: OverflowBoxFit.max,
+          child: FlutterMap(
+            mapController: _map,
+            options: MapOptions(
+              initialCenter: const LatLng(0, 0),
+              initialZoom: 1,
+              initialCameraFit: places.isEmpty ? null : _fit(places),
+              interactionOptions: const InteractionOptions(
+                flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+              ),
             ),
-          ),
-          children: [
-            TileLayer(
-              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-              userAgentPackageName: 'io.getstream.visionagents.flutterassistant',
-            ),
-            MarkerLayer(
-              markers: [
-                for (final place in places.take(_pinned))
-                  Marker(
-                    point: LatLng(place.latitude, place.longitude),
-                    width: 40,
-                    height: 40,
-                    alignment: Alignment.topCenter,
-                    child: Semantics(
-                      button: true,
-                      label: place.name,
-                      child: GestureDetector(
-                        onTap: () => widget.onSelect(place),
-                        child: TweenAnimationBuilder<double>(
-                          tween: Tween(begin: 0, end: 1),
-                          duration: const Duration(milliseconds: 350),
-                          curve: Curves.elasticOut,
-                          builder: (context, t, child) => Transform.scale(scale: t, child: child),
-                          child: Icon(Icons.location_on, size: 40, color: colors.accentPrimary),
+            children: [
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'io.getstream.visionagents.flutterassistant',
+              ),
+              MarkerLayer(
+                markers: [
+                  for (final place in places.take(_pinned))
+                    Marker(
+                      point: LatLng(place.latitude, place.longitude),
+                      width: 40,
+                      height: 40,
+                      alignment: Alignment.topCenter,
+                      child: Semantics(
+                        button: true,
+                        label: place.name,
+                        child: GestureDetector(
+                          onTap: () => widget.onSelect(place),
+                          child: TweenAnimationBuilder<double>(
+                            tween: Tween(begin: 0, end: 1),
+                            duration: const Duration(milliseconds: 350),
+                            curve: Curves.elasticOut,
+                            builder: (context, t, child) => Transform.scale(scale: t, child: child),
+                            child: Icon(Icons.location_on, size: 40, color: colors.accentPrimary),
+                          ),
                         ),
                       ),
                     ),
-                  ),
-              ],
-            ),
-            SimpleAttributionWidget(
-              source: Text(
-                'OpenStreetMap contributors',
-                style: context.streamTextTheme.metadataDefault.copyWith(color: colors.textPrimary),
+                ],
               ),
-            ),
-          ],
+              SimpleAttributionWidget(
+                source: Text(
+                  'OpenStreetMap contributors',
+                  style: context.streamTextTheme.metadataDefault.copyWith(
+                    color: colors.textPrimary,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
