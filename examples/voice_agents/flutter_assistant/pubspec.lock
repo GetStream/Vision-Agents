@@ -793,10 +793,10 @@ packages:
     dependency: "direct main"
     description:
       name: intl
-      sha256: "1ca20c894b1717686a2319b8548763d812bc0aabdac580420a44c5178c57a867"
+      sha256: "3df61194eb431efc39c4ceba583b95633a403f46c9fd341e550ce0bfa50e9aa5"
       url: "https://pub.dev"
     source: hosted
-    version: "0.20.3"
+    version: "0.20.2"
   isolate_channel:
     dependency: transitive
     description:
@@ -945,10 +945,10 @@ packages:
     dependency: transitive
     description:
       name: matcher
-      sha256: "31bd099b47c10cd1aeb55146a2d46ce0277630ecef3f7dae54ad7873f36696cd"
+      sha256: dc0b7dc7651697ea4ff3e69ef44b0407ea32c487a39fff6a4004fa585e901861
       url: "https://pub.dev"
     source: hosted
-    version: "0.12.20"
+    version: "0.12.19"
   material_color_utilities:
     dependency: transitive
     description:
@@ -961,10 +961,10 @@ packages:
     dependency: transitive
     description:
       name: meta
-      sha256: "307249ce4ff29d58a18e97f6345f539382eb9c9c29ecda628900f31de0443dd9"
+      sha256: "1741988757a65eb6b36abe716829688cf01910bbf91c34354ff7ec1c3de2b349"
       url: "https://pub.dev"
     source: hosted
-    version: "1.19.0"
+    version: "1.18.0"
   mgrs_dart:
     dependency: transitive
     description:
@@ -1430,8 +1430,8 @@ packages:
     dependency: "direct main"
     description:
       path: "packages/stream_chat_flutter_ai"
-      ref: "9fbe9db"
-      resolved-ref: "9fbe9dbfd321884e65798d60478e9ec3f2d373f8"
+      ref: eefb10b90c3cef486cd03a9843ad428a2e6bc525
+      resolved-ref: eefb10b90c3cef486cd03a9843ad428a2e6bc525
       url: "https://github.com/GetStream/stream-chat-flutter-ai.git"
     source: git
     version: "0.1.0"
@@ -1439,11 +1439,20 @@ packages:
     dependency: "direct main"
     description:
       path: "packages/stream_chat_flutter_ai_a2ui"
-      ref: "9fbe9db"
-      resolved-ref: "9fbe9dbfd321884e65798d60478e9ec3f2d373f8"
+      ref: eefb10b90c3cef486cd03a9843ad428a2e6bc525
+      resolved-ref: eefb10b90c3cef486cd03a9843ad428a2e6bc525
       url: "https://github.com/GetStream/stream-chat-flutter-ai.git"
     source: git
-    version: "0.0.0"
+    version: "0.1.0"
+  stream_chat_flutter_ai_openui:
+    dependency: "direct main"
+    description:
+      path: "packages/stream_chat_flutter_ai_openui"
+      ref: eefb10b90c3cef486cd03a9843ad428a2e6bc525
+      resolved-ref: eefb10b90c3cef486cd03a9843ad428a2e6bc525
+      url: "https://github.com/GetStream/stream-chat-flutter-ai.git"
+    source: git
+    version: "0.1.0"
   stream_core_flutter:
     dependency: "direct main"
     description:
@@ -1528,18 +1537,18 @@ packages:
     dependency: transitive
     description:
       name: test_api
-      sha256: "2a122cbe059f8b610d3a5415f42e255b6c17b1f21eee1d960f31080237fb4f11"
+      sha256: "949a932224383300f01be9221c39180316445ecb8e7547f70a41a35bf421fb9e"
       url: "https://pub.dev"
     source: hosted
-    version: "0.7.12"
+    version: "0.7.11"
   theme_extensions_builder_annotation:
     dependency: transitive
     description:
       name: theme_extensions_builder_annotation
-      sha256: "1589c73f90d7c8eafb1e980ffbfcb576d4d7504f5e197f088e66a77a0366449c"
+      sha256: "9249af881cd892aeac002bb016628becac51f12439df9af2a23e3c516b0470f5"
       url: "https://pub.dev"
     source: hosted
-    version: "7.5.0"
+    version: "7.4.0"
   thermal:
     dependency: transitive
     description:
@@ -1672,10 +1681,10 @@ packages:
     dependency: transitive
     description:
       name: vector_math
-      sha256: fa49e1674cb84acb900141714e6c6e1f9ae099827c24d141430ff6819db4e1bc
+      sha256: d530bd74fea330e6e364cda7a85019c434070188383e1cd8d9777ee586914c5b
       url: "https://pub.dev"
     source: hosted
-    version: "2.4.4"
+    version: "2.2.0"
   video_player:
     dependency: transitive
     description:
@@ -1696,10 +1705,10 @@ packages:
     dependency: transitive
     description:
       name: video_player_avfoundation
-      sha256: "7d620d8c69d00c158a5c57bf3d2a051833b547631203ff724664fbf301024bc1"
+      sha256: "4f8a845173377ab250a50f9b9dfe4a43500cc76a7c49dd8410d02d8fc29dfd8b"
       url: "https://pub.dev"
     source: hosted
-    version: "2.12.3"
+    version: "2.12.1"
   video_player_platform_interface:
     dependency: transitive
     description:
@@ -1866,5 +1875,5 @@ packages:
     source: hosted
     version: "3.1.4"
 sdks:
-  dart: ">=3.13.0 <4.0.0"
-  flutter: ">=3.47.0"
+  dart: ">=3.12.0 <4.0.0"
+  flutter: ">=3.44.0"

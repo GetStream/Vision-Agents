@@ -34,15 +34,20 @@ dependencies:
   stream_chat_flutter_ai:
     git:
       url: https://github.com/GetStream/stream-chat-flutter-ai.git
-      ref: 9fbe9db
+      ref: eefb10b90c3cef486cd03a9843ad428a2e6bc525
       path: packages/stream_chat_flutter_ai
-  # The A2UI renderer for the UI the agent writes in its replies. Pinned to its pull request
-  # until it is released.
+  # The A2UI and OpenUI renderers for the UI the agent writes in its replies. Pinned to the
+  # OpenUI pull request's head (it holds the A2UI package too) until they are released.
   stream_chat_flutter_ai_a2ui:
     git:
       url: https://github.com/GetStream/stream-chat-flutter-ai.git
-      ref: 9fbe9db
+      ref: eefb10b90c3cef486cd03a9843ad428a2e6bc525
       path: packages/stream_chat_flutter_ai_a2ui
+  stream_chat_flutter_ai_openui:
+    git:
+      url: https://github.com/GetStream/stream-chat-flutter-ai.git
+      ref: eefb10b90c3cef486cd03a9843ad428a2e6bc525
+      path: packages/stream_chat_flutter_ai_openui
   # Stream's design system, which the AI components are built on: its widgets for the app's own
   # screens (app bar, buttons, sheets). The version stream_chat_flutter_ai uses.
   stream_core_flutter: ^0.5.3
@@ -61,11 +66,11 @@ dependencies:
 dependency_overrides:
   vision_agents_core:
     path: ../../../sdks/dart/core
-  # The A2UI renderer asks for stream_chat_flutter_ai from pub.dev, where this commit is not.
+  # The renderers ask for stream_chat_flutter_ai from pub.dev, where this commit is not.
   stream_chat_flutter_ai:
     git:
       url: https://github.com/GetStream/stream-chat-flutter-ai.git
-      ref: 9fbe9db
+      ref: eefb10b90c3cef486cd03a9843ad428a2e6bc525
       path: packages/stream_chat_flutter_ai
 
 dev_dependencies:

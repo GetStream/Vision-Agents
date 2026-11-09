@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:stream_chat/stream_chat.dart' as stream;
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 import 'package:stream_chat_flutter_ai_a2ui/stream_chat_flutter_ai_a2ui.dart';
+import 'package:stream_chat_flutter_ai_openui/stream_chat_flutter_ai_openui.dart';
 import 'package:vision_agents_chat/vision_agents_chat.dart';
 import 'package:vision_agents_core/vision_agents_core.dart';
 
@@ -54,7 +55,10 @@ class AgentChat extends ChangeNotifier {
   /// phone's own components, and sends what the person does in it back.
   late final ui = AIUIHost(
     components: TripComponents.all,
-    renderers: [A2UIRenderer(onError: (error, _) => debugPrint('A2UI: $error'))],
+    renderers: [
+      OpenUIRenderer(onError: (error, _) => debugPrint('OpenUI: $error')),
+      A2UIRenderer(onError: (error, _) => debugPrint('A2UI: $error')),
+    ],
     send: _answer,
   );
 

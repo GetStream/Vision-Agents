@@ -102,13 +102,6 @@ class _RootScreenState extends State<RootScreen> {
             return Text(open?.displayTitle ?? 'Juno');
           },
         ),
-        trailing: StreamButton.icon(
-          style: .secondary,
-          type: .ghost,
-          tooltip: 'Settings',
-          onPressed: () => SettingsSheet.show(context),
-          icon: const Icon(Icons.tune),
-        ),
       ),
       drawer: Drawer(
         backgroundColor: context.streamColorScheme.backgroundApp,
@@ -116,6 +109,10 @@ class _RootScreenState extends State<RootScreen> {
           conversations: _conversations,
           selected: _selected,
           onNew: () => _show(null),
+          onSettings: () {
+            _scaffold.currentState?.closeDrawer();
+            SettingsSheet.show(context);
+          },
           onOpen: (session) => _show(session.id),
           onDelete: (session) {
             _conversations.delete(session);
