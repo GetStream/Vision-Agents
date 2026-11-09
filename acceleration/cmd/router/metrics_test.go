@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -75,6 +76,82 @@ func (s *MetricsSuite) TestMetricsAreServedAsOpenMetrics() {
 	s.Equal(http.StatusOK, response.StatusCode)
 	s.Contains(response.Header.Get("Content-Type"), "application/openmetrics-text")
 	s.Contains(string(body), "go_goroutines")
+}
+
+// servedRateLimited serves metrics and returns the router_vendor_rate_limited_total series
+// the router serves, as its label set mapped to its value.
+func (s *MetricsSuite) servedRateLimited() map[string]string {
+	stop, _ := serveMetrics(s.addr, slog.New(slog.DiscardHandler))
+	s.T().Cleanup(stop)
+
+	var response *http.Response
+	s.Require().Eventually(func() bool {
+		var err error
+		response, err = s.scrape()
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond, "the metrics listener never answered")
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	s.Require().NoError(err)
+
+	served := map[string]string{}
+	for line := range strings.Lines(string(body)) {
+		series, found := strings.CutPrefix(strings.TrimSpace(line), "router_vendor_rate_limited_total{")
+		labels, value, ok := strings.Cut(series, " ")
+		if found && ok {
+			served[labels] = value
+		}
+	}
+	return served
+}
+
+// tableKeyVars are the eleven variables of the router's vendor table, written out here so that
+// dropping or misspelling one in the router's list fails the tests below.
+var tableKeyVars = []string{
+	"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ELEVENLABS_API_KEY", "CEREBRAS_API_KEY", "XAI_API_KEY",
+	"TOGETHER_API_KEY", "FIREWORKS_API_KEY", "DEEPGRAM_API_KEY", "GOOGLE_API_KEY", "CARTESIA_API_KEY",
+	"OPENROUTER_API_KEY",
+}
+
+// A fresh router serves each table vendor's 429 count at 0 per key, before any request: an
+// alert on it reads an absent series as no data.
+func (s *MetricsSuite) TestEveryTableVendorsRateLimitCountIsServedAtZeroPerKeyBeforeAnyRequest() {
+	for _, name := range tableKeyVars {
+		s.T().Setenv(name, "metrics-test-key")
+	}
+	s.T().Setenv("CEREBRAS_API_KEY", "metrics-test-key-1,metrics-test-key-2")
+
+	served := s.servedRateLimited()
+
+	for _, name := range tableKeyVars {
+		s.Equal("0.0", served[`key="0",key_var="`+name+`"}`], name)
+	}
+	s.Equal("0.0", served[`key="1",key_var="CEREBRAS_API_KEY"}`])
+	cerebras := 0
+	for labels := range served {
+		// The other tests serve the table with the variables this process was started with, so
+		// a key="none" series from one of them may already be here.
+		if strings.Contains(labels, `key_var="CEREBRAS_API_KEY"`) && !strings.Contains(labels, `key="none"`) {
+			cerebras++
+		}
+		s.NotContains(labels, "metrics-test-key")
+	}
+	s.Equal(2, cerebras, "one series per key")
+}
+
+// A table variable the deployment does not set is served at 0 too, under key="none", so an alert
+// on that vendor's 429s reads 0 and not no data.
+func (s *MetricsSuite) TestAnUnsetTableVariablesRateLimitCountIsServedAtZeroUnderKeyNone() {
+	for _, name := range tableKeyVars {
+		s.T().Setenv(name, "")
+		s.Require().NoError(os.Unsetenv(name))
+	}
+
+	served := s.servedRateLimited()
+
+	for _, name := range tableKeyVars {
+		s.Equal("0.0", served[`key="none",key_var="`+name+`"}`], name)
+	}
 }
 
 func (s *MetricsSuite) TestMetricsStopBeingServedWhenStopped() {

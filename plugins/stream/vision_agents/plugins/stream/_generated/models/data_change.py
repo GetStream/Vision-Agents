@@ -81,7 +81,7 @@ class DataChange:
 
         key = DataChangeKey.from_dict(d.pop("key"))
 
-        op = DataChangeOp(d.pop("op"))
+        op = DataChangeOp._decode(d.pop("op"))
 
         seq = d.pop("seq")
 

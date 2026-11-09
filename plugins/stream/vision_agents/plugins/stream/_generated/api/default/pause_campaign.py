@@ -58,6 +58,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = ErrorResponse.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 500:
         response_500 = ErrorResponse.from_dict(response.json())
 
@@ -92,8 +97,9 @@ def sync_detailed(
 ) -> Response[Campaign | ErrorResponse]:
     """Stop ringing anybody new
 
-     The calls already happening are left alone: a campaign is paused to stop ringing people, not to hang
-    up on the ones who answered.
+     A running or scheduled campaign only. The calls already happening are left alone: a campaign is
+    paused to stop ringing people, not to hang up on the ones who answered. A scheduled one paused does
+    not start at its start_at, and resuming it before then returns it to scheduled.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -125,8 +131,9 @@ def sync(
 ) -> Campaign | ErrorResponse | None:
     """Stop ringing anybody new
 
-     The calls already happening are left alone: a campaign is paused to stop ringing people, not to hang
-    up on the ones who answered.
+     A running or scheduled campaign only. The calls already happening are left alone: a campaign is
+    paused to stop ringing people, not to hang up on the ones who answered. A scheduled one paused does
+    not start at its start_at, and resuming it before then returns it to scheduled.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -153,8 +160,9 @@ async def asyncio_detailed(
 ) -> Response[Campaign | ErrorResponse]:
     """Stop ringing anybody new
 
-     The calls already happening are left alone: a campaign is paused to stop ringing people, not to hang
-    up on the ones who answered.
+     A running or scheduled campaign only. The calls already happening are left alone: a campaign is
+    paused to stop ringing people, not to hang up on the ones who answered. A scheduled one paused does
+    not start at its start_at, and resuming it before then returns it to scheduled.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -184,8 +192,9 @@ async def asyncio(
 ) -> Campaign | ErrorResponse | None:
     """Stop ringing anybody new
 
-     The calls already happening are left alone: a campaign is paused to stop ringing people, not to hang
-    up on the ones who answered.
+     A running or scheduled campaign only. The calls already happening are left alone: a campaign is
+    paused to stop ringing people, not to hang up on the ones who answered. A scheduled one paused does
+    not start at its start_at, and resuming it before then returns it to scheduled.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:

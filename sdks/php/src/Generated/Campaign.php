@@ -11,19 +11,34 @@ use GetStream\VisionAgents\Json;
 final readonly class Campaign
 {
     public function __construct(
+        public CallingHours $callingHours,
+        // How many of these calls may be happening at once.
         public int $concurrency,
+        // The agent config the calls are made with, the same as the sequence's step names.
         public string $configId,
+        public ContactCounts $contacts,
         public \DateTimeImmutable $createdAt,
+        // The region, as ISO 3166-1 alpha-2, a contact's number without a country code is read in.
+        public string $defaultCountry,
+        // One of the app's own numbers, which is what the person sees.
         public string $fromNumber,
         public string $id,
         public string $name,
-        public string $state,
-        public ?\DateTimeImmutable $finishedAt = null,
-        // Why the router paused the campaign itself, as the code of what refused its next call: telephony_suspended,...
+        public CampaignSequence $sequence,
+        public CampaignState|string $state,
+        /** @var array<string, string> */
+        public array $tags,
+        public CampaignType|string $type,
+        // When it had nobody left to ring.
+        public ?\DateTimeImmutable $completedAt = null,
+        public ?\DateTimeImmutable $launchedAt = null,
+        // Why the router paused the campaign itself: the code of what refused its next call, for example telephony_su...
         public ?string $pausedReason = null,
+        // When it was launched to start ringing.
+        public ?\DateTimeImmutable $startAt = null,
+        // When it first rang anybody.
         public ?\DateTimeImmutable $startedAt = null,
-        /** @var array<string, string>|null */
-        public ?array $tags = null,
+        public ?\DateTimeImmutable $stoppedAt = null,
     ) {
     }
 
@@ -33,17 +48,25 @@ final readonly class Campaign
     public static function fromArray(array $data): self
     {
         return new self(
+            callingHours: CallingHours::fromArray(Json::object($data, 'calling_hours')),
             concurrency: Json::int($data, 'concurrency'),
             configId: Json::string($data, 'config_id'),
+            contacts: ContactCounts::fromArray(Json::object($data, 'contacts')),
             createdAt: Json::date($data, 'created_at'),
+            defaultCountry: Json::string($data, 'default_country'),
             fromNumber: Json::string($data, 'from_number'),
             id: Json::string($data, 'id'),
             name: Json::string($data, 'name'),
-            state: Json::string($data, 'state'),
-            finishedAt: array_key_exists('finished_at', $data) && $data['finished_at'] !== null ? Json::date($data, 'finished_at') : null,
+            sequence: CampaignSequence::fromArray(Json::object($data, 'sequence')),
+            state: Json::enum($data, 'state', CampaignState::class),
+            tags: Json::stringMap($data, 'tags'),
+            type: Json::enum($data, 'type', CampaignType::class),
+            completedAt: array_key_exists('completed_at', $data) && $data['completed_at'] !== null ? Json::date($data, 'completed_at') : null,
+            launchedAt: array_key_exists('launched_at', $data) && $data['launched_at'] !== null ? Json::date($data, 'launched_at') : null,
             pausedReason: array_key_exists('paused_reason', $data) && $data['paused_reason'] !== null ? Json::string($data, 'paused_reason') : null,
+            startAt: array_key_exists('start_at', $data) && $data['start_at'] !== null ? Json::date($data, 'start_at') : null,
             startedAt: array_key_exists('started_at', $data) && $data['started_at'] !== null ? Json::date($data, 'started_at') : null,
-            tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
+            stoppedAt: array_key_exists('stopped_at', $data) && $data['stopped_at'] !== null ? Json::date($data, 'stopped_at') : null,
         );
     }
 
@@ -55,24 +78,36 @@ final readonly class Campaign
     public function toArray(): array
     {
         $out = [];
+        $out['calling_hours'] = $this->callingHours->toArray();
         $out['concurrency'] = $this->concurrency;
         $out['config_id'] = $this->configId;
+        $out['contacts'] = $this->contacts->toArray();
         $out['created_at'] = Json::dateValue($this->createdAt);
+        $out['default_country'] = $this->defaultCountry;
         $out['from_number'] = $this->fromNumber;
         $out['id'] = $this->id;
         $out['name'] = $this->name;
-        $out['state'] = $this->state;
-        if ($this->finishedAt !== null) {
-            $out['finished_at'] = Json::dateValue($this->finishedAt);
+        $out['sequence'] = $this->sequence->toArray();
+        $out['state'] = Json::enumValue($this->state);
+        $out['tags'] = $this->tags;
+        $out['type'] = Json::enumValue($this->type);
+        if ($this->completedAt !== null) {
+            $out['completed_at'] = Json::dateValue($this->completedAt);
+        }
+        if ($this->launchedAt !== null) {
+            $out['launched_at'] = Json::dateValue($this->launchedAt);
         }
         if ($this->pausedReason !== null) {
             $out['paused_reason'] = $this->pausedReason;
         }
+        if ($this->startAt !== null) {
+            $out['start_at'] = Json::dateValue($this->startAt);
+        }
         if ($this->startedAt !== null) {
             $out['started_at'] = Json::dateValue($this->startedAt);
         }
-        if ($this->tags !== null) {
-            $out['tags'] = $this->tags;
+        if ($this->stoppedAt !== null) {
+            $out['stopped_at'] = Json::dateValue($this->stoppedAt);
         }
         return $out;
     }

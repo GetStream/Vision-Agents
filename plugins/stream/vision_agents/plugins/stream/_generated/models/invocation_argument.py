@@ -57,7 +57,7 @@ class InvocationArgument:
         d = dict(src_dict)
         name = d.pop("name")
 
-        type_ = InvocationArgumentType(d.pop("type"))
+        type_ = InvocationArgumentType._decode(d.pop("type"))
 
         length = d.pop("length", UNSET)
 

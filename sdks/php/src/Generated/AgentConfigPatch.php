@@ -22,6 +22,8 @@ final readonly class AgentConfigPatch
         public ?array $connectors = null,
         public ?AgentDispatch $dispatch = null,
         public EpisodeCardsMode|string|null $episodeCards = null,
+        // Replaces the choice whole. Left out or null, the stored choice stays; an empty object is the default flow c...
+        public ?FloorControl $floorControl = null,
         // Replaces the greeting whole. An empty text removes it.
         public ?Greeting $greeting = null,
         // A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string remove...
@@ -83,6 +85,7 @@ final readonly class AgentConfigPatch
             connectors: array_key_exists('connectors', $data) && $data['connectors'] !== null ? array_map(AgentConnectorBinding::fromArray(...), Json::objects($data, 'connectors')) : null,
             dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
             episodeCards: array_key_exists('episode_cards', $data) && $data['episode_cards'] !== null ? Json::enum($data, 'episode_cards', EpisodeCardsMode::class) : null,
+            floorControl: array_key_exists('floor_control', $data) && $data['floor_control'] !== null ? FloorControl::fromArray(Json::object($data, 'floor_control')) : null,
             greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Greeting::fromArray(Json::object($data, 'greeting')) : null,
             guardrail: array_key_exists('guardrail', $data) && $data['guardrail'] !== null ? Json::string($data, 'guardrail') : null,
             harness: array_key_exists('harness', $data) && $data['harness'] !== null ? Json::enum($data, 'harness', Harness::class) : null,
@@ -138,6 +141,9 @@ final readonly class AgentConfigPatch
         }
         if ($this->episodeCards !== null) {
             $out['episode_cards'] = Json::enumValue($this->episodeCards);
+        }
+        if ($this->floorControl !== null) {
+            $out['floor_control'] = $this->floorControl->toArray();
         }
         if ($this->greeting !== null) {
             $out['greeting'] = $this->greeting->toArray();

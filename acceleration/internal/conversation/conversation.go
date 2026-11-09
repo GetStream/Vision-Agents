@@ -23,6 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/google/uuid"
 )
@@ -1689,7 +1690,7 @@ func (c *Conversation) Observe(event agent.Event) {
 			}
 			failure := ""
 			if e.Err != nil {
-				failure = e.Err.Error()
+				failure = store.SafeLogText(e.Err.Error())
 			}
 			ran(m, t.ID, t.Status, e.Result, failure, now)
 			changed = true

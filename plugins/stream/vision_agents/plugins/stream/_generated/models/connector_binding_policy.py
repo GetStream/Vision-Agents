@@ -67,7 +67,7 @@ class ConnectorBindingPolicy:
         if isinstance(_on_interrupt, Unset):
             on_interrupt = UNSET
         else:
-            on_interrupt = ConnectorOnInterrupt(_on_interrupt)
+            on_interrupt = ConnectorOnInterrupt._decode(_on_interrupt)
 
         pre_speech = d.pop("pre_speech", UNSET)
 

@@ -409,12 +409,71 @@ func TestADeclarationKeyNobodyKnowsIsRefused(t *testing.T) {
 		"sandbox_options:\n  timeout: soon\n",
 		"sandbox_options:\n  memory: 4\n",
 		"keyterms: Vision Agents\n",
+		"end_of_turn:\n  max_wait_ms: 900\n",
+		"end_of_turn: {}\n",
 	} {
 		root := filepath.Join(t.TempDir(), "jean")
 		write(t, root, "agent.yaml", declaration)
 
 		if _, err := Load(root); err == nil {
 			t.Errorf("accepted %q", declaration)
+		}
+	}
+}
+
+// floor_control is read as written, an empty mapping included; which models there are, and
+// whether a wait needs one, is the router's to say.
+func TestTheFloorControlIsReadAsWritten(t *testing.T) {
+	for _, c := range []struct {
+		declared string
+		want     *FloorControlSettings
+	}{
+		{"floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n", &FloorControlSettings{Model: pointer("stream/chorus-asr"), MaxWaitMs: pointer(800)}},
+		{"floor_control: {model: \"stream/chorus-asr\"}\n", &FloorControlSettings{Model: pointer("stream/chorus-asr")}},
+		{"floor_control: {max_wait_ms: 800}\n", &FloorControlSettings{MaxWaitMs: pointer(800)}},
+		{"floor_control: {model: ~, max_wait_ms: ~}\n", &FloorControlSettings{}},
+		{"floor_control: {}\n", &FloorControlSettings{}},
+		{"floor_control:\n", nil},
+		{"floor_control: ~\n", nil},
+		{"llm: openai/gpt-5.6\n", nil},
+	} {
+		root := filepath.Join(t.TempDir(), "jean")
+		write(t, root, "agent.yaml", c.declared)
+
+		folder, err := Load(root)
+		if err != nil {
+			t.Errorf("%q: %v", c.declared, err)
+			continue
+		}
+		if !reflect.DeepEqual(folder.Settings.FloorControl, c.want) {
+			t.Errorf("%q: floor_control read as %+v, not %+v", c.declared, folder.Settings.FloorControl, c.want)
+		}
+	}
+}
+
+// A floor_control that is not a mapping, the string it once was included, a key nobody knows,
+// a model that is not a string or a wait that is not an integer is refused, naming what.
+func TestAFloorControlThatIsNotAMappingOfModelAndWaitIsRefused(t *testing.T) {
+	for _, c := range []struct {
+		declared, says string
+	}{
+		{"floor_control: stream/chorus-asr\n", "floor_control is a mapping of model and, optionally, max_wait_ms"},
+		{"floor_control: [stream/chorus-asr]\n", "floor_control is a mapping"},
+		{"floor_control: true\n", "floor_control is a mapping"},
+		{"floor_control: 1\n", "floor_control is a mapping"},
+		{"floor_control: {model: stream/chorus-asr, mode: act}\n", `"mode" is not a floor_control setting`},
+		{"floor_control: {model: stream/chorus-asr, preset: fast}\n", `"preset" is not a floor_control setting`},
+		{"floor_control: {model: [stream/chorus-asr]}\n", "floor_control.model must be a string"},
+		{"floor_control: {model: 1}\n", "floor_control.model must be a string"},
+		{"floor_control: {model: stream/chorus-asr, max_wait_ms: soon}\n", "floor_control.max_wait_ms must be an integer"},
+		{"floor_control: {model: stream/chorus-asr, max_wait_ms: 800.5}\n", "floor_control.max_wait_ms must be an integer"},
+	} {
+		root := filepath.Join(t.TempDir(), "jean")
+		write(t, root, "agent.yaml", c.declared)
+
+		_, err := Load(root)
+		if err == nil || !strings.Contains(err.Error(), c.says) {
+			t.Errorf("%q: refused with %v", c.declared, err)
 		}
 	}
 }

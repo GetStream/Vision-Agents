@@ -20,7 +20,7 @@ final readonly class OptOut
         public string $id,
         // The number, in E.164.
         public string $recipient,
-        // keyword when they texted STOP, otherwise api or dashboard.
+        // keyword when they texted STOP, campaign when they asked a campaign call not to call again, otherwise api or...
         public string $source,
     ) {
     }

@@ -60,7 +60,8 @@ func (s *Store) FinishRecording(ctx context.Context, id, provider, model string,
 	reason := ""
 	if failure != nil {
 		status = RecordingFailed
-		reason = failure.Error()
+		// A provider's text can echo the key it was sent, and a caller reads this back.
+		reason = SafeLogText(failure.Error())
 	}
 
 	_, err := s.shard.NewUpdate().Model((*Recording)(nil)).

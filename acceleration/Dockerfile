@@ -20,6 +20,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+# Go's SIMD experiment compiles the Opus codec's vector kernels, on amd64 and arm64.
+ENV GOEXPERIMENT=simd
 RUN CGO_ENABLED=0 go build -trimpath -o /out/router ./cmd/router \
     && CGO_ENABLED=0 go build -trimpath -o /out/usage ./cmd/usage
 

@@ -277,6 +277,8 @@ type CreateSessionRequest struct {
 	Memory               *SessionMemory     `json:"memory,omitempty"`
 	MinConfidence        *float64           `json:"min_confidence,omitempty" doc:"How sure the transcriber must be before the agent answers rather than checks what was meant."`
 	ModelOverwrites      *ModelOverwrites   `json:"model_overwrites,omitempty"`
+	FloorControl         *FloorControl      `json:"floor_control,omitempty" doc:"The model that controls the floor in this session, and how long a caller may wait once they stop, over the agent config's. Left out or null, the config's; an empty object is the default flow controller. The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide."`
+	EndOfTurn            any                `json:"end_of_turn,omitempty" hidden:"true"` // refused: floor_control's max_wait_ms replaced it
 	ResumeHistory        *ResumeHistory     `json:"resume_history,omitempty" doc:"How a conversation this session carries on is handed back to the model, over the agent config's and the app's and organization's policy, field by field: a field given here wins, one left out keeps the next level's. The session keeps what it was opened with, so reopening it after it ended reads the conversation the same way. Server-side only: a device sending it is refused with a 403, because what the model is sent is billed to the app."`
 	Navigating           *bool              `json:"navigating,omitempty" doc:"The agent placed this call, so let recordings finish and answer their menus." default:"false"`
 	Phone                *SessionPhone      `json:"phone,omitempty"`
@@ -823,7 +825,9 @@ type Session struct {
 	CreatedAt        time.Time               `json:"created_at"`
 	Custom           *map[string]interface{} `json:"custom,omitempty"`
 	Description      *string                 `json:"description,omitempty"`
-	EndReason        *SessionEndReason       `json:"end_reason,omitempty" readOnly:"true" doc:"Why the session ended. Absent while it is running, and for a session that ended before this was kept or by being stopped."`
+	EndFault         *SessionEndFault        `json:"end_fault,omitempty" readOnly:"true" doc:"Whose doing end_reason was. Absent while the session is running."`
+	EndReason        *SessionEndReason       `json:"end_reason,omitempty" readOnly:"true" doc:"Why the session ended. Absent while it is running, and for a session that ended before this was kept."`
+	EndStage         *SessionEndStage        `json:"end_stage,omitempty" readOnly:"true" doc:"How far the session had got when it ended. Absent while it is running."`
 	ForkedFrom       *string                 `json:"forked_from,omitempty" doc:"The session this one continued from, empty for one opened fresh."`
 	Id               string                  `json:"id"`
 	Incognito        *bool                   `json:"incognito,omitempty" doc:"Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from."`
@@ -888,14 +892,6 @@ func (e SessionModality) Valid() bool {
 
 func (SessionModality) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "SessionModality", "How the user took part: text for a conversation held in writing, voice for a call, and video once the agent has seen the user's video. It only moves up, from text or voice to video.", "text", "voice", "video")
-}
-
-// SessionEndReason is why a session ended.
-type SessionEndReason string
-
-func (SessionEndReason) Schema(registry huma.Registry) *huma.Schema {
-	return namedEnum(registry, "SessionEndReason", "Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.",
-		"agent_hangup", "transferred", "hangup", "start", "unanswered", "voicemail")
 }
 
 // SessionMode How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.
@@ -970,6 +966,22 @@ func (VoicemailAction) Schema(registry huma.Registry) *huma.Schema {
 		"hang_up", "leave_message")
 }
 
+// CampaignVoicemailAction is what a campaign's agent does on reaching an answering machine.
+type CampaignVoicemailAction string
+
+const (
+	CampaignVoicemailActionOff          CampaignVoicemailAction = "off"
+	CampaignVoicemailActionHangUp       CampaignVoicemailAction = "hang_up"
+	CampaignVoicemailActionLeaveMessage CampaignVoicemailAction = "leave_message"
+)
+
+func (CampaignVoicemailAction) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "CampaignVoicemailAction", "off: the agent talks to a machine as to a person. The default.\n"+
+		"hang_up: end the call at once, saying nothing.\n"+
+		"leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.",
+		"off", "hang_up", "leave_message")
+}
+
 func (*SessionPhone) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "The number the session acts from, which is what turns transferring on."
 	return schema
@@ -1012,7 +1024,7 @@ func (CallOutcome) Schema(registry huma.Registry) *huma.Schema {
 
 // SessionRespondCommand is the SessionRespondCommand schema.
 type SessionRespondCommand struct {
-	RequestId *string                   `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. Text only when present." pattern:"^[A-Za-z0-9_-]{1,128}$"`
+	RequestId *string                   `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message." pattern:"^[A-Za-z0-9_-]{1,128}$"`
 	Images    *[]ImageSource            `json:"images,omitempty"`
 	Text      string                    `json:"text"`
 	Type      SessionRespondCommandType `json:"type" enum:"respond"`

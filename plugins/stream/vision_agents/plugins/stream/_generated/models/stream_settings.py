@@ -79,13 +79,13 @@ class StreamSettings:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        call_type = StreamTypeState(d.pop("call_type"))
+        call_type = StreamTypeState._decode(d.pop("call_type"))
 
-        channel_type = StreamTypeState(d.pop("channel_type"))
+        channel_type = StreamTypeState._decode(d.pop("channel_type"))
 
-        tenancy = StreamTenancy(d.pop("tenancy"))
+        tenancy = StreamTenancy._decode(d.pop("tenancy"))
 
-        writes_into = StreamWritesInto(d.pop("writes_into"))
+        writes_into = StreamWritesInto._decode(d.pop("writes_into"))
 
         _checked_at = d.pop("checked_at", UNSET)
         checked_at: datetime.datetime | Unset

@@ -239,8 +239,10 @@ func (c *callCards) write(ctx context.Context, created *Session, spec Spec, numb
 		ThreadChannel: thread,
 		CallID:        spec.CallID,
 		SessionID:     created.id,
-		StartedAt:     created.created,
-		StreamAppPK:   spec.StreamApp,
+		// Dated by Postgres's clock, as the link whose boundary leaves it out is, from when the
+		// session began: its card may be written minutes later, once a late caller joins.
+		Began:       created.began,
+		StreamAppPK: spec.StreamApp,
 	})
 	if err != nil {
 		return err

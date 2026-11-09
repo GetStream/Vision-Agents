@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from ..models.agent_dispatch import AgentDispatch
     from ..models.agent_scheduling import AgentScheduling
     from ..models.agent_tools import AgentTools
+    from ..models.floor_control import FloorControl
     from ..models.greeting import Greeting
     from ..models.knowledge_document import KnowledgeDocument
     from ..models.knowledge_url_declaration import KnowledgeUrlDeclaration
@@ -69,6 +70,9 @@ class SyncAgentRequest:
                 left alone.
             dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
                 /v1/dispatch. Omitted settings are disabled.
+            floor_control (FloorControl | Unset): The model that controls an agent's floor, and how long a caller may wait
+                once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again;
+                anything else replaces the stored choice whole.
             greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
             guardrail (str | Unset): The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the
                 policy in prose. Empty means every turn is answered.
@@ -145,6 +149,7 @@ class SyncAgentRequest:
     check_changes: bool | Unset = UNSET
     connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
+    floor_control: FloorControl | Unset = UNSET
     greeting: Greeting | Unset = UNSET
     guardrail: str | Unset = UNSET
     harness: Harness | Unset = UNSET
@@ -208,6 +213,10 @@ class SyncAgentRequest:
         dispatch: dict[str, Any] | Unset = UNSET
         if not isinstance(self.dispatch, Unset):
             dispatch = self.dispatch.to_dict()
+
+        floor_control: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.floor_control, Unset):
+            floor_control = self.floor_control.to_dict()
 
         greeting: dict[str, Any] | Unset = UNSET
         if not isinstance(self.greeting, Unset):
@@ -357,6 +366,8 @@ class SyncAgentRequest:
             field_dict["connectors"] = connectors
         if dispatch is not UNSET:
             field_dict["dispatch"] = dispatch
+        if floor_control is not UNSET:
+            field_dict["floor_control"] = floor_control
         if greeting is not UNSET:
             field_dict["greeting"] = greeting
         if guardrail is not UNSET:
@@ -428,6 +439,7 @@ class SyncAgentRequest:
         from ..models.agent_dispatch import AgentDispatch
         from ..models.agent_scheduling import AgentScheduling
         from ..models.agent_tools import AgentTools
+        from ..models.floor_control import FloorControl
         from ..models.greeting import Greeting
         from ..models.knowledge_document import KnowledgeDocument
         from ..models.knowledge_url_declaration import KnowledgeUrlDeclaration
@@ -487,6 +499,13 @@ class SyncAgentRequest:
         else:
             dispatch = AgentDispatch.from_dict(_dispatch)
 
+        _floor_control = d.pop("floor_control", UNSET)
+        floor_control: FloorControl | Unset
+        if isinstance(_floor_control, Unset):
+            floor_control = UNSET
+        else:
+            floor_control = FloorControl.from_dict(_floor_control)
+
         _greeting = d.pop("greeting", UNSET)
         greeting: Greeting | Unset
         if isinstance(_greeting, Unset):
@@ -501,7 +520,7 @@ class SyncAgentRequest:
         if isinstance(_harness, Unset):
             harness = UNSET
         else:
-            harness = Harness(_harness)
+            harness = Harness._decode(_harness)
 
         instructions = d.pop("instructions", UNSET)
 
@@ -556,7 +575,7 @@ class SyncAgentRequest:
         if isinstance(_mode, Unset):
             mode = UNSET
         else:
-            mode = AgentMode(_mode)
+            mode = AgentMode._decode(_mode)
 
         _plugin_events = d.pop("plugin_events", UNSET)
         plugin_events: list[SyncAgentRequestPluginEventsItem] | Unset = UNSET
@@ -608,14 +627,14 @@ class SyncAgentRequest:
         if isinstance(_role, Unset):
             role = UNSET
         else:
-            role = AgentRole(_role)
+            role = AgentRole._decode(_role)
 
         _sandbox = d.pop("sandbox", UNSET)
         sandbox: Sandbox | Unset
         if isinstance(_sandbox, Unset):
             sandbox = UNSET
         else:
-            sandbox = Sandbox(_sandbox)
+            sandbox = Sandbox._decode(_sandbox)
 
         _sandbox_options = d.pop("sandbox_options", UNSET)
         sandbox_options: SandboxOptions | Unset
@@ -693,6 +712,7 @@ class SyncAgentRequest:
             check_changes=check_changes,
             connectors=connectors,
             dispatch=dispatch,
+            floor_control=floor_control,
             greeting=greeting,
             guardrail=guardrail,
             harness=harness,

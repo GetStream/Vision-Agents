@@ -204,6 +204,20 @@ unchanged directory is only read back. A key `agent.yaml` does not know is refus
 syncs first. Each file in `simulations/` is a list of `{name, scenario, assertion, mode, ...}`;
 a directory with the folder replaces the agent's simulations, and no directory leaves them alone.
 
+`floor_control:` is the model that controls the agent's floor, and how long a caller may wait
+once they stop:
+
+```yaml
+floor_control:
+  model: stream/chorus-asr
+  max_wait_ms: 800      # optional; the server's default point otherwise
+```
+
+It is sent as written, and `{}` is the default flow controller again. Left out, the stored choice
+stays, and an agent that never chose has the default flow controller; the router refuses
+`stream/chorus-asr` without a chorus-asr server, and a `max_wait_ms` shorter than every point it
+measured.
+
 ## Simulations
 
 ```csharp

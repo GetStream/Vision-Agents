@@ -30,13 +30,14 @@ class FakeChat extends Store<{ messages: LocalMessage[]; failure: string | undef
 
   /** Stream's copy of the person's question arriving in the channel. */
   arrives(text: string): void {
-    this.update({ messages: [...this.get().messages, { id: crypto.randomUUID(), text } as LocalMessage] });
+    this.update({ messages: [...this.get().messages, { id: crypto.randomUUID(), text, custom: {} } as LocalMessage] });
   }
 }
 
 /** A message as Stream holds it: the person's, or the agent's reply. */
 function message(text: string, isReply = false): LocalMessage {
-  return { id: crypto.randomUUID(), text, ...(isReply ? { ai_generated: true } : {}) } as unknown as LocalMessage;
+  // stream-chat 10 keeps fields it does not define under `custom`, and every message has one.
+  return { id: crypto.randomUUID(), text, custom: isReply ? { ai_generated: true } : {} } as unknown as LocalMessage;
 }
 
 /**

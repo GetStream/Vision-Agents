@@ -388,7 +388,11 @@ func (s *AgentSuite) TestAFailedReplyIsLoggedAsAnAgentFailure() {
 	s.model.opened(s.model.turns()[0].ID).Fail(errors.New("stream reset"), "stream")
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the failed turn never ended")
 
-	s.Len(s.logs.records("agent failure"), 1)
+	failures := s.logs.records("agent failure")
+	s.Require().Len(failures, 1)
+	// Named as the stream that failed names itself: a failover's is the provider it reached.
+	s.Equal("stub", failures[0]["provider"])
+	s.Equal("stub-llm", failures[0]["model"])
 }
 
 // refusal is the screen's verdict on input that reads as a prompt injection.

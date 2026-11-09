@@ -1,7 +1,9 @@
 package conversation
 
 import (
+	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -214,6 +216,39 @@ func (s *DisplaySuite) TestAnApprovalReachesTheCommandsReply() {
 	c.Observe(agent.ToolApprovalDecided{ID: "toolu_01A", TurnID: "turn-a", Allowed: true})
 	s.Equal("awaiting_client", current(c).Parts[0].Status)
 	s.Equal("allowed", current(c).Parts[0].Approval.Decision)
+}
+
+// A device's tool that failed shows its error as the step's summary, which Chat keeps and
+// shows end users: without the key the error echoed, and as it was when it had none.
+func (s *DisplaySuite) TestAFailedDeviceToolsSummaryKeepsNoKeyItsErrorEchoed() {
+	key := "sk-test-" + rand.Text()
+	c := s.open("athena")
+	c.DescribeTools(map[string]ToolDisplay{"athena_device_location": {Title: "Checking your location", Client: true}})
+	receipt, err := c.BeginCommand("command-a", "What's the weather here?", "ios-1")
+	s.Require().NoError(err)
+	c.BindTurn("command-a", "turn-a")
+	c.Observe(agent.Responding{TurnID: "turn-a"})
+	for id, failure := range map[string]string{"toolu_01A": "location: 401 Unauthorized\nAuthorization: Bearer " + key,
+		"toolu_01B": "location: the device is offline"} {
+		c.Observe(agent.ToolStarted{ID: id, TurnID: "turn-a", Tool: "athena_device_location", StartedAt: time.Now().UTC()})
+		c.Observe(agent.ToolRan{ID: id, TurnID: "turn-a", Tool: "athena_device_location", Err: errors.New(failure)})
+	}
+	c.Observe(agent.Responded{TurnID: "turn-a", Text: "I could not tell where you are."})
+	saved(s.T(), c)
+
+	var sent struct {
+		Attachments []struct {
+			Custom struct{ ID, Summary string }
+		}
+	}
+	s.Require().NoError(json.Unmarshal([]byte(s.raw(receipt.AssistantMessageID)), &sent))
+	summaries := map[string]string{}
+	for _, attachment := range sent.Attachments {
+		summaries[attachment.Custom.ID] = attachment.Custom.Summary
+	}
+	s.Equal(map[string]string{"toolu_01A": "location: 401 Unauthorized\n[redacted]",
+		"toolu_01B": "location: the device is offline"}, summaries)
+	s.NotContains(s.raw(receipt.AssistantMessageID), key)
 }
 
 func (s *DisplaySuite) TestRevisionsIgnoreDuplicateLateAndCrossCommandEvents() {

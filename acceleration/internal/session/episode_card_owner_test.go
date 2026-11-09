@@ -50,7 +50,7 @@ func (s *EpisodeReadingSuite) placedCall(callType string) string {
 // call id the session names (placedSpec).
 func (s *EpisodeReadingSuite) placedCallIn(streamApp int64, callType string) string {
 	call := uuid.NewString()
-	keeper := outcome.NewKeeper(s.store, time.Now)
+	keeper := outcome.NewKeeper(s.store, time.Now, nil, slog.New(slog.DiscardHandler))
 	token, err := keeper.Placed(s.ctx, outcome.Call{
 		Key:    outcome.Key{CustomerID: s.customerID, StreamAppPK: streamApp, CallType: callType, CallID: call, Local: line, Remote: callee},
 		Vendor: "twilio",
@@ -253,7 +253,7 @@ func (s *EpisodeReadingSuite) TestADialingCallWithNoVendorCallIDYetNamesNobodyOn
 	s.at(-30)
 	s.smsThread(callee, "sms-author", "is the clinic open on Sunday?")
 	call := uuid.NewString()
-	_, err := outcome.NewKeeper(s.store, time.Now).Placed(s.ctx, outcome.Call{
+	_, err := outcome.NewKeeper(s.store, time.Now, nil, slog.New(slog.DiscardHandler)).Placed(s.ctx, outcome.Call{
 		Key:    outcome.Key{CustomerID: s.customerID, CallType: "agent", CallID: call, Local: line, Remote: callee},
 		Vendor: "twilio",
 	})

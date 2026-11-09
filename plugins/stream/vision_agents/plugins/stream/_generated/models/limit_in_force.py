@@ -60,7 +60,7 @@ class LimitInForce:
 
         id = d.pop("id")
 
-        level = LimitLevel(d.pop("level"))
+        level = LimitLevel._decode(d.pop("level"))
 
         limit_micros = d.pop("limit_micros")
 

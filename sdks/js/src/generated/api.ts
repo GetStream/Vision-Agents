@@ -372,12 +372,16 @@ export type paths = {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** The campaigns the calling customer has */
+        /**
+         * The campaigns the calling customer has
+         * @description Newest first.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
         readonly get: operations["listCampaigns"];
         readonly put?: never;
         /**
-         * Define a list of people to ring
-         * @description A campaign is created stopped. Add the people to ring, then start it: concurrency is how many of these calls may be happening at once, and every call is a conversation this service is running.
+         * Make a draft campaign
+         * @description A campaign rings a list of people with one agent config. It is made a draft, with the default sequence and calling hours for whatever it leaves out: add the people to ring, then launch it.
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["createCampaign"];
@@ -394,8 +398,42 @@ export type paths = {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** One campaign */
+        /**
+         * One campaign, with its contacts counted by stage
+         * @description Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
         readonly get: operations["getCampaign"];
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Delete a campaign and its contacts
+         * @description A draft, stopped or completed campaign only. Its calls stay.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteCampaign"];
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Change a campaign's settings
+         * @description Sets only what it sends. Once a campaign is launched only its name, number and concurrency change: any other field sent must be what it already is, or the change is refused with 409 campaign_locked.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly patch: operations["updateCampaign"];
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/campaigns/{id}/analytics": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * How a campaign's calls went
+         * @description A dial is a call placed: answered, unanswered, taken by an answering machine or still happening. dialed, connected and converted count contacts, not dials.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["getCampaignAnalytics"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -411,15 +449,107 @@ export type paths = {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** Who a campaign is ringing, and how far it has got */
+        /**
+         * Who a campaign rings, and how far it has got
+         * @description In the order they are rung.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
         readonly get: operations["listCampaignContacts"];
         readonly put?: never;
         /**
          * Add people to ring
-         * @description Contacts are added rather than replaced, so a campaign can be topped up while it is running. Each may carry instructions of their own, which the agent is told along with whatever its config already says.
+         * @description A draft only: once launched, the list is fixed (409 campaign_locked). Up to 1,000 a request. Each number is stored in E.164, read in default_country when it has no country code. A row that cannot be rung, or repeats a number the campaign holds, is refused and the rest are added: refused says which and why.
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["addCampaignContacts"];
+        /**
+         * Remove every contact of a draft
+         * @description A draft only: once launched, the list is fixed (409 campaign_locked).
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteCampaignContacts"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/campaigns/{id}/contacts/{contact_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * One contact, with every dial made to them
+         * @description Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["getCampaignContact"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/campaigns/{id}/contacts/{contact_id}/stop": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Ring a contact no more
+         * @description One waiting for their next attempt is stopped now. One on a call is not cut off: they are stopped when the call ends. One the sequence is done with is left as it is.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["stopCampaignContact"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/campaigns/{id}/duplicate": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Make a draft with a campaign's settings
+         * @description Its contacts are copied as asked, starting over with no attempts.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["duplicateCampaign"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/campaigns/{id}/launch": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Launch a draft
+         * @description Records the customer's consent and rings the contacts from start_at. A draft missing what it needs (contacts, one of the app's numbers, an agent config, a ready sequence) is refused with campaign_not_ready, saying what. An organization that may not pay for calls is refused here as a call would be, and a campaign refused midway is paused with paused_reason set. Contacts who opted out of calls are rejected without a call.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["launchCampaign"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -437,7 +567,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Stop ringing anybody new
-         * @description The calls already happening are left alone: a campaign is paused to stop ringing people, not to hang up on the ones who answered.
+         * @description A running or scheduled campaign only. The calls already happening are left alone: a campaign is paused to stop ringing people, not to hang up on the ones who answered. A scheduled one paused does not start at its start_at, and resuming it before then returns it to scheduled.
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["pauseCampaign"];
@@ -447,7 +577,7 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/v1/agents/campaigns/{id}/start": {
+    readonly "/v1/agents/campaigns/{id}/resume": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -457,11 +587,32 @@ export type paths = {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Start ringing
-         * @description Returns once the campaign is running rather than once it is over. A campaign that was paused carries on from whoever is left. An organization that may not pay for calls is refused here as a call would be, 402 or 403 account_suspended, and a campaign it refuses midway is paused with paused_reason set.
+         * Ring people again
+         * @description A paused campaign only. It carries on from whoever is left, and clears paused_reason. A campaign whose start time has not come goes back to scheduled rather than running. An organization that may not pay for calls is refused as a call would be.
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
-        readonly post: operations["startCampaign"];
+        readonly post: operations["resumeCampaign"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/campaigns/{id}/stop": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * End a campaign for good
+         * @description Nobody waiting is rung; calls in progress finish.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["stopCampaign"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4240,6 +4391,17 @@ export type components = {
          * @enum {string}
          */
         readonly ActivityGranularity: "daily" | "monthly";
+        readonly AddContactsRequest: {
+            /** @description Up to 1,000. */
+            readonly contacts: readonly components["schemas"]["ContactInput"][];
+            /** @description The region, as ISO 3166-1 alpha-2, a number without a country code is read in. Omitted is the campaign's default_country, else US. */
+            readonly default_country?: string;
+        };
+        readonly AddContactsResponse: {
+            readonly added: number;
+            /** @description In the order sent. */
+            readonly refused: readonly components["schemas"]["RefusedContact"][];
+        };
         readonly AddTrunkNumberRequest: {
             /** @description Required. ISO 3166-1 alpha-2 country code. */
             readonly country?: string;
@@ -4288,6 +4450,8 @@ export type components = {
             readonly dispatch?: components["schemas"]["AgentDispatch"];
             /** @description What this agent does with episode cards. record and on write a card into the person's omni-channel for each phone call, app chat conversation and SMS, WhatsApp, iMessage or Slack thread under this agent. Only on has each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in start with the person's other cards. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any. */
             readonly episode_cards?: components["schemas"]["EpisodeCardsMode"];
+            /** @description The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. Absent for the default flow controller. */
+            readonly floor_control?: components["schemas"]["FloorControl"];
             readonly greeting?: components["schemas"]["Greeting"];
             readonly guardrail?: string;
             readonly harness?: components["schemas"]["Harness"];
@@ -4340,6 +4504,8 @@ export type components = {
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
             readonly episode_cards?: components["schemas"]["EpisodeCardsMode"];
+            /** @description Replaces the choice whole. Left out or null, the stored choice stays; an empty object is the default flow controller again. */
+            readonly floor_control?: components["schemas"]["FloorControl"];
             /** @description Replaces the greeting whole. An empty text removes it. */
             readonly greeting?: components["schemas"]["Greeting"];
             /** @description A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail. */
@@ -4409,6 +4575,8 @@ export type components = {
             readonly dispatch?: components["schemas"]["AgentDispatch"];
             /** @description What this agent does with episode cards, for each phone call under it, each run of messages a Stream user writes to it in an agent channel of the app chat, and each thread of its SMS, WhatsApp, iMessage and Slack channel connections. record and on write the conversation's card, and its summary once it ends, into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number, the app chat's Stream user id or the Slack user. Only on reads them: a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any. off by default, and then a conversation writes no card and a session runs as it always did. Left out on an update, the stored setting stays. */
             readonly episode_cards?: components["schemas"]["EpisodeCardsMode"];
+            /** @description The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. A session request's wins over this. Left out or null on a create, the default flow controller; left out or null on an update, the stored choice stays; an empty object is the default flow controller again. */
+            readonly floor_control?: components["schemas"]["FloorControl"];
             readonly greeting?: components["schemas"]["Greeting"];
             /** @description A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered. */
             readonly guardrail?: string;
@@ -5020,6 +5188,21 @@ export type components = {
             /** @description The exchange it was about, which lines it up against that turn's timings. */
             readonly turn_id?: string;
         };
+        readonly CallingHours: {
+            /** @description YYYY-MM-DD, the contact's local date, on which nobody is rung. */
+            readonly excluded_dates: readonly string[];
+            readonly time_zone: components["schemas"]["CampaignTimeZone"];
+            /** @description Keyed monday to sunday. A day left out rings nobody. */
+            readonly windows: {
+                readonly [key: string]: readonly components["schemas"]["CallingWindow"][] | null;
+            };
+        };
+        readonly CallingWindow: {
+            /** @description HH:MM, up to 24:00. A window does not cross midnight. */
+            readonly end: string;
+            /** @description HH:MM, on a 15-minute step. */
+            readonly start: string;
+        };
         /**
          * @description How a placed call ended.
          *     completed: the person answered and the call ended.
@@ -5111,40 +5294,213 @@ export type components = {
             readonly requests: number;
         };
         readonly Campaign: {
+            readonly calling_hours: components["schemas"]["CallingHours"];
+            /**
+             * Format: date-time
+             * @description When it had nobody left to ring.
+             */
+            readonly completed_at?: string;
+            /** @description How many of these calls may be happening at once. */
             readonly concurrency: number;
+            /** @description The agent config the calls are made with, the same as the sequence's step names. */
             readonly config_id: string;
+            readonly contacts: components["schemas"]["ContactCounts"];
             /** Format: date-time */
             readonly created_at: string;
-            /** Format: date-time */
-            readonly finished_at?: string;
+            /** @description The region, as ISO 3166-1 alpha-2, a contact's number without a country code is read in. */
+            readonly default_country: string;
+            /** @description One of the app's own numbers, which is what the person sees. */
             readonly from_number: string;
             readonly id: string;
-            readonly name: string;
-            /** @description Why the router paused the campaign itself, as the code of what refused its next call: telephony_suspended, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached. The contact that call was for is rung once the campaign is started again. Absent for a campaign the customer paused, and cleared by starting it. */
-            readonly paused_reason?: string;
             /** Format: date-time */
+            readonly launched_at?: string;
+            readonly name: string;
+            /** @description Why the router paused the campaign itself: the code of what refused its next call, for example telephony_suspended, account_suspended, insufficient_credits, system_limit_reached, spend_limit_reached, user_limit_reached or spend_check_unavailable, config_missing when its agent config was deleted, session_refused when its agent config makes a session that cannot open, or voicemail_needs_exact_words when its step leaves a voicemail message and its agent config became speech-to-speech. The contact that call was for is rung once the campaign is resumed. Absent for a campaign somebody paused, and cleared by resuming it. */
+            readonly paused_reason?: string;
+            readonly sequence: components["schemas"]["CampaignSequence"];
+            /**
+             * Format: date-time
+             * @description When it was launched to start ringing.
+             */
+            readonly start_at?: string;
+            /**
+             * Format: date-time
+             * @description When it first rang anybody.
+             */
             readonly started_at?: string;
-            /** @enum {string} */
-            readonly state: "draft" | "running" | "paused" | "finished";
-            readonly tags?: {
+            readonly state: components["schemas"]["CampaignState"];
+            /** Format: date-time */
+            readonly stopped_at?: string;
+            readonly tags: {
                 readonly [key: string]: string;
             };
+            readonly type: components["schemas"]["CampaignType"];
+        };
+        readonly CampaignAnalytics: {
+            /** @description Calls placed that ended, by how the phone says they ended: completed, busy, no_answer, failed, canceled or unknown. A call an answering machine took is completed. */
+            readonly call_outcomes: {
+                readonly [key: string]: number;
+            };
+            /**
+             * Format: int64
+             * @description Contacts who answered at least one call.
+             */
+            readonly connected: number;
+            /**
+             * Format: double
+             * @description converted / dialed, 0 when nobody was dialed.
+             */
+            readonly conversion_rate: number;
+            /**
+             * Format: int64
+             * @description Contacts that ended successfully.
+             */
+            readonly converted: number;
+            /**
+             * Format: int64
+             * @description Contacts with at least one call placed.
+             */
+            readonly dialed: number;
+            /** @description Oldest first, only the days with a dial. */
+            readonly dials_per_day: readonly components["schemas"]["CampaignDialDay"][];
+            /** @description Contacts that are done, by outcome id, no_response included. */
+            readonly outcomes: {
+                readonly [key: string]: number;
+            };
+        };
+        readonly CampaignAttempt: {
+            /**
+             * Format: int64
+             * @description Minutes after the previous attempt started, pushed into the calling hours.
+             */
+            readonly delay_minutes: number;
+        };
+        readonly CampaignDialDay: {
+            /**
+             * Format: int64
+             * @description Calls a person picked up and spoke on.
+             */
+            readonly answered: number;
+            /**
+             * Format: date
+             * @description YYYY-MM-DD, in UTC.
+             */
+            readonly date: string;
+            /**
+             * Format: int64
+             * @description Calls placed, answering machines included.
+             */
+            readonly dials: number;
+            /**
+             * Format: int64
+             * @description Calls an answering machine took.
+             */
+            readonly voicemail: number;
+        };
+        readonly CampaignNext: {
+            /**
+             * @description How the contact ends: successful counts as converted.
+             * @enum {string}
+             */
+            readonly end?: "successful" | "unsuccessful";
+            /** @description Reserved for branching to another step, which is refused for now. */
+            readonly step?: string;
+        };
+        readonly CampaignOutcome: {
+            /** @description What the call has to have been for this outcome, which the model reading the transcript goes by. */
+            readonly description: string;
+            /** @description Lowercase letters, digits and underscores, starting with a letter. */
+            readonly id: string;
+            readonly name: string;
+            readonly next: components["schemas"]["CampaignNext"];
+        };
+        readonly CampaignPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["Campaign"][];
+            /** @description Pass as cursor for the next page. Absent on the last. */
+            readonly next_cursor?: string;
         };
         readonly CampaignRequest: {
-            /**
-             * @description How many of these calls may be happening at once.
-             * @default 1
-             */
+            /** @description Omitted is weekdays 09:00 to 18:00 where the contact is, on create. */
+            readonly calling_hours?: components["schemas"]["CallingHours"];
+            /** @description How many of these calls may be happening at once. Omitted is 1 on create. */
             readonly concurrency?: number;
-            /** @description The agent config the calls are made with. */
-            readonly config_id: string;
-            /** @description One of your own numbers, which is what the person sees. */
-            readonly from_number: string;
-            readonly name: string;
+            /** @description The agent config the calls are made with. Setting it sets the sequence's step's too. */
+            readonly config_id?: string;
+            /** @description The region, as ISO 3166-1 alpha-2, a contact's number without a country code is read in. */
+            readonly default_country?: string;
+            /** @description One of the app's own numbers, which is what the person sees. */
+            readonly from_number?: string;
+            /** @description Required on create. */
+            readonly name?: string;
+            /** @description Omitted is four attempts over twenty days, with double dial, on create. Its step's config_id is the campaign's: sending both, they must agree. */
+            readonly sequence?: components["schemas"]["CampaignSequence"];
             readonly tags?: {
                 readonly [key: string]: string;
             };
+            /** @description Omitted is standard on create. It never changes. */
+            readonly type?: components["schemas"]["CampaignType"];
         };
+        readonly CampaignRoute: {
+            readonly next: components["schemas"]["CampaignNext"];
+        };
+        readonly CampaignSequence: {
+            /** @description Ring again at once when the first call of an attempt is not answered. */
+            readonly double_dial: boolean;
+            /** @description Exactly one step for now. */
+            readonly steps: readonly components["schemas"]["CampaignStep"][];
+        };
+        /**
+         * @description Where a campaign is: draft until it is launched, scheduled until its start_at, running while it rings people, paused while it rings nobody new, stopped for good, completed once it has nobody left to ring.
+         * @enum {string}
+         */
+        readonly CampaignState: "draft" | "scheduled" | "running" | "paused" | "stopped" | "completed";
+        readonly CampaignStep: {
+            /** @description 1 to 10. The first has a delay of 0. */
+            readonly attempts: readonly components["schemas"]["CampaignAttempt"][];
+            /** @description The agent config the step rings with, the same as the campaign's config_id. */
+            readonly config_id: string;
+            /** @description What this conversation is for, told to the agent on every call of the step. {{variable}} placeholders are filled from the contact. Required to launch. */
+            readonly goal?: string;
+            /** @description step_1, for now. */
+            readonly id: string;
+            /** @description Where running out of attempts leads. It ends unsuccessfully. */
+            readonly no_response: components["schemas"]["CampaignRoute"];
+            /** @description Where an answered call none of the outcomes fit leads. */
+            readonly other: components["schemas"]["CampaignRoute"];
+            /** @description What an answered call can end as. do_not_call is built in. */
+            readonly outcomes: readonly components["schemas"]["CampaignOutcome"][];
+            /** @description What the agent does when an answering machine picks up. Absent is off: the agent talks to a machine as to a person. Leaving a message needs an agent that is not speech-to-speech. */
+            readonly voicemail?: components["schemas"]["CampaignVoicemail"];
+        };
+        readonly CampaignTimeZone: {
+            /** @description An IANA zone, used by contact mode. */
+            readonly fallback: string;
+            /** @description An IANA zone, used by fixed mode. */
+            readonly fixed?: string;
+            /**
+             * @description contact reads the hours where each contact is: their time_zone, else their number's, else fallback. fixed reads them in fixed.
+             * @enum {string}
+             */
+            readonly mode: "contact" | "fixed";
+        };
+        /**
+         * @description What a campaign rings. standard rings the contacts it was given; auto_enroll is refused for now. Fixed once the campaign is created.
+         * @enum {string}
+         */
+        readonly CampaignType: "standard" | "auto_enroll";
+        readonly CampaignVoicemail: {
+            readonly action: components["schemas"]["CampaignVoicemailAction"];
+            /** @description {{variable}} placeholders are filled from the contact, then it is said word for word once the greeting has ended, and the call ends. Required to launch for leave_message, and not only spaces. */
+            readonly message?: string;
+        };
+        /**
+         * @description off: the agent talks to a machine as to a person. The default.
+         *     hang_up: end the call at once, saying nothing.
+         *     leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.
+         * @enum {string}
+         */
+        readonly CampaignVoicemailAction: "off" | "hang_up" | "leave_message";
         readonly CancelPriceChangeInput: {
             /** @description Why the change is called off. */
             readonly reason: string;
@@ -5911,27 +6267,106 @@ export type components = {
             readonly schema_digest?: string;
         };
         readonly Contact: {
-            readonly attempts: number;
-            /** @description The call this contact became, which is what the call paths take. */
+            /** @description Every dial made to them, oldest first. Only on a contact read alone. */
+            readonly attempts?: readonly components["schemas"]["ContactAttempt"][] | null;
+            /** @description Attempts that placed at least one call. */
+            readonly attempts_made: number;
+            /** @description The attempts the sequence makes at most. */
+            readonly attempts_total: number;
+            /** @description The last call placed to them, which is what the call paths take. */
             readonly call_id?: string;
-            /** @description Why they could not be rung, when they could not be. */
-            readonly error?: string;
+            /** @description They ended successfully. */
+            readonly converted: boolean;
+            /** Format: date-time */
+            readonly created_at: string;
             readonly id: string;
-            readonly instructions?: string;
-            /** @description How the call to them ended, once it has. The state still says only whether they were rung. */
-            readonly outcome?: components["schemas"]["CallOutcome"];
-            /** @enum {string} */
-            readonly state: "pending" | "calling" | "done" | "failed";
+            /**
+             * Format: date-time
+             * @description When they are next rung, while they are waiting to be.
+             */
+            readonly next_attempt_at?: string;
+            /** @description The id of the outcome they ended with, once they have. */
+            readonly outcome?: string;
+            /** @description Why they were rejected, failed or stopped. */
+            readonly reason?: string;
+            readonly stage: components["schemas"]["ContactStage"];
+            /** @description The IANA zone they were added with. */
+            readonly time_zone?: string;
+            /** @description E.164. */
             readonly to_number: string;
-            readonly vendor_call_id?: string;
+            /** @description Filled into the agent's {{placeholders}} on their calls. */
+            readonly variables: {
+                readonly [key: string]: string;
+            };
+            /** @description The IANA zone the calling hours are read in for them: the campaign's fixed zone, else their time_zone, else their number's, else the campaign's fallback. */
+            readonly zone: string;
         };
-        readonly ContactsRequest: {
-            readonly contacts: readonly {
-                /** @description What to say to this person, added to whatever the config already says. */
-                readonly instructions?: string;
-                readonly to_number: string;
-            }[];
+        readonly ContactAttempt: {
+            /** @description Which attempt of the sequence, from 1. */
+            readonly attempt: number;
+            readonly call_id?: string;
+            /** @description How the call the dial placed ended, as the phone says. Absent while it is happening and for a dial that placed none. */
+            readonly call_outcome?: components["schemas"]["CallOutcome"];
+            /** @description 1, or 2 for the second call of a double dial. */
+            readonly dial: number;
+            /** Format: date-time */
+            readonly ended_at?: string;
+            /** @description The outcome an answered call was read as: no_response when nobody but the agent spoke. */
+            readonly outcome?: string;
+            /** @description Why the dial placed no call: invalid_number, refused, deferred, paused or not_placed (the router stopped before the call went out). voicemail for a call an answering machine took. Empty for any other call, whose end call_outcome says. */
+            readonly result: string;
+            /** Format: date-time */
+            readonly started_at: string;
         };
+        readonly ContactCounts: {
+            /** Format: int64 */
+            readonly completed: number;
+            /**
+             * Format: int64
+             * @description Contacts that ended successfully.
+             */
+            readonly converted: number;
+            /**
+             * Format: int64
+             * @description Contacts with at least one call placed.
+             */
+            readonly dialed: number;
+            /** Format: int64 */
+            readonly enrolled: number;
+            /** Format: int64 */
+            readonly failed: number;
+            /** Format: int64 */
+            readonly in_progress: number;
+            /** Format: int64 */
+            readonly rejected: number;
+            /** Format: int64 */
+            readonly stopped: number;
+            /** Format: int64 */
+            readonly total: number;
+        };
+        readonly ContactInput: {
+            /** @description What to say to this person, added to whatever the config already says. Up to 2,000 characters; longer fails the whole request with 400. */
+            readonly instructions?: string;
+            /** @description An IANA zone, which a campaign reading its hours where each contact is goes by before the number's. */
+            readonly time_zone?: string;
+            /** @description With or without a country code. */
+            readonly to_number: string;
+            /** @description Filled into the agent's {{placeholders}}. Names are lowercase letters, digits and underscores, starting with a letter; up to 50, each value up to 1,000 characters on one line. */
+            readonly variables?: {
+                readonly [key: string]: string;
+            };
+        };
+        readonly ContactPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["Contact"][];
+            /** @description Pass as cursor for the next page. Absent on the last. */
+            readonly next_cursor?: string;
+        };
+        /**
+         * @description Where a contact is: enrolled while waiting to be rung, in_progress while a call to them happens or is being read, completed once the sequence is done with them, rejected when their number was refused before any call, stopped when they were left unrung, failed when a call could not be made.
+         * @enum {string}
+         */
+        readonly ContactStage: "enrolled" | "in_progress" | "completed" | "rejected" | "stopped" | "failed";
         readonly ContentPart: components["schemas"]["TextContentPart"] | components["schemas"]["ImageContentPart"];
         /** @description One place a call's cost came from. */
         readonly CostSource: {
@@ -6045,6 +6480,8 @@ export type components = {
             };
             /** @description A longer note about the conversation, searched alongside the title. */
             readonly description?: string;
+            /** @description The model that controls the floor in this session, and how long a caller may wait once they stop, over the agent config's. Left out or null, the config's; an empty object is the default flow controller. The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide. */
+            readonly floor_control?: components["schemas"]["FloorControl"];
             /** @description What the agent opens the call with, over what the config says. */
             readonly greeting?: components["schemas"]["Greeting"];
             /** @description The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth. */
@@ -6423,6 +6860,13 @@ export type components = {
          * @enum {string}
          */
         readonly DispatchSetting: "enabled" | "disabled";
+        readonly DuplicateCampaignRequest: {
+            /**
+             * @description none, all, or the contacts never rung, which a stopped or completed campaign alone knows.
+             * @enum {string}
+             */
+            readonly contacts: "none" | "all" | "not_contacted";
+        };
         /** @description The quota a user is held to: each number is the first set of the user's own, the app's, the organization's and the router's default. Both are 0 on a router that counts nothing. */
         readonly EffectiveQuota: {
             /**
@@ -6459,7 +6903,7 @@ export type components = {
             readonly $eq: string;
         };
         readonly ErrorDetail: {
-            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
+            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
             readonly code: string;
             /**
              * Format: uri
@@ -6479,6 +6923,20 @@ export type components = {
          * @enum {string}
          */
         readonly ErrorType: "invalid_request" | "authentication" | "permission" | "payment_required" | "not_found" | "method_not_allowed" | "not_acceptable" | "conflict" | "gone" | "payload_too_large" | "unsupported_media_type" | "rate_limited" | "internal" | "unavailable" | "timeout";
+        /** @description The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole. */
+        readonly FloorControl: {
+            /**
+             * Format: int64
+             * @description The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point.
+             * @example 800
+             */
+            readonly max_wait_ms?: number;
+            /**
+             * @description The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one there is. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured).
+             * @example stream/chorus-asr
+             */
+            readonly model?: string;
+        };
         /** @description Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model. */
         readonly ForkSessionRequest: {
             readonly agent?: string;
@@ -6896,6 +7354,15 @@ export type components = {
          * @enum {string}
          */
         readonly KnowledgeUrlState: "pending" | "indexed" | "failed";
+        readonly LaunchCampaignRequest: {
+            /** @description Must be true: the people on the campaign agreed to be called by it. Recorded with the time. */
+            readonly consent: boolean;
+            /**
+             * Format: date-time
+             * @description When to start ringing. Omitted is now; up to a minute in the past is now too.
+             */
+            readonly start_at?: string;
+        };
         /** @description A connector agent.yaml names that a sync left out, because the app has no connection by the id or label it names. */
         readonly LeftOutConnector: {
             /** @description The connection id or label agent.yaml named, which no connection of the app has. */
@@ -7285,6 +7752,8 @@ export type components = {
             readonly duration_ms?: number;
             /** @description Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. key_refused is the vendor refusing the key the app keeps for it (BYOK), and the router's own instance of the model was asked next. refused is a response the prompt injection screen refused: the provider answered as asked, so it is no failure of the provider's either. Any other code, timeout included, is a failure and counts against the provider's health, unless it was on the app's own key. */
             readonly error_code?: string;
+            /** @description What the failure said, absent when success is true: for a provider that answered with an error, the start of its body. Bearer tokens, API keys, authorization headers and URL credentials in it are redacted, and a long one is cut short. Absent for a failure that said nothing, and for a request recorded before the router kept it. */
+            readonly error_message?: string;
             /** Format: int64 */
             readonly input_tokens?: number;
             readonly model: string;
@@ -7451,7 +7920,7 @@ export type components = {
             readonly id: string;
             /** @description The number, in E.164. */
             readonly recipient: string;
-            /** @description keyword when they texted STOP, otherwise api or dashboard. */
+            /** @description keyword when they texted STOP, campaign when they asked a campaign call not to call again, otherwise api or dashboard. */
             readonly source: string;
         };
         /**
@@ -8178,14 +8647,28 @@ export type components = {
          * @enum {string}
          */
         readonly RecordingStatus: "queued" | "running" | "completed" | "failed";
+        readonly RefusedContact: {
+            /** @description Its place in contacts, from 0. */
+            readonly index: number;
+            readonly reason: components["schemas"]["RefusedReason"];
+            /** @description As it was sent. */
+            readonly to_number: string;
+        };
+        /**
+         * @description Why a contact was not added: invalid_number is a number that cannot be read, duplicate one the campaign already holds or the request repeats, invalid_variable more than 50 variables, a variable with a bad name, or a value too long or over more than one line, invalid_time_zone a time zone that is not an IANA one.
+         * @enum {string}
+         */
+        readonly RefusedReason: "invalid_number" | "duplicate" | "invalid_variable" | "invalid_time_zone";
         readonly RespondRequest: {
             /** @description A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region. */
             readonly audio?: components["schemas"]["AudioSource"];
             /** @description The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it. */
             readonly client_id?: string;
-            /** @description Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, a voice note is uploaded and shown on the person's message. A retry with the same id, text and voice note does not restart inference. */
+            /** @description Photos to answer about, as on createResponse. With a request_id, or with no text in a session kept in Stream Chat, they are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message. The model sees them with this question alone. Refused before any turn starts when the agent has neither a vision skill nor a conversation model that accepts images. */
+            readonly images?: readonly components["schemas"]["ImageSource"][];
+            /** @description Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, photos and a voice note are uploaded and shown on the person's message. A retry with the same id, text, photos and voice note does not restart inference. */
             readonly request_id?: string;
-            /** @description What to answer, as though it had been said. May be empty when audio carries the question. */
+            /** @description What to answer, as though it had been said. May be empty when photos or audio carry the question. */
             readonly text: string;
         };
         /** @description How a conversation is handed back to the model when a session carries it on. */
@@ -8598,8 +9081,12 @@ export type components = {
                 readonly [key: string]: unknown;
             };
             readonly description?: string;
-            /** @description Why the session ended. Absent while it is running, and for a session that ended before this was kept or by being stopped. */
+            /** @description Whose doing end_reason was. Absent while the session is running. */
+            readonly end_fault?: components["schemas"]["SessionEndFault"];
+            /** @description Why the session ended. Absent while it is running, and for a session that ended before this was kept. */
             readonly end_reason?: components["schemas"]["SessionEndReason"];
+            /** @description How far the session had got when it ended. Absent while it is running. */
+            readonly end_stage?: components["schemas"]["SessionEndStage"];
             /** @description The session this one continued from, empty for one opened fresh. */
             readonly forked_from?: string;
             readonly id: string;
@@ -8677,10 +9164,20 @@ export type components = {
             readonly name: string;
         };
         /**
-         * @description Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.
+         * @description Whose doing a session's end was: none, the agent or the app ended it; caller, the person on the call; router, the router itself; vendor, a model vendor; carrier, the phone carrier; customer_config, the app's configuration or its own key; customer_credit, the organization's credit or spend limits.
          * @enum {string}
          */
-        readonly SessionEndReason: "agent_hangup" | "transferred" | "hangup" | "start" | "unanswered" | "voicemail";
+        readonly SessionEndFault: "none" | "caller" | "router" | "vendor" | "carrier" | "customer_config" | "customer_credit";
+        /**
+         * @description Why the session ended, with whose fault it was and the stage it came at: agent_hangup, the agent hung up (fault none, stage conversation); transferred, the agent handed the caller to a person (fault none, stage conversation); hangup, the caller left (fault caller, stage conversation); start, nobody joined the phone call in time (fault carrier, stage ringing); unanswered, the call placed was never answered (fault caller, stage ringing); voicemail, an answering machine picked up the call placed, and the agent left its message or hung up (fault none, stage ringing); closed, the session was closed through the API, or replaced by a newer one (fault none, stage conversation); shutdown, the router ended the session as it shut down (fault router, stage conversation); agent_failed, the agent left the call or answered no turn for a failure of the router's own (fault router, stage conversation); model_failed, a model vendor failed: the agent left the call or answered no turn (fault vendor, stage conversation); model_config_refused, the model failed on the customer's own key or model, or refused a setting, and the agent answered no turn (fault customer_config, stage conversation); model_no_credit, the credit or spend limits refused the model's work, and the agent answered no turn (fault customer_credit, stage conversation).
+         * @enum {string}
+         */
+        readonly SessionEndReason: "agent_hangup" | "transferred" | "hangup" | "start" | "unanswered" | "voicemail" | "closed" | "shutdown" | "agent_failed" | "model_failed" | "model_config_refused" | "model_no_credit";
+        /**
+         * @description How far a session had got when it ended: ringing, before a person was on the line of a phone call; conversation, once the session was open.
+         * @enum {string}
+         */
+        readonly SessionEndStage: "ringing" | "conversation";
         /** @description Which sessions to list. A field not listed here is refused rather than ignored. */
         readonly SessionFilter: {
             /** @description The agent name the session was opened against. */
@@ -8757,7 +9254,7 @@ export type components = {
         };
         readonly SessionRespondCommand: {
             readonly images?: readonly components["schemas"]["ImageSource"][];
-            /** @description Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. Text only when present. */
+            /** @description Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message. */
             readonly request_id?: string;
             readonly text: string;
             /** @enum {string} */
@@ -9448,6 +9945,8 @@ export type components = {
             /** @description The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
+            /** @description agent.yaml's floor_control: the model that controls the agent's floor, and how long a caller may wait once they stop. Sent, it replaces the stored choice whole, and an empty object is the default flow controller again; left out or null, the stored one stays, and an agent that never chose has the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400), and so is a max_wait_ms shorter than every point the chorus-asr server publishes, before anything is written. When the server cannot be asked the wait is kept and a warning says so, as it does of a point that fails the server's dictation guard. */
+            readonly floor_control?: components["schemas"]["FloorControl"];
             readonly greeting?: components["schemas"]["Greeting"];
             /** @description The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered. */
             readonly guardrail?: string;
@@ -11185,14 +11684,21 @@ export interface operations {
     };
     readonly listCampaigns: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                /** @description The next_cursor of the previous page, sent with the same state. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 50. */
+                readonly limit?: number;
+                /** @description Only the campaigns in this state. */
+                readonly state?: components["schemas"]["CampaignState"];
+            };
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
         };
         readonly requestBody?: never;
         readonly responses: {
-            /** @description The customer's campaigns, newest first */
+            /** @description A page of the customer's campaigns */
             readonly 200: {
                 headers: {
                     readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
@@ -11202,7 +11708,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": readonly components["schemas"]["Campaign"][];
+                    readonly "application/json": components["schemas"]["CampaignPage"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
@@ -11226,7 +11732,7 @@ export interface operations {
             };
         };
         readonly responses: {
-            /** @description The campaign was stored */
+            /** @description The draft */
             readonly 201: {
                 headers: {
                     readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
@@ -11282,7 +11788,7 @@ export interface operations {
             readonly 503: components["responses"]["Unavailable"];
         };
     };
-    readonly listCampaignContacts: {
+    readonly deleteCampaign: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -11294,7 +11800,52 @@ export interface operations {
         };
         readonly requestBody?: never;
         readonly responses: {
-            /** @description The contacts, in the order they are rung */
+            /** @description The campaign is gone */
+            readonly 204: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly updateCampaign: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CampaignRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The campaign as it is now */
             readonly 200: {
                 headers: {
                     readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
@@ -11304,7 +11855,93 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": readonly components["schemas"]["Contact"][];
+                    readonly "application/json": components["schemas"]["Campaign"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly getCampaignAnalytics: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The campaign's analytics */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CampaignAnalytics"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly listCampaignContacts: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The next_cursor of the previous page, sent with the same filters. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 50. */
+                readonly limit?: number;
+                /** @description Only the contacts whose number contains this. */
+                readonly number?: string;
+                /** @description Only the contacts at this stage. */
+                readonly stage?: components["schemas"]["ContactStage"];
+            };
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description A page of the campaign's contacts */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ContactPage"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
@@ -11328,11 +11965,11 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["ContactsRequest"];
+                readonly "application/json": components["schemas"]["AddContactsRequest"];
             };
         };
         readonly responses: {
-            /** @description The contacts, in the order they are rung */
+            /** @description How many were added, and which were refused */
             readonly 201: {
                 headers: {
                     readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
@@ -11342,7 +11979,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": readonly components["schemas"]["Contact"][];
+                    readonly "application/json": components["schemas"]["AddContactsResponse"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
@@ -11350,6 +11987,231 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly deleteCampaignContacts: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The campaign has no contacts */
+            readonly 204: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly getCampaignContact: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The contact, as the campaign's contacts list it. */
+                readonly contact_id: string;
+                /** @description The campaign. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The contact */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Contact"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly stopCampaignContact: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The contact, as the campaign's contacts list it. */
+                readonly contact_id: string;
+                /** @description The campaign. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The contact */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Contact"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly duplicateCampaign: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DuplicateCampaignRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The new draft */
+            readonly 201: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Campaign"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly launchCampaign: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LaunchCampaignRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The campaign, scheduled or running */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Campaign"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             readonly 500: components["responses"]["InternalError"];
             readonly 503: components["responses"]["Unavailable"];
         };
@@ -11384,11 +12246,20 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             readonly 500: components["responses"]["InternalError"];
             readonly 503: components["responses"]["Unavailable"];
         };
     };
-    readonly startCampaign: {
+    readonly resumeCampaign: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -11400,8 +12271,8 @@ export interface operations {
         };
         readonly requestBody?: never;
         readonly responses: {
-            /** @description The campaign is running */
-            readonly 202: {
+            /** @description The campaign is running, or scheduled when its start time has not come */
+            readonly 200: {
                 headers: {
                     readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
                     readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
@@ -11418,6 +12289,67 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            readonly 429: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly stopCampaign: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The campaign is stopped */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Campaign"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             readonly 500: components["responses"]["InternalError"];
             readonly 503: components["responses"]["Unavailable"];
         };

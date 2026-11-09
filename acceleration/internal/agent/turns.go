@@ -71,6 +71,9 @@ type turnTracker struct {
 	// after it, but it is capped: a backchannel or a hold line is never measured, so nothing
 	// would otherwise say when its entry may go.
 	origins map[string]origin
+	// out is when the audio of each turn in origins first went out to the call, for the
+	// turns whose audio has.
+	out map[string]time.Time
 	// order is the turns in origins, oldest first.
 	order []string
 	// caller is the latest caller turn when a turn starts, which is the parent it names. A
@@ -78,6 +81,8 @@ type turnTracker struct {
 	// the one before the words it murmurs over; the turn a tool call answers is on the
 	// tool's own line.
 	caller string
+	// native says whether the agent is on a speech-to-speech model now; nil is a cascade.
+	native func() bool
 }
 
 // originsKept is how many turns' origins are kept. An utterance is logged within seconds of
@@ -106,6 +111,11 @@ const (
 type origin struct {
 	kind   string
 	parent string
+	// pipeline is the pipeline the agent ran when the turn started: a settings change may
+	// swap it while the turn is still open, and the turn finishes on the one it began on.
+	pipeline string
+	// scheduled says a scheduled task fired the caller turn, not somebody in the call.
+	scheduled bool
 }
 
 // openTurn is a turn that has not finished yet.
@@ -137,7 +147,14 @@ type openTurn struct {
 	// expected is how many syntheses the turn will produce in total.
 	expected int
 	// settled is how many of them have completed.
-	settled     int
+	settled int
+	// owed means a caller turn's reply handed work on, to a tool or to the subagent, so when
+	// none of its own audio went out the turn waits for the first line said for it.
+	owed bool
+	// answer is what a native reply that answers the owed turn is recorded as, which the model
+	// does not say: a tool's answer, or a follow-up delivering the subagent's work. The cascade
+	// starts each of its lines with its own kind.
+	answer      string
 	interrupted bool
 	// why is why the reply was abandoned, set with interrupted.
 	why interruption
@@ -162,19 +179,120 @@ func (m *turnMarks) FirstFrameQueued(at time.Time)   { m.tracker.queued(m.turn, 
 func (m *turnMarks) FirstAudiblePulled(at time.Time) { m.tracker.pulled(m.turn, m.id, at) }
 
 func newTurnTracker(owner routing.Owner, finished func(Turn)) *turnTracker {
-	return &turnTracker{open: map[string]*openTurn{}, finished: finished, owner: owner, grace: playoutGrace, origins: map[string]origin{}}
+	return &turnTracker{open: map[string]*openTurn{}, finished: finished, owner: owner, grace: playoutGrace, origins: map[string]origin{},
+		out: map[string]time.Time{}}
 }
 
-// started records what started a turn, before anything of it is measured or said.
+// started records what started a turn, before anything of it is measured or said. A caller
+// turn still waiting for a line said for it is reported without one when the caller speaks
+// again: what follows answers the newer turn.
 func (t *turnTracker) started(turnID, kind string) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	if kind == kindCaller {
-		t.caller = turnID
-		t.remember(turnID, origin{kind: kind})
+	pipeline := pipelineCascade
+	if t.native != nil && t.native() {
+		pipeline = pipelineNative
+	}
+	if kind != kindCaller {
+		t.remember(turnID, origin{kind: kind, parent: t.caller, pipeline: pipeline})
+		t.mu.Unlock()
 		return
 	}
-	t.remember(turnID, origin{kind: kind, parent: t.caller})
+	t.caller = turnID
+	t.remember(turnID, origin{kind: kind, pipeline: pipeline})
+	given := t.giveUpLocked()
+	t.mu.Unlock()
+
+	t.reportAll(given)
+}
+
+// giveUp reports each caller turn still waiting for a line said for it, with no first audio.
+func (t *turnTracker) giveUp() {
+	t.mu.Lock()
+	given := t.giveUpLocked()
+	t.mu.Unlock()
+
+	t.reportAll(given)
+}
+
+func (t *turnTracker) giveUpLocked() []settledTurn {
+	var given []settledTurn
+	for id, current := range t.open {
+		if current.owed {
+			current.owed = false
+			given = append(given, settledTurn{id: id, current: current, finished: t.settleLocked(id, current)})
+		}
+	}
+	return given
+}
+
+// typedTurn records a turn typed into a native session, which the model answers as a turn of
+// its own, as when the caller speaks again (started): a caller turn still waiting for a line
+// said for it is reported without one, and no reply after this answers it.
+func (t *turnTracker) typedTurn() {
+	t.mu.Lock()
+	t.caller = ""
+	given := t.giveUpLocked()
+	t.mu.Unlock()
+
+	t.reportAll(given)
+}
+
+// settledTurn is a turn settled under the lock, to be reported once it is let go.
+type settledTurn struct {
+	id       string
+	current  *openTurn
+	finished *Turn
+}
+
+func (t *turnTracker) reportAll(settled []settledTurn) {
+	for _, turn := range settled {
+		t.report(turn.id, turn.current, turn.finished)
+	}
+}
+
+// owes records that a caller turn's reply handed work on, which a native reply that answers it
+// is recorded as answer of. It is told before the reply is completed, so a reply that said
+// nothing is not closed without the line said for it. Nobody waits on a turn a scheduled task
+// fired, so that one owes nothing.
+func (t *turnTracker) owes(turnID, answer string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil && t.origins[turnID].kind == kindCaller && !t.origins[turnID].scheduled {
+		current.owed = true
+		current.answer = answer
+	}
+}
+
+// scheduledTurn records that a scheduled task fired the caller turn turnID, once started has
+// recorded it.
+func (t *turnTracker) scheduledTurn(turnID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if started, known := t.origins[turnID]; known {
+		started.scheduled = true
+		t.origins[turnID] = started
+	}
+}
+
+// answering records that a native reply nobody's silence opened answers the latest caller turn,
+// as the kind of work that turn handed on, when it still waits for a line said for it, and
+// records nothing otherwise.
+func (t *turnTracker) answering(turnID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if caller := t.open[t.caller]; caller != nil && caller.owed {
+		t.remember(turnID, origin{kind: caller.answer, parent: t.caller, pipeline: pipelineNative})
+	}
+}
+
+// answersCaller says whether a turn of kind is a line said for the caller turn it follows: a hold
+// or update line while the work runs, or what a tool or the subagent came back with.
+func answersCaller(kind string) bool {
+	switch kind {
+	case kindHold, kindUpdate, kindTool, kindFollowUp:
+		return true
+	}
+	return false
 }
 
 // remember keeps the origin of a turn, letting the oldest go past originsKept.
@@ -185,6 +303,7 @@ func (t *turnTracker) remember(turnID string, started origin) {
 	t.origins[turnID] = started
 	if len(t.order) > originsKept {
 		delete(t.origins, t.order[0])
+		delete(t.out, t.order[0])
 		t.order = t.order[1:]
 	}
 }
@@ -194,6 +313,45 @@ func (t *turnTracker) originOf(turnID string) origin {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.origins[turnID]
+}
+
+// wentOut records when a turn's first audio was sent to the call, the earliest the call can
+// have heard any of it. It outlives the turn's measurement, as its origin does, since the
+// audio may play on after the turn has closed.
+func (t *turnTracker) wentOut(turnID string, at time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if _, known := t.origins[turnID]; !known {
+		return
+	}
+	if _, already := t.out[turnID]; !already {
+		t.out[turnID] = at
+	}
+}
+
+// answerHeardBefore says whether any of the agent's answer to the caller turn turnID is part
+// of went out before at: the reply to that turn, or a line the agent said after it on its own,
+// such as what a tool came back with. ok is false for a turn that is part of no answer, a
+// murmur or a line said before the caller spoke.
+func (t *turnTracker) answerHeardBefore(turnID string, at time.Time) (heard, ok bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	started, known := t.origins[turnID]
+	caller := turnID
+	if started.kind != kindCaller {
+		caller = started.parent
+	}
+	if !known || started.kind == kindBackchannel || caller == "" {
+		return false, false
+	}
+	for id, out := range t.out {
+		o := t.origins[id]
+		answers := id == caller || o.parent == caller && o.kind != kindCaller && o.kind != kindBackchannel
+		if answers && out.Before(at) {
+			return true, true
+		}
+	}
+	return false, true
 }
 
 // begin opens a turn. The speech-to-text latency is the provider's own decode time for
@@ -248,17 +406,25 @@ func (t *turnTracker) sentToVoice(turnID string) bool {
 }
 
 // firstAudio records the moment the first audio of a reply reached the edge, which is
-// what ends the participant's wait.
+// what ends the participant's wait. The first audio of a line said for a caller turn that
+// had none of its own ends that turn's wait too.
 func (t *turnTracker) firstAudio(turnID string, at time.Time) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	current, ok := t.open[turnID]
-	if !ok || !current.firstAudioAt.IsZero() {
-		return
+	if current, ok := t.open[turnID]; ok && current.firstAudioAt.IsZero() {
+		current.firstAudioAt = at
+		current.roundtripMs = msBetween(current.transcriptAt, at)
 	}
-	current.firstAudioAt = at
-	current.roundtripMs = msBetween(current.transcriptAt, at)
+	var answered settledTurn
+	if started := t.origins[turnID]; answersCaller(started.kind) && !t.origins[started.parent].scheduled {
+		if caller := t.open[started.parent]; caller != nil && caller.firstAudioAt.IsZero() {
+			caller.firstAudioAt = at
+			caller.roundtripMs = msBetween(caller.transcriptAt, at)
+			answered = settledTurn{id: started.parent, current: caller, finished: t.settleLocked(started.parent, caller)}
+		}
+	}
+	t.mu.Unlock()
+
+	t.report(answered.id, answered.current, answered.finished)
 }
 
 // marksFor returns what an edge reports the first frames of a reply to, or nil when the turn
@@ -395,6 +561,9 @@ func (t *turnTracker) settleLocked(turnID string, current *openTurn) *Turn {
 	if !current.modelDone || current.settled < current.expected {
 		return nil
 	}
+	if current.owed && current.firstAudioAt.IsZero() {
+		return nil
+	}
 	// Speech queued on an edge that has not taken it yet is about to give the turn its last
 	// moment, so closing now would report it without. The timer closes it as soon as the track
 	// has taken the speech, or when the grace says it is not going to.
@@ -459,6 +628,29 @@ func speechEndToAudible(current *openTurn) float64 {
 		return 0
 	}
 	return msBetween(current.transcriptAt, current.pulledAt) + current.sttLatencyMs
+}
+
+// The pipelines a turn latency is labelled with, named as the session's mode is.
+const (
+	pipelineCascade = "cascade"
+	pipelineNative  = "native"
+)
+
+// observeTurnLatency records a caller turn's waits. A leg that did not happen is zero, and is
+// left out rather than counted as an instant reply.
+func observeTurnLatency(turn Turn, pipeline string) {
+	for _, observed := range []struct {
+		leg string
+		ms  float64
+	}{
+		{"roundtrip", turn.RoundtripMs},
+		{"speech_end_to_audio", turn.SpeechEndToAudioMs},
+		{"speech_end_to_audible", turn.SpeechEndToAudibleMs},
+	} {
+		if observed.ms > 0 {
+			turnLatencySeconds.WithLabelValues(observed.leg, pipeline).Observe(observed.ms / 1000)
+		}
+	}
 }
 
 func msBetween(from, to time.Time) float64 {

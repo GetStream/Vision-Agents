@@ -1,0 +1,11 @@
+{
+  "spec_sha256": "40a3aeeb9846ee3ab38d2118efd3e12c3bf21bd3c8efdf2be88720b5b55b992d",
+  "client_sha256": "314b40b7867ad84e79bb0220a3b346e9d61d07525b7d4316a07bba9dce02f56c",
+  "options": [
+    "access_modifier=internal",
+    "immutable_models=true",
+    "raw_representable_over_enum=true",
+    "string_coding_keys=true"
+  ],
+  "generator": "53ddd89b820c8fa9de82385ebc5ef02c1d31bc03"
+}

@@ -3,11 +3,12 @@ import { subscribe } from "node:diagnostics_channel";
 import type { ClientRequest } from "node:http";
 import { after, before, describe, it } from "node:test";
 
+import { StreamClient } from "@stream-io/node-sdk";
 import { StreamChat } from "stream-chat";
 
 import "../../src/chat.js";
 import "../../src/video.js";
-import { Client, Dispatch, Session, signToken } from "../../src/index.js";
+import { Client, Dispatch, Session, signToken, type ChatClient } from "../../src/index.js";
 import { close, conversationModel, eventually, uniqueId, unreachable } from "./target.js";
 
 /**
@@ -34,15 +35,16 @@ const streamKey = process.env["STREAM_API_KEY"] ?? "";
 const streamSecret = process.env["STREAM_API_SECRET"] ?? "";
 const pushProvider = process.env["INTEGRATION_PUSH_PROVIDER"] ?? "firebase";
 
-const CHAT_SOCKET = "chat.stream-io-api.com/connect";
+/** stream-chat 9 connects on `/connect`, 10 on `/api/v2/connect`. */
+const CHAT_SOCKET = ["chat.stream-io-api.com/connect", "chat.stream-io-api.com/api/v2/connect"];
 const VIDEO_SOCKET = "video.stream-io-api.com/video/connect";
 
 /**
  * Every WebSocket this process opened, as host and path.
  *
  * Read off Node's own diagnostics channels rather than off the clients, so what is counted
- * is the connections that actually left the process: `stream-chat` opens its socket with
- * `ws` over `http`, and the video client with the global WebSocket.
+ * is the connections that actually left the process: `stream-chat` 9 opens its socket with
+ * `ws` over `http`, and `stream-chat` 10 and the video client with the global WebSocket.
  */
 const sockets: string[] = [];
 subscribe("http.client.request.start", (message) => {
@@ -57,9 +59,10 @@ subscribe("undici:websocket:open", (message) => {
   sockets.push(`${url.host}${url.pathname}`);
 });
 
-/** How many sockets to `target` were opened after `since` were. */
-function openedSince(since: number, target: string): number {
-  return sockets.slice(since).filter((socket) => socket === target).length;
+/** How many sockets to `target` (or any one of them) were opened after `since` were. */
+function openedSince(since: number, target: string | readonly string[]): number {
+  const targets = typeof target === "string" ? [target] : target;
+  return sockets.slice(since).filter((socket) => targets.includes(socket)).length;
 }
 
 describe(
@@ -160,7 +163,9 @@ describe(
         : "STREAM_API_KEY, STREAM_API_SECRET and STREAM_ACCELERATION_CUSTOMER_ID are not set",
   },
   () => {
-    const stream = new StreamChat(streamKey, streamSecret);
+    // What needs the secret is the app's backend's, on node-sdk: stream-chat 10 is a client
+    // and has no secret to take.
+    const stream = new StreamClient(streamKey, streamSecret);
     const users: string[] = [];
     const opened: { api: Client; id: string }[] = [];
     let model = "";
@@ -181,7 +186,7 @@ describe(
     }
 
     async function online(id: string): Promise<boolean> {
-      const { users: found } = await stream.queryUsers({ id }, {}, {});
+      const { users: found } = await stream.queryUsers({ payload: { filter_conditions: { id } } });
       return found[0]?.online === true;
     }
 
@@ -194,7 +199,7 @@ describe(
         await close(api, id);
       }
       if (users.length > 0) {
-        await stream.deleteUsers(users, { user: "hard" }).catch(() => undefined);
+        await stream.deleteUsers({ user_ids: users, user: "hard" }).catch(() => undefined);
       }
     });
 
@@ -246,7 +251,9 @@ describe(
       assert.ok(chats.every((each) => each.client === app));
 
       await api.disconnect();
-      assert.equal(app.userID, id, "disconnecting the SDK disconnected the app's client");
+      // Read as the SDK reads it: `userID` is only a deprecated alias of `userId` in 10.
+      const held: ChatClient = app;
+      assert.equal(held.userId ?? held.userID, id, "disconnecting the SDK disconnected the app's client");
       assert.equal(await online(id), true);
       await app.disconnectUser();
 
@@ -257,8 +264,14 @@ describe(
       const { api, id } = await asUser();
       const app = new StreamChat(streamKey);
       await app.connectUser({ id }, await signToken({ user_id: id }, streamSecret));
-      const registered = await app
-        .addDevice(uniqueId("device"), "firebase", undefined, pushProvider)
+      // The app's one device, registered the way its backend would for the user.
+      const registered = await stream
+        .createDevice({
+          id: uniqueId("device"),
+          push_provider: "firebase",
+          push_provider_name: pushProvider,
+          user_id: id,
+        })
         .then(() => true)
         .catch((raised: Error) => {
           t.skip(`this Stream app cannot register a ${pushProvider} device: ${raised.message}`);
@@ -272,7 +285,7 @@ describe(
 
       const sessions = await Promise.all([open(api), open(api)]);
       await Promise.all(sessions.map((session) => session.chat()));
-      const { devices } = await stream.getDevices(id);
+      const { devices } = await stream.listDevices({ user_id: id });
 
       assert.equal(devices?.length, 1, "a second device is a second copy of every push");
       await app.disconnectUser();

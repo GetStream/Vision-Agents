@@ -186,6 +186,14 @@ public sealed record Declaration
 
     /// <summary>What is left to dispatch, null when agent.yaml has no <c>dispatch:</c> block.</summary>
     public DispatchDeclaration? Dispatch { get; init; }
+
+    /// <summary>
+    /// The model that controls the agent's floor, and how long a caller may wait once they stop
+    /// (max_wait_ms), as written. Null when agent.yaml says nothing, which leaves the stored
+    /// choice; empty ({}) for the default flow controller again. Which models there are, and
+    /// whether a wait names one, is the router's to say.
+    /// </summary>
+    public FloorControl? FloorControl { get; init; }
 }
 
 /// <summary>
@@ -597,6 +605,7 @@ public sealed class Folder
             Tags = read.Tags ?? [],
             Video = video,
             Dispatch = read.Dispatch is { } dispatch ? new DispatchDeclaration(dispatch.IncomingCall ?? "", dispatch.Text ?? "") : null,
+            FloorControl = read.FloorControl is { Named: true } floor ? new FloorControl { Model = floor.Model, MaxWaitMs = floor.MaxWaitMs } : null,
         };
     }
 
@@ -1086,6 +1095,7 @@ public sealed class Folder
         [YamlMember(Alias = "tags")] public Dictionary<string, string>? Tags { get; set; }
         [YamlMember(Alias = "video")] public WrittenVideo? Video { get; set; }
         [YamlMember(Alias = "dispatch")] public WrittenDispatch? Dispatch { get; set; }
+        [YamlMember(Alias = "floor_control")] public WrittenFloorControl? FloorControl { get; set; }
     }
 
     /// <summary>
@@ -1173,6 +1183,76 @@ public sealed class Folder
     {
         [YamlMember(Alias = "incoming_call")] public string? IncomingCall { get; set; }
         [YamlMember(Alias = "text")] public string? Text { get; set; }
+    }
+
+    /// <summary>
+    /// The <c>floor_control:</c> mapping, read by hand so that each refusal names what is wrong:
+    /// not a mapping (as the string it once was), a key nobody knows, a model that is not a
+    /// string or a max_wait_ms that is not an integer. A plain null is absent; a key whose value
+    /// is null is left out; an empty mapping is sent empty.
+    /// </summary>
+    private sealed class WrittenFloorControl : IYamlConvertible
+    {
+        public bool Named { get; private set; }
+        public string? Model { get; private set; }
+        public long? MaxWaitMs { get; private set; }
+
+        void IYamlConvertible.Read(IParser parser, Type expectedType, ObjectDeserializer nestedObjectDeserializer)
+        {
+            if (parser.Current is Scalar { Style: ScalarStyle.Plain } nothing && IsNull(nothing.Value))
+            {
+                parser.MoveNext();
+                return;
+            }
+            if (!parser.TryConsume<MappingStart>(out _))
+            {
+                throw new YamlException("floor_control is a mapping of model and, optionally, max_wait_ms");
+            }
+            Named = true;
+            while (!parser.TryConsume<MappingEnd>(out _))
+            {
+                var key = parser.Consume<Scalar>().Value;
+                if (key is not ("model" or "max_wait_ms"))
+                {
+                    throw new YamlException($"\"{key}\" is not a floor_control setting; model and max_wait_ms are");
+                }
+                if (!parser.TryConsume<Scalar>(out var value))
+                {
+                    throw new YamlException(key == "model" ? "floor_control.model must be a string" : "floor_control.max_wait_ms must be an integer");
+                }
+                if (value.Style == ScalarStyle.Plain && IsNull(value.Value))
+                {
+                    continue;
+                }
+                if (key == "model")
+                {
+                    // YAML 1.2's core schema: a plain true, false or number is not a string.
+                    if (value.Style == ScalarStyle.Plain && NotAString.IsMatch(value.Value))
+                    {
+                        throw new YamlException("floor_control.model must be a string");
+                    }
+                    Model = value.Value;
+                }
+                else
+                {
+                    if (value.Style != ScalarStyle.Plain || !long.TryParse(value.Value, System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out var wait))
+                    {
+                        throw new YamlException("floor_control.max_wait_ms must be an integer");
+                    }
+                    MaxWaitMs = wait;
+                }
+            }
+        }
+
+        void IYamlConvertible.Write(IEmitter emitter, ObjectSerializer nestedObjectSerializer) =>
+            throw new NotSupportedException();
+
+        private static bool IsNull(string plain) => plain is "" or "~" or "null" or "Null" or "NULL";
+
+        /// <summary>A plain scalar YAML 1.2's core schema reads as a boolean or a number.</summary>
+        private static readonly System.Text.RegularExpressions.Regex NotAString = new(
+            @"^(?:true|True|TRUE|false|False|FALSE|[-+]?[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+|[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN))$",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
     }
 
     private sealed class WrittenSandboxOptions

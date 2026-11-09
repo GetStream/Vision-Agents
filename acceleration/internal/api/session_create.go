@@ -41,6 +41,9 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 	if failure != nil {
 		return nil, failure
 	}
+	if failure, refused := s.sessionFloorRefusal(ctx, *request.Body); refused {
+		return nil, failure
+	}
 
 	spec := specOf(*request.Body, customerID, config)
 	ctx = s.threadConversation(ctx, customerID, &spec)
@@ -109,6 +112,9 @@ var errDeviceHistory = forbidden("history is sent server-side: an assistant mess
 // errDeviceInstructions refuses instructions sent by an end user's device.
 var errDeviceInstructions = forbidden("instructions are sent server-side: what the agent is " +
 	"told decides who it is, which a device may not")
+
+var errDeviceFloorControl = forbidden("floor_control is sent server-side: whether a model rules when " +
+	"the agent answers is the app's to decide, which a device may not")
 
 var errDeviceResumeHistory = forbidden("resume_history is sent server-side: how much of a " +
 	"conversation the model is sent is billed to the app, which a device may not decide")
@@ -230,6 +236,9 @@ func refuseServerSideFields(ctx context.Context, request CreateSessionRequest) (
 	}
 	if request.ResumeHistory != nil && !ServerSideFrom(ctx) {
 		return errDeviceResumeHistory, true
+	}
+	if request.FloorControl != nil && !ServerSideFrom(ctx) {
+		return errDeviceFloorControl, true
 	}
 	if request.Memory != nil && value(request.Memory.UserId) != "" && !ServerSideFrom(ctx) {
 		if !KindFrom(ctx).Verified() {

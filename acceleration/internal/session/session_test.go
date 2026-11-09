@@ -31,6 +31,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
@@ -192,6 +194,8 @@ type stubLLM struct {
 	// tools, as a model told it may call none does not.
 	called bool
 	sees   bool
+	// refuses, when set, is what every request fails with, as a provider refusing its key.
+	refuses error
 }
 
 func (s *stubLLM) Start(context.Context) error { return nil }
@@ -199,6 +203,10 @@ func (s *stubLLM) Start(context.Context) error { return nil }
 func (s *stubLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	s.mu.Lock()
 	s.asked = append(s.asked, params)
+	if s.refuses != nil {
+		s.mu.Unlock()
+		return nil, s.refuses
+	}
 	offered := len(params.Tools) > 0 && params.ToolChoice != "none"
 	reply := s.reply
 	var calls []llm.ToolCall
@@ -455,6 +463,11 @@ type SessionSuite struct {
 	// gated answers the conversation model instead of stubLLM, for a test that needs a
 	// reply it can hold open while something else happens to the session.
 	gated *gatedLLM
+	// flowGated answers the flow controller instead of a stubLLM, for a test that decides
+	// when its decision lands in a turn.
+	flowGated *gatedLLM
+	// speculates has agents start a reply before the flow controller rules on its turn.
+	speculates bool
 	// conversations persists text commands, for a test that submits one.
 	conversations *persistent.Service
 	// grace is how long a persistent text session outlives its last watcher. Zero is the
@@ -470,6 +483,14 @@ type SessionSuite struct {
 	// edges that say nobody comes or goes, as a socket does.
 	present    []stt.Participant
 	unattended bool
+	// speech opens the speech-to-speech model a native session converses with, when a test
+	// wants one. Nil routes none. speechGate is what the speech-to-speech router asks before it
+	// opens one, nil for nothing.
+	speech     func() (sts.STS, error)
+	speechGate routing.Gate
+	// opens is the edge the manager opens for the next voice session, when a test hands one
+	// in: unlike Spec.Edge, it is a call the manager opened.
+	opens agent.Edge
 }
 
 func TestSessionSuite(t *testing.T) {
@@ -483,6 +504,8 @@ func (s *SessionSuite) SetupTest() {
 	s.records = nil
 	s.thinks = false
 	s.gated = nil
+	s.flowGated = nil
+	s.speculates = false
 	s.conversations = nil
 	s.apps = nil
 	s.edgeApps = nil
@@ -491,6 +514,9 @@ func (s *SessionSuite) SetupTest() {
 	s.others = nil
 	s.present = nil
 	s.unattended = false
+	s.speech = nil
+	s.speechGate = nil
+	s.opens = nil
 	s.shortensPhoneTimeouts()
 }
 
@@ -534,6 +560,9 @@ func (s *SessionSuite) manages() {
 			}
 			return s.model, nil
 		}
+		if s.flowGated != nil && opened.Load() == 2 {
+			return s.flowGated, nil
+		}
 		other := &stubLLM{reply: "Sure.", sees: s.model.sees}
 		s.othersMu.Lock()
 		s.others = append(s.others, other)
@@ -565,19 +594,37 @@ func (s *SessionSuite) manages() {
 		storing = func(context.Context, Spec, streamapp.Bound, *slog.Logger) (Transcript, error) { return s.records, nil }
 	}
 
+	var conversing *stsrouter.Router
+	if s.speech != nil {
+		native := stsrouter.NewRegistry()
+		native.Register("stub", func(routing.Spec) (sts.STS, error) { return s.speech() })
+		// A native session asks its model to write down what was said.
+		speaking := stubConfig()
+		speaking.Providers[0].Terms = []options.Term{options.InputTranscript, options.OutputTranscript}
+		conversing, err = stsrouter.New(stsrouter.Options{Config: speaking, Registry: native, Logger: logger, Gate: s.speechGate})
+		s.Require().NoError(err)
+		s.T().Cleanup(conversing.Close)
+	}
+
 	manager, err := NewManager(ManagerOptions{
-		LLM:           reasoner,
-		STT:           transcriber,
-		TTS:           speaker,
-		Memory:        remembering,
-		Transcript:    storing,
-		Conversations: s.conversations,
-		Stream:        s.apps,
-		DetachedGrace: s.grace,
-		Directory:     s.directory,
-		Logger:        logger,
+		LLM:                reasoner,
+		STT:                transcriber,
+		TTS:                speaker,
+		STS:                conversing,
+		Memory:             remembering,
+		Transcript:         storing,
+		Conversations:      s.conversations,
+		Stream:             s.apps,
+		DetachedGrace:      s.grace,
+		Directory:          s.directory,
+		Logger:             logger,
+		SpeculativeReplies: s.speculates,
 		Edge: func(_ context.Context, _ Spec, stream streamapp.Bound, _ *slog.Logger) (agent.Edge, error) {
 			s.edgeApps = append(s.edgeApps, stream.Identity)
+			if opened := s.opens; opened != nil {
+				s.opens = nil
+				return opened, nil
+			}
 			edge := newQuietEdge(s.present...)
 			s.edges = append(s.edges, edge)
 			if s.unattended {

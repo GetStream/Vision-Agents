@@ -491,6 +491,41 @@ class TestRouter:
                 customer_id="acme",
             )
 
+    @pytest.mark.parametrize(
+        "options, misspelt",
+        [
+            ({"stt": {"mode": "verbtim"}}, "verbtim"),
+            ({"llm": {"verbosity": "HIGH"}}, "HIGH"),
+            ({"search": {"contents": ["text", "sumary"]}}, "sumary"),
+        ],
+    )
+    async def test_a_value_an_option_does_not_list_is_refused(
+        self, backend: Router, options: dict[str, Any], misspelt: str
+    ):
+        # A reader keeps an enum value it does not list, for an answer from a newer router,
+        # but a caller's own option is still checked before anything is sent.
+        with pytest.raises(ValueError, match=misspelt):
+            await stream.define_router(
+                "healthcare", url=backend.url, customer_id="acme", **options
+            )
+
+        assert backend.configs == []
+
+    async def test_a_value_an_option_lists_is_stored_as_given(self, backend: Router):
+        await stream.define_router(
+            "healthcare",
+            stt={"mode": "verbatim"},
+            llm={"verbosity": "high"},
+            search={"contents": ["text", "summary"]},
+            url=backend.url,
+            customer_id="acme",
+        )
+
+        (stored,) = backend.configs
+        assert stored["stt"]["mode"] == "verbatim"
+        assert stored["llm"]["verbosity"] == "high"
+        assert stored["search"]["contents"] == ["text", "summary"]
+
     async def test_configure_stt_stores_a_priority_list_and_a_data_policy(
         self, router: stream.Router, backend: Router
     ):

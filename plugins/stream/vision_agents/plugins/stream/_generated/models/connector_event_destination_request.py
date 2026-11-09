@@ -49,7 +49,7 @@ class ConnectorEventDestinationRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        forward = ConnectorEventForward(d.pop("forward"))
+        forward = ConnectorEventForward._decode(d.pop("forward"))
 
         url = d.pop("url")
 

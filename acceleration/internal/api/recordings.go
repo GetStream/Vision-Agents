@@ -585,7 +585,7 @@ func inlineResult(job store.Recording, provider, model string, result json.RawMe
 	job.CompletedAt = &now
 	if failure != nil {
 		job.Status = "failed"
-		job.Error = failure.Error()
+		job.Error = store.SafeLogText(failure.Error())
 	}
 	return job
 }

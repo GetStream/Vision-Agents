@@ -1031,6 +1031,7 @@ func (s *RoutingSuite) TestSelectFailsWhenNoCandidateCanBeBuilt() {
 	_, _, err = router.Select(s.ctx, Request{CustomerID: "acme", Target: "en-high-accuracy"})
 	s.ErrorContains(err, "every candidate")
 	s.ErrorContains(err, "no factory registered")
+	s.NotErrorIs(err, ErrVendorsFailed, "no vendor was asked")
 }
 
 func (s *RoutingSuite) TestSelectClosesAProviderThatFailedToStart() {

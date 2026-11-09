@@ -14,23 +14,24 @@
     "@openuidev/react-headless": "0.18.1",
     "@openuidev/react-lang": "1.0.2",
     "@openuidev/react-ui": "0.18.1",
-    "@stream-io/calypso": "file:../../../sdks/js",
+    "@stream-io/calypso": "^0.3.1",
     "@stream-io/video-client": "^1.64.0",
     "leaflet": "^1.9.4",
-    "react": "19.2.0",
-    "react-dom": "19.2.0",
-    "stream-chat": "^9.54.0",
-    "stream-chat-react": "^14.16.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "stream-chat": "^10.0.0",
+    "stream-chat-react": "^15.0.0",
     "zod": "^4.1.0",
     "zustand": "^4.5.7"
   },
   "devDependencies": {
     "@types/leaflet": "^1.9.20",
-    "@types/react": "19.2.2",
-    "@types/react-dom": "19.2.2",
-    "@vitejs/plugin-react": "5.0.4",
-    "typescript": "5.9.3",
-    "vite": "7.1.12",
-    "vitest": "3.2.4"
+    "@types/node": "22.20.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.2.1",
+    "typescript": "7.0.2",
+    "vite": "8.3.6",
+    "vitest": "5.1.0"
   }
 }

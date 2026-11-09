@@ -141,13 +141,15 @@ module GetStream
 
       SETTING_STRINGS = %w[name description mode stt tts sts voice llm harness subagent search sandbox].freeze
       SETTING_LISTS = %w[keyterms].freeze
-      SETTINGS = (SETTING_STRINGS + SETTING_LISTS + %w[greeting tags video dispatch connectors sandbox_options]).freeze
+      SETTINGS = (SETTING_STRINGS + SETTING_LISTS +
+                  %w[greeting tags video dispatch connectors sandbox_options floor_control]).freeze
       SANDBOX_LISTS = %w[setup allowed_domains network_allow_list].freeze
       SANDBOX_SIZES = %w[cpu memory_gb disk_gb].freeze
       SANDBOX_KEYS = (SANDBOX_LISTS + SANDBOX_SIZES + %w[image timeout network]).freeze
       GREETING_KEYS = %w[text mode].freeze
       VIDEO_KEYS = %w[source max_frames].freeze
       DISPATCH_KEYS = %w[incoming_call text].freeze
+      FLOOR_CONTROL_KEYS = %w[model max_wait_ms].freeze
       PAGE_KEYS = %w[url title description refresh_hours].freeze
       CONNECTOR_KEYS = %w[name connector tools connection required].freeze
       SIMULATION_STRINGS = %w[name scenario assertion mode caller_target judge_target caller_stt caller_tts
@@ -308,7 +310,36 @@ module GetStream
         when "dispatch" then dispatch(value, file)
         when "connectors" then connectors(value, file)
         when "sandbox_options" then sandbox_options(value, file)
+        when "floor_control" then floor_control(value, file)
         end
+      end
+
+      # The model that controls the agent's floor and, optionally, how long a caller may wait
+      # once they stop, as written: {} is the default flow controller again, and a key whose
+      # value is null is left out. Only the shape is read here; which models there are, and
+      # whether a wait names one, is the router's to say.
+      def self.floor_control(value, file)
+        unless value.is_a?(Hash)
+          raise ConfigurationError, "#{file}: floor_control is a mapping of model and, optionally, max_wait_ms"
+        end
+
+        unknown = value.keys.map(&:to_s) - FLOOR_CONTROL_KEYS
+        unless unknown.empty?
+          raise ConfigurationError,
+                "#{file}: #{unknown.join(", ")} is not a floor_control setting; model and max_wait_ms are"
+        end
+
+        value.to_h do |key, setting|
+          key = key.to_s
+          next [key, nil] if setting.nil?
+
+          if key == "model"
+            raise ConfigurationError, "#{file}: floor_control.model must be a string" unless setting.is_a?(String)
+          else
+            raise ConfigurationError, "#{file}: floor_control.max_wait_ms must be an integer" unless setting.is_a?(Integer)
+          end
+          [key, setting]
+        end.compact
       end
 
       # How the sandbox is built and what code in it may reach, as the sync takes it. Outbound

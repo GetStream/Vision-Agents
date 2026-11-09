@@ -6,12 +6,16 @@ Stream token are all swift_assistant's, as they are for the [Android app](../and
 Only the page is here.
 
 ```
-package.json     React and Vite over @stream-io/calypso (sdks/js, as it is in this checkout)
-                 and stream-chat-react's AI components
+package.json     React and Vite over @stream-io/calypso (0.3.1 from npm, the first to take
+                 stream-chat 10) and stream-chat-react's AI components
 connected.html   where a connector's sign-in comes back to
 src/             the page
-tests/           its pure parts: captions, the glow's phases, photos, days
+tests/           its pure parts (captions, the glow's phases, photos, days) and the chat over a
+                 fake channel and session
 ```
+
+It runs on `stream-chat` 10 and `stream-chat-react` 15, with React 19, Vite 8 and TypeScript 7.
+That takes Node 22.18 or newer: `stream-chat` 10's own floor, above Vite 8's.
 
 ## Run it
 
@@ -32,11 +36,10 @@ go run ./backend
 ```
 
 The backend listens on `:8098`, which the page reaches through Vite's dev server at `/backend`:
-it answers no browser of another origin. Build the SDK once, then tell the page the Stream key,
-in `.env.local` here, which git ignores:
+it answers no browser of another origin. Tell the page the Stream key in `.env.local` here, which
+git ignores:
 
 ```bash
-(cd ../../../sdks/js && npm ci && npm run build)
 echo "VITE_STREAM_API_KEY=<the router's STREAM_API_KEY>" > .env.local
 npm install
 npm run dev
@@ -49,14 +52,16 @@ connector's sign-in comes back only to the origin a conversation named, and the 
 The AI components it uses (`AIConversation`, the reply's steps, the approval and sign-in cards,
 suggestions, reply actions and the composer's chat options) come from
 `stream-chat-react/ai-components`, and the generated UI it shows from `stream-chat-react/a2ui`
-and `stream-chat-react/openui`, released in 14.16.0.
+and `stream-chat-react/openui`: added in 14.16.0, and read here as 15 has them, with the reply's
+`ai_generated`, `generating` and `ai_ui` under `message.custom` as `stream-chat` 10 keeps them.
 
-The chat asks for `xai/grok-4.7`, a model that streams its reasoning, so the router needs
+The chat asks for `xai/grok-4.7`, a model that streams its reasoning, as a model overwrite the
+router keeps on the session, so a conversation carried on later stays on it. The router needs
 `XAI_API_KEY`, and `GOOGLE_API_KEY`, `DEEPGRAM_API_KEY` and `INWORLD_API_KEY` for a call. Web
 search needs one of `EXA_API_KEY`, `TAVILY_API_KEY` or `PERPLEXITY_API_KEY`.
 
 ```bash
-npm test          # the pure parts
+npm test          # the pure parts, and the chat
 npm run build     # types, then the bundle
 ```
 

@@ -344,7 +344,7 @@ func (s *EpisodeReadingSuite) TestWithTheCardsOffADeviceSessionIsAsBefore() {
 	s.Nil(s.handed(off))
 	s.Empty(created.CardsFor())
 	s.Require().Len(off.Input, 2)
-	s.Equal(llm.Message{Role: llm.User, Content: "when is my appointment?"}, off.Input[0])
+	s.Equal(llm.Message{Role: llm.User, Content: "when is my appointment?", Typed: true}, off.Input[0], "written, not said on a call")
 	s.Equal(llm.System, off.Input[1].Role)
 	s.True(strings.HasPrefix(off.Input[1].Content, "[Note from the system running this call]\nToday is "), off.Input[1].Content)
 	s.Empty(namingAny(s.requests()[asked:], chat, card.Contact.ConversationID, card.Episode.CardMessageID))

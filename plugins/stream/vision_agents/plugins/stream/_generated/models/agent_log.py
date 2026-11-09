@@ -128,9 +128,9 @@ class AgentLog:
 
         session_id = d.pop("session_id")
 
-        severity = AgentLogSeverity(d.pop("severity"))
+        severity = AgentLogSeverity._decode(d.pop("severity"))
 
-        source = AgentLogSource(d.pop("source"))
+        source = AgentLogSource._decode(d.pop("source"))
 
         cursor = d.pop("cursor", UNSET)
 

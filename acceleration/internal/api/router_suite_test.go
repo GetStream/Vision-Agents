@@ -45,9 +45,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
@@ -354,6 +354,9 @@ type RouterSuite struct {
 	// connectors is what connector adapters the router has, for a suite about connectors to
 	// set before it starts the harness. Empty has none.
 	connectors core.Registry
+	// audioFloor is the router's chorus-asr server, for a suite about floor control to set
+	// before it starts the harness. Nil is none.
+	audioFloor *audiofloor.Client
 	// connectorsOff gives the router no connector keyring, transports or limiter, as a deployment with
 	// ROUTER_CONNECTORS_ENABLED unset has, for a control suite to set before it starts the
 	// harness. The suite's store, resolver and sealer are still built.
@@ -733,7 +736,6 @@ func (s *RouterSuite) SetupSuite() {
 		// App mode is served only behind a gateway that declares kinds.
 		ProxyDeclaresKind: s.appMode,
 		Phone:             s.telephony(logger),
-		Campaigns:         s.campaigns(sessions, logger),
 		Simulations:       s.simulations(sessions, streams, logger),
 		Channels:          s.inbound,
 		DLC:               s.registrations(listener, logger),
@@ -761,6 +763,7 @@ func (s *RouterSuite) SetupSuite() {
 		TelnyxPublicKey:    s.telnyxPublicKey,
 		ChatInboundKeys:    s.chatInboundKeys,
 		TelnyxConnectionID: s.telnyxConnectionID,
+		AudioFloor:         s.audioFloor,
 		Logger:             logger,
 		// The connector events endpoint revokes through the suite's resolver.
 		ConnectorResolver:     s.resolver,
@@ -787,6 +790,9 @@ func (s *RouterSuite) SetupSuite() {
 	if bridge, built := s.bridge.(*channelbridge.Bridge); built {
 		bridge.Start(context.Background(), s.answerQueued)
 	}
+	// No campaign dialer, unlike cmd/router: suites share a database, and one suite's dialer
+	// would ring every other suite's running campaigns. A suite that dials builds its own over
+	// a database of its own (AdmissionSuite.dialer).
 }
 
 // answerQueued is the hand-off cmd/router gives the inbound worker (Server.AnswerQueued). It
@@ -1602,19 +1608,11 @@ func (s *RouterSuite) telephonySealedBy(sealer *auth.Sealer, apps phone.Apps, lo
 		Sealer:    sealer,
 		SIPTrunks: siptrunk.New(siptrunk.Options{Logger: logger}),
 		Apps:      apps,
+		Redis:     s.live.Redis(),
 		Logger:    logger,
 	})
 	s.Require().NoError(err)
 	return service
-}
-
-func (s *RouterSuite) campaigns(sessions *session.Manager, logger *slog.Logger) *campaign.Runner {
-	runner, err := campaign.New(campaign.Options{
-		Store: s.store, Phone: s.telephony(logger), Sessions: sessions, Logger: logger,
-	})
-	s.Require().NoError(err)
-	s.T().Cleanup(runner.Close)
-	return runner
 }
 
 func (s *RouterSuite) simulations(sessions *session.Manager, streams *Streams, logger *slog.Logger) *simulation.Runner {
