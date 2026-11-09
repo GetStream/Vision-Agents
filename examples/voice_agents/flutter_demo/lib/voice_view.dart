@@ -143,6 +143,9 @@ class _VoiceViewState extends State<VoiceView> {
         ..add(voice.session.approvals.stream.listen((_) => setState(() {})))
         ..add(voice.state.stream.listen(_handleVoiceState));
       await voice.join();
+      // Let go of while it joined, because the conversation ended or the screen went away:
+      // leaving then found no call yet, so the call it just joined is left here.
+      if (!identical(_voice, voice)) await _leaveQuietly(voice);
     } on Object catch (error) {
       // A join that throws rather than failing leaves no call to hang up: let go of the
       // session, so the failure shows and the person can try again. Set first, so a failure
@@ -393,8 +396,8 @@ class _CallControls extends StatelessWidget {
               style: .destructive,
               size: .large,
               tooltip: 'Hang up',
-              // Not until the call is joined, or failed to: until then there is no call to
-              // hang up.
+              // Not until the call is joined, or failed to: leaving while it is still being
+              // joined would let the join land after it, in a call nobody can leave.
               onPressed: state.isJoined || state.failure != null
                   ? onHangUp
                   : null,

@@ -100,13 +100,6 @@ final class VoiceSession {
   final bool _createdLocally;
   final _state = LiveValueController(const VoiceState());
   bool _joining = false;
-
-  /// How many times [leave] or [end] ran.
-  int _leaves = 0;
-
-  /// How many times [leave] or [end] had run when [join] was last called. A join still under
-  /// way that finds more was left after it: whichever of the two came last is what counts.
-  int _leavesAtJoin = 0;
   late final _shots = CameraShots(_shot, cameraJpeg);
 
   LiveValue<VoiceState> get state => _state;
@@ -124,24 +117,13 @@ final class VoiceSession {
   /// It joins on the client handed over with `useVideo`, or else on one built from the
   /// agents' key, user and token, which every voice session then shares. Without a key, user
   /// and token there is nothing to join with, which is an [ArgumentError].
-  ///
-  /// A [leave] or [end] while it is joining wins, unless [join] is called again after it: the
-  /// call is not joined, or is left as soon as it is, and [call] stays null.
   Future<void> join({bool camera = false}) async {
-    // Taken on every call, the one that finds a join already under way included: joining
-    // again after a leave wants the call after all.
-    _leavesAtJoin = _leaves;
     if (_joining || call != null) {
       return;
     }
     _joining = true;
     try {
-      final client = await _client();
-      // Left while the client was opened: nothing is joined, so nothing has to be left.
-      if (_wasLeft) {
-        return;
-      }
-      final joined = client.makeCall(
+      final joined = (await _client()).makeCall(
         callType: video.StreamCallType.fromString(session.session.callType),
         id: session.session.callId,
       );
@@ -159,12 +141,6 @@ final class VoiceSession {
       );
       if (result case video.Failure(:final error)) {
         _state.value = _state.value._with(failure: CallFailure(error.message));
-        return;
-      }
-      // Left while joining: leaving found no call yet, so this one would otherwise stay
-      // joined, with the microphone on, behind a session that says it has none.
-      if (_wasLeft) {
-        await joined.leave();
         return;
       }
       _state.value = _state.value._with(call: joined, isMuted: false, isCameraEnabled: camera);
@@ -231,7 +207,6 @@ final class VoiceSession {
   Future<void> end() => _leave(closeSession: true);
 
   Future<void> _leave({required bool closeSession}) async {
-    _leaves += 1;
     _stopLooking();
     final call = this.call;
     _state.value = VoiceState(failure: _state.value.failure);
@@ -304,7 +279,4 @@ final class VoiceSession {
     }
     return false;
   }
-
-  /// Whether [leave] or [end] ran after [join] was last called.
-  bool get _wasLeft => _leaves != _leavesAtJoin;
 }
