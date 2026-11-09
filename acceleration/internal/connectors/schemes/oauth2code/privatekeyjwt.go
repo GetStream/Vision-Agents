@@ -59,17 +59,10 @@ func (k PrivateKeyJWT) Form(clientID, audience string, now time.Time) (url.Value
 	if err != nil {
 		return nil, err
 	}
-	header := map[string]any{"alg": k.Alg, "typ": "JWT"}
-	if k.KeyID != "" {
-		header["kid"] = k.KeyID
-	}
-	if len(k.CertificateSHA256) > 0 {
-		header["x5t#S256"] = base64.RawURLEncoding.EncodeToString(k.CertificateSHA256)
-	}
 	// OpenID Connect Core 1.0 section 9: iss and sub are the client_id, aud the audience,
 	// jti unique, exp required, iat optional. nbf is RFC 7523 section 3 item 5's, which
 	// Microsoft lists (architecture doc, stress-test row 8).
-	claims := map[string]any{
+	assertion, err := k.Sign(map[string]any{
 		"iss": clientID,
 		"sub": clientID,
 		"aud": audience,
@@ -77,10 +70,35 @@ func (k PrivateKeyJWT) Form(clientID, audience string, now time.Time) (url.Value
 		"iat": now.Unix(),
 		"nbf": now.Unix(),
 		"exp": now.Add(assertionLifetime).Unix(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	form := url.Values{}
+	form.Set("client_assertion_type", clientAssertionType)
+	// RFC 7521 section 4.2 names the parameter; RFC 7523 section 2.2: «It MUST NOT contain
+	// more than one JWT».
+	form.Set("client_assertion", assertion)
+	return form, nil
+}
+
+// Sign is claims as a compact JWS (RFC 7515 section 7.1) signed with Key under Alg, with
+// KeyID and CertificateSHA256 in its header when set. The claims are the caller's, so a
+// scheme that signs another kind of JWT reuses the signing.
+func (k PrivateKeyJWT) Sign(claims map[string]any) (string, error) {
+	if k.Key == nil {
+		return "", errors.New("oauth2code: private_key_jwt needs a key")
+	}
+	header := map[string]any{"alg": k.Alg, "typ": "JWT"}
+	if k.KeyID != "" {
+		header["kid"] = k.KeyID
+	}
+	if len(k.CertificateSHA256) > 0 {
+		header["x5t#S256"] = base64.RawURLEncoding.EncodeToString(k.CertificateSHA256)
 	}
 	signingInput, err := jwsSigningInput(header, claims)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	digest := sha256.Sum256([]byte(signingInput))
 	var signature []byte
@@ -93,17 +111,12 @@ func (k PrivateKeyJWT) Form(clientID, audience string, now time.Time) (url.Value
 		// same size as the hash function output».
 		signature, err = rsa.SignPSS(rand.Reader, k.Key, crypto.SHA256, digest[:], &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash})
 	default:
-		return nil, fmt.Errorf("oauth2code: private_key_jwt alg %q is not RS256 or PS256", k.Alg)
+		return "", fmt.Errorf("oauth2code: private_key_jwt alg %q is not RS256 or PS256", k.Alg)
 	}
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	form := url.Values{}
-	form.Set("client_assertion_type", clientAssertionType)
-	// RFC 7521 section 4.2 names the parameter; RFC 7523 section 2.2: «It MUST NOT contain
-	// more than one JWT».
-	form.Set("client_assertion", signingInput+"."+base64.RawURLEncoding.EncodeToString(signature))
-	return form, nil
+	return signingInput + "." + base64.RawURLEncoding.EncodeToString(signature), nil
 }
 
 // jwsSigningInput is RFC 7515 section 5.1's signing input of the compact serialization:
