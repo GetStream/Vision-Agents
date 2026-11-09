@@ -80,6 +80,7 @@ class PlaceCard extends StatefulWidget {
 
 class _PlaceCardState extends State<PlaceCard> {
   WikipediaSummary? _summary;
+  var _isLoading = true;
 
   @override
   void initState() {
@@ -96,7 +97,12 @@ class _PlaceCardState extends State<PlaceCard> {
   Future<void> _load() async {
     final title = widget.title;
     final summary = await Wikipedia.summary(title);
-    if (mounted && title == widget.title) setState(() => _summary = summary);
+    if (mounted && title == widget.title) {
+      setState(() {
+        _summary = summary;
+        _isLoading = false;
+      });
+    }
   }
 
   @override
@@ -118,26 +124,29 @@ class _PlaceCardState extends State<PlaceCard> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: SizedBox.square(
-                    dimension: 88,
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 300),
-                      child: summary?.thumbnail == null
-                          ? ColoredBox(
-                              key: const ValueKey(false),
-                              color: colors.backgroundSurfaceStrong,
-                            )
-                          : Image.network(
-                              summary!.thumbnail!,
-                              key: const ValueKey(true),
-                              fit: BoxFit.cover,
-                            ),
+                // The photo's place is kept while it loads, and given up when there is none.
+                if (_isLoading || summary?.thumbnail != null) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: SizedBox.square(
+                      dimension: 88,
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 300),
+                        child: summary?.thumbnail == null
+                            ? ColoredBox(
+                                key: const ValueKey(false),
+                                color: colors.backgroundSurfaceStrong,
+                              )
+                            : Image.network(
+                                summary!.thumbnail!,
+                                key: const ValueKey(true),
+                                fit: BoxFit.cover,
+                              ),
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 12),
+                  const SizedBox(width: 12),
+                ],
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
