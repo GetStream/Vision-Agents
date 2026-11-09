@@ -107,7 +107,7 @@ var (
 	_ = promauto.NewGaugeFunc(prometheus.GaugeOpts{
 		Namespace: "router",
 		Name:      "usage_unshipped_rows",
-		Help:      "This shard's usage rows not yet in the usage service; every router of the shard reports the same count",
+		Help:      "This shard's usage rows with an organization not yet in the usage service; every router of the shard reports the same count",
 	}, func() float64 {
 		var rows int64
 		sweepers.Range(func(key, _ any) bool {
@@ -119,7 +119,7 @@ var (
 	_ = promauto.NewGaugeFunc(prometheus.GaugeOpts{
 		Namespace: "router",
 		Name:      "usage_unshipped_oldest_seconds",
-		Help:      "How long ago the work of this shard's oldest usage row not yet in the usage service started; every router of the shard reports it",
+		Help:      "How long ago the work of this shard's oldest usage row with an organization not yet in the usage service started; every router of the shard reports it",
 	}, unshippedOldest)
 )
 
