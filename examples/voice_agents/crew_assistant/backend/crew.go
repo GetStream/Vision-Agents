@@ -194,6 +194,14 @@ func (r *restaurant) schedule(w http.ResponseWriter, _ *http.Request) {
 	answer(w, map[string]any{"shifts": mine})
 }
 
+// stopWords say nothing about which passage a question is about.
+var stopWords = map[string]bool{
+	"the": true, "and": true, "can": true, "are": true, "what": true, "how": true, "for": true,
+	"with": true, "does": true, "you": true, "your": true, "our": true, "about": true, "rules": true,
+	"policy": true, "own": true, "when": true, "need": true, "should": true, "there": true,
+	"have": true, "has": true, "any": true, "get": true, "use": true, "much": true, "many": true,
+}
+
 var mustStayHome = []string{"vomit", "diarrhea", "fever", "jaundice", "sore throat"}
 
 func (r *restaurant) calloutCheck(w http.ResponseWriter, req *http.Request) {
@@ -330,7 +338,7 @@ func (r *restaurant) searchHandbook(w http.ResponseWriter, req *http.Request) {
 		score := 0
 		for _, word := range words {
 			word = strings.Trim(word, "?.,!'\"")
-			if len(word) < 3 {
+			if len(word) < 3 || stopWords[word] {
 				continue
 			}
 			if strings.Contains(text, word) {
@@ -347,7 +355,7 @@ func (r *restaurant) searchHandbook(w http.ResponseWriter, req *http.Request) {
 	sort.SliceStable(found, func(i, j int) bool { return found[i].score > found[j].score })
 	citations := []map[string]string{}
 	for i, f := range found {
-		if i == 3 {
+		if i == 3 || f.score*2 < found[0].score {
 			break
 		}
 		citations = append(citations, map[string]string{
