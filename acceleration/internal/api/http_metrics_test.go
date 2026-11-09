@@ -135,6 +135,27 @@ func (s *HTTPMetricsSuite) TestEveryStatusClassIsTimedUnderItsClassAlone() {
 	s.LessOrEqual(len(series), len(classes))
 }
 
+// Defect: the status-class histogram on other buckets than the route-keyed one, so the two
+// disagree on how slow is slow.
+func (s *HTTPMetricsSuite) TestTheStatusClassHistogramHasTheRouteKeyedBuckets() {
+	route := s.prefix + "/buckets"
+	s.mux.Get(route, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	s.serve(http.MethodGet, route)
+
+	bounds := func(histogram *dto.Histogram) []float64 {
+		var upper []float64
+		for _, bucket := range histogram.GetBucket() {
+			upper = append(upper, bucket.GetUpperBound())
+		}
+		return upper
+	}
+	byStatus := seriesOf(s.T(), "router_http_request_status_seconds", func(labels map[string]string) bool {
+		return labels["status"] == "2xx"
+	})
+	s.Require().Len(byStatus, 1)
+	s.Equal(bounds(s.timed(route, "2xx")), bounds(byStatus[0].GetHistogram()))
+}
+
 // Defect: the raw path in the route label, a series per session id.
 func (s *HTTPMetricsSuite) TestRequestsForDifferentIdsShareOneSeries() {
 	route := s.prefix + "/sessions/{id}"
