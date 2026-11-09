@@ -541,12 +541,36 @@ should expect items whose only field set, beside the raw `Frame`, is `Balance`. 
 client is told none of it. To be told by webhook instead, add an event destination for the
 connector `stream`, which is sent `account.balance_low` and `account.balance_exhausted`.
 
+## Spend limits
+
+A backend caps what the organization, its apps, keys, end users, teams and usage categories may
+spend in each day, week, two weeks or month. Amounts are `client.USD`, written the way a
+`time.Duration` is, and exact: the router counts in millionths of a dollar, and so does `USD`.
+
+```go
+limits := api.SpendLimits()
+limits.Create(ctx, client.Limit{Subject: client.Organization, Interval: client.Monthly, Amount: 20_000 * client.Dollar})
+
+// Every user of app 1234 may spend $20 a day, and user-42 $50.
+limits.Create(ctx, client.Limit{Subject: client.User, AppID: "1234", Interval: client.Daily, Amount: 20 * client.Dollar})
+limits.Create(ctx, client.Limit{Subject: client.User, AppID: "1234", UserID: "user-42", Interval: client.Daily, Amount: 50 * client.Dollar})
+
+// Created or changed, whichever the team needs.
+api.Teams().SetLimit(ctx, client.TeamLimit{Team: "finance", Interval: client.Weekly, Amount: 2_500 * client.Dollar})
+
+amount, err := client.ParseUSD("12.50") // from a form or a config file
+```
+
+What the router answers is in micros too: `client.USD(limit.LimitMicros)` prints as `$20000.00`.
+Work a limit refuses is a `*stream.RouterError` of 402 `spend_limit_reached`, or 429
+`user_limit_reached` for one end user's.
+
 ## Layout
 
 | Path            | What is in it                                                     |
 | --------------- | ----------------------------------------------------------------- |
 | `agents/`       | `Agent`, its lifecycle, the harness, the directory loader and function registration |
-| `client/`       | Agents by name, their sessions, responses and items, forking and guest users |
+| `client/`       | Agents by name, their sessions, responses and items, forking and guest users, spend limits and teams |
 | `stream/`       | The remote pipeline, the backend it talks to, the socket and the phone endpoints |
 | `edge/`         | Creating the Stream call and minting a link to listen in on it     |
 | `tools/`        | The function registry and the JSON Schema derived from an argument struct |
