@@ -96,6 +96,18 @@ func (s *HTTPMetricsSuite) TestA5xxIsCountedAsAServerErrorAndA2xxIsNot() {
 	s.EqualValues(2, s.timed(route, "2xx").GetSampleCount())
 }
 
+// statusSum is the sum of the seconds router_api_latency_seconds holds for a status class.
+func statusSum(t *testing.T, class string) float64 {
+	t.Helper()
+	total := 0.0
+	for _, metric := range seriesOf(t, "router_api_latency_seconds", func(labels map[string]string) bool {
+		return labels["status"] == class
+	}) {
+		total += metric.GetHistogram().GetSampleSum()
+	}
+	return total
+}
+
 // statusSamples is the sample count of router_api_latency_seconds for a status class.
 func statusSamples(t *testing.T, class string) uint64 {
 	t.Helper()
@@ -256,11 +268,16 @@ func (s *HTTPMetricsSuite) TestTheTimeIsHowLongTheAnswerTookToBegin() {
 		_, _ = io.WriteString(w, "done")
 	})
 
+	classBefore := statusSum(s.T(), "2xx")
 	s.serve(http.MethodGet, route)
 
 	spent := s.timed(route, "2xx")
 	s.Require().NotNil(spent)
 	s.GreaterOrEqual(spent.GetSampleSum(), 0.05)
+	// The class histogram times the same beginning, not the end and not zero.
+	classSpent := statusSum(s.T(), "2xx") - classBefore
+	s.GreaterOrEqual(classSpent, 0.05)
+	s.Less(classSpent, 0.3, "the body's time is counted by status class")
 	s.Less(spent.GetSampleSum(), 0.3, "the body's time is counted")
 	// The buckets tell an answer in 50 ms from one in 300 ms, the range a slow API moves in.
 	s.True(slices.ContainsFunc(spent.GetBucket(), func(bucket *dto.Bucket) bool {
@@ -315,6 +332,7 @@ func (s *HTTPMetricsSuite) TestAStreamedAnswerIsCountedAndNotTimed() {
 	})
 	server := httptest.NewServer(withTrace(withMetrics(s.mux, withTiming((&Server{logger: slog.New(slog.DiscardHandler)}).withRequestLog(s.mux)))))
 	s.T().Cleanup(server.Close)
+	classBefore := statusSamples(s.T(), "2xx")
 
 	// A flush that never reaches the caller would leave the request waiting for its headers.
 	client := &http.Client{Timeout: 5 * time.Second}
@@ -331,6 +349,8 @@ func (s *HTTPMetricsSuite) TestAStreamedAnswerIsCountedAndNotTimed() {
 
 	s.Require().Eventually(func() bool { return s.count(route, "2xx") == 1 }, 5*time.Second, 10*time.Millisecond)
 	s.Empty(s.series("router_http_request_seconds", route))
+	// The series is the process's: this holds while no other test answers a 2xx at the same time.
+	s.Equal(classBefore, statusSamples(s.T(), "2xx"), "a streamed answer was timed by status class")
 }
 
 // Defect: a socket timed as a response, so the latency holds the length of sessions.
