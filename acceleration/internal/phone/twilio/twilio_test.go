@@ -47,6 +47,8 @@ type request struct {
 func TestTwilio(t *testing.T) { suite.Run(t, new(TwilioSuite)) }
 
 func (s *TwilioSuite) SetupTest() {
+	// A key exported in the shell would sign as the key, not the AC these tests expect.
+	s.T().Setenv("TWILIO_API_KEY_SID", "")
 	s.ctx = context.Background()
 	s.seen = request{}
 	s.seenPricing = request{}
@@ -119,6 +121,33 @@ func (s *TwilioSuite) TestSearchingAsksForTheCountryAndReturnsWhatIsOffered() {
 	s.Equal("+15125551234", offered[0].E164)
 	s.Equal("Austin", offered[0].Locality)
 	s.Equal([]phone.Capability{phone.Voice, phone.SMS}, offered[0].Capabilities)
+}
+
+func (s *TwilioSuite) TestAnAPIKeySignsRequestsWhileTheAccountStaysInThePath() {
+	provider, err := New(Options{
+		AccountSID: "AC123",
+		APIKeySID:  "SK456",
+		AuthToken:  "key-secret",
+		BaseURL:    s.server.URL,
+		PricingURL: s.server.URL,
+	})
+	s.Require().NoError(err)
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/PhoneNumbers/Countries/") {
+			_, _ = w.Write([]byte(usPrices))
+			return
+		}
+		_, _ = w.Write([]byte(oneNumber))
+	}
+
+	_, err = provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+	s.Require().NoError(err)
+
+	s.Equal("/2010-04-01/Accounts/AC123/AvailablePhoneNumbers/US/Local.json", s.seen.path)
+	s.Equal("SK456", s.seen.user)
+	s.Equal("key-secret", s.seen.pass)
+	s.Equal("SK456", s.seenPricing.user)
+	s.Equal("key-secret", s.seenPricing.pass)
 }
 
 const usPrices = `{"iso_country":"US","price_unit":"USD","phone_number_prices":[
