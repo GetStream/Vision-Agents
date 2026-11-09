@@ -322,6 +322,63 @@ class TestBackend < Minitest::Test
     assert_raises(VA::ConfigurationError) { VA::Backend.new(url: "http://router", api_key: "key", api_secret: "") }
   end
 
+  def test_a_team_and_categories_are_signed_into_the_server_token_and_sent_as_a_header
+    headers = VA::Backend.new(url: "http://router", api_key: "key", api_secret: "secret", team: "finance",
+                              usage_categories: %w[project:onboarding env.prod project:onboarding]).headers
+
+    claims = claims_of(headers)
+    assert_equal true, claims["server"]
+    assert_equal "finance", claims["team"]
+    assert_equal %w[env.prod project:onboarding], claims["usage_categories"]
+    assert_equal "env.prod,project:onboarding,team:finance", headers["X-Stream-Usage-Categories"]
+  end
+
+  def test_behind_the_proxy_they_are_only_claims
+    backend = VA::Backend.new(url: "http://router", api_key: "key", api_secret: "secret", user_id: "ada",
+                              authenticate: true, team: "finance")
+
+    claims = claims_of(backend.headers)
+    assert_equal "ada", claims["user_id"]
+    assert_equal "finance", claims["team"]
+    refute claims.key?("usage_categories")
+    refute backend.headers.key?("X-Stream-Usage-Categories")
+  end
+
+  def test_a_router_trusting_the_customer_reads_them_from_the_header
+    backend = VA::Backend.new(url: "http://router", customer_id: "acme", team: "finance")
+
+    assert_equal({ "X-Customer-Id" => "acme", "X-Stream-Usage-Categories" => "team:finance" }, backend.headers)
+    assert_equal "team:finance", backend.acting_for("ada").headers["X-Stream-Usage-Categories"]
+    refute VA::Backend.new(url: "http://router", customer_id: "acme").headers.key?("X-Stream-Usage-Categories")
+  end
+
+  def test_a_team_or_category_the_router_would_refuse_is_refused
+    [
+      { team: "fin ance" },
+      { team: "f" * 60 },
+      { usage_categories: ["TEAM:finance"] },
+      { usage_categories: ["c" * 65] },
+      { usage_categories: "project:onboarding" },
+      { usage_categories: [nil] },
+      { team: "finance", usage_categories: (1..10).map { |n| "c#{n}" } }
+    ].each do |options|
+      assert_raises(VA::ConfigurationError, options.inspect) do
+        VA::Backend.new(url: "http://router", customer_id: "acme", **options)
+      end
+    end
+    assert_equal 10, VA::Backend.new(url: "http://router", customer_id: "acme",
+                                     usage_categories: (1..10).map { |n| "c#{n}" }).usage_categories.size
+  end
+
+  def test_a_token_handed_in_cannot_take_a_team
+    assert_raises(VA::ConfigurationError) do
+      VA::Backend.new(url: "http://router", api_key: "key", token: "user-token", team: "finance")
+    end
+    assert_raises(VA::ConfigurationError) do
+      VA::Client.new(url: "http://router", api_key: "key", token: "user-token", usage_categories: ["a"])
+    end
+  end
+
   def test_sockets_use_the_websocket_scheme
     backend = VA::Backend.new(url: "https://router.example/", customer_id: "acme")
 
@@ -330,6 +387,10 @@ class TestBackend < Minitest::Test
   end
 
   private
+
+  def claims_of(headers)
+    JSON.parse(headers["Authorization"].split(".")[1].tr("-_", "+/").unpack1("m"))
+  end
 
   # Sets each variable for the block, nil unsetting it, and puts back what was there before.
   def with_env(values)

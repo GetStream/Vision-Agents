@@ -17,8 +17,8 @@ module GetStream
     #   api.get("/v1/agents/configs", query: { name: "docs" })
     #   api.get("/v1/agents/sessions/{id}", path: { id: "sess_1" })
     #
-    # The resources (#agent, #router, #simulations, #memories) are built on these, and are
-    # what callers use.
+    # The resources (#agent, #router, #simulations, #memories, #spend_limits, #teams) are built
+    # on these, and are what callers use.
     #
     # Answers are the router's JSON as string-keyed hashes, whole: a field added to the spec
     # after this gem shipped still reaches the caller. A 204 answers nil.
@@ -31,7 +31,8 @@ module GetStream
 
       # @param backend [Backend] one already built, instead of building one from the options.
       # @param options the Backend options: url, customer_id, api_key, api_secret, token,
-      #   user_id and authenticate, each falling back to the environment.
+      #   user_id and authenticate, each falling back to the environment, and the team and
+      #   usage_categories the work is counted against.
       def initialize(backend: nil, **options)
         @backend = backend || Backend.new(**options)
       end
@@ -136,6 +137,17 @@ module GetStream
       # What agents remember about the app's users.
       def memories
         Memories.new(self)
+      end
+
+      # The customer's spend limits, on the organization, its apps, keys, end users, teams
+      # and usage categories.
+      def spend_limits
+        SpendLimits.new(self)
+      end
+
+      # The organization's teams and their spend limits.
+      def teams
+        Teams.new(self)
       end
 
       private
