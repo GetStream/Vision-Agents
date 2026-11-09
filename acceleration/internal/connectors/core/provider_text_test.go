@@ -35,6 +35,15 @@ func (s *LoggedDescriptionSuite) TestAURLEscapedEchoOfASecretIsRedacted() {
 	s.Equal("bad [redacted], path [redacted], raw [redacted]", core.LoggedDescription(text, "s3cr/et+tok=en&x"))
 }
 
+// TestAJSONEscapedEchoOfASecretIsRedacted: a JSON body echoes a secret escaped, its & as \u0026
+// by Go's encoding/json, its / as \/ by PHP's json_encode, or with only its " and \ escaped.
+func (s *LoggedDescriptionSuite) TestAJSONEscapedEchoOfASecretIsRedacted() {
+	secret := `tok/a&b<c"d\e`
+	text := `go tok/a\u0026b\u003cc\"d\\e, php tok\/a\u0026b\u003cc\"d\\e, plain tok/a&b<c\"d\\e, plain php tok\/a&b<c\"d\\e`
+
+	s.Equal("go [redacted], php [redacted], plain [redacted], plain php [redacted]", core.LoggedDescription(text, secret))
+}
+
 // TestASecretOfOneByteIsLeftAlone: a byte alone names nothing, and taking it out would take
 // out every such byte, as the Exchange's redaction leaves it.
 func (s *LoggedDescriptionSuite) TestASecretOfOneByteIsLeftAlone() {

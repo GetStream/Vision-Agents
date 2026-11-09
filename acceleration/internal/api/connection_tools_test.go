@@ -5,7 +5,9 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
@@ -385,6 +387,30 @@ func (s *ConnectionToolsSuite) TestAValidateTheProviderRefusesLogsItsStatusAndMe
 			s.Contains(lines[0], `echoed Bearer [redacted] `, "the provider's own words")
 			s.NotContains(lines[0], strings.Repeat("x", maxStoredErrorBytes), "cut to 1 KiB")
 			s.False(strings.Contains(s.logged.String(), token), "no line holds the token")
+		})
+	}
+}
+
+// TestAValidateLogsNoTokenTheProviderEchoedJSONEscaped: a JSON body may echo the token escaped,
+// its / as \/ as PHP's json_encode writes it, which is not the token as it was sent. The line
+// holds neither, and the validate answers as it always has.
+func (s *ConnectionToolsSuite) TestAValidateLogsNoTokenTheProviderEchoedJSONEscaped() {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusBadRequest} {
+		s.Run(strconv.Itoa(status), func() {
+			start := "tok-" + s.utils.uuid()
+			token := start + "/ab+cd=="
+			id := s.refusedBy(status, token, func(authorization string) string {
+				escaped := strings.ReplaceAll(authorization, "/", `\/`)
+				return `{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"echoed ` + escaped + `"}}`
+			})
+
+			validation := s.validate(id)
+
+			s.Equal(validationNeedsReauthorization, string(validation.Status))
+			s.Equal(codeCredentialRejected, validation.Code)
+			s.Contains(s.refusedLine(id), "echoed Bearer [redacted]", "the provider's own words")
+			// s.False on strings.Contains, not s.NotContains, so a failure never prints the token.
+			s.False(strings.Contains(s.logged.String(), start), "no line holds the token, escaped or not")
 		})
 	}
 }
@@ -1097,6 +1123,33 @@ func (s *ConnectionToolsSuite) connectedAt(id string) *time.Time {
 	connection, err := s.store.ConnectorConnection(context.Background(), s.customerID(), id)
 	s.Require().NoError(err)
 	return connection.ConnectedAt
+}
+
+// refusedBy is a bearer connection holding token whose provider answers every request with
+// status and the body body makes of the Authorization header it was sent.
+func (s *ConnectionToolsSuite) refusedBy(status int, token string, body func(authorization string) string) string {
+	refusing := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, body(r.Header.Get("Authorization")))
+	}))
+	s.T().Cleanup(refusing.Close)
+	id := s.connectionTo(s.connectorWith(bearer.Name, refusing.URL+"/mcp"))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+id+"/credentials", s.bearerToken(1, token), nil))
+	return id
+}
+
+// refusedLine is the one "refused by the provider" line logged for connection id.
+func (s *ConnectionToolsSuite) refusedLine(id string) string {
+	var lines []string
+	for line := range strings.Lines(s.logged.String()) {
+		if strings.Contains(line, " connection="+id+" ") && strings.Contains(line, "refused by the provider") {
+			lines = append(lines, line)
+		}
+	}
+	s.Require().Len(lines, 1, "one line for the refused validate")
+	return lines[0]
 }
 
 func (s *ConnectionToolsSuite) bearerToken(revision int, token string) map[string]any {
