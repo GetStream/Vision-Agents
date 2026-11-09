@@ -64,7 +64,7 @@ var (
 	}, []string{"method", "route", "status"})
 	httpStatusSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "router",
-		Name:      "http_request_status_seconds",
+		Name:      "api_latency_seconds",
 		Help: "How long the API took to begin its answer, by status class only: router_http_request_seconds without the " +
 			"method and route labels, so a cheap SLO can read API latency without them. A socket and a streamed answer " +
 			"are left out",

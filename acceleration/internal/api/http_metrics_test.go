@@ -96,11 +96,11 @@ func (s *HTTPMetricsSuite) TestA5xxIsCountedAsAServerErrorAndA2xxIsNot() {
 	s.EqualValues(2, s.timed(route, "2xx").GetSampleCount())
 }
 
-// statusSamples is the sample count of router_http_request_status_seconds for a status class.
+// statusSamples is the sample count of router_api_latency_seconds for a status class.
 func statusSamples(t *testing.T, class string) uint64 {
 	t.Helper()
 	var total uint64
-	for _, metric := range seriesOf(t, "router_http_request_status_seconds", func(labels map[string]string) bool {
+	for _, metric := range seriesOf(t, "router_api_latency_seconds", func(labels map[string]string) bool {
 		return labels["status"] == class
 	}) {
 		total += metric.GetHistogram().GetSampleCount()
@@ -125,7 +125,7 @@ func (s *HTTPMetricsSuite) TestEveryStatusClassIsTimedUnderItsClassAlone() {
 	}
 
 	classes := []string{"1xx", "2xx", "3xx", "4xx", "5xx"}
-	series := seriesOf(s.T(), "router_http_request_status_seconds", func(map[string]string) bool { return true })
+	series := seriesOf(s.T(), "router_api_latency_seconds", func(map[string]string) bool { return true })
 	s.NotEmpty(series)
 	for _, metric := range series {
 		labels := labelsOf(metric)
@@ -149,7 +149,7 @@ func (s *HTTPMetricsSuite) TestTheStatusClassHistogramHasTheRouteKeyedBuckets() 
 		}
 		return upper
 	}
-	byStatus := seriesOf(s.T(), "router_http_request_status_seconds", func(labels map[string]string) bool {
+	byStatus := seriesOf(s.T(), "router_api_latency_seconds", func(labels map[string]string) bool {
 		return labels["status"] == "2xx"
 	})
 	s.Require().Len(byStatus, 1)
