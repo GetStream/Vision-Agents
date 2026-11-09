@@ -107,6 +107,10 @@ up to `maxRetries` times (2 unless the client says), waiting longer each time an
 `Retry-After` asks. To ask again yourself after a failure that may have reached the router,
 pass the same `requestId` to `responses.create`.
 
+A connection lost while reading a response body follows the same retry policy. Invalid JSON
+is reported with the operation and request id and is not retried. Text responses remain
+strings; event-stream responses return a `ReadableStream<Uint8Array>` for the caller to read.
+
 ## Spend limits and teams
 
 A backend caps what the organization, its apps, keys, end users, teams and usage categories may
@@ -236,6 +240,7 @@ agent.tools.register<{ city: string }>({
   run: async ({ city }) => fetchWeather(city),
 });
 
+await agent.sync();
 const session = await agent.join();
 console.log(await agent.monitorURL(session));
 
@@ -249,7 +254,8 @@ for await (const event of session.events()) {
 instructions, the same skills, the same knowledge, with nothing transcribed and nothing
 spoken. `session.voice.stop()` carries a conversation on in writing and
 `session.voice.start()` puts the agent back on the call. Instructions reach the backend
-with `agent.sync()`: a session runs on the stored config's.
+with `agent.sync()`: a session runs on the stored config's. Without `pipeline.config`,
+`chat` and `join` select that config by the agent's name.
 
 `new Agent({ timezone: "Europe/Lisbon" })` is the zone the agent's sessions are in, and `join`,
 `chat`, `answer`, `reply`, `startCall` and `waitForCall` each take a `timezone` for the person on
@@ -357,7 +363,9 @@ dispatch.onMessage(async (message) => {
     await dispatch.answer(message);
     return;
   }
-  const session = await dispatch.sessionFor(message, () => new Agent({ name: "John" }));
+  const session = await dispatch.sessionFor(message, () => new Agent({
+    name: "John", pipeline: { config: "support" },
+  }));
   const images = (message.images ?? []).map(({ url }) => ({ url }));
   await session.responses.create(message.text, { images });
 });
@@ -399,6 +407,10 @@ tool takes the same `interruptible`, `timeoutMs` and `approval` (asked only on a
 call), is handed its `toolCallContext`, and is aborted when the router gives up on it. `run`
 works with only hosted tools and no handler, and throws `HostingRefusedError` if the router
 refuses them.
+
+Tool names must be unique across the agents hosted by one worker. Use separate workers when
+agents need different implementations of a tool with the same name. `stop` also cancels a
+socket upgrade still in progress; work already running is drained.
 
 Server side only. A worker is offered other people's callers, so anything that can open
 that socket could answer for the whole app.

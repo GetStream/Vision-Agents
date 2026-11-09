@@ -188,11 +188,13 @@ export class Dispatch {
    * ```
    */
   host(agent: AgentHandle, options: HostOptions = {}): this {
-    this.hosted.push({
+    const offer = {
       agentId: agent.name,
       tools: agent.tools,
       toolTimeoutMs: options.toolTimeoutMs ?? 0,
-    });
+    };
+    this.checkHosting([...this.hosted, offer]);
+    this.hosted.push(offer);
     return this;
   }
 
@@ -288,6 +290,7 @@ export class Dispatch {
         "register a handler with onCall or onMessage, or host tools, before running",
       );
     }
+    this.checkHosting();
 
     const stopper = new AbortController();
     this.stopping = stopper;
@@ -297,7 +300,7 @@ export class Dispatch {
     const reporting = setInterval(() => void this.report(), this.reportEveryMs);
 
     try {
-      let socket = await Socket.dial(this.client.backend, "/v1/dispatch", this.waiting());
+      let socket = await Socket.dial(this.client.backend, "/v1/dispatch", this.waiting(), stopping);
       let failures = 0;
       while (true) {
         if (await this.serve(socket, stopping, hostedSignal)) {
@@ -321,7 +324,7 @@ export class Dispatch {
             return;
           }
           try {
-            reconnected = await Socket.dial(this.client.backend, "/v1/dispatch", this.waiting());
+            reconnected = await Socket.dial(this.client.backend, "/v1/dispatch", this.waiting(), stopping);
           } catch (cause) {
             // A configuration that cannot work is not going to start working on the next try.
             if (!(cause instanceof SocketClosedError)) {
@@ -331,6 +334,10 @@ export class Dispatch {
           }
         }
         socket = reconnected;
+      }
+    } catch (cause) {
+      if (!stopping.aborted || cause !== stopping.reason) {
+        throw cause;
       }
     } finally {
       clearInterval(reporting);
@@ -410,6 +417,7 @@ export class Dispatch {
         }
       }
     } finally {
+      this.holds.clear();
       stopping.removeEventListener("abort", close);
     }
     return ready;
@@ -493,6 +501,7 @@ export class Dispatch {
 
   /** Tells the router what this worker runs, every time it says it is listening. */
   private declare(): void {
+    this.checkHosting();
     for (const offer of this.hosted) {
       this.tell({
         type: "host_tools",
@@ -500,6 +509,18 @@ export class Dispatch {
         tools: offer.tools.declared(),
         timeout_ms: offer.toolTimeoutMs,
       });
+    }
+  }
+
+  private checkHosting(offers: readonly Hosting[] = this.hosted): void {
+    const names = new Set<string>();
+    for (const offer of offers) {
+      for (const tool of offer.tools.declared()) {
+        if (names.has(tool.name)) {
+          throw new ConfigurationError(`hosted tool ${tool.name} is registered more than once`);
+        }
+        names.add(tool.name);
+      }
     }
   }
 

@@ -1,6 +1,6 @@
 import type { Client, Schemas } from "./client.js";
 import { Conversation } from "./conversation.js";
-import { ConfigurationError } from "./errors.js";
+import { ConfigurationError, RouterError } from "./errors.js";
 import { CameraFrames } from "./frames.js";
 import { Responses } from "./responses.js";
 import { Socket, type Frame, flag, nested, text } from "./socket.js";
@@ -194,6 +194,7 @@ export class Session {
   private readonly asking = new Map<string, { request: ToolApprovalRequest; frame: Frame }>();
   private readonly finished: Promise<void>;
   private ended = false;
+  private stopped = false;
 
   private constructor(
     client: Client,
@@ -229,7 +230,24 @@ export class Session {
     const created = await client.post("/v1/agents/sessions", {
       body: declared.length > 0 ? { ...request, tools: declared } : request,
     });
-    return Session.watching(client, created, options);
+    return Session.startWatching(client, created, options);
+  }
+
+  /** @internal Watches a newly created session, stopping it if watching fails. */
+  static async startWatching(
+    client: Client,
+    created: Schemas["Session"],
+    options: SessionOptions = {},
+  ): Promise<Session> {
+    try {
+      return await Session.watching(client, created, options);
+    } catch (cause) {
+      // The session is live in the backend even though nothing here can watch it, so it is
+      // stopped rather than left holding a call nobody is listening to.
+      await client.post("/v1/agents/sessions/{id}/stop", { path: { id: created.id } })
+        .catch(() => undefined);
+      throw cause;
+    }
   }
 
   /**
@@ -258,21 +276,12 @@ export class Session {
       query["decisions"] = "false";
     }
 
-    try {
-      const socket = await Socket.dial(
-        client.backend,
-        `/v1/agents/sessions/${encodeURIComponent(created.id)}/events`,
-        query,
-      );
-      return new Session(client, created, socket, options.tools);
-    } catch (cause) {
-      // The session is live in the backend even though nothing here can watch it, so it is
-      // stopped rather than left holding a call nobody is listening to.
-      await client
-        .post("/v1/agents/sessions/{id}/stop", { path: { id: created.id } })
-        .catch(() => undefined);
-      throw cause;
-    }
+    const socket = await Socket.dial(
+      client.backend,
+      `/v1/agents/sessions/${encodeURIComponent(created.id)}/events`,
+      query,
+    );
+    return new Session(client, created, socket, options.tools);
   }
 
   /** The backend's id for the session. */
@@ -464,7 +473,7 @@ export class Session {
     // here in this process, and a conversation continued without them would offer the model
     // tools it cannot run.
     const inherited = tools ?? this.tools;
-    return Session.watching(this.client, forked, {
+    return Session.startWatching(this.client, forked, {
       ...(inherited ? { tools: inherited } : {}),
       ...(interim === undefined ? {} : { interim }),
       ...(decisions === undefined ? {} : { decisions }),
@@ -559,15 +568,26 @@ export class Session {
    * and remembered is kept; `delete` is what takes those away.
    */
   async close(): Promise<void> {
+    if (this.stopped) {
+      return;
+    }
     if (this.socket?.open) {
       this.socket.send({ type: "close" });
-    } else if (!this.ended) {
-      await this.client
-        .post("/v1/agents/sessions/{id}/stop", { path: { id: this.id } })
-        .catch(() => undefined);
+    } else {
+      try {
+        await this.client.post("/v1/agents/sessions/{id}/stop", { path: { id: this.id } });
+      } catch (cause) {
+        if (!(cause instanceof RouterError) || cause.status !== 404 || cause.code !== "session_not_found") {
+          throw cause;
+        }
+      }
     }
+    this.stopped = true;
     this.socket?.close();
     await this.finished;
+    if (!this.socket) {
+      this.end();
+    }
   }
 
   /**
@@ -634,18 +654,22 @@ export class Session {
       stoppedBy = cause instanceof Error ? cause : new Error(String(cause));
       throw cause;
     } finally {
-      this.ended = true;
-      this.speech.close();
-      this.state.end();
-      this.asking.clear();
-      this.conversation.disconnected(stoppedBy ?? this.socket?.closedBy);
-      this.ending.abort();
-      for (const cancel of this.running.values()) {
-        cancel.abort();
-      }
-      for (const reader of this.readers) {
-        reader.wake?.();
-      }
+      this.end(stoppedBy ?? this.socket?.closedBy);
+    }
+  }
+
+  private end(cause?: Error): void {
+    this.ended = true;
+    this.speech.close();
+    this.state.end();
+    this.asking.clear();
+    this.conversation.disconnected(cause);
+    this.ending.abort();
+    for (const cancel of this.running.values()) {
+      cancel.abort();
+    }
+    for (const reader of this.readers) {
+      reader.wake?.();
     }
   }
 

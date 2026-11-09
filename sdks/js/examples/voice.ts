@@ -32,6 +32,7 @@ agent.tools.register<{ city: string }>({
   run: ({ city }) => ({ city, sky: "clear", celsius: 21 }),
 });
 
+await agent.sync();
 const session = await agent.join();
 console.log(`open this to talk to the agent:\n${await agent.monitorURL(session)}\n`);
 

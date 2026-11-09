@@ -92,7 +92,7 @@ export class StreamPeers {
       const credentials = await this.credentials("chat");
       const StreamChat = installed(registered.chat, "chat", "stream-chat");
       const client = new StreamChat(credentials.apiKey);
-      await client.connectUser(chatUser(client, credentials.user), this.tokens("chat", credentials.token));
+      await client.connectUser(chatUser(client, credentials.user), streamTokens(this.backend, credentials, "chat"));
       return client;
     });
   }
@@ -108,7 +108,7 @@ export class StreamPeers {
       return new StreamVideoClient({
         apiKey: credentials.apiKey,
         user: credentials.user,
-        tokenProvider: this.tokens("video", credentials.token),
+        tokenProvider: streamTokens(this.backend, credentials, "video"),
       });
     });
   }
@@ -144,16 +144,6 @@ export class StreamPeers {
     return credentials;
   }
 
-  /** The token already fetched first, then a fresh one each time Stream asks again. */
-  private tokens(what: string, first: string): () => Promise<string> {
-    let unused: string | undefined = first;
-    return async () => {
-      const token = unused ?? (await this.credentials(what, true)).token;
-      unused = undefined;
-      return token;
-    };
-  }
-
   /**
    * The client cached for the current key and user, or the one `open` builds. Keyed before any
    * token is asked for, so a session reusing a connection mints nothing. A failed one is not kept.
@@ -168,6 +158,28 @@ export class StreamPeers {
     }
     return opening;
   }
+}
+
+/** @internal Refreshes a connection's token only while its original user is still signed in. */
+export function streamTokens(
+  backend: Backend,
+  credentials: StreamCredentials,
+  what: string,
+): () => Promise<string> {
+  let unused: string | undefined = credentials.token;
+  return async () => {
+    if (backend.userId !== credentials.user.id) {
+      throw new ConfigurationError(
+        `the ${what} connection belongs to ${credentials.user.id}; disconnect it after changing users`,
+      );
+    }
+    const token = unused ?? (await backend.streamCredentials(true))?.token;
+    if (!token) {
+      throw new ConfigurationError(`there is no token for the ${what} connection`);
+    }
+    unused = undefined;
+    return token;
+  };
 }
 
 /** The class an entry point registered, or the error saying which one to import. */

@@ -466,6 +466,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### JavaScript: reliable configuration, shutdown and transport failures
+
+Agents select their synced configuration by default, respect an empty skill override and verify the remote sync fingerprint. Attaching a watcher no longer stops an existing conversation on failure. Closing a session after losing its socket stops it over HTTP, reports stop failures and ends unwatched sessions locally. Dispatch refuses ambiguous hosted tool names, cancels pending socket upgrades and settles pending tool holds on shutdown. Stream connections refuse tokens for a different signed-in user, and concurrent guest refreshes share one request. Safe requests retry truncated response bodies; text responses and event streams retain their formats. Socket receive queues are bounded. Folder loading propagates filesystem failures, preserves quoted hashes and rejects malformed durations. An ended voice session must be started or attached again before joining.
+
 ### Go: leaving reports a stop the router refused
 
 When `stream.Pipeline.Leave` (and so `Session.Close`) stops a session over HTTP because its socket is gone, a refusal other than 404 is now returned as a `*stream.RouterError` instead of nil, since the session may still be running. A 404, a session the router no longer holds, still counts as left (AI-1892).

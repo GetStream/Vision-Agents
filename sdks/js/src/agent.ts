@@ -307,7 +307,7 @@ export class Agent {
     // A directory's skills are folded in here, so everything downstream reads one harness.
     const declared = options.harness;
     const fromFolder = this.folder?.skills ?? [];
-    if (declared && (declared.skills?.length ?? 0) === 0 && fromFolder.length > 0) {
+    if (declared && declared.skills === undefined && fromFolder.length > 0) {
       this.harness = { ...declared, skills: fromFolder };
     } else if (!declared && fromFolder.length > 0) {
       this.harness = { skills: fromFolder };
@@ -575,7 +575,7 @@ export class Agent {
         query: { name: this.name },
       });
       // A config deleted since the stamp was written is synced again rather than trusted.
-      if (stored?.name === this.name) {
+      if (stored?.name === this.name && stored.sync_hash === hash) {
         return { unchanged: true, config: stored };
       }
     }
@@ -691,7 +691,9 @@ export class Agent {
       ...(pipeline.maxTokens ? { max_tokens: pipeline.maxTokens } : {}),
       ...(pipeline.toolTimeoutMs ? { tool_timeout_ms: pipeline.toolTimeoutMs } : {}),
       ...(pipeline.video ? { video: pipeline.video } : {}),
-      ...(pipeline.config ? { config_id: await this.resolveConfig(pipeline.config) } : {}),
+      ...(pipeline.config
+        ? { config_id: await this.resolveConfig(pipeline.config) }
+        : { agent: this.name }),
     };
   }
 

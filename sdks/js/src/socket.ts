@@ -14,6 +14,9 @@ export type Frame = { readonly type?: string } & Readonly<Record<string, unknown
 /** What arrives on a socket: a JSON frame, or audio. */
 export type Message = Frame | Uint8Array;
 
+const BUFFERED_MESSAGES = 1024;
+const BUFFERED_BYTES = 8 * 1024 * 1024;
+
 /**
  * One WebSocket to the router.
  *
@@ -23,12 +26,13 @@ export type Message = Frame | Uint8Array;
  */
 export class Socket {
   private readonly socket: WebSocketLike;
-  private readonly arrived: Message[] = [];
+  private readonly arrived: { message: Message; bytes: number }[] = [];
   private readonly waiting: ((next: IteratorResult<Message>) => void)[] = [];
   private ended = false;
   /** Set by `close()`, so a socket this side shut is never taken for one that failed. */
   private closing = false;
   private failure: SocketClosedError | undefined;
+  private bufferedBytes = 0;
 
   private constructor(socket: WebSocketLike) {
     this.socket = socket;
@@ -47,22 +51,33 @@ export class Socket {
    * asked for a new one and the socket dialled again. Once, for the same reason a request is
    * retried once: a second refusal is not the token being old.
    */
-  static async dial(backend: Backend, path: string, query: Record<string, string> = {}): Promise<Socket> {
+  static async dial(
+    backend: Backend,
+    path: string,
+    query: Record<string, string> = {},
+    signal?: AbortSignal,
+  ): Promise<Socket> {
+    signal?.throwIfAborted();
     const url = await backend.socketURL(path, query);
     try {
-      return await Socket.open(backend, url);
+      return await Socket.open(backend, url, signal);
     } catch (cause) {
+      signal?.throwIfAborted();
       const carried = new URL(url).searchParams.get("token") ?? undefined;
       if (!backend.expireToken(carried)) {
         throw cause;
       }
-      return Socket.open(backend, await backend.socketURL(path, query));
+      return Socket.open(backend, await backend.socketURL(path, query), signal);
     }
   }
 
   /** Dials the router and resolves once the upgrade is through. */
-  static open(backend: Backend, url: string): Promise<Socket> {
+  static open(backend: Backend, url: string, signal?: AbortSignal): Promise<Socket> {
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(signal.reason);
+        return;
+      }
       let raw: WebSocketLike;
       try {
         raw = backend.openSocket(url);
@@ -71,25 +86,33 @@ export class Socket {
         return;
       }
 
-      const opened = () => {
+      const cleanup = () => {
+        signal?.removeEventListener("abort", aborted);
         raw.removeEventListener("open", opened);
         raw.removeEventListener("error", refused);
         raw.removeEventListener("close", refused);
+      };
+      const opened = () => {
+        cleanup();
         resolve(new Socket(raw));
       };
       // A browser is told nothing about why an upgrade was refused, so the reason the
       // router gave is not available to report. Where it was is, and is usually the answer;
       // the query is left out, because it carries the credentials and errors end up in logs.
       const refused = () => {
-        raw.removeEventListener("open", opened);
-        raw.removeEventListener("error", refused);
-        raw.removeEventListener("close", refused);
+        cleanup();
         reject(new SocketClosedError(`the router refused the socket at ${withoutQuery(url)}`));
+      };
+      const aborted = () => {
+        cleanup();
+        reject(signal?.reason);
+        raw.close();
       };
 
       raw.addEventListener("open", opened);
       raw.addEventListener("error", refused);
       raw.addEventListener("close", refused);
+      signal?.addEventListener("abort", aborted, { once: true });
     });
   }
 
@@ -134,7 +157,8 @@ export class Socket {
     while (true) {
       const next = this.arrived.shift();
       if (next !== undefined) {
-        yield next;
+        this.bufferedBytes -= next.bytes;
+        yield next.message;
         continue;
       }
       if (this.ended) {
@@ -171,12 +195,14 @@ export class Socket {
         // stream over it would lose everything said after it.
         return;
       }
-      this.deliver(frame);
+      if (typeof frame === "object" && frame !== null && !Array.isArray(frame)) {
+        this.deliver(frame, data.length * 2);
+      }
       return;
     }
 
     if (data instanceof ArrayBuffer) {
-      this.deliver(new Uint8Array(data));
+      this.deliver(new Uint8Array(data), data.byteLength);
     }
   };
 
@@ -204,13 +230,22 @@ export class Socket {
     }
   };
 
-  private deliver(message: Message): void {
+  private deliver(message: Message, bytes: number): void {
     const resolve = this.waiting.shift();
     if (resolve) {
       resolve({ done: false, value: message });
       return;
     }
-    this.arrived.push(message);
+    if (this.arrived.length >= BUFFERED_MESSAGES || this.bufferedBytes + bytes > BUFFERED_BYTES) {
+      this.failure = new SocketClosedError("the socket reader fell behind its receive buffer");
+      this.arrived.length = 0;
+      this.bufferedBytes = 0;
+      this.socket.close(4009, "receive buffer exceeded");
+      this.finish();
+      return;
+    }
+    this.bufferedBytes += bytes;
+    this.arrived.push({ message, bytes });
   }
 }
 

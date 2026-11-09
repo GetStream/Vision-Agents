@@ -97,6 +97,7 @@ describe("sessions", () => {
   beforeEach(async () => {
     router = await TestRouter.start();
     api = new Client({ url: router.url, customerId: "local" });
+    router.serve("POST", "/v1/agents/sessions/session-1/stop", { status: 204 });
   });
 
   afterEach(async () => {

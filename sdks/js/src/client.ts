@@ -104,7 +104,11 @@ export type Result<Op> = {
     content: { readonly "application/json": infer B };
   }
     ? B
-    : void;
+    : ResponsesOf<Op>[S] extends { content: { readonly "text/event-stream": string } }
+      ? ReadableStream<Uint8Array>
+      : ResponsesOf<Op>[S] extends { content: { readonly "text/plain": string } }
+        ? string
+        : void;
 }[Extract<keyof ResponsesOf<Op>, 200 | 201 | 202 | 204>];
 
 /** Whether the options can be left out entirely, which they can when nothing is required. */
@@ -407,10 +411,48 @@ export class Client {
       if (!response.ok) {
         throw await errorOf(response, operation);
       }
-      if (response.status === 204 || response.headers.get("Content-Length") === "0") {
+      const mediaType = response.headers.get("Content-Type")?.split(";")[0]?.trim().toLowerCase();
+      if (
+        response.status === 204 ||
+        (response.headers.get("Content-Length") === "0" &&
+          mediaType !== "text/plain" && mediaType !== "text/event-stream")
+      ) {
         return undefined as T;
       }
-      return (await response.json()) as T;
+      if (mediaType === "text/event-stream") {
+        if (!response.body) {
+          throw new RouterError(response.status, operation, "the router returned no event stream");
+        }
+        return response.body as T;
+      }
+      let content: string;
+      try {
+        content = await response.text();
+      } catch (cause) {
+        if (signal?.aborted) {
+          throw signal.reason ?? cause;
+        }
+        if (retryable && retries < this.backend.maxRetries) {
+          await pause(backoff(retries), signal);
+          retries += 1;
+          continue;
+        }
+        throw new RouterError(0, operation, "the connection ended before the router's response was read", {
+          cause,
+          requestId: response.headers.get("X-Request-Id") || undefined,
+        });
+      }
+      if (mediaType === "text/plain") {
+        return content as T;
+      }
+      try {
+        return JSON.parse(content) as T;
+      } catch (cause) {
+        throw new RouterError(response.status, operation, "the router returned invalid JSON", {
+          cause,
+          requestId: response.headers.get("X-Request-Id") || undefined,
+        });
+      }
     }
   }
 }
