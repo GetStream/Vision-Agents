@@ -495,8 +495,15 @@ func (s *AgentSuite) TestACallEndingWhileAHeldReplyGoesOutSendsNoMore() {
 	released()
 
 	s.Require().NoError(<-closed)
-	s.Never(func() bool { return strings.Contains(s.voiced(), "How can I help?") }, 200*time.Millisecond, 5*time.Millisecond,
-		"the rest of the held reply was sent after the call ended")
+	// Read through a copy: Never's last check can run once the next test has set s.voice.
+	voice := s.voice
+	s.Never(func() bool {
+		var sent strings.Builder
+		for _, request := range voice.spoken() {
+			sent.WriteString(request.Text)
+		}
+		return strings.Contains(sent.String(), "How can I help?")
+	}, 200*time.Millisecond, 5*time.Millisecond, "the rest of the held reply was sent after the call ended")
 }
 
 // A stop over the agent ruled on the greeting's own utterance would set the greeting aside
