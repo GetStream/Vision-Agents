@@ -1672,6 +1672,22 @@ func TestSetUserRefusesAUserWithNothingToProveIt(t *testing.T) {
 	}
 }
 
+func TestSetUserLeavesTheTeamToTheUsersToken(t *testing.T) {
+	api, err := New(stream.Backend{URL: "http://localhost:8080", CustomerID: "acme",
+		Team: "finance", UsageCategories: []string{"project:onboarding"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	jean, err := api.SetUser("jean", "minted.elsewhere")
+	if err != nil {
+		t.Fatalf("a client with a team could not act for a user: %v", err)
+	}
+	if backend := jean.Backend(); backend.Team != "" || len(backend.UsageCategories) > 0 {
+		t.Errorf("the user's client kept team %q and categories %q", backend.Team, backend.UsageCategories)
+	}
+}
+
 func TestChatIsRefusedForAConversationThatKeepsNoTranscript(t *testing.T) {
 	backend := newRouter(t)
 	session := open(t, backend)

@@ -496,3 +496,121 @@ func TestALocalRouterToldOnlyWhoToBillIsNotSentTheEnvironmentsCredential(t *test
 		t.Error("a key and secret lying around turned authentication on for a local router")
 	}
 }
+
+// claimsOf reads the claims of the token a request carries, verified with the secret.
+func claimsOf(t *testing.T, credentials http.Header, secret string) jwt.MapClaims {
+	t.Helper()
+	claims := jwt.MapClaims{}
+	if _, err := jwt.ParseWithClaims(credentials.Get(AuthorizationHeader), claims,
+		func(*jwt.Token) (any, error) { return []byte(secret), nil }); err != nil {
+		t.Fatal(err)
+	}
+	return claims
+}
+
+func TestATeamAndUsageCategoriesAreSignedIntoTheToken(t *testing.T) {
+	for _, user := range []string{"", "alice"} {
+		resolved, err := Backend{
+			URL: DefaultURL, APIKey: "ntv9", APISecret: "shh", UserID: user,
+			Team: "finance", UsageCategories: []string{"project:onboarding", "env:prod", "project:onboarding"},
+		}.Resolve()
+		if err != nil {
+			t.Fatal(err)
+		}
+		credentials, err := resolved.Credentials()
+		if err != nil {
+			t.Fatal(err)
+		}
+		claims := claimsOf(t, credentials, "shh")
+		if claims["team"] != "finance" {
+			t.Errorf("the token for %q names the team %v", user, claims["team"])
+		}
+		categories, _ := claims["usage_categories"].([]any)
+		if len(categories) != 2 || categories[0] != "env:prod" || categories[1] != "project:onboarding" {
+			t.Errorf("the token for %q names the categories %v, want them sorted and each once", user, claims["usage_categories"])
+		}
+		if got := credentials.Get(UsageCategoriesHeader); got != "" {
+			t.Errorf("the proxy is sent %s: %q, which it deletes", UsageCategoriesHeader, got)
+		}
+	}
+}
+
+func TestATokenWithNoTeamOrCategoriesNamesNeither(t *testing.T) {
+	credentials, err := Backend{Authenticate: true, APIKey: "ntv9", APISecret: "shh"}.Credentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims := claimsOf(t, credentials, "shh")
+	for _, name := range []string{"team", "usage_categories"} {
+		if _, ok := claims[name]; ok {
+			t.Errorf("the token carries %s: %v", name, claims[name])
+		}
+	}
+}
+
+func TestARouterWithNoProxyIsToldTheTeamAndCategoriesInAHeader(t *testing.T) {
+	resolved, err := Backend{
+		URL: "http://localhost:8080", CustomerID: "acme",
+		Team: "finance", UsageCategories: []string{"project:onboarding", "env:prod"},
+	}.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentials, err := resolved.Credentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := credentials.Get(UsageCategoriesHeader); got != "env:prod,project:onboarding,team:finance" {
+		t.Errorf("%s is %q", UsageCategoriesHeader, got)
+	}
+
+	credentials, err = Backend{URL: "http://localhost:8080", CustomerID: "acme"}.Credentials()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := credentials[UsageCategoriesHeader]; ok {
+		t.Errorf("%s is sent with nothing to name", UsageCategoriesHeader)
+	}
+}
+
+func TestATeamOrCategoryTheRouterWouldRefuseIsRefusedHere(t *testing.T) {
+	tooMany := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}
+	for _, backend := range []Backend{
+		{Team: "fin:ance"},
+		{Team: strings.Repeat("t", 60)},
+		{UsageCategories: []string{""}},
+		{UsageCategories: []string{"project onboarding"}},
+		{UsageCategories: []string{strings.Repeat("c", 65)}},
+		{UsageCategories: []string{"team:finance"}},
+		{UsageCategories: []string{"Team:finance"}},
+		{Team: "finance", UsageCategories: tooMany},
+		{UsageCategories: append(tooMany, "k")},
+	} {
+		backend.URL, backend.CustomerID = "http://localhost:8080", "acme"
+		if _, err := backend.Resolve(); err == nil {
+			t.Errorf("team %q with categories %q resolved", backend.Team, backend.UsageCategories)
+		}
+	}
+
+	_, err := Backend{URL: "http://localhost:8080", CustomerID: "acme", UsageCategories: []string{"TEAM:finance"}}.Resolve()
+	if err == nil || !strings.Contains(err.Error(), "use Team") {
+		t.Errorf("a team written as a category is refused with %v, want it to say to use Team", err)
+	}
+
+	if _, err := (Backend{URL: "http://localhost:8080", CustomerID: "acme", Team: strings.Repeat("t", 59),
+		UsageCategories: tooMany[:9]}).Resolve(); err != nil {
+		t.Errorf("ten categories, the team included, are refused: %v", err)
+	}
+}
+
+func TestATokenHandedInCannotBeGivenAnotherTeamOrCategories(t *testing.T) {
+	for _, backend := range []Backend{
+		{Team: "finance"},
+		{UsageCategories: []string{"project:onboarding"}},
+	} {
+		backend.URL, backend.APIKey, backend.Token, backend.UserID = DefaultURL, "ntv9", "minted.elsewhere", "alice"
+		if _, err := backend.Resolve(); err == nil {
+			t.Errorf("a token handed in resolved beside team %q and categories %q", backend.Team, backend.UsageCategories)
+		}
+	}
+}

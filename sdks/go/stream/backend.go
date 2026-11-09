@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -52,6 +53,12 @@ const (
 	// directory is this one; the dashboard and the CLI name themselves.
 	ClientHeader = "X-Stream-Client"
 	ClientSDK    = "sdk"
+	// UsageCategoriesHeader is where a caller the proxy is not in front of names its usage
+	// categories, its team among them as team:<name>, joined with commas. Behind the proxy
+	// they are claims on the token instead, and the proxy deletes this header.
+	UsageCategoriesHeader = "X-Stream-Usage-Categories"
+	// MaxUsageCategories is the most usage categories a caller may name, its team included.
+	MaxUsageCategories = 10
 	// DefaultURL is the hosted router in us-east4. STREAM_ACCELERATION_URL or
 	// STREAM_ACCELERATION_REGION moves it.
 	DefaultURL = "https://accelerate-us-east4.gcp.stream-io-api.com"
@@ -68,6 +75,15 @@ const tokenValidity = time.Hour
 // is checked: which regions are served is the hosted router's to say, so offering another
 // needs no release of this SDK.
 var region = regexp.MustCompile(`^[a-z]+-[a-z]+[0-9]+$`)
+
+// A team is a usage category of its own, team:<name>, which is why its name is shorter and
+// has no ':'.
+const teamPrefix = "team:"
+
+var (
+	teamName     = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,59}$`)
+	categoryName = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,64}$`)
+)
 
 // RegionURL is the hosted router held to one region: requests to it are served there and
 // nowhere else, even when that region is full or down.
@@ -128,6 +144,18 @@ type Backend struct {
 	// credential, so the request is still the server's: what it writes is answered by the
 	// model rather than handed to a dispatch worker, and no daily limit is counted.
 	ActingFor string
+	// Team is the customer's team the work is counted against, such as finance: its spend
+	// and its spend limits. 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
+	//
+	// It and UsageCategories are signed into every token minted here, and sent in
+	// X-Stream-Usage-Categories to a router with no proxy in front of it. A Token handed in
+	// carries whatever it was signed with, so neither can be set beside one.
+	Team string
+	// UsageCategories are the customer's own groupings the work is counted against, such as
+	// project:onboarding: at most 10 together with the team, each 1 to 64 characters of
+	// A-Z, a-z, 0-9, _ . : and -, and none starting team:. Resolve keeps them sorted, each
+	// once.
+	UsageCategories []string
 	// HTTPClient is used for both the REST calls and the socket handshake. Nil uses the
 	// default client.
 	HTTPClient *http.Client
@@ -135,6 +163,15 @@ type Backend struct {
 
 // Resolve fills in whatever the environment knows and refuses a backend nobody is billed for.
 func (b Backend) Resolve() (Backend, error) {
+	categories, err := checkedCategories(b.Team, b.UsageCategories)
+	if err != nil {
+		return b, err
+	}
+	b.UsageCategories = categories
+	if b.Token != "" && (b.Team != "" || len(b.UsageCategories) > 0) {
+		return b, errors.New("stream: a token handed in carries the team and usage categories " +
+			"it was signed with; sign them into the token instead")
+	}
 	if b.URL != "" && b.Region != "" {
 		// Clients retain the resolved backend and resolve it again for resource calls.
 		if url, err := RegionURL(b.Region); err != nil || strings.TrimSuffix(b.URL, "/") != url {
@@ -207,6 +244,12 @@ func (b Backend) token() (string, error) {
 	} else {
 		claims["user_id"] = b.UserID
 	}
+	if b.Team != "" {
+		claims["team"] = b.Team
+	}
+	if len(b.UsageCategories) > 0 {
+		claims["usage_categories"] = b.UsageCategories
+	}
 	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(b.APISecret))
 	if err != nil {
 		return "", fmt.Errorf("stream: signing a token for %s: %w", b.APIKey, err)
@@ -226,6 +269,9 @@ func (b Backend) Credentials() (http.Header, error) {
 		if b.CustomerID != "" {
 			header.Set(CustomerHeader, b.CustomerID)
 		}
+		if named := b.categoryHeader(); named != "" {
+			header.Set(UsageCategoriesHeader, named)
+		}
 		return header, nil
 	}
 	token, err := b.token()
@@ -236,6 +282,46 @@ func (b Backend) Credentials() (http.Header, error) {
 	header.Set(AuthTypeHeader, AuthTypeJWT)
 	header.Set(AuthorizationHeader, token)
 	return header, nil
+}
+
+// categoryHeader is the team and categories as a router with no proxy in front of it reads
+// them, or empty for none.
+func (b Backend) categoryHeader() string {
+	named := slices.Clone(b.UsageCategories)
+	if b.Team != "" {
+		named = append(named, teamPrefix+b.Team)
+	}
+	slices.Sort(named)
+	return strings.Join(named, ",")
+}
+
+// checkedCategories are the categories each once and sorted, as the proxy keeps them, or an
+// error naming the entry the router would refuse.
+func checkedCategories(team string, categories []string) ([]string, error) {
+	if team != "" && !teamName.MatchString(team) {
+		return nil, fmt.Errorf("stream: team %q is not 1 to 59 characters of A-Z, a-z, 0-9, _ . and -", team)
+	}
+	for _, category := range categories {
+		if !categoryName.MatchString(category) {
+			return nil, fmt.Errorf("stream: usage category %q is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -", category)
+		}
+		// In any case, as the proxy reads it: Team:finance would be a second team.
+		if strings.HasPrefix(strings.ToLower(category), teamPrefix) {
+			return nil, fmt.Errorf("stream: usage category %q names a team: use Team for a team", category)
+		}
+	}
+	kept := slices.Compact(slices.Sorted(slices.Values(categories)))
+	counted := len(kept)
+	if team != "" {
+		counted++
+	}
+	if counted > MaxUsageCategories {
+		return nil, fmt.Errorf("stream: at most %d usage categories, the team included; these are %d", MaxUsageCategories, counted)
+	}
+	if len(kept) == 0 {
+		return nil, nil
+	}
+	return kept, nil
 }
 
 // Client is an HTTP client for the generated API, already carrying the credentials.
