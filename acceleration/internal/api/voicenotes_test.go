@@ -120,6 +120,7 @@ func (s *VoiceNotesSuite) TestTheVoiceNoteIsShownOnThePersonsMessageWithWhatItSa
 	uploads := s.chat.Uploads()[before:]
 	s.Require().Len(uploads, 1, "the voice note is uploaded once")
 	s.Equal(audio, uploads[0].Data, "what is shown is the voice note as sent")
+	s.Equal(channel, uploads[0].Channel, "the voice note is stored on the conversation's channel")
 	s.Contains(string(attachments), `"asset_url":"`, "the message points at the upload")
 }
 
@@ -488,6 +489,10 @@ func (s *VoiceNotesSuite) TestTextOverTheDefaultLimitWithoutAVoiceNoteIsRefusedA
 		},
 		"respond with a request id": func(opened Session) (int, []byte) {
 			return s.serverClient.call(http.MethodPost, s.respond(opened), map[string]any{"text": big, "request_id": s.utils.uuid()})
+		},
+		"respond with a photo": func(opened Session) (int, []byte) {
+			return s.serverClient.call(http.MethodPost, s.respond(opened), RespondRequest{
+				Text: big[:1<<20], RequestId: pointerTo(s.utils.uuid()), Images: &[]ImageSource{{Url: "data:image/png;base64," + big[:1<<10]}}})
 		},
 		"createResponse": func(opened Session) (int, []byte) {
 			return s.serverClient.call(http.MethodPost, s.responses(opened), CreateResponseRequest{Text: big})

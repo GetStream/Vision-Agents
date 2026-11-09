@@ -43,17 +43,20 @@ func (s *StoreSuite) TestAGrantNamesOneSubject() {
 }
 
 func (s *StoreSuite) TestLiveGrantsLeaveOutRevokedAndExpired() {
-	soon := time.Now().Add(500 * time.Millisecond)
+	// An hour ahead, so a slow insert is still before it (limit_grants_expiry_check), and
+	// LiveGrants is asked at instants pinned to it: how long the setup takes does not matter.
+	// Microseconds, as Postgres keeps them.
+	expires := time.Now().Add(time.Hour).Truncate(time.Microsecond)
 	live := s.grant(LimitGrant{})
-	expiring := s.grant(LimitGrant{ExpiresAt: &soon})
+	expiring := s.grant(LimitGrant{ExpiresAt: &expires})
 	revoked := s.grant(LimitGrant{})
 	_, err := s.store.RevokeGrant(s.ctx, "org-1", revoked.ID, "someone", "no longer needed", LimitAudit{CustomerID: "app-1", Source: AuditSourceAPI})
 	s.Require().NoError(err)
 
-	grants, err := s.store.LiveGrants(s.ctx, []string{"org-1"}, time.Now())
+	grants, err := s.store.LiveGrants(s.ctx, []string{"org-1"}, expires.Add(-time.Microsecond))
 	s.Require().NoError(err)
-	s.Equal([]int64{live.ID, expiring.ID}, idsOf(grants))
-	grants, err = s.store.LiveGrants(s.ctx, []string{"org-1"}, soon)
+	s.Equal([]int64{live.ID, expiring.ID}, idsOf(grants), "just before expires_at it is live")
+	grants, err = s.store.LiveGrants(s.ctx, []string{"org-1"}, expires)
 	s.Require().NoError(err)
 	s.Equal([]int64{live.ID}, idsOf(grants), "at expires_at it is expired")
 }

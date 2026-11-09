@@ -181,6 +181,9 @@ connectors:
   - github
 keyterms:
   - Vision Agents
+floor_control:                    # leave it out to keep the stored choice; {} is the default flow controller
+  model: stream/chorus-asr
+  max_wait_ms: 800                # optional: how long a caller may wait once they stop
 tags:
   project: support
 ```
@@ -321,62 +324,45 @@ Work for a subject with nothing left is refused with `RouterError` `402
 spend_limit_reached`, or `429 user_limit_reached` for one end user's limit. Server side only.
 
 ```python
-from datetime import datetime, timedelta, timezone
-
 from vision_agents.plugins import stream
 
 api = stream.Client()  # STREAM_API_KEY and STREAM_API_SECRET from the environment
+limits = api.spend_limits
 
-await api.spend_limits.create("organization", interval="monthly", usd=2000)
-await api.spend_limits.create("user", app_id="1234", interval="daily", usd=5)
-await api.spend_limits.create("team", team="finance", interval="weekly", usd="250")
+await limits.create("organization", interval="monthly", usd=20_000)
 
-# The same for a team, in one call that creates or updates
-await api.teams.set_limit("finance", interval="weekly", usd=250)
-await api.teams.set_limit("finance", app_id="1234", interval="daily", usd=40)
-
-# A one-time $5,000 extra for finance until 15 November, across its daily, weekly and
-# monthly limits; the organization's own limit still applies
-grant = await api.teams.grant(
-    "finance",
-    usd=5_000,
-    reason="Q4 close",
-    expires_at=datetime(2026, 11, 15, tzinfo=timezone.utc),
+# Every key of app 1234 gets $50 a day; one key gets $10, noted
+await limits.create("api_key", app_id="1234", interval="daily", usd=50)
+await limits.create(
+    "api_key", app_id="1234", api_key="mz7kq2xa9b", interval="daily", usd=10,
+    note="CI key",
 )
-await api.spend_limits.revoke_grant(grant.id, reason="close finished early")
+[ci] = await limits.list(subject="api_key", api_key="mz7kq2xa9b")
+await limits.update(ci.id, usd=25)
+await limits.delete(ci.id)
 
-# "$10 more today" for one user is a grant that ends at midnight UTC
-midnight = (datetime.now(timezone.utc) + timedelta(days=1)).replace(
-    hour=0, minute=0, second=0, microsecond=0
+# Every user of app 1234 gets $20 a day; user-42 gets $50
+await limits.create("user", app_id="1234", interval="daily", usd=20)
+await limits.create("user", app_id="1234", user_id="user-42", interval="daily", usd=50)
+
+await api.teams.set_limit("finance", interval="monthly", usd=8_000)
+
+# A session counted under the team, from a backend
+await api.agent("support").sessions.create(stream.SessionOptions(team="finance"))
+
+# Everything this client and its router do counts under the team
+finance = stream.Client(team="finance")
+router = finance.router("dentist_ai")
+
+# user-42's weekly window counts from now; what it spent stays spent
+await limits.reset(
+    "user", app_id="1234", user_id="user-42", intervals=["weekly"],
+    reason="refunded a broken session",
 )
-await api.spend_limits.grant(
-    "user",
-    app_id="1234",
-    user_id="user-42",
-    usd=10,
-    reason="support ticket 8812",
-    expires_at=midnight,
-)
-
-# A reset: user-42's limits count from now until each window ends
-await api.spend_limits.reset(
-    "user", app_id="1234", user_id="user-42", reason="refunded a broken session"
-)
-
-# A user joins a team through its token; categories are for any other grouping
-token = api.create_user_token(
-    "user-42", team="finance", usage_categories=["project:onboarding"]
-)
-alice = api.for_user("user-42", team="finance")  # a backend running work for user-42
-
-for team in await api.teams.list():
-    print(team.name, team.apps, [stream.usd(w.spent_micros) for w in team.spent])
-
-# Stream's spend limit for the organization, when Stream set one
-account = await api.account.get()
-if account.spend_hard_limit and account.spend_hard_limit.daily:
-    print("room today:", stream.usd(account.spend_hard_limit.daily.room_micros))
 ```
+
+An agent's `agent.yaml` with `tags: team: finance` counts that agent's sessions under the
+team. A token's team always wins, then the session's, then the agent's tag.
 
 - **Money** is dollars as a `Decimal`, an `int` or a `str`, converted to the router's
   millionths of a dollar exactly. A `float` raises `TypeError`. Answers keep the router's
@@ -391,7 +377,9 @@ if account.spend_hard_limit and account.spend_hard_limit.daily:
   A team is 1 to 59 characters of `A-Z a-z 0-9 _ . -`; a category 1 to 64 of
   `A-Z a-z 0-9 _ . : -`, never starting `team:`; at most 10 together. Anything else raises
   `ValueError` before a token is signed.
-- **Grants** are the one way past a spent limit. A grant never lifts a parent's limit, or
+- **Grants** are the one way past a spent limit: `api.teams.grant("finance", usd=5_000,
+  reason=..., expires_at=...)`, or `api.spend_limits.grant(...)` for any other subject,
+  revoked with `revoke_grant`. A grant never lifts a parent's limit, or
   Stream's spend limit for the organization, `402 system_limit_reached`, which only
   Stream's staff change and `spend_hard_limit` on the account shows.
 - **Spend over time:** `await api.usage.spend(start=..., end=..., group_by="who:team")`.
@@ -601,3 +589,13 @@ uv run plugins/stream/generate.py
 ```
 
 The WebSockets are hand-written in `_socket.py`, since OpenAPI stops at the upgrade.
+
+`templates/` replaces two of openapi-python-client's templates. Every string enum gets
+`_decode`, and every model's `from_dict` reads its enums with it. A value the client lists is
+its member, as before. Any other string is a member of its own that carries the value, so
+`str(session.end_reason)` is `"closed"` and `to_dict` writes `"closed"` back. A router adds
+values before every client is released (AI-2951), and a rollback leaves them in stored rows.
+`SessionEndReason("closed")` written by a caller still raises `ValueError`, and a value that is
+not a string still fails to decode. An option block a caller writes (`define_router`, a
+`router.yaml`) goes through `from_dict` too, so `_routerconfig.block` checks its enums against
+the values the client lists.

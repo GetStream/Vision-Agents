@@ -713,6 +713,33 @@ func (s *RoutingSuite) TestUnknownTargetIsRejected() {
 	s.ErrorContains(err, `unknown target "quick/does-not-exist"`)
 }
 
+func (s *RoutingSuite) TestARetiredTargetSaysWhatToAskForInstead() {
+	// Probed on 3b7a53f97: `routing: unknown target "quick/old"`, which reads as a typo.
+	config := s.config()
+	config.Retired = map[string]string{"quick/old": "quick/en"}
+
+	_, err := s.newRouterWithConfig(config, func(spec Spec) (*stubProvider, error) {
+		return &stubProvider{model: spec.Model}, nil
+	}).Resolve(s.ctx, "quick/old", nil)
+
+	s.ErrorIs(err, ErrRequest)
+	s.EqualError(err, "routing: quick/old is retired; ask for quick/en instead")
+}
+
+func (s *RoutingSuite) TestConfigRejectsARetiredTargetThatIsStillDeclared() {
+	config := s.config()
+	config.Retired = map[string]string{"quick/en": "quick/multi"}
+
+	s.ErrorContains(config.Validate(), "quick/en is retired and still declared")
+}
+
+func (s *RoutingSuite) TestConfigRejectsARetiredTargetWhoseReplacementIsNotDeclared() {
+	config := s.config()
+	config.Retired = map[string]string{"quick/old": "quick/gone"}
+
+	s.ErrorContains(config.Validate(), "quick/old is retired for quick/gone, which is not declared")
+}
+
 func (s *RoutingSuite) TestEmptyTargetIsRejected() {
 	_, err := s.newRouter().Resolve(s.ctx, "", nil)
 	s.ErrorContains(err, "target is required")
@@ -1004,6 +1031,7 @@ func (s *RoutingSuite) TestSelectFailsWhenNoCandidateCanBeBuilt() {
 	_, _, err = router.Select(s.ctx, Request{CustomerID: "acme", Target: "en-high-accuracy"})
 	s.ErrorContains(err, "every candidate")
 	s.ErrorContains(err, "no factory registered")
+	s.NotErrorIs(err, ErrVendorsFailed, "no vendor was asked")
 }
 
 func (s *RoutingSuite) TestSelectClosesAProviderThatFailedToStart() {

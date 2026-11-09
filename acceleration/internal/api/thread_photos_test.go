@@ -170,7 +170,9 @@ func (s *SlackChannelSuite) TestAPhotoSentAloneToAnAgentWithAVisionSkillIsAnswer
 // is, and alone.
 func (s *SlackChannelSuite) TestAThreadMessageWithNeitherTextNorAPhotoIsNotAnswered() {
 	channel := s.answeredThread()
+	before := len(s.logged.String())
 
+	s.sentInThread(channel, "  \n ")
 	s.sentInThread(channel, "", map[string]any{"type": "voiceRecording", "asset_url": s.images.URL + "/note.aac", "mime_type": "audio/aac"})
 	s.sentInThread(channel, "", map[string]any{"type": "file", "asset_url": s.images.URL + "/report.pdf", "mime_type": "application/pdf"})
 	s.sentInThread(channel, "", map[string]any{"type": "image", "image_url": s.images.URL + "/photo.png", "og_scrape_url": s.images.URL + "/photo.png"})
@@ -180,6 +182,7 @@ func (s *SlackChannelSuite) TestAThreadMessageWithNeitherTextNorAPhotoIsNotAnswe
 	s.Equal("Noted.", s.posted(2)[1].Text)
 	s.Never(func() bool { return len(s.slack.Posts()) > 2 }, time.Second, 10*time.Millisecond,
 		"only the message with text was answered")
+	s.NotContains(s.logged.String()[before:], "could not answer a message in a thread channel", "blanks are no failure")
 }
 
 // AI-2095: a photo answered in a thread is in the next turn's history as a note that it was

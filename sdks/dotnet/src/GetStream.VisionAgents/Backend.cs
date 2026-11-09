@@ -64,6 +64,77 @@ public sealed record VisionAgentsOptions
     /// this router is reached.
     /// </remarks>
     public bool? Authenticate { get; init; }
+
+    /// <summary>
+    /// The customer's team this client's work is counted against, its spend and its spend
+    /// limits, such as <c>finance</c>: 1 to 59 characters of A-Z, a-z, 0-9, <c>_ . -</c>.
+    /// </summary>
+    /// <remarks>
+    /// It and <see cref="UsageCategories"/> are signed into every token this client mints, and
+    /// sent as <c>X-Stream-Usage-Categories</c> to a router with no proxy in front of it. A
+    /// <see cref="Token"/> handed in carries whatever it was signed with, so neither can be set
+    /// beside one.
+    /// </remarks>
+    public string? Team { get; init; }
+
+    /// <summary>
+    /// The customer's own groupings this client's work is counted against, such as
+    /// <c>project:onboarding</c>: at most 10 together with the team, each 1 to 64 characters of
+    /// A-Z, a-z, 0-9, <c>_ . : -</c>, and none starting <c>team:</c>. Kept sorted, each once.
+    /// </summary>
+    public IReadOnlyList<string>? UsageCategories { get; init; }
+}
+
+/// <summary>The rules the router and the proxy hold a team and usage categories to.</summary>
+internal static class UsageCategories
+{
+    /// <summary>
+    /// Where a caller the proxy is not in front of names its categories, its team among them as
+    /// <c>team:&lt;name&gt;</c>, joined with commas. Behind the proxy they are claims on the token
+    /// instead, and the proxy deletes the header.
+    /// </summary>
+    public const string Header = "X-Stream-Usage-Categories";
+
+    public const string TeamPrefix = "team:";
+    public const int Max = 10;
+
+    // A team is a category of its own, team:<name>, which is why its name is shorter and has no ':'.
+    private static readonly Regex TeamName = new(@"^[A-Za-z0-9_.-]{1,59}\z", RegexOptions.CultureInvariant);
+    private static readonly Regex CategoryName = new(@"^[A-Za-z0-9_.:-]{1,64}\z", RegexOptions.CultureInvariant);
+
+    public static string CheckTeam(string team) => TeamName.IsMatch(team ?? "")
+        ? team!
+        : throw new ConfigurationException($"team \"{team}\" is not 1 to 59 characters of A-Z, a-z, 0-9, _ . and -");
+
+    public static string CheckCategory(string category)
+    {
+        if (!CategoryName.IsMatch(category ?? ""))
+        {
+            throw new ConfigurationException($"usage category \"{category}\" is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -");
+        }
+        // In any case, as the proxy reads it: Team:finance would be a second team.
+        if (category!.StartsWith(TeamPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConfigurationException($"usage category \"{category}\" names a team: use Team for a team");
+        }
+        return category;
+    }
+
+    /// <summary>The categories each once and sorted, as the proxy keeps them, with the team checked.</summary>
+    public static string[] Checked(string? team, IEnumerable<string>? categories)
+    {
+        var kept = (categories ?? []).Select(CheckCategory).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        if (team is not null)
+        {
+            CheckTeam(team);
+        }
+        var count = kept.Length + (team is null ? 0 : 1);
+        if (count > Max)
+        {
+            throw new ConfigurationException($"at most {Max} usage categories, the team included; these are {count}");
+        }
+        return kept;
+    }
 }
 
 /// <summary>
@@ -125,6 +196,13 @@ internal sealed class Backend
         UserId = options.UserId ?? "";
         // The hosted router, in any region, is always behind the proxy.
         Authenticate = options.Authenticate ?? (Flag(env(AuthenticateEnv)) || Hosted(Url));
+        Team = VisionAgentsClient.Blank(options.Team);
+        Categories = UsageCategories.Checked(Team, options.UsageCategories);
+        if (Token != "" && (Team is not null || Categories.Count > 0))
+        {
+            throw new ConfigurationException(
+                "a token handed in carries the team and usage categories it was signed with; set neither beside it");
+        }
 
         if (ApiKey == "" && CustomerId == "")
         {
@@ -147,6 +225,8 @@ internal sealed class Backend
         Token = from.Token;
         UserId = from.UserId;
         Authenticate = from.Authenticate;
+        Team = from.Team;
+        Categories = from.Categories;
     }
 
     public string Url { get; }
@@ -156,6 +236,10 @@ internal sealed class Backend
     public string Token { get; }
     public string UserId { get; private init; }
     public bool Authenticate { get; }
+    public string? Team { get; }
+
+    /// <summary>The usage categories, sorted and each once, the team not among them.</summary>
+    public IReadOnlyList<string> Categories { get; }
 
     /// <summary>
     /// The end user this server-side credential speaks for. Unlike <see cref="UserId"/> it
@@ -190,6 +274,17 @@ internal sealed class Backend
         {
             return [.. new Backend(this).Headers(), new("X-Stream-User-Id", ActingFor)];
         }
+        var headers = Credentials();
+        if (!Authenticate && (Team is not null || Categories.Count > 0))
+        {
+            IEnumerable<string> named = Team is null ? Categories : [.. Categories, UsageCategories.TeamPrefix + Team];
+            headers.Add(new(UsageCategories.Header, string.Join(',', named.Order(StringComparer.Ordinal))));
+        }
+        return headers;
+    }
+
+    private List<KeyValuePair<string, string>> Credentials()
+    {
         if (ApiKey == "")
         {
             return [new("X-Customer-Id", CustomerId)];
@@ -200,8 +295,8 @@ internal sealed class Backend
             // jwt whoever the token is for: the proxy works out the caller from the token it
             // verified, and refuses a request that claims to be server.
             var proxied = Token != "" ? Token
-                : UserId != "" ? SignToken(new() { ["user_id"] = UserId }, ApiSecret)
-                : SignToken(new() { ["server"] = true }, ApiSecret);
+                : UserId != "" ? SignToken(Claims(new() { ["user_id"] = UserId }), ApiSecret)
+                : SignToken(Claims(new() { ["server"] = true }), ApiSecret);
             return
             [
                 new("api_key", ApiKey),
@@ -215,7 +310,7 @@ internal sealed class Backend
             List<KeyValuePair<string, string>> server =
             [
                 new("X-Api-Key", ApiKey),
-                new("Authorization", $"Bearer {SignToken(new() { ["server"] = true }, ApiSecret)}"),
+                new("Authorization", $"Bearer {SignToken(Claims(new() { ["server"] = true }), ApiSecret)}"),
                 new("Stream-Auth-Type", "server"),
             ];
             if (UserId != "")
@@ -231,6 +326,20 @@ internal sealed class Backend
             new("Authorization", $"Bearer {Token}"),
             new("Stream-Auth-Type", "jwt"),
         ];
+    }
+
+    /// <summary>The claims with the team and the categories, each only when there is one.</summary>
+    private Dictionary<string, object> Claims(Dictionary<string, object> claims)
+    {
+        if (Team is not null)
+        {
+            claims["team"] = Team;
+        }
+        if (Categories.Count > 0)
+        {
+            claims["usage_categories"] = Categories;
+        }
+        return claims;
     }
 
     /// <summary>The WebSocket URL for a path on the router.</summary>

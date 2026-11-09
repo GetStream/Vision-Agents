@@ -4,17 +4,28 @@
 # app's WhatsApp webhook at POST /v1/connectors/events/whatsapp/{app id}, with the app id as
 # the Verify Token (wave 3d Q1). The replies go from the business number with the customer's
 # system-user access token. STOP, START and HELP are kept from the agent by the bridge
-# (channelbridge.keywords): Meta answers none of them itself. Text messages only; replies past
-# the 24-hour window (approved templates) and Meta's Tech Provider with Embedded Signup are
-# later tickets. internal/channels/whatsapp.go is where it started.
+# (channelbridge.keywords): Meta answers none of them itself. Text messages, and the caption of
+# a photo, a video or a document as its text (revision 2), and a photo itself, with or without
+# a caption (revision 3); replies past the 24-hour window (approved templates) and Meta's Tech
+# Provider with Embedded Signup are later tickets.
+# internal/channels/whatsapp.go is where it started.
 # Meta's pages, opened October 8, 2026:
 #   [hooks]    https://developers.facebook.com/docs/graph-api/webhooks/getting-started
 #   [payload]  https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/payload-examples
 #   [send]     https://developers.facebook.com/docs/whatsapp/cloud-api/guides/send-messages
 #   [versions] https://developers.facebook.com/docs/graph-api/changelog
+# Opened November 4, 2026:
+#   [image]    https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/reference/messages/image
+#   [video]    https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/reference/messages/video
+#   [document] https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/reference/messages/document
+#   [media]    https://developers.facebook.com/docs/whatsapp/cloud-api/reference/media
 id: whatsapp
 # A new revision for any change to what this file says; see AGENTS.md.
-revision: 1
+# Revision 2 (AI-2133): a photo, a video and a document with a caption are read, with the
+# caption as their text (also).
+# Revision 3 (AI-2740): a photo's file is read too, by its id (also[0].media, media_lookup), so
+# a photo without a caption is read as well.
+revision: 3
 name: WhatsApp
 category: Communication
 description: Answer people on WhatsApp from the customer's own business number.
@@ -55,10 +66,47 @@ channel:
     # entry[].changes[].value.messages[]. Statuses sit in value.statuses[], so each skips
     # them.
     each: $.entry[*].changes[*].value.messages[*]
-    # [payload]: «"type": "text"». Media, reactions, buttons and the rest are not read: a reply
-    # to a button only follows a template or interactive message the bridge never sends.
+    # [payload]: «"type": "text"». Other media, reactions, buttons and the rest are not read: a
+    # reply to a button only follows a template or interactive message the bridge never sends.
     match:
       $.entry[*].changes[*].value.messages[*].type: text
+    # [image]: a photo is «"type": "image"» with «"image": {"caption": "Taj Mahal", "mime_type",
+    # "sha256", "id", "url"}», caption being «Media asset caption text». [video] and [document]
+    # give «"type": "video"» with «"video": {"caption": ...}» and «"type": "document"» with
+    # «"document": {"caption": ..., "filename": ...}», the same «Media asset caption text».
+    # The caption is the message's text, so the person's question about the file is answered,
+    # keywords included, as the same words sent as text would be (as on Linq, where the text
+    # sent with a video is answered and the video is not passed on). A video or a document
+    # without a caption is not read, as on revision 1, and its file is not passed on. A build
+    # before also (a rollback) ignores it and reads text messages only, as revision 1 does.
+    also:
+      - match:
+          $.entry[*].changes[*].value.messages[*].type: image
+        text: $.entry[*].changes[*].value.messages[*].image.caption
+        # [image]: id is «Media asset ID. You can perform a GET on this ID to get the asset
+        # URL», and mime_type «Media asset MIME type». The webhook's own url is «being released
+        # to developers gradually», so the id is what every delivery has. A build before kind
+        # media (a rollback) ignores it and reads the caption alone, as revision 2 does.
+        media:
+          id: $.entry[*].changes[*].value.messages[*].image.id
+          mime_type: $.entry[*].changes[*].value.messages[*].image.mime_type
+      - match:
+          $.entry[*].changes[*].value.messages[*].type: video
+        text: $.entry[*].changes[*].value.messages[*].video.caption
+      - match:
+          $.entry[*].changes[*].value.messages[*].type: document
+        text: $.entry[*].changes[*].value.messages[*].document.caption
+    # [media], «Get media URL»: GET /<MEDIA_ID> with the access token answers url, mime_type,
+    # sha256, file_size and id; «Media URLs expire after 5 minutes», so the file is downloaded
+    # right after; «Media IDs in webhooks expire after 7 days». «Download media»: a GET of that
+    # url with the same access token («If you omit your token, the request will fail»). Its
+    # host is lookaside.fbsbx.com: [image]'s example url, and the url Meta answered in a probe
+    # of a business number on v25.0 (November 4, 2026; a GET without the token got 401, with it
+    # the file). No other host gets the token. v25.0 as the reply's below.
+    media_lookup:
+      url: https://graph.facebook.com/v25.0/{id}
+      file: $.url
+      host: lookaside.fbsbx.com
     # [payload]: value.metadata.phone_number_id, the business number that received it.
     provider_unit_id: $.entry[*].changes[*].value.metadata.phone_number_id
     thread_key:

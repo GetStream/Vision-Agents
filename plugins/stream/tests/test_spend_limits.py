@@ -192,6 +192,23 @@ class TestChange:
         assert query["app_id"] == "1234"
         assert query["cursor"] == "4"
 
+    async def test_list_sends_a_key_as_api_key_id(
+        self, spend_api: stream.Client, spend_router: SpendRouter
+    ):
+        spend_router.add_limit(subject="api_key", app_id="1234", api_key="key_a")
+        spend_router.add_limit(subject="api_key", app_id="1234", api_key="key_b")
+
+        by_key = await spend_api.spend_limits.list(api_key="key_a")
+        of_subject = await spend_api.spend_limits.list(
+            subject="api_key", app_id="1234", api_key="key_b"
+        )
+
+        assert [limit.api_key for limit in by_key] == ["key_a"]
+        assert [limit.api_key for limit in of_subject] == ["key_b"]
+        query = spend_router.query("GET", LIMITS)
+        assert query["api_key_id"] == "key_b"
+        assert "api_key" not in query, "api_key in a query is the proxy's credential"
+
 
 class TestGrants:
     async def test_a_grant_sends_its_expiry_in_utc(
@@ -247,6 +264,19 @@ class TestGrants:
         assert spend_router.requests("GET", GRANTS) == 3
         assert spend_router.query("GET", GRANTS)["state"] == "live"
 
+    async def test_grants_send_a_key_as_api_key_id(
+        self, spend_api: stream.Client, spend_router: SpendRouter
+    ):
+        spend_router.add_grant(subject="api_key", app_id="1234", api_key="key_a")
+        spend_router.add_grant(subject="organization")
+
+        grants = await spend_api.spend_limits.grants(api_key="key_a")
+
+        assert [grant.api_key for grant in grants] == ["key_a"]
+        query = spend_router.query("GET", GRANTS)
+        assert query["api_key_id"] == "key_a"
+        assert "api_key" not in query
+
     async def test_revoke_grant_posts_its_reason(
         self, spend_api: stream.Client, spend_router: SpendRouter
     ):
@@ -279,6 +309,18 @@ class TestUsage:
         team = await spend_api.teams.usage("finance", app_id="1234")
         assert team.team == "finance"
         assert spend_router.query("GET", USAGE)["subject"] == "app_team"
+
+    async def test_usage_sends_a_key_as_api_key_id(
+        self, spend_api: stream.Client, spend_router: SpendRouter
+    ):
+        keys = await spend_api.spend_limits.usage_many(
+            "api_key", app_id="1234", api_key=["key_a", "key_b"]
+        )
+
+        assert [u.api_key for u in keys] == ["key_a", "key_b"]
+        query = spend_router.query("GET", USAGE)
+        assert query.getall("api_key_id") == ["key_a", "key_b"]
+        assert "api_key" not in query, "api_key in a query is the proxy's credential"
 
     async def test_usage_many_answers_one_per_subject_in_order(
         self, spend_api: stream.Client, spend_router: SpendRouter

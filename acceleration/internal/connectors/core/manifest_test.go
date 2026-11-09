@@ -115,6 +115,28 @@ func (s *ManifestSuite) TestASourceSendsOutEveryToolItDoesNotListAsReadOnly() {
 	s.False(MCPSource(parsed.Sources).SendsOutTool("update_doc"))
 }
 
+// A tool granted by name does not say which source it comes from, so a manifest sends it out
+// when any of its sources may, and one with no source sends none.
+func (s *ManifestSuite) TestAManifestSendsOutAToolAnyOfItsSourcesMaySend() {
+	reads := SourceRule{Kind: "mcp", ReadOnlyTools: []string{"read_doc"}}
+	writes := SourceRule{Kind: "mcp"}
+	closed := SourceRule{Kind: "mcp", Outbound: new(false)}
+	for name, test := range map[string]struct {
+		sources []SourceRule
+		sends   bool
+	}{
+		"no source":                         {nil, false},
+		"listed in read_only_tools":         {[]SourceRule{reads}, false},
+		"of a source saying outbound false": {[]SourceRule{closed}, false},
+		"of a source that may write":        {[]SourceRule{writes}, true},
+		"listed by one source, not another": {[]SourceRule{reads, writes}, true},
+		"not listed by the first source":    {[]SourceRule{writes, reads}, true},
+		"read only in every source":         {[]SourceRule{reads, closed}, false},
+	} {
+		s.Equal(test.sends, Manifest{Sources: test.sources}.SendsOutTool("read_doc"), name)
+	}
+}
+
 func (s *ManifestSuite) TestAnEmptyReadOnlyToolIsRejected() {
 	_, err := ParseManifest(minimal("endpoints:\n  mcp: https://example.com/mcp\nsources:\n  - kind: mcp\n" +
 		"    endpoint: mcp\n    read_only_tools: [read_doc, \"\"]\n"))
@@ -1135,18 +1157,20 @@ func (s *ManifestSuite) TestASandboxHostIsALowercaseHostNameOrAWildcardDomain() 
 // A read names a host of the block, a method in upper case as a client sends it (RFC 9110
 // section 9.1), and a path.Match pattern from the path's leading slash. A GraphQL read takes a
 // POST and leaves its method out, so a router that predates it matches it to no request; a SQL
-// read does the same, and a read is not both.
+// read and an LFS read do the same, and a read is one of them at most.
 func (s *ManifestSuite) TestASandboxReadIsAMethodToAPathOfOneOfItsHosts() {
 	block := "sandbox:\n  env: EXAMPLE_TOKEN\n  hosts: [api.example.com, \"*.example.org\"]\n  reads:\n"
 	parsed, err := ParseManifest(minimal(block + "    - {host: api.example.com, method: POST, path: /*/*/git-upload-pack}\n" +
 		"    - {host: \"*.example.org\", method: QUERY, path: /search}\n" +
 		"    - {host: api.example.com, path: /graphql, graphql: true}\n" +
-		"    - {host: api.example.com, path: /v2/projects/*/queries, sql: true}\n"))
+		"    - {host: api.example.com, path: /v2/projects/*/queries, sql: true}\n" +
+		"    - {host: api.example.com, path: /*/*/info/lfs/objects/batch, lfs: true}\n"))
 	s.Require().NoError(err)
 	s.Equal([]SandboxRead{{Host: "api.example.com", Method: "POST", Path: "/*/*/git-upload-pack"},
 		{Host: "*.example.org", Method: "QUERY", Path: "/search"},
 		{Host: "api.example.com", Path: "/graphql", GraphQL: true},
-		{Host: "api.example.com", Path: "/v2/projects/*/queries", SQL: true}}, parsed.Sandbox.Reads)
+		{Host: "api.example.com", Path: "/v2/projects/*/queries", SQL: true},
+		{Host: "api.example.com", Path: "/*/*/info/lfs/objects/batch", LFS: true}}, parsed.Sandbox.Reads)
 
 	for read, field := range map[string]string{
 		"{host: other.example.com, method: POST, path: /x}":                    "sandbox.reads[0].host:",
@@ -1171,6 +1195,12 @@ func (s *ManifestSuite) TestASandboxReadIsAMethodToAPathOfOneOfItsHosts() {
 		"{host: other.example.com, path: /q, sql: true}":                       "sandbox.reads[0].host:",
 		"{host: api.example.com, path: q, sql: true}":                          "sandbox.reads[0].path:",
 		"{host: api.example.com, path: /q, sql: true, graphql: true}":          "sandbox.reads[0].sql:",
+		"{host: api.example.com, method: POST, path: /b, lfs: true}":           "sandbox.reads[0].method:",
+		"{host: api.example.com, path: /b, lfs: false}":                        "sandbox.reads[0].method:",
+		"{host: other.example.com, path: /b, lfs: true}":                       "sandbox.reads[0].host:",
+		"{host: api.example.com, path: b, lfs: true}":                          "sandbox.reads[0].path:",
+		"{host: api.example.com, path: /b, lfs: true, graphql: true}":          "sandbox.reads[0].lfs:",
+		"{host: api.example.com, path: /b, lfs: true, sql: true}":              "sandbox.reads[0].lfs:",
 	} {
 		_, err := ParseManifest(minimal(block + "    - " + read + "\n"))
 
@@ -1184,6 +1214,38 @@ func (s *ManifestSuite) TestASandboxReadIsAMethodToAPathOfOneOfItsHosts() {
 	s.Error(err, "graphql that is no bool")
 	_, err = ParseManifest(minimal(block + "    - {host: api.example.com, path: /x, sql: select}\n"))
 	s.Error(err, "sql that is no bool")
+	_, err = ParseManifest(minimal(block + "    - {host: api.example.com, path: /x, lfs: download}\n"))
+	s.Error(err, "lfs that is no bool")
+}
+
+// An LFS read's downloads are hosts written as sandbox.hosts are, which the egress reaches with no
+// token: none may be a host sandbox.hosts cover, which get it, and only an LFS read has them.
+func (s *ManifestSuite) TestAnLFSReadsDownloadsAreHostsThatGetNoCredential() {
+	block := "sandbox:\n  env: EXAMPLE_TOKEN\n  hosts: [api.example.com, \"*.example.org\"]\n  reads:\n"
+	parsed, err := ParseManifest(minimal(block + "    - {host: api.example.com, path: /b, lfs: true, downloads: [media.example.net, \"*.cdn.example.net\"]}\n"))
+	s.Require().NoError(err)
+	s.Equal([]SandboxRead{{Host: "api.example.com", Path: "/b", LFS: true, Downloads: []string{"media.example.net", "*.cdn.example.net"}}},
+		parsed.Sandbox.Reads)
+
+	for read, field := range map[string]string{
+		"{host: api.example.com, method: POST, path: /b, downloads: [media.example.net]}":          "sandbox.reads[0].downloads:",
+		"{host: api.example.com, path: /b, graphql: true, downloads: [media.example.net]}":         "sandbox.reads[0].downloads:",
+		"{host: api.example.com, path: /b, lfs: true, downloads: [api.example.com]}":               "sandbox.reads[0].downloads[0]:",
+		"{host: api.example.com, path: /b, lfs: true, downloads: [\"*.example.org\"]}":             "sandbox.reads[0].downloads[0]:",
+		"{host: api.example.com, path: /b, lfs: true, downloads: [media.example.org]}":             "sandbox.reads[0].downloads[0]:",
+		"{host: api.example.com, path: /b, lfs: true, downloads: [example.org]}":                   "sandbox.reads[0].downloads[0]:",
+		"{host: api.example.com, path: /b, lfs: true, downloads: [\"*.a.example.org\"]}":           "sandbox.reads[0].downloads[0]:",
+		"{host: api.example.com, path: /b, lfs: true, downloads: [\"https://media.example.net\"]}": "sandbox.reads[0].downloads[0]:",
+		"{host: api.example.com, path: /b, lfs: true, downloads: [Media.example.net]}":             "sandbox.reads[0].downloads[0]:",
+		"{host: api.example.com, path: /b, lfs: true, downloads: [\"1.2.3.4\"]}":                   "sandbox.reads[0].downloads[0]:",
+		"{host: api.example.com, path: /b, lfs: true, downloads: [\"media.example.net:443\"]}":     "sandbox.reads[0].downloads[0]:",
+		"{host: api.example.com, path: /b, lfs: true, downloads: [\"\"]}":                          "sandbox.reads[0].downloads[0]:",
+		"{host: api.example.com, path: /b, lfs: true, downloads: [com]}":                           "sandbox.reads[0].downloads[0]:",
+	} {
+		_, err := ParseManifest(minimal(block + "    - " + read + "\n"))
+
+		s.ErrorContains(err, field, read)
+	}
 }
 
 // A block without reads marshals as it did before the field existed, so the seeder finds

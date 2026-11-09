@@ -15,6 +15,29 @@ import kotlinx.serialization.json.jsonPrimitive
 
 class WireTest {
     @Test
+    fun `a ui action goes on the wire as ui_action`() {
+        val action = mapOf(
+            "v" to 1,
+            "message_id" to "m1",
+            "format" to "openui",
+            "name" to "submit",
+            "payload" to mapOf("city" to "Skopje", "nights" to 2, "tags" to listOf("a", true)),
+        )
+        val request = io.getstream.visionagents.android.core.generated.CreateResponseRequest(
+            text = "Book it",
+            uiAction = action.mapValues { (_, value) -> value.toJsonElement() },
+        )
+        val sent = Json.parseToJsonElement(
+            wire.encodeToString(io.getstream.visionagents.android.core.generated.CreateResponseRequest.serializer(), request),
+        ).jsonObject
+
+        val uiAction = sent.getValue("ui_action").jsonObject
+        assertEquals("m1", uiAction.getValue("message_id").jsonPrimitive.content)
+        assertEquals("submit", uiAction.getValue("name").jsonPrimitive.content)
+        assertEquals(2, uiAction.getValue("payload").jsonObject.getValue("nights").jsonPrimitive.int)
+    }
+
+    @Test
     fun `an event the SDK does not know still reaches the caller whole`() {
         val event = assertNotNull(AgentEvent.decode("""{"type":"astonished","degree":11,"why":{"because":"yes"}}"""))
 

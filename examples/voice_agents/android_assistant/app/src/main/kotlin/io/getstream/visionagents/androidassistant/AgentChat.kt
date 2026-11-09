@@ -6,6 +6,8 @@ import io.getstream.chat.android.ai.compose.conversation.AIMessage
 import io.getstream.chat.android.ai.compose.conversation.AIMessageAttachment
 import io.getstream.chat.android.ai.compose.conversation.AIMessageRating
 import io.getstream.chat.android.ai.compose.conversation.AIMessageRole
+import io.getstream.chat.android.ai.compose.generativeui.AIUIAction
+import io.getstream.chat.android.ai.compose.generativeui.AIUIDocument
 import io.getstream.chat.android.ai.compose.parts.AIMessagePart
 import io.getstream.chat.android.ai.compose.parts.AIReasoningPart
 import io.getstream.chat.android.client.ChatClient
@@ -17,6 +19,7 @@ import io.getstream.chat.android.client.events.MessageUpdatedEvent
 import io.getstream.chat.android.client.utils.observable.Disposable
 import io.getstream.chat.android.models.Message
 import io.getstream.result.Result
+import io.getstream.visionagents.android.core.AgentEvent
 import io.getstream.visionagents.android.core.AgentSession
 import io.getstream.visionagents.android.core.AgentsException
 import io.getstream.visionagents.android.core.Conversation
@@ -27,6 +30,7 @@ import io.getstream.visionagents.android.core.chat
 import io.getstream.visionagents.android.core.read
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -57,6 +61,7 @@ class AgentChat private constructor(
     private val scope: CoroutineScope,
 ) {
     private val asking = MutableStateFlow<String?>(null)
+    private val failedTurn = MutableStateFlow<String?>(null)
     private val thinking = MutableStateFlow(0)
     private val rated = MutableStateFlow<Map<String, AIMessageRating>>(emptyMap())
 
@@ -64,6 +69,7 @@ class AgentChat private constructor(
     // arrives after it is the question and then its reply.
     private val askedAfter = MutableStateFlow<String?>(null)
     private var subscription: Disposable? = null
+    private var reports: Job? = null
 
     /** The channel's messages, oldest first. */
     val messages: StateFlow<List<Message>> = state
@@ -93,8 +99,15 @@ class AgentChat private constructor(
         messages.map { AgentMessage(it, reasoning, version) }
     }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
-    /** Why asking failed, or null. */
+    /** Why loading older messages failed, or null. */
     val failure: StateFlow<String?> = asking.asStateFlow()
+
+    /**
+     * Why the latest question went unanswered, or null: the router would not take it, or took it
+     * and reported its reply failed, such as when the model could not be reached. The channel
+     * holds no reply then, so this is all that says so. Null again once something is asked.
+     */
+    val unanswered: StateFlow<String?> = failedTurn.asStateFlow()
 
     /** What the agent is doing while its reply shows nothing yet. */
     sealed interface Activity {
@@ -131,17 +144,31 @@ class AgentChat private constructor(
         }
     }.stateIn(scope, SharingStarted.Eagerly, false)
 
-    /** Asks, with the photos picked for it, each read and shrunk by [photos] first. */
-    fun ask(text: String, photos: suspend () -> List<ImageSource> = { emptyList() }) {
+    /**
+     * Asks, with the photos picked for it, each read and shrunk by [photos] first. False when the
+     * router would not take the question, which is then not in the channel.
+     */
+    suspend fun ask(text: String, photos: suspend () -> List<ImageSource> = { emptyList() }): Boolean =
+        create { session.responses.create(text, images = photos()) }
+
+    /**
+     * Answers with what the person did in a reply's generated UI: its label as the text, the
+     * action itself as `ui_action`. False when the router would not take it.
+     */
+    suspend fun answer(action: AIUIAction): Boolean =
+        create { session.responses.create(action.label, uiAction = action.json) }
+
+    private suspend fun create(request: suspend () -> Unit): Boolean {
         asking.value = null
+        failedTurn.value = null
         askedAfter.value = messages.value.lastOrNull()?.id.orEmpty()
-        scope.launch {
-            try {
-                session.responses.create(text, images = photos())
-            } catch (e: AgentsException) {
-                asking.value = e.message
-                askedAfter.value = null
-            }
+        return try {
+            request()
+            true
+        } catch (_: AgentsException) {
+            failedTurn.value = UNANSWERED
+            askedAfter.value = null
+            false
         }
     }
 
@@ -171,6 +198,7 @@ class AgentChat private constructor(
 
     suspend fun close() {
         subscription?.dispose()
+        reports?.cancel()
         session.close()
     }
 
@@ -178,6 +206,14 @@ class AgentChat private constructor(
         // The client's events rather than the channel's state for the thinking: each live update
         // carries its own window of it, and the state folds them into one, losing all but the last.
         subscription = channel.subscribe(::receive)
+        // A reply that fails ends with nothing written to the channel; only the session's socket
+        // says so, as an error of the model's.
+        reports = scope.launch { session.events().collect(::report) }
+    }
+
+    private fun report(event: AgentEvent) {
+        failedTurn.update { it.unansweredAfter(event) }
+        if (event.isFailedReply) askedAfter.value = null
     }
 
     private fun receive(event: ChatEvent) {
@@ -196,6 +232,26 @@ class AgentChat private constructor(
             return chat
         }
     }
+}
+
+/** Whether this is the router reporting that a reply failed, rather than some other part. */
+private val AgentEvent.isFailedReply: Boolean
+    get() = kind == AgentEvent.Kind.Error && string("context") == "llm"
+
+/**
+ * What a turn that went unanswered shows. The router's reason is a provider's raw error, with
+ * its billing links and response body, so it isn't shown.
+ */
+internal const val UNANSWERED: String = "Juno couldn't answer."
+
+/**
+ * Whether the latest question went unanswered once [event] is in: a reply that failed leaves it
+ * unanswered, and the next reply starting means the agent is answering again.
+ */
+internal fun String?.unansweredAfter(event: AgentEvent): String? = when {
+    event.isFailedReply -> UNANSWERED
+    event.kind == AgentEvent.Kind.Responding -> null
+    else -> this
 }
 
 /** A reply the agent wrote, which Stream's AI components render. */
@@ -231,6 +287,9 @@ data class AgentMessage(val message: Message, private val reasoning: LiveReasoni
     override val role: AIMessageRole = if (message.isAgentReply) AIMessageRole.Assistant else AIMessageRole.User
     override val text: String = message.text
     override val isGenerating: Boolean = message.isGenerating
+
+    // The reply's generated UI, `custom.ai_ui`, which Stream Chat lifts into extraData.
+    override val uiDocument: AIUIDocument? = AIUIDocument.from(message.extraData)
 
     // Read on every update while a reply streams, so decoded once, when the message is made.
     override val parts: List<AIMessagePart> = message.decodeParts()

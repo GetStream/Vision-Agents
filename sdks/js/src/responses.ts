@@ -13,7 +13,17 @@ export interface CreateResponseOptions {
   maxOutputTokens?: number;
   /** How long the model may think first: one of the efforts the session's model accepts. */
   reasoningEffort?: string;
+  /**
+   * What the person did in the UI an earlier reply showed, which the text says in their words:
+   * the reply (`message_id`), the UI's format and the action (`name`), with what it carries
+   * (`payload`), such as an `AIUIAction`'s JSON. Their message carries it as
+   * `custom.ai_ui_action`, and the model is told it after the text. An empty one is not sent.
+   */
+  uiAction?: UIAction;
 }
+
+/** What the person did in a reply's generated UI, as the router takes it. */
+export type UIAction = NonNullable<Schemas["CreateResponseRequest"]["ui_action"]>;
 
 /**
  * The things one turn was made of, in the order they happened.
@@ -192,6 +202,7 @@ export async function createResponse(
       ...(options.images?.length ? { images: options.images } : {}),
       ...(options.maxOutputTokens !== undefined ? { max_output_tokens: options.maxOutputTokens } : {}),
       ...(options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {}),
+      ...(options.uiAction && Object.keys(options.uiAction).length ? { ui_action: options.uiAction } : {}),
       ...(id ? { request_id: id } : {}),
     },
   });

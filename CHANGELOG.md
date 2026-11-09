@@ -5,10 +5,99 @@
 ### Juno on Flutter
 
 `examples/voice_agents/flutter_assistant` is the Flutter half of swift_assistant: Juno, talked to from a Flutter app on iOS and Android with swift_assistant's agent, `configure` and backend, on the Dart SDK and Stream's Flutter AI components (`stream_chat_flutter_ai`). Its conversations are the router's, in a drawer that lists, searches, opens and deletes them, and a new one opens its session as its first message is typed and deletes it if it is left unsent. The chat is `AIConversationView`, with the reply's reasoning and steps, copy, share and rating under it, photos from the composer, Think harder, and the composer floating over the conversation. The phone answers `get_local_context`, `get_location`, `list_events`, `add_reminder` (Reminders on iOS, a calendar event with an alert on Android) and `send_email`, asking for each permission the first time a tool needs it. Voice mode starts voice on the open conversation, with Stream's voice glow, paced captions, the approval card over the call and a camera preview that Juno looks through when asked what it sees, and says which part of the agent failed, as the Android app does. Gmail and Linear sign in as on iOS: a call waiting for the person's account shows Connect and Not now on its step (`AIToolAuthorizer`), Connect opens the router's sign-in page with `flutter_web_auth_2` (a web authentication sheet on iOS, an Auth Tab or Custom Tab on Android) and comes back to `io.getstream.visionagents.flutterassistant:/connected`, each new conversation's `return_url`, and Not now calls `declineLogin` (#1361).
+### The Go SDK has a README that installs and an sdk-go skill
+
+`sdks/go/README.md` opens with `go get github.com/GetStream/Vision-Agents/sdks/go@latest`, the Go floor (1.25) and a quickstart against the hosted router, which `readme_test.go` holds to `examples/quickstart` word for word. It no longer names fields that do not exist (`Harness.UseSkills`, `ChatOptions`, a `ConversationID` option), its links outside the module are absolute, and it says how versions are tagged (`sdks/go/vX.Y.Z`, released from `main`), which generated types are the SDK's models, and what is and is not retried. The new `sdk-go` skill records the conventions and the release steps (AI-1892).
+
+### Go: a refusal says how long to wait
+
+`stream.RouterError.RetryAfter` is the wait the router's `Retry-After` asked for, as seconds or a date, on a 429 `user_limit_reached` or `concurrency_limited` and a 503 `spend_check_unavailable`, and zero when it sent none. The SDK still retries nothing itself (AI-1892).
+### A failed model call says what the provider answered
+
+The session socket's `model_call` frame and a call timeline's `model_calls` carry `error_message` beside `error_code` for a call that did not succeed: the start of the provider's error body, such as a self-hosted model's `502 failed to connect to local service`, redacted and capped as the requests table stores it. A successful call's frame is unchanged. The flow controller's and the agent's failure log lines name the `provider` and `model` (AI-2954).
+
+### Voice start-up latency and failures per stage
+
+`router_agent_startup_seconds{stage, kind}` times each stage of a voice session's start-up once: `create` (from `Manager.Create` to the agent starting to join), `join` (the edge joining the call) and `media` (from the join to the agent's outgoing connection being up). The stages follow each other, so their sum is the wait until the agent can be heard. `kind` is `phone` or `web`. `router_agent_startup_failures_total{stage, kind, cause}` counts the stage a start-up stopped in: `error` where a session is counted under a `create_*` reason, `timeout` for an outgoing connection not up within 30 s. Only sessions on a Stream call the router joins are counted: not text sessions, audio sockets or simulations (AI-2832, #1794).
+
+### The router counts silent and one-way voice sessions
+
+`/metrics` serves `router_silent_sessions_total{case, kind}`: each voice session somebody besides the agent joined, once at its end under each case it is in. For the caller's side: `no_inbound_audio` (no audio frame came), `silent_inbound_audio` (frames came, none reached about -48 dBFS) or `no_words` (audible audio, but the transcriber wrote no word; not judged on a speech-to-speech model). For the agent's side: `no_audible_outbound` (the reply was queued at the call's track, which took no audible frame of it). `kind` is `phone` or `web`. A web caller whose microphone was off for the whole call counts as `no_inbound_audio` or `silent_inbound_audio`, like a broken media path. Calls are not ended or changed. The definition is in `acceleration/internal/agent/silence.go` (AI-2828, #1792).
+
+### The router counts how phone calls end
+
+`/metrics` serves `router_phone_call_outcomes_total{vendor, direction, outcome}`: each inbound and placed call once, when its leg first ends, under its stored outcome or as `dropped`, an answered call whose agent left it on the line (stopped, failed, or the router shut down) before the caller hung up. A network or vendor cut is not told apart from the caller hanging up. What a dropped call is, and what is not detected, is in `acceleration/internal/phone/outcome/AGENTS.md` (AI-2780, #1783).
+
+### The router counts carrier KPIs per phone vendor
+
+`/metrics` serves `router_phone_call_sip_responses_total{vendor, direction, code}`, each placed call's final SIP response where the vendor reports one (Twilio, Vonage, Bandwidth rejections, a customer's own SIP trunk), `router_phone_post_dial_delay_seconds{vendor, direction}` (Vonage's ringing event and the router's own SIP bridge), and `router_phone_short_calls_total{vendor, direction}`, answered calls under 6 s. A dial the vendor refuses is counted `refused` in `router_phone_call_outcomes_total`. What each vendor reports is in `acceleration/internal/phone/outcome/AGENTS.md` (AI-2830, AI-2905, #1793).
+
+### The router counts its sessions and how they end, whose fault it was and at which stage
+
+`/metrics` serves `router_sessions_active`, the sessions each router process holds, and `router_session_ends_total{reason, failed, fault, stage}`, each session end once, one series per reason. Every end reason is listed in `session.EndReasons` (`acceleration/internal/session/timeout.go`) with its fault (`none`, `caller`, `router`, `vendor`, `carrier`, `customer_config`, `customer_credit`) and stage (`starting`, `ringing`, `conversation`); `failed` is `true` for `start` and every `create_*`, `agent_failed` and `model_*` reason. A session's record gains `end_fault` and `end_stage`, and a session stopped through the API, ended by a shutdown or failed now keeps `closed`, `shutdown`, `agent_failed`, `model_failed`, `model_config_refused` or `model_no_credit` where it kept nothing; the six reasons kept before keep their values. A session that failed to open counts as `create_failed`, `create_vendor_failed`, `create_config_refused`, `create_no_credit`, `create_no_video`, `create_no_call_type` or `create_no_channel_type` (AI-2779, #1782; AI-2831, #1796; AI-2949).
+
+### Vendor rate limits per key: refusals and headroom
+
+`router_vendor_rate_limited_total{key_var,key}` counts every 429 a vendor answers on one of the router's own keys, on a request or a websocket handshake, by the variable the keys were read from and the key's place in the pool (never the key). Anthropic's 429 for a spent monthly cap is not counted. `router_vendor_ratelimit_remaining{key_var,key,limit}` holds the last headroom a vendor reported: OpenAI's `x-ratelimit-remaining-*` headers and its Realtime `rate_limits.updated` event, Anthropic's `anthropic-ratelimit-*-remaining` headers, and ElevenLabs' concurrency headers. A customer's own key is in neither. Headers are read from the responses the router already gets (AI-2833, #1781). Each key's 429 count is served at 0 from when its pool is built, and from start-up for OpenAI, Anthropic, ElevenLabs, Cerebras, xAI, Together, Fireworks, Deepgram, Google Gemini, Cartesia and OpenRouter, so an alert on it reads 0 before the first 429, not no data (AI-2930).
+
+A table variable the deployment leaves unset is served too, as one series at 0 under `key="none"` (AI-2940, #1810).
+
+### The router counts each vendor failover
+
+`router_failovers_total` counts each time the router moved work off a provider that failed, by `modality`, the `provider` that failed, `stage` (`start` and `use` at request start in the walk, `session` for an STT session, a voice or an LLM response another candidate took over mid-session) and `reason` (`vendor`, or `request`, `customer_key` (the customer's own key or `custom` model) and `cancelled` for failures that are not the vendor's). A failure nothing replaced is no failover (AI-2781, #1785).
+
+### Turn latency on /metrics
+
+`router_agent_turn_latency_seconds{leg,pipeline}` is a histogram of how long a caller waited for the agent's reply. `leg` is `roundtrip` (last transcript revision to first audio published), `speech_end_to_audio` (that plus the transcriber's endpointing) or `speech_end_to_audible` (to the first frame the call's track took); `pipeline` is `cascade` or `native`, the one the turn started on; under `native`, `roundtrip` runs from the model's speech-stopped signal and `speech_end_to_audio` equals it. Only caller turns are observed, and a leg a turn never reached, such as a reply interrupted before its audio, is left out rather than counted as zero. Buckets run 200 ms to 10 s with a line at 1.2 s. `turn_latency_hourly` is unchanged (AI-2826, #1780).
+
+### The router's metrics show its own API requests
+
+`/metrics` has `router_http_requests_total{method,route,status}`, every request the API answered by route template and status class, and `router_http_request_seconds`, how long request/response answers took to begin. Sockets and streams are counted but not timed (#1786).
+### A server sends a person's photos on respond
+
+`POST /v1/agents/sessions/{id}/respond` takes `images`, as `createResponse` and the session socket's `respond` already did. With a `request_id` they are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, and the model sees them with that question alone. A retry with the same id, text and photos is the same question. Unlike `createResponse`, the answer is still the command's receipt with the person's and the reply's message ids, and `client_id` still addresses the install's tools, so a server that sends what a person typed on their behalf can now send what they photographed too. Text and photos together are held to the same 1 MiB as on `createResponse` when no voice note is sent. In the PHP and Python SDKs, whose generated request classes take positional arguments, `images` comes after `request_id`: their generators now keep each parameter where it was released and add new ones after, so `new RespondRequest('question', null, 'device-1', 'request-1')` and `RespondRequest("question", UNSET, "device-1", "request-1")` still mean what they did.
+
+### Work is sold at its cost × 1.08
+
+`pricing.PriceFactorBps` is 10800, down from 12000. Every entry written without a price of its own is priced at its vendor's rates × 1.08: a price list's first load and the items a release adds that the list has never priced. An amount a vendor quotes outright, such as a number's monthly rental, is charged at it × 1.08 too. A million tokens that cost the vendor $1 are $1.08, and still $0.20 on the customer's own key (`pricing.BYOKFeeBps` is unchanged). No price already in a list moves with the factor: each deployment's stored prices are lowered through the management API, by a price change of their own (AI-2946).
+
+### The link says how much of the number's past the user reads
+
+`PUT /v1/agents/users/{user_id}` takes `include_phone_history` and `phone_history_since`. `true` gives the user everything the number ever said. `false` gives what it says from the request on. A time gives what it said from then on. With neither field, a new link starts at the link, and the same number again keeps what was stored. The boundary covers the user's episode cards and the history a session on the number's SMS, WhatsApp or iMessage thread is handed, which until now held the whole thread. A conversation that started before it is left out whole. `true` with a time, or a time in the future, is a 400. `GET /v1/agents/users/{user_id}` answers the number and the boundary as stored. A thread whose number is linked to nobody is handed all of it, as before (AI-2861, #1790).
+
+### Usage reads name who started the work `origin`
+
+A usage row's "who started it" is a public API key or, for work no key started, an origin such as `hook:chat`, `phone:inbound` or `job:<name>`. The API called it `api_key` and `api_key_id`, so `api_key_id=hook:chat` read as a key that is not one. Its public name is now `origin`: `listUsageEvents` and `getSpend` take `origin` in the query, each `UsageEvent` answers `origin`, and `getSpend` groups by it with `group_by=who:origin`. The usage service's `listUsage` and `readAccountUsage` take `origin` and answer it on each event. The old names are gone (see Breaking Changes). Limits and grants keep `api_key_id`, since they only ever name a key (AI-2811). A query parameter tagged deprecated is marked `deprecated` on the parameter itself in both specs, so the generated JavaScript and Go clients flag it (AI-2812).
+
+### The operator hears of each organization's first money limit
+
+With `ROUTER_LIMITS_SLACK_TOKEN` and `ROUTER_LIMITS_SLACK_CHANNEL` set, the router posts to that Slack channel the first time each organization is refused at its credit, at Stream's spend hard limit for the day or the month, or at one of its own spend limits. In `shadow` it posts what would have been refused, and says the work was admitted. Each post names the organization, its tier, the app and the refusal as the caller was answered. It is sent once per organization and kind of limit across every router: the router that writes the organization's `limit_notices` row posts it, and one whose post failed is posted by the next router to sweep. A suspension, a user's own limit and a money check that could not be read are not posted (AI-1918). A post from anywhere but production starts with its `SENTRY_ENVIRONMENT` in capitals, such as `[STAGING]`; production's has no tag (AI-1918). `ROUTER_LIMITS_APP_URL` and `ROUTER_LIMITS_STAFF_URL` add links to the app's page and the operator's, as URLs in which `{organization}` and `{app}` stand for the ids (AI-1918).
+
+### The router reads a page into Markdown
+
+`POST /v1/ocr` takes a JPEG or PNG of a page, up to 10 MB, and answers with its text as Markdown, its headings, lists and tables kept. `ocr-default` asks Mistral OCR 4.1 first and fails over, after 45 seconds or an error, to gpt-6-luna and then gemini-3.8-flash. It never fails over to a model that cannot see a picture. `options.target` names another shortcut, `ocr-vision` among them, or one model, as the other modalities do, and `options.data_policy` applies the ZDR and region rules. Each page is one usage row with the model that read it: Mistral's is priced by the page at $4 per 1,000, and a vision model's by the tokens it took. A request is checked against the spend limits before the page is sent. A page every model failed is a 200 with `status: failed` and an `error_code`. `GET /v1/ocr/providers` and `GET /v1/ocr/routes` list the models and shortcuts (AI-2611).
+
+### Knowledge takes PDF and office files
+
+`POST /v1/agents/knowledge/files?namespace=…` takes a PDF, a Word document (DOCX or DOC), an Excel workbook (XLSX), an RTF or OpenDocument text file, or Markdown or plain text, up to 50 MB, as `multipart/form-data` in a part named `file`. It answers 202 with the document `pending`, and reads it in the background into Markdown that keeps its headings, lists and tables; each passage's source names the page it is from (`manual.pdf > p. 7`). A page that is only a scan is read from its picture through `ocr-figures` and billed as `POST /v1/ocr` is. A document now has a `state` (`pending`, `indexed` or `failed`), and a failed one an `error` that says why: a password, a damaged file, or no text at all. A file whose first bytes are no document, a photo say, is a 400 at once, one over 50 MB a 413, and one from a customer who may spend nothing a 402, as a text ingest is. Uploading the same source again replaces the document, whose old passages are still found until the new file is read. Text posted to `POST /v1/agents/knowledge` is unchanged and `indexed` at once. The files wait in the bucket `ROUTER_KNOWLEDGE_BUCKET_URL` names, and are deleted once read; a router without one answers 503 `not_configured` (AI-2600).
+
+### Knowledge reads the charts, diagrams and pictures in a file
+
+A file uploaded to a knowledge base is read for what its figures show as well as for its text. A PDF page that is a tenth or more charts, diagrams or pictures is drawn and read for them, and what was read follows the page's text: each figure's words, then a quote that opens with `> **Figure:**` and says what it shows. Words the page's text already has, such as a chart's labels or the page written out again, are not added twice. A table of text, a logo and a tinted page are not figures. A scanned page is read for its text and its figures together. The pictures in a Word, OpenDocument or Excel file (PNG, JPEG and GIF, 100 pixels a side or more, each once) are read the same way, and what was read stands where the picture was. Word's own EMF and WMF drawings, Excel's charts, and the pictures in DOC and RTF files are not read. The new `ocr-figures` shortcut asks GPT-6 Luna, Claude Haiku 5.5 and Gemini 3.8 Flash in that order, then Mistral OCR for a scan's text alone; Claude Haiku 5.5 is a new OCR model, at its LLM rates. At most 500 pages and pictures of a file are read, and each is billed as a `POST /v1/ocr` call. A figure no model could read is left out, and the file is still indexed. `POST /v1/ocr` takes `options.figures`, which has the page's figures summarised too and tries the vision models before Mistral OCR (AI-2600, AI-2611).
+
+### A reply can be UI the agent writes
+
+An agent can answer with UI rather than text, written in a fenced block of its reply whose info string is `ui:<format>` or `ui:<format>@<version>`, or OpenUI's `openui-lang`. The router knows no format: it sends the block to Stream Chat as the message's `custom.ai_ui` when it fits in the message's custom data, and the words around it as the text, which push notifications, external threads and clients that cannot show the UI show instead. A person's message keeps a block they wrote as their words. StreamChatAI's generative UI shows it in place of the text. What the person does in it comes back with their next message as `ui_action` on `POST /v1/agents/sessions/{id}/responses`, which their message carries as `custom.ai_ui_action` and the model is told after their words, with the opening words of the reply it was in. Go has `client.UIAction`, Swift `Responses.create(_:uiAction:)`, JavaScript `responses.create(text, { uiAction })`, Kotlin `Responses.create(text, uiAction = ...)`, whose SDK now depends on Stream Chat 7.18.0, and Dart `responses.create(text, uiAction: action.toJson())`.
+
+The `swift_assistant` example plans a trip as interactive UI, in A2UI or OpenUI, as its settings choose: a map, the person's own calendar for those days, a tab per day and a form to change the plan, drawn with the app's own components.
 
 ### The app chat writes episode cards to the person's omni-channel
 
 Under an agent config with `episode_cards` on, a person's message in a plain `agent` channel of the app chat now opens an episode, as a call or a Slack thread does. Its card (source `chat`) goes to the person's omni-channel and names the channel the chat is in. The person is the Stream user who wrote, in the Stream app the message came from. One run of messages is one episode and one card; after `episodes.idle_after` without a message, the sweeper closes it and writes its summary. A thread channel, an omni-channel, an incognito session and a call's session open none. A config with `episode_cards` off writes nothing new; a message in a chat a session has answered before reads the config once, as a chat's first message did before (AI-2632, #1701).
+
+### The person's own device reads their app chat's cards
+
+Under an agent config with `episode_cards` on, a session the person's own app opens with their user token now starts with their episode cards, as the app chat's session does: the cards of that Stream user, in the session's Stream app, under that agent config. Text and voice sessions both read them, unless somebody else reads the answers: a conversation shared with its members or with any other member, or a call anybody else is on, reads none. A call with a phone number on it still reads the number's. A guest, an anonymous caller, a backend naming a user, and a scheduled task's session read none. Neither this session nor the app chat's reads any card in a Stream app whose auth checks are off, or one Stream cannot be asked about. A config with `episode_cards` off reads nothing new (AI-2709, #1727).
 
 ### A personal conversation takes a video with a question
 
@@ -86,6 +175,7 @@ The `instructions` a custom connector's MCP server (`custom_…`) sends when a s
 ### A number or a 10DLC registration is paid for before it is bought
 
 `POST /v1/phone/numbers` books the number's first month out of the organization's credit before the vendor is asked, and the 10DLC brand fee, campaign fee and the campaign's first months are booked before each is registered. A use case whose fees the credit does not cover is not submitted. Credit short of the booking is a 402 `insufficient_credits`, in every `ROUTER_LIMITS_MODE`, `off` and `shadow` included, so it is not just logged. A number with no price in its offer needs some credit. What is booked counts against the credit and the spend hard limit of every router sharing the Redis until the purchase is billed, or is released when it fails. A booking left by a router that stopped expires after an hour and is counted in `router_bookings_expired_total`. `router_bookings_refused_total{reason}` counts refusals (AI-1884).
+
 ### Juno on the web
 
 `examples/voice_agents/react_assistant` is Juno in a browser: React and Vite over the JS SDK and `stream-chat-react`'s AI components, with swift_assistant's agent, `configure` and backend, as the Android app has. Its conversations are the router's, in a drawer that lists, searches, opens and deletes them, and a new one has no session until it is first written to. The chat is `AIConversation`, with the reply's reasoning and steps, copy, share and rating under it, photos from the composer, Think harder, and the composer floating over the conversation. The page answers `get_local_context`, `get_location`, `list_events`, `add_reminder` and `send_email`, keeping its own calendar since a browser has none. Voice mode starts voice on the open conversation, with `VoiceGlow`, captions, a camera button with a preview of what Juno sees, and a line when the agent fails on the call. A connector's sign-in opens in a popup and comes back to `connected.html`, the session's `return_url`; Not now is `session.declineLogin`.
@@ -95,6 +185,10 @@ The `instructions` a custom connector's MCP server (`custom_…`) sends when a s
 `session.conversation` follows a conversation the way Swift's and Kotlin's `conversation` does, beside `session.state` and with the same `get` and `subscribe`: its `turns` (what the page typed, what was transcribed on the call, the agent's replies as they were written), `failure` (what the agent last reported going wrong, with `failureContext` naming the part and `failureAt`, until it next hears, answers or speaks), `approvals` (the calls waiting for the person, now told when they change, a cancel by the model included), and `connected` with the `socketError` that stopped the socket; `session.failure` says the same. `session.declineLogin(toolCallId)` is the Not now of a connector's sign-in on its `awaiting_authorization` step, and `connectorScopeRequiredOf(event)` reads a `connector_scope_required` event. A voice session's snapshot keeps why joining, muting or the camera last failed as `failure`. A tool shows the model pictures by returning a `ToolOutput` (`text` and `images`). `sessions.query` and `search` take `createdSince`, `createdBefore`, `custom` and `sort`; `memory` on a new session is remembered for the user `setUser` named, never another a page names; `returnUrl` names where a sign-in goes back to, as on the phones; `sessions.update`, `startVoice`, `stopVoice`, `close` and `fork` take a session by its id; `VoiceSession.attach(api, sessionId)` joins a session's call by its id with a watcher of its own; `api.router({ config, tags }).search(query)` searches, the one routed modality a device may reach; `api.scheduledTasks` lists, reads, changes, pauses, resumes and deletes the user's scheduled tasks and reads their runs; and `api.clearUser()` signs out, while `api.setUser(guest)` acts as a guest. `session.events()` can now be read by several loops at once, each told everything from when it started, and one that falls 256 events behind is ended rather than left with a hole.
 
 A page that reaches a router by `customerId` and names its user with `setUser` is now that user: it says `stream-auth-type=jwt`, so the router lists only that user's conversations rather than every user's, and `serverSide` is false. A client given `userId` instead stays the app's backend acting for that user.
+
+### The JavaScript SDK works with stream-chat 9 and 10
+
+`@stream-io/calypso` takes `stream-chat` `^9.0.0 || ^10.0.0-0` as its optional peer, release candidates of 10 included, where `>=9.0.0` refused them with `ERESOLVE`. One build reads a Chat message by its shape, never by version: `LiveReasoning`, `session.speech.heard` and the check for a reply still being written read `reasoning`, `turn_id`, `generating`, `source` and `ai_generated` at the top level as 9 has them or under `custom` as 10 does, so on 10 a reply's thinking is whole again rather than its opening alone. `client.use({ chat })` takes 10's `StreamChat`, which names its user `userId`, and a client the SDK connects itself on 10 carries the user's own fields from `setUser` under `custom`, as 10 takes them.
 
 ### A session sets how many tool rounds a reply may chain
 
@@ -308,7 +402,34 @@ The router now streams to `fish/transcribe-stream-1`, reachable by name or by an
 
 Every reply the agent abandons logs one INFO line, `the agent was interrupted`, with `cause` (`settled`, `talking`, `unheard`, `api`, `provider`, `voice_lost`, `voice_refused`), `ruler` (`primary`, `fallback`, `deadline`, `unusable`, `none`), `took_ms`, the caller's `words`, `played_ms` and `echo`: whether the words were the reply's own (`most` from two words in three, `some`, `none`, or `no_words` when there were no words to compare; `echo_share` gives the share). The same labels count in `router_agent_interruptions_total{cause,ruler,echo}` and are on the `agent.turn` span as `turn.interrupt.cause`, `.ruler` and `.echo`. A caller talking over the agent while no model ruled within 750 ms now counts as ruler `deadline`, and a controller answer that could not be read as ruler `unusable`, in `router_agent_flow_decisions_total` and `router_agent_flow_decision_seconds` too, where both were `none`. `finished speaking` logs `synthesis_cut` in place of `interrupted`, and `turn_abandoned` (AI-2207).
 
+### A connection's tools say which only read
+
+`GET /v1/agents/connections/{id}/tools` gives each tool `read_only`: true when, in the connector's latest revision, every source lists it in `read_only_tools` or says it sends nothing out (`outbound: false`); false when the connector is gone. A binding may grant such a tool by name beside a sensitive connector such as Nessy without `require_approval`; the config save refuses any other tool there unless `require_approval` holds it. It is the same rule the save checks, so an admin can preselect the tools that only read without guessing from their names: Linear's `list_issues` is `read_only`, its `search_documentation` and `save_issue` are not (AI-2788).
+
 ## Breaking Changes
+
+### The Go SDK's helpers take a Backend, not the generated client
+
+`agents.DefineAgent`, `agents.DefineSkills`, `agents.IngestKnowledge`, `agents.SubscribeKnowledgeURLs` and `stream.NewPhone` take a `stream.Backend` where they took the generated `*acceleration.ClientWithResponses`, so using them no longer means building the generated client first. `stream.NewPhone` now returns an error too, for a backend that does not resolve. `agents.Harness.VM` is `agents.Harness.Sandbox`, the name every other SDK and the docs use. Pass `stream.Backend{}` for the environment's router, or `api.Backend()` for a client's. `stream.Backend.Client()` and `agents.Agent.Client()` still hand out the generated client, for operations the SDK has no method for yet; its operation methods carry no compatibility promise (AI-1892).
+### Rust: the string enums are no longer `Copy`, and a `match` on one needs an `Unlisted` arm
+
+Each of the Rust SDK's 133 string enums has a new `Unlisted(String)` variant that holds a value the SDK does not list, so none of them is `Copy` any more. Clone one where you copied it, and add an `Unlisted(_)` arm to a `match` on one that has no wildcard. The Python client has no such break (AI-2951).
+
+### `episode_cards` is `off`, `record` or `on`
+
+An agent config's `episode_cards` is a string now, no longer a boolean: `off` (the default) writes no episode card and reads none, `record` writes each conversation's card and its summary while no session reads them, and `on` writes and reads them, as `true` did. A config stored with `true` reads as `on` and one with `false` as `off`; a boolean sent is refused with a 400 `validation_failed`. Every channel follows the mode the same way: under `off` an SMS, WhatsApp, iMessage or Slack thread no longer opens an episode, so it costs no card and no summary, and it is answered as before (AI-2856, #1791).
+
+### Usage reads drop the old names of `origin`
+
+`listUsageEvents` and `getSpend` refuse `api_key_id` with a 400 that names `origin`, rather than ignoring it and answering every key's events or spend; `getSpend` refuses `group_by=who:api_key` the same way, naming `who:origin`. Each `UsageEvent` answers `origin` alone, no longer `api_key`. On the usage service, `listUsage` and `readAccountUsage` no longer read `api_key_id` or `api_key` (ignored, as any undeclared parameter) and their events answer `origin` alone. `api_key` in the query is still the caller's credential, and limits and grants keep `api_key_id`. The generated clients lose those parameters and the field; `plugins/stream`'s `usage.spend(api_key=...)` now sends it as `origin` (AI-2851).
+
+### A usage or spend read names a key as `api_key_id`
+
+`listUsageEvents`, `getSpend`, `listLimits`, `listLimitGrants` and `getLimitUsage` (and their `manage*` twins) now name a key in the query as `api_key_id`, where they took `api_key`. Stream's proxy requires `api_key=<app key>` on every call and forwards it, so through the proxy every usage list and spend read was narrowed to the caller's own key. Rows that an origin started (`hook:chat`, `phone:inbound`, `job:<name>`) or that another key of the app started could not be read, and `getLimitUsage` refused every subject but a key. `api_key` in the query is now only the credential. A read that still sends a key as `api_key` gets every key's rows back. Request bodies and response fields keep `api_key`. `plugins/stream` keeps its `api_key=` argument and sends it as `api_key_id` (AI-2684).
+
+### The generated clients lose the plugin and MCP server types
+
+`PluginEntry`, `PluginWithOptions`, `PluginEvent`, `McpServer` and `McpServerBranding` are gone from the spec and from every generated client (Go, Python `plugins/stream`, JavaScript, .NET, Ruby, Rust, PHP). `plugins`, `plugin_events` and `mcp_servers` stay on `AgentConfigRequest`, `AgentConfigPatch` and `SyncAgentRequest`, deprecated, as lists with no schema of their own (`plugins`: strings or objects; the other two: objects), so code that built them from those types no longer compiles. The router answers as before: a non-empty list is the same 400, and `[]`, `null` or a left-out key saves. (#1742)
 
 ### The router refuses `plugins`, `plugin_events` and `mcp_servers` and serves none of them
 
@@ -348,6 +469,236 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### Go: leaving reports a stop the router refused
+
+When `stream.Pipeline.Leave` (and so `Session.Close`) stops a session over HTTP because its socket is gone, a refusal other than 404 is now returned as a `*stream.RouterError` instead of nil, since the session may still be running. A 404, a session the router no longer holds, still counts as left (AI-1892).
+
+### Go: leaving a session the router already ended succeeds
+
+`stream.Pipeline.Leave`, and so `Session.Close`, failed with `websocket: close sent` for a session whose socket the router had closed, because the closed socket still read as open. The pipeline now closes its socket when watching ends, and a close that finds the socket already closed, by the router ending the session at that moment, stops the session over HTTP instead. Either way leaving returns nil (AI-1892).
+
+### Go: a client made on another client's Backend reads each answer once
+
+`client.New(api.Backend())`, which `agents` and dispatch workers do with the backend they are given, wrapped the first client's money watcher in a second one. A balance warning the first client handed to `WithBalanceWarning` was then logged as well. A client given no callback of its own (no options, or only `WithLogger`) on a backend another client already reads now shares that client's watcher, so an agent or worker built on `api.Backend()` reports what its requests cost to `api`'s callbacks, once (AI-1892).
+### After a voice failover the kept reply no longer waits for the lost voice to close
+
+A reply or check-in kept for the voice that replaces a lost one goes to that voice as soon as it is open. Before, it waited for the lost voice to close first, up to 2 s for ElevenLabs. The agent still waits for that close when it stops (AI-2974).
+
+### A caller turn answered through the subagent or a tool counts in the turn latency
+
+A caller turn whose reply said nothing and handed the work to the subagent or a tool is timed to the first audio of the first line said for it: a hold or update line while the work runs, or the answer it came back with. `router_agent_turn_latency_seconds` observes it once, and its `SpeechEndToAudioMs` in the session's turn events shows the same wait; before, both left the slowest turns out. A filler in the turn's own reply still ends the wait, so the answer after it adds nothing. A turn a scheduled task or a reminder fires into the call is no longer observed, since nobody in the call waited on it; its turn event keeps its timings (AI-2969).
+
+### A reply the voice lost before any of it was heard is said in the next voice
+
+When a voice fails before any of a finished reply's audio went out (staging: ElevenLabs refusing the agent's voice on its first word), the voice that replaces it says the reply, and the turn is not abandoned. Before, the reply was dropped (`cause=voice_lost`, `turn_abandoned=true`) and the caller heard nothing. A greeting or a check-in none of which was heard is said the same way, and so is what the lost voice had of a reply the model is still writing. What the model writes while the next voice opens is said by that voice after it; before, it went to the lost voice and was never heard. A reply or line partly heard, and one with no voice left to say it, are still cut off as before (AI-2970).
+
+### A check-in the voice lost before any of it was heard is said in the next voice
+
+An agent not acting on chorus-asr says its check-ins, updates and hold lines as murmurs, and a lost voice let go of every murmur, so such a line refused on its first word was dropped and the caller heard nothing until the next check-in (staging: 2.8 s later). It is now said once in the voice that replaces the lost one, under its own id, as a greeting is; one partly heard, or one the caller starts talking over while that voice opens, is reported cut off and not said. A murmur ("mhm") is still never said again (AI-2973).
+
+### A call refused because the app has no Stream Video is the customer's setup, not the router's fault
+
+A voice session whose call Stream refuses with `video is not enabled for your account` or `video is not enabled on this server` (code 17) now counts in `router_session_ends_total` as `create_no_video`, fault `customer_config`, stage `starting`, where it counted as `create_failed`, fault `router`. A create refused because the customer's own Stream app has no agent call type counts as `create_no_call_type`, and one refused because it has no agent channel type, or one clients may rewrite, as `create_no_channel_type`, both fault `customer_config`, stage `starting`; they were not counted at all. Every other join refusal still counts as `create_failed`, and the 400 answers are unchanged (AI-2949).
+
+### A tool's error and a Sentry alert's details no longer keep a key a provider echoed
+
+A failed tool's error is now stored through the same redactor as its `tool_ran` frame: in the `tool_result` item that `GET /v1/agents/sessions/{id}/responses/items` lists, in a simulation transcript's tools, and in a device tool's step summary in Chat; a simulation case's `error` and each tool `result` in its transcript, a recording's `error` (stored, and in an inline answer) and a voice binding's `error` are redacted too. The router's and usage service's Sentry events now also redact their tags and every string in their contexts, such as the provider error a usage alert carries. Text with nothing to redact is unchanged, except that a tool or case error, a simulation transcript's tool result, a recording's error and a voice binding's error longer than 8192 bytes is cut to 2048 characters and `… [truncated]`, as the requests table cuts an error. Rows written before are not rewritten (AI-2975).
+
+### The router's log no longer prints a key a provider echoed in its error
+
+Every value the router, the usage service and the command-line tools log, the message included, goes through the redactor the requests table uses, uncapped, and so do the failures the tools print and the router's and usage service's Sentry events: a provider error that echoes `Authorization: Bearer <key>`, such as in the `agent failure` and `could not review the call` lines, keeps its text with the key shown as `[redacted]`. A line with nothing to redact is unchanged. The redactor now keeps a word after `bearer`, `secret` or `password`, as in "no bearer token" or a `Bearer error="insufficient_scope"` challenge, and takes a `key=` or `token=` that starts a quoted query (AI-2966, #1838).
+
+### A provider key in a URL is redacted from stored failures and stream socket errors
+
+The requests table, agent logs and socket error frames now redact a key sent as a `?key=` or `&token=` query parameter (Gemini Live, ipinfo), raw or percent-encoded, and a URL-encoded `Authorization` or `Cookie` header or bearer token. The stt, tts, sts and llm stream sockets now redact their error frames and close reasons the same way, as the session socket already did (AI-2958, AI-2959).
+
+### A session whose every reply was lost no longer counts as closed when the flow controller answered
+
+A flow controller or subagent request no longer stands in for a lost reply, so the session ends by whose fault the reply failed (AI-2939, #1811).
+### Photos an agent cannot see are refused before they are uploaded
+
+A question with photos and a `request_id`, on `createResponse` or the session socket's `respond`, sent to an agent with neither a vision skill nor a conversation model that accepts images, was refused only after its photos were uploaded and the person's message written, leaving a message in the channel that nothing would answer. It is now refused first, with the same 400 `not_configured`, and nothing is uploaded or written. A retry of a photo question already taken is still answered with its receipt, also after the session's model changed to one that cannot see, since it starts no turn.
+
+### The Python and Rust clients read an enum value they do not list
+
+A session that a newer router ended for a reason this client was not built with, such as `closed`, made `sessions.get` and `query` raise in Python (`ValueError`) and fail in Rust (`Error::Decode`). This was true of every enum in an answer. The value now reads as it was sent and is written back the same way: in Python as a member of the enum that carries it (`str(session.end_reason) == "closed"`), in Rust as the new `Unlisted(String)` variant. A listed value reads as before, and a value a caller builds or parses is still checked. In Rust these enums are no longer `Copy`, and a `match` on one needs an `Unlisted` arm (AI-2951).
+
+### A call that began before its number's link stays before it
+
+A call episode was dated by the router's clock while a number's link is dated by Postgres's, so with the router's clock ahead, a call that began just before the link counted as after it and the linked user's sessions read it. A call episode is now dated by Postgres's clock, from when its session began, also when its card is written later because the caller joined late (#1824).
+
+### A phone operation that fails on the router's side is a 500
+
+A phone operation (search, buy, release, attach, detach, a call, a transfer, pressing digits) whose failure was the router's own, such as a database read of the 10DLC gate, answered 400 `invalid_request` with the database's words. It now answers 500 "something went wrong" and the log keeps the error with its stack. Work waiting on the deployment's own Stream app answers 503 with `Retry-After`. A request the client can change keeps its 400 `invalid_request` and its words: a search filter or a call term a vendor cannot take, a number that cannot be dialled, an unknown vendor, an app the customer cannot act in. A call or a transfer with an empty `from` says it needs one of the customer's numbers to dial from. A setting the deployment lacks is a 400 `not_configured`: a vendor's credentials or a setting it buys or calls with (such as a connection id, or the signalling addresses a trunk needs), a public url, sip trunks, and Stream credentials, which now answer "phone lines are not available: this deployment has no Stream app to make them in". A Bird, DIDWW, Plivo or Vonage request that failed is a vendor failure as for the other vendors: 503 `phone_vendor_failed` without the vendor's words, and a search skips that vendor with "The phone vendor could not complete the request." (AI-2056).
+
+### A scheduled text the organization may not pay for is not tried again
+
+A task due on SMS, WhatsApp or iMessage, or in the thread it was made in, whose organization is suspended, out of credit or past a spend limit, was tried up to three more times. A thread task's run also said `channel_unreachable`. The run now fails at once, under the refusal's code (`account_suspended`, `insufficient_credits`, `system_limit_reached` or `spend_limit_reached`), and the router logs a warning that names the customer. A refusal because the router could not check the money is still tried again.
+
+### Importing an export no longer writes over edits made on the target
+
+`POST /v1/data/import` wrote every row of an export, so a second import of an older export undid what had been done to those rows on the target since. An export for an app the target already holds is now refused with a 409 before any row is written, as `router replicate` refuses it; `?full=true` writes it anyway, and a batch of changes is applied as before (AI-2889).
+
+### A code run that prints a lot no longer fills the router's memory
+
+The router read everything a Daytona code run printed into memory, however much, and handed all of it to the model. It now keeps the first 1 MiB and ends it with a line telling the model the output was cut. The rest is dropped as it is read, so the router holds about 6 MiB of one output, a few times that while cutting, and never more as the answer grows. An output under 1 MiB reaches the model as before. A command's, a download's and an upload's answer from the sandbox are bounded too. (#1804)
+
+### git lfs push in a sandbox says why it is refused
+
+Under the proxy broker, `git lfs push` in a sandbox is refused at its first request, `locks/verify`, and git-lfs showed «Authentication error … Check that you have proper access to the repository». The proxy now answers every refused request under a Git LFS API (`/info/lfs/`) with an LFS error, so git-lfs prints the proxy's hint: code in the sandbox only reads through a connector, and writes with the connector's tools. Uploads stay refused, and the log says why (AI-2876, #1801).
+
+### A sandbox session cut while it opens leaves no Daytona secret
+
+When a session with sandbox grants was cut partway through opening, because its context was cancelled or past its deadline, the router deleted the secrets it had made on that same context, so every delete failed and the first grant's live token stayed at Daytona until the session closed. It now deletes them on a context that is not cancelled, bounded to 60 seconds (AI-2455, #1800).
+
+### A follower whose next changes were pruned is told to copy again
+
+A follower that read nothing after the source's recording started again kept its cursor there, and one whose every change after its cursor had aged out had none of its own kept. Either was answered the later changes, or none, with no refusal once those changes were pruned. Pruning now notes the last change of each app it drops, and a cursor below it is answered 410, so `router replicate` says to run with `--full` (AI-2918, #1806).
+
+### A move whose recording lapsed is told to copy again
+
+A move nobody followed for longer than the source's retention stopped recording the app's changes, and a follower back after that was answered the changes recorded since as if they were all: the writes made while nothing was recorded never reached the target. The source now answers 410 for a cursor from before its recording started again, so `router replicate` says to run with `--full`; the export it copies then carries on (AI-2815).
+
+### A repeatable read write is not lost by a move
+
+A repeatable read or serializable transaction that took its snapshot before an export started recording, and wrote after, was in neither the export nor its changes. Its write is now refused with a serialization failure, the error those levels are retried on, and the retry is recorded. An export waits up to 30 seconds for such a transaction that wrote before it started, then answers 503, as it does for any open write; a transaction that only reads holds no export (AI-2814).
+
+### A repeat `router replicate --once` brings only what changed since the last run
+
+A second `--once` for an app copied before wrote the whole export again, so every row edited on the target since the first copy went back to the source's older copy. A run now saves the source's cursor on the target, and the next run for the app follows the changes from it and writes no row of the export. An app the target already holds with no saved cursor, copied before this release, is refused, and so is one whose last run read the source longer ago than this deployment's `ROUTER_DATA_MOVE_RETENTION` (taken to be the source's own); pass `--as` on a repeat run so it opens no export; `--full` copies everything again, as before (AI-2864).
+
+### A Slack mention is answered when a reply that waited for it can no longer be read
+
+A Slack reply that is not to the bot, in a thread nobody linked yet, waits for the mention that starts the thread. When the connection was pinned meanwhile to a revision that does not read the reply, the mention failed with a 500 on every retry and was never answered. Now that reply is dropped and logged at warn, and the mention is answered. Any other failure to take a waiting reply still fails the mention, and Slack's retry takes both (AI-2743).
+
+### A repeat copy keeps a phone number attached where it moved to
+
+`router replicate --once`, `--follow` and `POST /v1/data/import` wrote the source's row of a phone number over the destination's, so a number attached on the destination lost its trunk, route, call and agent and stopped ringing it. A number on a trunk on the destination now keeps them, while its other columns still take the source's edits; a number not on a trunk there takes the source's row as before (AI-2844).
+
+### The agent passes on only an ID a source gave it as that kind
+
+A link a tool returns now gives an ID only of a kind that its line, the keys above it or the tool's name names. A person's profile link from a user lookup is no channel ID, and a message link's timestamp is no case ID; a channel search's permalink still gives the channel. A link or line that a tool reads back and that holds a line the agent wrote earlier, in a reply or in a message it posted, is no source for the IDs in it. An ID before its kind word counts only where that word ends its phrase. So `Ana Lind (U…) - channel owner` and `Owner U… channel admin` give no channel, while `#help (C…) - public_channel` and `C… (channel)` still do (AI-2852, AI-2853, AI-2854).
+
+### A link's address and a role's word name no ID's kind
+
+A link's own host and path no longer name what kind of thing its ID is: `see https://channels.example.com/u/U…` gives no channel. The words beside the link, the keys above it and the tool's name still do, so `Channel link: <link>` and a channel search's permalink still give the channel. A word between the kind and the ID is no longer read as the thing's name where a colon ends a label at it or the thing was named before its kind. So `Channel owner: U…` and `#help channel admin U…` give no channel, while `Channel #help: C…` and `channel help (C…)` still do. A link a tool writes twice, as `<link|host/path>`, names no kind by either copy (AI-2881, AI-2884, #1788).
+
+### What the agent wrote is no source when a tool reads it back
+
+A tool that reads back a note or a message the agent sent no longer gives a number in it, and one that reads back what the agent said or sent no longer gives a stand-in name in it. A near miss of the caller's number, a number to put the caller through to, or a name such as `John Doe` that the agent made up and a tool then read back is refused as before the read-back. A number the agent only said on the call, as when it reads one back to confirm it, still counts when a tool lists it. Only the agent's own lines are cut from a result, so a number or name the tool wrote beside them, on another line, or before the agent wrote it, still counts, a number in any of its written forms. A read-back message also gives no channel through a field of its own, as `"channel_id"` in its blocks, when its text is the agent's line with that ID; a field of any other result still does (AI-2886, AI-2883, #1795).
+
+### A number the agent sent is read as the number guards read one
+
+The guards that refuse a number nobody gave and a transfer to a number no tool gave read each line the agent sent as they read a number. A line holds the number only where it is written as one: `Booked at 10:56, 30 min` holds no 5630, so a tool line with a 5630 of its own where that line stands still gives it. A line read back with the number in another of its forms, `Sales: +1 5550100199` for the agent's `Sales: 5550100199`, is still the agent's and gives no number to put the caller through to. A result that writes back only the arguments of the call it answers, `{"last4":"5630"}` to `last4=5630`, gives no number either; a record or a listing with data of the tool's own beside it still does (AI-2925, AI-2926, AI-2927, #1831).
+
+### A short video is sampled into the frames it has
+
+`responses.create` with a video of fewer frames than `max_frames` (8 by default) failed with `video: reading the frame at 812.5ms` when the clip ended inside its last frame: a one second clip at 4 frames a second could not be sampled at its default. The router now picks the frame showing at each sampling moment, which it reads from the clip, and shows a frame once however many moments fall in it, so that clip gives its four frames. A clip with more frames than `max_frames` gives `max_frames` frames as before, each now the frame on screen at its time rather than the next to begin (AI-2658, #1767).
+
+### `git lfs pull` works in a sandbox behind the egress proxy
+
+Under `code_sandbox.broker: proxy`, Git LFS's batch request was refused as a write, so `git lfs pull` failed. GitHub's connector (revision 11) now lets a batch that asks to download through, and fetches the objects from the host GitHub names with no token; an upload is still refused (#1768).
+
+### A video question that would be refused is refused before its videos are fetched
+
+A response with videos that its conversation would refuse to begin, because an answer is still running, the conversation is not open or the text is past 1 MiB, was refused only after up to two videos of 50 MB each were fetched and sampled. It is now refused first, with the same error (AI-2657, #1764).
+
+### A linked user never reads what the number said before the link, whenever the cards were turned on
+
+A number linked to a user (`PUT /v1/agents/users/{user_id}`) under an agent with `episode_cards` off kept its earlier SMS and call episodes on the user's omni-channel. Once the agent turned the cards on, the user's app chat, their own device and the number's later calls and SMS read those cards. Now no session reads an episode that a linked number started before the link, and sending the same number again no longer moves the time of the link (#1772).
+
+### No app chat episode card in an app that checks no tokens
+
+With auth checks off, a Stream app lets any client send as any user, so an app chat message there no longer opens an episode or writes a card in that user's omni-channel. The same applies when Stream cannot say whether the app checks tokens. The message is answered as before (AI-2763, #1769).
+
+### An episode left open when its config turns the cards off still closes
+
+On a router with connectors off, the idle sweeper started only if a config had `episode_cards` on when the router started. A chat episode that was opened while the cards were on stayed in progress forever if its config turned them off and the router then restarted. It also got no summary. The sweeper now also starts for an episode still to close or summarize. Turning the cards off still opens no new call or app chat episode. A card is now also updated as its own author: a card written before its number was unlinked stayed in progress and lost its summary, because the update named a user Stream did not have (AI-2771, #1766).
+
+### An outbound call's episode card goes to who it rang, and a late caller still gets one
+
+Under an agent config with `episode_cards` on, a call placed through `POST /v1/phone/calls` filed its card under the line's own number, so every person the line rang shared one omni-channel. Its card now goes to the omni-channel of the number it rang. An inbound caller who joins the call after the agent now gets their card too; before, they got none. (#1770)
+
+### A custom connector deleted while a session opens no longer fails it with a 500
+
+When a custom connector was force-deleted while a session that binds it was opening, the session failed with a 500. Now an optional binding is left out, or opens with no sandbox access, and a required one is refused with `connection_unavailable`. A delete a moment earlier already got these answers. (#1765)
+
+### A router with shards refuses to be a move's source
+
+A router whose calls, sessions, responses, requests and stats are kept in shard databases recorded no changes to them after an export, so `router replicate` from it lost those writes and said nothing. `GET /v1/data/export` and `GET /v1/data/changes` on such a router now answer 400 `not_configured` and say that moving off a router with shards is not supported yet. An unsharded router moves as before, and a router with shards can still be a move's target (AI-2813).
+
+### An export no longer misses a write that was in progress when it started
+
+A write that was in progress when `GET /v1/data/export` started recording an app's changes could be in neither the export nor the changes after it, so `router replicate` never carried it. An export now waits for such writes to commit before it reads, and answers 503 if one is still open after 30 seconds (AI-2792).
+
+### The usage service filters its usage list by `api_key_id`
+
+The usage service's `listUsage` (`GET /v1/manage/accounts/{organization_id}/usage`) and its customer view `readAccountUsage` silently ignored `api_key_id`, and answered every key's events. Stream's staff gateway refuses `api_key` in the query, so staff could not filter by key at all. Both operations now take the key as `api_key_id`. `api_key` is still read for one release; given with `api_key_id`, it must name the same key, or the call is a 400 (AI-2797).
+
+### `router replicate` no longer misses a change that commits late
+
+`GET /v1/data/changes` and an export could hand out a cursor past a change whose transaction was still running, when a transaction that started earlier had committed a higher number, and that change never reached the new deployment. Pruning could also drop a newer change and keep an older one, so a cursor between them carried on past the gap without a 410. Now the cursor stops below every change still in flight, an open transaction that records no change no longer holds the feed back, and pruning drops only the oldest numbers (AI-2741).
+
+### A tool call with an ID pasted in a link, or listed by a tool, is no longer refused
+
+The agent refused a tool call whose ID the person had only pasted inside a link, such as a channel in a thread's link, unless they also named what the ID was. An ID that is a whole segment of a link's path, or a whole value of its query, in the person's own message now counts as theirs. An ID a tool wrote out in a text field of its JSON answer, as Slack's channel search lists `#help (C…) - public_channel` under `results`, now counts as returned when its line names what the ID is (`channel` for a `channel_id`) and the call that got the answer was not sent that ID. An ID the person or a tool never gave is still refused (AI-2791).
+
+### The ID guard takes a tool's links, and a kind's word only as a word of its own
+
+A link in a tool's result now gives its parts as an ID, as a link the person writes does, so a channel record that gives the channel only in its permalink lets the agent read that channel; a part the call itself was sent is still its own echo. The word for a kind counts only as a word of its own: `#ops-channel by U…` and `Ops-channel: Ana Lind (U…)` no longer give `U…` as a channel, and a channel's listed type `public_channel` is no channel ID. `public_channel` and `channel_id` still name a channel, and so does the plural `Channels:`. A field's label is named by its last word, so `Channel owner: Ana Lind (U…)` names an owner. An ID that a line labels as another thing, such as `From: Ana Lind (ID: U…)`, is no longer given by `Channel: Ana Lind (ID: U…)`; `Channel: Group DM (ID: C…)` still is. An ID written before a kind word counts only when nothing stands between them, so `U0… joined channel #help` gives no channel, while a list's `#name (C…)` does. The caller's own kind word is matched as a whole word, split at every mark: "the showcase number is 6631" gives no case, `case#6631` and `ticket-4521` do (AI-2820, AI-2821, AI-2822, AI-2823).
+
+### An ID guard reads links as written and takes a listed ID only beside its kind
+
+The agent's ID guard read a link the person wrote in a shared channel only up to its first `&`, because the channel passes their text on in JSON, which writes `&` as `\u0026`; a link escaped for HTML (`&amp;`) lost its query the same way. Both are now read as the person wrote them. A link part counts as an ID of any kind only when it mixes letters and digits: a page number, a year or a word in a link no longer passes as one, and a number still counts where the person's text names its kind (`…/cases/48213`). A line of a tool's text gives an ID only beside the word for its kind, with at most the thing's name and the word `ID` between: `Channel: #help (C…)` still gives the channel, and `Channel #x by U…` no longer gives `U…` as one. A query the model wrote with JSON escapes (`\u0043…`) and the tool wrote back is still its own echo, not an ID the tool returned (AI-2798, AI-2799, AI-2800, AI-2801).
+
+### Gmail, Google Calendar, Linear and Slack tools that only read sit beside a sensitive connector
+
+A config that binds a sensitive connector such as Nessy was refused when it also granted a tool of Gmail, Google Calendar, Linear or Slack, even one that only reads, because their manifests listed no `read_only_tools`. Gmail revision 4, Google Calendar revision 3, Linear revision 3 and Slack revision 7 now list the tools their vendor pages or tool descriptions say only read: Gmail's thread, message, draft and label reads, Calendar's event and calendar reads and `suggest_time`, Linear's get and list tools, and Slack's search, read and list tools. A binding granting only those by name is accepted. Any other tool, such as Gmail's `create_draft`, Linear's `extract_images` and Slack's `slack_send_message`, still needs the binding's `require_approval` (AI-2756).
+
+### Tools of nine more connectors that only read sit beside a sensitive connector
+
+A config that binds a sensitive connector such as Nessy was refused when it also granted a tool of Cal.com, Calendly, GitHub, Gong, HubSpot, Linear (own OAuth app), Metabase, Notion or Sentry, even one that only reads, because their manifests listed no `read_only_tools`. Cal.com revision 3, Calendly revision 3, GitHub revision 10, Gong revision 3, HubSpot revision 2, Linear (own OAuth app) revision 3, Metabase revision 3, Notion revision 2 and Sentry revision 2 now list the tools their vendor pages or server source say only read, such as Cal.com's `get_bookings`, GitHub's `get_file_contents`, Notion's `notion-fetch` and Sentry's `get_issue_details`. A binding granting only those by name is accepted. Any other tool still needs the binding's `require_approval`: one that writes, and one that can send data out of the account, such as Notion's `notion-connector-search`, Sentry's natural-language `search_issues`, HubSpot's `query_crm_data` and Calendly's `shares-create_share`. Instacart, Shopify and Salesforce list none: Instacart's and Shopify's tools all send data out, and Salesforce's tool reference could not be read (AI-2777).
+
+### A number whose Stream SIP rule or trunk is gone lines again
+
+A number whose stored Stream SIP routing rule had been deleted at Stream failed every call it placed and every `POST /v1/phone/numbers/{e164}/attach` with "can't be found". The router now makes the rule again on the number's trunk and keeps its id. A number whose trunk is gone joins a shared trunk, and a shared trunk Stream lost is replaced for the next number that joins it. Each of that trunk's other numbers moves to a working trunk on its next outbound call; calls to it reach an agent again only once it is detached and attached again. When Stream still routes the number through a rule or trunk this router did not store, the router makes no second one and fails with an error that says so (AI-2699).
+
+### A new phone link starts the number clean
+
+`PUT /v1/agents/users/{user_id}` linked a user to a number together with everything the number had said before: the user's app chat then read the SMS and call cards of the number's last holder, or of anyone who texted from it before the link. Now, under an agent config with `episode_cards` on, the number's earlier episodes stay on an omni-channel of their own, and only what the number says after the link reaches the user. The user's own texts from before the link are not joined either. The same link sent again changes nothing (AI-2716, #1728).
+
+### A linked user's chat reads none of the number's earlier texts through its next SMS
+
+After `PUT /v1/agents/users/{user_id}` linked a user to a number, the card of the number's next SMS episode joined the user. While that episode was in progress, its card still held the last 20 texts of the number's SMS thread, including those sent before the link. So the user's app chat could read them until the episode was summarized. A card in progress now holds only the lines of its own episode, as a call's card and a summary already did. An app chat card in progress no longer repeats the earlier runs of its channel either (AI-2716, #1741).
+
+### An app's first `router replicate --once` is not refused as expired
+
+`GET /v1/data/changes` answered 410 to the cursor of an app's own export when other apps that are moving had changes after it, so the first `--once` stopped with "the source no longer keeps the changes since that cursor" and only a rerun went on. Change numbers are shared by every app, so those numbers are not a sign of pruning. Now a cursor gets 410 only when it is older than the oldest change still kept and the app has a change kept (AI-2683).
+
+### A repeat copy keeps a connection authorized again where it moved to
+
+`router replicate --once` and `POST /v1/data/import` reset each connector connection to `needs_reauthorization`, even one the owner had authorized again on the destination, whose credentials then no longer opened. A connection that is `connected` on the destination now keeps its state and credentials: a rename, a disconnect or a soft delete at the source no longer reaches it, while a hard delete still does. A connection not authorized there still arrives needing it, with the source's edits (AI-2656).
+
+### A WhatsApp photo reaches the agent
+
+A WhatsApp photo now reaches the agent itself, with or without a caption, and the agent answers from the photo and its caption. Before, the agent read the caption alone, and a photo without one got no reply. The router downloads the photo with the business number's access token and stores a copy on the thread channel in Stream Chat. It sends that token to Graph and `lookaside.fbsbx.com` only. If the photo cannot be downloaded or stored, its caption is still answered, and a photo sent alone gets no reply. The router downloads no video or document; their captions are answered as before. A connection takes `whatsapp` revision 3 at its next credential save. A channel manifest can name a file by its id (`media.id`), give an `also` kind its own `media`, and say where such a file is with `messages.media_lookup` (AI-2740).
+
+### A WhatsApp photo tried again keeps its first copy
+
+When the router stored a WhatsApp photo in Stream Chat and then failed to write or answer the message, every retry downloaded and stored the photo again, which left extra copies on the thread channel. A photo sent alone could also get no reply: when the retry could no longer download it, the router took the message as one with nothing to answer. Now the router keeps where it stored the photo, and a retry answers with that copy without downloading it again (AI-2757).
+
+### A WhatsApp photo's, video's and document's caption is answered
+
+A WhatsApp photo, video or document sent with a caption reaches the agent as its caption, and the agent answers it; before, the whole message was dropped. A caption that is STOP, START or HELP is the keyword, as the same text is. A photo, video or document without a caption, and a voice note, sticker, reaction or location, still get no reply, and the file itself does not reach the agent yet. A connection takes `whatsapp` revision 2 at its next credential save; until then its captioned files are dropped, as before. A channel manifest reads another kind of message by its own text with `messages.also` (AI-2133).
+
+### A photo sent to a worker's running session reaches its model
+
+A message written in an agent channel whose worker's session is still open is answered by that session. Its photos were dropped: a photo sent alone became a turn with nothing in it, which Gemini refuses, and the person got an empty reply. The model now gets the photos with the text and with what a voice recording says. A model that cannot see is told of the photo, as a running session answering in writing is, and a photo that cannot be fetched is said so. A follow-up with no text and no photo, such as a message of blanks, is not answered (AI-2679).
+
+### A message reaches the worker that takes messages on another router
+
+A router that held only a customer's worker hosting tools kept an arriving message and failed it, with "nobody could answer an arriving message", while the customer's worker taking messages waited on another router. The same held for a call on a router whose worker took only messages. Now a router keeps a message or a call only when a worker connected to it takes that kind of work. Otherwise it hands the work to a router where a worker waits, as it did when no worker was connected to it. A router with such a worker still answers first. With no worker anywhere that takes the work, the error is the same as before (#1725, AI-2719).
+
 ### Pausing a campaign stops its calls on every router
 
 `POST /v1/agents/campaigns/{id}/pause` stopped the campaign only on the router that answered it. A router behind the same load balancer that was running the campaign went on ringing people, and finished the campaign over the pause when nobody was left. Now no router takes another contact from a campaign that is not running. A router whose loop outlived a pause made elsewhere exits that loop at its next claim and writes no state. A start on that router before then runs the campaign again (AI-2681).
@@ -359,6 +710,7 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### A typed message in a voice session is offered tools once the caller has spoken
 
 On a voice session where a speculative reply answered every spoken turn, a typed message was still treated as sent before anyone spoke, and its reply was offered no tools. It is now offered them, as after any other spoken turn. A speculative reply thrown away can no longer clear what was recorded for the answer asked for under the same turn id (AI-2543, AI-2541).
+
 ### A session outside region us cannot ask for memory
 
 The memory provider (mem0, at `api.mem0.ai`) keeps everything in the US, and an agent's work is done in its own region only. A session in another region, such as an `eu` agent's, that asks for memory (`memory.user_id`) is now refused with a 400 naming the region, rather than sending what the user said to the US (AI-2187).
@@ -466,6 +818,7 @@ Moving a running session onto other models or another voice (`PATCH /v1/agents/s
 ### A bought or attached number reaches its agent
 
 Buying a number (`POST /v1/phone/numbers`) or attaching one now points the Stream app's call hook at the router, when `ROUTER_PUBLIC_URL` is set and the app has none. Before, nothing did, so a call to an attached number connected to silence, and an outbound call's leg was never billed and its trunk never deleted. A hook that cannot be pointed fails the buy before the vendor is paid, and a first attach before anything is made, with a 503. A number already attached keeps answering (AI-2486).
+
 ### A JavaScript question with photos is kept in its conversation
 
 `responses.create` in the JS SDK left out the request id whenever a question had images, so a photo asked about in a personal conversation kept in Stream Chat, which needs one, was refused. Every question now goes with one, as in Swift and Kotlin; only videos are refused beside it.
@@ -480,6 +833,7 @@ An existing guest now gets a token only for one of these:
 - the new `refresh_secret` the guest was last handed.
 
 Every guest response carries a `refresh_secret`. It works once, and each answer carries the next one. Any other caller that names an id is given a new guest, as if it had named none, rather than an error. That way a device holding a guest from before this change carries on as a new guest instead of being stuck, and the answer no longer tells a stranger which ids are guests. A guest coming back keeps their name and custom data; only the backend can change them. The secret's hash is kept on the user row (migration `20261207100000_users_refresh_secret`) and is never exported or imported with a customer's data (AI-2487).
+
 ### A turn that offers tools is never answered by a model that ignores them
 
 `llm-fast` and `en-low-latency` no longer fail over or hedge to `moondream/moondream3-preview`, which takes the tools it is offered and never calls one. When Gemini 3.8 Flash was slow to start a reply, Moondream often answered the hedge first, and the agent on a call never transferred, ended the call or pressed a digit. A model in `router.yaml` declares `ignores_tools: true`, and a shortcut with `require_tools: true` leaves it out. Whatever the target, a response offering tools is failed over and hedged only to models that call them, and a session whose own model ignores tools asks the others first, keeping its own only when none of them answers. Moondream is still reached by naming it and through `vlm` (AI-2496).
@@ -863,6 +1217,10 @@ A `connectors:` entry in agent.yaml may say `sandbox: true` and `require_approva
 ### A connector tool whose schema changed no longer breaks its whole binding
 
 When the provider lists a granted tool with another schema than the one approved, a session's binding now opens with its other tools (while it still offers one tool), also when the binding is required (reported in `connector_unavailable` as `tool_unavailable`) or has sandbox access (the sandbox keeps it), and when the person connects it in the conversation: that login no longer waits until its consent expires. A call of the left-out tool answers `tool_unavailable` with what gives it back: for a tool granted by name or by pattern, an admin's approval of the new schema (`POST /v1/agents/connections/{id}/tools/approve`); for a schema digest the agent config names, saving the config at the new schema. A login's `list_tools` names it under `left_out`. A granted tool the provider no longer lists is still unknown to the session, and still fails a required binding (AI-1932).
+
+### An app chat card's summary keeps the person's first message, and a group channel writes no card
+
+A chat episode now starts when Stream made the message that opened it. Before, it started when the router opened it, a moment later, so the summary left out that message: a one-message chat was summed up as "the user wrote nothing". A message in a channel with a member other than the person and the agent now opens no episode and writes no card, the rule a session already reads cards by. Without members in what Stream sends, the message opens none. A config with `episode_cards` off writes and reads nothing new (AI-2632).
 
 ## Breaking Changes
 

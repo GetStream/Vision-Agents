@@ -55,7 +55,7 @@ class WindowSpend:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        interval = LimitInterval(d.pop("interval"))
+        interval = LimitInterval._decode(d.pop("interval"))
 
         spent_micros = d.pop("spent_micros")
 

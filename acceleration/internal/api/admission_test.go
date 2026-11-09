@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -22,6 +23,8 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
@@ -51,6 +54,8 @@ func TestAdmissionSuite(t *testing.T) {
 
 func (s *AdmissionSuite) SetupSuite() {
 	s.limited = true
+	// The campaign dialer a test runs claims every running campaign in its database.
+	s.database = "admission"
 	s.sharing, s.holds = newRedisProxy(s.T())
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	s.Require().NoError(err)
@@ -59,6 +64,10 @@ func (s *AdmissionSuite) SetupSuite() {
 	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 	s.line = telnyxRinger{suite: &s.RouterSuite, private: private}
+	// A run cut short leaves its campaigns ringing, and this run's dialer would ring them.
+	_, err = s.store.DB().ExecContext(context.Background(), "UPDATE campaigns SET state = ? WHERE state IN (?, ?, ?)",
+		store.Stopped, store.Scheduled, store.Running, store.Paused)
+	s.Require().NoError(err)
 }
 
 // SetupTest gives every test an app, and so an organization, of its own: what one test grants,
@@ -104,6 +113,24 @@ func (s *AdmissionSuite) TestAnLLMRequestWithNoCreditIsAPaymentRequired() {
 	s.Equal(codeInsufficientCredits, failure.Code)
 	s.Contains(failure.Message, "add credit")
 	s.NotContains(failure.Message, "policy:", "the policy's words, without the package's")
+}
+
+func (s *AdmissionSuite) TestAKnowledgeFileWithNoCreditIsAPaymentRequired() {
+	body, contentType := formWith("manual.pdf", extractFixture(s.T(), "manual.pdf"))
+	var failure ErrorDetail
+	s.Require().Eventually(func() bool {
+		status, payload := s.postKnowledgeFile(s.serverClient, body, contentType, url.Values{"namespace": {"manuals"}})
+		if status != http.StatusPaymentRequired {
+			return false
+		}
+		var answered ErrorResponse
+		s.Require().NoError(json.Unmarshal(payload, &answered), string(payload))
+		failure = answered.Error
+		return !unreadLimits(failure)
+	}, 10*time.Second, 50*time.Millisecond, "the upload is refused for money")
+
+	s.Equal(codeInsufficientCredits, failure.Code, "told before the file is kept, as a text ingest is")
+	s.NotContains(failure.Message, "policy:")
 }
 
 func (s *AdmissionSuite) TestASearchWithNoCreditIsAPaymentRequired() {
@@ -556,17 +583,18 @@ func (s *AdmissionSuite) TestACallArrivingOverStreamForAnOrganizationThatMayNotP
 	}
 }
 
-func (s *AdmissionSuite) TestACampaignCannotStartWhenItsOrganizationMayNotPay() {
+func (s *AdmissionSuite) TestACampaignCannotLaunchWhenItsOrganizationMayNotPay() {
 	created := s.campaign(1)
 	s.refused(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"})
 
-	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil)
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/launch",
+		map[string]any{"consent": true})
 
 	s.Equal(http.StatusPaymentRequired, status)
 	var answered ErrorResponse
 	s.Require().NoError(json.Unmarshal(payload, &answered))
 	s.Equal(codeInsufficientCredits, answered.Error.Code)
-	s.Equal(ContactStatePending, s.campaignContacts(created.Id)[0].State, "nobody was rung")
+	s.Equal(CampaignStateDraft, s.campaignState(created.Id).State, "nobody was rung")
 }
 
 func (s *AdmissionSuite) TestACampaignRefusedMidwayPausesAndKeepsItsContacts() {
@@ -579,9 +607,9 @@ func (s *AdmissionSuite) TestACampaignRefusedMidwayPausesAndKeepsItsContacts() {
 	}
 }
 
-// pausedMidway starts a campaign of concurrency whose one contact is held off until the
-// organization is refused, and checks the refused call pauses it for good, with the contact
-// given back to be rung.
+// pausedMidway launches a campaign of concurrency with credit, refuses the organization, and
+// checks the next call the dialer places pauses it for good, with the contact given back to be
+// rung.
 func (s *AdmissionSuite) pausedMidway(refused string, concurrency int) {
 	s.SetupTest()
 	s.usage.Credit(s.T(), s.organization(), 10_000_000)
@@ -589,16 +617,12 @@ func (s *AdmissionSuite) pausedMidway(refused string, concurrency int) {
 		return s.serverClient.do(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"}, nil) == http.StatusOK
 	}, 10*time.Second, 50*time.Millisecond, "the credit is read")
 	created := s.campaign(concurrency)
-	// Locking the contact's row holds the runner off it, as SKIP LOCKED claims, so the
-	// campaign starts with credit and its call comes once it is refused.
-	ctx := context.Background()
-	locked, err := s.store.DB().BeginTx(ctx, nil)
-	s.Require().NoError(err)
-	defer locked.Rollback() //nolint:errcheck // nothing was written
-	_, err = locked.ExecContext(ctx, "SELECT id FROM campaign_contacts WHERE campaign_id = ? FOR UPDATE", created.Id)
-	s.Require().NoError(err)
-	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, nil))
+	// Stopped whatever happens, so no later test's dialer rings it.
+	defer s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/stop", nil, nil)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/launch",
+		map[string]any{"consent": true}, nil))
 
+	ctx := context.Background()
 	switch refused {
 	case codeAccountSuspended:
 		s.usage.Suspend(s.T(), s.organization(), "fraud review")
@@ -611,19 +635,23 @@ func (s *AdmissionSuite) pausedMidway(refused string, concurrency int) {
 			CustomerID: s.customerID(), Reason: "fraud", SuspendedBy: "ops@getstream.io",
 		}))
 	}
-	s.Require().NoError(locked.Rollback())
+	dialer := s.dialer()
 
-	read := func() (string, string) {
-		var campaign Campaign
-		s.serverClient.do(http.MethodGet, "/v1/agents/campaigns/"+created.Id, nil, &campaign)
-		return string(campaign.State), value(campaign.PausedReason)
+	read := func() (CampaignState, string) {
+		campaign := s.campaignState(created.Id)
+		return campaign.State, value(campaign.PausedReason)
 	}
-	s.Require().Eventually(func() bool { state, _ := read(); return state == string(CampaignStatePaused) },
+	s.Require().Eventually(func() bool { state, _ := read(); return state == CampaignStatePaused },
 		10*time.Second, 50*time.Millisecond, "paused at the refused call")
-	s.Never(func() bool { state, reason := read(); return state != string(CampaignStatePaused) || reason != refused },
+	s.Never(func() bool { state, reason := read(); return state != CampaignStatePaused || reason != refused },
 		500*time.Millisecond, 20*time.Millisecond, "and it stays paused, with why, whatever its other slots were doing")
-	s.Equal(ContactStatePending, s.campaignContacts(created.Id)[0].State,
-		"the contact nobody rang is given back, to be rung when the campaign is started again")
+	dialer.Close()
+	contacts, err := s.store.QueryContacts(ctx, created.Id, store.ContactFilter{})
+	s.Require().NoError(err)
+	s.Require().Len(contacts, 1)
+	s.Equal(store.Enrolled, contacts[0].Stage,
+		"the contact nobody rang is given back, to be rung when the campaign is resumed")
+	s.Zero(contacts[0].Attempt, "and the refused call used none of its attempts")
 
 	switch refused {
 	case codeAccountSuspended:
@@ -636,28 +664,71 @@ func (s *AdmissionSuite) pausedMidway(refused string, concurrency int) {
 	s.Require().Eventually(func() bool {
 		return s.serverClient.do(http.MethodPost, "/v1/search", SearchRequest{Query: "anything"}, nil) == http.StatusOK
 	}, 10*time.Second, 50*time.Millisecond, "paid again")
-	var started Campaign
-	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, &started))
-	s.Nil(started.PausedReason, "starting it again clears why it paused")
+	var resumed Campaign
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/resume", nil, &resumed))
+	s.Nil(resumed.PausedReason, "resuming it clears why it paused")
 }
 
-// campaign is a campaign of concurrency over a stored config with one person to ring.
+// dialer runs the campaign dialer every router runs, placing its calls through the suite's own
+// phone service and sessions, until the test closes it. It reaches every running campaign in
+// the suite's database, which is why the suite has one of its own.
+func (s *AdmissionSuite) dialer() *campaign.Runner {
+	runner, err := campaign.New(campaign.Options{
+		Store:       s.store,
+		Dialer:      campaign.NewPhoneDialer(s.router.phone, s.manager, s.store, slog.New(slog.DiscardHandler)),
+		Transcripts: s.router,
+		Classifier:  noOutcome{},
+		Tick:        50 * time.Millisecond,
+		Logger:      slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(runner.Close)
+	s.Require().NoError(runner.Start(context.Background()))
+	return runner
+}
+
+// noOutcome stands in for classifying an answered call, which no call here is.
+type noOutcome struct{}
+
+func (noOutcome) Classify(context.Context, store.Campaign, string, campaign.Step, []chatlog.Spoken) (string, error) {
+	return "", nil
+}
+
+// campaign is a campaign of concurrency, ready to launch, with one person to ring at any hour
+// from one of the app's numbers.
 func (s *AdmissionSuite) campaign(concurrency int) Campaign {
+	from := s.utils.number()
+	s.Require().NoError(s.store.RecordNumber(context.Background(), &store.PhoneNumber{
+		E164: from, Vendor: "twilio", Country: "US", CustomerID: s.customerID(), PurchasedAt: time.Now().UTC(),
+	}))
+	always := []CallingWindow{{Start: "00:00", End: "24:00"}}
+	utc := "UTC"
 	var created Campaign
-	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns", map[string]any{
-		"name": "campaign-" + s.utils.uuid(), "config_id": s.data.createAgentConfig().Id, "from_number": s.utils.number(),
-		"concurrency": concurrency,
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns", CampaignRequest{
+		Name: pointerTo("campaign-" + s.utils.uuid()), ConfigId: pointerTo(s.data.createAgentConfig().Id),
+		FromNumber: &from, Concurrency: &concurrency,
+		CallingHours: &CallingHours{
+			Windows: map[string][]CallingWindow{
+				"monday": always, "tuesday": always, "wednesday": always, "thursday": always,
+				"friday": always, "saturday": always, "sunday": always,
+			},
+			TimeZone:      CampaignTimeZone{Mode: "fixed", Fallback: utc, Fixed: &utc},
+			ExcludedDates: []string{},
+		},
 	}, &created))
+	sequence := created.Sequence
+	sequence.Steps[0].Goal = "Confirm the visit"
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/campaigns/"+created.Id,
+		CampaignRequest{Sequence: &sequence}, nil))
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/contacts",
 		map[string]any{"contacts": []map[string]any{{"to_number": s.utils.number()}}}, nil))
 	return created
 }
 
-func (s *AdmissionSuite) campaignContacts(campaignID string) []Contact {
-	var listed []Contact
-	s.Require().Equal(http.StatusOK,
-		s.serverClient.do(http.MethodGet, "/v1/agents/campaigns/"+campaignID+"/contacts", nil, &listed))
-	return listed
+func (s *AdmissionSuite) campaignState(campaignID string) Campaign {
+	var campaign Campaign
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/campaigns/"+campaignID, nil, &campaign))
+	return campaign
 }
 
 func (s *AdmissionSuite) TestInlineSpeechWithNoCreditIsAPaymentRequired() {

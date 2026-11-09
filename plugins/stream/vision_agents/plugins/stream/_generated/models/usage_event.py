@@ -26,14 +26,14 @@ class UsageEvent:
     cost. What Stream pays for it is Stream's, and is not here.
 
         Attributes:
-            api_key (str): The public API key the work was started with, or the origin of work no key started, such as
-                hook:chat, phone:inbound or job:<name>.
             app_id (str): The app the work was for.
             billable (bool): Whether cost_micros counts against the organization's credit and limits.
             cost_micros (int): What the organization is charged for the work, in millionths of a dollar.
             meter (str): The kind of work: a modality such as llm, stt, tts, sts, search, image, detection, decision_model,
                 memory, knowledge or phone, or runtime or sandbox. More may be added.
             occurred_at (datetime.datetime): When the work happened.
+            origin (str): Who started the work: the public API key it was started with, or the origin of work no key
+                started, such as hook:chat, phone:inbound or job:<name>.
             quantities (UsageEventQuantities): How much work was done, by what it is priced by: input_tokens, output_tokens,
                 audio_ms, seconds, bytes and the like.
             success (bool): Whether the work succeeded.
@@ -58,12 +58,12 @@ class UsageEvent:
                 within the app. Absent when there was none, or the caller was anonymous.
     """
 
-    api_key: str
     app_id: str
     billable: bool
     cost_micros: int
     meter: str
     occurred_at: datetime.datetime
+    origin: str
     quantities: UsageEventQuantities
     success: bool
     usage_categories: list[str]
@@ -83,8 +83,6 @@ class UsageEvent:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        api_key = self.api_key
-
         app_id = self.app_id
 
         billable = self.billable
@@ -94,6 +92,8 @@ class UsageEvent:
         meter = self.meter
 
         occurred_at = self.occurred_at.isoformat()
+
+        origin = self.origin
 
         quantities = self.quantities.to_dict()
 
@@ -135,12 +135,12 @@ class UsageEvent:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "api_key": api_key,
                 "app_id": app_id,
                 "billable": billable,
                 "cost_micros": cost_micros,
                 "meter": meter,
                 "occurred_at": occurred_at,
+                "origin": origin,
                 "quantities": quantities,
                 "success": success,
                 "usage_categories": usage_categories,
@@ -181,8 +181,6 @@ class UsageEvent:
         from ..models.usage_event_tags import UsageEventTags
 
         d = dict(src_dict)
-        api_key = d.pop("api_key")
-
         app_id = d.pop("app_id")
 
         billable = d.pop("billable")
@@ -192,6 +190,8 @@ class UsageEvent:
         meter = d.pop("meter")
 
         occurred_at = datetime.datetime.fromisoformat(d.pop("occurred_at"))
+
+        origin = d.pop("origin")
 
         quantities = UsageEventQuantities.from_dict(d.pop("quantities"))
 
@@ -236,12 +236,12 @@ class UsageEvent:
         user_id = d.pop("user_id", UNSET)
 
         usage_event = cls(
-            api_key=api_key,
             app_id=app_id,
             billable=billable,
             cost_micros=cost_micros,
             meter=meter,
             occurred_at=occurred_at,
+            origin=origin,
             quantities=quantities,
             success=success,
             usage_categories=usage_categories,

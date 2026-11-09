@@ -8,6 +8,7 @@ use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Folder;
 use GetStream\VisionAgents\Generated\AgentDispatch;
 use GetStream\VisionAgents\Generated\DispatchSetting;
+use GetStream\VisionAgents\Generated\FloorControl;
 use GetStream\VisionAgents\Generated\Greeting;
 use GetStream\VisionAgents\Generated\GreetingMode;
 use GetStream\VisionAgents\Generated\SandboxOptions;
@@ -35,6 +36,9 @@ final readonly class Declaration
      *     the stored bindings; empty when it lists none, which removes them
      * @param ?SandboxOptions $sandboxOptions how the sandbox is built and what code in it may
      *     reach; outbound network is blocked unless network or an allow list opens it
+     * @param ?FloorControl $floorControl the model that controls the agent's floor, and how long
+     *     a caller may wait once they stop (max_wait_ms), as written: null when the declaration
+     *     says nothing, which leaves the stored choice; empty for the default flow controller again
      */
     public function __construct(
         public string $name = '',
@@ -56,6 +60,7 @@ final readonly class Declaration
         public ?AgentDispatch $dispatch = null,
         public ?array $connectors = null,
         public ?SandboxOptions $sandboxOptions = null,
+        public ?FloorControl $floorControl = null,
     ) {
     }
 
@@ -65,7 +70,8 @@ final readonly class Declaration
      *
      * @param mixed $mapped the same file parsed with Yaml::PARSE_OBJECT_FOR_MAP, which
      *     `connectors` is read from: there `{}` is an object and not an empty list, so it is
-     *     refused rather than sent as [] and wiping the stored bindings
+     *     refused rather than sent as [] and wiping the stored bindings. `floor_control` is read
+     *     from it too, where `{}` is the default flow controller and `[]` is not a mapping
      */
     public static function fromYaml(mixed $parsed, mixed $mapped): self
     {
@@ -78,6 +84,7 @@ final readonly class Declaration
 
         $values = [];
         $connectors = null;
+        $floorControl = null;
         foreach ($parsed as $key => $value) {
             $key = (string) $key;
             if (in_array($key, self::STRINGS, true)) {
@@ -100,6 +107,8 @@ final readonly class Declaration
                 self::refuseReplaced($mapped instanceof \stdClass ? $mapped->plugins : $value);
             } elseif ($key === 'connectors') {
                 $connectors = self::connectors($mapped instanceof \stdClass ? $mapped->connectors : $value);
+            } elseif ($key === 'floor_control') {
+                $floorControl = self::floorControl($mapped instanceof \stdClass ? $mapped->floor_control : $value);
             } else {
                 throw new ConfigurationException("\"{$key}\" is not something agent.yaml declares");
             }
@@ -125,6 +134,7 @@ final readonly class Declaration
             dispatch: ($values['dispatch'] ?? null) instanceof AgentDispatch ? $values['dispatch'] : null,
             connectors: $connectors,
             sandboxOptions: ($values['sandbox_options'] ?? null) instanceof SandboxOptions ? $values['sandbox_options'] : null,
+            floorControl: $floorControl,
         );
     }
 
@@ -253,6 +263,40 @@ final readonly class Declaration
             throw new ConfigurationException('connectors must be a list');
         }
         return array_map(Connector::fromYaml(...), $value);
+    }
+
+    /**
+     * The model that controls the agent's floor and, optionally, `max_wait_ms`, as written: an
+     * empty mapping is the default flow controller again, and a key whose value is null is left
+     * out. Only the shape is checked here; which models there are, and whether a wait names one,
+     * is the router's to say.
+     */
+    private static function floorControl(mixed $value): ?FloorControl
+    {
+        if ($value === null) {
+            return null;
+        }
+        if (!$value instanceof \stdClass) {
+            throw new ConfigurationException('floor_control is a mapping of model and, optionally, max_wait_ms');
+        }
+        $model = null;
+        $wait = null;
+        foreach (get_object_vars($value) as $key => $each) {
+            if ($key === 'model') {
+                if (!is_string($each) && $each !== null) {
+                    throw new ConfigurationException('floor_control.model must be a string');
+                }
+                $model = $each;
+            } elseif ($key === 'max_wait_ms') {
+                if (!is_int($each) && $each !== null) {
+                    throw new ConfigurationException('floor_control.max_wait_ms must be an integer');
+                }
+                $wait = $each;
+            } else {
+                throw new ConfigurationException("\"{$key}\" is not a floor_control setting; model and max_wait_ms are");
+            }
+        }
+        return new FloorControl(maxWaitMs: $wait, model: $model);
     }
 
     /**

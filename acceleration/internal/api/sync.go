@@ -42,9 +42,9 @@ type SyncAgentRequest struct {
 	Subagent          *string                    `json:"subagent,omitempty" doc:"Only a voice agent names one: a text agent runs everything on its llm."`
 	Search            *string                    `json:"search,omitempty"`
 	Greeting          *Greeting                  `json:"greeting,omitempty"`
-	Plugins           *[]PluginEntry             `json:"plugins,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
-	PluginEvents      *[]PluginEvent             `json:"plugin_events,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
-	McpServers        *[]McpServer               `json:"mcp_servers,omitempty" deprecated:"true" doc:"No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	Plugins           *[]retiredPlugin           `json:"plugins,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	PluginEvents      *[]map[string]any          `json:"plugin_events,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	McpServers        *[]map[string]any          `json:"mcp_servers,omitempty" deprecated:"true" doc:"No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing."`
 	Channels          *AgentChannels             `json:"channels,omitempty" doc:"Lines this agent answers on besides Stream Chat, each a number the app connected."`
 	Connectors        *[]AgentConnectorBinding   `json:"connectors,omitempty" maxItems:"64" doc:"The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone."`
 	LeftOutConnectors *[]LeftOutConnector        `json:"left_out_connectors,omitempty" maxItems:"64" doc:"The connectors agent.yaml names that the client left out of connectors, because the app has no connection by the id or label they name. Stored as sent and served on the config, so the dashboard can say what the agent is missing. A non-empty list is refused without connectors: a sync that sends connectors replaces the stored ones with these, or with none when this is left out, and a sync that sends neither leaves them alone. At most 64, as connectors."`
@@ -59,6 +59,8 @@ type SyncAgentRequest struct {
 	Calls          *AgentCalls        `json:"calls,omitempty" doc:"The tools an agent on a phone call is offered: end the call, press keys, transfer. A tool left out keeps what is stored; a tool sent replaces its settings whole."`
 	Scheduling     *AgentScheduling   `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. A setting left out keeps what is stored."`
 	ResumeHistory  *ResumeHistory     `json:"resume_history,omitempty" doc:"How a conversation is handed back to the model when a session carries it on. A setting left out keeps what is stored."`
+	FloorControl   *FloorControl      `json:"floor_control,omitempty" doc:"agent.yaml's floor_control: the model that controls the agent's floor, and how long a caller may wait once they stop. Sent, it replaces the stored choice whole, and an empty object is the default flow controller again; left out or null, the stored one stays, and an agent that never chose has the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400), and so is a max_wait_ms shorter than every point the chorus-asr server publishes, before anything is written. When the server cannot be asked the wait is kept and a warning says so, as it does of a point that fails the server's dictation guard."`
+	EndOfTurn      any                `json:"end_of_turn,omitempty" hidden:"true"` // refused: floor_control's max_wait_ms replaced it
 }
 
 func (*SyncAgentRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -245,8 +247,6 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	} else {
 		config = store.AgentConfig{CustomerID: customerID, Name: name}
 	}
-	// A stored row may still name them from before they were refused; a sync writes none.
-	config.Plugins, config.PluginEvents, config.MCPServers = nil, nil, nil
 	applySettings(&config, body)
 	// Named whatever the directory says, so the knowledge the sync writes is never written
 	// into a base kept in another region than the agent's.
@@ -261,7 +261,18 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok := schedulingComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
+	if failure, refused := s.floorControlRefusal(body.FloorControl, body.EndOfTurn); refused {
+		return nil, failure
+	}
+	if warning, message, ok := s.floorControlComplaint(ctx, config.FloorControl, existing.FloorControl); !ok {
+		return nil, invalidRequest(message)
+	} else if warning != "" && body.FloorControl != nil {
+		warnings = append(warnings, warning)
+	}
 	if message, ok := callsComplaint(config.Calls); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := teamTagComplaint(config.Tags, existing.Tags); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := outputRetentionComplaint(config); !ok {
@@ -577,6 +588,7 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	config.Scheduling = schedulingOr(config.Scheduling, body.Scheduling)
 	config.Calls = callsOr(config.Calls, body.Calls)
 	config.ResumeHistory = resumeHistoryOr(config.ResumeHistory, body.ResumeHistory)
+	config.FloorControl = floorControlOr(config.FloorControl, body.FloorControl)
 	if body.Channels != nil {
 		config.Channels = channelsOf(body.Channels)
 	}

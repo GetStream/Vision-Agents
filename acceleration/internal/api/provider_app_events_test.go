@@ -186,6 +186,8 @@ func (s *SlackChannelSuite) TestARetriedDeliveryIsWrittenOnce() {
 // A thread is one episode: its first message opens one card in the omni-channel of whoever
 // started it, and the messages after it, the starter's or anybody's, open none (T41).
 func (s *SlackChannelSuite) TestAThreadIsOneEpisodeCardInTheOmniChannelOfWhoeverStartedIt() {
+	s.config.EpisodeCards = true
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
 	delivered := time.Now()
 	s.deliver(s.message("U0000ALICE", "<@U0000BOT> is the build green?", "1759740000.000100", ""), 0)
 	s.deliver(s.message("U0000ALICE", "the release one", "1759740000.000200", "1759740000.000100"), 0)
@@ -209,6 +211,8 @@ func (s *SlackChannelSuite) TestAThreadIsOneEpisodeCardInTheOmniChannelOfWhoever
 // One person's threads are episodes of one omni-channel: Monday's thread is a card beside
 // Tuesday's, which is how the agent on Tuesday learns of Monday (T56).
 func (s *SlackChannelSuite) TestTheSamePersonsNextThreadIsAnotherCardInTheSameOmniChannel() {
+	s.config.EpisodeCards = true
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
 	s.deliver(s.message("U0000ALICE", "first", "1759740000.000100", ""), 0)
 	s.deliver(s.message("U0000ALICE", "second", "1759740000.000500", ""), 0)
 
@@ -226,6 +230,8 @@ func (s *SlackChannelSuite) TestTheSamePersonsNextThreadIsAnotherCardInTheSameOm
 // omni-channel names its agent config, and a message there without a source would be handed
 // to a worker.
 func (s *SlackChannelSuite) TestAnEpisodeCardStartsNoSession() {
+	s.config.EpisodeCards = true
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
 	s.deliver(s.message("U0000ALICE", "Can you check the build?", "1759740000.000100", ""), 0)
 	omni := s.omniChannel("U0000ALICE")
 	s.written(omni, 1)
@@ -757,9 +763,10 @@ func (s *SlackChannelSuite) TestAReplyThatWaitedIsWrittenWithItsFiles() {
 	s.Equal([]string{"https://files.slack.test/build.png"}, photoURLs(stored[1]), "the reply is written with its file")
 }
 
-// AI-2150: a reply that waited and cannot be read again fails the mention that takes it: the
-// mention is not claimed and the reply waits on, so Slack's retry of the mention takes both.
-func (s *SlackChannelSuite) TestAMentionWhoseWaitingReplyCannotBeReadIsRefusedAndTheReplyWaitsOn() {
+// AI-2150, AI-2743: a reply that waited and that the connection's revision does not read, here
+// a body it reads no message from, is dropped, and the mention that takes it is answered: every
+// retry of the mention would find the same revision. It was answered 500 for good before.
+func (s *SlackChannelSuite) TestAWaitingReplyTheConnectionDoesNotReadIsDroppedAndTheMentionAnswered() {
 	s.deliver(s.message("U0000BOB", "and the deploy?", "1759740000.000200", "1759740000.000100"), 0)
 	s.Require().Equal(1, s.waiting())
 	_, err := s.store.DB().ExecContext(context.Background(),
@@ -768,11 +775,94 @@ func (s *SlackChannelSuite) TestAMentionWhoseWaitingReplyCannotBeReadIsRefusedAn
 
 	status, _ := s.deliver(s.message("U0000ALICE", "is the build green?", "1759740000.000100", ""), 1)
 
+	s.Equal(http.StatusOK, status)
+	channel := s.threadChannel("C0000CHAN:1759740000.000100")
+	s.Equal("is the build green?", s.bridgedWritten(channel, 1)[0]["text"])
+	s.Zero(s.waiting(), "the reply is dropped")
+	s.Never(func() bool { return len(s.bridged(channel)) > 1 }, dropped, 20*time.Millisecond)
+	s.droppedAWaitingReply()
+}
+
+// AI-2743: a reply waits while its connection is on a revision that reads it; the connection is
+// then pinned to one that skips it, here every reply in a thread. The mention that takes it is
+// answered and the reply dropped. The revision is taken out again when the test ends.
+func (s *SlackChannelSuite) TestAWaitingReplyARepinnedRevisionDoesNotReadIsDroppedAndTheMentionAnswered() {
+	s.deliver(s.message("U0000BOB", "and the deploy?", "1759740000.000200", "1759740000.000100"), 0)
+	s.Require().Equal(1, s.waiting(), "the reply waits")
+	ctx := context.Background()
+	connection, err := s.store.ConnectorConnection(ctx, s.customerID(), s.bot.ConnectionID)
+	s.Require().NoError(err)
+	definition, err := s.store.ConnectorDefinition(ctx, s.customerID(), "slack_bot", connection.DefinitionRevision)
+	s.Require().NoError(err)
+	definition.Revision, definition.Manifest.Revision = 1001, 1001
+	definition.Manifest.Channel.Messages.SkipIfPresent = append(definition.Manifest.Channel.Messages.SkipIfPresent, "$.event.thread_ts")
+	_, err = s.store.DB().NewInsert().Model(&definition).Exec(ctx)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() {
+		_, err := s.store.DB().ExecContext(ctx, "DELETE FROM connector_definitions WHERE customer_id = ? AND id = 'slack_bot' AND revision = 1001", store.BuiltinCustomer)
+		s.NoError(err)
+	})
+	credentials, err := pgsealed.New(s.store, s.sealer)
+	s.Require().NoError(err)
+	s.Require().NoError(credentials.Update(ctx, s.bot, func(state *core.CredentialState, _ func() error) (bool, error) {
+		state.DefinitionRevision = 1001
+		return true, nil
+	}))
+
+	status, _ := s.deliver(s.message("U0000ALICE", "is the build green?", "1759740000.000100", ""), 1)
+
+	s.Equal(http.StatusOK, status)
+	channel := s.threadChannel("C0000CHAN:1759740000.000100")
+	s.Equal("is the build green?", s.bridgedWritten(channel, 1)[0]["text"])
+	s.Zero(s.waiting(), "the reply is dropped")
+	s.Never(func() bool { return len(s.bridged(channel)) > 1 }, dropped, 20*time.Millisecond)
+	s.droppedAWaitingReply()
+}
+
+// AI-2150: any other failure to take a reply that waited, here a body the revision cannot
+// decode, fails the mention that takes it: the mention is not claimed and the reply waits on,
+// so Slack's retry of the mention, once the failure is gone, takes both.
+func (s *SlackChannelSuite) TestAMentionWhoseWaitingReplyFailsToBeTakenIsRefusedAndTheReplyWaitsOn() {
+	s.deliver(s.message("U0000BOB", "and the deploy?", "1759740000.000200", "1759740000.000100"), 0)
+	s.Require().Equal(1, s.waiting())
+	ctx := context.Background()
+	var raw []byte
+	s.Require().NoError(s.store.DB().QueryRowContext(ctx, "SELECT raw FROM channel_thread_waiting WHERE customer_id = ?", s.customerID()).Scan(&raw))
+	_, err := s.store.DB().ExecContext(ctx,
+		"UPDATE channel_thread_waiting SET raw = convert_to('not json', 'UTF8') WHERE customer_id = ?", s.customerID())
+	s.Require().NoError(err)
+	mention := s.message("U0000ALICE", "is the build green?", "1759740000.000100", "")
+
+	status, _ := s.deliver(mention, 1)
+
 	s.Equal(http.StatusInternalServerError, status)
 	channel := s.threadChannel("C0000CHAN:1759740000.000100")
 	s.Zero(s.claimed(channel, store.ClaimInbound), "the mention is not claimed")
 	s.Equal(1, s.waiting(), "the reply waits on")
 	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 }, dropped, 20*time.Millisecond)
+	_, err = s.store.DB().ExecContext(ctx, "UPDATE channel_thread_waiting SET raw = ? WHERE customer_id = ?", raw, s.customerID())
+	s.Require().NoError(err)
+
+	status, _ = s.deliver(mention, 2)
+
+	s.Equal(http.StatusOK, status)
+	stored := s.bridgedWritten(channel, 2)
+	s.Equal([]any{"is the build green?", "and the deploy?"}, []any{stored[0]["text"], stored[1]["text"]})
+	s.Zero(s.waiting())
+}
+
+// droppedAWaitingReply is whether the bridge logged, at warn, the drop of a reply that waited,
+// with the connection and without the reply's text.
+func (s *SlackChannelSuite) droppedAWaitingReply() {
+	var line string
+	for _, l := range strings.Split(s.logged.String(), "\n") {
+		if strings.Contains(l, "dropped a waiting reply the revision of its connection does not read") {
+			line = l
+		}
+	}
+	s.Contains(line, "level=WARN")
+	s.Contains(line, "connection="+s.bot.ConnectionID)
+	s.NotContains(line, "and the deploy?")
 }
 
 // AI-990 F31a: a message that starts its thread and is not to the bot is not kept: no later

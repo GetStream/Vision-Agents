@@ -64,6 +64,14 @@ func New(backend stream.Backend, options ...Option) (*Client, error) {
 	for _, apply := range options {
 		apply(watching)
 	}
+	// A backend taken from another client's Backend is already read by that client's
+	// options. Wrapped again with no callback of its own, every answer would be read twice,
+	// and a balance warning the first client hands to its callback would be logged as well.
+	// Only the transport the first client set is recognised: one wrapped again around it,
+	// for tracing say, is read twice.
+	if heard := heardBy(resolved.HTTPClient); heard != nil && watching.usage == nil && watching.warned == nil {
+		return &Client{backend: resolved, watcher: heard}, nil
+	}
 	resolved.HTTPClient = watching.transport(resolved.HTTPClient)
 	return &Client{backend: resolved, watcher: watching}, nil
 }
@@ -85,6 +93,8 @@ func (c *Client) SetUser(userID, token string) (*Client, error) {
 	backend := c.backend
 	backend.UserID = userID
 	backend.Token = token
+	// The token carries the user's team and categories, which this client's are not.
+	backend.Team, backend.UsageCategories = "", nil
 	resolved, err := backend.Resolve()
 	if err != nil {
 		return nil, err

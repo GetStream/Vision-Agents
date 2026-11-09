@@ -32,7 +32,8 @@ type ContactMapEntry struct {
 	CustomerID    string `bun:"customer_id,notnull"`
 	AgentConfigID string `bun:"agent_config_id,notnull"`
 	// Kind is ContactPhone, ContactSlack or ContactStreamUser, and Address the number, the Slack
-	// user or the Stream user in its app.
+	// user or the Stream user in its app; retired:<id> for a number's row a link set aside
+	// (retireHistory).
 	Kind    string `bun:"kind,notnull"`
 	Address string `bun:"address,notnull"`
 	// ConversationID is the omni-channel's cid, agent:omni-<uuid>.
@@ -122,10 +123,12 @@ func (s *Store) Contact(ctx context.Context, customerID, agentConfigID, kind, ad
 // ThreadContact is the contact map row of the person a thread channel's episodes are with,
 // for one agent of a customer: the one who started the thread, since OpenEpisode keeps the
 // first message's episode for the later ones. The newest episode of the thread decides. A
-// thread with no episode, or only one of another customer or agent, has none.
+// thread with no episode, or only one of another customer or agent, has none. A row a link set
+// aside is answered with its number as its address (reachedAt): the thread still reaches it.
 func (s *Store) ThreadContact(ctx context.Context, customerID, agentConfigID, threadChannel string) (ContactMapEntry, error) {
 	var entry ContactMapEntry
 	err := s.db.NewSelect().Model(&entry).
+		ColumnExpr("cm.*").ColumnExpr(reachedAt+" AS address").
 		Join("JOIN episodes AS ep ON ep.contact_id = cm.id").
 		Where("ep.customer_id = ?", customerID).Where("ep.thread_channel = ?", threadChannel).
 		Where("ep.session_id IS NULL").

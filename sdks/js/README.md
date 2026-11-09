@@ -12,7 +12,8 @@ npm install @stream-io/calypso
 ```
 
 Node 22 or newer, or any browser. No runtime dependencies: `fetch`, `WebSocket` and Web
-Crypto are all taken from the runtime.
+Crypto are all taken from the runtime. `session.chat()` works with `stream-chat` 9 or 10
+(10 needs Node 22.18 or newer).
 
 ## The three ways to say who is calling
 
@@ -34,6 +35,13 @@ const api = new Client();
 // In a browser, with a token your backend minted for this user.
 const api = new Client({ apiKey: "vak_live_…", token: () => fetch("/api/token").then((r) => r.text()) });
 ```
+
+A token function is asked once and its answer kept. It is asked again when the router answers
+401, and the request is sent once more; when a socket is refused, and the socket dialled once
+more; when the token it holds expires within a minute, read from the JWT's `exp`; and after
+`setUser` or `clearUser`. Requests that need a token while one is being fetched wait for that
+fetch, and requests refused together ask for one new token between them. A token passed as a
+string is the only one there is, so a 401 with it is final.
 
 Search is the one routed modality a page may reach: `api.router({ config: "healthcare" }).search("what changed in the pricing page")`.
 
@@ -89,6 +97,56 @@ A failure raises `RouterError`, carrying the status, the operation and what the 
 went wrong. Branch on `code` (`not_configured`, `validation_failed`, ...) or `type`, not on the
 message, and expect codes you do not know; quote `requestId` to support, since a 500 says only
 "something went wrong".
+
+## Spend limits and teams
+
+A backend caps what the organization, its apps, keys, end users, teams and usage categories may
+spend in each day, week, two weeks or month. Amounts are `USD`, held exactly as the millionths
+of a dollar the router counts in, and never built from a fractional number: `USD.dollars(20)`,
+`USD.cents(1250)`, or `USD.parse("12.50")` (a string of dollars is taken anywhere an amount is).
+
+```ts
+import { Client, USD } from "@stream-io/calypso";
+
+const api = new Client(); // STREAM_API_KEY and STREAM_API_SECRET: server side only
+await api.spendLimits.create({ subject: "organization", interval: "monthly", amount: USD.dollars(20_000) });
+
+// Every key of app 1234 may spend $50 a day, and the CI key $10.
+await api.spendLimits.create({ subject: "api_key", appId: "1234", interval: "daily", amount: USD.dollars(50) });
+await api.spendLimits.create({
+  subject: "api_key", appId: "1234", apiKey: "mz7kq2xa9b", interval: "daily", amount: USD.dollars(10), note: "CI key",
+});
+const [ci] = await api.spendLimits.list({ subject: "api_key", appId: "1234", apiKey: "mz7kq2xa9b" });
+await api.spendLimits.setAmount(ci!.id, USD.dollars(25));
+await api.spendLimits.delete(ci!.id);
+
+// Every user of app 1234 may spend $20 a day, and user-42 $50.
+await api.spendLimits.create({ subject: "user", appId: "1234", interval: "daily", amount: USD.dollars(20) });
+await api.spendLimits.create({ subject: "user", appId: "1234", userId: "user-42", interval: "daily", amount: USD.dollars(50) });
+
+// Created or changed, whichever the team needs.
+await api.teams.setLimit("finance", { interval: "monthly", amount: USD.dollars(8_000) });
+
+// Work counted under the team: one session, or everything a client does.
+const session = await api.agent("docs").sessions.create({ team: "finance" });
+const finance = new Client({ team: "finance" });
+
+// Count user-42's week from now. Nothing is refunded.
+await api.spendLimits.reset({
+  subject: "user", appId: "1234", userId: "user-42", intervals: ["weekly"], reason: "refunded a duplicate run",
+});
+```
+
+An agent whose `agent.yaml` has `tags: team: finance` counts its sessions under that team when
+neither the caller's token nor the session names one.
+
+A client built with `team` (and `usageCategories`) signs them into every token it mints, and
+sends them in `X-Stream-Usage-Categories` to a router with no proxy in front of it. A device's
+token carries its own, from `api.createUserToken("user-42", { team: "finance" })`, so neither can
+be passed beside a token; a session naming a team other than its token's is refused with a 400,
+and a device naming one at all with a 403. What the router answers is in micros too:
+`USD.fromMicros(limit.limit_micros)` prints as `$20000.00`. Work a limit refuses is a
+`RouterError` of 402 `spend_limit_reached`, or 429 `user_limit_reached` for one end user's.
 
 ## A conversation somebody comes back to
 
@@ -378,6 +436,20 @@ base and its sandbox are there and nowhere else. Left out, the stored region sta
 agent is in `us`. The router refuses a sync naming a model with no instance in the region,
 naming each, and one whose knowledge base is already kept in another region.
 
+`floor_control` is the model that controls the agent's floor, and how long a caller may wait
+once they stop, sent as written:
+
+```yaml
+floor_control:
+  model: stream/chorus-asr
+  max_wait_ms: 800      # optional; left out, the server's default point
+```
+
+Left out or null, the stored choice stays, and an agent that never chose has the default flow
+controller; `floor_control: {}` is the default flow controller again. The router refuses
+`stream/chorus-asr` without a chorus-asr server, and a `max_wait_ms` shorter than every point
+the server has measured.
+
 Each file in `simulations/` is a list of `name`, `scenario` and `assertion`, with `mode`,
 `variations`, `max_turns`, `caller_*`, `judge_target` and `tags` optional. With a
 `simulations/` directory the config's simulations become exactly what it declares, so an
@@ -491,7 +563,7 @@ does not say is counted in the voice's characters. A cut freezes the turn at wha
 before the track got to it, behind speech still queued, starts when that has played
 (`delay_ms` on `speaking`). A voice that takes a sentence at a time can still start another
 after a pause, so show a reply in full once `done` is true and its message is no longer
-`generating`.
+`generating` (`message.generating` in stream-chat 9, `message.custom.generating` in 10).
 
 A reply's message usually arrives before its audio starts, and Chat can even be faster than the
 session socket. While the agent is on the call, a turn is `{ chars: 0, done: false }` until its
@@ -575,7 +647,9 @@ client — see [acceleration/README.md](../../acceleration/README.md).
 The tests run against a real HTTP server and a real WebSocket upgrade rather than a stubbed
 `fetch`, so what they exercise is the request this SDK actually puts on the wire.
 
-`npm test` is hermetic and is what CI runs. The two live suites are not part of it and are
+`npm test` is hermetic and is what CI runs, once with the `stream-chat` 9 the lockfile has
+and once with 10. To run it against 10 here: `npm install --no-save stream-chat@^10.0.0-0`,
+then `npm test`, then `npm ci` to go back. The two live suites are not part of it and are
 not in CI: they talk to a deployment, and they skip rather than fail when there is none to
 talk to — a laptop with no router up, or a checkout with no credentials, is not a broken
 build. `test:local` wants a router on `LOCAL_ACCELERATION_URL`, default

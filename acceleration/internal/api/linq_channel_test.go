@@ -4,6 +4,7 @@ package api
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -43,6 +44,12 @@ import (
 // https://docs.linqapp.com/channel/imessage/guides/webhooks/events/index.md (events) and
 // https://docs.linqapp.com/channel/imessage/guides/messaging/sending-messages/index.md (send).
 type LinqChannelSuite struct {
+	linqLine
+}
+
+// linqLine is the customer's Linq line and the agent on it, which LinqChannelSuite and
+// LinqSandboxSuite share.
+type linqLine struct {
 	RouterSuite
 
 	linq *fakeLinq
@@ -68,8 +75,8 @@ func TestLinqChannelSuite(t *testing.T) {
 // SetupSuite registers standard_webhooks and the real bearer scheme, whose Wrap puts the API
 // key on a reply, and the real channel bridge. The suite has a database of its own: one of its
 // tests renames a table away.
-func (s *LinqChannelSuite) SetupSuite() {
-	s.database = "linq_channel"
+func (s *linqLine) SetupSuite() {
+	s.database = cmp.Or(s.database, "linq_channel")
 	verifier := standardwebhooks.New()
 	s.connectors = core.Registry{
 		Schemes:   map[string]core.Scheme{bearer.Name: bearer.New()},
@@ -91,7 +98,7 @@ func (s *LinqChannelSuite) SetupSuite() {
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
 
-func (s *LinqChannelSuite) SetupTest() {
+func (s *linqLine) SetupTest() {
 	s.useApp(s.data.createApp())
 	s.linq = newFakeLinq(s.T())
 	key := make([]byte, 32)
@@ -294,6 +301,9 @@ func photoURLs(message map[string]any) []string {
 // A chat is one thread, so its messages are one thread channel and one episode card, in the
 // omni-channel the contact map gives the sender's number (T41).
 func (s *LinqChannelSuite) TestAChatIsOneThreadChannelAndOneIMessageCardInTheSendersOmniChannel() {
+	// record writes the card as on does (AI-2856).
+	s.config.EpisodeCardsRecord = true
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
 	chat := s.utils.uuid()
 	s.deliver(s.received(chat, s.line, "+12025550199", "first"), time.Now())
 	s.deliver(s.received(chat, s.line, "+12025550199", "second"), time.Now())
@@ -475,12 +485,12 @@ func (s *LinqChannelSuite) TestAReplyLinqRefusesIsSentByTheNextHandOff() {
 
 // received is a message.received of the 2026-02-03 version (events) in chat, to line, from
 // sender, with one text part.
-func (s *LinqChannelSuite) received(chat, line, sender, text string) []byte {
+func (s *linqLine) received(chat, line, sender, text string) []byte {
 	return s.receivedParts(chat, line, sender, []map[string]any{{"type": "text", "value": text}})
 }
 
 // receivedParts is received with parts as they are.
-func (s *LinqChannelSuite) receivedParts(chat, line, sender string, parts []map[string]any) []byte {
+func (s *linqLine) receivedParts(chat, line, sender string, parts []map[string]any) []byte {
 	raw, err := json.Marshal(map[string]any{
 		"api_version": "v3", "webhook_version": "2026-02-03", "event_type": "message.received",
 		"event_id": s.utils.uuid(), "created_at": time.Now().UTC().Format(time.RFC3339Nano), "partner_id": "synthetic-partner",
@@ -496,14 +506,14 @@ func (s *LinqChannelSuite) receivedParts(chat, line, sender string, parts []map[
 	return raw
 }
 
-func (s *LinqChannelSuite) deliver(body []byte, at time.Time) int {
+func (s *linqLine) deliver(body []byte, at time.Time) int {
 	return s.deliverSigned(body, at, s.secret)
 }
 
 // deliverSigned posts body to the app's events URL as Linq does, signed at at with secret: v1,
 // and the base64 HMAC-SHA256 of {webhook-id}.{webhook-timestamp}.{body} under the base64 key
 // after whsec_ (webhooks; the Standard Webhooks specification).
-func (s *LinqChannelSuite) deliverSigned(body []byte, at time.Time, secret string) int {
+func (s *linqLine) deliverSigned(body []byte, at time.Time, secret string) int {
 	key, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(secret, "whsec_"))
 	s.Require().NoError(err)
 	id, timestamp := "msg_"+s.utils.uuid(), strconv.FormatInt(at.Unix(), 10)
@@ -525,7 +535,7 @@ func (s *LinqChannelSuite) deliverSigned(body []byte, at time.Time, secret strin
 
 // threadChannel is the thread channel the test's customer has for a Linq chat, once the bridge
 // linked it.
-func (s *LinqChannelSuite) threadChannel(chat string) string {
+func (s *linqLine) threadChannel(chat string) string {
 	var channel string
 	s.Require().Eventually(func() bool {
 		return s.store.DB().QueryRowContext(context.Background(),
@@ -577,7 +587,7 @@ func (s *LinqChannelSuite) streamDelivers(channel string, index int) int {
 		message["attachments"] = attachments
 	}
 	// The hook carries the author as Chat keeps them, which the bridge named after their
-	// number (channelbridge writeInto), not after their id as the fake's messages do.
+	// number (channelbridge openThread), not after their id as the fake's messages do.
 	if author, ok := message["user"].(map[string]any); ok {
 		if user, found := s.chat.User(fmt.Sprint(author["id"])); found {
 			message["user"] = user
@@ -701,7 +711,7 @@ func (l *fakeLinq) sent() []linqMessage {
 }
 
 // took waits until the test's Linq took count messages, and returns them.
-func (s *LinqChannelSuite) took(count int) []linqMessage {
+func (s *linqLine) took(count int) []linqMessage {
 	s.Require().Eventually(func() bool { return len(s.linq.sent()) >= count }, settleFor, 10*time.Millisecond,
 		"Linq took %d messages, not %d", len(s.linq.sent()), count)
 	return s.linq.sent()
@@ -1005,7 +1015,7 @@ func (s *LinqChannelSuite) TestAKeywordAnswerThatFailsOtherwiseIsAnError() {
 
 // reachable is what the bridge answers a scheduled delivery into a thread channel asks
 // (channelbridge.Bridge.Reachable).
-func (s *LinqChannelSuite) reachable(channel string) error {
+func (s *linqLine) reachable(channel string) error {
 	thread, err := s.store.ChannelThread(context.Background(), channel)
 	s.Require().NoError(err)
 	return s.bridge.(*channelbridge.Bridge).Reachable(context.Background(), thread)

@@ -53,7 +53,7 @@ class CreateOptOutRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        channel = OptOutChannel(d.pop("channel"))
+        channel = OptOutChannel._decode(d.pop("channel"))
 
         recipient = d.pop("recipient")
 
@@ -62,7 +62,7 @@ class CreateOptOutRequest:
         if isinstance(_source, Unset):
             source = UNSET
         else:
-            source = CreateOptOutRequestSource(_source)
+            source = CreateOptOutRequestSource._decode(_source)
 
         create_opt_out_request = cls(
             channel=channel,

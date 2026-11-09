@@ -15,8 +15,8 @@
 #         client_secret_post], code_challenge_methods_supported [S256], no revocation_endpoint.
 id: gong
 # A new revision for any change to what this file says; see AGENTS.md. 2 renames
-# client.policy to client.registration.
-revision: 2
+# client.policy to client.registration. 3 lists the tools that only read.
+revision: 3
 # [proto]:86-88
 name: Gong
 category: Revenue
@@ -54,3 +54,10 @@ scopes:
 sources:
   - kind: mcp
     endpoint: mcp
+    # The tools that only read: the three [about] (opened again 2026-11-05) names under «MCP
+    # server tools», which says «The MCP server is read-only and does not create, update, or
+    # delete data in Gong or the CRM». Left out: ask_account and ask_deal, which send the
+    # model's question to Gong's AI, as Sentry's natural-language search tools are out.
+    # Named here rather than outbound: false, so a tool added later is left out.
+    read_only_tools:
+      - generate_brief

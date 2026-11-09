@@ -103,6 +103,16 @@ func (r refused) Unwrap() []error { return []error{r.err, ErrRequest} }
 // Refused marks a factory's error as the caller's mistake, see ErrRequest.
 func Refused(err error) error { return refused{err: err} }
 
+// ErrVendorsFailed marks a walk in which every candidate failed and at least one of them
+// failed at its vendor, on the deployment's own key, rather than being passed over.
+var ErrVendorsFailed = errors.New("routing: the vendors failed")
+
+// vendorsFailed marks err as ErrVendorsFailed without changing what it says.
+type vendorsFailed struct{ err error }
+
+func (v vendorsFailed) Error() string   { return v.err.Error() }
+func (v vendorsFailed) Unwrap() []error { return []error{v.err, ErrVendorsFailed} }
+
 // Settings decodes this provider's overwrites into a struct of its own.
 //
 // Unknown fields are rejected, which is the whole point: an escape hatch that silently

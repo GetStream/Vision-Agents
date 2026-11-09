@@ -15,6 +15,10 @@ final readonly class AgentUser
         public string $phone,
         // The Stream user id, as the app's own token signs it.
         public string $userId,
+        // true when the user reads all of what the number ever said. Left out otherwise.
+        public ?bool $includePhoneHistory = null,
+        // From when on the user reads what the number said: the link's time, the time of a request with include_phone...
+        public ?\DateTimeImmutable $phoneHistorySince = null,
     ) {
     }
 
@@ -26,6 +30,8 @@ final readonly class AgentUser
         return new self(
             phone: Json::string($data, 'phone'),
             userId: Json::string($data, 'user_id'),
+            includePhoneHistory: array_key_exists('include_phone_history', $data) && $data['include_phone_history'] !== null ? Json::bool($data, 'include_phone_history') : null,
+            phoneHistorySince: array_key_exists('phone_history_since', $data) && $data['phone_history_since'] !== null ? Json::date($data, 'phone_history_since') : null,
         );
     }
 
@@ -39,6 +45,12 @@ final readonly class AgentUser
         $out = [];
         $out['phone'] = $this->phone;
         $out['user_id'] = $this->userId;
+        if ($this->includePhoneHistory !== null) {
+            $out['include_phone_history'] = $this->includePhoneHistory;
+        }
+        if ($this->phoneHistorySince !== null) {
+            $out['phone_history_since'] = Json::dateValue($this->phoneHistorySince);
+        }
         return $out;
     }
 }

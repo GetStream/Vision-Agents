@@ -190,6 +190,20 @@ class GreetingSettings:
 
 
 @dataclass
+class FloorControlSettings:
+    """The model that controls the agent's floor, and how long a caller may wait once they
+    stop, each None when the file does not name it, and both sent as written: which models
+    there are, and whether a wait needs one, is the router's to say. Neither named is the
+    default flow controller again."""
+
+    model: str | None = None
+    """The model that controls the floor; stream/chorus-asr is the one there is."""
+    max_wait_ms: int | None = None
+    """The most a caller who has finished may wait for the answer, in milliseconds. None is
+    the server's default point."""
+
+
+@dataclass
 class Settings:
     """What `agent.yaml` declares.
 
@@ -234,6 +248,10 @@ class Settings:
     scheduling: SchedulingSettings | None = None
     """Whether the agent may schedule tasks for its users. None when the file says
     nothing about it."""
+    floor_control: FloorControlSettings | None = None
+    """The model that controls the agent's floor, and how long a caller may wait once they
+    stop. None when the file says nothing about it, which leaves the stored choice; an empty
+    one is the default flow controller again."""
     keyterms: list[str] = field(default_factory=list)
     tags: dict[str, str] = field(default_factory=dict)
     video_source: str = ""
@@ -486,6 +504,8 @@ def _declare(path: Path) -> Settings:
             settings.channels = _channels(path, value)
         elif field_name == "scheduling":
             settings.scheduling = _scheduling(path, value)
+        elif field_name == "floor_control":
+            settings.floor_control = _floor_control(path, value)
         elif field_name == "keyterms":
             settings.keyterms = _terms(path, field_name, value)
         elif field_name == "tags":
@@ -752,6 +772,27 @@ def _scheduling(path: Path, value: object) -> SchedulingSettings | None:
         max_tasks_per_user=maximum,
         default_timezone=_word(value.get("default_timezone")),
     )
+
+
+def _floor_control(path: Path, value: object) -> FloorControlSettings | None:
+    """Only the shape is read: which models there are, and whether a wait needs one, is the
+    router's to say. A null key is unset."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(
+            f"{path} floor_control is a mapping of model and, optionally, max_wait_ms"
+        )
+    extra = set(value) - {"model", "max_wait_ms"}
+    if extra:
+        raise ValueError(f"{path} unknown floor_control setting: {sorted(extra)[0]}")
+    model = value.get("model")
+    if model is not None and not isinstance(model, str):
+        raise ValueError(f"{path} floor_control.model must be a string")
+    wait = value.get("max_wait_ms")
+    if wait is not None and type(wait) is not int:
+        raise ValueError(f"{path} floor_control.max_wait_ms must be a whole number")
+    return FloorControlSettings(model=model, max_wait_ms=wait)
 
 
 def _channel(path: Path, kind: str, value: object) -> ChannelSettings | None:

@@ -30,6 +30,10 @@ class ModelCallTiming:
             injection screen refused: the provider answered as asked, so it is no failure of the provider's either. Any
             other code, timeout included, is a failure and counts against the provider's health, unless it was on the app's
             own key.
+        error_message (str | Unset): What the failure said, absent when success is true: for a provider that answered
+            with an error, the start of its body. Bearer tokens, API keys, authorization headers and URL credentials in it
+            are redacted, and a long one is cut short. Absent for a failure that said nothing, and for a request recorded
+            before the router kept it.
         input_tokens (int | Unset):
         operation_id (str | Unset): Response ID for this operation; retries can share an ID.
         output_tokens (int | Unset):
@@ -43,6 +47,7 @@ class ModelCallTiming:
     success: bool
     duration_ms: float | Unset = UNSET
     error_code: str | Unset = UNSET
+    error_message: str | Unset = UNSET
     input_tokens: int | Unset = UNSET
     operation_id: str | Unset = UNSET
     output_tokens: int | Unset = UNSET
@@ -62,6 +67,8 @@ class ModelCallTiming:
         duration_ms = self.duration_ms
 
         error_code = self.error_code
+
+        error_message = self.error_message
 
         input_tokens = self.input_tokens
 
@@ -87,6 +94,8 @@ class ModelCallTiming:
             field_dict["duration_ms"] = duration_ms
         if error_code is not UNSET:
             field_dict["error_code"] = error_code
+        if error_message is not UNSET:
+            field_dict["error_message"] = error_message
         if input_tokens is not UNSET:
             field_dict["input_tokens"] = input_tokens
         if operation_id is not UNSET:
@@ -115,6 +124,8 @@ class ModelCallTiming:
 
         error_code = d.pop("error_code", UNSET)
 
+        error_message = d.pop("error_message", UNSET)
+
         input_tokens = d.pop("input_tokens", UNSET)
 
         operation_id = d.pop("operation_id", UNSET)
@@ -132,6 +143,7 @@ class ModelCallTiming:
             success=success,
             duration_ms=duration_ms,
             error_code=error_code,
+            error_message=error_message,
             input_tokens=input_tokens,
             operation_id=operation_id,
             output_tokens=output_tokens,

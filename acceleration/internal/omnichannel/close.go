@@ -12,7 +12,6 @@ import (
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -33,8 +32,8 @@ const (
 	// summaryTimeout bounds one summary: the agent config, one Stream Chat read, one LLM
 	// response and two Stream Chat writes.
 	summaryTimeout = time.Minute
-	// cardWriteTimeout bounds one update of a card: chatlog's writeTimeout for one Stream
-	// Chat write, 10 s.
+	// cardWriteTimeout bounds one read or update of a card: chatlog's writeTimeout for one
+	// Stream Chat write, 10 s.
 	cardWriteTimeout = 10 * time.Second
 	// summaryLease is how long the router that closed an episode has to summarize it before
 	// another router's sweep takes it: longer than summaryTimeout, so a router still writing
@@ -207,31 +206,43 @@ func (c *Closer) EndCall(ctx context.Context, scope store.AppScope, callID strin
 }
 
 // finish sets the cards of the episodes just closed ended, then summarizes those and the ones
-// taken again, at once, and waits for them.
+// taken again, at once, and waits for them. Each card is read once, for its author.
 func (c *Closer) finish(ctx context.Context, closed, left []store.ClosedEpisode) {
-	for _, episode := range closed {
-		if err := c.mark(ctx, episode, map[string]any{statusField: store.EpisodeEnded}); err != nil {
-			c.logger.Error("could not set an episode's card ended", "episode", episode.ID, "error", err)
-		}
-	}
 	var summaries sync.WaitGroup
-	for _, episode := range append(closed, left...) {
+	for i, episode := range append(closed, left...) {
 		summaries.Add(1)
 		go func() {
 			defer summaries.Done()
-			c.summarize(ctx, episode)
+			author, err := c.authorOf(ctx, episode)
+			if err != nil {
+				// Stopping leaves it ended, for its lease to run out.
+				if ctx.Err() != nil {
+					return
+				}
+				c.logger.Error("could not read an episode's card", "episode", episode.ID, "error", err)
+				if err := c.store.FinishEpisodeSummary(ctx, episode.CustomerID, episode.ID, store.EpisodeSummaryFailed); err != nil {
+					c.logger.Error("could not record an episode's summary", "episode", episode.ID, "error", err)
+				}
+				return
+			}
+			if i < len(closed) {
+				if err := c.mark(ctx, episode, author, map[string]any{statusField: store.EpisodeEnded}); err != nil {
+					c.logger.Error("could not set an episode's card ended", "episode", episode.ID, "error", err)
+				}
+			}
+			c.summarize(ctx, episode, author)
 		}()
 	}
 	summaries.Wait()
 }
 
-// summarize writes an ended episode's summary into its card and sets it summarized, or sets
-// it summary_failed. Stopping leaves it ended, for its lease to run out.
-func (c *Closer) summarize(parent context.Context, episode store.ClosedEpisode) {
+// summarize writes an ended episode's summary into its card, as author, and sets it
+// summarized, or sets it summary_failed. Stopping leaves it ended, for its lease to run out.
+func (c *Closer) summarize(parent context.Context, episode store.ClosedEpisode, author string) {
 	ctx, cancel := context.WithTimeout(parent, c.timeout)
 	defer cancel()
 	status := store.EpisodeSummarized
-	err := c.write(ctx, episode)
+	err := c.write(ctx, episode, author)
 	if parent.Err() != nil {
 		return
 	}
@@ -240,7 +251,7 @@ func (c *Closer) summarize(parent context.Context, episode store.ClosedEpisode) 
 	if err != nil {
 		status = store.EpisodeSummaryFailed
 		c.logger.Error("could not summarize an episode", "episode", episode.ID, "customer", episode.CustomerID, "error", err)
-		if err := c.mark(parent, episode, map[string]any{statusField: status}); err != nil {
+		if err := c.mark(parent, episode, author, map[string]any{statusField: status}); err != nil {
 			c.logger.Error("could not set an episode's card summary_failed", "episode", episode.ID, "error", err)
 		}
 	}
@@ -250,8 +261,8 @@ func (c *Closer) summarize(parent context.Context, episode store.ClosedEpisode) 
 }
 
 // write asks the agent config's own LLM for the summary of the episode's lines and writes it
-// into the card as its text, with the status summarized.
-func (c *Closer) write(ctx context.Context, episode store.ClosedEpisode) error {
+// into the card as its text, with the status summarized, as author.
+func (c *Closer) write(ctx context.Context, episode store.ClosedEpisode, author string) error {
 	config, err := c.store.AgentConfig(ctx, episode.CustomerID, episode.AgentConfigID)
 	if err != nil {
 		return err
@@ -264,7 +275,7 @@ func (c *Closer) write(ctx context.Context, episode store.ClosedEpisode) error {
 		Episode: episode.Episode, Until: episode.EndedAt,
 		ContactKind: episode.ContactKind, ContactAddress: episode.ContactAddress, AgentConfigID: episode.AgentConfigID,
 	}
-	lines, err := linesOf(ctx, bound, card, conversation.MaxHistoryMessages, true)
+	lines, err := linesOf(ctx, bound, card, conversation.MaxHistoryMessages)
 	if err != nil {
 		return err
 	}
@@ -276,7 +287,7 @@ func (c *Closer) write(ctx context.Context, episode store.ClosedEpisode) error {
 	if err != nil {
 		return err
 	}
-	return c.mark(ctx, episode, map[string]any{"text": summary, statusField: store.EpisodeSummarized})
+	return c.mark(ctx, episode, author, map[string]any{"text": summary, statusField: store.EpisodeSummarized})
 }
 
 // ask is the summary of the episode's lines, from the agent config's own LLM in its region.
@@ -314,16 +325,38 @@ func (c *Closer) ask(ctx context.Context, config store.AgentConfig, episode stor
 	return summary, nil
 }
 
-// mark sets fields of an episode's card with a partial update, as the card's author: the
-// omni-channel's agent user, whose id is the channel's (Write).
-func (c *Closer) mark(ctx context.Context, episode store.ClosedEpisode, set map[string]any) error {
+// authorOf is who an episode's card is updated as: its author, the agent user of the
+// omni-channel it was written in (Write). A message that is not a card as Write writes it has
+// no such author, as one that cannot be read has none: it is never updated as whoever wrote it. Not the omni-channel the person's row points at now:
+// an unlink gives the number's row a new one (store.UnlinkUserPhone), whose agent user is made
+// only with its first card, and Stream refuses an update by a user it does not have («the user
+// omni-… does not exist», staging, AI-2771).
+func (c *Closer) authorOf(ctx context.Context, episode store.ClosedEpisode) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, cardWriteTimeout)
+	defer cancel()
+	bound, err := c.stream.ForApp(ctx, episode.CustomerID, episode.StreamAppPK)
+	if err != nil {
+		return "", err
+	}
+	r, err := bound.Client.Chat().GetMessage(ctx, episode.CardMessageID, &getstream.GetMessageRequest{})
+	if err != nil {
+		return "", stack.Wrap(fmt.Errorf("omnichannel: read the card of episode %s: %w", episode.ID, err))
+	}
+	message := r.Data.Message
+	if !writtenAsCard(message) {
+		return "", stack.Wrap(fmt.Errorf("omnichannel: message %s of episode %s is not a card", episode.CardMessageID, episode.ID))
+	}
+	return message.User.ID, nil
+}
+
+// mark sets fields of an episode's card with a partial update, as its author (authorOf).
+func (c *Closer) mark(ctx context.Context, episode store.ClosedEpisode, author string, set map[string]any) error {
 	ctx, cancel := context.WithTimeout(ctx, cardWriteTimeout)
 	defer cancel()
 	bound, err := c.stream.ForApp(ctx, episode.CustomerID, episode.StreamAppPK)
 	if err != nil {
 		return err
 	}
-	author := strings.TrimPrefix(episode.ConversationID, chatlog.ChannelType+":")
 	_, err = bound.Client.Chat().UpdateMessagePartial(ctx, episode.CardMessageID, &getstream.UpdateMessagePartialRequest{
 		UserID: &author, Set: set,
 	})

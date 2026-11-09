@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -23,11 +24,14 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	chathooks "github.com/GetStream/Vision-Agents/acceleration/internal/chat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatinbound"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -85,11 +89,11 @@ func (s *DrainSuite) TestTheDrainWaitsForAScheduledDeliveryInFlight() {
 	s.T().Cleanup(scheduler.Close)
 
 	s.Require().Eventually(func() bool { return scheduler.Running() > 0 }, 10*time.Second, 10*time.Millisecond)
-	s.Positive(running(nil, scheduler, nil, nil, nil), "the drain counts the delivery in flight")
-	s.Equal(scheduler.Running(), running(nil, scheduler, nil, nil, nil))
+	s.Positive(running(nil, scheduler, nil, nil, nil, nil), "the drain counts the delivery in flight")
+	s.Equal(scheduler.Running(), running(nil, scheduler, nil, nil, nil, nil))
 
 	close(release)
-	s.Require().Eventually(func() bool { return running(nil, scheduler, nil, nil, nil) == 0 }, 10*time.Second, 10*time.Millisecond)
+	s.Require().Eventually(func() bool { return running(nil, scheduler, nil, nil, nil, nil) == 0 }, 10*time.Second, 10*time.Millisecond)
 }
 
 func (s *DrainSuite) TestTheDrainWaitsForAChatAnswerInFlight() {
@@ -113,11 +117,11 @@ func (s *DrainSuite) TestTheDrainWaitsForAChatAnswerInFlight() {
 	s.T().Cleanup(deliveries.Close)
 
 	s.Require().Eventually(func() bool { return deliveries.Running() > 0 }, 10*time.Second, 10*time.Millisecond)
-	s.Positive(running(nil, nil, nil, deliveries, nil), "the drain counts the answer in flight")
-	s.Equal(deliveries.Running(), running(nil, nil, nil, deliveries, nil))
+	s.Positive(running(nil, nil, nil, deliveries, nil, nil), "the drain counts the answer in flight")
+	s.Equal(deliveries.Running(), running(nil, nil, nil, deliveries, nil, nil))
 
 	close(release)
-	s.Require().Eventually(func() bool { return running(nil, nil, nil, deliveries, nil) == 0 }, 10*time.Second, 10*time.Millisecond)
+	s.Require().Eventually(func() bool { return running(nil, nil, nil, deliveries, nil, nil) == 0 }, 10*time.Second, 10*time.Millisecond)
 }
 
 // A router told to stop while it writes an inbound message takes no other message, of the
@@ -257,7 +261,7 @@ func (s *DrainSuite) TestARouterDrainsAChatCardInFlight() {
 	})
 	s.Require().Eventually(func() bool { return serving(settings.Addr) }, 15*time.Second, 10*time.Millisecond)
 	body := fmt.Sprintf(`{"type":"message.new","app_id":1,"channel_id":%q,"channel_type":"agent","created_at":%q,
-"channel_custom":{"agent_config_id":%q},"message":{"id":%q,"text":"where is my order?","user":{"id":"anya_123","name":"Anya"}}}`,
+"channel_custom":{"agent_config_id":%q},"channel":{"members":[{"user_id":"anya_123"}]},"message":{"id":%q,"text":"where is my order?","user":{"id":"anya_123","name":"Anya"}}}`,
 		"chat-"+uuid.NewString(), time.Now().UTC().Format(time.RFC3339Nano), agent.ID, "message-"+uuid.NewString())
 	mac := hmac.New(sha256.New, []byte(settings.Stream.APISecret))
 	mac.Write([]byte(body))
@@ -352,4 +356,61 @@ func isClosed(done <-chan struct{}) bool {
 	default:
 		return false
 	}
+}
+
+func (s *DrainSuite) TestTheDrainWaitsForACampaignCallInFlight() {
+	customerID := "customer-" + uuid.NewString()
+	sequence, err := json.Marshal(campaign.DefaultSequence("config-1"))
+	s.Require().NoError(err)
+	hours, err := json.Marshal(campaign.LegacyCallingHours())
+	s.Require().NoError(err)
+	created := store.Campaign{CustomerID: customerID, Name: "renewals", ConfigID: "config-1",
+		FromNumber: "+15550100000", Concurrency: 1, Sequence: sequence, CallingHours: hours}
+	s.Require().NoError(s.db.CreateCampaign(s.ctx, &created))
+	_, _, err = s.db.AddContacts(s.ctx, created.ID, []store.Contact{{ToNumber: "+15550000001"}})
+	s.Require().NoError(err)
+	now := time.Now()
+	_, err = s.db.LaunchCampaign(s.ctx, customerID, created.ID, store.Launch{StartAt: now, Now: now, APIKey: "key-a"})
+	s.Require().NoError(err)
+	// Stopped whatever happens, so no later test's dialer rings it.
+	s.T().Cleanup(func() { s.NoError(s.db.StopCampaign(context.Background(), customerID, created.ID, time.Now())) })
+
+	release := make(chan struct{})
+	dialer, err := campaign.New(campaign.Options{
+		Store: s.db, Dialer: heldDial(release), Transcripts: unreadTranscripts{}, Classifier: noOutcome{},
+		Tick: 10 * time.Millisecond, Logger: slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(dialer.Start(s.ctx))
+	s.T().Cleanup(dialer.Close)
+
+	s.Require().Eventually(func() bool { return dialer.Running() > 0 }, 10*time.Second, 10*time.Millisecond)
+	s.Equal(1, running(nil, nil, nil, nil, nil, dialer), "the drain counts the call in flight")
+
+	close(release)
+	s.Require().Eventually(func() bool { return running(nil, nil, nil, nil, nil, dialer) == 0 }, 10*time.Second, 10*time.Millisecond)
+}
+
+// heldDial is a dial that lasts until release closes, as a campaign call lasts until its
+// session ends, and that nobody answered.
+type heldDial chan struct{}
+
+func (h heldDial) Dial(ctx context.Context, _ campaign.Dial) (campaign.Dialed, error) {
+	select {
+	case <-h:
+	case <-ctx.Done():
+	}
+	return campaign.Dialed{Outcome: outcome.NoAnswer}, nil
+}
+
+type unreadTranscripts struct{}
+
+func (unreadTranscripts) CallTranscript(context.Context, string, string) ([]chatlog.Spoken, error) {
+	return nil, nil
+}
+
+type noOutcome struct{}
+
+func (noOutcome) Classify(context.Context, store.Campaign, string, campaign.Step, []chatlog.Spoken) (string, error) {
+	return "", nil
 }

@@ -4,6 +4,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"maps"
 	"os"
@@ -106,7 +107,8 @@ func (s *StoreSuite) seedingANewBuiltInLeavesTheOthersAsTheyWere(id string) {
 // TestMetabaseRevisionTwoSeedsOverTheRevisionOneTheBuildBeforeStored: revision 2 names the
 // tools that need a scope revision 1 never asks for (AI-1394). testdata/metabase-revision-1.yaml
 // is the file a database already holds. Revision 1 stays, unmarked, for the connections pinned
-// to it until they consent again, and every other built-in stays.
+// to it until they consent again, and every other built-in stays. Revision 3 keeps the tools and
+// lists the ones that only read (AI-2777).
 func (s *StoreSuite) TestMetabaseRevisionTwoSeedsOverTheRevisionOneTheBuildBeforeStored() {
 	one, err := os.ReadFile("testdata/metabase-revision-1.yaml")
 	s.Require().NoError(err)
@@ -135,7 +137,7 @@ func (s *StoreSuite) TestMetabaseRevisionTwoSeedsOverTheRevisionOneTheBuildBefor
 	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS))
 
 	now := latest()
-	s.Equal(2, now["metabase"])
+	s.Equal(3, now["metabase"])
 	delete(was, "metabase")
 	delete(now, "metabase")
 	s.Equal(was, now)
@@ -172,6 +174,7 @@ func (s *StoreSuite) TestGoogleDriveRevisionSixSeedsOverTheRevisionFourTheBuildB
 // TestSlackRevisionSixSeedsOverTheRevisionFiveTheBuildBeforeStored: revision 6 says what 5
 // says and marks 1 to 4 broken, which is a change, so it is a new revision rather than an
 // edit the seeder refuses. The marks are stored with it, and every other built-in stays.
+// Revision 7 keeps the marks and lists the tools that only read (AI-2756).
 func (s *StoreSuite) TestSlackRevisionSixSeedsOverTheRevisionFiveTheBuildBeforeStored() {
 	before := fstest.MapFS{}
 	files, err := fs.ReadDir(providers.FS, ".")
@@ -186,7 +189,7 @@ func (s *StoreSuite) TestSlackRevisionSixSeedsOverTheRevisionFiveTheBuildBeforeS
 	s.Require().True(found)
 	_, rest, found := strings.Cut(marks, "\n# [proto]:3-5\n")
 	s.Require().True(found)
-	five = strings.Replace(five, "\nrevision: 6\n", "\nrevision: 5\n", 1) + "\n# [proto]:3-5\n" + rest
+	five = strings.Replace(five, "\nrevision: 7\n", "\nrevision: 5\n", 1) + "\n# [proto]:3-5\n" + rest
 	before["slack.yaml"] = &fstest.MapFile{Data: []byte(five)}
 	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, before))
 	latest := func() map[string]int {
@@ -207,11 +210,11 @@ func (s *StoreSuite) TestSlackRevisionSixSeedsOverTheRevisionFiveTheBuildBeforeS
 	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS), "the marks are a new revision, not refused")
 
 	now := latest()
-	s.Equal(6, now["slack"])
+	s.Equal(7, now["slack"])
 	delete(was, "slack")
 	delete(now, "slack")
 	s.Equal(was, now)
-	for revision, want := range map[int]bool{1: true, 2: true, 3: true, 4: true, 5: false, 6: false} {
+	for revision, want := range map[int]bool{1: true, 2: true, 3: true, 4: true, 5: false, 6: false, 7: false} {
 		reason, broken, err := s.store.BrokenConnectorRevision(s.ctx, "slack", revision)
 		s.Require().NoError(err)
 		s.Equal(want, broken, "revision %d", revision)
@@ -219,6 +222,69 @@ func (s *StoreSuite) TestSlackRevisionSixSeedsOverTheRevisionFiveTheBuildBeforeS
 			s.Equal("user_id read from $.authed_user.id; live Slack sends top-level user_id", reason)
 		}
 	}
+}
+
+// TestTheReadOnlyToolsSeedOverTheRevisionsTheBuildBeforeStored (AI-2777): each of these files
+// lists read_only_tools at the revision here, which is a change, so a new revision rather than
+// an edit the seeder refuses. The build before held each file without the list, one revision
+// down. Every other built-in stays. github's list came at 10 and its file is at 11 (an LFS read),
+// so its build before is taken as 11 without the list, at 10: the table is emptied for each test,
+// and a list added at a new revision is what this checks.
+func (s *StoreSuite) TestTheReadOnlyToolsSeedOverTheRevisionsTheBuildBeforeStored() {
+	listed := map[string]int{"calcom": 3, "calendly": 3, "github": 11, "gong": 3, "hubspot": 2, "linear_app": 3,
+		"metabase": 3, "notion": 2, "sentry": 2}
+	before := fstest.MapFS{}
+	files, err := fs.ReadDir(providers.FS, ".")
+	s.Require().NoError(err)
+	for _, file := range files {
+		raw, err := fs.ReadFile(providers.FS, file.Name())
+		s.Require().NoError(err)
+		before[file.Name()] = &fstest.MapFile{Data: raw}
+	}
+	for id, revision := range listed {
+		var kept []string
+		listing := false
+		for line := range strings.Lines(string(before[id+".yaml"].Data)) {
+			if line == "    read_only_tools:\n" {
+				listing = true
+				continue
+			}
+			if listing && strings.HasPrefix(line, "      - ") {
+				continue
+			}
+			listing = false
+			kept = append(kept, line)
+		}
+		was := strings.Join(kept, "")
+		s.Require().Contains(was, fmt.Sprintf("\nrevision: %d\n", revision), id)
+		was = strings.Replace(was, fmt.Sprintf("\nrevision: %d\n", revision), fmt.Sprintf("\nrevision: %d\n", revision-1), 1)
+		before[id+".yaml"] = &fstest.MapFile{Data: []byte(was)}
+	}
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, before))
+	latest := func() map[string]int {
+		revisions := map[string]int{}
+		for name := range before {
+			definition, err := s.store.LatestBuiltinConnectorDefinition(s.ctx, strings.TrimSuffix(name, ".yaml"))
+			s.Require().NoError(err)
+			revisions[definition.ID] = definition.Revision
+		}
+		return revisions
+	}
+	was := latest()
+
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS), "the lists are new revisions, not refused")
+
+	now := latest()
+	for id, revision := range listed {
+		s.Equal(revision-1, was[id], id)
+		s.Equal(revision, now[id], id)
+		definition, err := s.store.LatestBuiltinConnectorDefinition(s.ctx, id)
+		s.Require().NoError(err)
+		s.NotEmpty(definition.Manifest.Sources[0].ReadOnlyTools, id)
+		delete(was, id)
+		delete(now, id)
+	}
+	s.Equal(was, now)
 }
 
 // TestShopifyRevisionTwoSeedsOverTheRevisionOneTheBuildBeforeStored: revision 1 sent the

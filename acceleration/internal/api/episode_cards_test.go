@@ -160,8 +160,9 @@ func (s *EpisodeCardsSuite) TestACallWithCardsIsRefusedAMoveOntoSpeechToSpeech()
 	s.Contains(failure.Error.Message, "no speech-to-speech models")
 }
 
-// smsWithALine opens an SMS episode of number, as the bridge will (T53), with one line in its
-// thread channel, so a call from the number starts with its card.
+// smsWithALine opens an SMS episode of number, as the bridge does, with one line in its
+// thread channel written after the episode opened, so a call from the number starts with its
+// card.
 func (s *EpisodeCardsSuite) smsWithALine(number, text string) {
 	ctx := context.Background()
 	cards, err := omnichannel.New(omnichannel.Options{Store: s.store, Stream: s.stream})
@@ -175,16 +176,16 @@ func (s *EpisodeCardsSuite) smsWithALine(number, text string) {
 		Data: &getstream.ChannelInput{CreatedByID: &author, Custom: map[string]any{"support_customer_id": s.customerID()}},
 	})
 	s.Require().NoError(err)
-	_, err = bound.Client.Chat().SendMessage(ctx, "agent", thread, &getstream.SendMessageRequest{
-		Message: getstream.MessageRequest{Text: &text, UserID: &author},
-	})
-	s.Require().NoError(err)
 	opened, err := cards.Open(ctx, omnichannel.Episode{
 		CustomerID: s.customerID(), AgentConfigID: s.config.Id, AgentName: s.config.Name, Person: person,
 		Source: "sms", ThreadChannel: "agent:" + thread,
 	})
 	s.Require().NoError(err)
 	s.Require().NoError(cards.Write(ctx, opened))
+	_, err = bound.Client.Chat().SendMessage(ctx, "agent", thread, &getstream.SendMessageRequest{
+		Message: getstream.MessageRequest{Text: &text, UserID: &author},
+	})
+	s.Require().NoError(err)
 }
 
 // joined is the id of a session under the test's agent on a call the participant is on.
@@ -213,9 +214,17 @@ func (s *EpisodeCardsSuite) agentConfigOn(cards bool, model string) AgentConfig 
 	var created AgentConfig
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
 		Name: "agent-" + s.utils.uuid(), Llm: pointerTo(model), Instructions: pointerTo("be brief"),
-		EpisodeCards: pointerTo(cards),
+		EpisodeCards: pointerTo(onOrOff(cards)),
 	}, &created))
 	return created
+}
+
+// onOrOff is the episode cards mode on for cards, off without.
+func onOrOff(cards bool) EpisodeCardsMode {
+	if cards {
+		return EpisodeCardsOn
+	}
+	return EpisodeCardsOff
 }
 
 // The call hook ends the call's episode (T55): ended, then summarized by the agent config's
@@ -238,6 +247,32 @@ func (s *EpisodeCardsSuite) TestACallsCardIsSummarizedWhenTheCallEnds() {
 	s.Contains(stored[0]["text"], "I need to move my appointment to Tuesday")
 	custom, _ := stored[0]["custom"].(map[string]any)
 	s.Equal(store.EpisodeSummarized, custom["status"])
+}
+
+// Catches a call whose number is linked to a user while it goes on that closes with its
+// set-aside row's address, retired:<id>, as its caller: no line on the call is the caller's
+// (omnichannel.callerOf), so the summary has nothing to read and fails.
+func (s *EpisodeCardsSuite) TestACallsCardIsSummarizedWhenItsNumberIsLinkedDuringTheCall() {
+	s.config = s.agentConfigOn(true, "recites/recites-model")
+	call := s.called("sip-" + s.number)
+	omni := s.omniChannel(s.number)
+	s.cards(omni, 1)
+	episode := s.callEpisode(call)
+	s.say(call, "sip-"+s.number, "I need to move my appointment to Tuesday")
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/users/user-"+s.utils.uuid(),
+		`{"phone": "`+s.number+`"}`, nil))
+	var aside int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM contact_map WHERE customer_id = ? AND address LIKE 'retired:%'", s.customerID()).Scan(&aside))
+	s.Require().Equal(1, aside, "the link set the call's row aside")
+	s.Equal(http.StatusOK, s.signedly(phone.CallHookPath, s.sessionEnded(call)))
+
+	s.Require().Eventually(func() bool { return s.episodeStatus(episode) == store.EpisodeSummarized }, settleFor, 10*time.Millisecond,
+		"the episode is %s", s.episodeStatus(episode))
+	stored := s.chat.Stored(omni)
+	s.Require().Len(stored, 1, "the card stays in the omni-channel it was written in")
+	s.Contains(stored[0]["text"], "I need to move my appointment to Tuesday")
 }
 
 // The summary is written off the hook: Stream has its 200 while the model is still writing,

@@ -53,7 +53,7 @@ func main() {
 	if *verbose {
 		level = slog.LevelDebug
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level, ReplaceAttr: store.RedactLogAttr}))
 	slog.SetDefault(logger)
 
 	options := options{
@@ -67,7 +67,7 @@ func main() {
 		tags:         tags.Tags,
 	}
 	if err := run(options, logger); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		logger.Error("chat stopped", "error", err)
 		os.Exit(1)
 	}
 }
@@ -251,7 +251,7 @@ func (t *talker) ask(ctx context.Context, question string) error {
 				fmt.Fprint(os.Stderr, typed.Delta)
 			}
 		case llm.ResponseFailed:
-			fmt.Fprintf(os.Stderr, "provider error (%s): %v\n", typed.Provider, typed.Err)
+			fmt.Fprintf(os.Stderr, "provider error (%s): %s\n", typed.Provider, store.RedactLogText(fmt.Sprint(typed.Err)))
 		}
 	}
 

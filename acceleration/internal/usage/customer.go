@@ -129,7 +129,7 @@ type CustomerUsageEvent struct {
 	UsageID         uuid.UUID         `json:"usage_id"`
 	OccurredAt      time.Time         `json:"occurred_at"`
 	AppID           string            `json:"app_id"`
-	APIKey          string            `json:"api_key" doc:"The public key the work was started with, or the origin of work no key started, such as hook:chat."`
+	Origin          string            `json:"origin" doc:"Who started the work: the public key it was started with, or the origin of work no key started, such as hook:chat."`
 	UserID          string            `json:"user_id,omitempty"`
 	UsageCategories []string          `json:"usage_categories" doc:"The token's usage categories, its team among them as team:<name>."`
 	AgentID         string            `json:"agent_id,omitempty"`
@@ -162,7 +162,7 @@ func CustomerUsageEventOf(event Event) CustomerUsageEvent {
 		quantities = map[string]int64{}
 	}
 	return CustomerUsageEvent{
-		UsageID: event.UsageID, OccurredAt: event.OccurredAt.UTC(), AppID: event.AppID, APIKey: event.APIKey,
+		UsageID: event.UsageID, OccurredAt: event.OccurredAt.UTC(), AppID: event.AppID, Origin: event.APIKey,
 		UserID: event.UserID, UsageCategories: categories, AgentID: event.AgentID, CallID: event.CallID,
 		SessionID: event.SessionID, Meter: event.Meter, Provider: event.Provider, Model: event.Model,
 		Purpose: event.Purpose, Quantities: quantities, Attributes: event.Attributes, SKU: event.SKU, Region: event.Region, BYOK: event.BYOK, CostMicros: event.CostMicros,
@@ -184,7 +184,8 @@ type UsageQuery struct {
 	From, To time.Time
 	Meter    string
 	AppID    string
-	APIKey   string
+	// Origin is the key the work was started with, or the origin of work no key started.
+	Origin string
 	// UserID needs AppID: a user id is only unique within its app.
 	UserID string
 	// Team is the category team:<name>, so it is not given with Category.
@@ -209,7 +210,7 @@ func (q UsageQuery) Values() url.Values {
 		}
 	}
 	for name, value := range map[string]string{
-		"meter": q.Meter, "app_id": q.AppID, "api_key": q.APIKey, "user_id": q.UserID,
+		"meter": q.Meter, "app_id": q.AppID, "origin": q.Origin, "user_id": q.UserID,
 		"team": q.Team, "category": q.Category, "cursor": q.Cursor,
 	} {
 		if value != "" {

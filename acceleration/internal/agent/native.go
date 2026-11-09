@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -17,6 +19,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
+
+// ErrPlaybackFull is a speech-to-speech model's audio arriving faster than the call plays it,
+// which the agent leaves the call for: a failure of the router's own, not the model's.
+var ErrPlaybackFull = errors.New("agent: speech-to-speech playback queue is full")
 
 const (
 	maxNativeRetries        = 3
@@ -85,6 +91,7 @@ func (a *Agent) respondNative(ctx context.Context, text string, images []llm.Ima
 	a.lastParticipant = caller
 	a.scheduled = routing.ScheduledTurn(ctx)
 	a.mu.Unlock()
+	a.turns.typedTurn()
 	return session.SendText(text, caller)
 }
 
@@ -249,7 +256,7 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 		case <-p.ctx.Done():
 			return
 		default:
-			a.fail(errors.New("agent: speech-to-speech playback queue is full"), "sts")
+			a.fail(ErrPlaybackFull, "sts")
 			go a.Close()
 			return
 		}
@@ -338,12 +345,13 @@ func (a *Agent) consumeSTS(p *pipeline, speech *stsrouter.Session, events <-chan
 			if typed.Fatal {
 				retry = true
 				retryErr = typed.Err
-				a.logger.Warn("the speech-to-speech session failed", "error", typed.Err)
+				a.logger.Warn("the speech-to-speech session failed",
+					"provider", typed.Provider, "model", typed.Model, "error", typed.Err)
 				if speech != nil {
 					_ = speech.Close()
 				}
 			} else {
-				a.fail(typed.Err, "sts")
+				a.fail(typed.Err, "sts", "provider", typed.Provider, "model", typed.Model)
 			}
 		}
 	}
@@ -590,6 +598,11 @@ func (a *Agent) replyStarted(started sts.ResponseStarted) {
 	if !waiting.IsZero() {
 		a.turns.started(started.ResponseID, kindCaller)
 		a.turns.begin(started.ResponseID, participant, waiting, waiting, 0)
+	} else {
+		// A reply nobody's silence opened, such as what a tool or the subagent came back with,
+		// ends the wait of a caller turn that said nothing and handed work on. The model does
+		// not say what opened it, so it is recorded as the work that turn handed on.
+		a.turns.answering(started.ResponseID)
 	}
 	a.emitter.Send(Responding{TurnID: started.ResponseID, Participant: participant, Prompt: prompt})
 }
@@ -604,10 +617,11 @@ func (a *Agent) replyAudio(chunk sts.AudioChunk) {
 		a.turns.dropped(chunk.ResponseID, chunk.Audio.DurationMs())
 		return
 	}
+	queued := time.Now()
 	var err error
 	marked, marks := a.options.Edge.(MarkedPlayout)
 	if marks {
-		err = marked.PublishAudioMarked(chunk.Audio, withUtterance(a.turns.marksFor(chunk.ResponseID), heard))
+		err = marked.PublishAudioMarked(chunk.Audio, a.carried.marked(withUtterance(a.turns.marksFor(chunk.ResponseID), heard)))
 	} else {
 		err = a.options.Edge.PublishAudio(chunk.Audio)
 	}
@@ -628,9 +642,7 @@ func (a *Agent) replyAudio(chunk sts.AudioChunk) {
 	if heard.sent(chunk.Audio.DurationMs()) && !marks {
 		heard.FirstAudiblePulled(time.Now())
 	}
-	a.mu.Lock()
-	a.lastSpokeAt = time.Now()
-	a.mu.Unlock()
+	a.spoke(queued, time.Now(), chunk.Audio)
 	// The wait ends when the participant can hear something, so this is timed after the
 	// publish rather than before it.
 	a.turns.firstAudio(chunk.ResponseID, time.Now())
@@ -664,14 +676,26 @@ func (a *Agent) replyComplete(complete sts.ResponseComplete) {
 	}
 	if said != "" {
 		a.history = append(a.history, llm.Message{Role: llm.Assistant, Content: said})
+		a.keptReply = complete.ResponseID
 	}
 	exchange := lastExchange(a.history)
 	pending := a.pendingTools
+	// A delegate_skill call still running is work for the subagent the harness does not know of yet.
+	delegating := slices.Contains(slices.Collect(maps.Values(a.toolsRunning)), delegateSkill)
+	current := a.harness
 	a.mu.Unlock()
 	a.settle()
 
 	// An interrupted reply was reported by receiveSTS, or by whoever abandoned it first.
 	if !complete.Interrupted {
+		// A reply that handed work on and said nothing leaves the caller waiting for the reply
+		// that delivers it: a tool's answer, or a follow-up for work the subagent does, as the
+		// cascade names the same lines.
+		if delegating || current != nil && (current.Delegating() || current.Pending()) {
+			a.turns.owes(complete.ResponseID, kindFollowUp)
+		} else if pending > 0 {
+			a.turns.owes(complete.ResponseID, kindTool)
+		}
 		a.turns.completed(complete.ResponseID, 0, 1)
 		a.turns.spoke(complete.ResponseID, 0, complete.AudioDurationMs)
 		// Remembering happens off the turn path: extraction takes longer than a turn and

@@ -236,8 +236,7 @@ export class Dispatch {
       );
     }
 
-    const url = await this.client.backend.socketURL("/v1/dispatch", this.waiting());
-    const socket = await Socket.open(this.client.backend, url);
+    const socket = await Socket.dial(this.client.backend, "/v1/dispatch", this.waiting());
     this.socket = socket;
 
     const close = () => socket.close();

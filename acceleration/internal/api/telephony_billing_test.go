@@ -297,6 +297,48 @@ func (s *TelephonyBillingSuite) TestAPhoneLeavingEndsItsLeg() {
 	s.Len(s.rows(phone.ModelCallMinutes), 1, "the call ending ends nothing more")
 }
 
+func (s *TelephonyBillingSuite) TestAnArrivingCallersLegKeepsTheirNumberInE164() {
+	_, callID := s.attached()
+	arriving := strings.Replace(arrivingCallAt("default:"+callID, s.clock.now()),
+		`"sip-+15550001111"`, `"sip-00442079460018"`, 1)
+
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/phone/hooks/stream", arriving))
+
+	s.Eventually(func() bool {
+		legs := s.legsOf(callID)
+		return len(legs) == 1 && legs[0].RemoteNumber == "+442079460018"
+	}, settleFor, 50*time.Millisecond, "the leg of a caller written with 00 holds the number in E.164")
+}
+
+// A phone written with 00 that joins a call ringing two numbers is given the leg placed to its
+// own number, not the one dialled first.
+func (s *TelephonyBillingSuite) TestAPhoneJoiningWith00TakesTheLegOfItsOwnNumber() {
+	callID := s.utils.uuid()
+	for _, remote := range []string{"+15125550123", "+442079460018"} {
+		s.router.phone.OpenLeg(context.Background(), routing.Owner{CustomerID: s.customerID(),
+			Attribution: routing.Attribution{APIKey: s.app.key}},
+			store.CallLeg{CallType: "default", CallID: callID, Vendor: "telnyx", Direction: store.Outbound,
+				LocalNumber: "+15125550100", RemoteNumber: remote}, false)
+		s.clock.advance(time.Second)
+	}
+
+	s.Require().Equal(http.StatusOK, s.participant("joined", callID, "sip-00442079460018", "phone-1"))
+
+	answered := map[string]string{}
+	for _, leg := range s.legsOf(callID) {
+		answered[leg.RemoteNumber] = leg.ParticipantSession
+	}
+	s.Equal(map[string]string{"+15125550123": "", "+442079460018": "phone-1"}, answered)
+}
+
+// legsOf is every leg of a call.
+func (s *telephonyBilling) legsOf(callID string) []store.CallLeg {
+	var legs []store.CallLeg
+	s.Require().NoError(s.store.ShardDB().NewSelect().Model(&legs).Where("call_id = ?", callID).
+		Scan(context.Background()))
+	return legs
+}
+
 // A leg is timed by when Stream made each event, not when it was delivered.
 func (s *TelephonyBillingSuite) TestALegIsTimedByWhenItsEventsWereMade() {
 	callID := s.placedLeg("+15125550123", routing.Attribution{APIKey: s.app.key})

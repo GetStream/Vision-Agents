@@ -183,8 +183,54 @@ func (s *UsageIdentitySuite) TestSpendIsNarrowedToAKeyAUserATeamAndACategory() {
 	s.Equal(int64(1), s.spentCount("team=finance"))
 	s.Equal(int64(1), s.spentCount("category=project:onboarding"))
 	s.Equal(int64(1), s.spentCount("user_id="+url.QueryEscape(sales.userID)))
-	s.Equal(int64(2), s.spentCount("api_key="+url.QueryEscape(s.app.key)))
-	s.Equal(int64(0), s.spentCount("api_key=hook:chat"))
+	s.Equal(int64(2), s.spentCount("origin="+url.QueryEscape(s.app.key)))
+	s.Equal(int64(0), s.spentCount("origin=hook:chat"))
+}
+
+// Stream's proxy forwards the app's key as api_key in every call's query: spend read through it
+// counts every key's and origin's work, and origin narrows it (AI-2684).
+func (s *UsageIdentitySuite) TestSpendWithTheCallersKeyInTheQueryCountsEveryKey() {
+	s.searched(s.client)
+	s.hookRow()
+	proxied := "api_key=" + url.QueryEscape(s.app.key)
+
+	s.Equal(int64(2), s.spentCount(proxied))
+	s.Equal(int64(1), s.spentCount(proxied+"&origin=hook%3Achat"))
+	s.Equal(int64(1), s.spentCount(proxied+"&origin="+url.QueryEscape(s.app.key)))
+}
+
+// Spend read with no key in the query counts every key's and origin's work (AI-2684).
+func (s *UsageIdentitySuite) TestSpendWithNoKeyInTheQueryCountsEveryKey() {
+	s.searched(s.client)
+	s.hookRow()
+
+	s.Equal(int64(2), s.spentCount(""))
+}
+
+// origin narrows spend to a key or to an origin no key started; empty, it narrows nothing
+// (AI-2811).
+func (s *UsageIdentitySuite) TestSpendIsNarrowedToAnOrigin() {
+	s.searched(s.client)
+	s.hookRow()
+
+	s.Equal(int64(1), s.spentCount("origin=hook%3Achat"))
+	s.Equal(int64(2), s.spentCount("origin="), "an empty origin narrows nothing")
+}
+
+// api_key_id was origin's name until AI-2851. Ignored, it would count every key's spend for a
+// caller that asked for one key's, so it is refused, even naming what origin names.
+func (s *UsageIdentitySuite) TestSpendRefusesTheOldNameAPIKeyID() {
+	s.searched(s.client)
+	s.hookRow()
+	key := url.QueryEscape(s.app.key)
+
+	for _, query := range []string{"api_key_id=hook%3Achat", "api_key_id=" + key + "&origin=" + key,
+		"api_key=" + key + "&api_key_id=hook%3Achat"} {
+		status, message := s.serverClient.failure(http.MethodGet, s.spendPath(query), nil)
+		s.Equal(http.StatusBadRequest, status, "%s: %s", query, message)
+		s.Contains(message, "api_key_id is now named origin", query)
+	}
+	s.Equal(int64(2), s.spentCount("api_key_id="), "an empty api_key_id names nothing")
 }
 
 func (s *UsageIdentitySuite) TestASpendFilterNamingTwoTeamsIsRefused() {
@@ -194,6 +240,89 @@ func (s *UsageIdentitySuite) TestASpendFilterNamingTwoTeamsIsRefused() {
 	var answered ErrorResponse
 	s.Require().NoError(json.Unmarshal(payload, &answered), string(payload))
 	s.Equal(codeInvalidUsageCategories, answered.Error.Code)
+}
+
+// An agent tagged with a team counts the sessions of a caller who names none under it, as a
+// token naming that team would.
+func (s *UsageIdentitySuite) TestAnAgentsTeamTagCountsItsSessionsUnderTheTeam() {
+	config := s.taggedConfig(map[string]string{"team": "support"})
+	opener := s.userWith([]string{"project:onboarding"}, "")
+	request := textSession(nil)
+	request.ConfigId = &config
+	opened := opener.createSession(request)
+
+	s.respond(opener, opened.Id, "hello")
+
+	for _, row := range s.sessionRows(opened.Id, 1) {
+		s.Equal([]string{"project:onboarding", "team:support"}, row.UsageCategories)
+	}
+	s.Equal(int64(1), s.spentCount("team=support"))
+}
+
+// The team a token was signed for is the session's, whatever the agent is tagged with.
+func (s *UsageIdentitySuite) TestATokensTeamIsNotMovedByTheAgentsTeamTag() {
+	config := s.taggedConfig(map[string]string{"team": "support"})
+	opener := s.userWith(nil, "finance")
+	request := textSession(nil)
+	request.ConfigId = &config
+	opened := opener.createSession(request)
+
+	s.respond(opener, opened.Id, "hello")
+
+	for _, row := range s.sessionRows(opened.Id, 1) {
+		s.Equal([]string{"team:finance"}, row.UsageCategories)
+	}
+}
+
+// A backend names the session's team over the agent's tag, and the session keeps it for the
+// turns a device asks afterwards.
+func (s *UsageIdentitySuite) TestABackendNamesTheTeamASessionIsCountedUnder() {
+	config := s.taggedConfig(map[string]string{"team": "support"})
+	owner := s.data.createUser()
+	request := textSession(nil)
+	request.ConfigId, request.Team = &config, pointerTo("finance")
+	opened := s.serverClient.actingFor(owner).createSession(request)
+
+	s.respond(s.serverClient.actingFor(owner), opened.Id, "hello")
+
+	for _, row := range s.sessionRows(opened.Id, 1) {
+		s.Equal([]string{"team:finance"}, row.UsageCategories)
+	}
+}
+
+func (s *UsageIdentitySuite) TestATeamASessionCannotBeCountedUnderIsRefused() {
+	request := textSession(nil)
+	request.Team = pointerTo("finance")
+	status, message := s.userWith(nil, "").failure(http.MethodPost, "/v1/agents/sessions", request)
+	s.Equal(http.StatusForbidden, status, message)
+	s.Contains(message, "team is sent server-side")
+
+	signed := s.signedIn(jwt.MapClaims{"server": true, "team": "sales"}, auth.AuthTypeServer, server, "")
+	status, message = signed.failure(http.MethodPost, "/v1/agents/sessions", request)
+	s.Equal(http.StatusBadRequest, status, message)
+	s.Contains(message, `the team "sales" the token was signed for`)
+
+	request.Team = pointerTo("fin:ance")
+	status, message = s.serverClient.failure(http.MethodPost, "/v1/agents/sessions", request)
+	s.Equal(http.StatusBadRequest, status, message)
+}
+
+func (s *UsageIdentitySuite) TestAConfigWhoseTeamTagIsNoTeamIsRefused() {
+	status, message := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
+		Name: "agent-" + s.utils.uuid(), Llm: pointerTo("en-low-latency"), Tags: &map[string]string{"team": "customer support"},
+	})
+
+	s.Equal(http.StatusBadRequest, status, message)
+	s.Contains(message, `tags.team "customer support" is not a team`)
+}
+
+// taggedConfig is the id of an agent config of the suite's app with tags.
+func (s *UsageIdentitySuite) taggedConfig(tags map[string]string) string {
+	var created AgentConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
+		Name: "agent-" + s.utils.uuid(), Llm: pointerTo("en-low-latency"), Tags: &tags,
+	}, &created))
+	return created.Id
 }
 
 // userWith is a new user of the app whose token names usage categories and a team.
@@ -212,6 +341,15 @@ func (s *UsageIdentitySuite) userWith(categories []string, team string) *testCli
 // searched has client search once and returns the row it recorded.
 func (s *UsageIdentitySuite) searched(client *testClient) store.Request {
 	return searchedBy(&s.RouterSuite, client)
+}
+
+// hookRow records a row of work a chat hook started, which names the origin hook:chat in
+// place of a key.
+func (s *UsageIdentitySuite) hookRow() {
+	s.Require().NoError(s.store.RecordRequest(context.Background(), &store.Request{
+		Modality: "stt", CustomerID: s.customerID(), OrganizationID: s.app.organization.ID, APIKey: "hook:chat",
+		Provider: "stub", Model: "stub-stt", StartedAt: time.Now(), CostMicros: 1_000, Billable: true, Success: true,
+	}))
 }
 
 // respond asks a session a question as client.

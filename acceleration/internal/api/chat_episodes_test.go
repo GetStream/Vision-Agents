@@ -13,12 +13,17 @@ import (
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/uptrace/bun"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 // ChatEpisodesSuite is the app chat's episode card: a person's message in an agent channel,
@@ -114,6 +119,132 @@ func (s *ChatEpisodesSuite) TestAChatMessageTheWebhookBringsWritesACard() {
 	s.Equal(store.EpisodeChat, custom["source"])
 }
 
+// record writes the chat's card as on does (AI-2856). The worker is handed the message, so the
+// spec is the config's (chatEpisodeUnopened, session.FromConfig). Catches record taken as off
+// there, or left out of the spec a config makes.
+func (s *ChatEpisodesSuite) TestAChatMessageUnderRecordWritesACard() {
+	worker := s.worker()
+	config := store.AgentConfig{CustomerID: s.customerID(), Name: "chat-" + s.utils.uuid(), Mode: store.AgentModeText,
+		LLM: "llm-flow", DispatchText: true, EpisodeCardsRecord: true}
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+
+	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
+
+	s.True(s.reachesWorker(worker), "the message is answered")
+	custom, _ := s.cards(s.omniChannel(), 1)[0]["custom"].(map[string]any)
+	s.Equal(store.EpisodeChat, custom["source"])
+}
+
+// Catches a card written from a channel that is not the person's alone, whose lines would
+// reach her other sessions though a session reads cards only in such a channel
+// (omnichannel.Between), and a channel taken as hers when what Stream sent says nothing of its
+// members: the message is answered, and opens no episode. Each channel is the event's, as
+// Stream sends it; PERSON is the writer and AGENT the agent's user, the channel's id.
+func (s *ChatEpisodesSuite) TestAMessageInAChannelThatIsNotThePersonsAloneOpensNoEpisode() {
+	for _, c := range []struct{ name, channel string }{
+		{"a third member", `{"members": [{"user_id": "PERSON"}, {"user_id": "carl"}]}`},
+		{"the person, the agent and a third member", `{"members": [{"user_id": "PERSON"}, {"user_id": "AGENT"}, {"user_id": "carl"}]}`},
+		{"the agent alone", `{"members": [{"user_id": "AGENT"}]}`},
+		{"somebody else alone", `{"members": [{"user_id": "carl"}]}`},
+		{"a member with no user id", `{"members": [{"user_id": "PERSON"}, {"user": {"id": "carl"}}]}`},
+		{"no members", `{"members": []}`},
+		{"members null", `{"members": null}`},
+		{"no members field", `{"id": "AGENT", "member_count": 1}`},
+		{"members of another type", `{"members": "PERSON"}`},
+		{"a user id of another type", `{"members": [{"user_id": "PERSON"}, {"user_id": 7}]}`},
+		{"a channel of another type", `"PERSON"`},
+		{"no channel", ``},
+	} {
+		s.Run(c.name, func() {
+			s.channelID = "chat-" + s.utils.uuid()
+			worker := s.worker()
+			config := s.config(true, "llm-flow")
+			channel := strings.NewReplacer("PERSON", s.user, "AGENT", s.channelID).Replace(c.channel)
+
+			s.Require().Equal(http.StatusOK, s.delivers(&s.RouterSuite, s.writtenIn(config.ID, "where is my order?", channel, time.Now()), s.current))
+
+			s.True(s.reachesWorker(worker), "the message is answered")
+			s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond, "a contact or an episode")
+		})
+	}
+}
+
+// Catches the agent counted as somebody else: a person's channel the agent is a member of too
+// is hers, and her message writes its card. The person alone is every other test's channel.
+func (s *ChatEpisodesSuite) TestAMessageInThePersonsChannelWithTheAgentWritesACard() {
+	worker := s.worker()
+	config := s.config(true, "llm-flow")
+	channel := fmt.Sprintf(`{"members": [{"user_id": %q}, {"user_id": %q}], "member_count": 2}`, s.user, s.channelID)
+
+	s.Require().Equal(http.StatusOK, s.delivers(&s.RouterSuite, s.writtenIn(config.ID, "where is my order?", channel, time.Now()), s.current))
+
+	s.True(s.reachesWorker(worker), "the message is answered")
+	custom, _ := s.cards(s.omniChannel(), 1)[0]["custom"].(map[string]any)
+	s.Equal(store.EpisodeChat, custom["source"])
+}
+
+// Catches a chat episode that starts anywhere but when Stream made its message, as its
+// created_at says in RFC 3339 with any offset, and a message whose created_at says no time
+// left without its card: its episode starts when it is opened, as before.
+func (s *ChatEpisodesSuite) TestAChatEpisodeStartsWhenItsMessageWasMade() {
+	made := time.Date(2026, 11, 3, 8, 5, 28, 655123456, time.UTC)
+	for _, c := range []struct {
+		name, createdAt string
+		made            bool
+	}{
+		{"in UTC", `"2026-11-03T08:05:28.655123456Z"`, true},
+		{"with an offset", `"2026-11-03T10:05:28.655123456+02:00"`, true},
+		{"none", ``, false},
+		{"null", `null`, false},
+		{"a number", `1762157128`, false},
+		{"not a time", `"yesterday"`, false},
+	} {
+		s.Run(c.name, func() {
+			s.channelID = "chat-" + s.utils.uuid()
+			s.user = "user-" + s.utils.uuid()
+			worker := s.worker()
+			config := s.config(true, "llm-flow")
+			channel := fmt.Sprintf(`{"members": [{"user_id": %q}]}`, s.user)
+			body := s.writtenIn(config.ID, "where is my order?", channel, made)
+			field := fmt.Sprintf(`"created_at": %q, `, made.Format(time.RFC3339Nano))
+			s.Require().Contains(body, field)
+			if c.createdAt == "" {
+				body = strings.Replace(body, field, "", 1)
+			} else {
+				body = strings.Replace(body, field, `"created_at": `+c.createdAt+`, `, 1)
+			}
+			before := time.Now().Truncate(time.Microsecond)
+
+			s.Require().Equal(http.StatusOK, s.delivers(&s.RouterSuite, body, s.current))
+
+			s.True(s.reachesWorker(worker), "the message is answered")
+			s.cards(s.omniChannel(), 1)
+			var started time.Time
+			s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+				"SELECT ep.started_at FROM episodes AS ep JOIN contact_map AS cm ON cm.id = ep.contact_id WHERE cm.address = ?",
+				fmt.Sprintf("%d:%s", suiteStreamApp, s.user)).Scan(&started))
+			if c.made {
+				s.True(started.Equal(made.Truncate(time.Microsecond)), "started at %s", started)
+			} else {
+				s.False(started.Before(before), "started at %s, before the delivery at %s", started, before)
+			}
+		})
+	}
+}
+
+// Catches a session running on the channel passed over by the members rule: its message in a
+// channel with a third member opens nothing, as a worker's does.
+func (s *ChatEpisodesSuite) TestAMessageToARunningSessionInAChannelWithAThirdMemberOpensNoEpisode() {
+	s.worker()
+	config := s.config(true, "en-low-latency")
+	s.serverClient.createSession(CreateSessionRequest{AgentId: &s.channelID, ConfigId: &config.ID})
+	channel := fmt.Sprintf(`{"members": [{"user_id": %q}, {"user_id": "carl"}]}`, s.user)
+
+	s.Require().Equal(http.StatusOK, s.delivers(&s.RouterSuite, s.writtenIn(config.ID, "where is my order?", channel, time.Now()), s.current))
+
+	s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond, "a contact or an episode")
+}
+
 // Catches a redelivery that opens a second episode or writes a second card: the queue's worker
 // tries a row again when its lease runs out, after a try that opened the episode.
 func (s *ChatEpisodesSuite) TestAQueuedMessageTriedAgainOpensNoSecondEpisode() {
@@ -155,6 +286,33 @@ func (s *ChatEpisodesSuite) TestAConfigWithoutCardsWritesAndReadsNothingNew() {
 	s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond, "a contact or an episode")
 	s.Equal(before, len(s.chat.Requests(suiteStreamKey)), "Stream was asked something")
 	s.Equal(int64(1), s.configReads.reads.Load(), "the config's row is read as many times as at base")
+}
+
+// Defect: a config without episode_cards asking Stream whether the app checks tokens, as a
+// cards-on one does (checksTokens before the config's gate): with Stream slow to answer, every
+// message of such a config would wait up to omnichannel.ReadTimeout and pay a request for
+// nothing. It is handed on at once and /api/v2/app is never requested.
+func (s *ChatEpisodesSuite) TestAConfigWithoutCardsNeverAsksStreamWhetherTheAppChecksTokens() {
+	s.inApp(chattest.App{ID: suiteStreamApp, CallTypes: []string{"agent"}})
+	asked, release := s.chat.Hold("/api/v2/app")
+	defer release()
+	worker := s.worker()
+	config := s.config(false, "llm-flow")
+
+	status := make(chan int, 1)
+	go func() { status <- s.writes(config.ID, "where is my order?") }()
+
+	select {
+	case <-worker:
+	case <-time.After(omnichannel.ReadTimeout / 2):
+		s.FailNow("the message was held for Stream's answer about the app")
+	}
+	s.Equal(http.StatusOK, <-status)
+	select {
+	case <-asked:
+		s.Fail("Stream was asked whether the app checks tokens")
+	case <-time.After(dropped):
+	}
 }
 
 // The control in a channel a session answered before, whose calls row ownerOf finds first: a
@@ -231,6 +389,93 @@ func (s *ChatEpisodesSuite) TestAChatASessionAnsweredGoesOnWritingCards() {
 	s.Equal(2, s.episodeCount(), "the message after the close opens the next episode")
 }
 
+// Defect: with auth checks off, a client may write in the app chat as anybody, so Bob's client
+// writing as Anya puts a card in her omni-channel, which her sessions then read. The message is
+// answered all the same, and opens no contact, no episode and no card.
+func (s *ChatEpisodesSuite) TestAMessageInAnAppThatChecksNoTokensWritesNoCard() {
+	s.inApp(chattest.App{ID: suiteStreamApp, CallTypes: []string{"agent"}, DisableAuthChecks: true})
+	worker := s.worker()
+	config := s.config(true, "llm-flow")
+
+	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
+
+	s.handedTo(worker)
+	s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond, "a contact or an episode")
+}
+
+// Defect: an app Stream refuses to describe taken as one that checks tokens, which writes the
+// card of whoever a message says wrote it. The message is answered, and opens nothing.
+func (s *ChatEpisodesSuite) TestAMessageInAnAppStreamCannotBeAskedAboutWritesNoCard() {
+	s.inApp(chattest.App{ID: suiteStreamApp, Refuses: true})
+	worker := s.worker()
+	config := s.config(true, "llm-flow")
+
+	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
+
+	s.handedTo(worker)
+	s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond, "a contact or an episode")
+}
+
+// Defect: a Stream slow to say whether the app checks tokens holds the message for as long as
+// a request to Stream may take (streamapp's requestTimeout, 30 s), twice. It is handed on once
+// omnichannel.ReadTimeout has passed, with no card.
+func (s *ChatEpisodesSuite) TestAStreamSlowToSayWhetherTheAppChecksTokensHoldsTheMessageNoLongerThanTheReadTimeout() {
+	s.inApp(chattest.App{ID: suiteStreamApp, CallTypes: []string{"agent"}})
+	asked, release := s.chat.Hold("/api/v2/app")
+	defer release()
+	worker := s.worker()
+	config := s.config(true, "llm-flow")
+
+	status := make(chan int, 1)
+	go func() { status <- s.writes(config.ID, "where is my order?") }()
+
+	select {
+	case <-asked:
+	case <-time.After(settleFor):
+		s.FailNow("Stream was not asked whether the app checks tokens")
+	}
+	select {
+	case <-worker:
+	case <-time.After(omnichannel.ReadTimeout + settleFor):
+		s.FailNow("the message was not handed on once the read timeout passed")
+	}
+	s.Equal(http.StatusOK, <-status)
+	s.Zero(s.contacts())
+	s.Zero(s.episodeCount())
+}
+
+// Defect: a message from an app the customer does not act in taken as one from an app that
+// checks tokens, though Stream was never asked about it: it opens nothing.
+func (s *ChatEpisodesSuite) TestAMessageFromAnAppTheCustomerDoesNotActInWritesNoCard() {
+	config := s.config(true, "llm-flow")
+	var event messageEvent
+	event.ChannelType, event.ChannelID = "agent", s.channelID
+	event.Message.ID, event.Message.Text, event.Message.User.ID = "message-"+s.utils.uuid(), "where is my order?", s.user
+	event.Channel = []byte(fmt.Sprintf(`{"members": [{"user_id": %q}]}`, s.user))
+
+	s.router.chatEpisode(context.Background(), hookOrigin{app: suiteStreamApp + 1, queued: true}, event, session.FromConfig(config))
+
+	s.Zero(s.contacts())
+	s.Zero(s.episodeCount())
+}
+
+// The control for the two above: the same app under a key of its own, which checks tokens,
+// writes the card as at base 668d15d5c, where the probe of this delivery wrote one. Catches the
+// rule read the wrong way round, and the key of its own, rather than the auth checks, keeping
+// the card out.
+func (s *ChatEpisodesSuite) TestAMessageInAnAppThatChecksTokensWritesACard() {
+	s.inApp(chattest.App{ID: suiteStreamApp, CallTypes: []string{"agent"}})
+	worker := s.worker()
+	config := s.config(true, "llm-flow")
+
+	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
+
+	s.handedTo(worker)
+	custom, _ := s.cards(s.omniChannel(), 1)[0]["custom"].(map[string]any)
+	s.Equal(store.EpisodeChat, custom["source"])
+	s.Equal(1, s.episodeCount())
+}
+
 // Catches an omni-channel taken for a channel a person writes in: it is where cards are
 // written, so a message in it, which a config of its own names, opens no episode of its own.
 func (s *ChatEpisodesSuite) TestAMessageInAnOmniChannelOpensNoChatEpisode() {
@@ -251,9 +496,12 @@ func (s *ChatEpisodesSuite) TestOneUserIDInTwoStreamAppsIsTwoPeople() {
 	ctx := context.Background()
 	config := s.config(true, "llm-flow")
 	for _, app := range []int64{111, 222} {
+		// The customer acts in that app: a hook from an app it does not is acted on by nobody.
+		s.giveApp(s.customerID(), app, fmt.Sprintf("key-%d-%s", app, s.utils.uuid()))
 		var event messageEvent
 		event.ChannelType, event.ChannelID = "agent", fmt.Sprintf("chat-%d-%s", app, s.utils.uuid())
 		event.Message.ID, event.Message.Text, event.Message.User.ID = "message-"+s.utils.uuid(), "where is my order?", s.user
+		event.Channel = []byte(fmt.Sprintf(`{"members": [{"user_id": %q}]}`, s.user))
 		s.router.chatEpisode(ctx, hookOrigin{app: app, queued: true}, event, session.FromConfig(config))
 	}
 
@@ -347,6 +595,21 @@ func (s *ChatEpisodesSuite) TestAMessageToARunningSessionWritesACard() {
 	s.Equal(store.EpisodeChat, custom["source"])
 }
 
+// Defect: a message of a customer whose work in the deployment's app may only be read, as app
+// mode leaves it once the fallback is off, opening a contact and an episode: a session that
+// started before still answers, and the message opens nothing. The card itself is refused
+// either way (Cards.Write, ErrReadOnly).
+func (s *ChatEpisodesSuite) TestAMessageToARunningSessionOfACustomerReadOnlyInTheAppWritesNoCard() {
+	s.worker()
+	config := s.config(true, "en-low-latency")
+	s.serverClient.createSession(CreateSessionRequest{AgentId: &s.channelID, ConfigId: &config.ID})
+	s.setApps(s.customerID(), func(apps *suiteApps) { apps.readOnly[s.customerID()] = true })
+
+	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
+
+	s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond, "a contact or an episode")
+}
+
 // Catches an incognito session's message being kept: it records nothing of the person.
 func (s *ChatEpisodesSuite) TestAMessageToAnIncognitoSessionOpensNothing() {
 	worker := s.worker()
@@ -373,34 +636,41 @@ func (s *ChatEpisodesSuite) TestAMessageToACallsSessionOpensNoChatEpisode() {
 	s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond)
 }
 
-// Catches a chat episode the idle sweeper leaves open or cannot summarize: a chat episode has
-// no session, so it closes as idle, and its channel, which the customer's app made with the
-// config it names and none of the router's stamps, is read for the summary. recites answers
-// with what it was handed, so the summary holds the person's line.
-func (s *ChatEpisodesSuite) TestAnIdleChatEpisodeIsClosedAndSummarized() {
+// Catches a chat episode the idle sweeper leaves open or cannot summarize, and one whose
+// summary leaves out the message that opened it: Stream made that message before the router
+// opened its episode, so an episode started at the open reads none of it from its start on. A
+// chat episode has no session, so it closes as idle, here by its last message, its start left
+// as the message made it; its channel, which the customer's app made with the config it names
+// and none of the router's stamps, is read for the summary. recites answers with what it was
+// handed, so the summary holds the person's line.
+func (s *ChatEpisodesSuite) TestAnIdleChatEpisodeIsSummarizedFromTheMessageThatOpenedIt() {
 	ctx := context.Background()
 	s.worker()
 	config := s.config(true, "recites/recites-model")
 	bound, err := s.stream.For(ctx, s.customerID())
 	s.Require().NoError(err)
 	_, err = bound.Client.Chat().GetOrCreateChannel(ctx, "agent", s.channelID, &getstream.GetOrCreateChannelRequest{
-		Data: &getstream.ChannelInput{CreatedByID: &s.user, Custom: map[string]any{ConfigField: config.ID}},
+		Data: &getstream.ChannelInput{CreatedByID: &s.user, Custom: map[string]any{ConfigField: config.ID},
+			Members: []getstream.ChannelMemberRequest{{UserID: s.user}}},
 	})
 	s.Require().NoError(err)
 	text := "I need to move my appointment to Tuesday"
-	_, err = bound.Client.Chat().SendMessage(ctx, "agent", s.channelID, &getstream.SendMessageRequest{
+	sent, err := bound.Client.Chat().SendMessage(ctx, "agent", s.channelID, &getstream.SendMessageRequest{
 		Message: getstream.MessageRequest{Text: &text, UserID: &s.user},
 	})
 	s.Require().NoError(err)
-	s.Require().Equal(http.StatusOK, s.writes(config.ID, text))
+	created := sent.Data.Message.CreatedAt.Time
+	s.Require().NotNil(created)
+	s.Require().Equal(http.StatusOK, s.delivers(&s.RouterSuite, s.written(config.ID, text), s.current))
 	omni := s.omniChannel()
 	s.cards(omni, 1)
-	// Idle for two hours, past the closer's hour.
-	_, err = s.store.DB().ExecContext(ctx,
-		"UPDATE episodes SET started_at = now() - interval '2 hours' WHERE customer_id = ?", s.customerID())
-	s.Require().NoError(err)
-	_, err = s.store.DB().ExecContext(ctx, `UPDATE episode_activity SET last_message_at = now() - interval '2 hours'
-WHERE episode_id IN (SELECT id FROM episodes WHERE customer_id = ?)`, s.customerID())
+	var started time.Time
+	s.Require().NoError(s.store.DB().QueryRowContext(ctx, "SELECT started_at FROM episodes WHERE customer_id = ?", s.customerID()).Scan(&started))
+	s.True(started.Equal(created.Truncate(time.Microsecond)), "the episode starts at %s, not when its message was made (%s)", started, created)
+	// Idle for two hours by its last message, past the closer's hour.
+	_, err = s.store.DB().ExecContext(ctx, `INSERT INTO episode_activity (episode_id, last_message_at)
+SELECT id, now() - interval '2 hours' FROM episodes WHERE customer_id = ?
+ON CONFLICT (episode_id) DO UPDATE SET last_message_at = excluded.last_message_at`, s.customerID())
 	s.Require().NoError(err)
 
 	s.Require().NoError(s.episodes.Sweep(ctx))
@@ -531,6 +801,42 @@ func (s *ChatEpisodesSuite) TestAWorkersSessionOnAnotherNodeReadsThePersonsCards
 	s.True(carded(s.askedWith(hello)))
 }
 
+// Defect (AI-2709): a session the person's own app opens with their token reads none of their
+// app chat's cards, or one opened with somebody else's credential reads them. Through
+// createSession, which takes the caller from the credential: Anya's own token is handed her
+// card's line; Bob's token, a guest token naming her, an anonymous caller going by her name,
+// and the backend, alone or naming her, are handed none.
+func (s *ChatEpisodesSuite) TestTheUsersOwnTokenOpensASessionThatReadsTheirChatCard() {
+	worker := s.worker()
+	config := s.config(true, "noted/noted-model")
+	s.says(config.ID, "my appointment is Friday at 3", worker)
+	s.cards(s.omniChannel(), 1)
+	anya := s.data.signedInAs(s.user)
+	for _, c := range []struct {
+		name   string
+		client *testClient
+		reads  bool
+	}{
+		{"her own token", anya, true},
+		{"Bob's token", s.data.createUser(), false},
+		{"a guest token naming her", s.signedIn(jwt.MapClaims{"user_id": s.user, "role": "guest"}, auth.AuthTypeJWT, guest, s.user), false},
+		{"an anonymous caller as her", s.data.claiming(s.user), false},
+		{"the backend", s.serverClient, false},
+		{"the backend naming her", s.serverClient.actingFor(anya), false},
+	} {
+		opened := c.client.createSession(CreateSessionRequest{ConfigId: &config.ID})
+		text := "when is my appointment? " + s.utils.uuid()
+		s.Require().Equal(http.StatusAccepted, c.client.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses",
+			CreateResponseRequest{Text: text, RequestId: pointerTo(s.utils.uuid())}, nil), c.name)
+
+		asked := s.askedWith(text)
+		s.Equal(c.reads, carded(asked), c.name)
+		s.Equal(c.reads, slices.ContainsFunc(asked.Input, func(m llm.Message) bool {
+			return strings.Contains(m.Content, "my appointment is Friday at 3")
+		}), c.name)
+	}
+}
+
 // slow has every reply of the "noted" models opened so far take d.
 func (s *ChatEpisodesSuite) slow(d time.Duration) {
 	s.notedMu.Lock()
@@ -627,11 +933,37 @@ func (s *ChatEpisodesSuite) writes(configID, text string) int {
 }
 
 // written is a message.new the test's user wrote in the test's channel, which names the
-// config given, or none for an empty one.
+// config given, or none for an empty one, as Stream sends it: with the channel's members, the
+// ones the fake Chat holds, else the test's user alone, as the customer's app makes a person's
+// chat; and made when the fake Chat stored the last message of that text there, else now.
 func (s *ChatEpisodesSuite) written(configID, text string) string {
+	members := s.chat.Members(s.channelID)
+	if len(members) == 0 {
+		members = []string{s.user}
+	}
+	var listed []string
+	for _, member := range members {
+		listed = append(listed, fmt.Sprintf(`{"user_id": %q, "user": {"id": %q}}`, member, member))
+	}
+	created := time.Now()
+	for _, stored := range s.chat.Stored(s.channelID) {
+		if at, ok := stored["created_at"].(int64); ok && stored["text"] == text {
+			created = time.Unix(0, at)
+		}
+	}
+	return s.writtenIn(configID, text, `{"members": [`+strings.Join(listed, ", ")+`]}`, created)
+}
+
+// writtenIn is written with the channel given, raw, as the event's channel, none for "", and
+// the message made at created.
+func (s *ChatEpisodesSuite) writtenIn(configID, text, channel string, created time.Time) string {
 	custom := fmt.Sprintf("{%q: %q}", ConfigField, configID)
 	if configID == "" {
 		custom = "{}"
+	}
+	sent := ""
+	if channel != "" {
+		sent = fmt.Sprintf(`"channel": %s,`, channel)
 	}
 	return fmt.Sprintf(`{
   "type": "message.new",
@@ -640,9 +972,10 @@ func (s *ChatEpisodesSuite) written(configID, text string) string {
   "channel_type": "agent",
   "created_at": %q,
   "channel_custom": %s,
-  "message": {"id": %q, "text": %q, "user": {"id": %q, "name": "Anya"}}
-}`, suiteStreamApp, s.channelID, time.Now().UTC().Format(time.RFC3339Nano), custom,
-		"message-"+s.utils.uuid(), text, s.user)
+  %s
+  "message": {"id": %q, "text": %q, "created_at": %q, "user": {"id": %q, "name": "Anya"}}
+}`, suiteStreamApp, s.channelID, time.Now().UTC().Format(time.RFC3339Nano), custom, sent,
+		"message-"+s.utils.uuid(), text, created.UTC().Format(time.RFC3339Nano), s.user)
 }
 
 // sessionAnswered leaves the calls row a worker's session answering in the test's channel
@@ -660,6 +993,21 @@ func (s *ChatEpisodesSuite) config(cards bool, llm string) store.AgentConfig {
 		LLM: llm, DispatchText: true, EpisodeCards: cards}
 	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
 	return config
+}
+
+// inApp has the test's customer act in the suite's Stream app under a key of its own, which
+// Stream describes as app: what it said of the suite's own key, kept a minute
+// (streamapp.Clients.Readiness), is not what is read here.
+func (s *ChatEpisodesSuite) inApp(app chattest.App) {
+	key := "key-" + s.utils.uuid()
+	s.chat.SetAppFor(key, app)
+	s.apps.mu.Lock()
+	s.apps.own[s.customerID()] = streamapp.Identity{
+		CustomerID: s.customerID(), StreamApp: suiteStreamApp, APIKey: key,
+		Secret: streamapp.NewSecret(key + "-secret"), BaseURL: s.chat.URL,
+	}
+	s.apps.mu.Unlock()
+	s.stream.Invalidate(s.customerID())
 }
 
 // worker connects a dispatch worker for the test's customer and returns what it is handed.

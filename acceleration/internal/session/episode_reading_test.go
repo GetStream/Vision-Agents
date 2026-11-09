@@ -29,6 +29,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
@@ -69,7 +70,13 @@ type EpisodeReadingSuite struct {
 	model   *recordingLLM
 
 	customerID, configID string
-	now                  time.Time
+	// edge is the edge every session joins on when a test sets one, else a quiet edge each,
+	// and telephony what a session with a number acts through, when a test sets it.
+	edge      agent.Edge
+	telephony *phone.Service
+	now       time.Time
+	// dated is the time the suite's Stream Chat dates messages by: now until at sets another.
+	dated time.Time
 }
 
 func TestEpisodeReadingSuite(t *testing.T) {
@@ -99,7 +106,9 @@ func (s *EpisodeReadingSuite) SetupTest() {
 	s.Require().NoError(err)
 	s.customerID, s.configID = "cards-"+uuid.NewString(), "config-"+uuid.NewString()
 	s.now = time.Now().UTC().Truncate(time.Second)
+	s.dated = s.now
 	s.model = &recordingLLM{}
+	s.edge, s.telephony = nil, nil
 	s.manager = s.managerOver()
 }
 
@@ -134,10 +143,13 @@ func (s *EpisodeReadingSuite) managerOver() *Manager {
 	s.T().Cleanup(conversing.Close)
 
 	manager, err := NewManager(ManagerOptions{
-		LLM: reasoner, STT: transcriber, TTS: speaker, STS: conversing, Store: s.store, Stream: s.apps,
+		LLM: reasoner, STT: transcriber, TTS: speaker, STS: conversing, Store: s.store, Stream: s.apps, Phone: s.telephony,
 		Conversations: persistent.NewForChats(persistent.StreamApps(s.apps)),
 		Logger:        logger,
 		Edge: func(context.Context, Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
+			if s.edge != nil {
+				return s.edge, nil
+			}
 			return newQuietEdge(), nil
 		},
 	})
@@ -228,6 +240,7 @@ func (s *EpisodeReadingSuite) handed(params llm.ResponseParams) []map[string]any
 func (s *EpisodeReadingSuite) at(seconds int) time.Time {
 	at := s.now.Add(time.Duration(seconds) * time.Second)
 	s.chat.At(at)
+	s.dated = at
 	return at
 }
 
@@ -329,9 +342,10 @@ func (s *EpisodeReadingSuite) smsThread(number, author, text string) (string, om
 	return thread, opened
 }
 
-// chatNow is the time the suite's Stream Chat dates messages by.
+// chatNow is the time the suite's Stream Chat dates messages by, which an episode opened for
+// the message written next starts at: a card's lines are those of its episode, from its start.
 func (s *EpisodeReadingSuite) chatNow() time.Time {
-	return s.now
+	return s.dated
 }
 
 // textSession opens the session on a thread channel the message hook opens, and tells it
@@ -782,6 +796,29 @@ func (s *EpisodeReadingSuite) TestACallAfterAnSMSThreadStartsWithTheSMSCard() {
 	s.Require().Len(handed, 1)
 	s.Equal("sms", handed[0]["source"])
 	s.Equal([]any{map[string]any{"from": "person", "display_name": "sms-author", "text": "is the clinic open on Sunday?"}}, handed[0]["lines"])
+}
+
+// record writes the call's card as on does, and the session starts with none of the person's
+// cards though they have one (AI-2856). Catches record read as on, a session handed the SMS
+// card, or as off, a call with no card.
+func (s *EpisodeReadingSuite) TestACallUnderRecordWritesItsCardAndReadsNone() {
+	s.at(-30)
+	s.smsThread("+15550100100", "sms-author", "is the clinic open on Sunday?")
+	s.at(-20)
+	call := "call-" + uuid.NewString()
+	s.chat.PutCall("agent", call, "sip-+15550100100")
+	created, err := s.manager.Create(s.ctx, Spec{
+		CustomerID: s.customerID, ConfigID: s.configID, AgentName: "Athena", EpisodeCardsRecord: true, CallID: call,
+		LLMTarget: "en-low-latency", STTTarget: "en-low-latency", TTSTarget: "en-low-latency", Instructions: "be brief",
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _, _ = s.manager.Close(created.ID(), OwnerOf(created.Spec())) })
+	_, err = created.Respond(s.ctx, "hello", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.Nil(s.handed(s.replyTo("hello")), "no card read")
+	db := s.store
+	s.Require().Eventually(func() bool { return len(callEpisodesIn(db, created.ID())) == 1 }, settleFor, 10*time.Millisecond)
 }
 
 // Rule 2: with episode_cards off a text session is handed exactly what it was before the

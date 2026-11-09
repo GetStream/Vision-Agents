@@ -690,6 +690,85 @@ func (s *ServerSuite) TestListUsageFiltersByTeam() {
 	s.refused(http.StatusBadRequest, http.MethodGet, "/v1/manage/accounts/"+s.organization+"/usage?user_id=u1", nil)
 }
 
+// keyedUsage ships one event started by hook:chat and one by the fixture's key, and answers
+// the hook:chat one.
+func (s *ServerSuite) keyedUsage() usage.Event {
+	hook := usagetest.Event(s.organization, func(e *usage.Event) { e.APIKey = "hook:chat" })
+	s.ship(hook, usagetest.Event(s.organization))
+	return hook
+}
+
+// listedBothWays lists the organization's usage with query, through manage and through the
+// customer view, and answers each one's usage ids.
+func (s *ServerSuite) listedBothWays(query string) (manage, customer []uuid.UUID) {
+	var managed server.UsageEventPage
+	s.ok(http.StatusOK, &managed, http.MethodGet, "/v1/manage/accounts/"+s.organization+"/usage?"+query, nil)
+	for _, event := range managed.Items {
+		manage = append(manage, event.UsageID)
+	}
+	var viewed usage.CustomerUsagePage
+	s.customerView(usage.PathAccounts+"/"+s.organization+"/usage?"+query, &viewed)
+	for _, event := range viewed.Items {
+		customer = append(customer, event.UsageID)
+	}
+	return manage, customer
+}
+
+// AI-2811: origin is the filter's name.
+func (s *ServerSuite) TestListUsageFiltersByOrigin() {
+	hook := s.keyedUsage()
+
+	manage, customer := s.listedBothWays("origin=hook:chat")
+	s.Equal([]uuid.UUID{hook.UsageID}, manage)
+	s.Equal([]uuid.UUID{hook.UsageID}, customer)
+	manage, customer = s.listedBothWays("origin=")
+	s.Len(manage, 2, "an empty origin filters nothing")
+	s.Len(customer, 2, "an empty origin filters nothing")
+}
+
+// origin's old names api_key_id and api_key are no longer read (AI-2851), and as any parameter
+// the service does not declare they are ignored rather than refused: while pods roll, a router
+// of the release before still sends api_key beside origin, the same value.
+func (s *ServerSuite) TestListUsageIgnoresTheOldNamesOfOrigin() {
+	hook := s.keyedUsage()
+
+	for _, query := range []string{"origin=hook:chat&api_key=hook:chat", "origin=hook:chat&api_key=key",
+		"origin=hook:chat&api_key_id=key"} {
+		manage, customer := s.listedBothWays(query)
+		s.Equal([]uuid.UUID{hook.UsageID}, manage, query)
+		s.Equal([]uuid.UUID{hook.UsageID}, customer, query)
+	}
+	for _, query := range []string{"api_key=hook:chat", "api_key_id=hook:chat", "api_key_id=hook:chat&api_key=key"} {
+		manage, customer := s.listedBothWays(query)
+		s.Len(manage, 2, query)
+		s.Len(customer, 2, query)
+	}
+}
+
+// Each event answers who started it as origin alone: api_key, its old name, is no longer
+// answered (AI-2851), by the list or by the customer view, for a key's event and an origin's.
+func (s *ServerSuite) TestListedUsageNamesItsOriginAlone() {
+	hook := s.keyedUsage()
+
+	var managed, viewed struct{ Items []map[string]any }
+	s.ok(http.StatusOK, &managed, http.MethodGet, "/v1/manage/accounts/"+s.organization+"/usage", nil)
+	s.customerView(usage.PathAccounts+"/"+s.organization+"/usage", &viewed)
+
+	s.Require().Len(managed.Items, 2)
+	s.Require().Len(viewed.Items, 2)
+	for i := range managed.Items {
+		want := "key"
+		if managed.Items[i]["usage_id"] == hook.UsageID.String() {
+			want = "hook:chat"
+		}
+		s.Equal(want, managed.Items[i]["origin"])
+		s.NotContains(managed.Items[i], "api_key")
+		s.Equal(managed.Items[i]["usage_id"], viewed.Items[i]["usage_id"])
+		s.Equal(want, viewed.Items[i]["origin"])
+		s.NotContains(viewed.Items[i], "api_key")
+	}
+}
+
 func (s *ServerSuite) TestListUsageTakesATimeRange() {
 	base := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
 	inside := usagetest.Event(s.organization, func(e *usage.Event) { e.OccurredAt = base.Add(10 * time.Minute) })

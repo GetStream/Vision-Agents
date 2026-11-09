@@ -135,12 +135,23 @@ func (s *DIDWWSuite) TestSearchingATypeResolvesThatToAnIdentifierToo() {
 	s.Equal("type-local", s.seen.query.Get("filter[did_group_type.id]"))
 }
 
+func (s *DIDWWSuite) TestAKindOfNumberDidwwDoesNotSellIsTheCallersToChange() {
+	// Satellite is no kind DIDWW has a name for; mobile is one, but not among its group types here.
+	for _, kind := range []phone.NumberType{"satellite", phone.Mobile} {
+		_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US", Type: kind})
+
+		s.ErrorContains(err, "does not sell "+string(kind)+" numbers")
+		s.ErrorIs(err, phone.ErrInvalid, kind)
+	}
+}
+
 func (s *DIDWWSuite) TestACountryDidwwDoesNotSellInSaysSo() {
 	s.answers["/v3/countries"] = `{"data":[]}`
 
 	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "ZZ"})
 
 	s.ErrorContains(err, "does not sell numbers in ZZ")
+	s.ErrorIs(err, phone.ErrInvalid)
 }
 
 func (s *DIDWWSuite) TestSearchingWithoutACountryIsRejectedBeforeAnyCall() {
@@ -185,6 +196,7 @@ func (s *DIDWWSuite) TestANumberNotOnOfferCannotBeBought() {
 	_, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+17195551234"})
 
 	s.ErrorContains(err, "not one of the numbers on offer")
+	s.ErrorIs(err, phone.ErrInvalid)
 }
 
 func (s *DIDWWSuite) TestReleasingTerminatesTheDidRatherThanDeletingIt() {

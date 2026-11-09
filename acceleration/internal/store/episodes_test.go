@@ -45,6 +45,20 @@ func (s *StoreSuite) TestTheFirstMessageOfAThreadOpensAnEpisodeInProgress() {
 	s.Equal(s.base, episode.StartedAt)
 }
 
+// Defect: a thread episode dated by Postgres's clock, as a call's is, in place of the time it is
+// given: an SMS episode starts when its message was queued (channel_inbound.created_at), so a
+// message the bridge writes later keeps its place against the link.
+func (s *StoreSuite) TestAThreadEpisodeStartsAtTheTimeItIsGiven() {
+	episode := s.episodeOf(s.mapped("+15550100"), "agent:thread-one")
+
+	_, err := s.store.OpenEpisode(s.ctx, episode)
+
+	s.Require().NoError(err)
+	var started time.Time
+	s.Require().NoError(s.store.db.QueryRowContext(s.ctx, "SELECT started_at FROM episodes WHERE id = ?", episode.ID).Scan(&started))
+	s.Equal(time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC), started.UTC())
+}
+
 // Three SMS in a row are one episode, so one card.
 func (s *StoreSuite) TestTheNextMessagesOfAThreadFindItsOpenEpisode() {
 	person := s.mapped("+15550100")
@@ -358,23 +372,106 @@ func (s *StoreSuite) TestASummaryFinishesOnlyAnEndedEpisode() {
 	s.Equal(episodeInProgress, s.episodeStatus(episode.ID))
 }
 
-func (s *StoreSuite) TestAnyEpisodeCardsIsWhetherAConfigTurnedThemOn() {
+// anyToSweep is AnyEpisodeToSweep's answer.
+func (s *StoreSuite) anyToSweep() bool {
+	due, err := s.store.AnyEpisodeToSweep(s.ctx)
+	s.Require().NoError(err)
+	return due
+}
+
+func (s *StoreSuite) TestAnyEpisodeToSweepIsWhetherAConfigTurnedTheCardsOn() {
 	off := &AgentConfig{CustomerID: "acme-app", Name: "plain"}
 	s.Require().NoError(s.store.CreateAgentConfig(s.ctx, off))
-	any, err := s.store.AnyEpisodeCards(s.ctx)
-	s.Require().NoError(err)
-	s.False(any)
+	s.False(s.anyToSweep(), "a config that never had the cards on, and no episode, has nothing to sweep")
 
 	on := &AgentConfig{CustomerID: "acme-app", Name: "carded", EpisodeCards: true}
 	s.Require().NoError(s.store.CreateAgentConfig(s.ctx, on))
-	any, err = s.store.AnyEpisodeCards(s.ctx)
-	s.Require().NoError(err)
-	s.True(any)
+	s.True(s.anyToSweep())
 
 	s.Require().NoError(s.store.DeleteAgentConfig(s.ctx, "acme-app", on.ID))
-	any, err = s.store.AnyEpisodeCards(s.ctx)
+	s.False(s.anyToSweep(), "a deleted config writes no card")
+}
+
+// Catches a sweeper that never starts for a config recording the cards: record opens call and
+// app chat episodes as on does, and they must close and be summarized (AI-2856).
+func (s *StoreSuite) TestAnyEpisodeToSweepCountsAConfigThatRecordsTheCards() {
+	off := &AgentConfig{CustomerID: "acme-app", Name: "plain"}
+	s.Require().NoError(s.store.CreateAgentConfig(s.ctx, off))
+	s.Require().False(s.anyToSweep())
+
+	record := &AgentConfig{CustomerID: "acme-app", Name: "recording", EpisodeCardsRecord: true}
+	s.Require().NoError(s.store.CreateAgentConfig(s.ctx, record))
+	s.True(s.anyToSweep())
+
+	s.Require().NoError(s.store.DeleteAgentConfig(s.ctx, "acme-app", record.ID))
+	s.False(s.anyToSweep(), "a deleted config writes no card")
+}
+
+// Catches an update that drops episode_cards_record (configColumns): a record config saved
+// again would turn off.
+func (s *StoreSuite) TestAnUpdateStoresWhetherAConfigRecordsTheCards() {
+	config := &AgentConfig{CustomerID: "acme-app", Name: "recording"}
+	s.Require().NoError(s.store.CreateAgentConfig(s.ctx, config))
+	config.EpisodeCardsRecord = true
+	s.Require().NoError(s.store.UpdateAgentConfig(s.ctx, config))
+
+	stored, err := s.store.AgentConfig(s.ctx, "acme-app", config.ID)
 	s.Require().NoError(err)
-	s.False(any, "a deleted config writes no card")
+	s.True(stored.EpisodeCardsRecord)
+	s.False(stored.EpisodeCards)
+}
+
+// Catches AI-2771: a config turned the cards off while its chat episode was open, and the
+// router started again with no config's cards on; the episode was never closed.
+func (s *StoreSuite) TestAThreadEpisodeLeftInProgressAfterTheCardsTurnedOffIsToSweep() {
+	off := &AgentConfig{CustomerID: "acme-app", Name: "was carded"}
+	s.Require().NoError(s.store.CreateAgentConfig(s.ctx, off))
+	episode := s.threadAt(s.mapped("+15550100"), "agent:thread-one", s.base)
+	s.True(s.anyToSweep())
+
+	s.Require().Len(s.closeIdle(s.store, s.base.Add(2*time.Hour)), 1)
+	s.Require().NoError(s.store.FinishEpisodeSummary(s.ctx, "acme-app", episode.ID, EpisodeSummarized))
+	s.False(s.anyToSweep(), "a summarized episode is nothing to sweep")
+}
+
+// Catches a sweeper started for a call alone, which its call hook ends, not the sweeper.
+func (s *StoreSuite) TestACallEpisodeInProgressIsNothingToSweep() {
+	call := s.episodeOf(s.mapped("+15550100"), "agent:call-one")
+	call.Source, call.CallID, call.SessionID = EpisodeCall, "call-one", "session-one"
+	_, err := s.store.OpenEpisode(s.ctx, call)
+	s.Require().NoError(err)
+
+	s.False(s.anyToSweep())
+}
+
+// Catches an ended episode whose router stopped before its summary, under a config that
+// turned the cards off since: its lease is taken by a sweep only. The lease is still running,
+// as when a router starts while another is summarizing and then dies: no sweeper would take it.
+func (s *StoreSuite) TestAnEndedEpisodeWithItsSummaryLeaseHeldIsToSweep() {
+	episode := s.threadAt(s.mapped("+15550100"), "agent:thread-one", s.base)
+	now := s.base.Add(2 * time.Hour)
+	closed, err := s.store.CloseIdleEpisodes(s.ctx, now.Add(-time.Hour), now, 50, time.Now().Add(5*time.Minute))
+	s.Require().NoError(err)
+	s.Require().Len(closed, 1)
+
+	s.True(s.anyToSweep(), "a lease still running is to sweep once it runs out")
+
+	s.Require().NoError(s.store.FinishEpisodeSummary(s.ctx, "acme-app", episode.ID, EpisodeSummaryFailed))
+	s.False(s.anyToSweep(), "a failed summary drops its lease, and the episode is nothing to sweep")
+}
+
+// Catches an episode closed early by a message tried again: a message is touched at the time
+// it was made or queued, so one tried again after a later message is older than the episode's
+// last message, and the episode stays open from that later one on.
+func (s *StoreSuite) TestAMessageTriedAgainAfterALaterOneKeepsTheEpisodeOpenFromTheLaterOne() {
+	person := s.mapped("+15550100")
+	episode := s.threadAt(person, "agent:thread-one", s.base)
+	s.threadAt(person, "agent:thread-one", s.base.Add(30*time.Minute))
+	s.threadAt(person, "agent:thread-one", s.base.Add(time.Minute))
+
+	s.Empty(s.closeIdle(s.store, s.base.Add(80*time.Minute)), "closed an hour after the message tried again, not the later one")
+	s.Equal(episodeInProgress, s.episodeStatus(episode.ID))
+	s.Len(s.closeIdle(s.store, s.base.Add(90*time.Minute)), 1, "the later message's hour is over")
 }
 
 // A message being written holds its episode open: a sweep that runs meanwhile leaves it to

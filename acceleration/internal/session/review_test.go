@@ -3,6 +3,8 @@ package session
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -158,6 +160,41 @@ func (s *ReviewSuite) TestAReviewThatFailsWhileTheReviewerIsOpenIsAnError() {
 	s.Contains(logs.String(), "call=call-unreadable")
 	s.Contains(logs.String(), "decode review")
 	s.NotContains(logs.String(), "level=WARN")
+}
+
+// refusingLLM refuses every request with err, the way a provider answers a failed request.
+type refusingLLM struct{ err error }
+
+func (r refusingLLM) Start(context.Context) error { return nil }
+func (r refusingLLM) Create(context.Context, llm.ResponseParams) (*llm.Stream, error) {
+	return nil, r.err
+}
+func (r refusingLLM) Provider() string               { return "stub" }
+func (r refusingLLM) Model() string                  { return "stub-llm" }
+func (r refusingLLM) Capabilities() llm.Capabilities { return llm.Capabilities{} }
+func (r refusingLLM) Close() error                   { return nil }
+
+// A provider that echoes the request's headers in its error puts the key it was sent into the
+// review's failure; the error line keeps the provider's reason and not the key.
+func (s *ReviewSuite) TestAReviewFailureLineKeepsTheProvidersReasonAndNotTheKeyItEchoed() {
+	key := rand.Text()
+	refused := refusingLLM{err: errors.New("502 Bad Gateway: upstream error: failed to connect to local service\n" +
+		"request headers: Authorization: Bearer sk-test-" + key)}
+	reasoning := llmrouter.NewRegistry()
+	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) { return refused, nil })
+	router, err := llmrouter.New(llmrouter.Options{Config: stubConfig(), Registry: reasoning, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	var logs bytes.Buffer
+	reviews := newReviewer(router, nil, slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{ReplaceAttr: store.RedactLogAttr})))
+
+	reviews.Review(store.Call{ID: "call-refused", CustomerID: "customer-reviewed"}, routing.Attribution{}, "", "en-low-latency", "", []spoken{{text: "hello?"}})
+	reviews.running.Wait()
+	reviews.Close()
+
+	s.Contains(logs.String(), `msg="could not review the call" call=call-refused`)
+	s.Contains(logs.String(), `502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]`)
+	s.NotContains(logs.String(), key)
 }
 
 // A review that outlives reviewTimeout fails with the reviewer still open, so it stays an

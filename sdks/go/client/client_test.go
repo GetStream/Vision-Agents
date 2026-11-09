@@ -226,6 +226,12 @@ func newRouter(t *testing.T) *router {
 		}
 	})
 
+	mux.HandleFunc("GET /v1/agents/users/{user_id}", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusOK, acceleration.AgentUser{UserId: r.PathValue("user_id"), Phone: ptr("+15550100100"),
+			IncludePhoneHistory: ptr(true)})
+	})
+
 	mux.HandleFunc("POST /v1/agents/guests", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
 		answer(w, http.StatusCreated, acceleration.GuestUser{
@@ -665,6 +671,23 @@ func TestInstructionsGoOverOnlyWhenGiven(t *testing.T) {
 	}
 }
 
+func TestTheTeamGoesOverOnlyWhenGiven(t *testing.T) {
+	for given, sent := range map[string]any{"": nil, "finance": "finance"} {
+		backend := newRouter(t)
+		agent := backend.client(t).Agent("docs")
+
+		session, err := agent.Sessions.Create(t.Context(), SessionOptions{Team: given})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close(t.Context())
+
+		if body := backend.body(t, "POST", "/v1/agents/sessions"); body["team"] != sent {
+			t.Errorf("team %q went over as %v", given, body["team"])
+		}
+	}
+}
+
 func TestConnectorBindingsNameAConnectionPerAlias(t *testing.T) {
 	backend := newRouter(t)
 	agent := backend.client(t).Agent("docs")
@@ -897,6 +920,27 @@ func TestALengthAndAnEffortGoOverWithTheQuestion(t *testing.T) {
 	}
 }
 
+func TestWhatThePersonDidInAReplysUIGoesOverWithTheirWords(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	if _, err := session.Responses.Create(t.Context(), "Update the plan", UIAction{
+		"message_id": "reply-1", "format": "a2ui", "name": "update_plan",
+		"payload": map[string]any{"pace": "relaxed"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/session-1/responses")
+	action, _ := json.Marshal(body["ui_action"])
+	if string(action) != `{"format":"a2ui","message_id":"reply-1","name":"update_plan","payload":{"pace":"relaxed"}}` {
+		t.Errorf("the action went over as %s", action)
+	}
+	if id, _ := body["request_id"].(string); id == "" {
+		t.Error("an action goes with the person's words, so the question still has a request id")
+	}
+}
+
 func TestAClipOnDiskIsSentInline(t *testing.T) {
 	for name, kind := range map[string]string{"unboxing.webm": "video/webm", "unboxing": "video/mp4"} {
 		path := filepath.Join(t.TempDir(), name)
@@ -980,6 +1024,56 @@ func TestUnwindingFollowsTheCursorUntilTheLastPage(t *testing.T) {
 	}
 	if asked := backend.requests("GET", "/v1/agents/sessions/session-1/responses/items"); asked != 3 {
 		t.Errorf("the items were asked for %d times", asked)
+	}
+}
+
+func TestUnwindingAbandonedHalfwaySaysItWasCancelled(t *testing.T) {
+	backend := newRouter(t)
+	// Every page says there is more, so only cancelling ends the stream.
+	backend.items = [][]acceleration.AgentResponseItem{
+		items("response-1", 0, 2), items("response-1", 2, 2), items("response-1", 4, 2), items("response-1", 6, 2),
+	}
+	session := open(t, backend)
+	ctx, cancel := context.WithCancel(t.Context())
+
+	stream := session.Responses.Items.Unwind(ctx, 2)
+	<-stream.Items()
+	cancel()
+	deadline := time.After(5 * time.Second)
+	for open := true; open; {
+		select {
+		case _, open = <-stream.Items():
+		case <-deadline:
+			t.Fatal("the stream was still open after its context was cancelled")
+		}
+	}
+
+	if !errors.Is(stream.Err(), context.Canceled) {
+		t.Errorf("an abandoned stream ended with %v, want context.Canceled", stream.Err())
+	}
+}
+
+func TestACancelledRequestReturnsTheContextsError(t *testing.T) {
+	asked := make(chan struct{})
+	waiting := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		close(asked)
+		<-r.Context().Done()
+	}))
+	t.Cleanup(waiting.Close)
+	api, err := New(stream.Backend{URL: waiting.URL, CustomerID: "acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() {
+		<-asked
+		cancel()
+	}()
+
+	_, err = api.Agent("docs").Config(ctx)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("a request cancelled in flight returned %v, want context.Canceled", err)
 	}
 }
 
@@ -1179,6 +1273,49 @@ func TestATakenNumberIsTheRoutersConflict(t *testing.T) {
 	}
 }
 
+// Catches a link with history that sends both fields, which the router refuses, or neither, which
+// keeps what the same number had: all of it, from a time, and from the request on.
+func TestLinkingWithHistorySendsOneOfItsFields(t *testing.T) {
+	since := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		history PhoneHistory
+		sent    map[string]any
+	}{
+		{PhoneHistory{All: true}, map[string]any{"phone": "+15550100100", "include_phone_history": true}},
+		{PhoneHistory{Since: since}, map[string]any{"phone": "+15550100100", "phone_history_since": "2026-11-02T00:00:00Z"}},
+		{PhoneHistory{}, map[string]any{"phone": "+15550100100", "include_phone_history": false}},
+	} {
+		backend := newRouter(t)
+
+		if _, err := backend.client(t).Users().LinkPhoneWithHistory(t.Context(), "anya", "+15550100100", c.history); err != nil {
+			t.Fatal(err)
+		}
+		if sent := backend.body(t, "PUT", "/v1/agents/users/anya"); !reflect.DeepEqual(sent, c.sent) {
+			t.Errorf("%+v: the router was sent %v", c.history, sent)
+		}
+	}
+}
+
+// Catches a read that drops what the router keeps of the link, or asks it for nobody.
+func TestGettingAUserAnswersTheirLink(t *testing.T) {
+	backend := newRouter(t)
+
+	user, err := backend.client(t).Users().Get(t.Context(), "anya")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user.UserId != "anya" || user.Phone == nil || *user.Phone != "+15550100100" || user.IncludePhoneHistory == nil || !*user.IncludePhoneHistory {
+		t.Errorf("the user came back as %+v", user)
+	}
+	if asked := backend.requests("GET", "/v1/agents/users/anya"); asked != 1 {
+		t.Errorf("the router was asked %d times", asked)
+	}
+	nobody := newRouter(t)
+	if _, err := nobody.client(t).Users().Get(t.Context(), ""); err == nil || len(nobody.asked) != 0 {
+		t.Errorf("an empty user id was read: %v, %v", err, nobody.asked)
+	}
+}
+
 // Catches an empty user id or number sent to the router, where an empty number would unlink.
 func TestLinkingNobodyOrNoNumberIsRefusedBeforeTheRouter(t *testing.T) {
 	backend := newRouter(t)
@@ -1191,6 +1328,9 @@ func TestLinkingNobodyOrNoNumberIsRefusedBeforeTheRouter(t *testing.T) {
 	}
 	if err := backend.client(t).Users().UnlinkPhone(t.Context(), ""); err == nil {
 		t.Error("an empty user id was unlinked")
+	}
+	if _, err := backend.client(t).Users().LinkPhoneWithHistory(t.Context(), "anya", "", PhoneHistory{All: true}); err == nil {
+		t.Error("an empty number was sent with its history")
 	}
 	if len(backend.asked) != 0 {
 		t.Errorf("the router was asked %v", backend.asked)
@@ -1529,6 +1669,22 @@ func TestSetUserRefusesAUserWithNothingToProveIt(t *testing.T) {
 	}
 	if _, err := api.SetUser("jean", ""); err == nil {
 		t.Error("a user with no token was allowed")
+	}
+}
+
+func TestSetUserLeavesTheTeamToTheUsersToken(t *testing.T) {
+	api, err := New(stream.Backend{URL: "http://localhost:8080", CustomerID: "acme",
+		Team: "finance", UsageCategories: []string{"project:onboarding"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	jean, err := api.SetUser("jean", "minted.elsewhere")
+	if err != nil {
+		t.Fatalf("a client with a team could not act for a user: %v", err)
+	}
+	if backend := jean.Backend(); backend.Team != "" || len(backend.UsageCategories) > 0 {
+		t.Errorf("the user's client kept team %q and categories %q", backend.Team, backend.UsageCategories)
 	}
 }
 

@@ -156,12 +156,14 @@ func (s *BandwidthSuite) TestSearchingNothingInParticularIsRejected() {
 	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
 
 	s.ErrorContains(err, "area code, a city or a state")
+	s.ErrorIs(err, phone.ErrInvalid)
 }
 
 func (s *BandwidthSuite) TestSearchingACityNeedsTheStateItIsIn() {
 	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US", Locality: "Springfield"})
 
 	s.ErrorContains(err, "needs the state")
+	s.ErrorIs(err, phone.ErrInvalid)
 }
 
 func (s *BandwidthSuite) TestOrderingNamesTheSiteTheNumberIsBilledTo() {
@@ -193,6 +195,7 @@ func (s *BandwidthSuite) TestOrderingWithoutASiteSaysWhatIsMissing() {
 	_, err = provider.BuyNumber(s.ctx, phone.Order{E164: "+17195551234"})
 
 	s.ErrorContains(err, "BANDWIDTH_SITE_ID")
+	s.ErrorIs(err, phone.ErrNotConfigured, "the setting is the deployment's to add")
 	s.Empty(s.seen.path)
 }
 
@@ -258,6 +261,7 @@ func (s *BandwidthSuite) TestDiallingWithoutTheVoiceApplicationSaysWhichCredenti
 	})
 
 	s.ErrorContains(err, applicationIDEnvVar)
+	s.ErrorIs(err, phone.ErrNotConfigured, "the setting is the deployment's to add")
 	s.Empty(s.seen.path)
 }
 
@@ -439,6 +443,30 @@ func (s *BandwidthSuite) TestEachFinalStatusIsAnOutcome() {
 			[]byte(`{"eventType":"disconnect","callId":"c-1","cause":"`+cause+`"}`))
 		s.Require().NoError(err)
 		s.Equal(phone.CallStatus{Result: result, Word: cause}, status, cause)
+	}
+}
+
+// bandwidthRejected is a disconnect of a rejected outbound call, with the fields Bandwidth
+// documents (https://dev.bandwidth.com/docs/voice/webhooks/disconnect) and sipResponseCode as given.
+func bandwidthRejected(sipResponseCode string) []byte {
+	return []byte(`{"eventType":"disconnect","eventTime":"2026-03-01T10:00:05.000Z","direction":"outbound",` +
+		`"callId":"c-1","startTime":"2026-03-01T10:00:00.000Z","endTime":"2026-03-01T10:00:05.000Z",` +
+		`"cause":"busy","sipStatusLine":"SIP/2.0 486 Busy Here",` +
+		`"sipResponseCode":` + sipResponseCode + `}`)
+}
+
+func (s *BandwidthSuite) TestARejectionCarriesItsSIPCode() {
+	status, err := s.provider.ReadStatus("application/json", bandwidthRejected("486"))
+	s.Require().NoError(err)
+
+	s.Equal(phone.CallStatus{Result: phone.CallBusy, Word: "busy", SIPCode: 486}, status)
+}
+
+func (s *BandwidthSuite) TestASIPCodeThatIsNoNumberLeavesTheStatusAsItIs() {
+	for _, odd := range []string{`{"code":486}`, `"busy"`, `null`} {
+		status, err := s.provider.ReadStatus("application/json", bandwidthRejected(odd))
+		s.Require().NoError(err, odd)
+		s.Equal(phone.CallStatus{Result: phone.CallBusy, Word: "busy"}, status, odd)
 	}
 }
 

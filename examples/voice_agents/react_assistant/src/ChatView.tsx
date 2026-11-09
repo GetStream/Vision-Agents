@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import type { LocalMessage, StateStore } from "stream-chat";
+import type { LocalMessage } from "stream-chat";
 import {
   AIClientIdentity,
   AIConversation,
@@ -11,14 +11,19 @@ import {
   useAIMessageComposerContext,
   useAttachments,
   type AIChatOption,
-  type AIMessageComposerStore,
   type AIToolApprover,
+  AIUIHost,
+  aiUIActionJSON,
 } from "stream-chat-react/ai-components";
+import { createA2UIRenderer } from "stream-chat-react/a2ui";
+import { createOpenUIRenderer } from "stream-chat-react/openui";
 
 import type { AgentChat, AgentChatSnapshot } from "./agentChat";
 import { Assistant } from "./assistant";
 import type { ChatScreen } from "./chatScreen";
+import { messageOf } from "./errors";
 import { Store, useStore } from "./store";
+import { tripComponents } from "./tripComponents";
 
 const STARTERS = [
   "What's on my calendar today?",
@@ -66,7 +71,8 @@ export function ChatView({ screen }: { screen: ChatScreen }) {
   const [barHeight, setBarHeight] = useState(0);
   const bar = useRef<HTMLDivElement>(null);
   const [thinkHarder, setThinkHarder] = useState(false);
-  const composer = useRef<StateStore<AIMessageComposerStore> | null>(null);
+  const composer = useRef<ComposerDraft | null>(null);
+  const { ui, unsent } = useGeneratedUI(screen);
 
   useEffect(() => {
     const element = bar.current;
@@ -89,7 +95,7 @@ export function ChatView({ screen }: { screen: ChatScreen }) {
   );
 
   const isWelcoming = shown.length === 0 && !pending && !isLoading;
-  const failure = openFailure ?? state.failure;
+  const failure = openFailure ?? state.failure ?? unsent;
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -114,6 +120,7 @@ export function ChatView({ screen }: { screen: ChatScreen }) {
         loadOlderMessages={state.hasOlderMessages && chat ? () => chat.loadOlderMessages() : undefined}
         messages={messages}
         pendingMessage={pending ?? null}
+        ui={ui}
         replyActions={(message) =>
           // Copying and sharing work on history read ahead of the chat; rating waits for the chat.
           chat ? { rating: state.ratings[message.id] ?? null, onRate: (rating) => chat.rate(message.id, rating) } : {}
@@ -158,6 +165,38 @@ export function ChatView({ screen }: { screen: ChatScreen }) {
   );
 }
 
+/**
+ * The UI the agent writes for a reply, in place of its text: A2UI or OpenUI, with the app's own
+ * trip components beside each format's own. What the person does in it is their next question,
+ * in their words, carrying the action, so it shows at once like anything they ask. One the screen
+ * can't send yet, while the agent still answers, fails, and says why where a failed question
+ * does, rather than doing nothing.
+ */
+function useGeneratedUI(screen: ChatScreen): { ui: AIUIHost; unsent: string | undefined } {
+  const [unsent, setUnsent] = useState<string>();
+  const ui = useMemo(
+    () =>
+      new AIUIHost({
+        components: tripComponents,
+        renderers: [createA2UIRenderer(), createOpenUIRenderer()],
+        onError: (error) => setUnsent(messageOf(error)),
+        send: async (action) => {
+          setUnsent(undefined);
+          if (!(await screen.send(action.label, [], false, aiUIActionJSON(action)))) {
+            throw new Error(`"${action.label}" wasn't sent: Juno is still answering. Try again once it's done.`);
+          }
+        },
+      }),
+    [screen],
+  );
+  // It no longer applies once the agent has answered.
+  const answering = screen.isBusy();
+  useEffect(() => {
+    if (!answering) setUnsent(undefined);
+  }, [answering]);
+  return { ui, unsent };
+}
+
 /** The photos picked for the next question, each with a way to take it back. */
 function PickedPhotos() {
   const { attachments, removeAttachment } = useAttachments();
@@ -175,8 +214,11 @@ function PickedPhotos() {
   );
 }
 
+/** The composer's draft, as stream-chat-react hands it out: its store, typed by the hook that gives it. */
+type ComposerDraft = ReturnType<typeof useAIMessageComposerContext>;
+
 /** Hands the composer's draft out, so sending reads its text and photos. */
-function ComposerStore({ into }: { into: { current: StateStore<AIMessageComposerStore> | null } }) {
+function ComposerStore({ into }: { into: { current: ComposerDraft | null } }) {
   into.current = useAIMessageComposerContext();
   return null;
 }

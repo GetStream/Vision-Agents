@@ -21,8 +21,10 @@ final readonly class AgentConfigRequest
         /** @var list<AgentConnectorBinding>|null */
         public ?array $connectors = null,
         public ?AgentDispatch $dispatch = null,
-        // Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent c...
-        public ?bool $episodeCards = null,
+        // What this agent does with episode cards, for each phone call under it, each run of messages a Stream user w...
+        public EpisodeCardsMode|string|null $episodeCards = null,
+        // The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop....
+        public ?FloorControl $floorControl = null,
         public ?Greeting $greeting = null,
         // A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the polic...
         public ?string $guardrail = null,
@@ -36,11 +38,11 @@ final readonly class AgentConfigRequest
         // The model holding the conversation.
         public ?string $llm = null,
         // No longer read: a server named by URL is now a custom connector, so create one for its URL and name it unde...
-        /** @var list<McpServer>|null */
+        /** @var list<array<string, mixed>>|null */
         public ?array $mcpServers = null,
         public AgentMode|string|null $mode = null,
         // No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty lis...
-        /** @var list<PluginEvent>|null */
+        /** @var list<array<string, mixed>>|null */
         public ?array $pluginEvents = null,
         // No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty lis...
         /** @var list<mixed>|null */
@@ -67,7 +69,7 @@ final readonly class AgentConfigRequest
         public ?string $stt = null,
         // The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent...
         public ?string $subagent = null,
-        // Cost labels, carried onto every request a session using it makes. A config tagged draft_of, naming the conf...
+        // Cost labels, carried onto every request a session using it makes. The team tag is also the team those sessi...
         /** @var array<string, string>|null */
         public ?array $tags = null,
         // How the agent is offered its connector tools. Left out on an update, the stored settings stay.
@@ -93,7 +95,8 @@ final readonly class AgentConfigRequest
             channels: array_key_exists('channels', $data) && $data['channels'] !== null ? AgentChannels::fromArray(Json::object($data, 'channels')) : null,
             connectors: array_key_exists('connectors', $data) && $data['connectors'] !== null ? array_map(AgentConnectorBinding::fromArray(...), Json::objects($data, 'connectors')) : null,
             dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
-            episodeCards: array_key_exists('episode_cards', $data) && $data['episode_cards'] !== null ? Json::bool($data, 'episode_cards') : null,
+            episodeCards: array_key_exists('episode_cards', $data) && $data['episode_cards'] !== null ? Json::enum($data, 'episode_cards', EpisodeCardsMode::class) : null,
+            floorControl: array_key_exists('floor_control', $data) && $data['floor_control'] !== null ? FloorControl::fromArray(Json::object($data, 'floor_control')) : null,
             greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Greeting::fromArray(Json::object($data, 'greeting')) : null,
             guardrail: array_key_exists('guardrail', $data) && $data['guardrail'] !== null ? Json::string($data, 'guardrail') : null,
             harness: array_key_exists('harness', $data) && $data['harness'] !== null ? Json::enum($data, 'harness', Harness::class) : null,
@@ -101,9 +104,9 @@ final readonly class AgentConfigRequest
             keyterms: array_key_exists('keyterms', $data) && $data['keyterms'] !== null ? Json::strings($data, 'keyterms') : null,
             knowledgeNamespace: array_key_exists('knowledge_namespace', $data) && $data['knowledge_namespace'] !== null ? Json::string($data, 'knowledge_namespace') : null,
             llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
-            mcpServers: array_key_exists('mcp_servers', $data) && $data['mcp_servers'] !== null ? array_map(McpServer::fromArray(...), Json::objects($data, 'mcp_servers')) : null,
+            mcpServers: array_key_exists('mcp_servers', $data) && $data['mcp_servers'] !== null ? Json::objects($data, 'mcp_servers') : null,
             mode: array_key_exists('mode', $data) && $data['mode'] !== null ? Json::enum($data, 'mode', AgentMode::class) : null,
-            pluginEvents: array_key_exists('plugin_events', $data) && $data['plugin_events'] !== null ? array_map(PluginEvent::fromArray(...), Json::objects($data, 'plugin_events')) : null,
+            pluginEvents: array_key_exists('plugin_events', $data) && $data['plugin_events'] !== null ? Json::objects($data, 'plugin_events') : null,
             plugins: array_key_exists('plugins', $data) && $data['plugins'] !== null ? Json::list($data, 'plugins') : null,
             region: array_key_exists('region', $data) && $data['region'] !== null ? Json::string($data, 'region') : null,
             resumeHistory: array_key_exists('resume_history', $data) && $data['resume_history'] !== null ? ResumeHistory::fromArray(Json::object($data, 'resume_history')) : null,
@@ -148,7 +151,10 @@ final readonly class AgentConfigRequest
             $out['dispatch'] = $this->dispatch->toArray();
         }
         if ($this->episodeCards !== null) {
-            $out['episode_cards'] = $this->episodeCards;
+            $out['episode_cards'] = Json::enumValue($this->episodeCards);
+        }
+        if ($this->floorControl !== null) {
+            $out['floor_control'] = $this->floorControl->toArray();
         }
         if ($this->greeting !== null) {
             $out['greeting'] = $this->greeting->toArray();
@@ -172,13 +178,13 @@ final readonly class AgentConfigRequest
             $out['llm'] = $this->llm;
         }
         if ($this->mcpServers !== null) {
-            $out['mcp_servers'] = array_map(static fn (McpServer $each): array => $each->toArray(), $this->mcpServers);
+            $out['mcp_servers'] = $this->mcpServers;
         }
         if ($this->mode !== null) {
             $out['mode'] = Json::enumValue($this->mode);
         }
         if ($this->pluginEvents !== null) {
-            $out['plugin_events'] = array_map(static fn (PluginEvent $each): array => $each->toArray(), $this->pluginEvents);
+            $out['plugin_events'] = $this->pluginEvents;
         }
         if ($this->plugins !== null) {
             $out['plugins'] = $this->plugins;

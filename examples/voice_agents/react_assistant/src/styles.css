@@ -788,3 +788,160 @@ button {
     animation: none;
   }
 }
+
+/* How Juno answers: a small panel under the top bar's gear. */
+.reply-format {
+  position: relative;
+}
+
+.reply-format-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: 280px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.14);
+}
+
+.reply-format-panel h3 {
+  margin: 0 0 10px;
+  font-size: 0.95rem;
+}
+
+.reply-format-option {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.reply-format-option:hover {
+  background: var(--surface);
+}
+
+.reply-format-option > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.9rem;
+}
+
+.reply-format-option > span > span,
+.reply-format-note {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.reply-format-note {
+  margin: 8px 0 0;
+}
+
+/* The trip components the agent places in a reply's UI. */
+.place-card {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 10px;
+  border: none;
+  border-radius: 16px;
+  background: var(--surface);
+  text-align: left;
+}
+
+.place-card:hover {
+  outline: 1px solid var(--border);
+}
+
+.place-card-photo {
+  flex-shrink: 0;
+  width: 88px;
+  height: 88px;
+  border-radius: 12px;
+  background: var(--border);
+  object-fit: cover;
+}
+
+.place-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.place-card-note {
+  color: var(--accent);
+  font-size: 0.85rem;
+}
+
+.place-card-extract {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.8rem;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.trip-map {
+  width: 100%;
+  height: 220px;
+  border-radius: 16px;
+  overflow: hidden;
+  z-index: 0;
+}
+
+.trip-map .trip-map-pin {
+  fill: var(--accent);
+  fill-opacity: 0.9;
+  stroke: #ffffff;
+  stroke-width: 2;
+}
+
+.calendar-check {
+  padding: 12px;
+  border-radius: 16px;
+  background: var(--surface);
+}
+
+.calendar-check h4 {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+}
+
+.calendar-check ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.85rem;
+}
+
+.calendar-check li {
+  display: flex;
+  gap: 12px;
+}
+
+.calendar-check-day {
+  flex-shrink: 0;
+  width: 96px;
+  font-weight: 500;
+}
+
+.calendar-check-free {
+  color: #1f9d55;
+}
+
+.calendar-check-private {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+}

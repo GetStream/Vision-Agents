@@ -1,4 +1,4 @@
-import type { Session } from "@stream-io/calypso";
+import type { Session, UIAction } from "@stream-io/calypso";
 import type { VoiceSession } from "@stream-io/calypso/video";
 import type { LocalMessage } from "stream-chat";
 import type { AIPendingMessage } from "stream-chat-react/ai-components";
@@ -127,7 +127,7 @@ export class ChatScreen extends Store<ChatScreenSnapshot> {
    * Asks, with the photos the composer holds, which show on the question at once. It sends nothing
    * while the screen is busy, and says whether it sent.
    */
-  async send(text: string, photos: readonly File[] = [], thinkHarder = false): Promise<boolean> {
+  async send(text: string, photos: readonly File[] = [], thinkHarder = false, uiAction?: UIAction): Promise<boolean> {
     if (this.isBusy()) return false;
     const urls = photos.filter((photo) => photo.type.startsWith("image/")).map((photo) => URL.createObjectURL(photo));
     const asking: Asked = {
@@ -146,7 +146,7 @@ export class ChatScreen extends Store<ChatScreenSnapshot> {
       return true;
     }
     this.markUsed(chat);
-    await chat.ask(text, photos, thinkHarder);
+    await chat.ask(text, photos, thinkHarder, uiAction);
     if (chat.get().failure && this.asked === asking) {
       this.setAsked(undefined);
     }

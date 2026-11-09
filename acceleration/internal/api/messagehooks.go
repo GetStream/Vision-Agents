@@ -40,10 +40,16 @@ type messageEvent struct {
 	// here, for a channel no agent has ever run on, where it is the only thing that says
 	// who should answer; see ownerOf. The rest is carried to the worker unread.
 	ChannelCustom map[string]any `json:"channel_custom"`
-	Message       struct {
+	// Channel is the channel as Stream sends it with the message, its members included
+	// (members). Raw, and read only for a chat episode, so a message under a config without
+	// episode cards costs nothing more, and a value of another shape costs only the card.
+	Channel json.RawMessage `json:"channel"`
+	Message struct {
 		ID   string `json:"id"`
 		Text string `json:"text"`
-		User struct {
+		// CreatedAt is when Stream made the message (created). Raw, as Channel is.
+		CreatedAt json.RawMessage `json:"created_at"`
+		User      struct {
 			ID   string `json:"id"`
 			Name string `json:"name"`
 		} `json:"user"`
@@ -70,6 +76,39 @@ type messageEvent struct {
 func (e messageEvent) bridged() bool {
 	var bridged bool
 	return json.Unmarshal(e.Message.Bridged, &bridged) == nil && bridged
+}
+
+// members are the user ids of the channel's members as Stream sends them with the message, in
+// the channel of the event, as the app's webhook carries it: «For message and channel events
+// the webhook request body will also include the list of channel members»
+// (https://getstream.io/chat/docs/go-golang/webhook_events/). The docs say «truncated up to 50
+// members»; the delivery loads up to 100 (DefaultMemberLimit, chat send_message.go:418,
+// channel_cache.go:39). A list cut short is longer than two, so omnichannel.Between reads it as
+// the channel of more than one person it is. A channel sent with no members, or none sent, has none, and so no person.
+func (e messageEvent) members() []string {
+	var channel struct {
+		Members []struct {
+			UserID string `json:"user_id"`
+		} `json:"members"`
+	}
+	if json.Unmarshal(e.Channel, &channel) != nil {
+		return nil
+	}
+	ids := make([]string, 0, len(channel.Members))
+	for _, member := range channel.Members {
+		ids = append(ids, member.UserID)
+	}
+	return ids
+}
+
+// created is when Stream made the message, as its created_at says, in RFC 3339 as Stream
+// writes it (2020-03-30T07:54:46.255628Z); zero when it says no time.
+func (e messageEvent) created() time.Time {
+	var at time.Time
+	if json.Unmarshal(e.Message.CreatedAt, &at) != nil {
+		return time.Time{}
+	}
+	return at
 }
 
 // messageAttachment is the part of a Stream Chat attachment that says whether it is a photo
@@ -249,7 +288,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		}
 		// A thread is answered from what was written and the photos, as before voice recordings
 		// were heard in a plain channel: a recording alone has nothing in it to answer there.
-		if event.Message.Text == "" && len(event.photos()) == 0 {
+		if strings.TrimSpace(event.Message.Text) == "" && len(event.photos()) == 0 {
 			return true
 		}
 		origin.answer(func() { s.answerThread(origin, thread, event) })
@@ -283,6 +322,10 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 			// The session a worker opened to answer this channel answers in it, as a thread's
 			// does: the message is already there, so only the reply is written.
 			if found.Spec().Dispatched {
+				// Blanks alone have nothing to answer: the session refuses the turn.
+				if strings.TrimSpace(event.Message.Text) == "" && len(event.photos()) == 0 && !recorded {
+					return true
+				}
 				if answer, settled := s.answerOnce(ctx, origin, event); !answer {
 					return settled
 				}
@@ -362,7 +405,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		return true
 	}
 
-	if elsewhere, taken := s.forwardedToWorkers(ctx, origin.handOver, customerID); elsewhere {
+	if elsewhere, taken := s.forwardedToWorkers(ctx, origin.handOver, customerID, dispatch.Messages); elsewhere {
 		return taken
 	}
 
@@ -739,14 +782,15 @@ func (s *Server) assignMessage(ctx context.Context, customerID string, message d
 
 // followUpMessage answers a message in the channel a running session answers for its worker
 // (session.Spec.Dispatched), once the reply it may still be writing is done, as a thread's
-// session answers one (answerClaimed).
+// session answers one (answerClaimed): with what its voice recording says and its photos, read
+// once for every try.
 func (s *Server) followUpMessage(origin hookOrigin, found *session.Session, event messageEvent) {
 	ctx, cancel := context.WithTimeout(context.Background(), askTimeout)
 	defer cancel()
 	followUpID := "message_" + store.NewID()
-	text := s.heardText(ctx, found.Spec(), origin, event)
+	text, images := s.messagePhotos(ctx, found.SeesImages(), s.heardText(ctx, found.Spec(), origin, event), event)
 	for {
-		err := found.FollowUp(ctx, followUpID, text, nil)
+		err := found.FollowUp(ctx, followUpID, text, images)
 		if errors.Is(err, conversation.ErrResponseRunning) && ctx.Err() == nil {
 			time.Sleep(threadTurnPoll)
 			continue

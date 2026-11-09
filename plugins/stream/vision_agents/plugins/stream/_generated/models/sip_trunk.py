@@ -106,7 +106,7 @@ class SipTrunk:
 
         port = d.pop("port")
 
-        transport = SipTrunkTransport(d.pop("transport"))
+        transport = SipTrunkTransport._decode(d.pop("transport"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 

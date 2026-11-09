@@ -5,11 +5,16 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import io.getstream.chat.android.ai.a2ui.generativeui.A2UIRenderer
 import io.getstream.chat.android.ai.compose.conversation.AIMessageAttachment
 import io.getstream.chat.android.ai.compose.conversation.AIMessageRating
 import io.getstream.chat.android.ai.compose.conversation.AIPendingMessage
+import io.getstream.chat.android.ai.compose.generativeui.AIUIAction
+import io.getstream.chat.android.ai.compose.generativeui.AIUIHost
+import io.getstream.chat.android.ai.openui.generativeui.OpenUIRenderer
 import io.getstream.visionagents.android.core.AgentsException
 import io.getstream.visionagents.android.core.Conversation
+import io.getstream.visionagents.android.core.ModelOverwrites
 import io.getstream.visionagents.android.core.SessionOptions
 import io.getstream.visionagents.android.core.VoiceSession
 import kotlinx.coroutines.CoroutineScope
@@ -93,16 +98,26 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val ratings: StateFlow<Map<String, AIMessageRating>> = opened.flatMapLatest { it?.ratings ?: flowOf(emptyMap()) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
-    /** Why opening or asking failed, or why the session stopped, or null. */
+    /** Why opening or loading failed, or why the session stopped, or null. */
     val failure: StateFlow<String?> = opened.flatMapLatest { chat ->
         if (chat == null) {
             failed
         } else {
-            combine(failed, chat.failure, chat.session.failure) { opening, asking, session ->
-                opening ?: asking ?: session?.message
+            combine(failed, chat.failure, chat.session.failure) { opening, loading, session ->
+                opening ?: loading ?: session?.message
             }
         }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /**
+     * Why the latest question or action went unanswered, shown under it with a way to [retry],
+     * or null.
+     */
+    val unanswered: StateFlow<String?> = opened.flatMapLatest { it?.unanswered ?: flowOf(null) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    // The latest question or action asked here, which retrying asks again.
+    private var latest: (() -> Unit)? = null
 
     private val calling = MutableStateFlow<VoiceSession?>(null)
     private val voiceShown = MutableStateFlow(false)
@@ -120,6 +135,49 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     /** The tools the agent may call, which run on this phone. */
     private val tools = DeviceTools(application).all
+
+    private val format = MutableStateFlow(ReplyFormat.stored(application))
+
+    /** How the agent writes its replies, which picks the renderer for their generated UI. */
+    val replyFormat: StateFlow<ReplyFormat> = format.asStateFlow()
+
+    /**
+     * Renders the generated UI of replies, in either format, and sends back what the person does
+     * in it. One for the screen's life, whatever the reply format, so earlier replies keep their UI
+     * and its state when the format changes, Markdown included.
+     */
+    val uiHost: AIUIHost = AIUIHost(renderers = listOf(OpenUIRenderer(), A2UIRenderer())) { action -> answer(action) }
+
+    init {
+        // The backend's agent decides the format; follow it when it can say.
+        viewModelScope.launch {
+            ReplyFormat.fetch()?.takeIf { it != format.value }?.let(::useFormat)
+        }
+    }
+
+    /** Has the agent write in [chosen] from the next new conversation. */
+    fun chooseReplyFormat(chosen: ReplyFormat) {
+        useFormat(chosen)
+        viewModelScope.launch {
+            if (!ReplyFormat.save(chosen)) failed.value = "The backend would not change the reply format."
+        }
+    }
+
+    private fun useFormat(chosen: ReplyFormat) {
+        if (chosen == format.value) return
+        format.value = chosen
+        ReplyFormat.store(getApplication(), chosen)
+    }
+
+    /** Sends what the person did in a reply's generated UI. */
+    private fun answer(action: AIUIAction) {
+        latest = { answer(action) }
+        screenScope.launch {
+            val chat = open() ?: return@launch
+            markUsed(chat)
+            chat.answer(action)
+        }
+    }
 
     // What belongs to the conversation on screen, and goes when another is picked.
     private var screenScope = newScreenScope()
@@ -144,6 +202,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         opened.value = null
         failed.value = null
         asked.value = null
+        latest = null
         shown.value = sessionId
         screenId.value++
         if (sessionId != null) screenScope.launch { open() }
@@ -160,6 +219,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Asks, with the photos the composer holds, which show on the question at once. */
     fun send(text: String, photos: Collection<Uri> = emptyList()) {
+        latest = { send(text, photos) }
         val asking = Asked(
             AIPendingMessage(text = text, attachments = photos.map { AIMessageAttachment.image(it) }),
             after = opened.value?.messages?.value?.count { !it.isAgentReply } ?: 0,
@@ -172,14 +232,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             markUsed(chat)
-            chat.ask(text) { Photos.sources(getApplication(), photos) }
+            // A question the router would not take is not in the channel, so the one on its way
+            // stays, with why it went unanswered under it.
+            if (!chat.ask(text) { Photos.sources(getApplication(), photos) }) return@launch
             // Stream's copy of the question is the person's first message after the ones there
-            // were when they asked. Once it is in, or asking failed, the question on its way goes.
-            combine(chat.messages, chat.failure) { messages, failure ->
-                failure != null || messages.count { !it.isAgentReply } > asking.after
+            // were when they asked. Once it is in, or its reply failed, the question on its way goes.
+            combine(chat.messages, chat.unanswered) { messages, unanswered ->
+                unanswered != null || messages.count { !it.isAgentReply } > asking.after
             }.first { it }
             if (asked.value === asking) asked.value = null
         }
+    }
+
+    /** Asks the latest question again, or sends the latest action again, after it went unanswered. */
+    fun retry() {
+        latest?.invoke()
     }
 
     /** Switches to voice mode on this conversation, starting a session for a new one. */
@@ -309,7 +376,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         failed.value = null
         return try {
             val session = openedFor?.let { Assistant.agents.attach(it, tools) } ?: Assistant.agents.agent(Assistant.AGENT_NAME).chat(
-                SessionOptions(llm = Assistant.CHAT_MODEL, tools = tools, returnUrl = Assistant.RETURN_URL),
+                SessionOptions(modelOverwrites = ModelOverwrites(llm = Assistant.CHAT_MODEL), tools = tools, returnUrl = Assistant.RETURN_URL),
             )
             AgentChat.open(getApplication(), session, screenScope).also { opened.value = it }
         } catch (e: AgentsException) {

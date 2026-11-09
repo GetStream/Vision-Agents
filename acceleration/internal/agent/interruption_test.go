@@ -289,20 +289,16 @@ func (s *AgentSuite) TestALineInterruptedAndThenRefusedIsToldOnce() {
 }
 
 func (s *AgentSuite) TestALineALostVoiceWasSayingSaysTheVoiceWasLost() {
+	// Partly heard: one none of which was heard is said by the next voice, not cut off.
 	s.logs = &logLines{}
-	s.join(false)
-	s.voice.silent = true
-	s.replacement = newStubTTS(false)
-	s.Require().NoError(s.agent.Say(s.ctx, "Hi, thanks for getting in touch."))
-	s.eventually(func() bool { return countOf[Said](s.reported()) == 1 }, "the greeting was never reported")
-	said, _ := firstOf[Said](s.reported())
+	turn := s.partlyHeardGreeting()
 
 	s.voice.emitter.Send(tts.Error{
 		Provider: "stub", Model: "stub-tts", Err: errors.New("quota exceeded"), Context: "read", Fatal: true,
 	})
 
 	logged := s.interruptedOnce()
-	s.Equal(said.TurnID, logged["turn"])
+	s.Equal(turn, logged["turn"])
 	s.Equal(causeVoiceLost, logged["cause"])
 	s.Equal(echoNoWords, logged["echo"])
 }

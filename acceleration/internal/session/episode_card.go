@@ -1,16 +1,20 @@
 package session
 
 import (
+	"cmp"
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
@@ -30,6 +34,9 @@ const callCardTimeout = 30 * time.Second
 // summaries, not the raw text»).
 type callCards struct {
 	cards  *omnichannel.Cards
+	stream *streamapp.Clients
+	// placed are the calls the router placed, which name who each rang (calledParty).
+	placed *outcome.Keeper
 	logger *slog.Logger
 
 	ctx     context.Context
@@ -38,17 +45,17 @@ type callCards struct {
 }
 
 // newCallCards is nil without a store or Stream clients, where no card can be kept.
-func newCallCards(pgStore *store.Store, stream *streamapp.Clients, logger *slog.Logger) *callCards {
+func newCallCards(pgStore *store.Store, placed *outcome.Keeper, stream *streamapp.Clients, logger *slog.Logger) *callCards {
 	cards, err := omnichannel.New(omnichannel.Options{Store: pgStore, Stream: stream})
 	if err != nil {
 		return nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &callCards{cards: cards, logger: logger, ctx: ctx, cancel: cancel}
+	return &callCards{cards: cards, stream: stream, placed: placed, logger: logger, ctx: ctx, cancel: cancel}
 }
 
 // started writes the card of a call session that has just joined, when its agent config
-// turned the cards on (store.AgentConfig.EpisodeCards). Off, which every config is unless it
+// writes the cards, on or record (Spec.WritesCards). Off, which every config is unless it
 // says otherwise, nothing runs: no call read, no contact map row, no card, as before the
 // cards existed. A session in writing, an incognito one, which records nothing, and one with
 // no agent config, whose omni-channel the contact map cannot key, get none either.
@@ -56,7 +63,7 @@ func (c *callCards) started(created *Session, stream streamapp.Bound) {
 	// The spec as the session started, read here, on the caller: the card is written off the
 	// start, while SetSettings may change created.spec.
 	spec := created.Spec()
-	if c == nil || !spec.EpisodeCards || spec.Text || spec.CallID == "" || spec.Incognito || spec.ConfigID == "" || stream.Client == nil {
+	if c == nil || !spec.WritesCards() || spec.Text || spec.CallID == "" || spec.Incognito || spec.ConfigID == "" || stream.Client == nil {
 		return
 	}
 	// A call whose transcript is written nowhere it may write has no channel for its card to
@@ -67,18 +74,22 @@ func (c *callCards) started(created *Session, stream streamapp.Bound) {
 	c.running.Add(1)
 	go func() {
 		defer c.running.Done()
-		ctx, cancel := context.WithTimeout(c.ctx, callCardTimeout)
-		defer cancel()
-		if err := c.write(ctx, created, spec, stream); err != nil {
+		number, err := c.party(created, spec, stream)
+		if err == nil && number != "" {
+			ctx, cancel := context.WithTimeout(c.ctx, callCardTimeout)
+			defer cancel()
+			err = c.write(ctx, created, spec, number)
+		}
+		if err != nil {
 			c.logger.Error("could not write a call's episode card", "session", created.id, "call", spec.CallID, "error", err)
 		}
 	}()
 }
 
 // read is the person's other episode cards, for a session to start with (T56 and T42,
-// AI-885), when its agent config turned the cards on. Off, which every config is unless it
-// says otherwise, nothing is read: no call, no contact map, no Stream Chat, and the session
-// starts with what it did before the cards existed. On:
+// AI-885), when its agent config turned the cards on (Spec.EpisodeCards). Off or record,
+// which writes the cards and reads none, nothing is read: no call, no contact map, no Stream
+// Chat, and the session starts with what it did before the cards existed. On:
 //
 //   - a text session on a thread channel reads the cards of the person its thread's episode
 //     is with, the thread itself left out, since it reads that word for word;
@@ -91,7 +102,18 @@ func (c *callCards) started(created *Session, stream streamapp.Bound) {
 //     empty, since the worker opens the session with its own server key (Manager.handedOut),
 //     so neither names that person. person is that user, once cards were read for them;
 //   - a voice session reads the cards of the number on its call (calledParty), its own
-//     call's card left out.
+//     call's card left out;
+//   - any other text or voice session the person's own device opened (deviceCaller) reads the
+//     cards of that Stream user, the conversation it carries on left out, since it reads that
+//     word for word, while nobody else reads the answers: the conversation is not open to its
+//     members and its members are that user alone, or that user and the agent
+//     (omnichannel.Reading.OwnAgent), and a call's members and participants are that user
+//     alone, or that user and the agent (UserID). person is that user too, once cards were
+//     read for them.
+//
+// A Stream user is only who a token Stream checked says, so neither of the two cases keyed by
+// one reads anything in an app Stream says checks no tokens (Readiness.AuthChecksOff), or
+// one it could not be asked about: a client there may write as, or sign in as, anybody.
 //
 // Any other session reads none: an incognito one, which keeps nothing of the person, one
 // with no agent config, whose contact map the cards are keyed by, a text session on any
@@ -116,24 +138,60 @@ func (c *callCards) read(ctx context.Context, spec Spec, stream streamapp.Bound)
 	case spec.Text && spec.PersistConversation && spec.Dispatched:
 		reading.Chat, reading.ChatUser, reading.ChatAgent = spec.ConversationID, spec.HandedOutBy, spec.AgentID
 	case !spec.Text && spec.CallID != "" && stream.Client != nil:
-		number, err := calledParty(ctx, spec, stream)
+		number, people, err := c.calledParty(ctx, spec, stream)
 		if err != nil {
 			c.logger.Error("could not read who is on a call for its episode cards", "session", spec.ID, "call", spec.CallID, "error", err)
 			return nil, ""
+		}
+		// A call from the person's own device has no number on it: it is the device's, while
+		// its members and participants are that person alone, or that person and the agent
+		// (UserID, whom it joins as). Anybody else on it hears the answers.
+		if number == "" && deviceCaller(spec) {
+			if !omnichannel.Between(people, spec.Caller.UserID, spec.UserID) {
+				return nil, ""
+			}
+			reading.User, reading.Own, reading.OwnAgent = spec.Caller.UserID, spec.ConversationID, spec.AgentID
+			break
 		}
 		person, err := omnichannel.Phone(number)
 		if err != nil {
 			return nil, ""
 		}
 		reading.Person, reading.SessionID = person, spec.ID
+	case deviceCaller(spec):
+		reading.User, reading.Own, reading.OwnAgent = spec.Caller.UserID, spec.ConversationID, spec.AgentID
 	default:
+		return nil, ""
+	}
+	if (reading.Chat != "" || reading.User != "") && !c.checksTokens(ctx, spec, stream) {
 		return nil, ""
 	}
 	cards, err := c.cards.Context(ctx, reading)
 	if err != nil {
 		c.logger.Error("could not read every episode card", "session", spec.ID, "error", err)
 	}
-	return cards, reading.ChatUser
+	return cards, cmp.Or(reading.ChatUser, reading.User)
+}
+
+// deviceCaller reports whether the session was opened by the person's own device: an end user
+// whose token was signed for them (auth.KindAuthenticated: by the app's secret in api_key
+// mode, by Stream behind the gateway). Not a guest, whose account is a temporary one the app
+// does not know, nor an anonymous caller, who may go by any name, nor a backend, the app's
+// worker or a scheduled task acting for a user (routing.Caller.ServerSide), which no device of
+// the person's opened.
+func deviceCaller(spec Spec) bool {
+	return spec.CallerKind == auth.KindAuthenticated && spec.Caller.UserID != "" && !spec.Caller.ServerSide
+}
+
+// checksTokens reports whether Stream says the app the session acts in checks the tokens it is
+// sent (streamapp.Clients.ChecksTokens). An app that could not be asked is taken as one that
+// does not.
+func (c *callCards) checksTokens(ctx context.Context, spec Spec, stream streamapp.Bound) bool {
+	checks, err := c.stream.ChecksTokens(ctx, stream)
+	if err != nil {
+		c.logger.Warn("could not ask Stream whether an app checks tokens, so no episode cards are read", "session", spec.ID, "error", err)
+	}
+	return checks
 }
 
 // Close abandons the cards still being written and waits for them to stop.
@@ -145,11 +203,25 @@ func (c *callCards) Close() {
 	c.running.Wait()
 }
 
-func (c *callCards) write(ctx context.Context, created *Session, spec Spec, stream streamapp.Bound) error {
-	number, err := calledParty(ctx, spec, stream)
-	if err != nil || number == "" {
-		return err
+// party is the number of the person on a call session, for its card. A phone session whose
+// caller is not on the call yet waits for the session to hear them join: the caller can join
+// after the agent, as the call hook is not told who is calling until they have (an inbound
+// leg can open without its caller, store.ConnectCallLeg). It waits as long as the session
+// waits for anybody, its start timeout, past which a phone session nobody joined ends, or until
+// the session closes, whichever is first.
+func (c *callCards) party(created *Session, spec Spec, stream streamapp.Bound) (string, error) {
+	ctx, cancel := context.WithTimeout(c.ctx, callCardTimeout)
+	number, _, err := c.calledParty(ctx, spec, stream)
+	cancel()
+	if err != nil || number != "" || spec.Phone == nil {
+		return number, err
 	}
+	ctx, cancel = context.WithTimeout(c.ctx, startTimeout(spec.Phone))
+	defer cancel()
+	return created.awaitCaller(ctx), nil
+}
+
+func (c *callCards) write(ctx context.Context, created *Session, spec Spec, number string) error {
 	person, err := omnichannel.Phone(number)
 	if err != nil {
 		c.logger.Info("no episode card for a call whose number is not in E.164", "session", created.id)
@@ -167,8 +239,10 @@ func (c *callCards) write(ctx context.Context, created *Session, spec Spec, stre
 		ThreadChannel: thread,
 		CallID:        spec.CallID,
 		SessionID:     created.id,
-		StartedAt:     created.created,
-		StreamAppPK:   spec.StreamApp,
+		// Dated by Postgres's clock, as the link whose boundary leaves it out is, from when the
+		// session began: its card may be written minutes later, once a late caller joins.
+		Began:       created.began,
+		StreamAppPK: spec.StreamApp,
 	})
 	if err != nil {
 		return err
@@ -177,23 +251,70 @@ func (c *callCards) write(ctx context.Context, created *Session, spec Spec, stre
 }
 
 // calledParty is the number of the person on the call with the agent: who the agent rang,
-// for a call it placed (PhoneSpec.To), otherwise the SIP caller the inbound routing rule named
-// (phone.CallerNumber), read off the call's session. Empty for a call no phone is on.
-func calledParty(ctx context.Context, spec Spec, stream streamapp.Bound) (string, error) {
+// for a call it placed (PhoneSpec.To, else rung), otherwise the SIP caller the inbound routing
+// rule named (phone.CallerNumber), read off the call's session. The session's own line is
+// never the person. Empty for a call no phone is on, and then people are the user ids of the
+// call's members and of its session's participants.
+func (c *callCards) calledParty(ctx context.Context, spec Spec, stream streamapp.Bound) (number string, people []string, err error) {
 	if spec.Phone != nil && spec.Phone.To != "" {
-		return spec.Phone.To, nil
+		return spec.Phone.To, nil, nil
+	}
+	if number, err := c.rung(ctx, spec); err != nil || number != "" {
+		return number, nil, err
 	}
 	call, err := stream.Client.Video().GetCall(ctx, spec.CallType, spec.CallID, &getstream.GetCallRequest{})
 	if err != nil {
-		return "", err
+		return "", nil, err
+	}
+	for _, member := range call.Data.Members {
+		people = append(people, member.UserID)
 	}
 	if call.Data.Call.Session == nil {
-		return "", nil
+		return "", people, nil
 	}
 	for _, participant := range call.Data.Call.Session.Participants {
-		if number, ok := phone.CallerNumber(participant.User.ID); ok {
-			return number, nil
+		if number, ok := phone.CallerNumber(participant.User.ID); ok && !ownLine(spec, number) {
+			return number, nil, nil
 		}
+		people = append(people, participant.User.ID)
 	}
-	return "", nil
+	return "", people, nil
+}
+
+// rung is who the router rang on the session's call, for a session the customer's backend
+// opened on a call placed through POST /v1/phone/calls, which names no PhoneSpec.To: the
+// phone that joins such a call is the vendor's leg, under the line's own number
+// (store.ConnectCallLeg matches it by local_number). Only for a phone session (PhoneSpec set)
+// on the call placed: its call type and Stream app, and its vendor's call id when the session
+// names one (the SDKs send it). Not for an end user's device, nor a session with no phone,
+// either of which may name the session id of a call it was never meant to be on. Empty for a
+// call the router did not place.
+func (c *callCards) rung(ctx context.Context, spec Spec) (string, error) {
+	if c.placed == nil || spec.CallerKind != auth.KindServer || spec.Phone == nil {
+		return "", nil
+	}
+	placed, err := c.placed.Read(ctx, spec.CustomerID, spec.CallID)
+	if errors.Is(err, outcome.ErrUnknownCall) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if placed.CallType != spec.CallType || placed.StreamAppPK != spec.StreamApp ||
+		(spec.Phone.VendorCallID != "" && placed.VendorCallID != spec.Phone.VendorCallID) {
+		return "", nil
+	}
+	return placed.Remote, nil
+}
+
+// ownLine reports whether number is the line the session's call is on (PhoneSpec.Number),
+// which is the vendor's leg of a call the agent placed, never the person.
+func ownLine(spec Spec, number string) bool {
+	if spec.Phone == nil {
+		return false
+	}
+	// A line that is not in E.164 has no address, which no person's is.
+	line, _ := omnichannel.Phone(spec.Phone.Number)
+	person, err := omnichannel.Phone(number)
+	return err == nil && person.Address == line.Address
 }

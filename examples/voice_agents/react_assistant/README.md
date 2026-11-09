@@ -6,12 +6,16 @@ Stream token are all swift_assistant's, as they are for the [Android app](../and
 Only the page is here.
 
 ```
-package.json     React and Vite over @stream-io/calypso (sdks/js, as it is in this checkout)
-                 and stream-chat-react's AI components
+package.json     React and Vite over @stream-io/calypso (0.3.1 from npm, the first to take
+                 stream-chat 10) and stream-chat-react's AI components
 connected.html   where a connector's sign-in comes back to
 src/             the page
-tests/           its pure parts: captions, the glow's phases, photos, days
+tests/           its pure parts (captions, the glow's phases, photos, days) and the chat over a
+                 fake channel and session
 ```
+
+It runs on `stream-chat` 10 and `stream-chat-react` 15, with React 19, Vite 8 and TypeScript 7.
+That takes Node 22.18 or newer: `stream-chat` 10's own floor, above Vite 8's.
 
 ## Run it
 
@@ -32,11 +36,10 @@ go run ./backend
 ```
 
 The backend listens on `:8098`, which the page reaches through Vite's dev server at `/backend`:
-it answers no browser of another origin. Build the SDK once, then tell the page the Stream key,
-in `.env.local` here, which git ignores:
+it answers no browser of another origin. Tell the page the Stream key in `.env.local` here, which
+git ignores:
 
 ```bash
-(cd ../../../sdks/js && npm ci && npm run build)
 echo "VITE_STREAM_API_KEY=<the router's STREAM_API_KEY>" > .env.local
 npm install
 npm run dev
@@ -48,14 +51,17 @@ connector's sign-in comes back only to the origin a conversation named, and the 
 
 The AI components it uses (`AIConversation`, the reply's steps, the approval and sign-in cards,
 suggestions, reply actions and the composer's chat options) come from
-`stream-chat-react/ai-components`, released in 14.15.0.
+`stream-chat-react/ai-components`, and the generated UI it shows from `stream-chat-react/a2ui`
+and `stream-chat-react/openui`: added in 14.16.0, and read here as 15 has them, with the reply's
+`ai_generated`, `generating` and `ai_ui` under `message.custom` as `stream-chat` 10 keeps them.
 
-The chat asks for `xai/grok-4.7`, a model that streams its reasoning, so the router needs
+The chat asks for `xai/grok-4.7`, a model that streams its reasoning, as a model overwrite the
+router keeps on the session, so a conversation carried on later stays on it. The router needs
 `XAI_API_KEY`, and `GOOGLE_API_KEY`, `DEEPGRAM_API_KEY` and `INWORLD_API_KEY` for a call. Web
 search needs one of `EXA_API_KEY`, `TAVILY_API_KEY` or `PERPLEXITY_API_KEY`.
 
 ```bash
-npm test          # the pure parts
+npm test          # the pure parts, and the chat
 npm run build     # types, then the bundle
 ```
 
@@ -82,6 +88,21 @@ npm run build     # types, then the bundle
   can copy, share and rate it; ratings stay in the page, as the router takes none yet. The
   composer floats over the bottom of the conversation, which fades away under it, and its
   options offer Think harder, which asks with a higher `reasoning_effort`.
+- **Interactive replies**: the gear in the top bar picks how Juno answers, as the iOS app's
+  settings do: in text, or with interactive UI written in [A2UI](https://a2ui.org) or
+  [OpenUI](https://openui.com). It is the
+  agent's instructions, kept by swift_assistant's backend (`GET`/`PUT /reply-format`), so every
+  app answers the same way, from the next conversation on. "Plan a weekend in Ohrid" then
+  answers with a card in place of the reply's words: a map of the places with their pins
+  dropping in, Juno's calendar for those days, a tab per day of place cards with their Wikipedia
+  photos, and a form to change the plan. The map, the place cards and the calendar are the
+  page's own components (`tripComponents.tsx`), described once for every platform in
+  swift_assistant's `UIComponents.json`; the rest is the format's own: A2UI's basic catalog,
+  drawn by `stream-chat-react/a2ui` on the official `@a2ui/web_core` and `@a2ui/react`, or
+  OpenUI's chat library, drawn by `stream-chat-react/openui` on the official `@openuidev`
+  packages. Tapping a place or sending the form is the person's next question, in their words,
+  with what they did as its `uiAction`, so the agent answers with a new plan. One done while
+  Juno is still answering isn't sent, and the line over the composer says so.
 - **Photos** from the composer's button go with the question, shrunk to 1280 pixels across and
   inline as JPEG data URIs (`photos.ts`), turned the way the camera held them. The question shows
   them at once; the router uploads them to the conversation's channel and writes them on the

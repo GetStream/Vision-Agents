@@ -137,6 +137,14 @@ impl Agent {
         self
     }
 
+    /// The team every session's work is counted under, its team spend limits included, over
+    /// the config's `tags: team`. Server side only: the router refuses it from a device, and
+    /// a team other than the one the caller's token names.
+    pub fn team(mut self, team: impl Into<String>) -> Self {
+        self.pipeline.team = Some(team.into());
+        self
+    }
+
     /// Labels every request the session makes, so spend can be attributed.
     pub fn cost_tracking<K: Into<String>, V: Into<String>>(
         mut self,
@@ -508,7 +516,11 @@ impl Agent {
     ) {
         match &self.harness {
             None => (None, None, None),
-            Some(harness) => (harness.name, text(harness.subagent()), harness.vm),
+            Some(harness) => (
+                harness.name.clone(),
+                text(harness.subagent()),
+                harness.vm.clone(),
+            ),
         }
     }
 
@@ -631,17 +643,17 @@ impl Agent {
                     .map(folder::Simulation::declaration)
                     .collect()
             }),
-            mode: settings.mode,
+            mode: settings.mode.clone(),
             stt: text(&settings.stt),
             tts: text(&settings.tts),
             sts: settings.sts.clone(),
             voice: text(&settings.voice),
             llm: text(&settings.llm),
-            harness: harness.or(settings.harness),
+            harness: harness.or(settings.harness.clone()),
             subagent: subagent.or_else(|| text(&settings.subagent)),
             search: text(&settings.search),
             greeting: settings.greeting.clone(),
-            sandbox: sandbox.or(settings.sandbox),
+            sandbox: sandbox.or(settings.sandbox.clone()),
             sandbox_options: settings.sandbox_options.clone(),
             keyterms: (!settings.keyterms.is_empty()).then(|| settings.keyterms.clone()),
             tags,
@@ -650,6 +662,7 @@ impl Agent {
                 source: text(&video.source),
             }),
             dispatch: settings.dispatch.clone(),
+            floor_control: settings.floor_control.clone(),
             connectors,
             ..Default::default()
         };

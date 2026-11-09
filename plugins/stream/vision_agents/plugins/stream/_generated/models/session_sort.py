@@ -48,7 +48,7 @@ class SessionSort:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        field = SessionSortField(d.pop("field"))
+        field = SessionSortField._decode(d.pop("field"))
 
         _direction = d.pop("direction", UNSET)
         direction: SessionSortDirection | Unset

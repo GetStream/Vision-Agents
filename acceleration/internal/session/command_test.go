@@ -370,17 +370,17 @@ func (s *SessionSuite) TestVideosAreSampledOnlyForAQuestionTheSessionWouldAnswer
 	s.persists()
 	running := s.commands()
 
-	_, err := running.SampleVideos(s.ctx, "")
+	_, err := running.SampleVideos(s.ctx, "", "")
 	s.ErrorIs(err, errPersonalNeedsCommand, "a personal conversation takes questions by command alone")
 	_, err = running.Respond(s.ctx, "What is in this clip?", nil, options.LLM{})
 	s.ErrorIs(err, errPersonalNeedsCommand, "which is what Respond refuses it for")
 
-	sample, err := running.SampleVideos(s.ctx, "command-a")
+	sample, err := running.SampleVideos(s.ctx, "command-a", "")
 	s.Require().NoError(err)
 	s.True(sample, "a command not taken yet")
 	_, _, err = running.RespondCommand(s.ctx, "command-a", "First question", "", nil, options.LLM{})
 	s.Require().NoError(err)
-	sample, err = running.SampleVideos(s.ctx, "command-a")
+	sample, err = running.SampleVideos(s.ctx, "command-a", "")
 	s.Require().NoError(err)
 	s.False(sample, "a retry of a command already taken")
 	s.gated.answers(1)
@@ -391,28 +391,118 @@ func (s *SessionSuite) TestVideosAreSampledOnlyForAQuestionTheSessionWouldAnswer
 
 	_, err = running.AwaitCommand(s.ctx, "command-w", "Handed to a worker", "")
 	s.Require().NoError(err)
-	sample, err = running.SampleVideos(s.ctx, "command-w")
+	sample, err = running.SampleVideos(s.ctx, "command-w", "")
 	s.Require().NoError(err)
 	s.True(sample, "a command a dispatch worker's server answers now reaches the model")
 
 	shared, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", Text: true, PersistConversation: true, LLMTarget: "en-low-latency"})
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = shared.Close() })
-	sample, err = shared.SampleVideos(s.ctx, "")
+	sample, err = shared.SampleVideos(s.ctx, "", "")
 	s.Require().NoError(err)
 	s.True(sample, "a conversation with no user takes a question without a command")
 
 	unkept, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", Text: true, LLMTarget: "en-low-latency", Caller: routing.Caller{UserID: "employee-1"}})
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = unkept.Close() })
-	sample, err = unkept.SampleVideos(s.ctx, "command-a")
+	sample, err = unkept.SampleVideos(s.ctx, "command-a", "")
 	s.Require().NoError(err)
 	s.True(sample, "a session kept nowhere answers every question, its request id ignored")
 
 	s.Require().NoError(running.StartVoice(s.ctx, Call{}))
-	sample, err = running.SampleVideos(s.ctx, "")
+	sample, err = running.SampleVideos(s.ctx, "", "")
 	s.Require().NoError(err)
 	s.True(sample, "a question typed into a call is heard there, without a command")
+}
+
+// Videos are not sampled for a question its conversation would refuse to begin, with the error
+// it would refuse it with: the answer still running, the text past its limit, the conversation
+// not open. The limit's boundary and a retry of the command running are not refused.
+func (s *SessionSuite) TestVideosAreNotSampledForAQuestionItsConversationWouldNotBegin() {
+	s.persists()
+	running := s.commands()
+	oversize := strings.Repeat("a", 1<<20+1)
+
+	_, _, refused := running.RespondCommand(s.ctx, "command-big", oversize, "", nil, options.LLM{})
+	s.Require().Error(refused, "a text past the limit is refused to begin")
+	_, err := running.SampleVideos(s.ctx, "command-big", oversize)
+	s.EqualError(err, refused.Error(), "with the error beginning it is refused with")
+	sample, err := running.SampleVideos(s.ctx, "command-big", oversize[:1<<20])
+	s.Require().NoError(err, "a text of the limit is begun")
+	s.True(sample)
+
+	_, _, err = running.RespondCommand(s.ctx, "command-a", "First question", "", nil, options.LLM{})
+	s.Require().NoError(err)
+	_, _, refused = running.RespondCommand(s.ctx, "command-b", "Second question", "", nil, options.LLM{})
+	s.Require().ErrorIs(refused, persistent.ErrResponseRunning)
+	_, err = running.SampleVideos(s.ctx, "command-b", "Second question")
+	s.ErrorIs(err, persistent.ErrResponseRunning, "a question waits for the answer running")
+	sample, err = running.SampleVideos(s.ctx, "command-a", "First question")
+	s.Require().NoError(err, "a retry of the command running is answered with its receipt")
+	s.False(sample)
+	s.gated.answers(1)
+	s.eventually(func() bool {
+		receipt, err := running.Command("command-a")
+		return err == nil && receipt.State == "completed"
+	}, "the first command should finish")
+	sample, err = running.SampleVideos(s.ctx, "command-b", "Second question")
+	s.Require().NoError(err, "the answer finished")
+	s.True(sample)
+
+	shared, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", Text: true, PersistConversation: true, LLMTarget: "en-low-latency"})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = shared.Close() })
+	s.Require().NoError(shared.persisted.Begin("Still answering"))
+	refused = shared.persisted.Begin("Another")
+	s.Require().ErrorIs(refused, persistent.ErrResponseRunning)
+	_, err = shared.SampleVideos(s.ctx, "", "Another")
+	s.ErrorIs(err, persistent.ErrResponseRunning, "a question without a command waits as well")
+	_, err = shared.SampleVideos(s.ctx, "", oversize)
+	s.Error(err, "and is refused past the limit of its text")
+
+	shared.persisted.Release()
+	_, err = shared.SampleVideos(s.ctx, "", "Another")
+	s.EqualError(err, "conversation is not open")
+	running.persisted.Release()
+	_, err = running.SampleVideos(s.ctx, "command-c", "Third question")
+	s.EqualError(err, "conversation is not open", "a conversation that is not open begins nothing")
+}
+
+// A worker's session begins what is handed on to it as a follow-up, which holds no limit on its
+// text, so a long one does not refuse its videos; one waiting on a response running does.
+func (s *SessionSuite) TestAWorkersVideosAreNotRefusedForTheLimitOfATextItsFollowUpHasNot() {
+	chat := chattest.NewServer(s.T())
+	service := persistent.NewForChat(chat.Client)
+	s.T().Cleanup(service.Close)
+	s.conversations = service
+	s.apps = streamapp.NewClients(streamapp.NewDeployment(streamapp.DeploymentOptions{
+		APIKey: "deploy-key", Secret: "deploy-secret", BaseURL: chat.URL,
+	}), streamapp.ClientsOptions{})
+	s.manages()
+	creator := "worker-agent"
+	_, err := chat.Client.Chat().GetOrCreateChannel(s.ctx, "agent", "worker-agent", &getstream.GetOrCreateChannelRequest{
+		Data: &getstream.ChannelInput{CreatedByID: &creator, Custom: map[string]any{persistent.CustomerField: "acme", "support_agent_id": "worker-agent"}},
+	})
+	s.Require().NoError(err)
+	s.manager.HandOut(s.ctx, "acme", "agent:worker-agent", 0, true, "")
+	worker, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", AgentID: "worker-agent", Text: true, PersistConversation: true,
+		LLMTarget: "en-low-latency", CallerKind: auth.KindServer})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = worker.Close() })
+	s.Require().True(worker.Spec().Dispatched)
+	oversize := strings.Repeat("a", 1<<20+1)
+
+	sample, err := worker.SampleVideos(s.ctx, "", oversize)
+	s.Require().NoError(err, "a follow-up holds no limit on its text")
+	s.True(sample)
+	sample, err = worker.SampleVideos(s.ctx, "follow-up", oversize)
+	s.Require().NoError(err)
+	s.True(sample)
+
+	_, err = worker.persisted.BeginFollowUp("running", "A follow-up")
+	s.Require().NoError(err)
+	_, err = worker.SampleVideos(s.ctx, "another", "")
+	s.ErrorIs(err, persistent.ErrResponseRunning, "a follow-up waits for the answer running as well")
 }
 
 // A question of photos alone needs no command to be shown on the person's message (AI-2550);
@@ -540,6 +630,53 @@ func (s *SessionSuite) TestPhotosWithoutTextAreUploadedOnlyWhereThePersonsMessag
 	_, _ = incognito.Respond(s.ctx, "", []llm.ImagePart{photo}, options.LLM{}, photo)
 
 	s.Empty(chat.Uploads())
+}
+
+// A worker's session answers what the person wrote in the channel it was handed, so it writes
+// nothing of theirs, but the model still has to be told what they did in a reply's UI: without
+// it, "Update the plan" is all the model hears, and it cannot know what to update it to.
+func (s *SessionSuite) TestAHandedOnCommandTellsTheModelWhatThePersonDidInTheUI() {
+	chat := chattest.NewServer(s.T())
+	service := persistent.NewForChat(chat.Client)
+	s.T().Cleanup(service.Close)
+	s.conversations = service
+	s.apps = streamapp.NewClients(streamapp.NewDeployment(streamapp.DeploymentOptions{
+		APIKey: "deploy-key", Secret: "deploy-secret", BaseURL: chat.URL,
+	}), streamapp.ClientsOptions{})
+	s.manages()
+	creator := "worker-agent"
+	_, err := chat.Client.Chat().GetOrCreateChannel(s.ctx, "agent", "worker-agent", &getstream.GetOrCreateChannelRequest{
+		Data: &getstream.ChannelInput{CreatedByID: &creator, Custom: map[string]any{persistent.CustomerField: "acme", "support_agent_id": "worker-agent"}},
+	})
+	s.Require().NoError(err)
+	s.manager.HandOut(s.ctx, "acme", "agent:worker-agent", 0, true, "")
+	worker, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", AgentID: "worker-agent", Text: true, PersistConversation: true,
+		LLMTarget: "en-low-latency", CallerKind: auth.KindServer})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = worker.Close() })
+	s.Require().True(worker.Spec().Dispatched, "the session a worker opens in the channel handed out")
+	action := map[string]any{
+		"v": 1, "message_id": "reply-1", "format": "a2ui", "name": "update_plan",
+		"payload": map[string]any{"context": map[string]any{"pace": []any{"packed"}}},
+	}
+
+	_, _, err = worker.RespondCommandWithAction(s.ctx, "command-w", "Update the plan", "", nil, options.LLM{}, action)
+	s.Require().NoError(err)
+
+	s.eventually(func() bool {
+		s.model.mu.Lock()
+		defer s.model.mu.Unlock()
+		for _, params := range s.model.asked {
+			for _, message := range params.Input {
+				if message.Role == llm.User && strings.HasPrefix(message.Content, "Update the plan\n\n") &&
+					strings.Contains(message.Content, `update_plan, with {"context":{"pace":["packed"]}}`) {
+					return true
+				}
+			}
+		}
+		return false
+	}, "the model was never told what the person did in the reply's UI")
+	s.Empty(chat.Uploads(), "the person's message is already in the channel")
 }
 
 func (s *SessionSuite) TestACommandsVoiceNoteIsShownOnThePersonsMessageOnce() {
@@ -1050,7 +1187,7 @@ func (s *SessionSuite) TestSharedConversationHandsOffAfterWatcherDetachAndReject
 	s.Require().NoError(err)
 	_, _, err = bob.RespondCommand(s.ctx, "removed-command", "This must not run", "", nil, options.LLM{})
 	s.ErrorIs(err, persistent.ErrCommandNotFound)
-	_, err = bob.SampleVideos(s.ctx, "removed-command")
+	_, err = bob.SampleVideos(s.ctx, "removed-command", "")
 	s.ErrorIs(err, persistent.ErrCommandNotFound, "a removed member's videos are not sampled")
 	_, err = bob.Command("bob-command")
 	s.ErrorIs(err, persistent.ErrCommandNotFound)

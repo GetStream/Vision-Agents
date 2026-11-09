@@ -146,6 +146,12 @@ export interface Declaration {
   channels?: Schemas["AgentChannels"];
   /** Whether the agent may schedule tasks for its users, and the bounds on that. */
   scheduling?: Schemas["AgentScheduling"];
+  /**
+   * The model that controls the agent's floor, and how long a caller may wait once they stop:
+   * `model` and `max_wait_ms`, as written. Undefined leaves the stored choice; an empty object
+   * is the default flow controller again.
+   */
+  floorControl?: Schemas["FloorControl"];
 }
 
 /** One connector an agent binds, as agent.yaml names it. */
@@ -760,6 +766,7 @@ function declaredRequest(declared: Declaration): Partial<Schemas["SyncAgentReque
     ...(declared.greeting ? { greeting: declared.greeting } : {}),
     ...(declared.channels ? { channels: declared.channels } : {}),
     ...(declared.scheduling ? { scheduling: declared.scheduling } : {}),
+    ...(declared.floorControl ? { floor_control: declared.floorControl } : {}),
     ...(declared.keyterms?.length ? { keyterms: declared.keyterms } : {}),
     ...(declared.video ? { video: declared.video } : {}),
     ...(declared.dispatch ? { dispatch: declared.dispatch } : {}),

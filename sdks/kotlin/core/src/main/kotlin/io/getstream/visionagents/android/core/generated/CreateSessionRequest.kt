@@ -23,6 +23,7 @@
 
 package io.getstream.visionagents.android.core.generated
 
+import io.getstream.visionagents.android.core.generated.FloorControl
 import io.getstream.visionagents.android.core.generated.Greeting
 import io.getstream.visionagents.android.core.generated.HistoryMessage
 import io.getstream.visionagents.android.core.generated.ModelOverwrites
@@ -55,6 +56,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param contextTruncated Older history was omitted from the model context.
  * @param custom Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing.
  * @param description A longer note about the conversation, searched alongside the title.
+ * @param floorControl 
  * @param greeting 
  * @param history The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
  * @param id The id to hold the session by, so a caller can know it before the session exists. It may be any string of up to 64 letters, digits, - and _, such as your own record's id, that nobody has used for a session before. A UUID is held lowercase. Omitted, the router generates a UUIDv7.
@@ -78,6 +80,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param sts A speech-to-speech target. Naming one makes the session native once voice is started: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
  * @param stt Omit it and the config decides, or en-low-latency when there is no config.
  * @param tags Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins.
+ * @param team The team the session's work is counted under, its team spend limits included, as team:<name> is among a token's usage categories: 1 to 59 letters, digits, _ . and -. Left out, the session is counted under the team the caller's token names, else the agent config's team tag. A token naming another team is refused with a 400: the team a token was signed for is not moved. Server-side only: a device sending it is refused with a 403, since its team is the one its token was signed for.
  * @param timezone The end user's IANA timezone, such as Europe/Amsterdam, which a device knows and the router does not. It sets the zone the agent reads dates in for this session and, for a user the caller may name, is remembered as theirs for the scheduled tasks and sessions that follow. An unknown zone is refused with a 400 invalid_timezone.
  * @param title What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.
  * @param toolTimeoutMs How long the model waits for a tool result. Zero is the default.
@@ -126,6 +129,9 @@ internal data class CreateSessionRequest (
     /* A longer note about the conversation, searched alongside the title. */
     @SerialName(value = "description")
     val description: kotlin.String? = null,
+
+    @SerialName(value = "floor_control")
+    val floorControl: FloorControl? = null,
 
     @SerialName(value = "greeting")
     val greeting: Greeting? = null,
@@ -212,6 +218,10 @@ internal data class CreateSessionRequest (
     /* Cost labels, carried onto every request the session makes. Merged with the agent config's tags; where both name a key, this one wins. */
     @SerialName(value = "tags")
     val tags: kotlin.collections.Map<kotlin.String, kotlin.String>? = null,
+
+    /* The team the session's work is counted under, its team spend limits included, as team:<name> is among a token's usage categories: 1 to 59 letters, digits, _ . and -. Left out, the session is counted under the team the caller's token names, else the agent config's team tag. A token naming another team is refused with a 400: the team a token was signed for is not moved. Server-side only: a device sending it is refused with a 403, since its team is the one its token was signed for. */
+    @SerialName(value = "team")
+    val team: kotlin.String? = null,
 
     /* The end user's IANA timezone, such as Europe/Amsterdam, which a device knows and the router does not. It sets the zone the agent reads dates in for this session and, for a user the caller may name, is remembered as theirs for the scheduled tasks and sessions that follow. An unknown zone is refused with a 400 invalid_timezone. */
     @SerialName(value = "timezone")

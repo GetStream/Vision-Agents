@@ -45,7 +45,7 @@ class ConnectionOwner:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        type_ = ConnectionOwnerType(d.pop("type"))
+        type_ = ConnectionOwnerType._decode(d.pop("type"))
 
         user_id = d.pop("user_id", UNSET)
 

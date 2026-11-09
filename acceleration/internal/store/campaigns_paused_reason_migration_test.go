@@ -70,6 +70,7 @@ func (s *PausedReasonMigrationSuite) TestADatabaseAtTheNewestMigrationUpgradesIn
 	s.Require().NoError(err)
 	s.Equal("paused", campaign.State)
 	s.Empty(campaign.PausedReason, "a campaign paused before says no reason")
+	s.Require().NoError(s.db.ResumeCampaign(s.ctx, "acme", "old"))
 	s.Require().NoError(s.db.PauseCampaign(s.ctx, "acme", "old", "insufficient_credits"))
 	campaign, err = s.db.Campaign(s.ctx, "acme", "old")
 	s.Require().NoError(err)

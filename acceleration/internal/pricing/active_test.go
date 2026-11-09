@@ -199,14 +199,14 @@ func (s *PricingSuite) TestFreeAndLocalStayFree() {
 
 func (s *PricingSuite) TestAPriceWorkedOutFromARateReadsAsWritten() {
 	vendorRate := 1.10
-	s.NotEqual(1.32, vendorRate*12_000/10_000, "multiplied as floats, the price has noise to drop")
+	s.NotEqual(1.188, vendorRate*10_800/10_000, "multiplied as floats, the price has noise to drop")
 
 	priced := Priced(llmEntry("m", map[Meter]Rate{CachedInputTokens: perMillion(1.10)}))
 	encoded, err := json.Marshal(priced.Prices[CachedInputTokens])
 
 	s.Require().NoError(err)
-	s.JSONEq(`{"usd": 1.32, "per": 1000000}`, string(encoded))
-	s.Contains(string(encoded), `"usd":1.32,`)
+	s.JSONEq(`{"usd": 1.188, "per": 1000000}`, string(encoded))
+	s.Contains(string(encoded), `"usd":1.188,`)
 	s.Equal(1.10, priced.Rates[CachedInputTokens].USD, "the vendor's rate is kept as it is")
 }
 

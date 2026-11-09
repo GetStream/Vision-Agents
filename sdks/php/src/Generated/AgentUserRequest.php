@@ -15,8 +15,12 @@ use GetStream\VisionAgents\Json;
 final readonly class AgentUserRequest
 {
     public function __construct(
-        // The user's phone number in E.164, with its plus. Their SMS, WhatsApp messages, iMessages and calls from it...
+        // The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and...
         public string $phone,
+        // How much of what the number said before this request the user reads. true: all of it, ever. false: none of...
+        public ?bool $includePhoneHistory = null,
+        // The user reads what the number said from this time on, in RFC 3339, such as 2026-11-02T00:00:00Z: a convers...
+        public ?\DateTimeImmutable $phoneHistorySince = null,
     ) {
     }
 
@@ -27,6 +31,8 @@ final readonly class AgentUserRequest
     {
         return new self(
             phone: Json::string($data, 'phone'),
+            includePhoneHistory: array_key_exists('include_phone_history', $data) && $data['include_phone_history'] !== null ? Json::bool($data, 'include_phone_history') : null,
+            phoneHistorySince: array_key_exists('phone_history_since', $data) && $data['phone_history_since'] !== null ? Json::date($data, 'phone_history_since') : null,
         );
     }
 
@@ -39,6 +45,12 @@ final readonly class AgentUserRequest
     {
         $out = [];
         $out['phone'] = $this->phone;
+        if ($this->includePhoneHistory !== null) {
+            $out['include_phone_history'] = $this->includePhoneHistory;
+        }
+        if ($this->phoneHistorySince !== null) {
+            $out['phone_history_since'] = Json::dateValue($this->phoneHistorySince);
+        }
         return $out;
     }
 }

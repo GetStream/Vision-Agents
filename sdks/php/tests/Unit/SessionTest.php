@@ -53,6 +53,23 @@ final class SessionTest extends TestCase
         self::assertTrue($session->voiceStarted());
     }
 
+    public function testCreateCountsTheSessionUnderATeam(): void
+    {
+        $this->router->client()->agent('jean')->sessions->create(team: 'finance', userId: 'jean');
+
+        self::assertSame(['agent' => 'jean', 'user_id' => 'jean', 'team' => 'finance'], $this->router->to('POST', '/v1/agents/sessions')[1]->json());
+    }
+
+    public function testCreateRefusesATeamTheRouterWould(): void
+    {
+        try {
+            $this->router->client()->agent('jean')->sessions->create(team: 'fin ance');
+            self::fail('the team was sent');
+        } catch (ConfigurationException) {
+            self::assertCount(1, $this->router->to('POST', '/v1/agents/sessions'));
+        }
+    }
+
     public function testVoiceStartsAndStopsOnTheSameSession(): void
     {
         $this->router->answer('POST', '/v1/agents/sessions/ses_1/voice', 200, Rows::session('ses_1', ['call_id' => 'ses_1', 'call_type' => 'default']));

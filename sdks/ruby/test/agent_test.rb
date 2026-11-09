@@ -609,6 +609,21 @@ class TestAgent < LocalRouterTest
     end
   end
 
+  # agent.yaml's floor_control goes as written, {} and a model the router does not know included,
+  # and a file that names none sends none, so the stored choice stays.
+  def test_sync_sends_the_floor_control_the_agent_declared
+    { "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n" =>
+        { "model" => "stream/chorus-asr", "max_wait_ms" => 800 },
+      "floor_control: {model: stream/chorus-asr}\n" => { "model" => "stream/chorus-asr" },
+      "floor_control: {}\n" => {},
+      "floor_control:\n  model: other\n" => { "model" => "other" } }.each do |declared, want|
+      assert_equal want, sync_declaring(declared)["floor_control"], declared
+    end
+    ["floor_control:\n", "llm: openai/gpt-5.6\n"].each do |declared|
+      refute sync_declaring(declared).key?("floor_control"), declared
+    end
+  end
+
   def test_sync_without_connectors_sends_none_and_leaves_the_fingerprint_alone
     request = sync_declaring("")
 
@@ -872,6 +887,17 @@ class TestSessions < LocalRouterTest
     assert_equal({ "agent" => "docs", "user_id" => "docs", "user_name" => "docs", "agent_id" => "docs",
                    "id" => "billing_ada-1", "title" => "Is Stream better?", "project_id" => "pricing" }, request)
     refute session.voice.started?
+  end
+
+  def test_a_session_is_counted_under_a_team_only_when_one_is_given
+    serve_session
+
+    client.agent("docs").sessions.create(team: "finance").close
+    assert_equal "finance", @router.last(:post, "/v1/agents/sessions").json["team"]
+    client.agent("docs").sessions.create(team: "").close
+    refute @router.last(:post, "/v1/agents/sessions").json.key?("team")
+    assert_raises(VA::ConfigurationError) { client.agent("docs").sessions.create(team: "team:finance") }
+    assert_equal 2, @router.seen(:post, "/v1/agents/sessions").size
   end
 
   def test_a_conversation_is_resumed_by_its_session_id

@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/extract"
 )
 
 type DocumentsSuite struct {
@@ -145,7 +147,7 @@ func (s *DocumentsSuite) TestAHeadingLimitOfZeroRepeatsNoHeading() {
 
 func (s *DocumentsSuite) TestThePassageSizeMultipleStaysInTheLimits() {
 	s.InDelta(2.6, DefaultLimits.SizeMultiple(), 0.05)
-	s.InDelta(5.6, Limits{MinChunk: 500, MaxHeading: 300}.SizeMultiple(), 0.05)
+	s.InDelta(5.7, Limits{MinChunk: 500, MaxHeading: 300}.SizeMultiple(), 0.05)
 	s.True(math.IsInf(Limits{MinChunk: 0, MaxHeading: 0}.SizeMultiple(), 1), "no minimum bounds nothing")
 }
 
@@ -176,6 +178,69 @@ func (s *DocumentsSuite) TestATableIsCutAtItsRowsBecauseItHasNoParagraphs() {
 		s.Less(len(piece.text), 600, "no passage runs away with the whole table")
 		s.Equal("providers.md > Providers", piece.source)
 	}
+}
+
+func (s *DocumentsSuite) TestALaterPieceOfATableRepeatsItsHeader() {
+	var table strings.Builder
+	table.WriteString("## Prices\n\n| Item | Price |\n| --- | --- |\n")
+	for index := range 60 {
+		table.WriteString("| Sandwich number " + strconv.Itoa(index) + " with extra pickles | 4.50 |\n")
+	}
+
+	passages := split("menu.md", table.String(), 600, DefaultLimits)
+
+	s.Require().Greater(len(passages), 2)
+	for _, piece := range passages {
+		s.Contains(piece.text, "| Item | Price |\n| --- | --- |\n| Sandwich number", "every piece says which column is the price")
+	}
+}
+
+func (s *DocumentsSuite) TestAPassageSaysWhichPageItIsFrom() {
+	long := strings.Repeat("Hold the valve until the light turns green. ", 15)
+	content := extract.Document{Pages: []extract.Page{
+		{Number: 1, Text: "# Safety\n\n" + long},
+		{Number: 2, Text: long},
+		{Number: 3, Text: "# Cleaning\n\n" + long},
+	}}.Markdown()
+
+	passages := split("manual.pdf", content, DefaultChunk, DefaultLimits)
+
+	s.Require().Len(passages, 3)
+	s.Equal("manual.pdf > p. 1 > Safety", passages[0].source)
+	s.Equal("manual.pdf > p. 2 > Safety", passages[1].source, "a section that runs onto the next page keeps its heading")
+	s.True(strings.HasPrefix(passages[1].text, "## Safety\n\nHold the valve"), passages[1].text[:40])
+	s.Equal("manual.pdf > p. 3 > Cleaning", passages[2].source)
+	for _, piece := range passages {
+		s.NotContains(piece.text, "<!--", "the page marker is not text")
+	}
+}
+
+func (s *DocumentsSuite) TestAPageOfAFewWordsIsKeptWithTheNext() {
+	content := extract.Document{Pages: []extract.Page{
+		{Number: 1, Text: "# Fryer manual"},
+		{Number: 2, Text: "Model F-200."},
+		{Number: 3, Text: strings.Repeat("Change the oil every 48 hours. ", 20)},
+	}}.Markdown()
+
+	passages := split("fryer.pdf", content, DefaultChunk, DefaultLimits)
+
+	s.Require().Len(passages, 1)
+	s.Equal("fryer.pdf > p. 1-3 > Fryer manual", passages[0].source)
+}
+
+func (s *DocumentsSuite) TestManyTinyPagesDoNotMultiplyADocument() {
+	pages := make([]extract.Page, 1<<14)
+	for index := range pages {
+		pages[index] = extract.Page{Number: index + 1, Text: "x"}
+	}
+	content := extract.Document{Pages: pages}.Markdown()
+
+	written := 0
+	for _, passage := range Split(strings.Repeat("m", 250)+".pdf", content, 1, DefaultLimits) {
+		written += len(passage.ID) + len(passage.Text) + len(passage.Source)
+	}
+
+	s.Less(written, 3*len(content))
 }
 
 func (s *DocumentsSuite) TestFencedCodeIsKeptWhole() {
