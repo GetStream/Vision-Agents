@@ -16,6 +16,89 @@ export const AUTHENTICATE_ENV = "STREAM_ACCELERATION_AUTHENTICATE";
 const TOKEN_VALIDITY_SECONDS = 60 * 60;
 
 /**
+ * Where a router with no proxy in front of it reads the team and usage categories, the team
+ * as team:<name>, joined with commas. Behind the proxy they are claims on the token instead,
+ * and the proxy deletes this header.
+ */
+export const USAGE_CATEGORIES_HEADER = "X-Stream-Usage-Categories";
+
+/**
+ * The rule the router and the proxy hold usage categories to. A team is a category of its
+ * own, team:<name>, which is why its name is shorter and has no ':'.
+ */
+const TEAM_PREFIX = "team:";
+const MAX_CATEGORIES = 10;
+const TEAM = /^[A-Za-z0-9_.-]{1,59}$/;
+const CATEGORY = /^[A-Za-z0-9_.:-]{1,64}$/;
+
+/** The team, or a ConfigurationError naming why the router would refuse it. */
+export function checkTeam(team: string): string {
+  if (typeof team !== "string" || !TEAM.test(team)) {
+    throw new ConfigurationError(
+      `team ${JSON.stringify(team)} is not 1 to 59 characters of A-Z, a-z, 0-9, _ . and -`,
+    );
+  }
+  return team;
+}
+
+/** The usage category, or a ConfigurationError naming why the router would refuse it. */
+export function checkCategory(category: string): string {
+  if (typeof category !== "string" || !CATEGORY.test(category)) {
+    throw new ConfigurationError(
+      `usage category ${JSON.stringify(category)} is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -`,
+    );
+  }
+  // In any case, as the proxy reads it: Team:finance would be a second team.
+  if (category.slice(0, TEAM_PREFIX.length).toLowerCase() === TEAM_PREFIX) {
+    throw new ConfigurationError(
+      `usage category ${JSON.stringify(category)} names a team: pass it as team instead`,
+    );
+  }
+  return category;
+}
+
+/**
+ * The categories each once and sorted, as the proxy keeps them, or a ConfigurationError
+ * naming the one the router would refuse.
+ */
+function checkedCategories(team: string | undefined, categories: readonly string[]): readonly string[] {
+  if (typeof categories === "string") {
+    throw new ConfigurationError(
+      `usageCategories is a list of categories, not the one string ${JSON.stringify(categories)}`,
+    );
+  }
+  const kept = [...new Set(categories.map(checkCategory))].sort();
+  if (team !== undefined) {
+    checkTeam(team);
+  }
+  const count = kept.length + (team === undefined ? 0 : 1);
+  if (count > MAX_CATEGORIES) {
+    throw new ConfigurationError(
+      `at most ${MAX_CATEGORIES} usage categories, the team included; these are ${count}`,
+    );
+  }
+  return kept;
+}
+
+/** The `team` and `usage_categories` claims, each only when there is one. */
+function categoryClaims(team: string | undefined, categories: readonly string[]): Record<string, unknown> {
+  return {
+    ...(team ? { team } : {}),
+    ...(categories.length > 0 ? { usage_categories: [...categories] } : {}),
+  };
+}
+
+/** What a user token is minted with beside the user it names. */
+export interface UserTokenOptions {
+  /** The team the user's work is counted under, such as `finance`. */
+  team?: string;
+  /** The customer's own groupings the user's work is counted against. */
+  usageCategories?: readonly string[];
+  /** How long it lasts. Defaults to an hour. */
+  validitySeconds?: number;
+}
+
+/**
  * The shape of a region name, such as us-east4 or europe-west4. Only the shape is checked:
  * which regions are served is the hosted router's to say, so offering another needs no
  * release of this SDK.
@@ -145,6 +228,22 @@ export interface BackendOptions {
    * Falls back to `STREAM_ACCELERATION_AUTHENTICATE`.
    */
   authenticate?: boolean;
+  /**
+   * The customer's team the work is counted under, such as `finance`: its spend and its spend
+   * limits. 1 to 59 characters of A-Z, a-z, 0-9, _ . and -.
+   *
+   * Signed into every token minted here, and sent in `X-Stream-Usage-Categories` to a router
+   * with no proxy in front of it. A token handed in carries whatever it was signed with, so
+   * neither this nor `usageCategories` can be passed beside one: mint it with
+   * `createUserToken` instead.
+   */
+  team?: string;
+  /**
+   * The customer's own groupings the work is counted against, such as `project:onboarding`:
+   * at most 10 together with the team, each 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -,
+   * and none starting `team:`. Kept sorted, each once. Carried the way `team` is.
+   */
+  usageCategories?: readonly string[];
   /** Used for every request. Defaults to the global fetch. */
   fetch?: typeof fetch;
   /** Used for every socket. Defaults to the global WebSocket. */
@@ -164,6 +263,10 @@ export class Backend {
   readonly apiKey: string;
   /** Whether the credential is spelled for Stream's proxy rather than for the router. */
   readonly authenticate: boolean;
+  /** The team the work is counted under, or undefined. */
+  readonly team: string | undefined;
+  /** The usage categories the work is counted against, sorted, each once. */
+  readonly usageCategories: readonly string[];
   /** Whether the router is told the customer rather than shown a credential. */
   private readonly byCustomer: boolean;
   /**
@@ -196,6 +299,11 @@ export class Backend {
   private readonly webSocketImpl: WebSocketConstructor | undefined;
 
   constructor(options: BackendOptions = {}) {
+    this.team = options.team || undefined;
+    this.usageCategories = checkedCategories(this.team, options.usageCategories ?? []);
+    if (options.token && this.carriesCategories) {
+      throw new ConfigurationError(CATEGORIES_BESIDE_TOKEN);
+    }
     this.url = routerUrl(options).replace(/\/+$/, "");
     this.customerId = options.customerId ?? env(CUSTOMER_ENV) ?? "";
     // The same reasoning as the secret below: naming a customer is choosing the way a
@@ -275,6 +383,9 @@ export class Backend {
     if (!token) {
       throw new ConfigurationError(`there is no token for ${named.id} to hold`);
     }
+    if (this.carriesCategories) {
+      throw new ConfigurationError(CATEGORIES_BESIDE_TOKEN);
+    }
     this.user = named;
     this.userIdValue = named.id;
     this.token = token;
@@ -327,6 +438,44 @@ export class Backend {
       this.forgetToken();
     }
     return true;
+  }
+
+  private get carriesCategories(): boolean {
+    return this.team !== undefined || this.usageCategories.length > 0;
+  }
+
+  /** The team and categories as a router with no proxy in front of it reads them. */
+  private categoryHeader(): Record<string, string> {
+    if (this.authenticate || !this.carriesCategories) {
+      return {};
+    }
+    const named = [...this.usageCategories, ...(this.team ? [TEAM_PREFIX + this.team] : [])];
+    return { [USAGE_CATEGORIES_HEADER]: named.sort().join(",") };
+  }
+
+  /**
+   * A token for one end user's device to hold, naming their team and usage categories.
+   *
+   * The claims are fixed when it is signed, so a device holding it cannot move its own work
+   * to another team or category: a team has no members list anywhere, the token is the
+   * membership. Server side only, because it is signed with the secret.
+   */
+  async createUserToken(userId: string, options: UserTokenOptions = {}): Promise<string> {
+    if (!this.apiSecret) {
+      throw new ConfigurationError(
+        "a user token is signed with the app's secret, which only a backend holds",
+      );
+    }
+    if (!userId) {
+      throw new ConfigurationError("a user token needs the user's id");
+    }
+    const validity = options.validitySeconds ?? TOKEN_VALIDITY_SECONDS;
+    if (!(validity > 0)) {
+      throw new ConfigurationError("a user token has to be valid for some seconds");
+    }
+    const team = options.team || undefined;
+    const categories = checkedCategories(team, options.usageCategories ?? []);
+    return signToken({ user_id: userId, ...categoryClaims(team, categories) }, this.apiSecret, validity);
   }
 
   /** Whether requests and sockets carry the end user's token, rather than none or a minted one. */
@@ -421,11 +570,12 @@ export class Backend {
         : { "X-Api-Key": this.apiKey, "Stream-Auth-Type": "anonymous" };
     }
     this.assertCredentialed();
-    const acting: Record<string, string> = this.actingForValue
-      ? { "X-Stream-User-Id": this.actingForValue }
-      : {};
+    const beside: Record<string, string> = {
+      ...(this.actingForValue ? { "X-Stream-User-Id": this.actingForValue } : {}),
+      ...this.categoryHeader(),
+    };
     if (this.byCustomer) {
-      return { "X-Customer-Id": this.customerId, ...acting };
+      return { "X-Customer-Id": this.customerId, ...beside };
     }
 
     if (this.authenticate) {
@@ -436,11 +586,11 @@ export class Backend {
         api_key: this.apiKey,
         "stream-auth-type": "jwt",
         Authorization: `Bearer ${await this.proxyToken()}`,
-        ...acting,
+        ...beside,
       };
     }
 
-    const headers: Record<string, string> = { "X-Api-Key": this.apiKey, ...acting };
+    const headers: Record<string, string> = { "X-Api-Key": this.apiKey, ...beside };
     if (this.apiSecret) {
       headers["Authorization"] = `Bearer ${await this.serverToken()}`;
       headers["Stream-Auth-Type"] = "server";
@@ -560,7 +710,7 @@ export class Backend {
     return {
       apiKey: this.apiKey,
       user,
-      token: await signToken({ user_id: user.id }, this.apiSecret),
+      token: await signToken({ user_id: user.id, ...this.categoryClaims() }, this.apiSecret),
     };
   }
 
@@ -571,7 +721,7 @@ export class Backend {
    * user to hold. Which of its users a backend is acting for goes in a header instead.
    */
   private serverToken(): Promise<string> {
-    return signToken({ server: true }, this.apiSecret);
+    return signToken({ server: true, ...this.categoryClaims() }, this.apiSecret);
   }
 
   /**
@@ -586,7 +736,7 @@ export class Backend {
       return this.userToken();
     }
     return this.userId
-      ? signToken({ user_id: this.userId }, this.apiSecret)
+      ? signToken({ user_id: this.userId, ...this.categoryClaims() }, this.apiSecret)
       : this.serverToken();
   }
 
@@ -631,11 +781,19 @@ export class Backend {
     return this.fetching;
   }
 
+  private categoryClaims(): Record<string, unknown> {
+    return categoryClaims(this.team, this.usageCategories);
+  }
+
   private forgetToken(): void {
     this.fetched = undefined;
     this.fetching = undefined;
   }
 }
+
+const CATEGORIES_BESIDE_TOKEN =
+  "a token handed in carries the team and usage categories it was signed with; " +
+  "mint it with createUserToken(userId, { team, usageCategories })";
 
 /** How long before the expiry a token carries it is fetched again rather than sent. */
 const EXPIRY_MARGIN_MS = 60_000;
