@@ -22,6 +22,12 @@ backend/crew.go      the restaurant: schedule, team, handbook, equipment, ticket
   backend under `/crew/`, which stands in for the restaurant's own systems. The swap, the
   ticket and the check-in ask the person first. Every one of them shows as a step on the reply
   (`visible_tools`).
+- **Cal.com.** `agent.yaml` binds `calcom` as each person's own, with only tools that read. The
+  first time the agent looks at their calendar, the call waits for them to connect it, shown on
+  its step in the chat, as swift_assistant does with Linear. Cal.com registers the router as its
+  OAuth client by itself, so it needs nothing besides the router's `ROUTER_CONNECTORS_ENABLED=true`,
+  `ROUTER_AUTH_KEK` and `ROUTER_PUBLIC_URL`. Google Calendar would need an OAuth client of your
+  own on the router first.
 - **Sources.** `search_handbook` answers exactly `{"status": "answered", "citations": [...]}`,
   so the router adds the handbook passages to the reply's `support_message.sources`, which the
   app lists under the answer.

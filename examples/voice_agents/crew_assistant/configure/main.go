@@ -31,7 +31,7 @@ var visibleTools = []string{
 	"search", "web_search",
 	"get_my_schedule", "check_callout", "find_coverage", "request_shift_swap", "notify_shift_leader",
 	"search_handbook", "get_updates_since", "get_equipment_guide", "create_support_ticket",
-	"get_team", "book_check_in", "get_menu", "save_shift_reflection",
+	"get_team", "book_check_in", "get_menu", "save_shift_reflection", "calcom__*",
 }
 
 func main() {
