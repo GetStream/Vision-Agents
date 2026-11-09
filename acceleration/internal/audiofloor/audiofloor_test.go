@@ -76,6 +76,8 @@ type fakeServer struct {
 	busy           int
 	failDecide     bool
 	failingDecides int
+	// decidesAt is when each decision was asked for, answered or not.
+	decidesAt []time.Time
 	// transcribeGate, when set, holds every transcription request until it is closed, or
 	// with holdOne the next one alone, and held counts the requests waiting at it. failHeld
 	// has a request let go of answer failWith.
@@ -192,6 +194,7 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		_, _ = fmt.Fprintf(w, `{"transcript":{"text":%q,"language":%q}}`+"\n", f.words, f.spoken())
 	case "/v1/decide":
+		f.decidesAt = append(f.decidesAt, time.Now())
 		if f.fail || f.failDecide || f.failingDecides > 0 {
 			if f.failingDecides > 0 {
 				f.failingDecides--
