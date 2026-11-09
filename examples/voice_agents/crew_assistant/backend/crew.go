@@ -29,13 +29,6 @@ type Shift struct {
 	Leader  string    `json:"shift_leader"`
 }
 
-// Passage is one part of the team handbook.
-type Passage struct {
-	ID    string `json:"id"`
-	Title string `json:"title"`
-	Text  string `json:"text"`
-}
-
 // Update is an announcement or a piece of team news.
 type Update struct {
 	Date  string `json:"date"`
@@ -79,7 +72,7 @@ type restaurant struct {
 	mu          sync.Mutex
 	people      map[string]Person
 	shifts      []Shift
-	handbook    []Passage
+	handbook    handbook
 	updates     []Update
 	guides      []Guide
 	menu        []map[string]any
@@ -119,18 +112,6 @@ func newRestaurant(now time.Time) *restaurant {
 		{ID: "s-202", Person: "ava", Station: "Register", Start: at(2, 16), End: at(2, 22), Leader: "sam"},
 		{ID: "s-203", Person: "dev", Station: "Drive-thru", Start: at(4, 6), End: at(4, 14), Leader: "maya"},
 		{ID: "s-204", Person: "marco", Station: "Kitchen", Start: at(1, 6), End: at(1, 14), Leader: "maya"},
-	}
-	r.handbook = []Passage{
-		{"uniform", "Uniform standards", "Every shift: name tag on the left, hat or visor, a clean apron, a black belt, black non-slip shoes and hair tied back above the collar. Nails short and clean, no polish in the kitchen. Jewelry is limited to one plain band and small stud earrings. Arrive in uniform; there's no changing on the floor."},
-		{"call-out", "Calling out sick", "Tell your shift leader as early as you can, and at least 4 hours before your shift, through the app. Do not come in with vomiting, diarrhea, fever, jaundice or a sore throat with fever, or within 24 hours of the last symptom: food safety law requires it. With at least 4 hours' notice and none of those symptoms, you may find your own cover from qualified teammates; otherwise the shift leader arranges it."},
-		{"swaps", "Shift swaps", "You may swap a shift with a teammate trained for the same station. The swap is final once your teammate accepts and the shift leader is told. Swaps may not push anyone over 40 hours in a week or give a minor a shift past 22:00."},
-		{"breaks", "Meal and rest breaks", "Shifts over 6 hours include a 30 minute unpaid meal break, taken before the fifth hour. Every 4 hours worked earns a paid 10 minute rest break. Your shift leader sets the break order at the start of the shift; tell them if you haven't had yours."},
-		{"handwashing", "Handwashing", "Wash for 20 seconds with soap and warm water: at the start of a shift, after breaks, the restroom, handling raw meat, touching your face or phone, and taking out trash. Change gloves between raw and ready-to-eat food and whenever they tear."},
-		{"allergens", "Allergens", "If a guest mentions an allergy, tell the shift leader and mark the order. Change gloves, use the clean allergen kit and the purple utensils, and never guess an ingredient: check the menu card or ask. The fryer oil is shared, so fried items aren't safe for shellfish allergies."},
-		{"time-off", "Time off", "Request time off in the app at least 14 days ahead. Requests are approved by the owner by the next schedule release. Requests over holidays are first come, first served."},
-		{"meals", "Team meals and discount", "One free team meal per shift over 4 hours, taken on your break. Off the clock, you get 50% off for yourself and one guest with your name tag or the app."},
-		{"fryer-safety", "Fryer safety", "Never add water or ice near the fryers. Lower baskets slowly, and wear the long gloves to filter oil. Only trained team members filter or change oil, and never alone. If oil smokes or a fryer shows a high-limit error, switch it off and tell the shift leader."},
-		{"values", "Our values", "Care: guests and teammates feel looked after. Craft: every order made right, every time. Speed: fast without rushing. Ownership: you see it, you fix it or flag it."},
 	}
 	r.updates = []Update{
 		{date(-6), "Menu", "Spicy bean wrap launched", "The spicy bean wrap is on the menu from today. It contains wheat, milk and egg. The new prep card is by the wrap station."},
@@ -330,14 +311,19 @@ func (r *restaurant) leaderNote(w http.ResponseWriter, req *http.Request) {
 // searchHandbook answers with the passages that match best, as citations, which is the result
 // the router shows as a reply's sources. Its text is all the agent gets, in each citation.
 func (r *restaurant) searchHandbook(w http.ResponseWriter, req *http.Request) {
+	passages, err := r.handbook.passages(req.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
 	words := strings.Fields(strings.ToLower(req.URL.Query().Get("q")))
 	type scored struct {
-		passage Passage
+		passage handbookPassage
 		score   int
 	}
 	var found []scored
-	for _, p := range r.handbook {
-		text := strings.ToLower(p.Title + " " + p.Text)
+	for _, p := range passages {
+		text := strings.ToLower(p.Heading + " " + p.Text)
 		score := 0
 		for _, word := range words {
 			word = strings.Trim(word, "?.,!'\"")
@@ -347,7 +333,7 @@ func (r *restaurant) searchHandbook(w http.ResponseWriter, req *http.Request) {
 			if strings.Contains(text, word) {
 				score++
 			}
-			if strings.Contains(strings.ToLower(p.Title), word) {
+			if strings.Contains(strings.ToLower(p.Heading), word) {
 				score += 2
 			}
 		}
@@ -361,10 +347,7 @@ func (r *restaurant) searchHandbook(w http.ResponseWriter, req *http.Request) {
 		if i == 3 || f.score*2 < found[0].score {
 			break
 		}
-		citations = append(citations, map[string]string{
-			"id": "handbook-" + f.passage.ID, "title": "Handbook: " + f.passage.Title,
-			"url": handbookURL + f.passage.ID, "citation": f.passage.Text,
-		})
+		citations = append(citations, f.passage.citation())
 	}
 	answer(w, map[string]any{"status": "answered", "citations": citations})
 }
