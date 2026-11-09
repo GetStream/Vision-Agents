@@ -19,8 +19,8 @@
     "leaflet": "^1.9.4",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "stream-chat": "^10.0.0-rc.34",
-    "stream-chat-react": "^15.0.0-rc.4",
+    "stream-chat": "^10.0.0",
+    "stream-chat-react": "^15.0.0",
     "zod": "^4.1.0",
     "zustand": "^4.5.7"
   },

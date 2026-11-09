@@ -14,9 +14,8 @@ tests/           its pure parts (captions, the glow's phases, photos, days) and 
                  fake channel and session
 ```
 
-It runs on `stream-chat` 10 and `stream-chat-react` 15, both still release candidates, with React
-19, Vite 8 and TypeScript 7. That takes Node 22.18 or newer: `stream-chat` 10's own floor, above
-Vite 8's.
+It runs on `stream-chat` 10 and `stream-chat-react` 15, with React 19, Vite 8 and TypeScript 7.
+That takes Node 22.18 or newer: `stream-chat` 10's own floor, above Vite 8's.
 
 ## Run it
 
