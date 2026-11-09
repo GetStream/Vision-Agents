@@ -340,7 +340,7 @@ func (s *AgentSuite) TestALoneGreetingWhileAVoiceIsLostDropsItAsBefore() {
 	s.replacement = newStubTTS(true)
 	started, release := make(chan struct{}), make(chan struct{})
 	s.replacement.startStarted, s.replacement.startRelease = started, release
-	defer sync.OnceFunc(func() { close(release) })()
+	defer close(release)
 	dropped := testutil.ToFloat64(staleReplies)
 	two := s.answering("two")
 	s.voice.emitter.Send(tts.Error{Provider: "stub", Model: "stub-tts", Err: errors.New("quota exceeded"), Fatal: true})
@@ -442,6 +442,25 @@ func (s *AgentSuite) TestACallEndingWhileAHeldReplyGoesOutSendsNoMore() {
 	s.Require().NoError(<-closed)
 	s.Never(func() bool { return strings.Contains(s.voiced(), "How can I help?") }, 200*time.Millisecond, 5*time.Millisecond,
 		"the rest of the held reply was sent after the call ended")
+}
+
+// A stop over the agent ruled on the greeting's own utterance would set the greeting aside
+// as the stop's words, and the reply held for it would be released by nothing.
+func (s *AgentSuite) TestAGreetingAStopWasRuledOnStillLetsTheHeldReplyGoOut() {
+	s.join(true)
+	dropped := testutil.ToFloat64(staleReplies)
+	turn := s.answering("Hello? Hello. Hello.")
+	s.greetedOver(turn, func(participant stt.Participant, text string) {
+		s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeReplacement, Text: text, Language: "en", Utterance: 2})
+	}, "Hello?")
+	s.agent.converse.mu.Lock()
+	s.agent.converse.stops[nash.ID] = stoppedOn{utterance: 2, words: "Hello?"}
+	s.agent.converse.mu.Unlock()
+	s.model.writes(turn, "Hi, yes, I can hear you.")
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply held for the greeting never went out")
+	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
+	s.Equal(1, s.voicedTimes("Hi, yes, I can hear you."))
 }
 
 // A reply that ends with nothing said leaves nothing for the greeting's settling to release:

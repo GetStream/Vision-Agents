@@ -325,7 +325,8 @@ func (p pauseAsker) Overheard(participant stt.Participant, ruled audiofloor.Rule
 	state := a.floor()
 	// The reply held for the caller's lone greeting answers it, and a stop on it would cut
 	// that reply, as the flow controller is not asked about it either.
-	if held := a.converse.greetedBy(participant.ID); held != "" && held == state.Unheard.turnID && greetsAlone(left) {
+	if held := a.converse.greetedBy(participant.ID); held != "" && held == state.Unheard.turnID &&
+		greetsAlone(unrepeated(left, a.converse.cadence.Repeating(participant.ID))) {
 		a.logger.Debug("a check over the agent ruled on a greeting the held reply answers, which is no reason to stop",
 			"participant", participant.ID, "text", left, "floor", ruled.Ruling.Floor)
 		return

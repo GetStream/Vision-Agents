@@ -1925,14 +1925,11 @@ func (a *Agent) consumeCadence(p *pipeline) {
 				continue
 			}
 			a.logHeard("turn", ready.Participant.ID, "turn", ready.ID)
-			greeted := a.converse.greetedBy(ready.Participant.ID)
 			action := a.converse.Settled(ready, a.floor())
-			a.act([]Action{action})
-			// The greeting's settling was the hold's last chance to be released: past it, what
-			// is held goes out now if it is still owed, or is let go of.
-			if greeted != "" && action.Kind != ActReleaseUnheard && a.converse.greetedBy(ready.Participant.ID) == "" {
-				a.releaseUnheard(greeted, time.Now())
+			if action.Unhold.turnID != "" {
+				a.unhold(ready.Participant, action.Unhold)
 			}
+			a.act([]Action{action})
 		case <-p.ctx.Done():
 			return
 		}
@@ -4078,6 +4075,25 @@ func (a *Agent) dropUnheard(participant stt.Participant, turnID string, why inte
 	a.logger.Info("dropped a reply the caller said more over before hearing any of it",
 		"turn", turnID, "participant", participant.ID,
 		"gap_ms", time.Since(stale.decidedAt).Milliseconds(), "sent_to_voice", sent)
+}
+
+// unhold ends a reply held for a lone greeting that the caller's settled turn did not
+// release, as nothing else will: words that grew drop it as stale does, and a reply no longer
+// unheard goes out now if it is still owed. stale only acts on the unheard reply, so it does
+// not race the release.
+func (a *Agent) unhold(participant stt.Participant, ended unhold) {
+	if !ended.grew {
+		a.releaseUnheard(ended.turnID, time.Now())
+		return
+	}
+	a.converse.wentOnUnheard(participant.ID)
+	a.dropUnheard(participant, ended.turnID, interruption{cause: causeUnheard})
+	// Not dropped as the unheard reply, it is let go of all the same: it answers nothing.
+	a.mu.Lock()
+	if a.heldLocked(ended.turnID) && a.held.greeting {
+		a.letGoLocked()
+	}
+	a.mu.Unlock()
 }
 
 // letGoLocked lets go of the reply held, none of which will be sent. Agent.mu must be held.

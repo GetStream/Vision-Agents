@@ -717,7 +717,7 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) string {
 	// voice drops it: the voice replacing this one would say it while the greeting may still
 	// grow into more.
 	greeted, greeter := "", ""
-	if a.heldLocked(a.speakingTurn) && a.held.greeting {
+	if a.heldLocked(a.speakingTurn) && a.held.greeting && a.unheard.turnID == a.speakingTurn {
 		greeted, greeter = a.speakingTurn, a.unheard.participant
 	}
 	// A voice that replaced a lost one and was lost too may not have been sent all of the
