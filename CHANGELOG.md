@@ -57,7 +57,7 @@ A table variable the deployment leaves unset is served too, as one series at 0 u
 
 ### API latency on /metrics without the route label
 
-`router_api_latency_seconds{status}` is `router_http_request_seconds` with the `status` class (`1xx` to `5xx`) as its only label and the same buckets, so a monitor or an SLO reads API latency at a few series per pod instead of one per route. The route-keyed histogram is unchanged (AI-3032).
+`router_api_latency_seconds{status}` is `router_http_request_seconds` with the `status` class as its only label and the same buckets, so a monitor or an SLO reads API latency at a few series per pod instead of one per route. The class is the API's own (`2xx` to `5xx`) or one a connection proxy passes on from a provider, so at most 8 classes are timed, 112 series per pod. The route-keyed histogram is unchanged (AI-3032).
 
 ### A server sends a person's photos on respond
 
