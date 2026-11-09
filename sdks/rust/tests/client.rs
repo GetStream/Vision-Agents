@@ -724,3 +724,194 @@ async fn a_monitoring_link_carries_a_token_for_a_listener() {
     assert_eq!(query["user_name"], "Monitor");
     assert_eq!(claims(&query["token"])["user_id"], "monitor-s1");
 }
+
+fn health(server: &Server) {
+    server.route(
+        Method::GET,
+        "/health",
+        200,
+        json!({"status": "ok", "dependencies": {}}),
+    );
+}
+
+fn with_team(server: &Server, options: ClientOptions) -> Client {
+    Client::new(ClientOptions {
+        url: Some(server.url.clone()),
+        team: Some("finance".into()),
+        usage_categories: vec![
+            "project:onboarding".into(),
+            "batch".into(),
+            "project:onboarding".into(),
+        ],
+        ..options
+    })
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_backends_team_and_categories_are_signed_into_its_token() {
+    let server = Server::start().await;
+    health(&server);
+    let client = with_team(
+        &server,
+        ClientOptions {
+            api_key: Some("key".into()),
+            api_secret: Some(SECRET.into()),
+            ..Default::default()
+        },
+    );
+    client.get_health().await.unwrap();
+
+    let seen = server.request(Method::GET, "/health");
+    let claims = claims(seen.header("authorization"));
+    assert_eq!(claims["server"], true);
+    assert_eq!(claims["team"], "finance");
+    assert_eq!(
+        claims["usage_categories"],
+        json!(["batch", "project:onboarding"])
+    );
+    assert_eq!(
+        seen.header("x-stream-usage-categories"),
+        "batch,project:onboarding,team:finance"
+    );
+}
+
+#[tokio::test]
+async fn behind_the_proxy_the_team_is_only_on_the_token() {
+    let server = Server::start().await;
+    health(&server);
+    let client = with_team(
+        &server,
+        ClientOptions {
+            api_key: Some("key".into()),
+            api_secret: Some(SECRET.into()),
+            user_id: Some("user-42".into()),
+            authenticate: Some(true),
+            ..Default::default()
+        },
+    );
+    client.get_health().await.unwrap();
+
+    let seen = server.request(Method::GET, "/health");
+    let claims = claims(seen.header("authorization"));
+    assert_eq!(claims["user_id"], "user-42");
+    assert_eq!(claims["team"], "finance");
+    assert_eq!(seen.header("x-stream-usage-categories"), "");
+}
+
+#[tokio::test]
+async fn a_router_with_nothing_in_front_is_told_the_team_in_a_header() {
+    let server = Server::start().await;
+    health(&server);
+    let client = Client::new(ClientOptions {
+        url: Some(server.url.clone()),
+        customer_id: Some("examples".into()),
+        team: Some("finance".into()),
+        ..Default::default()
+    })
+    .unwrap();
+    client.get_health().await.unwrap();
+
+    let seen = server.request(Method::GET, "/health");
+    assert_eq!(seen.header("x-stream-usage-categories"), "team:finance");
+    assert_eq!(seen.header("authorization"), "");
+}
+
+#[tokio::test]
+async fn a_client_with_no_team_sends_none() {
+    let server = Server::start().await;
+    health(&server);
+    server.backend().get_health().await.unwrap();
+
+    let seen = server.request(Method::GET, "/health");
+    assert_eq!(seen.header("x-stream-usage-categories"), "");
+    let claims = claims(seen.header("authorization"));
+    assert!(claims.get("team").is_none() && claims.get("usage_categories").is_none());
+}
+
+#[test]
+fn a_team_or_categories_the_router_would_refuse_are_refused_when_the_client_is_built() {
+    let build = |team: Option<&str>, categories: Vec<String>| {
+        Client::new(ClientOptions {
+            url: Some("http://localhost:1".into()),
+            customer_id: Some("examples".into()),
+            team: team.map(Into::into),
+            usage_categories: categories,
+            ..Default::default()
+        })
+    };
+    let eleven = (0..11).map(|n| format!("c{n}")).collect::<Vec<_>>();
+    let ten = (0..10).map(|n| format!("c{n}")).collect::<Vec<_>>();
+    for (refused, says) in [
+        (build(Some("fin ance"), vec![]), "is not 1 to 59"),
+        (build(Some(&"t".repeat(60)), vec![]), "is not 1 to 59"),
+        (build(Some("team:finance"), vec![]), "is not 1 to 59"),
+        (build(None, vec!["TEAM:finance".into()]), "names a team"),
+        (build(None, vec!["a/b".into()]), "is not 1 to 64"),
+        (build(None, vec!["c".repeat(65)]), "is not 1 to 64"),
+        (build(None, vec![String::new()]), "is not 1 to 64"),
+        (build(None, eleven), "at most 10"),
+        (build(Some("finance"), ten.clone()), "at most 10"),
+    ] {
+        match refused {
+            Err(Error::Configuration(message)) => assert!(message.contains(says), "{message}"),
+            other => panic!("expected {says:?}, got {other:?}"),
+        }
+    }
+    assert!(build(None, ten).is_ok());
+    assert!(build(Some("Fin_ance.2-x"), vec!["project:a.b_c-1".into()]).is_ok());
+}
+
+#[test]
+fn a_team_beside_a_token_handed_in_is_refused() {
+    let refused = Client::new(ClientOptions {
+        url: Some("http://localhost:1".into()),
+        api_key: Some("key".into()),
+        token: Some("token-for-ada".into()),
+        team: Some("finance".into()),
+        ..Default::default()
+    });
+    match refused {
+        Err(Error::Configuration(message)) => assert!(message.contains("token"), "{message}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_user_token_names_the_users_team_and_categories() {
+    let backend = Client::new(ClientOptions {
+        url: Some("http://localhost:1".into()),
+        api_key: Some("key".into()),
+        api_secret: Some(SECRET.into()),
+        ..Default::default()
+    })
+    .unwrap();
+
+    let token = backend
+        .user_token("user-42", Some("finance"), &["project:b", "project:a"], 600)
+        .unwrap();
+    let signed = claims(&token);
+    assert_eq!(signed["user_id"], "user-42");
+    assert_eq!(signed["team"], "finance");
+    assert_eq!(
+        signed["usage_categories"],
+        json!(["project:a", "project:b"])
+    );
+    assert_eq!(
+        signed["exp"].as_u64().unwrap() - signed["iat"].as_u64().unwrap(),
+        600
+    );
+
+    let plain = claims(&backend.user_token("user-42", None, &[], 600).unwrap());
+    assert!(plain.get("team").is_none() && plain.get("usage_categories").is_none());
+
+    assert!(matches!(
+        backend.user_token("user-42", Some("team:x"), &[], 600),
+        Err(Error::Configuration(_))
+    ));
+    let device = backend.as_user("user-42", &token).unwrap();
+    assert!(matches!(
+        device.user_token("user-43", None, &[], 600),
+        Err(Error::Configuration(_))
+    ));
+}

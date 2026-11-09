@@ -137,6 +137,14 @@ impl Agent {
         self
     }
 
+    /// The team every session's work is counted under, its team spend limits included, over
+    /// the config's `tags: team`. Server side only: the router refuses it from a device, and
+    /// a team other than the one the caller's token names.
+    pub fn team(mut self, team: impl Into<String>) -> Self {
+        self.pipeline.team = Some(team.into());
+        self
+    }
+
     /// Labels every request the session makes, so spend can be attributed.
     pub fn cost_tracking<K: Into<String>, V: Into<String>>(
         mut self,

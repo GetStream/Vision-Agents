@@ -117,6 +117,46 @@ async fn an_agent_spelled_out_in_code_sends_its_pipeline_but_never_its_instructi
 }
 
 #[tokio::test]
+async fn a_session_is_opened_under_the_team_it_is_given_and_none_otherwise() {
+    let server = Server::start().await;
+    server.route(Method::POST, "/v1/agents/sessions", 201, session("s1"));
+    let jean = agent(&server, "jean").team("finance");
+    let docs = server.client().agent("docs");
+
+    let (_with_agent, _socket) = opened(&server, async move { jean.chat().await }).await;
+    let (_with_request, _socket) = opened(&server, async move {
+        docs.sessions
+            .create(
+                types::CreateSessionRequest {
+                    team: Some("finance".into()),
+                    ..Default::default()
+                },
+                vision_agents::Tools::new(),
+            )
+            .await
+    })
+    .await;
+    let plain = server.client().agent("docs");
+    let (_without, _socket) = opened(&server, async move {
+        plain
+            .sessions
+            .create(Default::default(), vision_agents::Tools::new())
+            .await
+    })
+    .await;
+
+    let teams: Vec<Option<Value>> = server
+        .requests(Method::POST, "/v1/agents/sessions")
+        .into_iter()
+        .map(|seen| seen.body.get("team").cloned())
+        .collect();
+    assert_eq!(
+        teams,
+        vec![Some(json!("finance")), Some(json!("finance")), None]
+    );
+}
+
+#[tokio::test]
 async fn a_conversation_is_resumed_by_the_id_of_its_session() {
     let server = Server::start().await;
     server.route(Method::GET, "/v1/agents/sessions/s1", 200, session("s1"));
