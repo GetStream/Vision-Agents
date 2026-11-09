@@ -323,7 +323,7 @@ func (r *restaurant) leaderNote(w http.ResponseWriter, req *http.Request) {
 	if shift, ok := r.shift(asked.ShiftID); ok {
 		to = r.people[shift.Leader].Name
 	}
-	item := r.add("alert", "Call-out", asked.Message, "Sent to "+to)
+	item := r.add("alert", "Note for "+to, asked.Message, "Sent")
 	answer(w, map[string]any{"id": item.ID, "sent_to": to})
 }
 
@@ -405,7 +405,10 @@ func (r *restaurant) ticket(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "a summary is required", http.StatusBadRequest)
 		return
 	}
-	title := strings.TrimSpace(asked.Asset + " " + asked.Summary)
+	title := asked.Summary
+	if asked.Asset != "" && !strings.Contains(strings.ToUpper(title), strings.ToUpper(asked.Asset)) {
+		title = asked.Asset + ": " + title
+	}
 	details := asked.Details
 	if asked.Priority != "" {
 		details = "Priority: " + asked.Priority + ". " + details
