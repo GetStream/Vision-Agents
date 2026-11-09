@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -111,19 +112,45 @@ func bodyOf(text string) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
-var notInID = regexp.MustCompile(`[^A-Za-z0-9_.-]+`)
+var (
+	notInID = regexp.MustCompile(`[^A-Za-z0-9_.-]+`)
+	// pageHeading is how the router names a passage of a file that has pages but no headings.
+	pageHeading = regexp.MustCompile(`^p\.?\s*(\d+)$`)
+)
 
-// citation is the passage in the shape the router shows as a reply's source.
+// documentTitle is a document's file name as a reader would say it: closing-procedures.pdf is
+// "Closing procedures".
+func documentTitle(document string) string {
+	name := strings.TrimSuffix(document, filepath.Ext(document))
+	name = strings.NewReplacer("-", " ", "_", " ").Replace(name)
+	if name == "" {
+		return document
+	}
+	return strings.ToUpper(name[:1]) + name[1:]
+}
+
+// citation is the passage in the shape the router shows as a reply's source: under its heading,
+// or under its document and page when the router read it from a page with no heading.
 func (p handbookPassage) citation() map[string]string {
-	document := strings.TrimSuffix(p.Document, ".md")
+	document := notInID.ReplaceAllString(strings.TrimSuffix(p.Document, ".md"), "-")
+	title, anchor := p.Heading, notInID.ReplaceAllString(strings.ToLower(p.Heading), "-")
+	if page := pageHeading.FindStringSubmatch(p.Heading); page != nil {
+		title, anchor = documentTitle(p.Document)+", p. "+page[1], "page="+page[1]
+	} else if title == "" {
+		title, anchor = documentTitle(p.Document), ""
+	}
 	text := p.Text
 	if utf8.RuneCountInString(text) > citationLength {
 		text = string([]rune(text)[:citationLength-1]) + "…"
 	}
+	url := handbookURL + document
+	if anchor != "" {
+		url += "#" + anchor
+	}
 	return map[string]string{
 		"id":       "handbook-" + strings.Trim(notInID.ReplaceAllString(p.ID, "-"), "-"),
-		"title":    "Handbook: " + p.Heading,
-		"url":      handbookURL + notInID.ReplaceAllString(document, "-") + "#" + notInID.ReplaceAllString(strings.ToLower(p.Heading), "-"),
+		"title":    "Handbook: " + title,
+		"url":      url,
 		"citation": text,
 	}
 }

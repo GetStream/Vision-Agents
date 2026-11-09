@@ -6,11 +6,13 @@ React Native app `examples/ExpoCrewAssistant` in stream-chat-react-native.
 
 ```
 agent.yaml           what runs the agent
+knowledge/           the team handbook: Markdown, and documents such as PDFs
 instructions.md      what the agent is told: the restaurant, its tools and each flow
 a2ui/instructions.md how it writes checklists, quizzes and forms in A2UI
 configure/main.go    stores the agent on the router, with A2UI, its visible tools and skills
 backend/main.go      Stream tokens, and the agent speaking first about an event
-backend/crew.go      the restaurant: schedule, team, handbook, equipment, tickets, the leaders' inbox
+backend/crew.go      the restaurant: schedule, team, equipment, tickets, the leaders' inbox
+backend/handbook.go  the handbook's passages, read from the router's knowledge base
 ```
 
 ## What it does
@@ -28,9 +30,12 @@ backend/crew.go      the restaurant: schedule, team, handbook, equipment, ticket
   OAuth client by itself, so it needs nothing besides the router's `ROUTER_CONNECTORS_ENABLED=true`,
   `ROUTER_AUTH_KEK` and `ROUTER_PUBLIC_URL`. Google Calendar would need an OAuth client of your
   own on the router first.
-- **Sources.** `search_handbook` answers exactly `{"status": "answered", "citations": [...]}`,
-  so the router adds the handbook passages to the reply's `support_message.sources`, which the
-  app lists under the answer.
+- **The handbook.** It is the agent's knowledge base on the router. `knowledge/` holds its
+  documents: the Markdown files the sync pushes, and PDF, Word or Excel files `configure` uploads,
+  which the router reads into Markdown itself, page by page. `/crew/handbook` searches the passages
+  the router cut them into, by heading, and answers `{"status": "answered", "citations": [...]}`,
+  so the passages it found show as the reply's sources. Add or replace a document and run
+  `configure` again: the backend reads the passages again within a minute.
 - **Speaking first.** `POST /events` with a `user_id`, a `session_id`, a `kind` (`clock_in`,
   `clock_out`, `back_from_time_off` or `onboarding`) and the phone's `timezone` creates a
   scheduled task in that session's conversation and runs it at once, so the agent opens the
@@ -59,7 +64,12 @@ STREAM_ACCELERATION_CUSTOMER_ID=examples \
 GOWORK=off go run .
 ```
 
-It listens on `:8097`, beside the Swift assistant's on `:8098`. Both modules point at the SDK
+It listens on `:8097`, beside the Swift assistant's on `:8098`.
+
+Uploading a PDF, Word or Excel file needs somewhere for it to wait until the router reads it:
+`ROUTER_KNOWLEDGE_BUCKET_URL` in the repo-root `.env`, such as `file:///tmp` for a local router
+(restart the router after setting it). Without it `configure` stops at the first such file, and
+the Markdown documents still work. Both modules point at the SDK
 next door with a `replace`, so `GOWORK=off` runs them without adding them to `go.work`.
 
 The agent runs on `xai/grok-4.7`, which reads photos and thinks before it answers, so replies
