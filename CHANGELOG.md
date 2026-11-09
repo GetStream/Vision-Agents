@@ -9,9 +9,6 @@
 ### Go: a refusal says how long to wait
 
 `stream.RouterError.RetryAfter` is the wait the router's `Retry-After` asked for, as seconds or a date, on a 429 `user_limit_reached` or `concurrency_limited` and a 503 `spend_check_unavailable`, and zero when it sent none. The SDK still retries nothing itself (AI-1892).
-### Go: a refusal says how long to wait
-
-`stream.RouterError.RetryAfter` is the wait the router's `Retry-After` asked for, as seconds or a date, on a 429 `user_limit_reached` or `concurrency_limited` and a 503 `spend_check_unavailable`, and zero when it sent none. The SDK still retries nothing itself (AI-1892).
 ### A failed model call says what the provider answered
 
 The session socket's `model_call` frame and a call timeline's `model_calls` carry `error_message` beside `error_code` for a call that did not succeed: the start of the provider's error body, such as a self-hosted model's `502 failed to connect to local service`, redacted and capped as the requests table stores it. A successful call's frame is unchanged. The flow controller's and the agent's failure log lines name the `provider` and `model` (AI-2954).
