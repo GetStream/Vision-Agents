@@ -636,9 +636,7 @@ func (c *converse) stale(transcript stt.Transcript, saying string, state floor) 
 			Text:        saying,
 		}), true
 	}
-	c.mu.Lock()
-	c.wentOn[transcript.Participant.ID] = time.Now()
-	c.mu.Unlock()
+	c.wentOnUnheard(transcript.Participant.ID)
 	return c.decide(Action{
 		Kind:         ActInterrupt,
 		Reason:       "the caller said more before hearing any of the reply, so it answers words they have moved on from",
@@ -664,6 +662,13 @@ func takesFloor(saying string) bool {
 		_, murmur := murmurs[field]
 		return !murmur
 	})
+}
+
+// wentOnUnheard records a participant going on talking before hearing any of the reply to them.
+func (c *converse) wentOnUnheard(participantID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.wentOn[participantID] = time.Now()
 }
 
 // greetsAlone reports whether words are nothing but a greeting that takes the floor alone.

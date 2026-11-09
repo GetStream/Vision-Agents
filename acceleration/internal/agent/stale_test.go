@@ -113,10 +113,40 @@ func (s *AgentSuite) TestALoneGreetingKeepsTheUnheardReplyUntilItGrows() {
 	s.mutters(nash, "Hey,")
 
 	s.eventually(func() bool { return countOf[Hearing](s.reported()) == 2 }, "the greeting was never heard")
-	model := s.model
-	s.Never(func() bool { return model.abandoned(two) }, 200*time.Millisecond, 5*time.Millisecond,
-		"a lone greeting may be all the caller says, so the reply answering them is kept")
+	s.eventually(func() bool { return s.holding(two) }, "the reply was never held")
+	s.model.writes(two, "Which two do you mean?")
+	model, voice, edge := s.model, s.voice, s.edge
+	s.Never(func() bool { return model.abandoned(two) || len(voice.spoken()) > 0 || len(edge.heard()) > 0 },
+		200*time.Millisecond, 5*time.Millisecond,
+		"a lone greeting may be all the caller says, so the reply answering them is kept, and kept from the voice")
 	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
+}
+
+// A greeting the hold is refused for, because the reply already reached the voice, is
+// dropped as any more words are: the caller went on, and the controller is told so.
+func (s *AgentSuite) TestALoneGreetingAfterTheReplyReachedTheVoiceDropsItAsBefore() {
+	s.join(true)
+	s.voice.silent = true
+	dropped := testutil.ToFloat64(staleReplies)
+	two := s.answering("two")
+	s.model.writes(two, "Which two do you mean?")
+	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "the reply never reached the voice")
+
+	s.mutters(nash, "Hey,")
+
+	s.eventually(func() bool { return s.model.abandoned(two) }, "the reply the voice had was held")
+	s.oneDropSince(dropped)
+	s.says(nash, "Hey, are you there")
+	s.eventually(func() bool { return len(s.flow.requests()) == 2 }, "what the caller went on to say was never ruled on")
+	s.Contains(harness.WithoutNotes(s.flow.requests()[1].Input)[0].Content, "giving one thought in parts",
+		"the caller went on before hearing the reply, as with any other drop")
+}
+
+// holding reports whether the agent keeps a turn's reply from the voice.
+func (s *AgentSuite) holding(turnID string) bool {
+	s.agent.mu.Lock()
+	defer s.agent.mu.Unlock()
+	return s.agent.heldLocked(turnID)
 }
 
 func (s *AgentSuite) TestALoneGreetingRevisedStillHoldsTheUnheardReply() {

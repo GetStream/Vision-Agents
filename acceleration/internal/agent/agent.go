@@ -2039,6 +2039,7 @@ func (a *Agent) perform(action Action) {
 
 	case ActHoldUnheard:
 		if !a.holdUnheard(action.TurnID) {
+			a.converse.wentOnUnheard(action.Participant.ID)
 			a.dropUnheard(action.Participant, action.TurnID, interruption{cause: causeUnheard, words: action.Text})
 		}
 
