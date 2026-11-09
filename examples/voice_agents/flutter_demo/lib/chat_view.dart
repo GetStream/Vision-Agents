@@ -25,6 +25,9 @@ class _ChatViewState extends State<ChatView> {
   AgentChat? _chat;
   String? _failure;
 
+  // Whether a session is being opened, so a second tap on Try again opens no second one.
+  var _opening = false;
+
   @override
   void initState() {
     super.initState();
@@ -32,6 +35,9 @@ class _ChatViewState extends State<ChatView> {
   }
 
   Future<void> _open() async {
+    if (_opening) return;
+    _opening = true;
+    if (_failure != null) setState(() => _failure = null);
     try {
       // A model that streams its reasoning, which is what fills the reply's thinking panel.
       // The call keeps the agent's own model, which answers sooner.
@@ -46,6 +52,8 @@ class _ChatViewState extends State<ChatView> {
       setState(() => _chat = chat);
     } on Object catch (error) {
       if (mounted) setState(() => _failure = '$error');
+    } finally {
+      _opening = false;
     }
   }
 
@@ -61,10 +69,16 @@ class _ChatViewState extends State<ChatView> {
     if (chat != null) return _AgentConversation(chat: chat);
     if (_failure case final failure?) {
       return Center(
-        child: Notice(
-          icon: context.streamIcons.exclamationTriangleFill,
-          title: 'Could not start',
-          message: failure,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Notice(
+              icon: context.streamIcons.exclamationTriangleFill,
+              title: 'Could not start',
+              message: failure,
+            ),
+            StreamButton(onPressed: _open, child: const Text('Try again')),
+          ],
         ),
       );
     }
@@ -97,10 +111,19 @@ class _AgentConversationState extends State<_AgentConversation> {
   // socket, which is also what runs the tool once it is allowed.
   late final _approver = AIToolApprover(
     identity: const AIClientIdentity(userId: Demo.userId),
-    decide: (call, decision) async => widget.chat.session.decide(
-      call.id,
-      allowed: decision == AIToolApprovalDecision.allowed,
-    ),
+    decide: (call, decision) async {
+      final session = widget.chat.session;
+      // The session drops an answer to a question it is not waiting on, such as one asked
+      // before its socket dropped, which would leave the step saying it was sent while the
+      // tool never runs.
+      if (!session.approvals.value.any((request) => request.id == call.id)) {
+        throw StateError('This question is no longer waiting for an answer.');
+      }
+      session.decide(
+        call.id,
+        allowed: decision == AIToolApprovalDecision.allowed,
+      );
+    },
   );
 
   // Stream's components, with what the person can do under each finished reply: copy it,

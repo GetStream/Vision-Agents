@@ -112,6 +112,38 @@ void main() {
     },
   );
 
+  test('Captions starts a new agent turn from its beginning', () {
+    final captions = Captions();
+    var now = Duration.zero;
+    void hear(Turn turn, int ticks) {
+      for (var i = 0; i < ticks; i += 1) {
+        now += _tick;
+        captions.update(
+          turn: turn,
+          agentIsAudible: true,
+          agentIsAnswering: true,
+          now: now,
+          elapsed: _tick,
+        );
+      }
+    }
+
+    hear(_reply(), 20);
+    hear(
+      Turn(
+        id: 'next reply',
+        speaker: Speaker.agent,
+        text: 'Anything else I can help with?',
+        at: DateTime(2026),
+      ),
+      6,
+    );
+
+    // 0.6 s into the new turn is 9 characters of it, "Anything ", held back to "Anything":
+    // its pacing starts again rather than carrying on from where the last turn had got to.
+    expect(captions.caption, const Caption('Anything', isPerson: false));
+  });
+
   test('Captions takes a caption down once it has lingered', () {
     final captions = Captions()
       ..update(

@@ -84,6 +84,20 @@ void main() {
     );
   });
 
+  test('isThinkingAbout is false once the reply has finished', () {
+    expect(
+      isThinkingAbout(
+        state: ConversationState.idle,
+        messages: [
+          _question('q1'),
+          _reply('a1', text: 'It ships on Friday.'),
+        ],
+        askedAfter: '',
+      ),
+      isFalse,
+    );
+  });
+
   test('isThinkingAbout is false once the reply shows a step', () {
     expect(
       isThinkingAbout(

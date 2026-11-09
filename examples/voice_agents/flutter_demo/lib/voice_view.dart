@@ -40,6 +40,41 @@ class VoiceView extends StatefulWidget {
   State<VoiceView> createState() => _VoiceViewState();
 }
 
+/// What the glow shows and the word under it.
+///
+/// [session] is what the agent is doing, or null before there is a call; [isStarting] says
+/// one is on its way. Joined, whoever is [heard] comes first, then what the agent is doing.
+({AIVoiceAgentState state, String status}) voicePresence({
+  required bool isStarting,
+  required ConversationState? session,
+  required bool isJoined,
+  required Heard? heard,
+}) {
+  if (session == null) {
+    return (
+      state: isStarting ? AIVoiceAgentState.connecting : AIVoiceAgentState.idle,
+      status: isStarting ? 'Connecting' : ' ',
+    );
+  }
+  if (!isJoined) {
+    return (state: AIVoiceAgentState.connecting, status: 'Connecting');
+  }
+  if (heard case (:final isPerson, level: _)) {
+    return isPerson
+        ? (state: AIVoiceAgentState.listening, status: 'Listening')
+        : (state: AIVoiceAgentState.speaking, status: 'Speaking');
+  }
+  return switch (session) {
+    Listening() => (state: AIVoiceAgentState.listening, status: 'Listening'),
+    Responding() => (state: AIVoiceAgentState.thinking, status: 'Thinking'),
+    Working(:final skills) => (
+      state: AIVoiceAgentState.thinking,
+      status: describeWork(skills) ?? 'Thinking',
+    ),
+    _ => (state: AIVoiceAgentState.idle, status: 'Ready'),
+  };
+}
+
 class _VoiceViewState extends State<VoiceView> {
   VoiceSession? _voice;
   String? _failure;
@@ -69,7 +104,7 @@ class _VoiceViewState extends State<VoiceView> {
   void dispose() {
     final voice = _voice;
     _reset();
-    unawaited(voice?.leave());
+    if (voice != null) unawaited(_leaveQuietly(voice));
     super.dispose();
   }
 
@@ -110,9 +145,10 @@ class _VoiceViewState extends State<VoiceView> {
       await voice.join();
     } on Object catch (error) {
       // A join that throws rather than failing leaves no call to hang up: let go of the
-      // session, so the failure shows and the person can try again.
-      await _leave();
+      // session, so the failure shows and the person can try again. Set first, so a failure
+      // to let go cannot hide it.
       if (mounted) setState(() => _failure = '$error');
+      await _leave();
     } finally {
       if (mounted) setState(() => _starting = false);
     }
@@ -172,6 +208,11 @@ class _VoiceViewState extends State<VoiceView> {
     // The agent leaving is the call being over, so let go of it and offer to start another
     // rather than leaving dead controls on screen.
     if (conversation.state is Ended) {
+      // A dropped socket ends the conversation too, and is said rather than looking like the
+      // agent hanging up.
+      if (_voice?.session.failure case final failure?) {
+        setState(() => _failure = '$failure');
+      }
       unawaited(_leave());
       return;
     }
@@ -183,7 +224,27 @@ class _VoiceViewState extends State<VoiceView> {
     final voice = _voice;
     _reset();
     if (mounted) setState(() {});
-    await voice?.leave();
+    if (voice != null) await _leaveQuietly(voice);
+  }
+
+  // Hangs up [voice], and lets go of it if it is still the call on screen: by the time the
+  // hang-up finishes, the person may have started another.
+  Future<void> _hangUp(VoiceSession voice) async {
+    try {
+      await voice.end();
+    } on Object catch (error) {
+      debugPrint('Hanging up failed: $error');
+    }
+    if (identical(_voice, voice)) await _leave();
+  }
+
+  // Leaves [voice]'s call. Nothing waits on it, so a failure is logged rather than thrown.
+  static Future<void> _leaveQuietly(VoiceSession voice) async {
+    try {
+      await voice.leave();
+    } on Object catch (error) {
+      debugPrint('Leaving the call failed: $error');
+    }
   }
 
   // Forgets the call and everything read from it.
@@ -202,34 +263,12 @@ class _VoiceViewState extends State<VoiceView> {
 
   bool get _inCall => _voice?.state.value.call != null;
 
-  ({AIVoiceAgentState state, String status}) get _presence {
-    final voice = _voice;
-    if (voice == null) {
-      return (
-        state: _starting
-            ? AIVoiceAgentState.connecting
-            : AIVoiceAgentState.idle,
-        status: _starting ? 'Connecting' : ' ',
-      );
-    }
-    if (!_inCall) {
-      return (state: AIVoiceAgentState.connecting, status: 'Connecting');
-    }
-    if (_heard case (:final isPerson, level: _)) {
-      return isPerson
-          ? (state: AIVoiceAgentState.listening, status: 'Listening')
-          : (state: AIVoiceAgentState.speaking, status: 'Speaking');
-    }
-    return switch (voice.session.state) {
-      Listening() => (state: AIVoiceAgentState.listening, status: 'Listening'),
-      Responding() => (state: AIVoiceAgentState.thinking, status: 'Thinking'),
-      Working(:final skills) => (
-        state: AIVoiceAgentState.thinking,
-        status: describeWork(skills) ?? 'Thinking',
-      ),
-      _ => (state: AIVoiceAgentState.idle, status: 'Ready'),
-    };
-  }
+  ({AIVoiceAgentState state, String status}) get _presence => voicePresence(
+    isStarting: _starting,
+    session: _voice?.session.state,
+    isJoined: _inCall,
+    heard: _heard,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -279,7 +318,7 @@ class _VoiceViewState extends State<VoiceView> {
           if (voice != null && request != null)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              // Keyed by the call, so a second question starts with no answer sending.
+              // Keyed by the tool call, so a second question starts with no answer sending.
               child: _ApprovalCard(
                 key: ValueKey(request.id),
                 request: request,
@@ -306,7 +345,7 @@ class _VoiceViewState extends State<VoiceView> {
                   )
                 : _CallControls(
                     voice: voice,
-                    onHangUp: () => unawaited(voice.end().whenComplete(_leave)),
+                    onHangUp: () => unawaited(_hangUp(voice)),
                   ),
           ),
         ],
@@ -354,8 +393,8 @@ class _CallControls extends StatelessWidget {
               style: .destructive,
               size: .large,
               tooltip: 'Hang up',
-              // Not until the call is joined, or failed to: leaving while it is still being
-              // joined would let the join land after it, in a call nobody can leave.
+              // Not until the call is joined, or failed to: until then there is no call to
+              // hang up.
               onPressed: state.isJoined || state.failure != null
                   ? onHangUp
                   : null,
@@ -387,7 +426,8 @@ class _ApprovalCard extends StatefulWidget {
 class _ApprovalCardState extends State<_ApprovalCard> {
   AIToolApprovalState _state = const AIToolApprovalIdle();
 
-  // Sending lasts until the call leaves the session's approvals, which takes the card away.
+  // Sending lasts until the tool call leaves the session's approvals, which takes the card
+  // away.
   void _handleAnswer(AIToolApprovalDecision decision) {
     setState(() => _state = AIToolApprovalSending(decision));
     try {

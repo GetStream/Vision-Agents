@@ -13,7 +13,10 @@ lib/           the phone half: chat, voice, and tools that run on the device
 
 Start the router and store the agent as [swift_demo's README](../swift_demo/README.md) says:
 `docker compose up --build` from the repo root with `ROUTER_AUTH_MODE=proxy`, then
-`go run ./configure` and `go run ./backend` in `examples/voice_agents/swift_demo`.
+`go run ./configure` and
+`STREAM_API_SECRET=<the router's STREAM_API_SECRET> go run ./backend` in
+`examples/voice_agents/swift_demo`. The backend signs the phone's Stream token with that secret,
+and does not start without it.
 
 Then run the app on a simulator or emulator, with the `STREAM_API_KEY` the router runs with:
 
@@ -60,9 +63,10 @@ The Chat tab asks for `xai/grok-4.7`, a model that streams its reasoning, so the
   - `ChatComposer` asks, dictates and stops a reply, and `AISuggestionsView` starts a
     conversation.
 - The app is drawn in Stream's design system (`stream_core_flutter`, which
-  `stream_chat_flutter_ai` is built on and re-exports): `StreamTheme` in light and dark,
-  `StreamAppBar`, `StreamBottomNavBar`, `StreamButton`, the sheet `showStreamSheet` opens with
-  its `StreamSheetHeader`, and `StreamIcons`.
+  `stream_chat_flutter_ai` is built on; it re-exports the theme, token and component-builder
+  types but not the widgets, so the app depends on `stream_core_flutter` for those):
+  `StreamTheme` in light and dark, `StreamAppBar`, `StreamBottomNavBar`, `StreamButton`, the
+  sheet `showStreamSheet` opens with its `StreamSheetHeader`, and `StreamIcons`.
 - **Voice** starts a session, which puts the agent on a call, and joins it over Stream Video as
   the same user, with the token `backend` signed. On Android the app asks for the microphone
   first; on iOS the system asks when the call first uses it.

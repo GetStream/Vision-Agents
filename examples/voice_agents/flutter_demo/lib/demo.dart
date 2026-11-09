@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
 
@@ -60,11 +61,21 @@ abstract final class Demo {
   // Asks the backend for a Stream user token, which the chat and the call connect with.
   static Future<String> _streamToken() async {
     final url = backendUrl.resolve('/stream-token');
-    final response = await http.post(
-      url,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'user_id': userId}),
-    );
+    final http.Response response;
+    try {
+      response = await http
+          .post(
+            url,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'user_id': userId}),
+          )
+          .timeout(const Duration(seconds: 15));
+    } on TimeoutException {
+      throw http.ClientException(
+        'the backend did not answer in time: is `go run ./backend` in swift_demo running?',
+        url,
+      );
+    }
     if (response.statusCode != 200) {
       throw http.ClientException(
         'the backend would not mint a Stream token (${response.statusCode}): is '
@@ -72,8 +83,17 @@ abstract final class Demo {
         url,
       );
     }
-    return (jsonDecode(response.body) as Map<String, Object?>)['token']!
-        as String;
+    Object? answer;
+    try {
+      answer = jsonDecode(response.body);
+    } on FormatException {
+      // Not JSON at all, which is no token either.
+    }
+    if (answer case {'token': final String token}) return token;
+    throw http.ClientException(
+      'the backend answered without a Stream token',
+      url,
+    );
   }
 
   /// The tools the agent may call, which run on this phone.

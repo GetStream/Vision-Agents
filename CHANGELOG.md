@@ -344,6 +344,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A Dart voice session left while it joins does not stay on the call
+
+`VoiceSession.leave()` or `end()` while `join()` was under way found no call to leave, and `join()` then kept the call it joined, so the device stayed on it with the microphone on until something left it again; an app that had let go of the session on leaving never did. A leave during the join now wins: the join stops before joining when it can, or leaves the call it joined, and `call` stays null. A `join()` called after that leave, while the first is still under way, wins over it in turn, and the call is kept (#1327).
+
 ### Pausing a campaign stops its calls on every router
 
 `POST /v1/agents/campaigns/{id}/pause` stopped the campaign only on the router that answered it. A router behind the same load balancer that was running the campaign went on ringing people, and finished the campaign over the pause when nobody was left. Now no router takes another contact from a campaign that is not running. A router whose loop outlived a pause made elsewhere exits that loop at its next claim and writes no state. A start on that router before then runs the campaign again (AI-2681).
@@ -870,6 +874,7 @@ shown with Stream Chat's AI components (`stream_chat_flutter_ai`) instead, and
 each reply's steps and live reasoning, tool approvals answered with `session.decide`, and the
 voice glow on a call. `LiveValueBuilder` and `LiveValueNotifier` went with it; a `StreamBuilder`
 over a `LiveValue`'s `stream` with `initialData:` its `value` does the same (#1327).
+
 ### A JavaScript tool's result can be parts
 
 `render()` and `Tools.call()` in the JS SDK answer `string | ToolOutputPart[]` rather than `string`, since a tool that returns a `ToolOutput` with images is told to the model as its words and then its pictures. Code that took either for a string checks for an array first. A tool's `run` is unchanged: what it returned before renders as before.

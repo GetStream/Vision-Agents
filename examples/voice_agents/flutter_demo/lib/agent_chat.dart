@@ -49,6 +49,7 @@ class AgentChat extends ChangeNotifier {
   final _ratings = <String, AIMessageRating>{};
   final _subscriptions = <StreamSubscription<Object?>>[];
   String? _failure;
+  String? _olderFailure;
   bool _hasOlderMessages = true;
 
   // The newest message when something was last asked here, until it fails or is stopped:
@@ -63,8 +64,13 @@ class AgentChat extends ChangeNotifier {
   /// The channel's messages, oldest first.
   List<stream.Message> get messages => _channel.state?.messages ?? const [];
 
-  /// Why asking failed, or null.
-  String? get failure => _failure;
+  /// Why asking failed, why the session's socket dropped, or why older messages could not
+  /// be loaded, in that order, or null.
+  ///
+  /// A dropped socket stops this phone's tools and the questions they ask; nothing reconnects
+  /// it, so it is said rather than left to look like a slow reply.
+  String? get failure =>
+      _failure ?? session.failure?.toString() ?? _olderFailure;
 
   /// Whether the channel holds messages older than those loaded.
   bool get hasOlderMessages => _hasOlderMessages;
@@ -82,7 +88,8 @@ class AgentChat extends ChangeNotifier {
           }
         }),
       )
-      ..add(session.conversation.stream.listen((_) => notifyListeners()));
+      ..add(session.conversation.stream.listen((_) => notifyListeners()))
+      ..add(session.connection.stream.listen((_) => notifyListeners()));
   }
 
   /// The messages as Stream's AI components show them.
@@ -116,12 +123,20 @@ class AgentChat extends ChangeNotifier {
   Future<void> loadOlderMessages() async {
     final first = messages.firstOrNull;
     if (first == null) return;
-    final state = await _channel.query(
-      messagesPagination: stream.PaginationParams(
-        lessThan: first.id,
-        limit: _pageSize,
-      ),
-    );
+    final stream.ChannelState state;
+    try {
+      state = await _channel.query(
+        messagesPagination: stream.PaginationParams(
+          lessThan: first.id,
+          limit: _pageSize,
+        ),
+      );
+    } on Object catch (error) {
+      _olderFailure = 'Could not load older messages: $error';
+      notifyListeners();
+      return;
+    }
+    _olderFailure = null;
     _hasOlderMessages = (state.messages?.length ?? 0) >= _pageSize;
     notifyListeners();
   }
@@ -139,6 +154,7 @@ class AgentChat extends ChangeNotifier {
   /// Asks the agent [text]. A failure to send is kept in [failure].
   Future<void> ask(String text) async {
     _failure = null;
+    _olderFailure = null;
     _askedAfter = messages.lastOrNull?.id ?? '';
     notifyListeners();
     try {
