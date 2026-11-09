@@ -86,5 +86,8 @@ func (s *HTTPMetricsRouterSuite) TestASessionSocketIsCountedAndNotTimed() {
 	s.Empty(seriesOf(s.T(), "router_http_request_seconds", func(labels map[string]string) bool {
 		return labels["route"] == upgraded["route"] && labels["status"] == "1xx"
 	}))
+	s.Empty(seriesOf(s.T(), "router_http_request_status_seconds", func(labels map[string]string) bool {
+		return labels["status"] == "1xx"
+	}), "a socket was timed by status class")
 	s.Zero(s.carrying(opened.Id), "a label holds the session id")
 }

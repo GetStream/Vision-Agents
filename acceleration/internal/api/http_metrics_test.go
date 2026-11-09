@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -93,6 +94,45 @@ func (s *HTTPMetricsSuite) TestA5xxIsCountedAsAServerErrorAndA2xxIsNot() {
 	s.Equal(2.0, s.count(route, "2xx"))
 	s.EqualValues(1, s.timed(route, "5xx").GetSampleCount())
 	s.EqualValues(2, s.timed(route, "2xx").GetSampleCount())
+}
+
+// statusSamples is the sample count of router_http_request_status_seconds for a status class.
+func statusSamples(t *testing.T, class string) uint64 {
+	t.Helper()
+	var total uint64
+	for _, metric := range seriesOf(t, "router_http_request_status_seconds", func(labels map[string]string) bool {
+		return labels["status"] == class
+	}) {
+		total += metric.GetHistogram().GetSampleCount()
+	}
+	return total
+}
+
+// Defect: the status-class histogram missing, observing under the wrong class, or keeping the
+// route or the method as a label, so the series count grows with the routes again. The series
+// are the process's, so each class is read as a delta of at least the requests sent.
+func (s *HTTPMetricsSuite) TestEveryStatusClassIsTimedUnderItsClassAlone() {
+	route := s.prefix + "/{code}"
+	s.mux.Handle(route, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		code, err := strconv.Atoi(chi.URLParam(r, "code"))
+		s.Require().NoError(err)
+		w.WriteHeader(code)
+	}))
+	for code, class := range map[string]string{"200": "2xx", "204": "2xx", "302": "3xx", "404": "4xx", "503": "5xx"} {
+		before := statusSamples(s.T(), class)
+		s.serve(http.MethodGet, s.prefix+"/"+code)
+		s.GreaterOrEqual(statusSamples(s.T(), class), before+1, "a %s was not timed under %s", code, class)
+	}
+
+	classes := []string{"1xx", "2xx", "3xx", "4xx", "5xx"}
+	series := seriesOf(s.T(), "router_http_request_status_seconds", func(map[string]string) bool { return true })
+	s.NotEmpty(series)
+	for _, metric := range series {
+		labels := labelsOf(metric)
+		s.Len(labels, 1, "a label besides status: %v", labels)
+		s.Contains(classes, labels["status"])
+	}
+	s.LessOrEqual(len(series), len(classes))
 }
 
 // Defect: the raw path in the route label, a series per session id.
@@ -296,6 +336,7 @@ func (s *HTTPMetricsSuite) TestASocketIsCountedAsAnUpgradeAndNotTimed() {
 
 	s.Require().Eventually(func() bool { return s.count(route, "1xx") == 1 }, 5*time.Second, 10*time.Millisecond)
 	s.Empty(s.series("router_http_request_seconds", route))
+	s.Zero(statusSamples(s.T(), "1xx"), "a socket was timed by status class")
 }
 
 // Defect: a panic is not counted (the deferred count is skipped), or counted as the empty
