@@ -248,6 +248,36 @@ func (s *ConnectionToolsSuite) TestAGitHubAppConnectionToAnInstallationGitHubDoe
 	s.Equal(ConnectionStatus(store.ConnectionPending), s.get(created.ID).Status)
 }
 
+// TestAGitHubAppTokenRefusedAPermissionKeepsItsConnection: the MCP server answers the freshly
+// minted token 403, as GitHub does when the app lacks a permission. The key works, so the
+// validate fails without moving the connection or saying to replace the key.
+func (s *ConnectionToolsSuite) TestAGitHubAppTokenRefusedAPermissionKeepsItsConnection() {
+	created := s.gitHubConnection(githubapp.Name, s.github.URL+"/forbidding-mcp")
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+created.ID+"/credentials",
+		map[string]any{"expected_revision": 1, "values": map[string]string{
+			githubapp.SuppliedAppID: "4242", githubapp.SuppliedPrivateKey: gitHubAppKey(s.T()), githubapp.SuppliedInstallationID: "1337",
+		}}, nil))
+
+	validation := s.validate(created.ID)
+
+	s.Equal(validationFailed, string(validation.Status))
+	s.NotEqual(codeCredentialRejected, validation.Code)
+	s.Equal(ConnectionStatus(store.ConnectionConnected), s.get(created.ID).Status)
+}
+
+// TestABearerTokenRefusedWithA403StillSaysToReplaceIt is the control: a static token that never
+// expires is still moved by any 4xx but 429 on validate (refusedStatic).
+func (s *ConnectionToolsSuite) TestABearerTokenRefusedWithA403StillSaysToReplaceIt() {
+	created := s.gitHubConnection(bearer.Name, s.github.URL+"/forbidding-mcp")
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/connections/"+created.ID+"/credentials", s.bearerToken(1, s.token), nil))
+
+	validation := s.validate(created.ID)
+
+	s.Equal(validationNeedsReauthorization, string(validation.Status))
+	s.Equal(codeCredentialRejected, validation.Code)
+	s.Equal(ConnectionStatus(store.ConnectionNeedsReauthorization), s.get(created.ID).Status)
+}
+
 // TestAnImportedGrantConnectsWithTheConnectorsEndpoints: the grant names no endpoint and no
 // client; the scheme takes both from the manifest and the operator's environment.
 func (s *ConnectionToolsSuite) TestAnImportedGrantConnectsWithTheConnectorsEndpoints() {
@@ -1020,16 +1050,22 @@ func (s *ConnectionToolsSuite) connection(scheme string) string {
 }
 
 // gitHubAppConnection is a pending app-owned github_app connection to a connector whose
-// api_base is the suite's GitHub.
+// api_base is the suite's GitHub and whose MCP server is the fake's.
 func (s *ConnectionToolsSuite) gitHubAppConnection() Connection {
+	return s.gitHubConnection(githubapp.Name, s.provider.URL+fakeprovider.PathMCP)
+}
+
+// gitHubConnection is a pending app-owned connection of scheme to a connector whose api_base is
+// the suite's GitHub and whose MCP server is at mcp.
+func (s *ConnectionToolsSuite) gitHubConnection(scheme, mcp string) Connection {
 	id := "custom_tools" + strings.ReplaceAll(s.utils.uuid(), "-", "")
 	manifest, err := core.ParseManifest([]byte("id: " + id + "\nrevision: 1\nname: Fake GitHub\nendpoints:\n  api_base: " +
-		s.github.URL + "\n  mcp: " + s.provider.URL + fakeprovider.PathMCP + "\nschemes: [" + githubapp.Name + "]\nsources:\n  - kind: mcp\n    endpoint: mcp\n"))
+		s.github.URL + "\n  mcp: " + mcp + "\nschemes: [" + scheme + "]\nsources:\n  - kind: mcp\n    endpoint: mcp\n"))
 	s.Require().NoError(err)
 	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
 	s.Require().NoError(err)
 	request := appOwned(id)
-	request["auth_scheme"] = githubapp.Name
+	request["auth_scheme"] = scheme
 	var created Connection
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", request, &created))
 	return created
@@ -1052,6 +1088,13 @@ func gitHubInstallations(t *testing.T) *httptest.Server {
 		}
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]string{"token": gitHubInstallationToken, "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)})
+	})
+	// An MCP server that takes the request's token and refuses what it asks for, as GitHub's
+	// answers a token missing a permission: 403 «Resource not accessible by integration».
+	mux.HandleFunc("/forbidding-mcp", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"Resource not accessible by integration"}`))
 	})
 	mux.HandleFunc("GET /installation/repositories", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+gitHubInstallationToken {

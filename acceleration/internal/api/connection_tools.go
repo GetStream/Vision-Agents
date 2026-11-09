@@ -442,7 +442,7 @@ func (s *Server) checkConnection(ctx context.Context, connection store.Connector
 		}
 		listed, err := source.Discover(ctx, binding)
 		if err != nil {
-			if refusedStatic(s.connectors.Schemes, connection.AuthScheme, answered.status()) {
+			if refusedStatic(s.connectors.Schemes, connection.AuthScheme, credential, answered.status()) {
 				// The 401 path's move (core.Transports invalidates a refused credential nothing
 				// renews), so the row and the validate say the same: replace the token or key.
 				// Invalidate leaves a connection whose credentials changed since Resolve alone.
@@ -674,9 +674,12 @@ func (c *headerCatch) RoundTrip(request *http.Request) (*http.Response, error) {
 // credential is wrong. A 5xx, a timeout or no answer says nothing about the credential, and
 // keeps the status. OAuth grants keep the 401-only rule, as tool calls do (core.Transports):
 // a reconnect, not a new token, is their remedy, and a 4xx on validate does not prove one is due.
-func refusedStatic(schemes map[string]core.Scheme, scheme string, status int) bool {
-	return core.IsStatic(schemes, scheme) && status >= http.StatusBadRequest && status < http.StatusInternalServerError &&
-		status != http.StatusTooManyRequests
+// A static credential that expires (github_app's token, minted from the key on Resolve) keeps
+// that rule too: the provider took the key moments ago, so another 4xx, such as a 403 for a
+// permission the app lacks, is about what the token may do, and a new key would not fix it.
+func refusedStatic(schemes map[string]core.Scheme, scheme string, credential core.AccessCredential, status int) bool {
+	return core.IsStatic(schemes, scheme) && credential.ExpiresAt.IsZero() &&
+		status >= http.StatusBadRequest && status < http.StatusInternalServerError && status != http.StatusTooManyRequests
 }
 
 // validationAfter is what a validate reports after the resolver or a source failed: the
