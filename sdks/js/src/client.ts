@@ -298,25 +298,39 @@ export class Client {
       }
     }
 
-    const request: RequestInit = {
-      method: method.toUpperCase(),
-      headers: { ...(await this.backend.headers(anonymously)), ...headers },
+    // The token the last attempt carried, so a 401 forgets that one and not a newer one.
+    let sent: string | undefined;
+    const attempt = async (): Promise<Response> => {
+      const credentials = await this.backend.headers(anonymously);
+      sent = credentials["Authorization"]?.replace(/^Bearer /, "");
+      const request: RequestInit = {
+        method: method.toUpperCase(),
+        headers: { ...credentials, ...headers },
+      };
+      if (body !== undefined) {
+        request.headers = { ...request.headers, "Content-Type": "application/json" };
+        request.body = JSON.stringify(body);
+      }
+      if (signal) {
+        request.signal = signal;
+      }
+      try {
+        return await this.backend.request(url.toString(), request);
+      } catch (cause) {
+        // A request that never arrived is reported as such rather than as a status, because
+        // a caller retrying on a network failure and one retrying on a 500 are different.
+        throw new RouterError(0, operation, `could not reach the router: ${String(cause)}`);
+      }
     };
-    if (body !== undefined) {
-      request.headers = { ...request.headers, "Content-Type": "application/json" };
-      request.body = JSON.stringify(body);
-    }
-    if (signal) {
-      request.signal = signal;
-    }
 
-    let response: Response;
-    try {
-      response = await this.backend.request(url.toString(), request);
-    } catch (cause) {
-      // A request that never arrived is reported as such rather than as a status, because
-      // a caller retrying on a network failure and one retrying on a 500 are different.
-      throw new RouterError(0, operation, `could not reach the router: ${String(cause)}`);
+    let response = await attempt();
+    // A 401 is the token having expired more often than anything else, so a token function
+    // is asked for a fresh one and the request sent once more. Once: a second refusal is the
+    // token being wrong rather than old, and asking again would only ask the app's backend
+    // the same question in a loop.
+    if (response.status === 401 && !anonymously && this.backend.expireToken(sent)) {
+      await response.body?.cancel();
+      response = await attempt();
     }
 
     if (anonymously && response.status === 401) {

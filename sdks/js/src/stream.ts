@@ -133,8 +133,8 @@ export class StreamPeers {
     return client;
   }
 
-  private async credentials(what: string): Promise<StreamCredentials> {
-    const credentials = await this.backend.streamCredentials();
+  private async credentials(what: string, refresh = false): Promise<StreamCredentials> {
+    const credentials = await this.backend.streamCredentials(refresh);
     if (!credentials) {
       throw new ConfigurationError(
         `${what} connects to Stream rather than to this router, so it needs a Stream key and ` +
@@ -148,7 +148,7 @@ export class StreamPeers {
   private tokens(what: string, first: string): () => Promise<string> {
     let unused: string | undefined = first;
     return async () => {
-      const token = unused ?? (await this.credentials(what)).token;
+      const token = unused ?? (await this.credentials(what, true)).token;
       unused = undefined;
       return token;
     };

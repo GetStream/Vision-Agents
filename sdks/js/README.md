@@ -36,6 +36,13 @@ const api = new Client();
 const api = new Client({ apiKey: "vak_live_…", token: () => fetch("/api/token").then((r) => r.text()) });
 ```
 
+A token function is asked once and its answer kept. It is asked again when the router answers
+401, and the request is sent once more; when a socket is refused, and the socket dialled once
+more; when the token it holds expires within a minute, read from the JWT's `exp`; and after
+`setUser` or `clearUser`. Requests that need a token while one is being fetched wait for that
+fetch, and requests refused together ask for one new token between them. A token passed as a
+string is the only one there is, so a 401 with it is final.
+
 Search is the one routed modality a page may reach: `api.router({ config: "healthcare" }).search("what changed in the pricing page")`.
 
 `url` falls back to `STREAM_ACCELERATION_URL`, then Stream's hosted router, so it is only

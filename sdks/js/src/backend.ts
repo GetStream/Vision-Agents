@@ -181,6 +181,14 @@ export class Backend {
    */
   private userIdValue: string;
   private token: TokenSource | undefined;
+  /**
+   * What a token function last answered, kept until the router refuses it or it is about
+   * to expire. Fetching one per request would put the app's own backend on the path of
+   * every call this SDK makes.
+   */
+  private fetched: string | undefined;
+  /** The fetch in flight, shared by every request that needs a token while it runs. */
+  private fetching: Promise<string> | undefined;
   private user: StreamUser | undefined;
   /** The end user `actingFor` named, sent beside this backend's own credential. */
   private actingForValue = "";
@@ -270,6 +278,7 @@ export class Backend {
     this.user = named;
     this.userIdValue = named.id;
     this.token = token;
+    this.forgetToken();
     // The same reasoning as the constructor's, and it has to be here as well because this
     // is the shape a page is written in: the token arrives after the client was built, so
     // there was nothing to suppress an ambient secret at construction. Without this a
@@ -289,6 +298,40 @@ export class Backend {
     this.user = undefined;
     this.userIdValue = "";
     this.token = undefined;
+    this.forgetToken();
+  }
+
+  /**
+   * Drops the token a token function last answered, so the next request asks it again.
+   *
+   * `refused` is the token the router turned down, where the caller knows it. Only that one is
+   * forgotten: when a newer token is already held or being fetched, because another request
+   * that was refused got there first, it is kept, and the retry goes with it. Otherwise a burst
+   * of requests refused together would each throw away the token the one before had fetched,
+   * and a refusal arriving late would throw away a good one.
+   *
+   * Answers whether a request sent again would carry a different token, which is what a
+   * retry after a 401 is for. It would not when the token was handed in as a string, which
+   * is the only one there is, nor when requests carry no user token at all: a router
+   * reached by customer id is never shown it, and a backend holding the secret mints its
+   * own. The client calls this when the router answers 401, and retries once if it says so.
+   */
+  expireToken(refused?: string): boolean {
+    if (typeof this.token !== "function" || !this.presentsUserToken) {
+      return false;
+    }
+    const newer =
+      refused !== undefined &&
+      (this.fetched !== undefined ? this.fetched !== refused : this.fetching !== undefined);
+    if (!newer) {
+      this.forgetToken();
+    }
+    return true;
+  }
+
+  /** Whether requests and sockets carry the end user's token, rather than none or a minted one. */
+  private get presentsUserToken(): boolean {
+    return !this.byCustomer && (this.authenticate || !this.apiSecret);
   }
 
   /**
@@ -302,6 +345,10 @@ export class Backend {
     const acting = Object.assign(Object.create(Backend.prototype) as Backend, this);
     acting.userIdValue = "";
     acting.user = undefined;
+    // A cache of its own: a fetch the original started settles into the original's fields,
+    // so a copied one would be held here forever.
+    acting.fetched = undefined;
+    acting.fetching = undefined;
     acting.actingForValue = userId;
     return acting;
   }
@@ -362,9 +409,10 @@ export class Backend {
   /**
    * What every request to the router carries.
    *
-   * Minted per call, so a client left idle longer than a token lasts does not wake up
-   * holding an expired one. `anonymously` sends the key alone, for a guest asked for by
-   * nobody yet.
+   * A token minted here is minted per call, so a client left idle longer than a token lasts
+   * does not wake up holding an expired one. A token function's answer is kept instead, and
+   * asked for again after a 401 (see `userToken`). `anonymously` sends the key alone, for a
+   * guest asked for by nobody yet.
    */
   async headers(anonymously = false): Promise<Record<string, string>> {
     if (anonymously) {
@@ -489,7 +537,7 @@ export class Backend {
    * as well before chat or video can connect. A server-side backend gets a token minted for the user it is acting for rather than its
    * own server token, because a chat client connects as somebody.
    */
-  async streamCredentials(): Promise<StreamCredentials | undefined> {
+  async streamCredentials(refresh = false): Promise<StreamCredentials | undefined> {
     if (!this.apiKey) {
       return undefined;
     }
@@ -498,6 +546,12 @@ export class Backend {
       return undefined;
     }
     if (this.token) {
+      // Stream's clients ask again only when the token they hold has expired, so the one
+      // kept here is no answer to them: `refresh` asks the token function for a new one. A
+      // fetch already under way is that new one, so it is waited for rather than started over.
+      if (refresh && !this.fetching) {
+        this.forgetToken();
+      }
       return { apiKey: this.apiKey, user, token: await this.userToken() };
     }
     if (!this.apiSecret) {
@@ -536,6 +590,14 @@ export class Backend {
       : this.serverToken();
   }
 
+  /**
+   * The end user's token: the one handed in, or what the token function answered.
+   *
+   * A function is asked once and its answer kept, until the router refuses it (the client
+   * calls `expireToken` on a 401), it is within a minute of the expiry it carries, or
+   * `setUser` or `clearUser` changes whose it is. Requests that need one while it is being
+   * fetched wait for the same fetch rather than starting their own.
+   */
   private async userToken(): Promise<string> {
     const source = this.token;
     if (typeof source === "string") {
@@ -544,7 +606,61 @@ export class Backend {
     if (!source) {
       throw new ConfigurationError("there is no token to authenticate with");
     }
-    return source();
+    if (this.fetched !== undefined && !expiresSoon(this.fetched)) {
+      return this.fetched;
+    }
+    if (!this.fetching) {
+      const fetching = (async () => source())();
+      this.fetching = fetching;
+      // Kept only if nothing replaced the user or expired the token while it was fetched:
+      // otherwise it is somebody else's, or the one that was just refused.
+      fetching.then(
+        (token) => {
+          if (this.fetching === fetching) {
+            this.fetched = token;
+            this.fetching = undefined;
+          }
+        },
+        () => {
+          if (this.fetching === fetching) {
+            this.fetching = undefined;
+          }
+        },
+      );
+    }
+    return this.fetching;
+  }
+
+  private forgetToken(): void {
+    this.fetched = undefined;
+    this.fetching = undefined;
+  }
+}
+
+/** How long before the expiry a token carries it is fetched again rather than sent. */
+const EXPIRY_MARGIN_MS = 60_000;
+
+/**
+ * Whether a token says it expires within the margin.
+ *
+ * Read rather than trusted: nothing is verified here, the point is only to not open a
+ * socket with a token the router is about to refuse, since a browser cannot read the
+ * status a refused socket was answered with and so cannot retry it the way a request is.
+ * A token that is not a JWT, or carries no expiry, never expires as far as this is concerned.
+ */
+function expiresSoon(token: string, now = Date.now()): boolean {
+  const payload = token.split(".")[1];
+  if (!payload) {
+    return false;
+  }
+  try {
+    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const claims = JSON.parse(atob(base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "="))) as {
+      exp?: unknown;
+    };
+    return typeof claims.exp === "number" && claims.exp * 1000 - now < EXPIRY_MARGIN_MS;
+  } catch {
+    return false;
   }
 }
 
