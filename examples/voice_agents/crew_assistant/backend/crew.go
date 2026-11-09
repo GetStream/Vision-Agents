@@ -220,6 +220,9 @@ func (r *restaurant) calloutCheck(w http.ResponseWriter, req *http.Request) {
 	}
 	reportable := []string{}
 	for _, symptom := range asked.Symptoms {
+		if negated(symptom) {
+			continue
+		}
 		for _, word := range mustStayHome {
 			if strings.Contains(strings.ToLower(symptom), word) {
 				reportable = append(reportable, symptom)
@@ -489,6 +492,17 @@ func (r *restaurant) add(kind, title, details, status string) InboxItem {
 	}
 	r.inbox = append(r.inbox, item)
 	return item
+}
+
+// negated says whether a symptom is one they said they don't have, such as "no fever".
+func negated(symptom string) bool {
+	lower := " " + strings.ToLower(strings.TrimSpace(symptom))
+	for _, word := range []string{" no ", " not ", " without ", " never "} {
+		if strings.Contains(lower, word) {
+			return true
+		}
+	}
+	return false
 }
 
 func contains(values []string, value string) bool {
