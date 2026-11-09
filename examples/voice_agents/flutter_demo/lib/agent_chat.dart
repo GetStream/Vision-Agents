@@ -36,6 +36,11 @@ class AgentChat extends ChangeNotifier {
     }
   }
 
+  /// Follows [channel], already open, for [session].
+  @visibleForTesting
+  factory AgentChat.following(AgentSession session, stream.Channel channel) =>
+      AgentChat._(session, channel).._listen();
+
   // How many messages are loaded at a time.
   static const _pageSize = 30;
 
