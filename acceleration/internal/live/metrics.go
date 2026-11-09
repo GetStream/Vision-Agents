@@ -73,7 +73,6 @@ func (m *measured) DoMulti(ctx context.Context, cmds ...rueidis.Completed) []rue
 	for _, result := range results {
 		if err := result.Error(); isFailure(err) {
 			failed = err
-			break
 		}
 	}
 	m.record(start, failed)

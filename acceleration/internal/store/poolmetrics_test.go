@@ -71,7 +71,13 @@ func (s *StoreSuite) TestAQueryWaitingForAPoolsLastConnectionIsCountedAsAWait() 
 }
 
 func (s *ShardedStoreSuite) TestAShardedStoreServesEachOfItsPoolsByShard() {
+	held, err := s.store.DB().DB.Conn(s.ctx)
+	s.Require().NoError(err)
+	defer held.Close()
+
 	series := s.poolSeries(s.store)
+	s.Equal(1.0, series["router_db_pool_in_use_connections shared "])
+	s.Equal(0.0, series["router_db_pool_in_use_connections shard here"])
 
 	s.Equal(40.0, series["router_db_pool_max_open_connections shared "])
 	s.Equal(40.0, series["router_db_pool_max_open_connections shard here"])

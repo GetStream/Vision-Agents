@@ -4,6 +4,7 @@ package main
 
 import (
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -83,4 +84,17 @@ func (s *RouterStartSuite) TestARouterWithNeitherPostgresNorRedisServesNoSaturat
 	s.NotContains(served, "router_db_pool_")
 	s.NotContains(served, "router_redis_command_")
 	s.Require().NoError(stop())
+}
+
+// A second router in one process, as an overlap test runs, serves the first one's pools, and
+// its stop leaves them served until the first stops.
+func (s *RouterStartSuite) TestASecondRoutersStopLeavesTheFirstOnesPoolsServed() {
+	stopFirst := serveSaturation(s.db, nil, slog.New(slog.DiscardHandler))
+	defer stopFirst()
+	stopSecond := serveSaturation(s.db, nil, slog.New(slog.DiscardHandler))
+
+	stopSecond()
+	s.NotEmpty(saturationMetrics(), "the second router's stop took the first one's pools out")
+	stopFirst()
+	s.Empty(saturationMetrics())
 }
