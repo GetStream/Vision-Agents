@@ -28,6 +28,16 @@ const (
 	causeShortened = "shortened"
 )
 
+// byCaller reports whether the caller taking the floor abandoned the reply, rather than the
+// voice failing or something outside the call stopping it.
+func (i interruption) byCaller() bool {
+	switch i.cause {
+	case causeSettled, causeTalking, causeUnheard, causeProvider, causeShortened:
+		return true
+	}
+	return false
+}
+
 // echo buckets: how much of the words that took the floor the reply had itself said.
 const (
 	echoNoWords = "no_words"

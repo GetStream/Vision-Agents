@@ -4107,12 +4107,19 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 	a.dropSpeech()
 
 	a.finishGenerate(turnID)
+	// What the reply was passing on is owed again, and a caller who took the floor over it is
+	// owed it with the reply to what they said: given a turn of its own, it was said again over
+	// them the moment the reply stopped, and what they said went unanswered.
+	release := func(turnID string) { current.Release(turnID) }
+	if why.byCaller() {
+		release = func(turnID string) { current.ReleaseTalkedOver(turnID) }
+	}
 	if current != nil && outstanding {
-		current.Release(turnID)
+		release(turnID)
 	}
 	for _, playing := range behind {
 		if current != nil {
-			current.Release(playing.turnID)
+			release(playing.turnID)
 		}
 	}
 	a.logger.Debug("stopping mid-reply, the caller took the floor",
