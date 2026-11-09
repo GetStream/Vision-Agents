@@ -11,6 +11,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // rateLimitedKeyVars are the key variables of the vendors whose rate limits the vendor metrics
@@ -64,4 +66,32 @@ func serveMetrics(addr string, logger *slog.Logger) (stop, handOver func()) {
 		})
 	}
 	return func() { closeServer(false) }, func() { closeServer(true) }
+}
+
+// serveSaturation adds the Postgres pools' and the Redis connections' metrics to what /metrics
+// serves, for whichever of the two the router has, until the returned function takes them out.
+// A test runs routers one after another in one process, and the next one's are its own.
+func serveSaturation(pgStore *store.Store, liveClient *live.Client, logger *slog.Logger) (stop func()) {
+	var collectors []prometheus.Collector
+	if pgStore != nil {
+		collectors = append(collectors, pgStore.Collector())
+	}
+	if liveClient != nil {
+		collectors = append(collectors, liveClient.Collectors()...)
+	}
+	var registered []prometheus.Collector
+	for _, collector := range collectors {
+		// One registry holds one series of a name and labels, so a second router running in
+		// the same process, as an overlapping test runs, serves the first one's alone.
+		if err := prometheus.Register(collector); err != nil {
+			logger.Warn("could not serve a pool's metrics", "error", err)
+			continue
+		}
+		registered = append(registered, collector)
+	}
+	return func() {
+		for _, collector := range registered {
+			prometheus.Unregister(collector)
+		}
+	}
 }
