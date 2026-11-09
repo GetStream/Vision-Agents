@@ -5,7 +5,7 @@ import StreamChat
 import StreamChatA2UI
 import StreamChatAI
 import StreamChatOpenUI
-import VisionAgentsCore
+import StreamAgents
 
 /// How Stream's `AIConversation` reaches Juno: the session that answers the conversation, and
 /// the channel the router keeps it in.

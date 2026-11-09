@@ -1,6 +1,6 @@
 import StreamChatAI
 import SwiftUI
-import VisionAgentsCore
+import StreamAgents
 
 /// One conversation: the messages, the composer, and the way into voice mode.
 ///
