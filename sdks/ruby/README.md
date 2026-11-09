@@ -112,7 +112,8 @@ same proxy passes `authenticate: true` or sets `STREAM_ACCELERATION_AUTHENTICATE
 
 ## Checked against the spec
 
-Every resource method (`api.agent`, `api.router`, `api.simulations`, `api.memories`) is built
+Every resource method (`api.agent`, `api.router`, `api.simulations`, `api.memories`,
+`api.spend_limits`, `api.teams`) is built
 on one method per HTTP verb, which looks the path up in a table generated from
 `acceleration/api/openapi.yaml`, so a path, query parameter or body key the spec does not
 have is refused before anything is sent. Answers are the router's JSON as string-keyed
@@ -312,6 +313,59 @@ guest = api.guest_user(name: "Visitor")          # id, token, expires_at
 api.as_guest(guest).agent("support").sessions.query
 api.claim_guest_user(guest["id"], "user-42")     # once they sign up
 ```
+
+## Spend limits and teams
+
+A backend caps what the organization, its apps, keys, end users, teams and usage categories may
+spend in each day, week, two weeks or month. An amount is dollars, exactly: an Integer, a String
+such as `"12.50"`, a `Rational` or a `GetStream::VisionAgents::USD`, never a Float. The router
+counts in millionths of a dollar, and so does `USD`.
+
+```ruby
+api = GetStream::VisionAgents::Client.new
+limits = api.spend_limits
+limits.create(:organization, interval: :monthly, amount: 20_000)
+
+# Every key of app 1234 may spend $50 a day, and the CI key $10, then $25, then no limit of its own.
+limits.create(:api_key, app_id: "1234", interval: :daily, amount: 50)
+limits.create(:api_key, app_id: "1234", api_key: "mz7kq2xa9b", interval: :daily, amount: 10, note: "CI key")
+ci = limits.list(subject: :api_key, app_id: "1234", api_key: "mz7kq2xa9b").first
+limits.set_amount(ci["id"], 25)
+limits.delete(ci["id"])
+
+# Every user of app 1234 may spend $20 a day, and user-42 $50.
+limits.create(:user, app_id: "1234", interval: :daily, amount: 20)
+limits.create(:user, app_id: "1234", user_id: "user-42", interval: :daily, amount: 50)
+
+# Created or changed, whichever the team needs.
+api.teams.set_limit("finance", interval: :monthly, amount: 8_000)
+
+api.agent("support").sessions.create(team: "finance")
+finance = GetStream::VisionAgents::Client.new(team: "finance")
+
+limits.reset(:user, app_id: "1234", user_id: "user-42", intervals: [:weekly], reason: "refunded a failed run")
+
+amount = GetStream::VisionAgents.usd("12.50") # from a form or a config file
+```
+
+Work counts under a team, and so against its limits, three ways. Whichever comes first wins,
+and a session is counted under one team at most:
+
+1. The team signed into the token. `Client.new(team: "finance")` signs it, with any
+   `usage_categories:`, into every token it mints, and names them in
+   `X-Stream-Usage-Categories` to a router with no proxy in front of it. A token handed in
+   already carries its own, so it cannot be given a team. A session cannot be moved off the
+   token's team, so a `team:` naming another is refused with a 400.
+2. `sessions.create(team: "finance")`, from a backend. A device sending a team is refused with
+   a 403.
+3. The agent's tag: `tags: team: finance` in its `agent.yaml` counts that agent's sessions under
+   the team. A tag that is no team name is refused when the agent is synced.
+
+Answers are the router's JSON, in micros: `GetStream::VisionAgents::USD.micros(limit["limit_micros"])`
+prints as `$20000.00`. `usage` reads what a subject spent against its limits, and `grant` gives
+it a one-time amount past them. Work a limit refuses raises `RouterError` with status 402 and
+code `spend_limit_reached`, or 429 `user_limit_reached` for one end user's. All of it is server
+side only.
 
 ## The router
 
