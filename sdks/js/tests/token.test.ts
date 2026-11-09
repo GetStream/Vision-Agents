@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
-import { Backend, Client, RouterError, signToken } from "../src/index.js";
+import { Backend, Client, RouterError, Socket, SocketClosedError, signToken } from "../src/index.js";
 import { TestRouter } from "./router.js";
 
 /** A token function that answers token-1, token-2, … and counts how often it was asked. */
@@ -148,6 +148,124 @@ describe("a token function", () => {
     assert.equal(url.searchParams.get("token"), tokens[1]);
     await backend.headers();
     assert.equal(asked, 2, "the second is kept");
+  });
+
+  it("is asked again after a 401 through Stream's proxy, the hosted router's own way", async () => {
+    router.serve("GET", "/v1/agents/sessions/sess_1", (request) =>
+      request.headers["authorization"] === "Bearer token-1"
+        ? { status: 401, body: {} }
+        : { body: { id: "sess_1" } },
+    );
+    const tokens = counting();
+    const api = new Client({ url: router.url, apiKey: "vak_live_x", authenticate: true });
+    await api.setUser("jlahey", tokens.source);
+
+    await api.get("/v1/agents/sessions/{id}", { path: { id: "sess_1" } });
+
+    assert.equal(tokens.asked(), 2);
+    assert.deepEqual(
+      router.received.map((r) => [r.headers["api_key"], r.headers["authorization"]]),
+      [
+        ["vak_live_x", "Bearer token-1"],
+        ["vak_live_x", "Bearer token-2"],
+      ],
+    );
+  });
+
+  it("is asked once more, not once per request, when requests are refused together", async () => {
+    router.serve("GET", "/v1/agents/sessions/sess_1", (request) =>
+      request.headers["authorization"] === "Bearer token-1"
+        ? { status: 401, body: {} }
+        : { body: { id: "sess_1" } },
+    );
+    const tokens = counting();
+    const api = new Client({ url: router.url, apiKey: "vak_live_x" });
+    await api.setUser("jlahey", tokens.source);
+    await api.backend.headers();
+
+    const sessions = await Promise.all(
+      [1, 2, 3, 4].map(() => api.get("/v1/agents/sessions/{id}", { path: { id: "sess_1" } })),
+    );
+
+    assert.equal(sessions.length, 4);
+    assert.equal(tokens.asked(), 2, "token-1, then one token-2 for every retry");
+  });
+
+  it("keeps a newer token when a refusal of an older one arrives late", async () => {
+    const tokens = counting();
+    const backend = new Backend({ url: router.url, apiKey: "vak_live_x" });
+    await backend.setUser("jlahey", tokens.source);
+
+    await backend.headers();
+    assert.equal(backend.expireToken("token-1"), true);
+    assert.equal((await backend.headers())["Authorization"], "Bearer token-2");
+
+    // A request sent with token-1 before the refresh is refused only now.
+    assert.equal(backend.expireToken("token-1"), true, "the retry goes with token-2");
+    assert.equal((await backend.headers())["Authorization"], "Bearer token-2");
+    assert.equal(tokens.asked(), 2);
+  });
+
+  it("dials a refused socket once more with a fresh token", async () => {
+    router.refuseSockets((query) => query.get("token") === "token-1");
+    const tokens = counting();
+    const backend = new Backend({ url: router.url, apiKey: "vak_live_x" });
+    await backend.setUser("jlahey", tokens.source);
+    await backend.headers();
+
+    const opening = Socket.dial(backend, "/v1/agents/sessions/x/events");
+    const connection = await router.socket();
+    const socket = await opening;
+
+    assert.equal(connection.query.get("token"), "token-2");
+    assert.equal(tokens.asked(), 2);
+    socket.close();
+  });
+
+  it("does not dial a refused socket again with a token handed in as it is", async () => {
+    router.refuseSockets(() => true);
+    const backend = new Backend({ url: router.url, apiKey: "vak_live_x" });
+    await backend.setUser("jlahey", "token-for-jim");
+
+    await assert.rejects(() => Socket.dial(backend, "/v1/agents/sessions/x/events"), SocketClosedError);
+  });
+
+  it("is not shared with a copy acting for another user", async () => {
+    let release: (token: string) => void = () => {};
+    let asked = 0;
+    const backend = new Backend({ url: router.url, apiKey: "vak_live_x", authenticate: true });
+    await backend.setUser("jlahey", () => {
+      asked += 1;
+      return asked === 1 ? new Promise<string>((resolve) => (release = resolve)) : `token-${asked}`;
+    });
+
+    const pending = backend.headers();
+    const acting = backend.actingFor("ana");
+    release("token-1");
+    await pending;
+
+    // The copy asks for its own rather than holding the original's fetch forever.
+    assert.equal((await acting.headers())["Authorization"], "Bearer token-2");
+    assert.equal(acting.expireToken("token-2"), true);
+    assert.equal((await acting.headers())["Authorization"], "Bearer token-3");
+  });
+
+  it("hands Stream's clients the fetch already under way rather than starting another", async () => {
+    let release: (token: string) => void = () => {};
+    let asked = 0;
+    const backend = new Backend({ url: router.url, apiKey: "vak_live_x" });
+    await backend.setUser("jlahey", () => {
+      asked += 1;
+      return new Promise<string>((resolve) => (release = resolve));
+    });
+
+    const request = backend.headers();
+    const chat = backend.streamCredentials(true);
+    release("token-1");
+
+    assert.equal((await chat)?.token, "token-1");
+    assert.equal((await request)["Authorization"], "Bearer token-1");
+    assert.equal(asked, 1);
   });
 
   it("is forgotten with the user it was for", async () => {

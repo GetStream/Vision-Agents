@@ -58,6 +58,7 @@ export class TestRouter {
   /** The ones a test has taken, kept so teardown can close them too. */
   private readonly handed: Connection[] = [];
   private address = "";
+  private refusing: ((query: URLSearchParams) => boolean) | undefined;
 
   private constructor() {
     this.server = createServer((request, response) => {
@@ -113,6 +114,10 @@ export class TestRouter {
 
     this.server.on("upgrade", (request, socket, head) => {
       const url = new URL(request.url ?? "/", "http://router");
+      if (this.refusing?.(url.searchParams)) {
+        socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+        return;
+      }
       this.sockets.handleUpgrade(request, socket, head, (raw) => {
         const connection = connectionOf(raw, url);
         const waiting = this.waiting.shift();
@@ -137,6 +142,12 @@ export class TestRouter {
 
   get url(): string {
     return this.address;
+  }
+
+  /** Refuses the upgrade of every socket whose query this says to, as a router does a stale token. */
+  refuseSockets(when: (query: URLSearchParams) => boolean): this {
+    this.refusing = when;
+    return this;
   }
 
   /** Answers one method and path with this, or with whatever the function decides. */

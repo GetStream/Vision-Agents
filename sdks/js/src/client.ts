@@ -298,10 +298,14 @@ export class Client {
       }
     }
 
+    // The token the last attempt carried, so a 401 forgets that one and not a newer one.
+    let sent: string | undefined;
     const attempt = async (): Promise<Response> => {
+      const credentials = await this.backend.headers(anonymously);
+      sent = credentials["Authorization"]?.replace(/^Bearer /, "");
       const request: RequestInit = {
         method: method.toUpperCase(),
-        headers: { ...(await this.backend.headers(anonymously)), ...headers },
+        headers: { ...credentials, ...headers },
       };
       if (body !== undefined) {
         request.headers = { ...request.headers, "Content-Type": "application/json" };
@@ -324,7 +328,7 @@ export class Client {
     // is asked for a fresh one and the request sent once more. Once: a second refusal is the
     // token being wrong rather than old, and asking again would only ask the app's backend
     // the same question in a loop.
-    if (response.status === 401 && !anonymously && this.backend.expireToken()) {
+    if (response.status === 401 && !anonymously && this.backend.expireToken(sent)) {
       await response.body?.cancel();
       response = await attempt();
     }

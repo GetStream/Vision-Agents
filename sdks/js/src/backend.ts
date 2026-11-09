@@ -304,17 +304,33 @@ export class Backend {
   /**
    * Drops the token a token function last answered, so the next request asks it again.
    *
+   * `refused` is the token the router turned down, where the caller knows it. Only that one is
+   * forgotten: when a newer token is already held or being fetched, because another request
+   * that was refused got there first, it is kept, and the retry goes with it. Otherwise a burst
+   * of requests refused together would each throw away the token the one before had fetched,
+   * and a refusal arriving late would throw away a good one.
+   *
    * Answers whether a request sent again would carry a different token, which is what a
    * retry after a 401 is for. It would not when the token was handed in as a string, which
    * is the only one there is, nor when requests carry no user token at all: a router
    * reached by customer id is never shown it, and a backend holding the secret mints its
    * own. The client calls this when the router answers 401, and retries once if it says so.
    */
-  expireToken(): boolean {
-    if (typeof this.token !== "function") {
+  expireToken(refused?: string): boolean {
+    if (typeof this.token !== "function" || !this.presentsUserToken) {
       return false;
     }
-    this.forgetToken();
+    const newer =
+      refused !== undefined &&
+      (this.fetched !== undefined ? this.fetched !== refused : this.fetching !== undefined);
+    if (!newer) {
+      this.forgetToken();
+    }
+    return true;
+  }
+
+  /** Whether requests and sockets carry the end user's token, rather than none or a minted one. */
+  private get presentsUserToken(): boolean {
     return !this.byCustomer && (this.authenticate || !this.apiSecret);
   }
 
@@ -329,6 +345,10 @@ export class Backend {
     const acting = Object.assign(Object.create(Backend.prototype) as Backend, this);
     acting.userIdValue = "";
     acting.user = undefined;
+    // A cache of its own: a fetch the original started settles into the original's fields,
+    // so a copied one would be held here forever.
+    acting.fetched = undefined;
+    acting.fetching = undefined;
     acting.actingForValue = userId;
     return acting;
   }
@@ -527,8 +547,9 @@ export class Backend {
     }
     if (this.token) {
       // Stream's clients ask again only when the token they hold has expired, so the one
-      // kept here is no answer to them: `refresh` asks the token function for a new one.
-      if (refresh) {
+      // kept here is no answer to them: `refresh` asks the token function for a new one. A
+      // fetch already under way is that new one, so it is waited for rather than started over.
+      if (refresh && !this.fetching) {
         this.forgetToken();
       }
       return { apiKey: this.apiKey, user, token: await this.userToken() };
