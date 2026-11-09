@@ -1,4 +1,10 @@
-import { Backend, type BackendOptions, type StreamUser, type TokenSource } from "./backend.js";
+import {
+  Backend,
+  type BackendOptions,
+  type StreamUser,
+  type TokenSource,
+  type UserTokenOptions,
+} from "./backend.js";
 import { ConfigurationError, errorOf, RouterError } from "./errors.js";
 import type { components, paths } from "./generated/api.js";
 import {
@@ -15,7 +21,9 @@ import { Memories } from "./memories.js";
 import { Router, type RouterOptions } from "./router.js";
 import { ScheduledTasks } from "./scheduled-tasks.js";
 import { Simulations } from "./simulations.js";
+import { SpendLimits } from "./spend-limits.js";
 import { StreamPeers, type StreamClients } from "./stream.js";
+import { Teams } from "./teams.js";
 
 /** The schemas from the spec, so callers can name a request or a response they build. */
 export type Schemas = components["schemas"];
@@ -119,6 +127,10 @@ export class Client {
   readonly simulations: Simulations;
   /** The reminders and later work agents hold for the user `setUser` named. */
   readonly scheduledTasks: ScheduledTasks;
+  /** The customer's spend limits. Server side only. */
+  readonly spendLimits: SpendLimits;
+  /** The organization's teams and their spend limits. Server side only. */
+  readonly teams: Teams;
   /** @internal The chat and video clients this client's sessions share. */
   readonly peers: StreamPeers;
 
@@ -127,6 +139,8 @@ export class Client {
     this.memories = new Memories(this);
     this.simulations = new Simulations(this);
     this.scheduledTasks = new ScheduledTasks(this);
+    this.spendLimits = new SpendLimits(this);
+    this.teams = new Teams(this, this.spendLimits);
     this.peers = new StreamPeers(this.backend);
   }
 
@@ -153,6 +167,19 @@ export class Client {
       return this.backend.setUser({ id: user.id, ...(user.name ? { name: user.name } : {}) }, token ?? user.token);
     }
     return this.backend.setUser(user, token as TokenSource);
+  }
+
+  /**
+   * The token a backend hands to one user's device, naming the user's team and usage
+   * categories, fixed when it is signed so the device cannot move its work to another team.
+   * Server side only: it is signed with the secret.
+   *
+   * ```ts
+   * const token = await api.createUserToken("user-42", { team: "finance" });
+   * ```
+   */
+  createUserToken(userId: string, options: UserTokenOptions = {}): Promise<string> {
+    return this.backend.createUserToken(userId, options);
   }
 
   /**

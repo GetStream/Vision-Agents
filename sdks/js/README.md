@@ -98,6 +98,56 @@ went wrong. Branch on `code` (`not_configured`, `validation_failed`, ...) or `ty
 message, and expect codes you do not know; quote `requestId` to support, since a 500 says only
 "something went wrong".
 
+## Spend limits and teams
+
+A backend caps what the organization, its apps, keys, end users, teams and usage categories may
+spend in each day, week, two weeks or month. Amounts are `USD`, held exactly as the millionths
+of a dollar the router counts in, and never built from a fractional number: `USD.dollars(20)`,
+`USD.cents(1250)`, or `USD.parse("12.50")` (a string of dollars is taken anywhere an amount is).
+
+```ts
+import { Client, USD } from "@stream-io/calypso";
+
+const api = new Client(); // STREAM_API_KEY and STREAM_API_SECRET: server side only
+await api.spendLimits.create({ subject: "organization", interval: "monthly", amount: USD.dollars(20_000) });
+
+// Every key of app 1234 may spend $50 a day, and the CI key $10.
+await api.spendLimits.create({ subject: "api_key", appId: "1234", interval: "daily", amount: USD.dollars(50) });
+await api.spendLimits.create({
+  subject: "api_key", appId: "1234", apiKey: "mz7kq2xa9b", interval: "daily", amount: USD.dollars(10), note: "CI key",
+});
+const [ci] = await api.spendLimits.list({ subject: "api_key", appId: "1234", apiKey: "mz7kq2xa9b" });
+await api.spendLimits.setAmount(ci!.id, USD.dollars(25));
+await api.spendLimits.delete(ci!.id);
+
+// Every user of app 1234 may spend $20 a day, and user-42 $50.
+await api.spendLimits.create({ subject: "user", appId: "1234", interval: "daily", amount: USD.dollars(20) });
+await api.spendLimits.create({ subject: "user", appId: "1234", userId: "user-42", interval: "daily", amount: USD.dollars(50) });
+
+// Created or changed, whichever the team needs.
+await api.teams.setLimit("finance", { interval: "monthly", amount: USD.dollars(8_000) });
+
+// Work counted under the team: one session, or everything a client does.
+const session = await api.agent("docs").sessions.create({ team: "finance" });
+const finance = new Client({ team: "finance" });
+
+// Count user-42's week from now. Nothing is refunded.
+await api.spendLimits.reset({
+  subject: "user", appId: "1234", userId: "user-42", intervals: ["weekly"], reason: "refunded a duplicate run",
+});
+```
+
+An agent whose `agent.yaml` has `tags: team: finance` counts its sessions under that team when
+neither the caller's token nor the session names one.
+
+A client built with `team` (and `usageCategories`) signs them into every token it mints, and
+sends them in `X-Stream-Usage-Categories` to a router with no proxy in front of it. A device's
+token carries its own, from `api.createUserToken("user-42", { team: "finance" })`, so neither can
+be passed beside a token; a session naming a team other than its token's is refused with a 400,
+and a device naming one at all with a 403. What the router answers is in micros too:
+`USD.fromMicros(limit.limit_micros)` prints as `$20000.00`. Work a limit refuses is a
+`RouterError` of 402 `spend_limit_reached`, or 429 `user_limit_reached` for one end user's.
+
 ## A conversation somebody comes back to
 
 A text conversation is kept in Stream Chat, so what was said outlives the session that
