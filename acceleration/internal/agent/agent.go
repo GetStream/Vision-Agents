@@ -2037,6 +2037,11 @@ func (a *Agent) perform(action Action) {
 		a.stopTools()
 		a.interrupt(action.Participant, action.Interruption)
 
+	case ActHoldUnheard:
+		if !a.holdUnheard(action.TurnID) {
+			a.dropUnheard(action.Participant, action.TurnID, interruption{cause: causeUnheard, words: action.Text})
+		}
+
 	case ActShorten:
 		a.shorten(action.Participant, action.TurnID, action.Interruption)
 
@@ -4037,6 +4042,11 @@ func (a *Agent) dropUnheard(participant stt.Participant, turnID string, why inte
 			return false
 		}
 		stale, a.unheard = a.unheard, unheardReply{}
+		// What the hold kept was counted as being said, and none of it will be.
+		if a.heldLocked(turnID) {
+			a.unsentLocked(a.held)
+			a.held = nil
+		}
 		a.missed = stale
 		// The tools an interruption cancels are cancelled before the speech is dropped, as
 		// they are when the caller talks over a reply: an end_call waiting on its goodbye
@@ -4052,6 +4062,22 @@ func (a *Agent) dropUnheard(participant stt.Participant, turnID string, why inte
 	a.logger.Info("dropped a reply the caller said more over before hearing any of it",
 		"turn", turnID, "participant", participant.ID,
 		"gap_ms", time.Since(stale.decidedAt).Milliseconds(), "sent_to_voice", sent)
+}
+
+// holdUnheard keeps an unheard reply from the voice while the caller's lone greeting may
+// still grow into more, and reports whether it is held. Text already at the voice cannot be
+// pulled back, and a reply held for a lost voice is that voice's to go on with.
+func (a *Agent) holdUnheard(turnID string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.held != nil && a.held.greeting && a.held.turnID == turnID {
+		return true
+	}
+	if a.unheard.turnID != turnID || a.speakingTurn != turnID || a.held != nil || a.turns.sentToVoice(turnID) {
+		return false
+	}
+	a.held = &heldReply{turnID: turnID, written: !a.generating, greeting: true}
+	return true
 }
 
 // interrupt abandons the reply being spoken because a participant started talking.

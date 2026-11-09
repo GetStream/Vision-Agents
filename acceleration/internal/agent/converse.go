@@ -53,6 +53,9 @@ const (
 	ActDelegate ActionKind = "delegate"
 	// ActSettle is delegated work coming back, answered or not.
 	ActSettle ActionKind = "settle"
+	// ActHoldUnheard keeps an unheard reply from the voice while the lone greeting its caller
+	// said over it may still grow into more.
+	ActHoldUnheard ActionKind = "hold_unheard"
 	// ActFail is a judgement that could not be made.
 	ActFail ActionKind = "fail"
 )
@@ -614,11 +617,24 @@ func (c *converse) overlap(transcript stt.Transcript, saying string, state floor
 // stale abandons the reply to a caller's turn once the same caller says more before any of it
 // has gone out: it answers words they moved on from, over them. What they say next is answered
 // with those words in the history. A murmur or a lone word that is no interruption is somebody
-// waiting to be answered, and leaves it.
+// waiting to be answered, and leaves it. A lone greeting holds it instead: it is as often
+// them waiting for it as the start of something new, and only what comes next tells.
 func (c *converse) stale(transcript stt.Transcript, saying string, state floor) (Action, bool) {
-	if state.Unheard.turnID == "" || transcript.Participant.ID != state.Unheard.participant ||
-		!takesFloor(unrepeated(saying, c.cadence.Repeating(transcript.Participant.ID))) {
+	if state.Unheard.turnID == "" || transcript.Participant.ID != state.Unheard.participant {
 		return Action{}, false
+	}
+	said := unrepeated(saying, c.cadence.Repeating(transcript.Participant.ID))
+	if !takesFloor(said) {
+		return Action{}, false
+	}
+	if greetsAlone(said) {
+		return c.decide(Action{
+			Kind:        ActHoldUnheard,
+			Reason:      "the caller said a lone greeting before hearing any of the reply, which may be them waiting for it",
+			Participant: transcript.Participant,
+			TurnID:      state.Unheard.turnID,
+			Text:        saying,
+		}), true
 	}
 	c.mu.Lock()
 	c.wentOn[transcript.Participant.ID] = time.Now()
@@ -648,6 +664,12 @@ func takesFloor(saying string) bool {
 		_, murmur := murmurs[field]
 		return !murmur
 	})
+}
+
+// greetsAlone reports whether words are nothing but a greeting that takes the floor alone.
+func greetsAlone(saying string) bool {
+	fields := wordList(saying)
+	return len(fields) == 1 && (fields[0] == "hello" || fields[0] == "hey")
 }
 
 // supersede abandons a ruling asked for about words that have since changed.

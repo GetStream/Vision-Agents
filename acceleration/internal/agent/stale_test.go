@@ -70,6 +70,70 @@ func (s *AgentSuite) TestAReplyTheCallerSaidMoreOverBeforeHearingAnyIsDropped() 
 	s.Contains(logged[0], "gap_ms")
 }
 
+// Session 01a15c2c, with the request arriving as revisions after "Hey,".
+func (s *AgentSuite) TestALoneGreetingThatGrowsIntoARequestDropsTheUnheardReply() {
+	s.join(true)
+	dropped := testutil.ToFloat64(staleReplies)
+	two := s.answering("two")
+
+	s.mutters(nash, "Hey,")
+	s.eventually(func() bool { return countOf[Hearing](s.reported()) == 2 }, "the greeting was never heard")
+	s.model.writes(two, "Which two do you mean?")
+	s.mutters(nash, "Hey. Can you help")
+
+	s.eventually(func() bool { return s.model.abandoned(two) }, "the reply to two kept going")
+	edge := s.edge
+	s.Never(func() bool { return len(edge.heard()) > 0 }, 100*time.Millisecond, 5*time.Millisecond,
+		"none of the dropped reply may go out")
+	s.oneDropSince(dropped)
+}
+
+func (s *AgentSuite) TestALoneGreetingFromAnotherCallerDoesNotHoldTheReply() {
+	s.join(true)
+	s.flow.then = []string{`{"disposition":"wait","floor":"continue"}`}
+	dropped := testutil.ToFloat64(staleReplies)
+	two := s.answering("two")
+	bob := stt.Participant{ID: "bob"}
+	s.speak(bob)
+
+	s.mutters(bob, "Hello")
+	s.eventually(func() bool { return countOf[Hearing](s.reported()) == 2 }, "the other caller was never heard")
+	s.model.writes(two, "Two of what?")
+	s.model.finishes(two)
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply was held over another caller's greeting")
+	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
+}
+
+func (s *AgentSuite) TestALoneGreetingKeepsTheUnheardReplyUntilItGrows() {
+	s.join(true)
+	dropped := testutil.ToFloat64(staleReplies)
+	two := s.answering("two")
+
+	s.mutters(nash, "Hey,")
+
+	s.eventually(func() bool { return countOf[Hearing](s.reported()) == 2 }, "the greeting was never heard")
+	model := s.model
+	s.Never(func() bool { return model.abandoned(two) }, 200*time.Millisecond, 5*time.Millisecond,
+		"a lone greeting may be all the caller says, so the reply answering them is kept")
+	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
+}
+
+func (s *AgentSuite) TestALoneGreetingRevisedStillHoldsTheUnheardReply() {
+	s.join(true)
+	dropped := testutil.ToFloat64(staleReplies)
+	two := s.answering("two")
+
+	s.mutters(nash, "Hey,")
+	s.mutters(nash, "Hello")
+
+	s.eventually(func() bool { return countOf[Hearing](s.reported()) == 3 }, "the revised greeting was never heard")
+	model := s.model
+	s.Never(func() bool { return model.abandoned(two) }, 200*time.Millisecond, 5*time.Millisecond,
+		"the reply already held for the greeting is not dropped when the greeting is revised")
+	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
+}
+
 func (s *AgentSuite) TestAReplyStartedBeforeTheRulingIsDroppedTheSameWay() {
 	s.speculates = true
 	s.join(true)
