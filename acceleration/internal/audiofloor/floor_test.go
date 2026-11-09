@@ -395,3 +395,41 @@ func (s *FloorSuite) TestACallerStillSpeakingInANoisyRoomIsNotCut() {
 	decisions, withWords, transcripts := s.counts()
 	s.Equal([3]int{0, 0, 0}, [3]int{decisions, withWords, transcripts}, "nothing asked while the words change")
 }
+
+// A final that came before the voice's last frame, a breath or the room holding the speech gate
+// voiced a little longer, settles the words: with nothing open, the floor waits for a run begun
+// before the voice stopped only until runLead after it stopped, which a pause long enough to end
+// the turn is past, so the words go out with the ruling and not finalWait later.
+func (s *FloorSuite) TestAFinalBeforeTheVoiceStoppedSettlesTheWords() {
+	s.ending(0.3)
+	s.say(800, true)
+	s.writes(1, stt.ModeReplacement, "Tell me a story")
+	s.writes(1, stt.ModeFinal, "Tell me a story.")
+	time.Sleep(1300 * time.Millisecond) // the final is older than the voice's last frame will be
+	s.say(300, true)
+	began := time.Now()
+	s.say(1200, false)
+	end := s.final()
+	s.Less(time.Since(began), finalWait/2, "with the ruling, not finalWait later")
+	s.Equal("Tell me a story.", end.Text)
+	s.Zero(s.askedForFinals(), "nothing was open")
+}
+
+// A run the transcriber begins while the floor waits out runLead was speech before the voice
+// stopped: its final is asked for and waited for, as a run open at the cut is, and the turn's words
+// are both runs'.
+func (s *FloorSuite) TestARunBegunJustBeforeTheVoiceStoppedIsWaitedFor() {
+	s.say(800, true)
+	s.writes(1, stt.ModeFinal, "Two tickets.")
+	time.Sleep(1300 * time.Millisecond)
+	s.say(300, true)
+	s.say(220, false)
+	s.Eventually(func() bool { decisions, _, _ := s.counts(); return decisions == 1 }, 5*time.Second, time.Millisecond)
+	s.writes(2, stt.ModeReplacement, "to Bilbao")
+	s.Eventually(func() bool { return s.askedForFinals() == 1 }, 5*time.Second, time.Millisecond, "asked for the run's final")
+	time.Sleep(runLead)
+	s.noFinal()
+	s.writes(2, stt.ModeFinal, "to Bilbao.")
+	end := s.final()
+	s.Equal("Two tickets. to Bilbao.", end.Text)
+}

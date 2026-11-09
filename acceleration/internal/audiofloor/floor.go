@@ -23,6 +23,14 @@ import (
 // most calls. Past it the utterance ends on the words of that run as they stand.
 const finalWait = time.Second
 
+// runLead is how long after a run of speech begins the transcriber writing the words has shown
+// some of it: AssemblyAI's first words of a run came 260 to 440 ms after its voice began on a
+// live call. An utterance the floor ended with nothing open and words settled waits for a run
+// begun before the voice stopped only until runLead after it stopped, not finalWait: past that,
+// what kept the speech gate voiced after the transcriber's last final (a breath, the room, the
+// line) was no words.
+const runLead = 700 * time.Millisecond
+
 var floorWords = promauto.NewCounterVec(prometheus.CounterOpts{
 	Namespace: "router",
 	Name:      "chorus_asr_floor_words_total",
@@ -277,7 +285,10 @@ type cut struct {
 	at        time.Time
 	forced    bool
 	said      chan Words
-	timer     *time.Timer
+	// timer gives up on the words at until: finalWait after the cut, or after the run it
+	// waits for began, and runLead after the voice stopped for one with nothing open.
+	timer *time.Timer
+	until time.Time
 }
 
 // heard keeps transcript, and says what to show of the utterance's words meanwhile, and
@@ -305,6 +316,12 @@ func (w *spoken) heard(transcript stt.Transcript) (interim stt.Transcript, show,
 		c.run = run
 		force = !transcript.Final() && !c.forced
 		c.forced = c.forced || force
+		// A run begun while the cut waited out runLead has its final waited for as one open at
+		// the cut is.
+		if until := time.Now().Add(finalWait); until.After(c.until) {
+			c.until = until
+			c.timer.Reset(finalWait)
+		}
 	}
 	w.provider, w.model = transcript.Provider, transcript.Model
 	if transcript.Language != "" {
@@ -357,7 +374,8 @@ func (w *spoken) heard(transcript stt.Transcript) (interim stt.Transcript, show,
 // end ends the words of utterance, which the floor ended at a pause the voice stopped for at
 // stopped: at once if the transcriber has written its final since and has nothing open, and
 // otherwise once it writes the final of the run it has open, or of the first it writes, up to
-// finalWait. It says whether the transcriber is to be asked for that final: it has a run open.
+// finalWait, or, with nothing open and words settled, up to runLead after stopped. It says
+// whether the transcriber is to be asked for that final: it has a run open.
 func (w *spoken) end(utterance int64, stopped time.Time) (<-chan Words, bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -373,25 +391,36 @@ func (w *spoken) end(utterance int64, stopped time.Time) (<-chan Words, bool) {
 		w.deliverLocked(c, "settled")
 		return c.said, false
 	}
-	if strings.TrimSpace(w.open) != "" {
+	wait := finalWait
+	switch {
+	case strings.TrimSpace(w.open) != "":
 		c.run, c.forced = w.run, true
+	case len(w.settled) > 0:
+		if wait = time.Until(stopped.Add(runLead)); wait <= 0 {
+			w.deliverLocked(c, "settled")
+			return c.said, false
+		}
 	}
-	w.cut = c
-	c.timer = time.AfterFunc(finalWait, func() { w.giveUp(c) })
+	w.cut, c.until = c, time.Now().Add(wait)
+	c.timer = time.AfterFunc(wait, func() { w.giveUp(c) })
 	return c.said, c.forced
 }
 
 // giveUp ends the words of an utterance whose final did not come within finalWait, on the
-// words as they stand.
+// words as they stand, or whose words were settled and no run began within runLead of the
+// voice stopping.
 func (w *spoken) giveUp(c *cut) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.cut != c {
+	if w.cut != c || time.Now().Before(c.until) {
 		return
 	}
 	settled := "none"
-	if strings.TrimSpace(w.open) != "" {
+	switch {
+	case strings.TrimSpace(w.open) != "":
 		w.spent, settled = w.run, "partial"
+	case len(w.settled) > 0:
+		settled = "settled"
 	}
 	w.deliverLocked(c, settled)
 }
