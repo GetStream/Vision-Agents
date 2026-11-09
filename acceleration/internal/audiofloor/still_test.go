@@ -15,7 +15,7 @@ import (
 // one before have answered, so that a check's answer comes at the frame it was asked at, as it
 // nearly does on a call, where a frame takes 20 ms and a check about as long. It returns the
 // final, if one came, and how far into the frames it came.
-func (s *PausesSuite) holding(ms int, voiced bool) (stt.Transcript, time.Duration, bool) {
+func (s *transcribing) holding(ms int, voiced bool) (stt.Transcript, time.Duration, bool) {
 	s.T().Helper()
 	for sent := 0; sent < ms; sent += 20 {
 		s.say(20, voiced)
