@@ -344,8 +344,8 @@ func (s *AgentSuite) TestAReplyStartedBeforeTheRulingIsDroppedTheSameWay() {
 	s.mutters(nash, "wait no")
 
 	s.eventually(func() bool { return s.model.abandoned(two) }, "the early reply kept going")
-	s.Equal(1, len(s.model.requests()), "the early reply was the one answering")
-	s.Equal(1, len(s.flow.requests()), "words that drop a reply are not also put to the controller")
+	s.Len(s.model.requests(), 1, "the early reply was the one answering")
+	s.Len(s.flow.requests(), 1, "words that drop a reply are not also put to the controller")
 	s.oneDropSince(dropped)
 }
 
