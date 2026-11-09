@@ -52,7 +52,8 @@ func (m redisMetrics) measure(client rueidis.Client, name string) rueidis.Client
 }
 
 // measured records the round trips of Do and DoMulti, the calls this router makes on these
-// connections. A subscription's Dedicated or Receive lasts as long as it is held, which is no
+// connections. A call whose context is done before it starts never reaches Redis, so it is not
+// recorded. A subscription's Dedicated or Receive lasts as long as it is held, which is no
 // latency, so those pass through.
 type measured struct {
 	rueidis.Client
@@ -61,6 +62,9 @@ type measured struct {
 }
 
 func (m *measured) Do(ctx context.Context, cmd rueidis.Completed) rueidis.RedisResult {
+	if ctx.Err() != nil {
+		return m.Client.Do(ctx, cmd)
+	}
 	start := time.Now()
 	result := m.Client.Do(ctx, cmd)
 	m.record(start, result.Error())
@@ -68,6 +72,9 @@ func (m *measured) Do(ctx context.Context, cmd rueidis.Completed) rueidis.RedisR
 }
 
 func (m *measured) DoMulti(ctx context.Context, cmds ...rueidis.Completed) []rueidis.RedisResult {
+	if ctx.Err() != nil {
+		return m.Client.DoMulti(ctx, cmds...)
+	}
 	start := time.Now()
 	results := m.Client.DoMulti(ctx, cmds...)
 	var failed error
@@ -88,7 +95,13 @@ func (m *measured) record(start time.Time, err error) {
 }
 
 // isFailure reports whether err says Redis failed. A missing key is an answer, and a caller
-// that cancelled, such as a request whose client hung up, says nothing of Redis.
+// that cancelled, such as a request whose client hung up, says nothing of Redis. A NOSCRIPT
+// reply is the script cache asking for the script again, which rueidis sends and answers the
+// caller with.
 func isFailure(err error) bool {
-	return err != nil && !rueidis.IsRedisNil(err) && !errors.Is(err, context.Canceled)
+	if err == nil || rueidis.IsRedisNil(err) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	redisErr, ok := rueidis.IsRedisErr(err)
+	return !ok || !redisErr.IsNoScript()
 }

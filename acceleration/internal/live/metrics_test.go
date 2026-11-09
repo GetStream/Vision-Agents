@@ -131,6 +131,66 @@ func (s *LiveSuite) TestAnErrorReplyIsAnErrorWhereverItIsInAPipeline() {
 	s.Equal(2.0, s.redisSeries(client)["router_redis_command_errors_total shared"])
 }
 
+func (s *LiveSuite) TestAnErrorReplyBeforeAMissingKeyIsAnError() {
+	client := s.measuredClient(Options{Address: os.Getenv(AddressEnvVar)})
+	redis := client.Redis()
+	word := "metrics-" + rand.Text()
+	s.Require().NoError(redis.Do(s.ctx, redis.B().Set().Key(word).Value("not a number").Px(time.Minute).Build()).Error())
+
+	results := redis.DoMulti(s.ctx, redis.B().Incr().Key(word).Build(), redis.B().Get().Key("metrics-"+rand.Text()).Build())
+
+	s.Require().Error(results[0].Error())
+	s.Require().True(rueidis.IsRedisNil(results[1].Error()))
+	s.Equal(1.0, s.redisSeries(client)["router_redis_command_errors_total shared"])
+}
+
+func (s *LiveSuite) TestACommandRedisDoesNotAnswerInTimeIsAnError() {
+	client := s.measuredClient(Options{Address: os.Getenv(AddressEnvVar)})
+	redis := client.Redis()
+	bounded, cancel := context.WithTimeout(s.ctx, 100*time.Millisecond)
+	defer cancel()
+
+	s.Require().ErrorIs(redis.Do(bounded, redis.B().Blpop().Key("metrics-"+rand.Text()).Timeout(1).Build()).Error(), context.DeadlineExceeded)
+
+	series := s.redisSeries(client)
+	s.Equal(1.0, series["router_redis_command_errors_total shared"])
+	s.Equal(1.0, series["router_redis_command_seconds shared"])
+}
+
+func (s *LiveSuite) TestACommandWhoseContextIsDoneBeforeTheCallIsNotRecorded() {
+	client := s.measuredClient(Options{Address: os.Getenv(AddressEnvVar)})
+	redis := client.Redis()
+	expired, cancelExpired := context.WithDeadline(s.ctx, time.Now().Add(-time.Second))
+	defer cancelExpired()
+	cancelled, cancel := context.WithCancel(s.ctx)
+	cancel()
+
+	for _, ctx := range []context.Context{expired, cancelled} {
+		s.Require().Error(redis.Do(ctx, redis.B().Get().Key("metrics-"+rand.Text()).Build()).Error())
+		for _, result := range redis.DoMulti(ctx, redis.B().Get().Key("metrics-"+rand.Text()).Build()) {
+			s.Require().Error(result.Error())
+		}
+	}
+
+	s.Equal(map[string]float64{
+		"router_redis_command_seconds shared":      0,
+		"router_redis_command_errors_total shared": 0,
+	}, s.redisSeries(client))
+}
+
+func (s *LiveSuite) TestAScriptRueidisSendsAgainAfterNoScriptIsNoError() {
+	client := s.measuredClient(Options{Address: os.Getenv(AddressEnvVar)})
+	redis := client.Redis()
+	script := rueidis.NewLuaScript("return ARGV[1]")
+	s.Require().NoError(redis.Do(s.ctx, redis.B().ScriptFlush().Build()).Error())
+
+	got, err := script.Exec(s.ctx, redis, nil, []string{"ok"}).ToString()
+
+	s.Require().NoError(err)
+	s.Equal("ok", got)
+	s.Zero(s.redisSeries(client)["router_redis_command_errors_total shared"])
+}
+
 func (s *LiveSuite) TestACommandItsCallerCancelledIsNoError() {
 	client := s.measuredClient(Options{Address: os.Getenv(AddressEnvVar)})
 	redis := client.Redis()
