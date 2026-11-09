@@ -24,10 +24,13 @@ class ConnectionCredentials:
             expected_revision (int): The connection's revision as last read. A connection that has moved past it is refused
                 with a 409, so two writers never replace each other's credentials unseen.
             values (ConnectionCredentialsValues | Unset): What the connection's auth_scheme takes, write-only. api_key:
-                api_key and header. bearer: token. none: nothing, which activates the connection. oauth2_client_credentials:
-                client_id and client_secret, which are tried at the token endpoint at once. oauth2_code: a grant the provider
-                already issued, as access_token, refresh_token (optional), expires_at (RFC 3339) and scope (the granted scopes
-                joined as the connector's scopes are); its endpoints and client are the connector's, never the caller's.
+                api_key and header. bearer: token. none: nothing, which activates the connection. github_app: app_id (the app's
+                id or client id), private_key (its PEM) and installation_id, and optionally permissions (a JSON object of
+                permission to read, write or admin) and repositories (names, comma-separated) to narrow its tokens; a token is
+                minted and one repository listed with it at once. oauth2_client_credentials: client_id and client_secret, which
+                are tried at the token endpoint at once. oauth2_code: a grant the provider already issued, as access_token,
+                refresh_token (optional), expires_at (RFC 3339) and scope (the granted scopes joined as the connector's scopes
+                are); its endpoints and client are the connector's, never the caller's.
     """
 
     expected_revision: int
