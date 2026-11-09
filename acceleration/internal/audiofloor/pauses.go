@@ -456,7 +456,8 @@ func (t *Transcriber) checkOver(asker Asker, c overCheck) {
 		return
 	}
 	turn.ParticipantID, turn.Audio, turn.Unfinished = c.participant.ID, c.audio, true
-	ctx, cancel := context.WithTimeout(t.ctx, t.client.HearDeadline(turn))
+	deadline := t.client.HearDeadline(turn)
+	ctx, cancel := context.WithTimeout(t.ctx, deadline)
 	defer cancel()
 	var said <-chan Words
 	checked, err := func() (Check, error) {
@@ -472,7 +473,7 @@ func (t *Transcriber) checkOver(asker Asker, c overCheck) {
 		}
 		return asker.Hearer().rule(policy, turn, answer)
 	}()
-	t.checked(err)
+	t.checked(err, deadline, c.participant)
 	checks.WithLabelValues(outcome(err)).Inc()
 	if err == nil {
 		checkSeconds.Observe(time.Since(c.asked).Seconds())
@@ -557,7 +558,8 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 	// no p_eot to count.
 	turn.ParticipantID = c.participant.ID
 	turn.Audio, turn.Paused, turn.FirstPause, turn.Waited = c.audio, c.paused, c.firstPause, c.counted
-	ctx, cancel := context.WithTimeout(t.ctx, harness.HearDeadline(turn))
+	deadline := harness.HearDeadline(turn)
+	ctx, cancel := context.WithTimeout(t.ctx, deadline)
 	defer cancel()
 	var said <-chan Words
 	var policy Policy
@@ -580,7 +582,7 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 		}
 		return asker.Hearer().rule(policy, turn, answer)
 	}()
-	t.checked(err)
+	t.checked(err, deadline, c.participant)
 	checks.WithLabelValues(outcome(err)).Inc()
 	if err == nil {
 		checkSeconds.Observe(time.Since(c.asked).Seconds())

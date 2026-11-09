@@ -1883,10 +1883,12 @@ func (a *Agent) transcribed(typed stt.Transcript, count func(stt.Transcript)) {
 // consumeFloor feeds the utterances a floor of chorus-asr's own ended (audioFloor.rules) to
 // the cadence controller, as chorus-asr's transcriber's are fed it: the words so far as
 // interims, and each utterance's final once its words are settled, with the ruling that
-// ended it. A floor that steps aside, its server down for the call, leaves the turns to the
-// transcriber that writes the words, and the contract with them (actsOnChorusASR).
+// ended it. A floor that steps aside, its server down, leaves the turns to the transcriber
+// that writes the words, and the contract with them (actsOnChorusASR), until it says it rules
+// again (stt.Connected after it stepped aside).
 func (a *Agent) consumeFloor(participantID string, floor *audiofloor.Transcriber) {
 	defer a.running.Done()
+	var asideSince time.Time
 	for event := range floor.Events() {
 		switch typed := event.(type) {
 		case stt.Transcript:
@@ -1898,9 +1900,19 @@ func (a *Agent) consumeFloor(participantID string, floor *audiofloor.Transcriber
 			if typed.Clean {
 				continue
 			}
+			asideSince = typed.At
 			a.pausesAsked.Store(false)
 			a.logger.Warn("chorus-asr no longer rules on a participant's floor, the transcriber writing the words ends their turns",
 				"participant", participantID, "reason", typed.Reason)
+		case stt.Connected:
+			// The floor's first Connected is its start: only one after it stepped aside is news.
+			if asideSince.IsZero() {
+				continue
+			}
+			a.pausesAsked.Store(true)
+			a.logger.Info("chorus-asr rules on a participant's floor again",
+				"participant", participantID, "out_ms", typed.At.Sub(asideSince).Milliseconds())
+			asideSince = time.Time{}
 		}
 	}
 }

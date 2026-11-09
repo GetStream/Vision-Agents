@@ -243,7 +243,8 @@ func (t *Transcriber) checkHeld(asker Asker, c heldCheck) {
 		return
 	}
 	turn.ParticipantID, turn.Audio, turn.Paused = c.participant.ID, c.audio, c.paused
-	ctx, cancel := context.WithTimeout(t.ctx, harness.HearDeadline(turn))
+	deadline := harness.HearDeadline(turn)
+	ctx, cancel := context.WithTimeout(t.ctx, deadline)
 	defer cancel()
 	var said <-chan Words
 	checked, err := func() (Check, error) {
@@ -258,7 +259,7 @@ func (t *Transcriber) checkHeld(asker Asker, c heldCheck) {
 		}
 		return asker.Hearer().ruleStill(policy, answer)
 	}()
-	t.checked(err)
+	t.checked(err, deadline, c.participant)
 	checks.WithLabelValues(outcome(err)).Inc()
 	if err != nil {
 		t.logHeld(c, checked, 0, "", err)

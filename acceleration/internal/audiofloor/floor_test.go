@@ -433,3 +433,173 @@ func (s *FloorSuite) TestARunBegunJustBeforeTheVoiceStoppedIsWaitedFor() {
 	end := s.final()
 	s.Equal("Two tickets. to Bilbao.", end.Text)
 }
+
+// stepAside has the server answer no check for failoverWindow, by the floor's clock, so that the
+// floor steps aside, and returns what it said as it did, at once.
+func (s *FloorSuite) stepAside() stt.Disconnected {
+	s.T().Helper()
+	clock := time.Now()
+	var mu sync.Mutex
+	s.transcriber.now = func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return clock
+	}
+	s.server.mu.Lock()
+	s.server.failDecide = true
+	s.server.mu.Unlock()
+	for i := range failoverAfter {
+		s.say(600, true)
+		s.say(220, false)
+		s.answered()
+		if i < failoverAfter-1 {
+			s.say(2600, false)
+		}
+		mu.Lock()
+		clock = clock.Add(failoverWindow / 2)
+		mu.Unlock()
+	}
+	gone := next[stt.Disconnected](&s.transcribing)
+	s.Require().False(gone.Clean)
+	return gone
+}
+
+// rulesAgain has the server answer decisions again, and the caller stay quiet until the floor
+// takes the floor back, which it says.
+func (s *FloorSuite) rulesAgain() {
+	s.T().Helper()
+	s.server.mu.Lock()
+	s.server.failDecide = false
+	s.server.mu.Unlock()
+	s.Require().Eventually(func() bool {
+		s.say(100, false)
+		return !s.transcriber.stepped.Load()
+	}, 5*time.Second, time.Millisecond, "the floor never took the floor back")
+	back := next[stt.Connected](&s.transcribing)
+	s.Equal(ProviderName, back.Provider)
+}
+
+// decidedSince is when each decision asked for after at was.
+func (s *FloorSuite) decidedSince(at time.Time) []time.Time {
+	s.server.mu.Lock()
+	defer s.server.mu.Unlock()
+	var out []time.Time
+	for _, asked := range s.server.decidesAt {
+		if asked.After(at) {
+			out = append(out, asked)
+		}
+	}
+	return out
+}
+
+// A floor whose server stalled past the window steps aside, asks the server again meanwhile,
+// and once it answers takes the floor back at the caller's next quiet moment: the words are its
+// own again, and its checks end their turns, not the other transcriber.
+func (s *FloorSuite) TestAFloorThatSteppedAsideTakesTheFloorBackOnceItsServerAnswers() {
+	s.transcriber.probeFirst, s.transcriber.probeCap = 20*time.Millisecond, 80*time.Millisecond
+	s.stepAside()
+	s.False(s.writes(9, stt.ModeReplacement, "hello"), "the words are the listener's while it stands aside")
+	s.False(s.writes(9, stt.ModeFinal, "Hello."))
+	s.rulesAgain()
+
+	s.say(1000, true)
+	s.True(s.writes(10, stt.ModeReplacement, "Two tickets"), "the words are the floor's again")
+	s.True(s.writes(10, stt.ModeFinal, "Two tickets to Bilbao, please."))
+	s.say(220, false)
+	end := s.final()
+	s.Equal("Two tickets to Bilbao, please.", end.Text, "only what was said since it took the floor back")
+	s.True(end.Floor, "the floor ended the turn")
+	rulings := s.agent.rulings()
+	s.Require().NotEmpty(rulings)
+	s.True(rulings[len(rulings)-1].Ended, "a check's ruling ended it")
+}
+
+// One that has a run open at the other transcriber when the server answers again asks it to
+// settle the run, and takes the floor back only once it has.
+func (s *FloorSuite) TestAFloorTakesTheFloorBackOnlyWithNothingOpenAtTheOtherTranscriber() {
+	s.transcriber.probeFirst, s.transcriber.probeCap = 20*time.Millisecond, 80*time.Millisecond
+	s.stepAside()
+	asked := s.askedForFinals()
+	s.False(s.writes(9, stt.ModeReplacement, "and one more"))
+	s.server.mu.Lock()
+	s.server.failDecide = false
+	s.server.mu.Unlock()
+	s.Eventually(func() bool {
+		s.say(100, false)
+		return s.askedForFinals() > asked
+	}, 5*time.Second, time.Millisecond, "the other transcriber was not asked to settle its run")
+	s.say(1000, false)
+	s.True(s.transcriber.stepped.Load(), "not with a run open")
+	s.False(s.writes(9, stt.ModeFinal, "And one more."))
+	s.rulesAgain()
+}
+
+// A server that never comes back keeps the floor aside: it is asked again at waits that double
+// up to probeCap, and not at all once the session closes.
+func (s *FloorSuite) TestAFloorWhoseServerStaysDownIsAskedLessOftenAndNotAfterClose() {
+	s.transcriber.probeFirst, s.transcriber.probeCap = 20*time.Millisecond, 80*time.Millisecond
+	s.stepAside()
+	aside := time.Now()
+	time.Sleep(450 * time.Millisecond)
+	s.say(1000, false)
+	s.True(s.transcriber.stepped.Load(), "still aside")
+	s.False(s.writes(9, stt.ModeReplacement, "hello"))
+	probes := s.decidedSince(aside)
+	s.Require().GreaterOrEqual(len(probes), 3, "asked again: %v", probes)
+	for i := 1; i < len(probes); i++ {
+		s.GreaterOrEqual(probes[i].Sub(probes[i-1]), s.transcriber.probeFirst-5*time.Millisecond, "never sooner than the first wait: %v", probes)
+	}
+	s.GreaterOrEqual(probes[len(probes)-1].Sub(probes[len(probes)-2]), s.transcriber.probeCap-5*time.Millisecond,
+		"the waits doubled up to the cap: %v", probes)
+
+	s.Require().NoError(s.transcriber.Close())
+	closed := time.Now()
+	time.Sleep(250 * time.Millisecond)
+	s.Empty(s.decidedSince(closed), "nothing asked once the session closed")
+}
+
+// A check over the agent that runs out of its short deadline says the server took longer than
+// that, not that it is down: however many there are, the floor does not step aside.
+func (s *FloorSuite) TestChecksOverTheAgentOutOfTheirShortDeadlineDoNotMakeTheFloorStepAside() {
+	clock := time.Now()
+	var mu sync.Mutex
+	s.transcriber.now = func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return clock
+	}
+	s.agent.mu.Lock()
+	s.agent.speaking = true
+	s.agent.mu.Unlock()
+	s.server.mu.Lock()
+	s.server.unfinishedAfter = 400 * time.Millisecond
+	s.server.mu.Unlock()
+	// The audio goes faster than it is said: each check over the agent is given the time to run
+	// out of its deadline before the caller says more.
+	for range 10 {
+		s.say(320, true)
+		time.Sleep(300 * time.Millisecond)
+		mu.Lock()
+		clock = clock.Add(failoverWindow / 4)
+		mu.Unlock()
+	}
+	s.GreaterOrEqual(len(s.decidedSince(time.Time{})), failoverAfter+2, "checks over the agent were asked")
+	time.Sleep(300 * time.Millisecond)
+	s.False(s.transcriber.stepped.Load(), "the floor stands")
+	s.True(s.writes(1, stt.ModeReplacement, "wait"), "the words are still the floor's")
+}
+
+// A floor that took the floor back steps aside again if the server stalls again, and asks it
+// again after a wait that goes on from the last, rather than starting over.
+func (s *FloorSuite) TestAFloorThatRelapsesStepsAsideAgainAndWaitsLonger() {
+	first := 40 * time.Millisecond
+	s.transcriber.probeFirst, s.transcriber.probeCap = first, 400*time.Millisecond
+	s.stepAside()
+	s.rulesAgain()
+
+	// The first wait was at least probeFirst, so the next is at least twice it.
+	aside := s.stepAside().At
+	s.Require().Eventually(func() bool { return len(s.decidedSince(aside)) > 0 }, 5*time.Second, time.Millisecond, "asked again")
+	s.GreaterOrEqual(s.decidedSince(aside)[0].Sub(aside), 2*first-5*time.Millisecond, "the wait goes on from the last")
+	s.rulesAgain()
+}
