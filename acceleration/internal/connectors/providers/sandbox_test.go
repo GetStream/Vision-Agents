@@ -28,10 +28,11 @@ func TestSandboxSuite(t *testing.T) {
 // (https://docs.github.com/en/graphql/guides/forming-calls-with-graphql). Revision 10 keeps them.
 // From revision 11 git lfs pull reads with a POST of downloads to the LFS batch API
 // (https://github.com/git-lfs/git-lfs/blob/main/docs/api/batch.md), and fetches the objects from
-// the host its answer names, which gets no token.
+// the host its answer names, which gets no token. Revision 12 adds github_app, which gets the
+// same block.
 func (s *SandboxSuite) TestGitHubGivesASandboxItsTokenForTheRESTAPIAndGitHosts() {
 	github := s.manifest("github")
-	s.Equal(11, github.Revision)
+	s.Equal(12, github.Revision)
 
 	for _, scheme := range github.Schemes {
 		resolved, err := github.Resolve(scheme, nil, nil)
@@ -54,7 +55,7 @@ func (s *SandboxSuite) TestGitHubsReadsNeedNoReconnect() {
 	s.Require().NoError(err)
 	before, _, found := strings.Cut(string(raw), "  reads:\n")
 	s.Require().True(found)
-	seven, err := core.ParseManifest([]byte(strings.Replace(before, "revision: 11\n", "revision: 7\n", 1)))
+	seven, err := core.ParseManifest([]byte(strings.Replace(before, "revision: 12\n", "revision: 7\n", 1)))
 	s.Require().NoError(err)
 	s.Equal(7, seven.Revision)
 	s.Nil(seven.Sandbox.Reads)

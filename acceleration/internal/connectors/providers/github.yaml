@@ -28,6 +28,10 @@
 # Opened October 22, 2026:
 #   [remotes] https://docs.github.com/en/get-started/git-basics/about-remote-repositories
 #   [install] https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation
+# Opened November 9, 2026:
+#   [mint]    https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app
+#   [ghs]     https://github.com/github/github-mcp-server/issues/696 («You can now use `ghs_` tokens
+#             to authorize against remote MCP server», a maintainer, 2025-08-27)
 # And the servers' own metadata, fetched on October 2, 2026 («[prm]» and «[as]»):
 #   [prm] GET https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/ at
 #         2026-10-02T21:06:34Z: resource https://api.githubcopilot.com/mcp/,
@@ -52,8 +56,8 @@ id: github
 # broker code in the sandbox reads only, and git clone and fetch read with a POST. 9 adds the
 # GraphQL endpoint as a read of queries alone, so gh reads through it. 10 lists the tools that
 # only read. 11 adds Git LFS's batch API as a read of downloads alone, so git lfs pull reads
-# through it.
-revision: 11
+# through it. 12 adds github_app, so an app-owned connection acts as a GitHub App installation.
+revision: 12
 # [proto]:78-80
 name: GitHub
 category: Developer tools
@@ -98,7 +102,17 @@ endpoints:
 # the client, scopes, refresh or issuer below: they are oauth2_code's. A token learns no
 # account, since this manifest has no identity. A connection that names no scheme still gets
 # oauth2_code, its one scheme that is not static (api.defaultScheme).
-schemes: [oauth2_code, bearer]
+# github_app is a GitHub App acting as one of its installations: it signs an app JWT with the
+# app's private key and mints an installation token at api_base ([mint]), an hour long, and
+# mints another before it expires. It reads none of the client, scopes, refresh or issuer
+# below either. The token goes as «Authorization: Bearer» to api_base ([install]: «use the
+# installation access token in the Authorization header») and to the MCP server ([ghs]; an
+# initialize with a made-up ghs_ token at 2026-11-09 got 401 «token authentication failed», as
+# a made-up ghp_ one did, where #696 reported 400 «badly formatted» before the change), and
+# as git's Basic password to github.com ([install]: «git clone
+# https://x-access-token:TOKEN@github.com/owner/repo.git»), so the sandbox block below takes it
+# as it is. It is static (core.Static), so the default above stays oauth2_code.
+schemes: [oauth2_code, bearer, github_app]
 client:
   # A GitHub App or an OAuth App registered ahead of time: «Dynamic Client Registration is
   # NOT supported by Remote GitHub MCP Server at this time» ([host]), and [as] has neither a

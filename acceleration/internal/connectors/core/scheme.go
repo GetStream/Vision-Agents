@@ -44,8 +44,8 @@ type Scheme interface {
 }
 
 // Static is a Scheme whose stored credentials are a token or key the developer supplied (PUT
-// /v1/agents/connections/{id}/credentials), handed out as they are and never renewed, such as
-// a personal access token. Nobody consents to one, so a credential the provider rejects is
+// /v1/agents/connections/{id}/credentials), such as a personal access token handed out as it
+// is, or a private key the scheme mints short-lived tokens from (github_app). Nobody consents to one, so a credential the provider rejects is
 // fixed only by supplying another, never by a consent (AI-990). It is optional: a scheme that
 // does not implement it is not static.
 type Static interface {

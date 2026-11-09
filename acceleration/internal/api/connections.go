@@ -375,14 +375,16 @@ func (s *Server) createConnection(ctx context.Context, request *createConnection
 // defaultScheme is the scheme a connection to m gets when nobody names one: m's only scheme,
 // or else its only one that is not core.Static. A connector that takes a consent and a static
 // token beside it (github: oauth2_code and bearer, AI-990) so connects by consent, as it did
-// before it took the token. found is false when that leaves none or several.
+// before it took the token. A scheme this deployment does not have is no candidate, so a
+// router built before a manifest's newer scheme still picks the same default. found is false
+// when that leaves none or several.
 func defaultScheme(m core.Manifest, schemes map[string]core.Scheme) (string, bool) {
 	if len(m.Schemes) == 1 {
 		return m.Schemes[0], true
 	}
 	var others []string
 	for _, name := range m.Schemes {
-		if !core.IsStatic(schemes, name) {
+		if _, registered := schemes[name]; registered && !core.IsStatic(schemes, name) {
 			others = append(others, name)
 		}
 	}

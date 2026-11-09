@@ -4,8 +4,13 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
@@ -17,6 +22,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/apikey"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/githubapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2cc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
@@ -39,6 +45,8 @@ type ConnectionToolsSuite struct {
 	// logged is what the router logged, for a test of the credential event lines.
 	logged   *lockedLog
 	provider *fakeprovider.Server
+	// github mints installation tokens for the github_app scheme (gitHubInstallations).
+	github *httptest.Server
 	// token is an access token the fake issued, which its MCP endpoint takes: the value a
 	// bearer connection is given. Synthetic, fresh per suite.
 	token string
@@ -83,8 +91,11 @@ func (s *ConnectionToolsSuite) SetupSuite() {
 	s.Require().NoError(err)
 	clientCredentials, err := oauth2cc.New(oauth2cc.Config{HTTP: s.provider.Client(), PublicEndpoint: loopbackOrPublic})
 	s.Require().NoError(err)
+	s.github = gitHubInstallations(s.T())
+	githubApp, err := githubapp.New(githubapp.Config{HTTP: s.github.Client(), PublicEndpoint: loopbackOrPublic})
+	s.Require().NoError(err)
 	s.connectors = core.Registry{
-		Schemes: map[string]core.Scheme{oauth2code.Name: code, oauth2cc.Name: clientCredentials,
+		Schemes: map[string]core.Scheme{oauth2code.Name: code, oauth2cc.Name: clientCredentials, githubapp.Name: githubApp,
 			bearer.Name: bearer.New(), none.Name: none.New(), apikey.Name: apikey.New()},
 		ToolSources: map[string]core.ToolSource{mcp.Kind: &afterListSource{ToolSource: mcp.New(), suite: s}},
 	}
@@ -196,6 +207,45 @@ func (s *ConnectionToolsSuite) TestAClientCredentialsConnectionIsSetUpWithItsCli
 
 	s.Equal(ConnectionStatus(store.ConnectionConnected), connection.Status)
 	s.Equal(validationConnected, string(s.validate(id).Status))
+}
+
+// TestAGitHubAppConnectionIsSetUpWithItsKeyAndNeverShowsIt: an app-owned github_app
+// connection is created and given the app's id, key and installation; a token is minted with
+// them at once, and no answer carries the key or the token.
+func (s *ConnectionToolsSuite) TestAGitHubAppConnectionIsSetUpWithItsKeyAndNeverShowsIt() {
+	created := s.gitHubAppConnection()
+	key := gitHubAppKey(s.T())
+
+	status, body := s.serverClient.call(http.MethodPut, "/v1/agents/connections/"+created.ID+"/credentials",
+		map[string]any{"expected_revision": 1, "values": map[string]string{
+			githubapp.SuppliedAppID: "4242", githubapp.SuppliedPrivateKey: key, githubapp.SuppliedInstallationID: "1337",
+		}})
+
+	s.Require().Equal(http.StatusOK, status, string(body))
+	var connection Connection
+	s.Require().NoError(json.Unmarshal(body, &connection))
+	s.Equal(ConnectionStatus(store.ConnectionConnected), connection.Status)
+	s.Equal(githubapp.Name, connection.AuthScheme)
+	_, read := s.serverClient.call(http.MethodGet, "/v1/agents/connections/"+created.ID, nil)
+	_, listed := s.serverClient.call(http.MethodGet, "/v1/agents/connections", nil)
+	answers := string(body) + string(read) + string(listed) + s.logged.String()
+	s.NotContains(answers, strings.Split(key, "\n")[3], "no line of the key")
+	s.NotContains(answers, gitHubInstallationToken)
+}
+
+// TestAGitHubAppConnectionToAnInstallationGitHubDoesNotKnowIsRefused: GitHub's answer is the
+// 400's reason, and the connection stays pending.
+func (s *ConnectionToolsSuite) TestAGitHubAppConnectionToAnInstallationGitHubDoesNotKnowIsRefused() {
+	created := s.gitHubAppConnection()
+
+	status, body := s.serverClient.call(http.MethodPut, "/v1/agents/connections/"+created.ID+"/credentials",
+		map[string]any{"expected_revision": 1, "values": map[string]string{
+			githubapp.SuppliedAppID: "4242", githubapp.SuppliedPrivateKey: gitHubAppKey(s.T()), githubapp.SuppliedInstallationID: "99",
+		}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(body), "GitHub answered HTTP 404: Not Found")
+	s.Equal(ConnectionStatus(store.ConnectionPending), s.get(created.ID).Status)
 }
 
 // TestAnImportedGrantConnectsWithTheConnectorsEndpoints: the grant names no endpoint and no
@@ -967,6 +1017,61 @@ func (s *ConnectionToolsSuite) connection(scheme string) string {
 	var created Connection
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", appOwned(s.connector(scheme, "")), &created))
 	return created.ID
+}
+
+// gitHubAppConnection is a pending app-owned github_app connection to a connector whose
+// api_base is the suite's GitHub.
+func (s *ConnectionToolsSuite) gitHubAppConnection() Connection {
+	id := "custom_tools" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	manifest, err := core.ParseManifest([]byte("id: " + id + "\nrevision: 1\nname: Fake GitHub\nendpoints:\n  api_base: " +
+		s.github.URL + "\n  mcp: " + s.provider.URL + fakeprovider.PathMCP + "\nschemes: [" + githubapp.Name + "]\nsources:\n  - kind: mcp\n    endpoint: mcp\n"))
+	s.Require().NoError(err)
+	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
+	s.Require().NoError(err)
+	request := appOwned(id)
+	request["auth_scheme"] = githubapp.Name
+	var created Connection
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/connections", request, &created))
+	return created
+}
+
+// gitHubInstallationToken is the one token gitHubInstallations mints. Synthetic.
+const gitHubInstallationToken = "ghs_suiteInstallationToken0123456789"
+
+// gitHubInstallations is a GitHub that mints gitHubInstallationToken for installation 1337,
+// whatever app JWT it is sent (githubapp's own suite verifies the JWT), answers 404 for any
+// other, and lists a repository for that token.
+func gitHubInstallations(t *testing.T) *httptest.Server {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /app/installations/{id}/access_tokens", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.PathValue("id") != "1337" {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]string{"token": gitHubInstallationToken, "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)})
+	})
+	mux.HandleFunc("GET /installation/repositories", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+gitHubInstallationToken {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"total_count":1,"repositories":[{"name":"hello"}]}`))
+	})
+	server := httptest.NewTLSServer(mux)
+	t.Cleanup(server.Close)
+	return server
+}
+
+// gitHubAppKey is a throwaway app key as GitHub hands one out, PKCS#1 PEM.
+func gitHubAppKey(t *testing.T) string {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
 }
 
 // connected is a bearer connection given the fake's token, at revision 2.

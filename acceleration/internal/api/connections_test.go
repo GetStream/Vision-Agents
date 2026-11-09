@@ -360,11 +360,12 @@ func (s *ConnectionsSuite) TestAConnectorWithSeveralSchemesNeedsOneNamed() {
 }
 
 // TestGitHubTakesAPersonalAccessTokenBesideAConsent: github's built-in lists bearer beside
-// oauth2_code (AI-990). A connection that names no scheme still gets oauth2_code, as when it
-// was github's only one, since bearer is a static token; one that names bearer takes a token.
+// oauth2_code (AI-990), and github_app from revision 12. A connection that names no scheme still
+// gets oauth2_code, as when it was github's only one, since bearer is a static token and this
+// suite's router has no github_app; one that names bearer takes a token.
 func (s *ConnectionsSuite) TestGitHubTakesAPersonalAccessTokenBesideAConsent() {
 	github := s.connector("github")
-	s.Equal([]string{"oauth2_code", bearer.Name}, github.Schemes)
+	s.Equal([]string{"oauth2_code", bearer.Name, "github_app"}, github.Schemes)
 	sent := appOwned("github")
 	sent["auth_scheme"] = bearer.Name
 

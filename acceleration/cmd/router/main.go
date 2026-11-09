@@ -44,6 +44,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/apikey"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/githubapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/none"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2cc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
@@ -443,14 +444,14 @@ func readKeyring(ctx context.Context, settings config.Config, unwrapper kekUnwra
 	return auth.NewSealerWithKeyring(current, keys)
 }
 
-// connectorHTTPTimeout bounds one outbound request oauth2_code or oauth2_client_credentials
-// makes: a discovery fetch, a client registration, a code exchange or a token request. 10 s is the prototype's (defaultHTTPClient in
+// connectorHTTPTimeout bounds one outbound request oauth2_code, oauth2_client_credentials or
+// github_app makes: a discovery fetch, a client registration, a code exchange or a token request. 10 s is the prototype's (defaultHTTPClient in
 // internal/mcp/oauth.go on codex/connector-support at cf62af0d), not a measured one.
 const connectorHTTPTimeout = 10 * time.Second
 
 // newConnectorRegistry is the connector adapters this deployment has: none when connectors
 // are off, so no connection and no custom connector can name a scheme, and oauth2_code,
-// oauth2_client_credentials, api_key, bearer and none when they are on. A new scheme is one more entry in the list
+// oauth2_client_credentials, github_app, api_key, bearer and none when they are on. A new scheme is one more entry in the list
 // below. It follows the sealer: without a keyring no attempt or grant can be sealed,
 // so a scheme registered without one would take connections nothing could ever authorize.
 //
@@ -471,8 +472,12 @@ func newConnectorRegistry(settings config.Config, clients oauth2code.ClientLooku
 	if err != nil {
 		return core.Registry{}, err
 	}
+	githubApp, err := githubapp.New(githubapp.Config{HTTP: egress.NewClient(connectorHTTPTimeout, nil)})
+	if err != nil {
+		return core.Registry{}, err
+	}
 	schemes := map[string]core.Scheme{}
-	for _, scheme := range []core.Scheme{code, clientCredentials, apikey.New(), bearer.New(), none.New()} {
+	for _, scheme := range []core.Scheme{code, clientCredentials, githubApp, apikey.New(), bearer.New(), none.New()} {
 		schemes[scheme.Name()] = scheme
 	}
 	// The verifiers a manifest's channel.verifier.kind may name; a new one is one more entry.

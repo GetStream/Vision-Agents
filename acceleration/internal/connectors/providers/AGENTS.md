@@ -31,7 +31,7 @@ ROUTER_POSTGRES_DSN='postgres://postgres:postgres@localhost:55432/model_router_t
   go test -tags integration -run 'TestStoreSuite|TestOpenStoreSuite' ./internal/store ./cmd/router
 ```
 
-`github` also takes a personal access token by `bearer` (revision 3, AI-990). A live check against GitHub, with the token from the environment only and never printed; it skips without one, and CI sets none:
+`github` also takes a personal access token by `bearer` (revision 3, AI-990). From revision 12 it takes `github_app` too, an app-owned connection acting as a GitHub App installation (`schemes/githubapp/AGENTS.md`); its live check is `TestGitHubAppLiveSuite`, below the PAT's. A live check against GitHub, with the token from the environment only and never printed; it skips without one, and CI sets none:
 
 ```bash
 E2E_GITHUB_PAT=... go test -tags integration -run TestGitHubLiveSuite ./internal/connectors/providers
