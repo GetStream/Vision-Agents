@@ -1,6 +1,6 @@
 import Testing
 
-@testable import VisionAgentsCore
+@testable import StreamAgents
 
 /// The windows of thinking the router puts on a reply's live updates, as `reasoningWindow` in
 /// `acceleration/internal/conversation/reasoning.go` writes them.

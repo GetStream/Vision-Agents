@@ -3,7 +3,7 @@ import StreamChat
 
 private let kind = "chat"
 
-extension VisionAgents {
+extension StreamAgents {
     /// Hands over the app's own Stream Chat client, so every conversation opens on it rather
     /// than on a second one. Connecting it, as the user `setUser` named, stays the app's job,
     /// and `disconnect` leaves it alone.

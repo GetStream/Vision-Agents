@@ -85,7 +85,7 @@ What each ships:
 
 * JS: one package, `@stream-io/calypso`, for Node and the browser, with chat and video as its `chat` and
   `video` entry points over the optional peers `stream-chat` and `@stream-io/video-client`.
-* Swift: one package, `core` (`VisionAgentsCore`), with voice and chat in it. Its views are Stream Chat's AI
+* Swift: one package, `core` (`StreamAgents`), with voice and chat in it. Its views are Stream Chat's AI
   components (`StreamChatAI`).
 * Kotlin: one module, `core` (`io.getstream.visionagents.android.core`), with voice and chat in it. Its views
   are Stream Chat's AI components (`stream-chat-android-ai-compose`).

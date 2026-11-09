@@ -142,7 +142,7 @@ enum Wikipedia {
               let url = URL(string: "https://en.wikipedia.org/api/rest_v1/page/summary/" + encoded)
         else { return nil }
         var request = URLRequest(url: url)
-        request.setValue("SwiftAssistant/1.0 (Stream Vision Agents example)", forHTTPHeaderField: "User-Agent")
+        request.setValue("SwiftAssistant/1.0 (Stream Agents example)", forHTTPHeaderField: "User-Agent")
         guard let (data, _) = try? await URLSession.shared.data(for: request),
               let summary = try? JSONDecoder().decode(Summary.self, from: data)
         else { return nil }

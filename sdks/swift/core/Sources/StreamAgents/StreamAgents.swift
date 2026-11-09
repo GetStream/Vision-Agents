@@ -99,7 +99,7 @@ public struct SessionOptions: Sendable {
 ///
 /// A few lines get a conversation going:
 ///
-///     let agents = VisionAgents(apiKey: "your_api_key")
+///     let agents = StreamAgents(apiKey: "your_api_key")
 ///     agents.setUser(User(id: "jlahey")) { try await yourBackend.agentToken() }
 ///     let session = try await agents.agent("myagent").sessions.create()
 ///     let turn = try await session.responses.create("Where is order 1042?")
@@ -109,7 +109,7 @@ public struct SessionOptions: Sendable {
 /// lets a device do. What an agent is configured as and a token to join a call with are
 /// server-side only: they belong to a backend, which has the Go or the Python SDK, and which
 /// hands down what the app needs.
-public struct VisionAgents: Sendable {
+public struct StreamAgents: Sendable {
     public let backend: Backend
 
     public init(apiKey: String, url: URL = Backend.defaultURL, urlSession: URLSession = .shared) {
@@ -342,7 +342,7 @@ public struct Agent: Sendable {
     /// This agent's conversations: opening one names it, and listing is narrowed to it.
     public let sessions: Sessions
 
-    init(agents: VisionAgents, name: String) {
+    init(agents: StreamAgents, name: String) {
         self.name = name
         sessions = Sessions(agents: agents, agent: name)
     }
@@ -353,10 +353,10 @@ public struct Agent: Sendable {
 /// From `Agent.sessions` every call is about that agent: opening names it, and listing is
 /// narrowed to it.
 public struct Sessions: Sendable {
-    private let agents: VisionAgents
+    private let agents: StreamAgents
     private let agent: String?
 
-    init(agents: VisionAgents, agent: String?) {
+    init(agents: StreamAgents, agent: String?) {
         self.agents = agents
         self.agent = agent
     }

@@ -4,7 +4,7 @@ import StreamVideo
 
 private let kind = "video"
 
-extension VisionAgents {
+extension StreamAgents {
     /// Hands over the app's own Stream Video client, so every call is joined on it.
     ///
     /// An app with a `StreamVideo` of its own must hand it over: building another makes that
@@ -49,7 +49,7 @@ public final class VoiceSession: ObservableObject {
     /// Passes the conversation's changes on as this one's.
     private var following: AnyCancellable?
 
-    private let agents: VisionAgents
+    private let agents: StreamAgents
     /// True when this device called `start`, false when it attached to a session something
     /// else started. Leaving closes only a session this device owns.
     private let createdLocally: Bool
@@ -59,7 +59,7 @@ public final class VoiceSession: ObservableObject {
     /// Starts an agent on the new session's own call, `agent:<session id>`, and prepares to
     /// join it.
     public static func start(
-        agents: VisionAgents,
+        agents: StreamAgents,
         agent: String? = nil,
         tools: [AgentTool] = []
     ) async throws -> VoiceSession {
@@ -73,7 +73,7 @@ public final class VoiceSession: ObservableObject {
     /// addresses. A session this device did not open is not found, since reading one is
     /// reading a conversation.
     public static func attach(
-        agents: VisionAgents,
+        agents: StreamAgents,
         sessionID: String,
         tools: [AgentTool] = []
     ) async throws -> VoiceSession {
@@ -81,7 +81,7 @@ public final class VoiceSession: ObservableObject {
         return VoiceSession(agents: agents, session: session, createdLocally: false)
     }
 
-    private init(agents: VisionAgents, session: AgentSession, createdLocally: Bool) {
+    private init(agents: StreamAgents, session: AgentSession, createdLocally: Bool) {
         self.agents = agents
         self.session = session
         self.createdLocally = createdLocally

@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import VisionAgentsCore
+@testable import StreamAgents
 
 /// The frames in both directions, checked against what the router actually writes and reads.
 @Suite struct WireTests {
