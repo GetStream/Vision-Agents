@@ -1,6 +1,6 @@
 name: crew_assistant
 description: Crew, the assistant a restaurant's team members talk to from their phone.
-llm: gemini/gemini-3.8-flash
+llm: xai/grok-4.7
 stt: deepgram/flux-general-en
 tts: inworld/inworld-tts-2-flash
 greeting:
