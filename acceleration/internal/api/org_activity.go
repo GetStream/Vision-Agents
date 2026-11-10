@@ -186,7 +186,11 @@ func (s *Server) registerOrganizationActivity(api huma.API) {
 			"its apps did in each area of the API, from each client, and what their work came to by " +
 			"modality, summed over every shard in postgres.shards, which the answer names. An " +
 			"organization with nothing recorded is answered with empty lists and furthest_step none. " +
-			"Every area and client is one item, so the lists are short and have no cursor.\n\nStream staff only: it needs the ops key.",
+			"Every area and client is one item, so the lists are short and have no cursor. Areas, " +
+			"first_seen, last_seen and furthest_step come from counts kept since they were first " +
+			"recorded, while meters come from every request, so an organization whose use is older " +
+			"than the counts can read furthest_step none with meters that show use.\n\n" +
+			"Stream staff only: it needs the ops key.",
 		Tags:      []string{staffTag},
 		Security:  opsSecurity,
 		Responses: map[string]*huma.Response{"200": {Description: "The organization's activity"}},

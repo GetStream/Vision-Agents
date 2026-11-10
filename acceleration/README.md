@@ -2021,7 +2021,10 @@ curl -H "X-Ops-Key: $ROUTER_AUTH_OPS_KEY" "localhost:8080/v1/ops/orgs/$ORG_ID/ac
 characters, time and cost), and `first_seen` and `last_seen` the first and last request of any
 area. `furthest_step` is the furthest of `dashboard_reads`, `agent_setup` and `conversations`
 with a request answered rather than refused, or `steady_use` once conversations or model calls
-were answered on three UTC days, else `none`. An organization with nothing recorded is a 200
+were answered on three UTC days, else `none`. Areas, `first_seen`, `last_seen` and
+`furthest_step` come from `customer_activity`, which counts only since it was first deployed,
+and `meters` from every request in the window: for an organization whose use is older, up to 90
+days back, `furthest_step` can read `none` while `meters` show use. An organization with nothing recorded is a 200
 with empty lists. `shards` names the shards whose `requests` the meters sum, this one's
 first. A deployment that leaves `postgres.shards` unset reads its own shard's `requests` alone
 and lists only that shard, named by a digest of its DSN, so its meters are not the organization's
