@@ -42,6 +42,21 @@ func (s *AppHooksSuite) TestAMessageInAChannelOfATypeTheConfigNamesIsAnsweredThe
 	s.Equal(config.Name, user["name"])
 }
 
+// The agent's own reply carries a source, as everything it stores does: answering it would be
+// the agent talking to itself.
+func (s *AppHooksSuite) TestTheAgentsOwnReplyInAChannelOfTheTypeIsNotAnswered() {
+	s.holdsType("callouts", memberWrites)
+	config := s.answeringIn("callouts")
+	channel := s.groupChannel("callouts", nil)
+	own := strings.Replace(s.groupMessage("callouts", channel, nil), `"user": {"id": "anya", "name": "Anya"}`,
+		fmt.Sprintf(`"user": {"id": %q, "name": "Rota"}, %q: "agent"`, config.ID, chatlog.SourceField), 1)
+	s.Require().Contains(own, chatlog.SourceField)
+
+	s.Equal(http.StatusOK, s.fromApp(s.appPath("/v1/chat/hooks/stream"), own))
+
+	s.nobodyAnswered("callouts:" + channel)
+}
+
 // A second customer's config naming the type answers in its own app alone: the type in this
 // app is answered by this app's customer or nobody.
 func (s *AppHooksSuite) TestAnotherCustomersConfigNamingTheTypeDoesNotAnswerInThisApp() {
