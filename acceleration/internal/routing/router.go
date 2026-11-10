@@ -698,7 +698,7 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 	}
 	// Every row is recorded under the merged tags, so they have to fit what a row carries.
 	if err := admission.Labelled(request.Tags).Validate(); err != nil {
-		return ProviderConfig{}, err
+		return ProviderConfig{}, Refused(err)
 	}
 	request.DataPolicy = request.DataPolicy.Stricter(admission.DataPolicy)
 
@@ -1353,9 +1353,9 @@ func serving(candidates []Candidate, terms []options.Term, target string) ([]Can
 		unserved = []string{"that combination of terms"}
 	}
 	if len(candidates) == 1 && candidates[0].Config.Name() == target {
-		return nil, stack.Wrap(fmt.Errorf("routing: %s does not take %s", target, strings.Join(unserved, ", ")))
+		return nil, Refused(stack.Wrap(fmt.Errorf("routing: %s does not take %s", target, strings.Join(unserved, ", "))))
 	}
-	return nil, stack.Wrap(fmt.Errorf("routing: no provider can express %s", strings.Join(unserved, ", ")))
+	return nil, Refused(stack.Wrap(fmt.Errorf("routing: no provider can express %s", strings.Join(unserved, ", "))))
 }
 
 // allowed narrows candidates to the models the customer's policies allow. A request none of
@@ -1442,8 +1442,8 @@ func permitted(candidates []Candidate, policy options.DataPolicy) ([]Candidate, 
 	if len(unmet) == 0 {
 		unmet = []string{"that combination of data policy requirements"}
 	}
-	return nil, stack.Wrap(fmt.Errorf("routing: no provider meets your data policy: none offers %s",
-		strings.Join(unmet, " and ")))
+	return nil, Refused(stack.Wrap(fmt.Errorf("routing: no provider meets your data policy: none offers %s",
+		strings.Join(unmet, " and "))))
 }
 
 // regional narrows candidates to the instances running in the region the work is done in,
@@ -1497,7 +1497,7 @@ func seeing(candidates []Candidate, modalities []string) ([]Candidate, error) {
 	if len(unmet) == 0 {
 		unmet = []string{"that combination of input modalities"}
 	}
-	return nil, stack.Wrap(fmt.Errorf("routing: no provider accepts %s input", strings.Join(unmet, ", ")))
+	return nil, Refused(stack.Wrap(fmt.Errorf("routing: no provider accepts %s input", strings.Join(unmet, ", "))))
 }
 
 // retentionUnmet names a retention requirement nothing offered, in the words it was asked
