@@ -176,23 +176,6 @@ type ManagerOptions struct {
 	Logger        *slog.Logger
 }
 
-// channelTeam is the Chat team a session's agent channels are made in. An app that keeps each
-// team's agent configs to its own users keeps their channels in the config's team too, so
-// that Chat shows them to that team's users alone. A config of no team asks nothing.
-func (m *Manager) channelTeam(ctx context.Context, spec Spec) (string, error) {
-	if spec.ConfigTeam == "" || m.options.Configs == nil {
-		return "", nil
-	}
-	settings, err := m.options.Configs.AppSettings(ctx, spec.CustomerID)
-	if err != nil {
-		return "", stack.Wrap(err)
-	}
-	if !settings.AgentTeamsChecked() {
-		return "", nil
-	}
-	return spec.ConfigTeam, nil
-}
-
 // defaultDetachedGrace is long enough to finish a connector login in another tab, or to leave
 // the page a conversation is on and come back to it.
 const defaultDetachedGrace = 5 * time.Minute
@@ -389,6 +372,23 @@ func (m *Manager) newSession(spec Spec, conv *persistent.Conversation, skills ha
 		created.runtimeMode = store.ModalityText
 	}
 	return created
+}
+
+// channelTeam is the Chat team a session's agent channels are made in. An app that keeps each
+// team's agent configs to its own users keeps their channels in the config's team too, so
+// that Chat shows them to that team's users alone. A config of no team asks nothing.
+func (m *Manager) channelTeam(ctx context.Context, spec Spec) (string, error) {
+	if spec.ConfigTeam == "" || m.options.Configs == nil {
+		return "", nil
+	}
+	settings, err := m.options.Configs.AppSettings(ctx, spec.CustomerID)
+	if err != nil {
+		return "", stack.Wrap(err)
+	}
+	if !settings.AgentTeamsChecked() {
+		return "", nil
+	}
+	return spec.ConfigTeam, nil
 }
 
 // Create joins a call and returns the session running it.
