@@ -213,3 +213,17 @@ func (s *ScheduledTasksSuite) TestATaskWaitsItsLookBeforeLookingAtACallAgain() {
 		s.FailNow("the wait for the next look outlived the delivery's context")
 	}
 }
+
+// A call that outlasts the wait is looked at every scheduledPoll until the wait is spent, and
+// then the user is on a call: the delivery looks again and again, and gives up only at the end.
+func (s *ScheduledTasksSuite) TestATaskKeepsLookingAtACallUntilItsWaitIsSpent() {
+	s.looksEvery(10 * time.Millisecond)
+	_, done := s.waitingOutACall(context.Background(), 200*time.Millisecond)
+
+	select {
+	case err := <-done:
+		s.Equal(scheduling.ReasonOnACall, scheduling.ReasonOf(err), "%v", err)
+	case <-time.After(deliveryWait):
+		s.FailNow("the delivery kept waiting past its window")
+	}
+}
