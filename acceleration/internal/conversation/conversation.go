@@ -110,6 +110,10 @@ type Page struct {
 	Messages   []Message `json:"messages"`
 	Before     string    `json:"before,omitempty"`
 	Truncated  bool      `json:"context_truncated"`
+
+	// answering is the message a session is about to be told, when its history is read for it
+	// (Answering).
+	answering string
 }
 type Updated struct {
 	CID     string  `json:"conversation_id"`
@@ -1187,6 +1191,9 @@ func entries(p Page) []entry {
 	// (Session.FollowUp), so they are not history yet: read here too, the model would see
 	// each one twice.
 	replied := false
+	// unanswered is whether the message being read was written before the one the session is
+	// about to be told (Page.answering) and after the last reply: one nobody answered.
+	unanswered := false
 	// withheld is whether the message being read was judged with a reply the prompt
 	// injection screen refused: every turn since the last reply a model is handed back, as
 	// agent.Withheld does in the live agent's history.
@@ -1202,7 +1209,8 @@ func entries(p Page) []entry {
 				withheld = false
 			}
 		}
-		if m.written && !replied {
+		if m.written && !replied && !unanswered {
+			unanswered = m.ID == p.answering
 			continue
 		}
 		if m.State != "completed" {

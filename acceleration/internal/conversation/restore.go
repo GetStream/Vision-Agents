@@ -50,8 +50,20 @@ func WithRestore(ctx context.Context, r Restore) context.Context {
 	return context.WithValue(ctx, restoreKey{}, r)
 }
 
+type answeringKey struct{}
+
+// Answering has every history read under ctx take the people's messages written after the
+// last reply and before the message id as what was said before it: a channel that answers
+// only the messages mentioning the agent leaves the others unanswered, and the session told
+// the message id (Session.FollowUp) would otherwise never read them. Without it, every message
+// after the last reply is taken as one a session is about to be told (entries).
+func Answering(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, answeringKey{}, id)
+}
+
 // restored is the history of a page as ctx asks for it.
 func restored(ctx context.Context, cid string, p Page) ([]llm.Message, bool) {
+	p.answering, _ = ctx.Value(answeringKey{}).(string)
 	r, _ := ctx.Value(restoreKey{}).(Restore)
 	if !r.Since.IsZero() {
 		p.Messages = slices.DeleteFunc(slices.Clone(p.Messages), func(m Message) bool { return m.StartedAt.Before(r.Since) })

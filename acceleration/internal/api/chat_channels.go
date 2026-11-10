@@ -2,8 +2,11 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/google/uuid"
@@ -39,12 +42,72 @@ func (s *Server) addressedIn(ctx context.Context, origin hookOrigin, event messa
 	if event.ChannelType == chatlog.ChannelType || !answerable(event) {
 		return addressed(event)
 	}
-	_, found, err := s.chatChannelConfig(ctx, origin, event)
+	config, found, err := s.chatChannelConfig(ctx, origin, event)
 	if err != nil {
 		s.logger.Error("could not read whether an agent config answers in a channel's type",
 			"channel_type", event.ChannelType, "channel", event.ChannelID, "stream_app", origin.app, "error", err)
 	}
-	return found
+	return found && answersTo(config, event)
+}
+
+// answersTo is whether the config answers a message in a channel of a type it names: any
+// message, or, when it answers only its mentions there (store.ChatChannelAnswerMentioned), one
+// that mentions the agent, whose Stream user is the config's id named after it
+// (chatChannelSession). A message it does not answer stays in the channel unanswered, and the
+// next one it answers reads it as what was said before (conversation.Answering).
+func answersTo(config store.AgentConfig, event messageEvent) bool {
+	return !config.AnswersOnlyMentionsIn(event.ChannelType) || event.mentions(config.ID, config.Name)
+}
+
+// mentions is whether the message mentions the Stream user id, named name: its mentioned_users
+// holds the user, as Stream's clients send a mention picked from their list, or its text has @
+// and the id or the name, as those clients write one (`@${name || id}`, stream-chat-js
+// src/messageComposer/middleware/textComposer/mentions.ts) and a person may type one.
+func (e messageEvent) mentions(id, name string) bool {
+	var users []struct {
+		ID string `json:"id"`
+	}
+	if json.Unmarshal(e.Message.MentionedUsers, &users) == nil {
+		for _, user := range users {
+			if user.ID == id {
+				return true
+			}
+		}
+	}
+	return mentionedIn(e.Message.Text, id) || mentionedIn(e.Message.Text, name)
+}
+
+// mentionedIn is whether text has @handle, in any case, as a mention of its own: the @ starts
+// the text or follows a character no handle holds, so an address such as anya@rota is none, and
+// the handle is not followed by one, so @rota-2, another user, is no mention of rota.
+func mentionedIn(text, handle string) bool {
+	if handle == "" {
+		return false
+	}
+	for rest := text; ; {
+		at := strings.IndexByte(rest, '@')
+		if at < 0 {
+			return false
+		}
+		before, after := rest[:at], rest[at+1:]
+		rest = after
+		if previous, _ := utf8.DecodeLastRuneInString(before); before != "" && inHandle(previous) {
+			continue
+		}
+		if len(after) < len(handle) || !strings.EqualFold(after[:len(handle)], handle) {
+			continue
+		}
+		if next, _ := utf8.DecodeRuneInString(after[len(handle):]); len(after) > len(handle) && inHandle(next) {
+			continue
+		}
+		return true
+	}
+}
+
+// inHandle is whether r may be part of a Stream user's id or a word of their name: a letter, a
+// digit, or one of _ - @, which Stream allows in a user id besides them.
+func inHandle(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-' || r == '@'
 }
 
 // chatChannelConfig is the agent config that answers in the channel of a message of a type
@@ -74,7 +137,8 @@ func (s *Server) answerChatChannel(ctx context.Context, origin hookOrigin, event
 			"channel_type", event.ChannelType, "channel", event.ChannelID, "stream_app", origin.app, "error", err)
 		return false
 	}
-	if !found || strings.TrimSpace(event.Message.Text) == "" && len(event.photos()) == 0 {
+	// The config may have come to answer only its mentions since the message was queued.
+	if !found || !answersTo(config, event) || strings.TrimSpace(event.Message.Text) == "" && len(event.photos()) == 0 {
 		return true
 	}
 	if answer, settled := s.answerOnce(ctx, origin, event); !answer {
@@ -129,7 +193,13 @@ func (s *Server) chatChannelSession(ctx context.Context, origin hookOrigin, conf
 	spec.ConversationID, spec.Dispatched = cid, true
 	spec.AgentID = config.ID
 	spec.Attribution = chatHookAttribution(config.CustomerID, event)
-	opened, err := s.sessions.Create(conversation.RouterOpensDispatched(ctx, cid), spec)
+	opening := conversation.RouterOpensDispatched(ctx, cid)
+	if config.AnswersOnlyMentionsIn(event.ChannelType) {
+		// What was written since the last reply without mentioning the agent was never answered:
+		// it is read as what was said before this message.
+		opening = conversation.Answering(opening, event.Message.ID)
+	}
+	opened, err := s.sessions.Create(opening, spec)
 	if err != nil {
 		return nil, err
 	}

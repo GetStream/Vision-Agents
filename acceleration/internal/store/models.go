@@ -955,6 +955,26 @@ type AgentChannels struct {
 type ChatChannel struct {
 	// Type is the channel type's name, as Stream Chat names it in a cid (type:id).
 	Type string `json:"type"`
+	// Answer is which messages in a channel of the type are answered: ChatChannelAnswerAlways,
+	// as empty is, or ChatChannelAnswerMentioned.
+	Answer string `json:"answer,omitempty"`
+}
+
+// The messages a ChatChannel answers: every one, or only one that mentions the agent.
+const (
+	ChatChannelAnswerAlways    = "always"
+	ChatChannelAnswerMentioned = "mentioned"
+)
+
+// AnswersOnlyMentionsIn is whether the config answers a message in a channel of the type given
+// only when the message mentions the agent.
+func (c AgentConfig) AnswersOnlyMentionsIn(channelType string) bool {
+	for _, channel := range c.ChatChannels {
+		if channel.Type == channelType {
+			return channel.Answer == ChatChannelAnswerMentioned
+		}
+	}
+	return false
 }
 
 // AgentScheduling is an agent config's scheduled-task settings, stored in

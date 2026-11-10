@@ -1717,7 +1717,12 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	if len(config.ChatChannels) > 0 {
 		types := make([]AgentChatChannel, 0, len(config.ChatChannels))
 		for _, channel := range config.ChatChannels {
-			types = append(types, AgentChatChannel{Type: channel.Type})
+			rendered := AgentChatChannel{Type: channel.Type}
+			if channel.Answer != "" {
+				answer := ChatChannelAnswer(channel.Answer)
+				rendered.Answer = &answer
+			}
+			types = append(types, rendered)
 		}
 		rendered.ChatChannels = &types
 	}
@@ -2527,7 +2532,22 @@ type AgentChatChannel struct {
 	// The pattern is the type part of a cid as Stream Chat checks it, [\w-]+ (GetStream/chat
 	// monolith/internal/validator/registry.go, ValidChannelCIDRe). 64 is a choice: the length
 	// Stream Chat allows a channel id.
-	Type string `json:"type" minLength:"1" maxLength:"64" pattern:"^[A-Za-z0-9_-]+$" patternDescription:"letters, digits, _ and -" example:"callouts" doc:"The channel type's name, as it comes before the colon in a channel's cid."`
+	Type   string             `json:"type" minLength:"1" maxLength:"64" pattern:"^[A-Za-z0-9_-]+$" patternDescription:"letters, digits, _ and -" example:"callouts" doc:"The channel type's name, as it comes before the colon in a channel's cid."`
+	Answer *ChatChannelAnswer `json:"answer,omitempty"`
+}
+
+// ChatChannelAnswer is which messages in a channel of a type an agent config names are answered.
+type ChatChannelAnswer string
+
+func (ChatChannelAnswer) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "ChatChannelAnswer",
+		"Which messages in a channel of the type are answered. always answers every message. mentioned "+
+			"answers only a message that mentions the agent: its mentioned_users holds the Stream user whose "+
+			"id is the config's id, or its text has @ and that user's id or the config's name, as Stream's "+
+			"clients write a mention. A message that does not mention the agent gets no reply and starts no "+
+			"model; it stays in the channel, and the next answered message reads it as what was said before. "+
+			"Omitted is always.",
+		store.ChatChannelAnswerAlways, store.ChatChannelAnswerMentioned)
 }
 
 // chatChannelsComplaint reports what is wrong with a config's chat_channels that their schema
@@ -2557,7 +2577,7 @@ func chatChannelsOf(channels *[]AgentChatChannel) []store.ChatChannel {
 	}
 	var stored []store.ChatChannel
 	for _, channel := range *channels {
-		stored = append(stored, store.ChatChannel{Type: channel.Type})
+		stored = append(stored, store.ChatChannel{Type: channel.Type, Answer: string(value(channel.Answer))})
 	}
 	return stored
 }
