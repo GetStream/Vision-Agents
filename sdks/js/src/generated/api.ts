@@ -4413,12 +4413,45 @@ export type components = {
              */
             readonly voice_minutes: number;
         };
+        readonly ActivityEnding: {
+            /** @description Why they ended. Absent for the sessions that ended with no reason kept, as before reasons were. */
+            readonly end_reason?: components["schemas"]["SessionEndReason"];
+            /**
+             * Format: int64
+             * @description How many ended so.
+             */
+            readonly sessions: number;
+        };
         /**
          * @description Separate from Granularity, and coarser, because distinct users cannot be summed: a month of them is who came back rather than the sum of its days.
          * @default daily
          * @enum {string}
          */
         readonly ActivityGranularity: "daily" | "monthly";
+        readonly ActivityLatency: {
+            /** @description The leg: stt_latency, the speech-to-text vendor's decode of the transcript that settled the turn; llm_ttft, asking the model to its first token; tts_ttfb, the first sentence sent to its first audio; roundtrip, the settled transcript to the first audio published. */
+            readonly leg: string;
+            /**
+             * Format: double
+             * @description The median, in milliseconds. Absent when no turn had the leg.
+             */
+            readonly p50_ms?: number | null;
+            /**
+             * Format: double
+             * @description The 95th percentile, in milliseconds. Absent when no turn had the leg.
+             */
+            readonly p95_ms?: number | null;
+            /**
+             * Format: double
+             * @description The 99th percentile, in milliseconds. Absent when no turn had the leg.
+             */
+            readonly p99_ms?: number | null;
+            /**
+             * Format: int64
+             * @description How many turns the leg was counted for.
+             */
+            readonly turns: number;
+        };
         readonly ActivityMeter: {
             /**
              * Format: int64
@@ -4457,6 +4490,44 @@ export type components = {
              * @description How many requests. Runtime and sandbox are time, not requests, and read 0.
              */
             readonly requests: number;
+        };
+        readonly ActivitySession: {
+            /** @description The name of the agent config it was opened with. */
+            readonly agent_name: string;
+            /** @description The app it was opened in. */
+            readonly app_id: string;
+            /**
+             * Format: date-time
+             * @description When it ended. Absent while it runs.
+             */
+            readonly closed_at?: string;
+            /**
+             * Format: date-time
+             * @description When it was opened.
+             */
+            readonly created_at: string;
+            /** @description Why it ended. Absent while it runs, and for one that ended with no reason kept. */
+            readonly end_reason?: components["schemas"]["SessionEndReason"];
+            /** @description The session. */
+            readonly id: string;
+            /** @description text, voice or video. */
+            readonly modality: string;
+        };
+        readonly ActivitySessions: {
+            /** @description How many of them ended for each reason, by reason, the ones with no reason kept first. */
+            readonly ended: readonly components["schemas"]["ActivityEnding"][] | null;
+            /** @description The 20 opened last, newest first. */
+            readonly latest: readonly components["schemas"]["ActivitySession"][] | null;
+            /**
+             * Format: int64
+             * @description How many sessions were opened, running ones included.
+             */
+            readonly opened: number;
+            /**
+             * Format: int64
+             * @description How many of them have not ended.
+             */
+            readonly running: number;
         };
         /**
          * @description The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
@@ -8046,10 +8117,14 @@ export type components = {
              * @description When the last request of any area arrived, absent when none did.
              */
             readonly last_seen?: string;
+            /** @description How long the turns of the organization's apps took, every agent summed, one item per leg: stt_latency, llm_ttft, tts_ttfb, then roundtrip. Turns are kept by the hour they started in, so they count the whole hour since falls in. The percentiles are read off bins 5% wide, so they are within 5% of the true ones. */
+            readonly latency: readonly components["schemas"]["ActivityLatency"][] | null;
             /** @description What the organization's apps' work came to, by modality, from the shards listed in shards. */
             readonly meters: readonly components["schemas"]["ActivityMeter"][] | null;
             /** @description The organization. */
             readonly organization_id: string;
+            /** @description The sessions the organization's apps opened from since on, from the shards listed in shards. */
+            readonly sessions: components["schemas"]["ActivitySessions"];
             /** @description The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them. */
             readonly shards: readonly string[] | null;
             /**

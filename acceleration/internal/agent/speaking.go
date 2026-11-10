@@ -157,6 +157,7 @@ func (u *utterance) span() *MessageSpan {
 // utterance to be heard, so it is let go of.
 func (a *Agent) synthesize(voice *ttsrouter.Session, turnID string, request tts.Request, message MessageSpan) error {
 	a.sending(turnID, request.ID, request.Text, message)
+	a.turns.voiced(turnID)
 	err := voice.Synthesize(request)
 	if err != nil {
 		a.takeUtterance(request.ID)
@@ -236,12 +237,16 @@ type unsaidUtterance struct {
 // heldReply is a reply the voice that replaces a lost one goes on with, and what of it that
 // voice has still to be sent, in the order of the reply's message: what the lost voice said
 // none of, and what was written for it while the next was opened. written is whether the
-// model had finished writing it when the voice was lost, and lostAt when that was.
+// model had finished writing it when the voice was lost, and lostAt when that was. greeting
+// is whether a caller's lone greeting holds it instead, while it may still grow into more,
+// and releaseAt when it goes out then.
 type heldReply struct {
-	turnID  string
-	unsaid  []unsaidUtterance
-	written bool
-	lostAt  time.Time
+	turnID    string
+	unsaid    []unsaidUtterance
+	written   bool
+	lostAt    time.Time
+	greeting  bool
+	releaseAt time.Time
 }
 
 // hold keeps a request for a reply held for the voice replacing a lost one, which would

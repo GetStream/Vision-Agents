@@ -2030,6 +2030,12 @@ first. A deployment that leaves `postgres.shards` unset reads its own shard's `r
 and lists only that shard, named by a digest of its DSN, so its meters are not the organization's
 whole use; areas are kept in the database every shard shares and are complete (see Shards).
 
+`sessions` reads `agent_sessions` on every shard in `shards`, from `since`: `opened` and
+`running` count the sessions the organization's apps opened, `ended` counts the others by end
+reason, and `latest` lists the 20 newest. `latency` reads `turn_latency_hourly` on every shard,
+from the hour `since` falls in, one item per leg with `turns` and the `p50_ms`, `p95_ms` and
+`p99_ms` read off bins 5% wide.
+
 The endpoint sums the rows of the organization's current apps, including rows the sweeper has
 not processed yet, while the cost-anomaly check sums `requests.organization_id` over swept
 billable rows, so the two can disagree for two reasons. One is an app that moved organization

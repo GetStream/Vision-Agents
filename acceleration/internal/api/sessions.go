@@ -979,10 +979,7 @@ func mergeStored(rendered *Session, row *store.AgentSession) {
 		rendered.ModelOverwrites = modelOverwritesFor(row.ModelOverwrites)
 	}
 	rendered.ClosedAt = row.ClosedAt
-	if row.EndReason != "" {
-		reason := SessionEndReason(row.EndReason)
-		rendered.EndReason = &reason
-	}
+	rendered.EndReason = endReasonOf(row.EndReason)
 	if info, known := session.EndReason(row.EndReason).Info(); known {
 		fault, stage := SessionEndFault(info.Fault), SessionEndStage(info.Stage)
 		rendered.EndFault, rendered.EndStage = &fault, &stage

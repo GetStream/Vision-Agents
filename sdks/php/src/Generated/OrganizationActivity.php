@@ -25,6 +25,11 @@ final readonly class OrganizationActivity
         // The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres...
         /** @var list<string> */
         public array $shards,
+        // How long the turns of the organization's apps took, every agent summed, one item per leg: stt_latency, llm_...
+        /** @var list<ActivityLatency> */
+        public array $latency,
+        // The sessions the organization's apps opened from since on, from the shards listed in shards.
+        public ActivitySessions $sessions,
         // When the first request of any area arrived, absent when none did.
         public ?\DateTimeImmutable $firstSeen = null,
         // When the last request of any area arrived, absent when none did.
@@ -44,6 +49,8 @@ final readonly class OrganizationActivity
             organizationId: Json::string($data, 'organization_id'),
             since: Json::date($data, 'since'),
             shards: Json::strings($data, 'shards'),
+            latency: array_map(ActivityLatency::fromArray(...), Json::objects($data, 'latency')),
+            sessions: ActivitySessions::fromArray(Json::object($data, 'sessions')),
             firstSeen: array_key_exists('first_seen', $data) && $data['first_seen'] !== null ? Json::date($data, 'first_seen') : null,
             lastSeen: array_key_exists('last_seen', $data) && $data['last_seen'] !== null ? Json::date($data, 'last_seen') : null,
         );
@@ -63,6 +70,8 @@ final readonly class OrganizationActivity
         $out['organization_id'] = $this->organizationId;
         $out['since'] = Json::dateValue($this->since);
         $out['shards'] = $this->shards;
+        $out['latency'] = array_map(static fn (ActivityLatency $each): array => $each->toArray(), $this->latency);
+        $out['sessions'] = $this->sessions->toArray();
         if ($this->firstSeen !== null) {
             $out['first_seen'] = Json::dateValue($this->firstSeen);
         }

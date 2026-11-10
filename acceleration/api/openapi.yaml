@@ -215,6 +215,18 @@ components:
         - sessions
         - voice_minutes
       type: object
+    ActivityEnding:
+      properties:
+        end_reason:
+          $ref: '#/components/schemas/SessionEndReason'
+          description: Why they ended. Absent for the sessions that ended with no reason kept, as before reasons were.
+        sessions:
+          description: How many ended so.
+          format: int64
+          type: integer
+      required:
+        - sessions
+      type: object
     ActivityGranularity:
       default: daily
       description: 'Separate from Granularity, and coarser, because distinct users cannot be summed: a month of them is who came back rather than the sum of its days.'
@@ -222,6 +234,34 @@ components:
         - daily
         - monthly
       type: string
+    ActivityLatency:
+      properties:
+        leg:
+          description: 'The leg: stt_latency, the speech-to-text vendor''s decode of the transcript that settled the turn; llm_ttft, asking the model to its first token; tts_ttfb, the first sentence sent to its first audio; roundtrip, the settled transcript to the first audio published.'
+          type: string
+        p50_ms:
+          description: The median, in milliseconds. Absent when no turn had the leg.
+          format: double
+          nullable: true
+          type: number
+        p95_ms:
+          description: The 95th percentile, in milliseconds. Absent when no turn had the leg.
+          format: double
+          nullable: true
+          type: number
+        p99_ms:
+          description: The 99th percentile, in milliseconds. Absent when no turn had the leg.
+          format: double
+          nullable: true
+          type: number
+        turns:
+          description: How many turns the leg was counted for.
+          format: int64
+          type: integer
+      required:
+        - leg
+        - turns
+      type: object
     ActivityMeter:
       properties:
         audio_ms:
@@ -264,6 +304,66 @@ components:
         - characters
         - duration_ms
         - cost_micros
+      type: object
+    ActivitySession:
+      properties:
+        agent_name:
+          description: The name of the agent config it was opened with.
+          type: string
+        app_id:
+          description: The app it was opened in.
+          type: string
+        closed_at:
+          description: When it ended. Absent while it runs.
+          format: date-time
+          type: string
+        created_at:
+          description: When it was opened.
+          format: date-time
+          type: string
+        end_reason:
+          $ref: '#/components/schemas/SessionEndReason'
+          description: Why it ended. Absent while it runs, and for one that ended with no reason kept.
+        id:
+          description: The session.
+          type: string
+        modality:
+          description: text, voice or video.
+          type: string
+      required:
+        - id
+        - app_id
+        - agent_name
+        - modality
+        - created_at
+      type: object
+    ActivitySessions:
+      properties:
+        ended:
+          description: How many of them ended for each reason, by reason, the ones with no reason kept first.
+          items:
+            $ref: '#/components/schemas/ActivityEnding'
+          nullable: true
+          type: array
+        latest:
+          description: The 20 opened last, newest first.
+          items:
+            $ref: '#/components/schemas/ActivitySession'
+          nullable: true
+          type: array
+        opened:
+          description: How many sessions were opened, running ones included.
+          format: int64
+          type: integer
+        running:
+          description: How many of them have not ended.
+          format: int64
+          type: integer
+      required:
+        - opened
+        - running
+        - ended
+        - latest
       type: object
     ActivityStep:
       description: 'The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.'
@@ -6520,6 +6620,12 @@ components:
           description: When the last request of any area arrived, absent when none did.
           format: date-time
           type: string
+        latency:
+          description: 'How long the turns of the organization''s apps took, every agent summed, one item per leg: stt_latency, llm_ttft, tts_ttfb, then roundtrip. Turns are kept by the hour they started in, so they count the whole hour since falls in. The percentiles are read off bins 5% wide, so they are within 5% of the true ones.'
+          items:
+            $ref: '#/components/schemas/ActivityLatency'
+          nullable: true
+          type: array
         meters:
           description: What the organization's apps' work came to, by modality, from the shards listed in shards.
           items:
@@ -6529,6 +6635,9 @@ components:
         organization_id:
           description: The organization.
           type: string
+        sessions:
+          $ref: '#/components/schemas/ActivitySessions'
+          description: The sessions the organization's apps opened from since on, from the shards listed in shards.
         shards:
           description: The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them.
           items:
@@ -6546,6 +6655,8 @@ components:
         - areas
         - meters
         - shards
+        - sessions
+        - latency
       type: object
     PhoneCapability:
       description: What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.
@@ -22197,7 +22308,7 @@ paths:
   /v1/ops/orgs/{org_id}/activity:
     get:
       description: |-
-        Whether an organization tried Agents, how far it got and how much it used: what its apps did in each area of the API, from each client, and what their work came to by modality, summed over every shard in postgres.shards, which the answer names. An organization with nothing recorded is answered with empty lists and furthest_step none. Every area and client is one item, so the lists are short and have no cursor. Areas, first_seen, last_seen and furthest_step come from counts kept since they were first recorded, while meters come from every request, so an organization whose use is older than the counts can read furthest_step none with meters that show use.
+        Whether an organization tried Agents, how far it got and how much it used: what its apps did in each area of the API, from each client, and what their work came to by modality, summed over every shard in postgres.shards, which the answer names, with the sessions they opened, how those ended and how long their turns took. An organization with nothing recorded is answered with empty lists and furthest_step none. Every area and client is one item, so the lists are short and have no cursor. Areas, first_seen, last_seen and furthest_step come from counts kept since they were first recorded, while meters come from every request, so an organization whose use is older than the counts can read furthest_step none with meters that show use.
 
         Stream staff only: it needs the ops key.
       operationId: getOrganizationActivity
