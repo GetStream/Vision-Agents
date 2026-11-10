@@ -11,7 +11,7 @@ streamChatAi = "7.18.0"
 browser = "1.10.0"
 
 [libraries]
-stream-agents-android-core = { module = "io.getstream:stream-agents-android-core", version = "0.1.0-SNAPSHOT" }
+stream-agents-android-core = { module = "io.getstream:stream-agents-android-core", version = "0.2.0" }
 stream-chat-ai-compose = { module = "io.getstream:stream-chat-android-ai-compose", version.ref = "streamChatAi" }
 stream-chat-ai-openui = { module = "io.getstream:stream-chat-android-ai-openui", version.ref = "streamChatAi" }
 stream-chat-ai-a2ui = { module = "io.getstream:stream-chat-android-ai-a2ui", version.ref = "streamChatAi" }
