@@ -136,6 +136,28 @@ func (s *ScheduledTasksSuite) TestADeliveryWaitsItsLookBeforeLookingForAPeersEnt
 	}
 }
 
+// A peer that never takes the delivery and never lets go of the session is waited on for
+// scheduledPeerWait, then the delivery fails as the node unreachable. The default is 30 s; the wait
+// here is 100 ms, and the answer is waited for well under that default, so a wait that ignores the
+// field does not answer in time.
+func (s *ScheduledTasksSuite) TestADeliveryGivesUpOnAPeerThatKeepsTheSessionAfterItsWait() {
+	s.Require().Equal(30*time.Second, s.router.scheduledPeerWait, "the peer wait's default")
+	wait := s.router.scheduledPeerWait
+	s.router.scheduledPeerWait = 100 * time.Millisecond
+	s.T().Cleanup(func() { s.router.scheduledPeerWait = wait })
+	s.looksEvery(10 * time.Millisecond)
+	sessionID := rand.Text()
+	s.refusingPeer(sessionID)
+
+	select {
+	case answered := <-s.handingOff(context.Background(), sessionID):
+		s.EqualError(answered.err, "the node running this session could not be reached")
+		s.False(answered.handed)
+	case <-time.After(10 * time.Second):
+		s.FailNow("the delivery never gave up on the peer")
+	}
+}
+
 // waitingOutACall is a voice session of a user's, and waitOutCall running on it for up to window.
 func (s *ScheduledTasksSuite) waitingOutACall(ctx context.Context, window time.Duration) (*session.Session, <-chan error) {
 	user := s.data.createUser()
