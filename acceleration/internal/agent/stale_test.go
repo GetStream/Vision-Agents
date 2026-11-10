@@ -245,7 +245,7 @@ func (s *AgentSuite) greetedOver(turnID string, greet func(stt.Participant, stri
 	s.eventually(func() bool { return s.holding(turnID) }, "the reply was never held for the greeting")
 }
 
-// Sessions c00c0768 and 3af06f9a: the caller said "Hello?" again while the reply to it was
+// The caller said "Hello?" again while the reply to it was
 // being written, and it was dropped every time.
 func (s *AgentSuite) TestALoneGreetingLetsTheHeldReplyGoOutOnceItSettles() {
 	greets := map[string]func(stt.Participant, string){"partial": s.mutters, "final": s.says}
