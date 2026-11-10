@@ -138,18 +138,24 @@ func (s *SpecSuite) TestATextSessionNamingNoAgentIDIsKeyedUnderNoneACallerNamed(
 }
 
 // A call's transcript goes into the conversation's agent channel, else the agent id's, as
-// chatlog.New picks it from the Channel the transcript factory passes: a conversation_id of
-// another channel type, or none at all, is the agent id's.
+// chatlog.New picks it from the ChannelType and Channel the transcript factory passes: a
+// conversation_id of another channel type, one naming no channel, or none at all, is the
+// agent id's.
 func (s *SpecSuite) TestATranscriptGoesIntoTheConversationsAgentChannelElseTheAgentIds() {
-	for conversation, want := range map[string][2]string{
-		"agent:support-0199": {"support-0199", "agent:support-0199"},
-		"messaging:X":        {"", "agent:front-desk"},
-		"X":                  {"", "agent:front-desk"},
-		"":                   {"", "agent:front-desk"},
+	for conversation, want := range map[string][3]string{
+		"agent:support-0199": {"agent", "support-0199", "agent:support-0199"},
+		"agent:a:b":          {"agent", "a:b", "agent:a:b"},
+		"agent:":             {"", "", "agent:front-desk"},
+		"messaging:X":        {"", "", "agent:front-desk"},
+		"agentX":             {"", "", "agent:front-desk"},
+		"X":                  {"", "", "agent:front-desk"},
+		"":                   {"", "", "agent:front-desk"},
 	} {
 		spec := Spec{ConversationID: conversation, AgentID: "front-desk"}
-		s.Equal(want[0], spec.ConversationChannel(), conversation)
-		s.Equal(want[1], spec.TranscriptChannel(), conversation)
+		channelType, channel := spec.ConversationChannel()
+		s.Equal(want[0], channelType, conversation)
+		s.Equal(want[1], channel, conversation)
+		s.Equal(want[2], spec.TranscriptChannel(), conversation)
 	}
 }
 
