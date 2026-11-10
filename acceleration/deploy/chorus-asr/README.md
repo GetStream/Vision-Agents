@@ -177,7 +177,11 @@ one decision, p50 / p90:
 for newer words or the call's end, or `error`), and is what to set the wait from.
 `router_chorus_asr_deadline_misses_total` counts the requests the router stopped waiting
 for, by `kind`, and each is logged at debug level with its `kind`, `deadline_ms` and
-`took_ms`.
+`took_ms`. `router_chorus_asr_request_errors_total` counts every request that failed by
+`kind` (those three, `agents` and `info`) and `code`: the status the server answered (`404`,
+`429`, `503`...), `busy` or `no_words` (answered without the words), `timeout` or
+`connection` (nothing answered). `router_chorus_asr_setup_round_trip_seconds` times
+`POST /v1/agents` and `GET /v1/info` by `route` (`agents`, `info`) and `outcome`.
 
 ## Floor control: `floor_control`
 
@@ -558,8 +562,9 @@ checkpoint, and another one comes with its own.
 `POST /v1/agents`: an agent, by what it was told and its customer tools. The router's own
 tools (ending or transferring the call, pressing keys, the knowledge and web lookups,
 confirming a tool call, video frames) are left out: listing them changes the model's
-answers. The ID follows the content, so an agent registers once and again only when it
-changes or the server restarts (a 404).
+answers. The ID follows the content, the same on every server, so an agent registers once
+and again only when it changes or the server answering a decision doesn't know it (a 404: a
+restart, or a replica behind the address that was never told).
 
 ```
 {"instructions":"You answer the phone for a weather service.","tools":[{"name":"get_weather","description":"Get the forecast for a city.","parameters":{"type":"object","required":["city"]}}]}
@@ -575,6 +580,20 @@ turn: {"conversation":[{"agent":true,"text":"Weather line, how can I help?"}]}
 
 {"answer":"get_weather","answer_probability":0.9988813,"p_eot":0.9999969,"options":[{"name":"respond","p":0.00015754762},{"name":"wait","p":0.0000031085704},{"name":"clarify","p":0.00080397225},{"name":"ignore","p":0.0000036620925},{"name":"cannot","p":0.00015045748},{"name":"get_weather","p":0.9988813}],"sample_rate":16000,"samples":35364,"window_samples":35364,"decide_ms":102.45,"ruling":{"disposition":"respond","floor":"continue","tool":"get_weather"}}
 ```
+
+A server whose `GET /v1/info` says `"inline_agents": true` is sent the agent with each
+decision as well: a third part, `agent` (`application/json`), after the audio, the same JSON
+`POST /v1/agents` takes, with `?agent=ID` as ever. A replica that doesn't know `ID` registers
+that agent from the part, once it hashes to `ID`, and decides, so any replica answers for any
+agent. The part goes last because a server that does not take it reads the turn and the audio
+and stops there, so a fleet halfway through a rollout to one that does answers all the same.
+A server that doesn't say so is sent the turn and the audio alone.
+
+Every decision and transcription says in `X-Timeout-Ms` how many milliseconds the router will
+go on waiting for its answer, counted from when it sent the request, so that a server can drop
+work nobody waits for: a decision's own deadline (with `?transcript=true`, for its first line;
+the words have 8 s and the audio's length more), and a transcription's. A server that ignores
+it answers as before.
 
 `POST /v1/transcribe?languages=en`: a `multipart/form-data` body of one `audio` part, as a
 decision's, and the languages the callers speak, the session's language hints. A server that
@@ -742,7 +761,9 @@ untouched. Acting, a decision's `Ruler` is `heard`.
   and a server that can't rule at all (no policy, 501) is asked once a session. A server
   that is busy, restarting or slow costs a request, not the
   session: a 5xx, 404, 408 or 429, a timeout or a reset connection is logged and counted in
-  `router_chorus_asr_transcribe_failures_total` by status, `timeout` or `connection`, and
+  `router_chorus_asr_transcribe_failures_total` by status, `busy` or `no_words` (the server
+  answered without the words: a decision's words answered `busy`), `timeout` or
+  `connection` (nothing answered), and
   the utterance's words are asked for again, whole, at its end or its next pause after more
   speech. A server the router is misconfigured for (another 4xx, or no policy where one is
   needed) is fatal at once, and one that is down for the call is fatal after three requests
@@ -778,11 +799,26 @@ untouched. Acting, a decision's `Ruler` is `heard`.
   words at a pause only when speech has come since it last did, so no audio is written
   twice; it ends the utterance with one final, and the next begins after it, with none of
   its audio.
-- **A restart, or another model.** A 404 has the router register again. The policy it read
-  from `/v1/info` is read again in the background, every 5 minutes and after a 404 or a 422
-  refusing an agent, with the last one read standing until then: no decision waits on it,
-  and a read that fails is tried again after 30 s. An agent written meanwhile has its
-  `floor_control.max_wait_ms` checked against `/v1/info` as it answers then.
+- **A restart, another model, or several replicas.** A decision answered 404 has the router
+  register that agent again, and it alone, and ask once more; every other agent's ID stands,
+  as it is its content's. A second 404 is a replica that has not been told, as happens behind
+  one address with a server that takes no agent inline: the server is up, so it falls to the
+  flow controller and the words alone like a busy answer, and never counts towards a floor
+  that rules alone stepping aside. The policy read from `/v1/info` is read again in the
+  background, every 5 minutes and after a 404 or a 422 refusing an agent, with the last one
+  read standing until then: no decision waits on it, and a read that fails is tried again
+  after 30 s. An agent written meanwhile has its `floor_control.max_wait_ms` checked against
+  `/v1/info` as it answers then.
+- **A server shedding load.** A 503 or 429 with `Retry-After` (seconds or an HTTP date, heeded
+  up to 30 s) has the router send only what decides turns until it has passed: the pauses'
+  checks and their words, and each utterance's end. Checks over the agent are not sent and
+  fall to the flow controller (`router_chorus_asr_checks_total{outcome="backed_off"}`), and
+  interims are not asked for; both are counted in `router_chorus_asr_backed_off_total` by
+  `kind` (`over_agent`, `interim`). One without `Retry-After` changes nothing.
+- **Connections.** The router keeps up to 256 idle connections to the server and closes one
+  after 50 s unused, under the server's 60 s, so that the server is not the one closing it as
+  a request goes out. Every request is idempotent and marked so, and is sent again on a new
+  connection if the one it went out on turns out closed.
 
 ## Measured
 

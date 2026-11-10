@@ -83,7 +83,7 @@ const (
 var transcribeFailures = promauto.NewCounterVec(prometheus.CounterOpts{
 	Namespace: "router",
 	Name:      "chorus_asr_transcribe_failures_total",
-	Help:      "Requests for an utterance's words the chorus-asr server did not answer, by why: its status, timeout or connection. Each is asked again at the utterance's next pause or its end.",
+	Help:      "Requests for an utterance's words the chorus-asr server did not answer, by why: its status, busy or no_words (it answered without the words: busy, every lane that writes them busy), timeout, or connection (nothing answered). Each is asked again at the utterance's next pause or its end.",
 }, []string{"reason"})
 
 // Transcriber writes what a participant says with the chorus-asr server's model, so a call
@@ -513,12 +513,22 @@ func (t *Transcriber) Provider() string { return ProviderName }
 // Model is the model identifier used in stats.
 func (t *Transcriber) Model() string { return t.model }
 
-// failure is why a request failed, as transcribeFailures counts it.
+// failure is why a request failed, as transcribeFailures and requestErrors count it: the
+// status the server answered; busy when it answered without the words because every lane that
+// writes them was busy, as a decision's words come back from a server shedding load, and
+// no_words when it answered without them for another reason; timeout; and connection when
+// nothing answered. An answer without the words is the server's, and not a connection that
+// failed.
 func failure(err error) string {
 	var status *StatusError
+	var transcript *TranscriptError
 	switch {
 	case errors.As(err, &status):
 		return strconv.Itoa(status.Code)
+	case errors.As(err, &transcript) && transcript.Message == "busy":
+		return "busy"
+	case errors.As(err, &transcript):
+		return "no_words"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "timeout"
 	}

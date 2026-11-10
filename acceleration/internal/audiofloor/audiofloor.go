@@ -21,6 +21,15 @@
 //	                          ?languages= the callers speak: what was said, empty when
 //	                          nothing was or the server heard noise
 //
+// A server that says "inline_agents": true in GET /v1/info takes a decision's agent with it: a
+// third part, "agent", after the audio, the JSON POST /v1/agents takes, so that any of several
+// replicas behind one address can answer for an agent another was told. It goes last because a
+// server that does not take it reads the turn and the audio and stops there. Every decision and
+// transcription says in X-Timeout-Ms how many milliseconds the router will go on waiting for its
+// answer, a decision's first line with ?transcript=true, from when it was sent, so that a server
+// can drop what nobody waits for any more. A 503 or a 429 with Retry-After has the client send
+// only what decides turns, the pauses' checks and their words, until it has passed.
+//
 // The server writes the model's prompt, because the model knows only the words it was
 // trained on. The server says what to do with the words; whether a turn with the floor free
 // has ended is the router's to say, from p_eot, the pause and the policy. A server started
@@ -43,6 +52,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -74,6 +84,19 @@ const (
 	// wordsTimeout bounds the words a decision writes as well, which on a CPU take seconds,
 	// with as long again as the audio lasts.
 	wordsTimeout = 8 * time.Second
+	// TimeoutHeader is how many milliseconds the router will go on waiting for a decision's or
+	// a transcription's answer, counted from when it sent the request: a whole number, at least
+	// 1. It is relative, so that the clocks of the router and the server need not agree.
+	TimeoutHeader = "X-Timeout-Ms"
+	// maxBackOff bounds how long a Retry-After is heeded, whatever it says.
+	maxBackOff = 30 * time.Second
+	// idleConnTimeout is how long a kept-alive connection to the server may sit unused before
+	// the client closes it: under the 60 s after which the server closes one itself (gophonic
+	// cmd/qwen3asr-decide, idleTimeout), so that the server is never the one to close it as a
+	// request goes out on it. maxIdleConns is what the router's default transport keeps a host
+	// (cmd/router), so that requests that overlap each keep a connection of their own.
+	idleConnTimeout = 50 * time.Second
+	maxIdleConns    = 256
 )
 
 var (
@@ -82,6 +105,13 @@ var (
 	ErrRefused = errors.New("audiofloor: the server refused the agent")
 	// ErrUnsupported is a server with no policy for its model, which asks about no agent.
 	ErrUnsupported = errors.New("audiofloor: the server has no policy for its model")
+	// ErrAgentUnknown is a decision the server answered 404 for an agent it was told about
+	// moments before, asked again and answered 404 again: a replica behind the same address that
+	// has not been told yet. The server is up, and the next request may reach one that knows.
+	ErrAgentUnknown = errors.New("audiofloor: the replica answering does not know the agent, though the server was told it")
+	// ErrBackingOff is a request the client did not send, one that decides no turn (a check
+	// over the agent), while a Retry-After the server answered 503 or 429 with lasts.
+	ErrBackingOff = errors.New("audiofloor: the server asked for time (Retry-After), so only the pauses are asked about")
 )
 
 // StatusError is a request the server answered with an error status.
@@ -130,10 +160,12 @@ func (e *TranscriptError) Error() string { return "audiofloor: " + e.Request + "
 // refused, reset or dropped, the request timed out, or what answered was a 5xx, 404 or 408,
 // as a proxy with nothing behind it answers. A server that answered 503 or 429 is up and
 // shedding load, and one that answered without words (TranscriptError) or refused the
-// request (Misconfigured) is up as well. A session that meets nothing else for a while has
-// a server down for the call, rather than restarting.
+// request (Misconfigured) is up as well, as is one whose replica did not know an agent
+// another was told (ErrAgentUnknown), and a request held back while it asked for time
+// (ErrBackingOff) says nothing of it. A session that meets nothing else for a while has a
+// server down for the call, rather than restarting.
 func Unreachable(err error) bool {
-	if Misconfigured(err) {
+	if Misconfigured(err) || errors.Is(err, ErrAgentUnknown) || errors.Is(err, ErrBackingOff) {
 		return false
 	}
 	var transcript *TranscriptError
@@ -280,11 +312,16 @@ type Client struct {
 
 	mu sync.Mutex
 	// policy is the last one read, nextRead when it is to be read again, and reading says a
-	// read is out, in the background.
+	// read is out, in the background. inline says the server read last takes a decision's agent
+	// with it (GET /v1/info's inline_agents).
 	policy   *Policy
 	nextRead time.Time
 	reading  bool
+	inline   bool
 	agents   map[[sha256.Size]byte]registration
+	// backOffUntil is when the last Retry-After the server answered 503 or 429 with runs out,
+	// by now.
+	backOffUntil time.Time
 }
 
 // registration is the server's name for an agent, or why it refused it: an agent refused
@@ -294,10 +331,11 @@ type registration struct {
 	refused error
 }
 
-// New returns a client of the server at url, sending it audio in format.
+// New returns a client of the server at url, sending it audio in format, over client, or over
+// one of the package's own when nil (serverClient).
 func New(url string, format Format, client *http.Client) *Client {
 	if client == nil {
-		client = http.DefaultClient
+		client = serverClient()
 	}
 	return &Client{url: strings.TrimRight(url, "/"), format: format, http: client, interims: true, now: time.Now, agents: map[[sha256.Size]byte]registration{}}
 }
@@ -368,16 +406,21 @@ func (c *Client) rereadLocked() {
 	}()
 }
 
-// readPolicy reads GET /v1/info within ctx, and keeps the policy it answers.
+// readPolicy reads GET /v1/info within ctx, and keeps the policy it answers, and whether the
+// server takes a decision's agent with it.
 func (c *Client) readPolicy(ctx context.Context) (Policy, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url+"/v1/info", nil)
 	if err != nil {
 		return Policy{}, stack.Wrap(err)
 	}
 	var info struct {
-		EndOfTurn json.RawMessage `json:"end_of_turn"`
+		EndOfTurn    json.RawMessage `json:"end_of_turn"`
+		InlineAgents bool            `json:"inline_agents"`
 	}
-	if _, err := c.do(req, &info); err != nil {
+	sent := time.Now()
+	_, err = c.do(req, &info)
+	measureSetup(ctx, routeInfo, sent, err)
+	if err != nil {
 		return Policy{}, err
 	}
 	// A policy of another shape, from a server older or newer than this router, is one it
@@ -390,7 +433,7 @@ func (c *Client) readPolicy(ctx context.Context) (Policy, error) {
 		return Policy{}, stack.Wrap(fmt.Errorf("%w: its end_of_turn is incomplete", ErrUnsupported))
 	}
 	c.mu.Lock()
-	c.policy, c.nextRead = &policy, c.now().Add(policyTTL)
+	c.policy, c.nextRead, c.inline = &policy, c.now().Add(policyTTL), info.InlineAgents
 	c.mu.Unlock()
 	return policy, nil
 }
@@ -440,21 +483,34 @@ func (c *Client) decide(ctx context.Context, agent Agent, turn Turn, audio harne
 	if len(audio.Data) == 0 {
 		return Answer{}, nil, stack.Wrap(errors.New("audiofloor: no audio heard yet"))
 	}
-	body, contentType, err := decisionBody(turn, audio)
-	if err != nil {
-		return Answer{}, nil, err
-	}
-	key, spec, err := agentKey(agent)
-	if err != nil {
-		return Answer{}, nil, err
-	}
 	// Words still coming are said only over the agent (turnOf).
 	kind := kindPause
 	if turn.Unfinished {
 		kind = kindOverAgent
 	}
+	if kind == kindOverAgent && c.backingOff() {
+		// A check over the agent decides no turn: the flow controller has it while the server
+		// asks for time, and the pauses' checks, which do, are what it is asked.
+		backedOff.WithLabelValues(kind).Inc()
+		return Answer{}, nil, stack.Wrap(ErrBackingOff)
+	}
+	key, spec, err := agentKey(agent)
+	if err != nil {
+		return Answer{}, nil, err
+	}
+	c.mu.Lock()
+	inline := c.inline
+	c.mu.Unlock()
+	var told []byte
+	if inline {
+		told = spec
+	}
+	body, contentType, err := decisionBody(turn, audio, told)
+	if err != nil {
+		return Answer{}, nil, err
+	}
 	for attempt := 0; ; attempt++ {
-		id, err := c.register(ctx, key, spec)
+		id, err := c.register(ctx, key, spec, attempt > 0)
 		if err != nil {
 			return Answer{}, nil, err
 		}
@@ -471,22 +527,29 @@ func (c *Client) decide(ctx context.Context, agent Agent, turn Turn, audio harne
 				return Answer{}, nil, stack.Wrap(err)
 			}
 			req.Header.Set("Content-Type", contentType)
+			setDeadline(req.Header, ctx)
 			status, err = c.do(req, &answer)
 		}
 		if err == nil && answer.Ruling == nil {
 			err = stack.Wrap(errors.New("audiofloor: decide: the answer has no ruling"))
 		}
 		measure(ctx, kind, sent, err)
-		if status == http.StatusNotFound && attempt == 0 {
-			// A restarted server knows no agent, and may serve another model: its policy is
-			// read again, in the background, and the last one read stands until then.
-			c.mu.Lock()
-			clear(c.agents)
-			c.rereadLocked()
-			c.mu.Unlock()
-			continue
+		if status != http.StatusNotFound {
+			return answer, said, err
 		}
-		return answer, said, err
+		if attempt > 0 {
+			// Told again, and still not known where the decision went: another replica than
+			// the one told, as a server that takes no agent inline has. It is up.
+			return Answer{}, nil, fmt.Errorf("%w: %w", ErrAgentUnknown, err)
+		}
+		// The replica that answered doesn't know the agent: one restarted, or one of several
+		// behind the address that was never told. That agent alone is told again, the others'
+		// names standing, as an agent's name is its content's and the same on every replica.
+		// A restarted server may serve another model, so its policy is read again, in the
+		// background, the last one read standing until then.
+		c.mu.Lock()
+		c.rereadLocked()
+		c.mu.Unlock()
 	}
 }
 
@@ -501,6 +564,9 @@ func (c *Client) decideWords(ctx context.Context, target string, body []byte, co
 		return Answer{}, nil, 0, stack.Wrap(err)
 	}
 	req.Header.Set("Content-Type", contentType)
+	// What the server is told it has is the decision's deadline, ctx's: past it, nobody
+	// waits for the words either.
+	setDeadline(req.Header, ctx)
 	given := func(err error) error {
 		// The decision's deadline, rather than the request's own, is what ran out.
 		if ctx.Err() != nil {
@@ -575,6 +641,7 @@ func (c *Client) Transcribe(ctx context.Context, audio harness.Audio, languages 
 		return Words{}, stack.Wrap(err)
 	}
 	req.Header.Set("Content-Type", contentType)
+	setDeadline(req.Header, ctx)
 	var said struct {
 		Transcript *transcriptJSON `json:"transcript"`
 		Error      string          `json:"transcript_error"`
@@ -616,12 +683,13 @@ func agentKey(agent Agent) ([sha256.Size]byte, []byte, error) {
 	return sha256.Sum256(raw), raw, nil
 }
 
-// register returns the server's name for the agent spec, registering it if it isn't known.
-func (c *Client) register(ctx context.Context, key [sha256.Size]byte, spec []byte) (string, error) {
+// register returns the server's name for the agent spec, registering it if it isn't known, or
+// again, though it is, when the server answering a decision about it did not know it.
+func (c *Client) register(ctx context.Context, key [sha256.Size]byte, spec []byte, again bool) (string, error) {
 	c.mu.Lock()
 	known, ok := c.agents[key]
 	c.mu.Unlock()
-	if ok {
+	if ok && !again {
 		return known.id, known.refused
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url+"/v1/agents", bytes.NewReader(spec))
@@ -632,7 +700,9 @@ func (c *Client) register(ctx context.Context, key [sha256.Size]byte, spec []byt
 	var registered struct {
 		Agent string `json:"agent"`
 	}
+	sent := time.Now()
 	status, err := c.do(req, &registered)
+	measureSetup(ctx, routeAgents, sent, err)
 	result := registration{id: registered.Agent}
 	switch {
 	case status == http.StatusUnprocessableEntity:
@@ -654,12 +724,60 @@ func (c *Client) register(ctx context.Context, key [sha256.Size]byte, spec []byt
 	return result.id, result.refused
 }
 
-// send is the one way a request leaves the client.
+// send is the one way a request leaves the client. Every request it sends is idempotent:
+// reading the policy, registering an agent by its content, and a decision or the words of
+// audio, which change nothing on the server. So each is marked so, with an Idempotency-Key
+// that is not sent (net/http: a nil value is never written), and net/http sends it again on a
+// new connection when a kept-alive one turns out closed by the server as the request went out
+// on it, which it otherwise does only for a GET.
 func (c *Client) send(req *http.Request) (*http.Response, error) {
 	if c.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
+	if _, ok := req.Header["Idempotency-Key"]; !ok {
+		req.Header["Idempotency-Key"] = nil
+	}
 	return c.http.Do(req)
+}
+
+// setDeadline says in header how long the router will wait for the answer, ctx's deadline
+// from now (TimeoutHeader), when ctx has one that has yet to pass.
+func setDeadline(header http.Header, ctx context.Context) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return
+	}
+	if left := time.Until(deadline); left > 0 {
+		header.Set(TimeoutHeader, strconv.FormatInt(max(1, left.Milliseconds()), 10))
+	}
+}
+
+// backingOff says a Retry-After the server answered with has yet to pass.
+func (c *Client) backingOff() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now().Before(c.backOffUntil)
+}
+
+// backOff heeds the Retry-After of a 503 or 429: seconds, or an HTTP date, up to maxBackOff
+// from now. One that has passed, or that is neither, changes nothing.
+func (c *Client) backOff(retryAfter string) {
+	retryAfter = strings.TrimSpace(retryAfter)
+	if retryAfter == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.now()
+	var wait time.Duration
+	if seconds, err := strconv.ParseInt(retryAfter, 10, 64); err == nil {
+		wait = time.Duration(min(seconds, int64(maxBackOff/time.Second))) * time.Second
+	} else if at, err := http.ParseTime(retryAfter); err == nil {
+		wait = at.Sub(now)
+	}
+	if until := now.Add(min(wait, maxBackOff)); wait > 0 && until.After(c.backOffUntil) {
+		c.backOffUntil = until
+	}
 }
 
 // do sends req and reads the answer, a JSON line, into into.
@@ -691,15 +809,19 @@ func (c *Client) statusError(req *http.Request, resp *http.Response) error {
 		failed.Error = strings.ReplaceAll(failed.Error, c.apiKey, "[key]")
 	}
 	var err error = &StatusError{Method: req.Method, Path: req.URL.Path, Code: resp.StatusCode, Status: resp.Status, Message: failed.Error}
-	if resp.StatusCode == http.StatusNotImplemented {
+	switch resp.StatusCode {
+	case http.StatusNotImplemented:
 		err = fmt.Errorf("%w: %w", ErrUnsupported, err)
+	case http.StatusServiceUnavailable, http.StatusTooManyRequests:
+		c.backOff(resp.Header.Get("Retry-After"))
 	}
 	return err
 }
 
-// decisionBody is a decision's multipart body: the turn, then the audio. What a prompt
-// won't show isn't sent.
-func decisionBody(turn Turn, audio harness.Audio) ([]byte, string, error) {
+// decisionBody is a decision's multipart body: the turn, then the audio, then the agent when
+// there is one to tell the server inline, the JSON POST /v1/agents takes. What a prompt won't
+// show isn't sent.
+func decisionBody(turn Turn, audio harness.Audio, agent []byte) ([]byte, string, error) {
 	turn.Said = lastRunes(turn.Said, maxSaid)
 	turn.Conversation = slices.Clone(lastTurns(turn.Conversation, maxTurns))
 	for i, line := range turn.Conversation {
@@ -721,7 +843,11 @@ func decisionBody(turn Turn, audio harness.Audio) ([]byte, string, error) {
 		}
 		turn.Conversation = turn.Conversation[1:]
 	}
-	return formBody(formPart{"turn", "application/json", moment}, formPart{"audio", audio.Type, audio.Data})
+	parts := []formPart{{"turn", "application/json", moment}, {"audio", audio.Type, audio.Data}}
+	if agent != nil {
+		parts = append(parts, formPart{"agent", "application/json", agent})
+	}
+	return formBody(parts...)
 }
 
 // formPart is a part of a multipart/form-data body: its name, type and bytes.
@@ -783,6 +909,16 @@ func lastRunes(s string, n int) string {
 	}
 	return s[at:]
 }
+
+// serverClient is the client every Client asks its server over unless it is given one, one a
+// process: net/http's default transport as the process has it, keeping as many idle
+// connections a host as the router's (maxIdleConns), each closed after idleConnTimeout unused.
+var serverClient = sync.OnceValue(func() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns, transport.MaxIdleConnsPerHost = maxIdleConns, maxIdleConns
+	transport.IdleConnTimeout = idleConnTimeout
+	return &http.Client{Transport: transport}
+})
 
 // Open returns a client of the server a deployment's settings name, or nil without one.
 // Loading the settings checked them all.
