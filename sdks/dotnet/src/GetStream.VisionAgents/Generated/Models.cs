@@ -228,6 +228,78 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ActivityEnding
+    {
+
+        /// <summary>
+        /// Why they ended. Absent for the sessions that ended with no reason kept, as before reasons were.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("end_reason")]
+        public string? EndReason { get; set; } = default!;
+
+        /// <summary>
+        /// How many ended so.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("sessions")]
+        public long Sessions { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ActivityLatency
+    {
+
+        /// <summary>
+        /// The leg: stt_latency, the speech-to-text vendor's decode of the transcript that settled the turn; llm_ttft, asking the model to its first token; tts_ttfb, the first sentence sent to its first audio; roundtrip, the settled transcript to the first audio published.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("leg")]
+        public string Leg { get; set; } = default!;
+
+        /// <summary>
+        /// The median, in milliseconds. Absent when no turn had the leg.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("p50_ms")]
+        public double? P50Ms { get; set; } = default!;
+
+        /// <summary>
+        /// The 95th percentile, in milliseconds. Absent when no turn had the leg.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("p95_ms")]
+        public double? P95Ms { get; set; } = default!;
+
+        /// <summary>
+        /// The 99th percentile, in milliseconds. Absent when no turn had the leg.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("p99_ms")]
+        public double? P99Ms { get; set; } = default!;
+
+        /// <summary>
+        /// How many turns the leg was counted for.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("turns")]
+        public long Turns { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class ActivityMeter
     {
 
@@ -278,6 +350,102 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("requests")]
         public long Requests { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ActivitySession
+    {
+
+        /// <summary>
+        /// The name of the agent config it was opened with.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("agent_name")]
+        public string AgentName { get; set; } = default!;
+
+        /// <summary>
+        /// The app it was opened in.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("app_id")]
+        public string AppId { get; set; } = default!;
+
+        /// <summary>
+        /// When it ended. Absent while it runs.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("closed_at")]
+        public System.DateTimeOffset? ClosedAt { get; set; } = default!;
+
+        /// <summary>
+        /// When it was opened.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("created_at")]
+        public System.DateTimeOffset CreatedAt { get; set; } = default!;
+
+        /// <summary>
+        /// Why it ended. Absent while it runs, and for one that ended with no reason kept.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("end_reason")]
+        public string? EndReason { get; set; } = default!;
+
+        /// <summary>
+        /// The session.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("id")]
+        public string Id { get; set; } = default!;
+
+        /// <summary>
+        /// text, voice or video.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("modality")]
+        public string Modality { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ActivitySessions
+    {
+
+        /// <summary>
+        /// How many of them ended for each reason, by reason, the ones with no reason kept first.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("ended")]
+        public System.Collections.Generic.List<ActivityEnding>? Ended { get; set; } = default!;
+
+        /// <summary>
+        /// The 20 opened last, newest first.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("latest")]
+        public System.Collections.Generic.List<ActivitySession>? Latest { get; set; } = default!;
+
+        /// <summary>
+        /// How many sessions were opened, running ones included.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("opened")]
+        public long Opened { get; set; } = default!;
+
+        /// <summary>
+        /// How many of them have not ended.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("running")]
+        public long Running { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -9552,6 +9720,12 @@ namespace GetStream.VisionAgents.Models
         public System.DateTimeOffset? LastSeen { get; set; } = default!;
 
         /// <summary>
+        /// How long the turns of the organization's apps took, every agent summed, one item per leg: stt_latency, llm_ttft, tts_ttfb, then roundtrip. Turns are kept by the hour they started in, so they count the whole hour since falls in. The percentiles are read off bins 5% wide, so they are within 5% of the true ones.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("latency")]
+        public System.Collections.Generic.List<ActivityLatency>? Latency { get; set; } = default!;
+
+        /// <summary>
         /// What the organization's apps' work came to, by modality, from the shards listed in shards.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("meters")]
@@ -9562,6 +9736,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("organization_id")]
         public string OrganizationId { get; set; } = default!;
+
+        /// <summary>
+        /// The sessions the organization's apps opened from since on, from the shards listed in shards.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("sessions")]
+        public ActivitySessions Sessions { get; set; } = new ActivitySessions();
 
         /// <summary>
         /// The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them.

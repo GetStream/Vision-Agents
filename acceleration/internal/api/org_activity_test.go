@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -356,4 +357,192 @@ func (s *OrganizationActivitySuite) TestTheAnswerNamesTheShardsItsMetersWereRead
 
 	s.Require().Len(answer.Shards, 1)
 	s.Regexp(`^dsn:[0-9a-f]{16}$`, answer.Shards[0])
+}
+
+// Defect: adding sessions and latency changed a field the answer already had, its name, its
+// value or its shape. The keys and values here were read off the answer before either was added.
+func (s *OrganizationActivitySuite) TestTheFieldsTheAnswerHadBeforeSessionsAndLatencyAreUnchanged() {
+	day := time.Now().UTC().Truncate(24 * time.Hour)
+	first, last, refused := day.Add(time.Hour), day.Add(3*time.Hour), day.Add(2*time.Hour)
+	s.Require().NoError(s.store.RecordActivity(context.Background(), []store.ActivityDelta{{
+		OrganizationID: s.app.organization.ID, AppID: s.customerID(), Area: activity.AreaConversations,
+		Client: store.AuditSourceSDK, Day: first, Requests: 4, Refused: 1, LastRefusalCode: "no_credit",
+		LastRefusalAt: refused, FirstAt: first, LastAt: last,
+	}}))
+	s.spent(s.customerID(), s.app.organization.ID, 7)
+	since := day.Add(-24 * time.Hour)
+
+	status, payload := s.staff.call(http.MethodGet,
+		s.path(s.app.organization.ID)+"?since="+url.QueryEscape(since.Format(time.RFC3339)), nil)
+	s.Require().Equal(http.StatusOK, status, string(payload))
+
+	var raw map[string]json.RawMessage
+	s.Require().NoError(json.Unmarshal(payload, &raw))
+	before := map[string]json.RawMessage{}
+	for key, value := range raw {
+		if key != "sessions" && key != "latency" {
+			before[key] = value
+		}
+	}
+	s.ElementsMatch([]string{"duration", "organization_id", "since", "furthest_step", "first_seen", "last_seen",
+		"areas", "meters", "shards"}, slices.Collect(maps.Keys(before)))
+	stamp := func(at time.Time) string { return `"` + at.Format(time.RFC3339) + `"` }
+	s.JSONEq(`"`+s.app.organization.ID+`"`, string(before["organization_id"]))
+	s.JSONEq(stamp(since), string(before["since"]))
+	s.JSONEq(`"conversations"`, string(before["furthest_step"]))
+	s.JSONEq(stamp(first), string(before["first_seen"]))
+	s.JSONEq(stamp(last), string(before["last_seen"]))
+	s.JSONEq(`[{"area":"conversations","client":"sdk","first_at":`+stamp(first)+`,"last_at":`+stamp(last)+
+		`,"requests":4,"refused":1,"last_refusal_code":"no_credit"}]`, string(before["areas"]))
+	s.JSONEq(`[{"meter":"llm","requests":1,"input_tokens":10,"output_tokens":5,"audio_ms":0,"characters":0,`+
+		`"duration_ms":0,"cost_micros":7}]`, string(before["meters"]))
+	s.Regexp(`^\["dsn:[0-9a-f]{16}"\]$`, string(before["shards"]))
+}
+
+// opened saves a session of app's opened at at, closed for reason when it is not running.
+func (s *OrganizationActivitySuite) opened(appID string, at time.Time, running bool, reason string) string {
+	return s.openedAs("support", appID, at, running, reason)
+}
+
+// openedAs is opened for the agent named agent.
+func (s *OrganizationActivitySuite) openedAs(agent, appID string, at time.Time, running bool, reason string) string {
+	id := "session-" + s.utils.uuid()
+	s.Require().NoError(s.store.SaveSession(context.Background(), &store.AgentSession{
+		ID: id, CustomerID: appID, AgentName: agent, CallID: "call-" + id, CreatedAt: at,
+	}))
+	if !running {
+		s.Require().NoError(s.store.CloseSession(context.Background(), id, at.Add(time.Minute), reason))
+	}
+	return id
+}
+
+// turned records a turn of app's whose roundtrip took ms.
+func (s *OrganizationActivitySuite) turned(appID string, ms float64) {
+	s.Require().NoError(s.store.RecordTurnStats(context.Background(), store.TurnSample{
+		CustomerID: appID, AgentID: "agent-" + appID, StartedAt: time.Now(), RoundtripMs: &ms,
+	}))
+}
+
+func sessionIDs(answer OrganizationActivity) []string {
+	ids := make([]string, 0, len(answer.Sessions.Latest))
+	for _, listed := range answer.Sessions.Latest {
+		ids = append(ids, listed.ID)
+	}
+	return ids
+}
+
+// Defect: an organization told another organization's sessions or turns, or the sessions and
+// turns of only one of its apps.
+func (s *OrganizationActivitySuite) TestSessionsAndLatencyAreTheOrganizationsOwn() {
+	second := s.appOf()
+	stranger := s.data.createApp()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	first := s.opened(s.customerID(), now.Add(-3*time.Hour), false, "hangup")
+	other := s.openedAs("sales", second, now.Add(-2*time.Hour), false, "hangup")
+	running := s.opened(s.customerID(), now.Add(-time.Hour), true, "")
+	theirs := s.opened(stranger.app.ID, now.Add(-time.Minute), false, "transferred")
+	s.turned(s.customerID(), 200)
+	s.turned(second, 400)
+	s.turned(stranger.app.ID, 60_000)
+
+	ours := s.read(s.app.organization.ID, time.Time{})
+
+	s.Equal(int64(3), ours.Sessions.Opened)
+	s.Equal(int64(1), ours.Sessions.Running)
+	hangup := SessionEndReason("hangup")
+	s.Equal([]ActivityEnding{{EndReason: &hangup, Sessions: 2}}, ours.Sessions.Ended)
+	s.Equal([]string{running, other, first}, sessionIDs(ours))
+	listed := ours.Sessions.Latest[1]
+	s.Equal(second, listed.AppID)
+	s.Equal("sales", listed.AgentName)
+	s.Equal("support", ours.Sessions.Latest[0].AgentName)
+	s.Equal(store.ModalityVoice, listed.Modality)
+	s.True(now.Add(-2*time.Hour).Equal(listed.CreatedAt), "created at %s", listed.CreatedAt)
+	s.Require().NotNil(listed.ClosedAt)
+	s.True(now.Add(-2*time.Hour+time.Minute).Equal(*listed.ClosedAt), "closed at %s", listed.ClosedAt)
+	s.Equal(&hangup, listed.EndReason)
+	roundtrip := ours.Latency[3]
+	s.Equal("roundtrip", roundtrip.Leg)
+	s.Equal(int64(2), roundtrip.Turns)
+	s.Require().NotNil(roundtrip.P99Ms)
+	s.InEpsilon(400, *roundtrip.P99Ms, 0.05)
+
+	theirAnswer := s.read(stranger.organization.ID, time.Time{})
+	s.Equal([]string{theirs}, sessionIDs(theirAnswer))
+	s.Equal(int64(1), theirAnswer.Latency[3].Turns)
+	s.Require().NotNil(theirAnswer.Latency[3].P50Ms)
+	s.InEpsilon(60_000, *theirAnswer.Latency[3].P50Ms, 0.05)
+}
+
+// Defect: the window ignored for sessions or turns, so a read from since tells what came before
+// it.
+func (s *OrganizationActivitySuite) TestSessionsAndTurnsBeforeSinceAreLeftOut() {
+	old := s.opened(s.customerID(), time.Now().Add(-48*time.Hour), false, "hangup")
+	s.Require().NoError(s.store.RecordTurnStats(context.Background(), store.TurnSample{
+		CustomerID: s.customerID(), AgentID: "agent", StartedAt: time.Now().Add(-48 * time.Hour), RoundtripMs: pointerTo(300.0),
+	}))
+	s.Equal([]string{old}, sessionIDs(s.read(s.app.organization.ID, time.Time{})))
+
+	answer := s.read(s.app.organization.ID, time.Now().Add(-24*time.Hour))
+
+	s.Zero(answer.Sessions.Opened)
+	s.Empty(answer.Sessions.Ended)
+	s.Empty(answer.Sessions.Latest)
+	s.Zero(answer.Latency[3].Turns)
+}
+
+// Defect: more than twenty sessions listed, or the twenty listed not the newest.
+func (s *OrganizationActivitySuite) TestTheTwentyNewestSessionsAreListed() {
+	start := time.Now().UTC().Add(-time.Hour)
+	var ids []string
+	for n := range 21 {
+		ids = append(ids, s.opened(s.customerID(), start.Add(time.Duration(n)*time.Second), true, ""))
+	}
+	slices.Reverse(ids)
+
+	answer := s.read(s.app.organization.ID, time.Time{})
+
+	s.Equal(int64(21), answer.Sessions.Opened)
+	s.Equal(int64(21), answer.Sessions.Running)
+	s.Equal(ids[:20], sessionIDs(answer))
+}
+
+// Defect: an organization with no sessions or turns answered with null lists, a leg left out,
+// or a percentile of zero rather than none.
+func (s *OrganizationActivitySuite) TestAnOrganizationWithNoSessionsHasEmptySessionsAndEveryLegWithNoTurns() {
+	status, payload := s.staff.call(http.MethodGet, s.path("organization-"+s.utils.uuid()), nil)
+	s.Require().Equal(http.StatusOK, status, string(payload))
+
+	var raw map[string]json.RawMessage
+	s.Require().NoError(json.Unmarshal(payload, &raw))
+	s.JSONEq(`{"opened":0,"running":0,"ended":[],"latest":[]}`, string(raw["sessions"]))
+	s.JSONEq(`[{"leg":"stt_latency","turns":0},{"leg":"llm_ttft","turns":0},{"leg":"tts_ttfb","turns":0},`+
+		`{"leg":"roundtrip","turns":0}]`, string(raw["latency"]))
+}
+
+// Defect: a session that ended with no reason kept, or one still running, told with an empty
+// reason rather than none.
+func (s *OrganizationActivitySuite) TestAnEndingWithNoReasonAndARunningSessionNameNoReason() {
+	ended := s.opened(s.customerID(), time.Now().Add(-time.Hour), false, "")
+	s.opened(s.customerID(), time.Now().Add(-time.Minute), true, "")
+
+	status, payload := s.staff.call(http.MethodGet, s.path(s.app.organization.ID), nil)
+	s.Require().Equal(http.StatusOK, status, string(payload))
+
+	var raw struct {
+		Sessions struct {
+			Ended  []map[string]json.RawMessage `json:"ended"`
+			Latest []map[string]json.RawMessage `json:"latest"`
+		} `json:"sessions"`
+	}
+	s.Require().NoError(json.Unmarshal(payload, &raw))
+	s.Require().Len(raw.Sessions.Ended, 1)
+	s.NotContains(raw.Sessions.Ended[0], "end_reason")
+	s.JSONEq(`1`, string(raw.Sessions.Ended[0]["sessions"]))
+	s.Require().Len(raw.Sessions.Latest, 2)
+	s.NotContains(raw.Sessions.Latest[0], "end_reason")
+	s.NotContains(raw.Sessions.Latest[0], "closed_at")
+	s.JSONEq(`"`+ended+`"`, string(raw.Sessions.Latest[1]["id"]))
+	s.NotContains(raw.Sessions.Latest[1], "end_reason")
+	s.Contains(raw.Sessions.Latest[1], "closed_at")
 }
