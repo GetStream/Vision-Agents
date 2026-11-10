@@ -75,10 +75,15 @@ func (c CallAudio) Merge(other CallAudio) CallAudio {
 	}
 }
 
+// Judged is the call being one Silences judges: somebody besides the agent was in it. An edge
+// without a Roster says nobody arrived, and audio from somebody says they did.
+func (c CallAudio) Judged() bool {
+	return c.Attended || c.Frames > 0
+}
+
 // Silences is the cases the call is in, nil for none.
 func (c CallAudio) Silences() []Silence {
-	// An edge without a Roster says nobody arrived, and audio from somebody says they did.
-	if !c.Attended && c.Frames == 0 {
+	if !c.Judged() {
 		return nil
 	}
 	var cases []Silence
