@@ -120,7 +120,7 @@ the other commands that read them there.
 | `ROUTER_AUTH_KEK_VERSION` | Which keyring version seals new connector credentials, defaults to `1`. Every `ROUTER_AUTH_KEK_V<n>` that is set still opens its rows, so moving this back to an older version is safe |
 | `ROUTER_CONNECTORS_ENABLED` | `true` turns connectors on. The router then needs the keyring version `ROUTER_AUTH_KEK_VERSION` names, in every auth mode, and refuses to start without it. Off by default |
 | `ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE` | Direct calls one app may send to one connector through the connection proxy in a minute, counted in Redis across routers, defaults to `60`. A call over it is a 429 with `Retry-After`. `0` turns it off, and so does a router with no Redis |
-| `ROUTER_RUNS_CONCURRENT_PER_APP` | Headless runs (`POST /v1/agents/runs`) one app may have in flight, counted in Redis across routers, defaults to `20`. A run over it is a 429 `concurrency_limited` with `Retry-After`. `0` turns it off, and so does a router with no Redis |
+| `ROUTER_RUNS_CONCURRENT_PER_APP` | Headless runs (`POST /v1/agents/runs`) one app may have in flight, counted in Redis across routers, defaults to `20`. A run over it is a 429 `concurrency_limited` with `Retry-After`. `0` turns it off, and so does a router with no Redis. The child agents a run calls take no slot: at most 8 run at once inside their parent's |
 | `ROUTER_CODE_SANDBOX_BROKER` | What holds a connector's credential for code in a sandbox: `daytona` (Daytona Secrets), the default, or `proxy`, the egress proxy (`internal/sandbox/egress`), which needs Redis, `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL`, `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`, and the proxy served by the same router (`ROUTER_CODE_SANDBOX_PROXY_ADDR`, `ROUTER_CODE_SANDBOX_PROXY_CA_KEY`). Behind the proxy a sandbox reaches the proxy alone, and the proxy reaches its grants' hosts and the config's `allowed_domains`; a config with `network: true` and no `allowed_domains`, or with a `network_allow_list`, is refused when a session with a sandbox binding starts |
 | `ROUTER_CODE_SANDBOX_SECRET_PREFIX` | Names this router's environment in every Daytona secret it makes, such as `stg` on staging (lowercase letters and digits only), since routers sharing a Daytona organization must never touch each other's. A session with a `sandbox: true` binding is refused without it. A prefix belongs to one deployment (one Redis): routers that share a prefix delete each other's secrets, so never use `stg` locally |
 | `ROUTER_CODE_SANDBOX_TARGETS` | `code_sandbox.targets`: each region sandboxes run in and the Daytona target they are made on, as `region=target` pairs, comma separated, such as `eu=eu`. `us` is always served: left out, on `DAYTONA_TARGET`, then the organization's default, as before. See [Regions](#regions) |
@@ -1627,6 +1627,38 @@ resolved once when the session is created: the customer's own rows, or the built
 `think`, `recall` and `explain`. A name nothing defines is refused rather than dropped,
 because a model offered a skill nobody implements is worse than one offered none. The
 runtime lookup is unchanged.
+
+**A text agent can hand work to the app's other text agents.** A config's `agents` names
+them, each with the tool its model calls it by:
+
+```yaml
+mode: text
+llm: anthropic/claude-sonnet-5-5
+agents:
+  - config: security-lens        # another text agent of the app, by name (an id is stored as its name)
+    tool: security
+    description: Reviews a diff for security bugs and lists each candidate finding.
+  - config: ranker
+    tool: rank
+    timeout_ms: 90000             # two minutes when left out
+```
+
+Each is offered as a tool taking one string, `input`. A call runs that agent as an incognito
+run of its own (`session.Manager.Run`, what `POST /v1/agents/runs` runs on) on its own llm,
+instructions, connectors and sandbox, and the tool result is what it said last. The calls in
+one reply already ran at once, a goroutine each; a parent runs at most 8 children at a time
+and the rest wait their turn within their deadline. A child gets its own timeout or what is
+left of the parent's run, whichever is less, and ends with the parent's tool call, so it never
+outlives the parent. A child that fails or runs out of time is a failed tool call the parent's
+model answers around, not a failed run. What the children spend is added to the run's `usage`
+and broken down by tool in its `children`.
+
+Children are one level deep: the parent and every child are text agents, and a child has no
+`agents` of its own and is not the parent. A save is refused that would break that from either
+side, including a child gaining agents or stopping being a text agent, and the child is checked
+again when it runs, which is also where a renamed or deleted child shows up, as a failed tool
+call. A child takes none of the app's run slots (`ROUTER_RUNS_CONCURRENT_PER_APP`): the parent's
+slot covers it.
 
 **Knowledge is what the business wrote down.** With `TURBOPUFFER_API_KEY` set, a config's
 `knowledge_namespace` gives the model a `lookup` tool over full-text search, so a caller's
