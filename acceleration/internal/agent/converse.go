@@ -137,17 +137,6 @@ type Action struct {
 	Err error
 	// At is when a held reply may go out: the caller holds the floor until then.
 	At time.Time
-	// Unhold is the reply held for the speaker's lone greeting that a settled turn ended
-	// without releasing it.
-	Unhold endedHold
-}
-
-// endedHold is a reply held for a lone greeting that a settled turn ended. grew is whether the
-// words were more than the greeting, which drops it; otherwise the reply is no longer the
-// unheard one, and goes out if it is still owed.
-type endedHold struct {
-	turnID string
-	grew   bool
 }
 
 // floor is what the agent is doing at the moment a judgement has to be made.
@@ -706,26 +695,17 @@ func greetsAlone(saying string) bool {
 // none of was held for it: the reply is the answer to it. The controller is not asked, as
 // every ruling it gives breaks that: stop cuts the reply, continue answers the greeting a
 // second time, wait lets the reply go and may then cut it.
-// Words that are not that, or a reply no longer unheard, end the hold, which it reports
-// unless the caller going on ended it first: the words are a turn as any other.
-func (c *converse) answeredByHeld(ready candidate, state floor) (Action, bool, endedHold) {
+// Words that are not that, or a reply no longer unheard, are a turn as any other: words that
+// grew dropped the reply as they came (stale), and the hold's own deadline ends it otherwise.
+func (c *converse) answeredByHeld(ready candidate, state floor) (Action, bool) {
 	participantID := ready.Participant.ID
 	turnID := c.greetedBy(participantID)
-	if turnID == "" {
-		return Action{}, false, endedHold{}
-	}
-	lone := greetsAlone(unrepeated(ready.Text, c.cadence.Repeating(participantID)))
-	if turnID != state.Unheard.turnID || !lone {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		if c.greeted[participantID] != turnID {
-			return Action{}, false, endedHold{}
-		}
-		delete(c.greeted, participantID)
-		return Action{}, false, endedHold{turnID: turnID, grew: !lone}
+	if turnID == "" || turnID != state.Unheard.turnID ||
+		!greetsAlone(unrepeated(ready.Text, c.cadence.Repeating(participantID))) {
+		return Action{}, false
 	}
 	if !c.cadence.Resolve(ready.ID, false) {
-		return Action{}, true, endedHold{}
+		return Action{}, true
 	}
 	c.mu.Lock()
 	delete(c.greeted, participantID)
@@ -745,7 +725,7 @@ func (c *converse) answeredByHeld(ready candidate, state floor) (Action, bool, e
 		Text:        shown,
 		LineID:      line,
 		At:          ready.RevisedAt.Add(callerHold),
-	}), true, endedHold{}
+	}), true
 }
 
 // greetedBy is the turn whose unheard reply a participant's lone greeting holds, if any.
@@ -768,17 +748,9 @@ func (c *converse) supersede(participant stt.Participant, candidateID string) Ac
 // Settled registers a turn whose words have stopped changing and asks for a ruling on it.
 func (c *converse) Settled(ready candidate, state floor) Action {
 	// Ahead of a stop's words: a stop on a greeting a held reply answers is not acted on.
-	released, ok, ended := c.answeredByHeld(ready, state)
-	if ok {
+	if released, ok := c.answeredByHeld(ready, state); ok {
 		return released
 	}
-	action := c.settled(ready, state)
-	action.Unhold = ended
-	return action
-}
-
-// settled rules on a turn no reply held for a greeting answers.
-func (c *converse) settled(ready candidate, state floor) Action {
 	if spent, ok := c.stopSpent(ready); ok {
 		return spent
 	}
