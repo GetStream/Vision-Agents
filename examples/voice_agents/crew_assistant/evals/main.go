@@ -1,19 +1,22 @@
 // Command evals runs the crew assistant's simulations on the router and says how each went.
 //
 // A simulation is a conversation the router holds with the agent, with a model playing the
-// team member and another judging the result against simulations/*.yaml. The agent's tools
-// live on the phone, which a simulation has none of, so this hosts the same tools under the
-// agent's name while the simulations run, each calling the backend the way the phone does. A
-// phone declares its own tools, which win, so it isn't affected.
+// team member and another judging the result against simulations/*.yaml. The backend hosts the
+// restaurant's tools on the router, simulations included. The phone's three tools that ask the
+// person first have no phone in a simulation, so this hosts them under the agent's name while
+// the simulations run, each calling the backend the way the phone does, as the user the backend
+// acts for in simulations. A phone declares its own, which win, so it isn't affected.
 //
-// Run configure first, so the router has the simulations, and the backend, ideally one of its
-// own so the swaps and tickets the simulations make stay out of the demo's team lead view:
+// Run configure first, so the router has the simulations, and the backend with the user a
+// simulation acts for. What the simulations write goes into that user's schedule and the
+// leaders' inbox:
 //
-//	cd backend && GOWORK=off go run . -addr :8096
-//	cd evals && GOWORK=off go run . -backend http://localhost:8096
+//	cd backend && GOWORK=off go run . -simulation-user crew-jordan
+//	cd evals && GOWORK=off go run .
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,7 +26,6 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -42,6 +44,7 @@ const runsAtOnce = 4
 func main() {
 	agent := flag.String("agent", "crew_assistant", "the agent to run the simulations of")
 	backend := flag.String("backend", "http://localhost:8097", "the crew backend the tools call")
+	user := flag.String("user", "crew-jordan", "who the tools call the backend as: the backend's -simulation-user")
 	only := flag.String("only", "", "run only the simulations whose name contains this")
 	transcripts := flag.Bool("transcripts", false, "print the transcript of every conversation that didn't pass")
 	flag.Parse()
@@ -49,12 +52,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	if err := run(ctx, *agent, *backend, *only, *transcripts); err != nil {
+	if err := run(ctx, *agent, *backend, *user, *only, *transcripts); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(ctx context.Context, agentName, backendURL, only string, transcripts bool) error {
+func run(ctx context.Context, agentName, backendURL, user, only string, transcripts bool) error {
 	client, err := stream.Backend{}.Client()
 	if err != nil {
 		return err
@@ -70,7 +73,11 @@ func run(ctx context.Context, agentName, backendURL, only string, transcripts bo
 	if err != nil {
 		return err
 	}
-	phone, err := phoneTools(crewBackend(strings.TrimSuffix(backendURL, "/")))
+	crew := &crewBackend{url: strings.TrimSuffix(backendURL, "/"), user: user}
+	if err := crew.signIn(ctx); err != nil {
+		return err
+	}
+	phone, err := phoneTools(crew)
 	if err != nil {
 		return err
 	}
@@ -83,7 +90,7 @@ func run(ctx context.Context, agentName, backendURL, only string, transcripts bo
 		return err
 	}
 
-	fmt.Printf("running %d simulations of %s, with its tools calling %s\n\n", len(simulations), agentName, backendURL)
+	fmt.Printf("running %d simulations of %s, with the phone's tools calling %s as %s\n\n", len(simulations), agentName, backendURL, user)
 	results := make([]acceleration.SimulationRun, len(simulations))
 	failures := make([]error, len(simulations))
 	slots := make(chan struct{}, runsAtOnce)
@@ -252,35 +259,39 @@ type hostedAgent struct {
 func (a hostedAgent) Name() string           { return a.name }
 func (a hostedAgent) Tools() *tools.Registry { return a.tools }
 
-// crewBackend asks the crew backend, as the phone's tools do.
-type crewBackend string
-
-func (b crewBackend) get(ctx context.Context, path string, query url.Values) (any, error) {
-	if len(query) > 0 {
-		path += "?" + query.Encode()
-	}
-	return b.do(ctx, http.MethodGet, path, nil)
+// crewBackend asks the crew backend, as the phone's tools do, with the user's Stream token.
+type crewBackend struct {
+	url   string
+	user  string
+	token string
 }
 
-func (b crewBackend) post(ctx context.Context, path string, body any) (any, error) {
-	return b.do(ctx, http.MethodPost, path, body)
+// signIn gets the user's Stream token, as the phone does.
+func (b *crewBackend) signIn(ctx context.Context) error {
+	answered, err := b.do(ctx, "stream-token", map[string]string{"user_id": b.user})
+	if err != nil {
+		return fmt.Errorf("signing in as %s: %w", b.user, err)
+	}
+	token, _ := answered.(map[string]any)["token"].(string)
+	if token == "" {
+		return errors.New("the crew backend answered no token")
+	}
+	b.token = token
+	return nil
 }
 
-func (b crewBackend) do(ctx context.Context, method, path string, body any) (any, error) {
-	var sent io.Reader
-	if body != nil {
-		encoded, err := json.Marshal(body)
-		if err != nil {
-			return nil, err
-		}
-		sent = strings.NewReader(string(encoded))
-	}
-	request, err := http.NewRequestWithContext(ctx, method, string(b)+"/crew/"+path, sent)
+func (b *crewBackend) do(ctx context.Context, path string, body any) (any, error) {
+	encoded, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
-	if body != nil {
-		request.Header.Set("Content-Type", "application/json")
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, b.url+"/"+path, bytes.NewReader(encoded))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	if b.token != "" {
+		request.Header.Set("Authorization", "Bearer "+b.token)
 	}
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
@@ -302,32 +313,10 @@ func (b crewBackend) do(ctx context.Context, method, path string, body any) (any
 }
 
 type (
-	none         struct{}
-	calloutCheck struct {
-		ShiftID  string   `json:"shift_id" schema:"The shift, from get_my_schedule"`
-		Symptoms []string `json:"symptoms" schema:"What they said they have, in a few words each, such as \"fever\""`
-	}
-	coverage struct {
-		ShiftID string `json:"shift_id" schema:"The shift to cover"`
-	}
 	swap struct {
 		Note       string `json:"note,omitempty" schema:"A short note to the teammate"`
 		ShiftID    string `json:"shift_id" schema:"The shift to give away"`
 		TeammateID string `json:"teammate_id" schema:"The teammate, from find_coverage"`
-	}
-	leaderNote struct {
-		Message string `json:"message" schema:"The note, one or two sentences"`
-		ShiftID string `json:"shift_id,omitempty" schema:"The shift"`
-	}
-	handbookQuery struct {
-		Query string `json:"query" schema:"What to look for, in a few words"`
-	}
-	updatesSince struct {
-		Since string `json:"since" schema:"The first day, as YYYY-MM-DD"`
-	}
-	equipment struct {
-		Asset string `json:"asset" schema:"The asset id"`
-		Code  string `json:"code,omitempty" schema:"The error code it shows, such as E-41"`
 	}
 	ticket struct {
 		Asset    string `json:"asset,omitempty" schema:"The asset id"`
@@ -340,76 +329,22 @@ type (
 		When  string `json:"when" schema:"When, such as \"Thursday 14:00\""`
 		With  string `json:"with" schema:"Who, by id or name, from get_team"`
 	}
-	reflection struct {
-		Energy int      `json:"energy" schema:"From 1 to 5"`
-		Themes []string `json:"themes"`
-		Win    string   `json:"win,omitempty" schema:"Their win, in a short line"`
-	}
 )
 
-// phoneTools are the tools the app declares, in agent/crewTools.ts of ExpoCrewAssistant, with
-// the same names and descriptions. The ones that ask first on the phone run straight away here,
-// since nobody is there to ask.
-func phoneTools(crew crewBackend) (*tools.Registry, error) {
+// phoneTools are the phone's tools that ask the person first, in agent/crewTools.ts of
+// ExpoCrewAssistant, with the same names and descriptions. They run straight away here, since
+// nobody is there to ask.
+func phoneTools(crew *crewBackend) (*tools.Registry, error) {
 	registry := tools.NewRegistry()
 	return registry, errors.Join(
-		tools.Register(registry, "get_local_context",
-			"The person's current date, local time, timezone and language. Call it before answering anything that depends on today or the time.",
-			func(context.Context, none) (any, error) {
-				now := time.Now()
-				zone, _ := now.Zone()
-				return map[string]string{"language": "en-US", "local": now.Format(time.RFC1123), "timeZone": zone, "utc": now.UTC().Format(time.RFC3339)}, nil
-			}),
-		tools.Register(registry, "get_my_schedule",
-			"The person's upcoming shifts, each with its id, station, start, end and shift leader.",
-			func(ctx context.Context, _ none) (any, error) { return crew.get(ctx, "schedule", nil) }),
-		tools.Register(registry, "check_callout",
-			"Whether the person may find their own cover for a shift, by the restaurant's call-out policy, given their symptoms. Call it before helping with coverage.",
-			func(ctx context.Context, in calloutCheck) (any, error) { return crew.post(ctx, "callout-check", in) }),
-		tools.Register(registry, "find_coverage",
-			"Teammates trained for the shift’s station and free at that time.",
-			func(ctx context.Context, in coverage) (any, error) {
-				return crew.get(ctx, "coverage", url.Values{"shift_id": {in.ShiftID}})
-			}),
 		tools.Register(registry, "request_shift_swap",
 			"Asks a teammate to take one of the person’s shifts. The phone asks the person first.",
-			func(ctx context.Context, in swap) (any, error) { return crew.post(ctx, "swaps", in) }),
-		tools.Register(registry, "notify_shift_leader",
-			"Sends the shift's leader a short status note, such as who is out and whether cover was asked for.",
-			func(ctx context.Context, in leaderNote) (any, error) { return crew.post(ctx, "leader-notes", in) }),
-		tools.Register(registry, "search_handbook",
-			"Searches the team handbook: policies, uniform, food safety, allergens, breaks, swaps, time off, meals and values. The passages it finds are the only source for answers about them, and show as the reply's sources.",
-			func(ctx context.Context, in handbookQuery) (any, error) {
-				return crew.get(ctx, "handbook", url.Values{"q": {in.Query}})
-			}),
-		tools.Register(registry, "get_updates_since",
-			"Announcements and team news since a date.",
-			func(ctx context.Context, in updatesSince) (any, error) {
-				return crew.get(ctx, "updates", url.Values{"since": {in.Since}})
-			}),
-		tools.Register(registry, "get_equipment_guide",
-			"The quick-fix guide for an error code on a piece of equipment, by its asset id, such as FRY-02, POS-1 or ICE-1.",
-			func(ctx context.Context, in equipment) (any, error) {
-				query := url.Values{"asset": {in.Asset}}
-				if in.Code != "" {
-					query.Set("code", in.Code)
-				}
-				return crew.get(ctx, "equipment", query)
-			}),
+			func(ctx context.Context, in swap) (any, error) { return crew.do(ctx, "crew/swaps", in) }),
 		tools.Register(registry, "create_support_ticket",
 			"Drafts a repair ticket for the owner to review and submit. The phone asks the person first.",
-			func(ctx context.Context, in ticket) (any, error) { return crew.post(ctx, "tickets", in) }),
-		tools.Register(registry, "get_team",
-			"The leadership team, the trainer and the onboarding buddy, with what each does.",
-			func(ctx context.Context, _ none) (any, error) { return crew.get(ctx, "team", nil) }),
+			func(ctx context.Context, in ticket) (any, error) { return crew.do(ctx, "crew/tickets", in) }),
 		tools.Register(registry, "book_check_in",
 			"Books a 1-on-1 check-in with a leader or trainer. The phone asks the person first.",
-			func(ctx context.Context, in checkIn) (any, error) { return crew.post(ctx, "check-ins", in) }),
-		tools.Register(registry, "get_menu",
-			"The menu, with what each item contains and notes, for questions and quizzes.",
-			func(ctx context.Context, _ none) (any, error) { return crew.get(ctx, "menu", nil) }),
-		tools.Register(registry, "save_shift_reflection",
-			"Saves the end-of-shift reflection. Only the themes, energy and win reach the leaders, never who wrote it.",
-			func(ctx context.Context, in reflection) (any, error) { return crew.post(ctx, "reflections", in) }),
+			func(ctx context.Context, in checkIn) (any, error) { return crew.do(ctx, "crew/check-ins", in) }),
 	)
 }

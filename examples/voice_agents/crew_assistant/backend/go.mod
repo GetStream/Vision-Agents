@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/GetStream/Vision-Agents/sdks/go v0.0.0
+	github.com/GetStream/getstream-go/v5 v5.2.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 )
 

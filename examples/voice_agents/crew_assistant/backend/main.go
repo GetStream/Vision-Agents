@@ -1,23 +1,26 @@
 // Command backend is the half of the crew assistant that stays up on a server.
 //
-// It signs the Stream token the phone is its user with, as the Swift assistant's does, and it
-// stands in for the restaurant's own systems: the schedule, the team, the handbook, the
-// equipment guides, the repair tickets and the leaders' inbox. The phone's tools read and
-// write them here, and the app's leader view reads the inbox. Everything lives in memory and
-// starts from the same restaurant each time.
+// It stands in for the restaurant's own systems: the schedule, the team, the handbook, the
+// equipment guides, the repair tickets and the leaders' inbox. It hosts the agent's tools that
+// read and write them on the router, which sends it their calls with the user who asked, and it
+// answers the phone for the three tools the phone asks the person about first, and for the
+// leaders' inbox. Everything lives in memory and starts from the same restaurant each time.
+//
+// Who is who is the Stream user: every request but the token carries a Stream token this signed,
+// and each person's crew role, which says who leads, is kept in their Stream user's custom data.
+// The token itself is signed for whichever user the phone names, which stands in for the
+// restaurant's own sign-in. Someone it hasn't met is enrolled as a new hire.
 //
 // It also makes the agent speak first. A clock-in, a clock-out or a return from time off is an
 // event the restaurant's systems would send: here the app sends it, and this creates a
 // scheduled task for the person's conversation and runs it at once, so the agent's message is
 // the first thing in it.
 //
-// A demo has nobody signed in, so it acts for whichever user the phone names. A real one
-// would act for the user its own sign-in vouched for.
-//
-//	STREAM_API_SECRET=<the secret of the Stream app the router runs in> \
+//	STREAM_API_KEY=<the key of the Stream app the router runs in> \
+//	STREAM_API_SECRET=<its secret> \
 //	STREAM_ACCELERATION_URL=http://localhost:8080 \
 //	STREAM_ACCELERATION_CUSTOMER_ID=examples \
-//	GOWORK=off go run ./backend
+//	GOWORK=off go run .
 package main
 
 import (
@@ -33,76 +36,76 @@ import (
 	"strings"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
-
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
-
-// tokenValidity is how long a Stream token lasts. The SDK asks for a new one when it expires.
-const tokenValidity = time.Hour
 
 // agentName is the agent configure stored from this directory.
 const agentName = "crew_assistant"
 
 func main() {
 	addr := flag.String("addr", ":8097", "where to listen")
+	simulationUser := flag.String("simulation-user", "", "the user a tool call that names none acts for, as a simulation's do; empty refuses them")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	if err := run(ctx, *addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := run(ctx, *addr, *simulationUser); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
 }
 
-func run(ctx context.Context, addr string) error {
-	secret := os.Getenv("STREAM_API_SECRET")
-	if secret == "" {
-		return errors.New("STREAM_API_SECRET is needed: the secret of the Stream app the router runs in")
+func run(ctx context.Context, addr, simulationUser string) error {
+	key, secret := os.Getenv("STREAM_API_KEY"), os.Getenv("STREAM_API_SECRET")
+	if key == "" || secret == "" {
+		return errors.New("STREAM_API_KEY and STREAM_API_SECRET are needed: the Stream app the router runs in")
 	}
-	restaurant := newRestaurant(time.Now())
+	roles, err := newStreamRoles(key, secret)
+	if err != nil {
+		return err
+	}
+	crew := newRestaurant(time.Now())
+	if err := roles.publish(ctx, crew.team()); err != nil {
+		return fmt.Errorf("keeping the crew roles on the Stream users: %w", err)
+	}
+	s := &server{secret: []byte(secret), crew: crew, roles: roles, speak: agentSpeaksFirst}
+
+	hosted, err := s.hostedTools(simulationUser)
+	if err != nil {
+		return err
+	}
+	dispatch, err := stream.NewDispatch(stream.DispatchOptions{})
+	if err != nil {
+		return err
+	}
+	dispatch.Host(hostedAgent{name: agentName, tools: hosted}, 30*time.Second)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /stream-token", streamToken(secret))
-	mux.HandleFunc("POST /events", agentSpeaksFirst)
-	restaurant.routes(mux)
-
+	s.routes(mux)
 	server := &http.Server{Addr: addr, Handler: logged(mux), ReadHeaderTimeout: 5 * time.Second}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	hosting := make(chan error, 1)
+	go func() {
+		hosting <- dispatch.Run(ctx)
+		cancel()
+	}()
 	go func() {
 		<-ctx.Done()
-		closing, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
+		closing, done := context.WithTimeout(context.Background(), 5*time.Second)
+		defer done()
 		_ = server.Shutdown(closing)
 	}()
 
-	log.Printf("minting Stream user tokens and serving Harbor Grill for %s on %s", agentName, addr)
-	return server.ListenAndServe()
-}
-
-// streamToken answers the phone with a Stream user token for the user it names.
-func streamToken(secret string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var asked struct {
-			UserID string `json:"user_id"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&asked); err != nil || asked.UserID == "" {
-			http.Error(w, "a user_id is required", http.StatusBadRequest)
-			return
-		}
-		now := time.Now()
-		token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-			"user_id": asked.UserID,
-			"iat":     jwt.NewNumericDate(now),
-			"exp":     jwt.NewNumericDate(now.Add(tokenValidity)),
-		}).SignedString([]byte(secret))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		answer(w, map[string]string{"token": token})
+	log.Printf("serving Harbor Grill for %s on %s, with its tools hosted on the router", agentName, addr)
+	served := server.ListenAndServe()
+	cancel()
+	if err := <-hosting; err != nil && !errors.Is(err, context.Canceled) {
+		return fmt.Errorf("hosting the tools: %w", err)
 	}
+	return served
 }
 
 // events are what the restaurant's systems tell the agent about, by kind, and what the agent
@@ -135,69 +138,49 @@ var events = map[string]struct{ title, instructions string }{
 	},
 }
 
-// agentSpeaksFirst has the agent open the person's conversation about an event, by creating a
+// agentSpeaksFirst has the agent open userID's conversation about an event, by creating a
 // scheduled task in it and running it now.
-func agentSpeaksFirst(w http.ResponseWriter, r *http.Request) {
-	var asked struct {
-		UserID    string `json:"user_id"`
-		SessionID string `json:"session_id"`
-		Kind      string `json:"kind"`
-		Timezone  string `json:"timezone"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&asked); err != nil || asked.UserID == "" || asked.SessionID == "" {
-		http.Error(w, "a user_id and a session_id are required", http.StatusBadRequest)
-		return
-	}
-	event, known := events[asked.Kind]
-	if !known {
-		http.Error(w, "kind is one of clock_in, clock_out, back_from_time_off and onboarding", http.StatusBadRequest)
-		return
-	}
-	ctx := r.Context()
-	client, err := stream.Backend{ActingFor: asked.UserID}.Client()
+func agentSpeaksFirst(ctx context.Context, userID, sessionID, kind, timezone string) (string, error) {
+	event := events[kind]
+	client, err := stream.Backend{ActingFor: userID}.Client()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return "", err
 	}
 	in := "P1D"
-	var timezone *string
-	if asked.Timezone != "" {
-		timezone = &asked.Timezone
+	var zone *string
+	if timezone != "" {
+		zone = &timezone
 	}
 	created, err := client.CreateScheduledTaskWithResponse(ctx,
-		&acceleration.CreateScheduledTaskParams{XStreamUserId: &asked.UserID},
+		&acceleration.CreateScheduledTaskParams{XStreamUserId: &userID},
 		acceleration.CreateScheduledTaskJSONRequestBody{
 			Title:        event.title,
 			Instructions: event.instructions,
-			Schedule:     acceleration.ScheduledTaskSchedule{In: &in, Timezone: timezone},
-			SessionId:    &asked.SessionID,
+			Schedule:     acceleration.ScheduledTaskSchedule{In: &in, Timezone: zone},
+			SessionId:    &sessionID,
 		})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
+		return "", err
 	}
 	task := created.JSON201
 	if task == nil {
-		http.Error(w, refused("creating the task", created.StatusCode(), created.Body), http.StatusBadGateway)
-		return
+		return "", errors.New(refused("creating the task", created.StatusCode(), created.Body))
 	}
 	ran, err := client.RunScheduledTaskWithResponse(ctx, task.Id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
+		return "", err
 	}
 	if ran.StatusCode() >= http.StatusMultipleChoices {
-		http.Error(w, refused("running the task", ran.StatusCode(), ran.Body), http.StatusBadGateway)
-		return
+		return "", errors.New(refused("running the task", ran.StatusCode(), ran.Body))
 	}
 	// The task was only a way to run once now: it goes once its run is well under way.
 	go func(id string) {
 		time.Sleep(2 * time.Minute)
 		if deleted, err := client.DeleteScheduledTaskWithResponse(context.Background(), id); err != nil || deleted.StatusCode() >= http.StatusMultipleChoices {
-			log.Printf("the %s task %s stays scheduled: %v", asked.Kind, id, err)
+			log.Printf("the %s task %s stays scheduled: %v", kind, id, err)
 		}
 	}(task.Id)
-	answer(w, map[string]string{"task_id": task.Id})
+	return task.Id, nil
 }
 
 // refused says what the router answered instead of the success it was asked for.
@@ -212,18 +195,4 @@ func refused(doing string, status int, body []byte) string {
 		said = envelope.Error.Message
 	}
 	return fmt.Sprintf("%s (%d): %s", doing, status, said)
-}
-
-func answer(w http.ResponseWriter, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(value); err != nil {
-		log.Printf("could not answer: %v", err)
-	}
-}
-
-func logged(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("%s %s", r.Method, r.URL.Path)
-		next.ServeHTTP(w, r)
-	})
 }
