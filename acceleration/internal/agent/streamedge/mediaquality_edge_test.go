@@ -127,6 +127,9 @@ func (s *StreamEdgeSuite) TestACallsMediaQualityIsObservedOnceWhenTheAgentLeaves
 	inboundLoss := "router_agent_media_packet_loss_ratio/inbound"
 	s.Equal(before[inboundLoss].count+1, after[inboundLoss].count, "one session, observed once")
 	s.InDelta(0.1, after[inboundLoss].sum-before[inboundLoss].sum, 1e-9, "ten of a hundred never came")
+	inboundJitter := "router_agent_media_jitter_seconds/inbound"
+	s.Less(after[inboundJitter].sum-before[inboundJitter].sum, 0.02,
+		"packets sent at 20 ms steps and read as they came are not 40 ms of jitter, as with the Opus clock taken as 16 kHz")
 	concealed := "router_agent_media_concealed_ratio/"
 	s.InDelta(0.1, after[concealed].sum-before[concealed].sum, 1e-9, "ten of a hundred buffers were made up")
 	for _, series := range []string{"router_agent_media_jitter_seconds/inbound",
