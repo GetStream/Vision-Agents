@@ -31,9 +31,10 @@ func (s *ConfigsSuite) TestAConfigAnswersInNoOtherChannelTypeUnlessItNamesOne() 
 	s.Equal(&[]AgentChatChannel{{Type: "shifts"}, {Type: "team_2"}}, patched.ChatChannels)
 	s.storedChatChannels(created.Id, []store.ChatChannel{{Type: "shifts"}, {Type: "team_2"}})
 
+	var emptied AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+created.Id,
-		map[string]any{"name": "rota", "chat_channels": []map[string]any{}}, &saved))
-	s.Nil(saved.ChatChannels, "an empty list removes them")
+		map[string]any{"name": "rota", "chat_channels": []map[string]any{}}, &emptied))
+	s.Nil(emptied.ChatChannels, "an empty list removes them")
 	s.storedChatChannels(created.Id, nil)
 }
 

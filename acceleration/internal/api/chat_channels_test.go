@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -198,7 +199,7 @@ func (s *RouterSuite) replyIn(cid string) map[string]any {
 			written, _ := custom["support_message"].(map[string]any)
 			if written["role"] == "assistant" && written["state"] == "completed" {
 				reply = stored
-				return !s.conversations.Writing()
+				return true
 			}
 		}
 		return false
@@ -213,4 +214,37 @@ func (s *RouterSuite) nobodyAnswered(cid string) {
 	s.Len(s.chat.Stored(cid), 1, "something answered in the channel")
 	_, channel, _ := strings.Cut(cid, ":")
 	s.Empty(s.chat.Stored(chatlog.ChannelType+":"+channel), "something wrote in the agent channel of the same id")
+}
+
+// A delivery Stream Chat makes of a message in a channel of a type the app's own customer names
+// is queued and answered there by the Router's own session; one in a type nobody names is not
+// queued.
+func (s *ChatInboundQueueSuite) TestADeliveryInAChannelOfATypeAConfigNamesIsQueuedAndAnsweredThere() {
+	customer := s.inAppMode()
+	// Types of the test's own: the deployment app's customer is the same in every test.
+	named, unnamed := "callouts-"+strings.ToLower(rand.Text()), "shifts-"+strings.ToLower(rand.Text())
+	config := store.AgentConfig{CustomerID: customer, Name: "rota-" + s.utils.uuid(), Mode: store.AgentModeText, LLM: "noted/noted-model",
+		ChatChannels: []store.ChatChannel{{Type: named}}}
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+	s.channelID = "team-" + s.utils.uuid()
+	s.writesInType(named, s.channelID, nil)
+
+	s.Equal(http.StatusOK, s.chatInbounds.delivers(&s.RouterSuite, s.ofType(named), s.current))
+	s.answering()
+
+	reply := s.replyIn(named + ":" + s.channelID)
+	s.Require().NotNil(reply, "nobody answered in the channel")
+	s.Equal(config.ID, reply["user_id"])
+
+	s.channelID = "team-" + s.utils.uuid()
+	s.writesInType(unnamed, s.channelID, nil)
+	s.Equal(http.StatusOK, s.chatInbounds.delivers(&s.RouterSuite, s.ofType(unnamed), s.current))
+	s.Zero(s.chatInbounds.queued(&s.RouterSuite), "a type nobody names was queued")
+}
+
+// ofType is a delivery of a message in the suite's channel under the channel type named.
+func (s *ChatInboundQueueSuite) ofType(channelType string) string {
+	body := strings.Replace(s.message(suiteStreamApp, "", ""), `"channel_type": "agent"`, fmt.Sprintf(`"channel_type": %q`, channelType), 1)
+	s.Require().Contains(body, channelType)
+	return body
 }
