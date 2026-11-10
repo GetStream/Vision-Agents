@@ -7,12 +7,14 @@ React Native app `examples/ExpoCrewAssistant` in stream-chat-react-native.
 ```
 agent.yaml           what runs the agent
 knowledge/           the team handbook: Markdown, and documents such as PDFs
-instructions.md      what the agent is told: the restaurant, its tools and each flow
+instructions.md      what the agent is told: the restaurant, its ground rules and each flow
 a2ui/instructions.md how it writes checklists, quizzes and forms in A2UI
+simulations/         the conversations each flow is judged on
 configure/main.go    stores the agent on the router, with A2UI, its visible tools and skills
 backend/main.go      Stream tokens, and the agent speaking first about an event
 backend/crew.go      the restaurant: schedule, team, equipment, tickets, the leaders' inbox
 backend/handbook.go  the handbook's passages, read from the router's knowledge base
+evals/main.go        runs the simulations, with the phone's tools hosted against the backend
 ```
 
 ## What it does
@@ -69,9 +71,43 @@ It listens on `:8097`, beside the Swift assistant's on `:8098`.
 Uploading a PDF, Word or Excel file needs somewhere for it to wait until the router reads it:
 `ROUTER_KNOWLEDGE_BUCKET_URL` in the repo-root `.env`, such as `file:///tmp` for a local router
 (restart the router after setting it). Without it `configure` stops at the first such file, and
-the Markdown documents still work. Both modules point at the SDK
-next door with a `replace`, so `GOWORK=off` runs them without adding them to `go.work`.
+the Markdown documents still work.
+
+The backend, `configure` and `evals` each point at the SDK next door with a `replace`, so
+`GOWORK=off` runs them without adding them to `go.work`.
 
 The agent runs on `xai/grok-4.7`, which reads photos and thinks before it answers, so replies
 show reasoning steps. The router needs `XAI_API_KEY`, and `DEEPGRAM_API_KEY` and
 `INWORLD_API_KEY` for voice mode.
+
+## Evals
+
+`simulations/flows.yaml` holds a conversation for each flow: the handbook (an answer, a gap it
+mustn't fill, an allergen), calling out with and without cover, a fryer error and its ticket, the
+fit check, the menu quiz, coming back from time off, the clock-out reflection and interview
+practice. The router holds each three times, worded differently, with a model playing the team
+member, and another model judges each conversation against the assertion, tool calls included.
+`configure` syncs them.
+
+A simulation has no phone, so `evals` hosts the phone's tools under the agent's name while it
+runs them, each calling the backend the way the app does. A phone declares its own tools, which
+win, so the app is unaffected. Give the evals a backend of their own, so their swaps and tickets
+stay out of the team lead view:
+
+```bash
+cd examples/voice_agents/crew_assistant/backend
+STREAM_API_SECRET=<the router's STREAM_API_SECRET> \
+STREAM_ACCELERATION_URL=http://localhost:8080 \
+STREAM_ACCELERATION_CUSTOMER_ID=examples \
+GOWORK=off go run . -addr :8096
+
+cd ../evals
+STREAM_ACCELERATION_URL=http://localhost:8080 \
+STREAM_ACCELERATION_CUSTOMER_ID=examples \
+GOWORK=off go run . -backend http://localhost:8096
+```
+
+It prints each simulation's score and the judge's reason for every conversation that failed, and
+exits non-zero unless all of them passed. `-only <name>` runs the matching simulations alone, and
+`-transcripts` prints what was said in the failed ones. The hosted tools mirror
+`agent/crewTools.ts` in the app: change both together.

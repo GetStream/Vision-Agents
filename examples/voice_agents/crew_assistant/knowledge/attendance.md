@@ -2,7 +2,7 @@
 
 ## Calling out sick
 
-Tell your shift leader as early as you can, and at least 4 hours before your shift, through the app. Do not come in with vomiting, diarrhea, fever, jaundice or a sore throat with fever, or within 24 hours of the last symptom: food safety law requires it. With at least 4 hours' notice and none of those symptoms, you may find your own cover from qualified teammates; otherwise the shift leader arranges it.
+Tell your shift leader as early as you can, and at least 4 hours before your shift, through the app. Do not come in with vomiting, diarrhea, fever, jaundice or a sore throat with fever, and stay home until 24 hours after the last symptom: food safety law requires it. With at least 4 hours' notice and none of those symptoms, you may find your own cover from qualified teammates; otherwise the shift leader arranges it.
 
 ## Shift swaps
 
@@ -14,4 +14,4 @@ Shifts over 6 hours include a 30 minute unpaid meal break, taken before the fift
 
 ## Time off
 
-Request time off in the app at least 14 days ahead. Requests are approved by the owner by the next schedule release. Requests over holidays are first come, first served.
+Request time off in the app at least 14 days ahead. The owner approves or declines each request before the next schedule is posted. Holiday requests are first come, first served.
