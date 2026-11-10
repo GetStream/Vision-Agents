@@ -21,7 +21,7 @@ Backend SDKs: Python, Go, Node, Ruby, PHP, .NET, Rust
 See the [quickstart docs](https://getstream.io/agents/docs/quickstart/)
 
 
-## Agent Folders
+## Agent Folders and CLI
 
 The fastest way to define an agent is using the folder structure
 
