@@ -412,6 +412,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerChannels(api)
 	s.registerDLC(api)
 	s.registerSuspensions(api)
+	s.registerOrganizationActivity(api)
 	s.registerManage(api)
 	s.registerPriceLists(api)
 	return api

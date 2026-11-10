@@ -157,7 +157,7 @@ func (s *Store) ActivityAreas(ctx context.Context, apps []string, since time.Tim
 		TableExpr("customer_activity").
 		ColumnExpr("area, client, MIN(first_at) AS first_at, MAX(last_at) AS last_at").
 		ColumnExpr("SUM(requests) AS requests, SUM(refused) AS refused").
-		ColumnExpr("COALESCE((array_agg(last_refusal_code ORDER BY last_refusal_at DESC)" +
+		ColumnExpr("COALESCE((array_agg(last_refusal_code ORDER BY last_refusal_at DESC)"+
 			" FILTER (WHERE last_refusal_at IS NOT NULL))[1], '') AS last_refusal_code").
 		Where("app_id IN (?)", bun.In(apps)).
 		Where("day >= ?::date", since.UTC().Format(time.DateOnly)).
