@@ -70,6 +70,10 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
 		return nil, err
 	}
+	if errors.Is(err, session.ErrAppSettingsUnreadable) {
+		// A failure of ours: the store's text is for the log, not for the caller.
+		return nil, internalError()
+	}
 	if err != nil {
 		// Everything that can go wrong here is the caller's spec, a provider that would not
 		// start, or a refusal about money, and each is worth reading rather than a 500 with

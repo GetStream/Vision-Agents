@@ -86,9 +86,10 @@ func (s *AgentTeamsSuite) TestASessionOfATeamsConfigIsRefusedWhenTheSettingsCann
 	request := s.recorded(config)
 	request.Id = &sessionID
 
-	// Create's failures are answered as a refused request (session_create.go).
 	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/sessions", request)
-	s.Equal(http.StatusBadRequest, status, string(payload))
+	s.Equal(http.StatusInternalServerError, status, string(payload))
+	s.NotContains(string(payload), "Scan", "the store's error text stays out of the answer")
+	s.NotContains(string(payload), "unreadable")
 	_, made := s.teamsChat.Channel(sessionID)
 	s.False(made, "no channel is made outside the config's team")
 }

@@ -383,7 +383,7 @@ func (m *Manager) channelTeam(ctx context.Context, spec Spec) (string, error) {
 	}
 	settings, err := m.options.Configs.AppSettings(ctx, spec.CustomerID)
 	if err != nil {
-		return "", stack.Wrap(err)
+		return "", stack.Wrap(fmt.Errorf("%w: %w", ErrAppSettingsUnreadable, err))
 	}
 	if !settings.AgentTeamsChecked() {
 		return "", nil
@@ -2336,6 +2336,10 @@ func (m *Manager) line(spec Spec) (agent.Telephony, error) {
 
 // ErrSessionExists is a session asked for by an id some session already has.
 var ErrSessionExists = errors.New("session: a session with that id already exists")
+
+// ErrAppSettingsUnreadable is an app's settings that could not be read. It is the router's
+// failure, not the caller's request.
+var ErrAppSettingsUnreadable = errors.New("session: the app's settings could not be read")
 
 // ErrNoMemory is memory asked of a deployment with no memory provider.
 var ErrNoMemory = errors.New("session: memory is unavailable; configure the backend memory provider")
