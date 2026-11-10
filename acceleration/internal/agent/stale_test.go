@@ -49,6 +49,12 @@ func (s *AgentSuite) TestAReplyTheCallerSaidMoreOverBeforeHearingAnyIsDropped() 
 	s.mutters(nash, "Hey,")
 	s.eventually(func() bool { return s.holding(two) }, "the reply was never held for the greeting")
 	s.model.writes(two, "Which two do you mean?")
+	// Written text the drop lands ahead of is counted as being said and never finishes.
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return s.agent.heldLocked(two) && len(s.agent.held.unsaid) > 0
+	}, "the reply written was never held")
 	s.mutters(nash, "Hey. Can you help")
 
 	s.eventually(func() bool { return s.model.abandoned(two) }, "the reply to two kept going")
