@@ -3,7 +3,7 @@ import StreamChatAI
 import StreamVideo
 import StreamWebRTC
 import SwiftUI
-import VisionAgentsCore
+import StreamAgents
 
 /// A spoken conversation, with the agent shown as Stream's voice glow and what is said captioned
 /// underneath.

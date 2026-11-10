@@ -107,7 +107,7 @@ jobs:
       - name: Generated models match the spec
         run: |
           uv run generate.py
-          changed=$(git status --porcelain -- core/src/main/kotlin/io/getstream/visionagents/android/core/generated)
+          changed=$(git status --porcelain -- core/src/main/kotlin/io/getstream/agents/android/core/generated)
           if [ -n "$changed" ]; then echo "$changed"; git diff; exit 1; fi
 
   dart:
@@ -184,7 +184,7 @@ jobs:
         run: |
           device=$(xcrun simctl list devices available -j | python3 -c "import json, sys; devices = json.load(sys.stdin)['devices']; print(next(d['udid'] for runtime, found in devices.items() if 'iOS' in runtime for d in found if d['name'].startswith('iPhone')))")
           echo "SIMULATOR=$device" >> "$GITHUB_ENV"
-          xcodebuild build-for-testing -scheme vision-agents-core -destination "platform=iOS Simulator,id=$device" \
+          xcodebuild build-for-testing -scheme stream-agents -destination "platform=iOS Simulator,id=$device" \
             -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm" -derivedDataPath "$RUNNER_TEMP/DerivedData"
 
       # Booting takes this runner minutes and starves whatever runs beside it, and tests
@@ -199,7 +199,7 @@ jobs:
       - name: Test core
         timeout-minutes: 10
         run: |
-          xcodebuild test-without-building -scheme vision-agents-core -destination "platform=iOS Simulator,id=$SIMULATOR" \
+          xcodebuild test-without-building -scheme stream-agents -destination "platform=iOS Simulator,id=$SIMULATOR" \
             -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm" -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             -parallel-testing-enabled NO -disable-concurrent-destination-testing -collect-test-diagnostics never
 

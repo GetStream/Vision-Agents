@@ -113,7 +113,7 @@ func Defang(text string) string {
 // given by anyone. Those naming a skill are format strings.
 func Notes() []string {
 	return []string{
-		noteHeader, channel, resumption, cutOffNote, answerNow, stillWorking,
+		noteHeader, channel, resumption, cutOffNote, talkedOverNote, answerNow, stillWorking,
 		noteQuestion, noteCodeFailed, noteSeen, noteAnswer, noteDeadline, noteFailed,
 		noteNoSkill, noteNoTool,
 	}

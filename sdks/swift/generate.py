@@ -52,7 +52,7 @@ import yaml
 SWIFT = Path(__file__).parent
 ROOT = SWIFT.parents[1]
 SPEC = ROOT / "acceleration" / "api" / "openapi.yaml"
-TARGET = SWIFT / "core" / "Sources" / "VisionAgentsCore"
+TARGET = SWIFT / "core" / "Sources" / "StreamAgents"
 GENERATED = TARGET / "Generated"
 GENERATOR = ROOT.parent / "chat" / "tools" / "openapi"
 FINGERPRINT = SWIFT / "core" / "generated.json"

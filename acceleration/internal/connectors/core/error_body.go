@@ -138,10 +138,10 @@ func redactionOf(request *http.Request, credential AccessCredential) redaction {
 	return redactionFrom(found)
 }
 
-// redactionFrom is the redaction of each of found longer than a byte, in order, each as it is
-// and URL-escaped: a token request's form body is urlencoded (url.Values.Encode, QueryEscape),
-// and its basic auth carries the client secret QueryEscaped (RFC 6749 section 2.3.1), so a
-// provider may echo either form.
+// redactionFrom is the redaction of each of found longer than a byte, in order, each as it is,
+// URL-escaped and JSON-escaped: a token request's form body is urlencoded (url.Values.Encode,
+// QueryEscape), and its basic auth carries the client secret QueryEscaped (RFC 6749 section
+// 2.3.1), so a provider may echo either form. A JSON body escapes what it echoes (jsonEscaped).
 func redactionFrom(found []string) redaction {
 	var r redaction
 	for _, s := range found {
@@ -149,7 +149,7 @@ func redactionFrom(found []string) redaction {
 		// out of the body, and a byte alone names nothing.
 		if len(s) > 1 {
 			r = append(r, s)
-			for _, escaped := range []string{url.QueryEscape(s), url.PathEscape(s)} {
+			for _, escaped := range append([]string{url.QueryEscape(s), url.PathEscape(s)}, jsonEscaped(s)...) {
 				if !slices.Contains(r, escaped) {
 					r = append(r, escaped)
 				}
@@ -157,6 +157,26 @@ func redactionFrom(found []string) redaction {
 		}
 	}
 	return r
+}
+
+// jsonEscaped is s as a JSON string's content may hold it: as Go's encoding/json writes it,
+// with <, > and & as \u003c, \u003e and \u0026, and as an encoder without that HTML escape
+// writes it, each also with every / as \/, as PHP's json_encode writes it by default.
+//
+// Example: "tok/a&b" is "tok/a\u0026b", "tok\/a\u0026b", "tok/a&b" and "tok\/a&b".
+func jsonEscaped(s string) []string {
+	var plain strings.Builder
+	encoder := json.NewEncoder(&plain)
+	encoder.SetEscapeHTML(false)
+	// Why the errors are dropped: a string always encodes, its invalid UTF-8 as \ufffd.
+	_ = encoder.Encode(s)
+	html, _ := json.Marshal(s)
+	var forms []string
+	for _, quoted := range []string{string(html), strings.TrimSuffix(plain.String(), "\n")} {
+		unquoted := quoted[1 : len(quoted)-1]
+		forms = append(forms, unquoted, strings.ReplaceAll(unquoted, "/", `\/`))
+	}
+	return forms
 }
 
 // appendStrings appends every string in value, a decoded JSON value, to found: a string, or

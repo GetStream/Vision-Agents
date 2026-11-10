@@ -3370,6 +3370,9 @@ type AgentConfig struct {
 	LeftOutConnectors *[]LeftOutConnector `json:"left_out_connectors,omitempty"`
 	Llm               *string             `json:"llm,omitempty"`
 
+	// LlmFallbacks Where a response goes, in order, when llm fails it. Absent when there are none.
+	LlmFallbacks *[]string `json:"llm_fallbacks,omitempty"`
+
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode AgentMode `json:"mode"`
 	Name string    `json:"name"`
@@ -3451,6 +3454,9 @@ type AgentConfigPatch struct {
 	Keyterms           *[]string `json:"keyterms,omitempty"`
 	KnowledgeNamespace *string   `json:"knowledge_namespace,omitempty"`
 	Llm                *string   `json:"llm,omitempty"`
+
+	// LlmFallbacks Replaces the list whole. An empty list removes it.
+	LlmFallbacks *[]string `json:"llm_fallbacks,omitempty"`
 
 	// McpServers No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
@@ -3562,6 +3568,9 @@ type AgentConfigRequest struct {
 
 	// Llm The model holding the conversation.
 	Llm *string `json:"llm,omitempty"`
+
+	// LlmFallbacks Where a response goes when llm fails it, in order: each a provider/model, a capability shortcut or one of your custom/ models, as llm takes. llm stays the first choice. A response it fails is asked of each next one in turn, and one it says nothing in for as long as a reply may is also asked of another, the first to start answering kept, so a model you serve yourself can be backed by one Stream serves. A response that has started is never moved, however slowly it goes on. Omitted or null on an update, the list stored stays as it is; an empty list removes it. A target this deployment does not route, or one with no instance in the agent's region, is refused.
+	LlmFallbacks *[]string `json:"llm_fallbacks,omitempty"`
 
 	// McpServers No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set

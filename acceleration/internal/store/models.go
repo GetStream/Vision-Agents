@@ -556,6 +556,11 @@ type AgentConfig struct {
 	Search         string `bun:"search,notnull"`
 	Instructions   string `bun:"instructions,notnull"`
 	Greeting       string `bun:"greeting,notnull"`
+
+	// LLMFallbacks are the targets a turn falls back to, in order, when LLM fails it. LLM
+	// is still the first choice; nil falls back only among LLM's own candidates.
+	LLMFallbacks []string `bun:"llm_fallbacks,type:jsonb"`
+
 	// GreetingMode is GreetingExact, said word for word, or GreetingVariation, which the
 	// model rewords on every call.
 	GreetingMode string `bun:"greeting_mode,notnull"`
@@ -1708,6 +1713,16 @@ type AppSettings struct {
 	// (visibleTo in connectors.go). Stream sets it on its own apps; no operation writes
 	// settings, so an app cannot set it on itself. Nil is no.
 	InternalConnectors *bool `json:"internal_connectors,omitempty"`
+	// AgentTeams is whether an end user opens only the agent configs of a team they are in,
+	// by Chat's shared-team rule (api.teamsGate). Stream sets it, as it does
+	// InternalConnectors. Nil is no: an app that never asked keeps every config open to
+	// every user, as before the setting existed.
+	AgentTeams *bool `json:"agent_teams,omitempty"`
+}
+
+// AgentTeamsChecked reports whether the app keeps each team's agent configs to its own users.
+func (s AppSettings) AgentTeamsChecked() bool {
+	return s.AgentTeams != nil && *s.AgentTeams
 }
 
 // AnonymousAllowed reports whether the app takes callers who presented no token.

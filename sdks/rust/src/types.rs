@@ -345,6 +345,9 @@ pub struct AgentConfig {
     pub left_out_connectors: ::std::option::Option<::std::vec::Vec<LeftOutConnector>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub llm: ::std::option::Option<::std::string::String>,
+    ///Where a response goes, in order, when llm fails it. Absent when there are none.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub llm_fallbacks: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     pub mode: AgentMode,
     pub name: ::std::string::String,
     ///Where the agent's work is done: every model its sessions run, its knowledge base and its sandbox are in it. us unless the agent's agent.yaml or config names another.
@@ -428,6 +431,9 @@ pub struct AgentConfigPatch {
     pub knowledge_namespace: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub llm: ::std::option::Option<::std::string::String>,
+    ///Replaces the list whole. An empty list removes it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub llm_fallbacks: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     ///No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub mcp_servers: ::std::option::Option<
@@ -542,6 +548,9 @@ pub struct AgentConfigRequest {
     ///The model holding the conversation.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub llm: ::std::option::Option<::std::string::String>,
+    ///Where a response goes when llm fails it, in order: each a provider/model, a capability shortcut or one of your custom/ models, as llm takes. llm stays the first choice. A response it fails is asked of each next one in turn, and one it says nothing in for as long as a reply may is also asked of another, the first to start answering kept, so a model you serve yourself can be backed by one Stream serves. A response that has started is never moved, however slowly it goes on. Omitted or null on an update, the list stored stays as it is; an empty list removes it. A target this deployment does not route, or one with no instance in the agent's region, is refused.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub llm_fallbacks: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     ///No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub mcp_servers: ::std::option::Option<

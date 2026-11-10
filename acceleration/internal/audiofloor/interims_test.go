@@ -357,9 +357,12 @@ func (s *InterimSuite) TestAPauseTheModelWaitsOnShowsItsWords() {
 // interim sends a second is bounded by what a decision hears: past 16 s of utterance one is
 // asked less often as it grows, so a caller who talks on costs a transcription lane at most
 // the words of 16 s a second, however long they go on.
+//
+// An interim is asked on a frame once the one before has answered, so the speech is held a frame
+// at a time: sent at once, the frames ran out with a few interims asked.
 func (s *InterimSuite) TestInterimsComeLessOftenAsTheUtteranceGrows() {
-	s.say(48000, true)
-	s.Eventually(func() bool { return !s.transcriber.interimOut.Load() }, 5*time.Second, time.Millisecond)
+	_, _, ended := s.holding(48000, true)
+	s.Require().False(ended, "not while the caller talks")
 	requests := s.requests()
 	s.GreaterOrEqual(len(requests), 20, "one a second of speech to 16 s, then fewer")
 	s.Less(len(requests), 40, "fewer than one a second past 16 s")

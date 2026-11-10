@@ -2,6 +2,13 @@
 
 ## Features
 
+### An agent config names the models its llm falls back to
+
+`llm_fallbacks` on an agent config (`POST`, `PUT` and `PATCH /v1/agents/configs`) is an ordered list of up to five targets, each a provider/model, a capability shortcut or one of the customer's `custom/` models, that a conversation turn falls back to when `llm` fails it. `llm` stays the first choice. A response `llm` cannot start, a 5xx, a timeout, a 401, 402, 403, 404, 408 or 429 included, is asked of each next entry in turn; one `llm` says nothing in for as long as a reply may (`ROUTER_REPLY_HEDGE`, 1.2 s by default) is also asked of another entry, the first to start answering kept. A response that has started is never moved, however slowly it streams, and a run that outlasts its timeout still ends as a 504. A shortcut can never include a customer's own model, so this is how a `custom/` model is backed by one Stream serves, such as `xai/grok-4.7`. A target the deployment does not route, or one with no instance in the agent's region, is refused when the config is saved. Left out on a `PUT`, the stored list is kept; an empty list removes it. The flow controller and the subagent do not fall back along it. `POST /v1/agents/runs` now reports in `model_route` the model that answered, the fallback included, rather than `llm`. `agent.yaml` does not take it yet.
+### Agent teams: Chat's team isolation for agent configs and channels
+
+An app with the `agent_teams` setting on (set by Stream, off by default) keeps each team's agent configs to its own users, as Chat multi-tenancy does: an end user opens a config only if their Stream user shares its `team` tag (a config of no team is open only to users in no team), and is answered as for an unknown config otherwise. Backends are not limited. The agent channel and voice transcript channel a session makes are in its config's team. With the setting off nothing changes (AI-3059, #1885, #1887).
+
 ### The Go SDK has a README that installs and an sdk-go skill
 
 `sdks/go/README.md` opens with `go get github.com/GetStream/Vision-Agents/sdks/go@latest`, the Go floor (1.25) and a quickstart against the hosted router, which `readme_test.go` holds to `examples/quickstart` word for word. It no longer names fields that do not exist (`Harness.UseSkills`, `ChatOptions`, a `ConversationID` option), its links outside the module are absolute, and it says how versions are tagged (`sdks/go/vX.Y.Z`, released from `main`), which generated types are the SDK's models, and what is and is not retried. The new `sdk-go` skill records the conventions and the release steps (AI-1892).
@@ -43,6 +50,10 @@ A table variable the deployment leaves unset is served too, as one series at 0 u
 
 `router_failovers_total` counts each time the router moved work off a provider that failed, by `modality`, the `provider` that failed, `stage` (`start` and `use` at request start in the walk, `session` for an STT session, a voice or an LLM response another candidate took over mid-session) and `reason` (`vendor`, or `request`, `customer_key` (the customer's own key or `custom` model) and `cancelled` for failures that are not the vendor's). A failure nothing replaced is no failover (AI-2781, #1785).
 
+### Postgres pool and Redis saturation on /metrics
+
+`/metrics` serves `router_db_pool_in_use_connections`, `router_db_pool_idle_connections`, `router_db_pool_max_open_connections`, `router_db_pool_waits_total` and `router_db_pool_wait_seconds_total`, by `pool` (`shared`, `shard` when this shard has a database of its own, `peer` for another shard's) and `shard` (its name in `postgres.shards`). It also serves `router_redis_command_seconds{client}`, each round trip to Redis (one command or one pipeline), and `router_redis_command_errors_total{client}`, the ones that failed, where `client` is `shared` or `shard`. A missing key and a command its caller cancelled are not errors, and subscriptions are not timed. Only the router generation serving `/metrics` is read, so a hand-over never adds two generations up (AI-2827).
+
 ### Turn latency on /metrics
 
 `router_agent_turn_latency_seconds{leg,pipeline}` is a histogram of how long a caller waited for the agent's reply. `leg` is `roundtrip` (last transcript revision to first audio published), `speech_end_to_audio` (that plus the transcriber's endpointing) or `speech_end_to_audible` (to the first frame the call's track took); `pipeline` is `cascade` or `native`, the one the turn started on; under `native`, `roundtrip` runs from the model's speech-stopped signal and `speech_end_to_audio` equals it. Only caller turns are observed, and a leg a turn never reached, such as a reply interrupted before its audio, is left out rather than counted as zero. Buckets run 200 ms to 10 s with a line at 1.2 s. `turn_latency_hourly` is unchanged (AI-2826, #1780).
@@ -50,6 +61,11 @@ A table variable the deployment leaves unset is served too, as one series at 0 u
 ### The router's metrics show its own API requests
 
 `/metrics` has `router_http_requests_total{method,route,status}`, every request the API answered by route template and status class, and `router_http_request_seconds`, how long request/response answers took to begin. Sockets and streams are counted but not timed (#1786).
+
+### API latency on /metrics without the route label
+
+`router_api_latency_seconds{status}` is `router_http_request_seconds` with the `status` class as its only label and the same buckets, so a monitor or an SLO reads API latency at a few series per pod instead of one per route. The class is the API's own (`2xx` to `5xx`) or one a connection proxy passes on from a provider, so at most 8 classes are timed, 112 series per pod. The route-keyed histogram is unchanged (AI-3032).
+
 ### A server sends a person's photos on respond
 
 `POST /v1/agents/sessions/{id}/respond` takes `images`, as `createResponse` and the session socket's `respond` already did. With a `request_id` they are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, and the model sees them with that question alone. A retry with the same id, text and photos is the same question. Unlike `createResponse`, the answer is still the command's receipt with the person's and the reply's message ids, and `client_id` still addresses the install's tools, so a server that sends what a person typed on their behalf can now send what they photographed too. Text and photos together are held to the same 1 MiB as on `createResponse` when no voice note is sent. In the PHP and Python SDKs, whose generated request classes take positional arguments, `images` comes after `request_id`: their generators now keep each parameter where it was released and add new ones after, so `new RespondRequest('question', null, 'device-1', 'request-1')` and `RespondRequest("question", UNSET, "device-1", "request-1")` still mean what they did.
@@ -408,6 +424,13 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### JavaScript: an Agent opens its sessions on its synced config
 
 An `Agent` without `pipeline.config` now names its stored config by `name` when it opens a session (`join`, `chat`, `answer`, `reply`, `startCall`, `waitForCall`), so the session runs on the instructions, skills and knowledge `agent.sync()` stored. It used to name no config, so such a session ran on the router's defaults and the agent's instructions never reached it. An agent that was never synced under its name is now refused with a 404, `there is no agent called <name>`, where it used to open a session: call `await agent.sync()` before opening one, or pass `pipeline.config` to name a stored config yourself.
+### Swift: VisionAgentsCore is StreamAgents
+
+The Swift SDK's product and module are `StreamAgents`, and its client is `StreamAgents`: `import StreamAgents`, then `StreamAgents(apiKey:)` or `StreamAgents(url:customerID:)` where it was `VisionAgents(...)`. Nothing else in the API changed. An app adding the package with SPM takes the `StreamAgents` product from the same repository URL. The package is `stream-agents`, so its test scheme is `stream-agents`. The empty `sdks/swift/ui` and `sdks/swift/rtc` directories are gone.
+
+### Kotlin: vision-agents-core is stream-agents-android-core
+
+The Kotlin SDK's artifact is `io.getstream:stream-agents-android-core`, its package is `io.getstream.agents.android.core`, and its client is `StreamAgents`: `StreamAgents(backend)` where it was `VisionAgents(backend)`, with imports from `io.getstream.agents.android.core` where they were from `io.getstream.visionagents.android.core`. Nothing else in the API changed. The Gradle project is `stream-agents-kotlin`.
 
 ### The Go SDK's helpers take a Backend, not the generated client
 
@@ -473,6 +496,13 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### JavaScript: reliable configuration, shutdown and transport failures
 
 Agents respect an empty skill override and verify the remote sync fingerprint. Attaching a watcher no longer stops an existing conversation on failure. Closing a session after losing its socket stops it over HTTP, reports stop failures and ends unwatched sessions locally. Dispatch refuses ambiguous hosted tool names, cancels pending socket upgrades and settles pending tool holds on shutdown. Stream connections refuse tokens for a different signed-in user, and concurrent guest refreshes share one request. Safe requests retry truncated response bodies; text responses and event streams retain their formats. Socket receive queues are bounded. Folder loading propagates filesystem failures, preserves quoted hashes and rejects malformed durations. An ended voice session must be started or attached again before joining.
+### A search provider that fails answers 500, not 400
+
+`POST /v1/search` answers a question its provider could not answer, or a session it could not open with a provider, with a 500 `internal_error` that says only `something went wrong`, instead of a 400 `invalid_request` carrying the provider's own error text. The router API 5xx monitor now counts a search outage. A request the router refuses (an unknown target, a term nothing serves), a model the customer's policies do not allow, and a refusal about money keep their 400, 402, 403 and 429 answers. The provider's error is in the access log under the request id. A search whose caller hung up before it was answered is a 400 that says so, not a 500. A request asking for a term the named or listed models do not take, a data policy no candidate meets, an input kind no candidate accepts, or more tags than a row carries once the policies' tags are added is marked as the caller's to change: on a stream socket it now ends with 1008 instead of 1011 (AI-3080).
+
+### ship_stale counts only the usage rows a sweep can ship
+
+`router_usage_unshipped_rows` and `router_usage_unshipped_oldest_seconds` count only the waiting usage rows that name an organization. A row whose app has joined none is skipped by the sweeper until it does, and `router_usage_unowned_total` already reports it; before, it also held `ship_stale` raised for as long as it waited (AI-3044).
 
 ### Go: leaving reports a stop the router refused
 

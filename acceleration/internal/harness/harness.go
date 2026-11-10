@@ -130,9 +130,14 @@ type noted struct {
 	cutOff bool
 }
 
-// cutOffNote is added to a note whose reply was talked over before the caller heard it.
+// cutOffNote is added to a note whose reply was cut off before the caller heard it.
 const cutOffNote = "Your last reply passing this on was cut off before the caller heard " +
 	"it, so they still need to be told."
+
+// talkedOverNote is added instead to a note whose reply the caller talked over, taking the
+// floor before they heard it: they said something since, which may have moved on from it.
+const talkedOverNote = "The caller talked over your last reply passing this on, so they did " +
+	"not hear it. Tell them only if it still fits what they have said since."
 
 // writtenReply is a reply the model has finished writing that may still be playing.
 type writtenReply struct {
@@ -352,7 +357,7 @@ func (h *Harness) Remember(response llm.Response) []llm.Message {
 	delete(h.toolless, response.ID)
 	delete(h.generations, response.ID)
 	if response.Status == llm.StatusFailed || response.Status == llm.StatusCancelled {
-		h.release(response.ID)
+		h.release(response.ID, false)
 		carried = nil
 	} else {
 		handed := slices.DeleteFunc(slices.Clone(h.notes), func(written noted) bool { return written.turn != response.ID })
@@ -524,7 +529,7 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 		// is recorded under the ID is then the answer's, as in Forget.
 		h.mu.Lock()
 		if current, taken := h.generations[turn.ID]; !taken || current == turn.Generation {
-			h.release(turn.ID)
+			h.release(turn.ID, false)
 		}
 		h.mu.Unlock()
 	}
@@ -544,11 +549,22 @@ func shapeOf(params llm.ResponseParams) string {
 // cut off before it was heard.
 func (h *Harness) Release(turnID string) {
 	h.mu.Lock()
-	h.release(turnID)
+	h.release(turnID, false)
 	h.mu.Unlock()
 }
 
-func (h *Harness) release(turnID string) {
+// ReleaseTalkedOver is Release for a reply the caller cut off by taking the floor. What it
+// was handed is still theirs to hear, but it no longer earns a turn of its own: it rides
+// along with the reply to what they said (quiet), so the model passes it on there if it still
+// fits. Owed a turn of its own, it was said again over the caller as soon as the reply
+// stopped, every time they talked over it, and their words went unanswered.
+func (h *Harness) ReleaseTalkedOver(turnID string) {
+	h.mu.Lock()
+	h.release(turnID, true)
+	h.mu.Unlock()
+}
+
+func (h *Harness) release(turnID string, talkedOver bool) {
 	// A reply cut off before it was written keeps nothing of what it was sent: its notes are
 	// owed again, data and all, so carrying them into the conversation as well would send
 	// what came back twice.
@@ -566,8 +582,9 @@ func (h *Harness) release(turnID string) {
 			// A correction of the harness's own is not something the caller was being told.
 			if !carried.cutOff && carried.skill != "" {
 				carried.cutOff = true
-				carried.text += " " + cutOffNote
+				carried.text += " " + cutOff(talkedOver)
 			}
+			carried.quiet = carried.quiet || talkedOver
 			h.notes = append(h.notes, carried)
 		}
 		h.written = writtenReply{}
@@ -575,8 +592,23 @@ func (h *Harness) release(turnID string) {
 	for i := range h.notes {
 		if h.notes[i].turn == turnID {
 			h.notes[i].turn = ""
+			if talkedOver {
+				if !h.notes[i].cutOff && h.notes[i].skill != "" {
+					h.notes[i].cutOff = true
+					h.notes[i].text += " " + cutOff(true)
+				}
+				h.notes[i].quiet = true
+			}
 		}
 	}
+}
+
+// cutOff is the line a released note is told again with.
+func cutOff(talkedOver bool) string {
+	if talkedOver {
+		return talkedOverNote
+	}
+	return cutOffNote
 }
 
 // SetModel moves the conversation, and the flow controller when one is given, onto other
