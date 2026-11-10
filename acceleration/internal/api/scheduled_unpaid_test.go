@@ -16,8 +16,11 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
 
 // TelnyxUnpaidSuite is a Telnyx line whose customer's organization has its money read from a
@@ -170,9 +173,10 @@ func (s *TelnyxUnpaidSuite) TestAReplyOfASuspendedOrganizationIsNotSentAndLogsNo
 	s.NotContains(s.logged.String(), "could not send a reply to its external thread")
 }
 
-// A task delivered by SMS for an organization whose credit ran out is not tried again: the run
-// says the credit is spent, and the router warns, naming the task.
-func (s *TelnyxUnpaidSuite) TestAnSMSTaskOfAnOrganizationWithNoCreditIsNotRetried() {
+// spentAfterOpening is a user who texts the agent's SMS line, and a session they opened on the
+// agent while the organization had credit; the credit is spent afterwards, so what costs money
+// is refused.
+func (s *TelnyxUnpaidSuite) spentAfterOpening() (*testClient, Session) {
 	number, writer := "+1555"+digits(s.utils.uuid()), "+1347"+digits(s.utils.uuid())
 	s.seedSMSLine(number)
 	s.config.Channels = store.AgentChannels{SMS: &store.ChannelLine{Number: number}}
@@ -181,8 +185,6 @@ func (s *TelnyxUnpaidSuite) TestAnSMSTaskOfAnOrganizationWithNoCreditIsNotRetrie
 	s.Require().NoError(s.store.SaveChannelIdentity(context.Background(), &store.ChannelIdentity{
 		CustomerID: s.customerID(), ConfigID: s.config.ID, Kind: string(channels.SMS), Address: writer, UserID: user.userID,
 	}))
-	// The task follows up in a session opened while the organization had credit, so what its
-	// spent credit refuses is the text.
 	organization := s.RouterSuite.app.organization.ID
 	s.usage.Credit(s.T(), organization, 10_000_000)
 	s.Require().Eventually(func() bool {
@@ -191,11 +193,27 @@ func (s *TelnyxUnpaidSuite) TestAnSMSTaskOfAnOrganizationWithNoCreditIsNotRetrie
 	opened := user.createSession(CreateSessionRequest{ConfigId: &s.config.ID})
 	s.usage.Credit(s.T(), organization, -10_000_000)
 	s.refusedForMoney(writer)
+	return user, opened
+}
+
+// userTask is a task of user's on channels, following up in the session sessionID, or opening
+// one on its first occurrence when sessionID is empty.
+func (s *TelnyxUnpaidSuite) userTask(user *testClient, sessionID string, channels ...string) store.ScheduledTask {
 	next := time.Now().Add(2 * time.Hour).UTC()
-	task := store.ScheduledTask{CustomerID: s.customerID(), ConfigID: s.config.ID, SessionID: opened.Id, UserID: user.userID,
+	task := store.ScheduledTask{CustomerID: s.customerID(), ConfigID: s.config.ID, SessionID: sessionID, UserID: user.userID,
 		CallerKind: "authenticated", APIKey: s.RouterSuite.app.key, Title: "Stretch", Instructions: "Remind them to stretch.",
-		StartLocal: next, Timezone: "Europe/Amsterdam", NextRunAt: &next, Channels: []string{"sms"}}
+		StartLocal: next, Timezone: "Europe/Amsterdam", NextRunAt: &next, Channels: channels}
 	s.Require().NoError(s.store.CreateScheduledTask(context.Background(), &task, 0))
+	return task
+}
+
+// A task delivered by SMS for an organization whose credit ran out is not tried again: the run
+// says the credit is spent, and the router warns, naming the task.
+func (s *TelnyxUnpaidSuite) TestAnSMSTaskOfAnOrganizationWithNoCreditIsNotRetried() {
+	// The task follows up in a session opened while the organization had credit, so what its
+	// spent credit refuses is the text.
+	user, opened := s.spentAfterOpening()
+	task := s.userTask(user, opened.Id, "sms")
 
 	run, attempts := s.settledByTheWorker(task)
 
@@ -259,4 +277,122 @@ func (s *TelnyxUnpaidSuite) TestAnSMSTaskWhoseOrganizationStopsPayingDuringItsTu
 	s.Require().NotNil(got.run.Error)
 	s.Equal(codeAccountSuspended, *got.run.Error)
 	s.Equal(int32(1), got.attempts, "a suspension outlasts every retry of the run")
+}
+
+// A task whose first occurrence cannot open its session, the credit being spent, is not tried
+// again: the run says the credit is spent.
+func (s *TelnyxUnpaidSuite) TestATaskWhoseSessionCannotOpenForMoneyIsNotRetried() {
+	user, _ := s.spentAfterOpening()
+	task := s.userTask(user, "", "conversation")
+
+	run, attempts := s.settledByTheWorker(task)
+
+	s.Equal(store.ScheduledTaskRunFailed, run.State)
+	s.Require().NotNil(run.Error)
+	s.Equal(codeInsufficientCredits, *run.Error)
+	s.Equal(int32(1), attempts, "spent credit outlasts every retry of the run")
+}
+
+// A task whose session ended and cannot be carried on, the credit being spent, is not tried
+// again: the run says the credit is spent.
+func (s *TelnyxUnpaidSuite) TestATaskWhoseEndedSessionCannotReopenForMoneyIsNotRetried() {
+	user, opened := s.spentAfterOpening()
+	status, body := user.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/stop", nil)
+	s.Require().Equal(http.StatusNoContent, status, string(body))
+	task := s.userTask(user, opened.Id, "conversation")
+
+	run, attempts := s.settledByTheWorker(task)
+
+	s.Equal(store.ScheduledTaskRunFailed, run.State)
+	s.Require().NotNil(run.Error)
+	s.Equal(codeInsufficientCredits, *run.Error)
+	s.Equal(int32(1), attempts, "spent credit outlasts every retry of the run")
+}
+
+// A phone task whose call the gate refuses, the credit being spent, rings nobody and is not tried
+// again: the run says the credit is spent.
+func (s *TelnyxUnpaidSuite) TestAPhoneTaskOfAnOrganizationWithNoCreditIsNotRetried() {
+	user, opened := s.spentAfterOpening()
+	task := s.userTask(user, opened.Id, "phone")
+
+	run, attempts := s.settledByTheWorker(task)
+
+	s.Equal(store.ScheduledTaskRunFailed, run.State)
+	s.Require().NotNil(run.Error)
+	s.Equal(codeInsufficientCredits, *run.Error)
+	s.Equal(int32(1), attempts, "spent credit outlasts every retry of the run")
+}
+
+// A task whose session cannot open because the organization's money cannot be checked is tried
+// again: the check passes again on its own.
+func (s *TelnyxUnpaidSuite) TestATaskWhoseSessionCannotOpenWhileMoneyCannotBeCheckedIsRetried() {
+	person := "+1347" + digits(s.utils.uuid())
+	s.usage.Credit(s.T(), s.RouterSuite.app.organization.ID, 10_000_000)
+	s.Require().Eventually(func() bool {
+		return s.gate.Allow(context.Background(), s.customerID(), dlc.SMS, person) == nil
+	}, 10*time.Second, 50*time.Millisecond, "the credit is read")
+	s.sharing.stop()
+	s.Require().Eventually(func() bool {
+		s.serverClient.call(http.MethodPost, "/v1/search", SearchRequest{Query: "again"})
+		err := s.gate.Allow(context.Background(), s.customerID(), dlc.SMS, person)
+		return errors.Is(err, dlc.ErrUnpaid) && policy.Transient(err)
+	}, 10*time.Second, 20*time.Millisecond, "refused once a hold waited unshared")
+	task := s.userTask(s.data.createUser(), "", "conversation")
+
+	run, attempts := s.settledByTheWorker(task)
+
+	s.Equal(store.ScheduledTaskRunFailed, run.State)
+	s.Require().NotNil(run.Error)
+	s.Equal(codeSpendCheckUnavailable, *run.Error)
+	s.Equal(int32(1+len(scheduling.DeliveryRetries)), attempts, "tried again after each wait")
+}
+
+// reservationRefused is work the router refuses at its reservation, before any vendor is asked, as
+// Notify's send is refused when the money changes after the gate let it through, recorded through a
+// writer the policies gate, as cmd/router's telephony is. The work is a 10DLC brand fee, whose price
+// needs none of the attributes a reservation leaves out (routing.Meter.Estimate).
+func (s *TelnyxUnpaidSuite) reservationRefused() error {
+	logger := slog.New(slog.DiscardHandler)
+	writer := routing.NewWriter(routing.WriterOptions{Store: s.store, Logger: logger, Gate: s.enforcer})
+	defer writer.Close(context.Background())
+	list, err := pricing.NewList("vendor", pricing.AllAtCost(prices.Vendor().Entries), logger)
+	s.Require().NoError(err)
+	meter := routing.Meter{Recorder: routing.NewRecorderOn(routing.Phone, writer, list, logger),
+		Owner:  routing.Owner{CustomerID: s.customerID(), Attribution: routing.Attribution{APIKey: s.RouterSuite.app.key}},
+		Config: routing.ProviderConfig{Provider: "telnyx", Model: "dlc_brand"}, Estimate: pricing.Quantities{pricing.Requests: 1}}
+	_, err = routing.Call(context.Background(), meter, func(context.Context) (channels.Sent, error) {
+		s.Fail("a refused reservation asks no vendor")
+		return channels.Sent{}, nil
+	})
+	s.Require().True(routing.ReservationRefused(err), "refused at the reservation: %v", err)
+	s.Require().NotErrorIs(err, dlc.ErrUnpaid, "the gate did not refuse it")
+	return err
+}
+
+// A text of a suspended organization refused at its reservation is recorded under the
+// suspension, and not tried again.
+func (s *TelnyxUnpaidSuite) TestATextRefusedAtItsReservationIsFinal() {
+	s.suspendedThread("+1347" + digits(s.utils.uuid()))
+
+	var failure *scheduling.Failure
+	s.Require().ErrorAs(unpaid(s.reservationRefused()), &failure)
+	s.Equal(codeAccountSuspended, failure.Reason)
+	s.True(failure.Final, "a suspension outlasts every retry of the run")
+}
+
+// A text refused at its reservation because the organization's money cannot be checked is tried
+// again.
+func (s *TelnyxUnpaidSuite) TestATextRefusedAtItsReservationWhileMoneyCannotBeCheckedIsRetried() {
+	person := "+1347" + digits(s.utils.uuid())
+	s.creditedThread(person)
+	s.sharing.stop()
+	s.Require().Eventually(func() bool {
+		s.serverClient.call(http.MethodPost, "/v1/search", SearchRequest{Query: "again"})
+		return policy.Transient(s.gate.Allow(context.Background(), s.customerID(), dlc.SMS, person))
+	}, 10*time.Second, 20*time.Millisecond, "refused once a hold waited unshared")
+
+	var failure *scheduling.Failure
+	s.Require().ErrorAs(unpaid(s.reservationRefused()), &failure)
+	s.Equal(codeSpendCheckUnavailable, failure.Reason)
+	s.False(failure.Final, "the check passes again on its own")
 }
