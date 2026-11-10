@@ -156,7 +156,8 @@ the other commands that read them there.
 | `PERPLEXITY_API_KEY`    | Perplexity credentials, for the ranked index and for Sonar |
 | `DAYTONA_API_KEY`       | Daytona credentials. Without it a session cannot ask for a sandbox |
 | `TWILIO_ACCOUNT_SID`    | Twilio credentials, for buying and operating numbers       |
-| `TWILIO_AUTH_TOKEN`     | Twilio credentials                                         |
+| `TWILIO_AUTH_TOKEN`     | Twilio credentials. With `TWILIO_API_KEY_SID` set, that key's secret |
+| `TWILIO_API_KEY_SID`    | Optional Twilio API key (SK...). Requests are signed with it instead of the account SID |
 | `TELNYX_API_KEY`        | Telnyx credentials                                         |
 | `TELNYX_CONNECTION_ID`  | The Telnyx TeXML application numbers and calls are on. Calls to the webhook from any other application are hung up |
 | `TELNYX_PUBLIC_KEY`     | Telnyx's public key (base64), to check the calls it sends to `/v1/phone/hooks/telnyx`. Without it Telnyx numbers are not answered. Telnyx numbers also need `ROUTER_AUTH_KEK`: without a keyring they cannot be attached |
