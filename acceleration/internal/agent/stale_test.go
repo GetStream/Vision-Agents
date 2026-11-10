@@ -557,6 +557,35 @@ func (s *AgentSuite) TestAHeldReplyStoppedAnotherWayIsLetGoOf() {
 	s.False(s.agent.floor().Talking, "what was held is counted as being said")
 }
 
+// A reply stopped before the greeting over it is dealt with is no longer the agent's to say.
+func (s *AgentSuite) TestAGreetingOverAReplyAlreadyStoppedHoldsNothing() {
+	s.join(true)
+	turn := s.answering("Hello? Hello. Hello.")
+	s.agent.interrupt(stt.Participant{ID: "bob"}, interruption{cause: causeTalking})
+
+	s.agent.perform(Action{Kind: ActHoldUnheard, Participant: nash, TurnID: turn, Text: "Hello?"})
+
+	s.False(s.holding(turn), "a reply already stopped was held")
+}
+
+// A reply let go of after a greeting went to the voice: dropped then, the log says so.
+func (s *AgentSuite) TestAReleasedReplyDroppedIsLoggedAsSentToTheVoice() {
+	s.logs = &logLines{}
+	s.join(true)
+	s.voice.silent = true
+	turn := s.answering("Hello? Hello. Hello.")
+	s.greetedOver(turn, s.mutters, "Hello?")
+	s.model.writes(turn, "Hi, yes, I can hear you.")
+	s.eventually(func() bool { return s.voicedTimes("Hi, yes, I can hear you.") == 1 }, "the held reply never reached the voice")
+
+	s.mutters(nash, "Hello? Can you help me")
+
+	s.eventually(func() bool { return s.model.abandoned(turn) }, "the reply was not dropped")
+	logged := s.dropLogged()
+	s.Require().Len(logged, 1)
+	s.Equal(true, logged[0]["sent_to_voice"])
+}
+
 func (s *AgentSuite) TestAReplyStartedBeforeTheRulingIsDroppedTheSameWay() {
 	s.speculates = true
 	s.join(true)
