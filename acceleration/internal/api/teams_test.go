@@ -30,6 +30,7 @@ type AgentTeamsSuite struct {
 func (s *AgentTeamsSuite) SetupSuite() {
 	s.logged = &lockedLog{}
 	s.logs = s.logged
+	s.deploymentKnown = true
 	s.RouterSuite.SetupSuite()
 }
 
@@ -263,6 +264,42 @@ func (s *AgentTeamsSuite) TestTheDeploymentAppsOwnCustomerReadsItsUsersTeamsTher
 	s.Equal(http.StatusCreated, dana.do(http.MethodPost, "/v1/agents/sessions", s.naming(s.configOf("")), nil))
 	s.Equal(http.StatusNotFound, dana.do(http.MethodPost, "/v1/agents/sessions", s.naming(s.configOf("red")), nil))
 	s.Equal(asked+5, s.teamReads(), "each session asks the deployment's app")
+}
+
+// In deployment tenancy the customer of the deployment's app has no app of its own: it acts in
+// the deployment's app with no pin, and Clients knows which app that is (Deployment.App()).
+func (s *AgentTeamsSuite) TestTheDeploymentAppsOwnCustomerWithNoPinReadsItsUsersTeamsThere() {
+	ctx := context.Background()
+	id := streamapp.CustomerOf(suiteStreamApp)
+	settings := store.AppSettings{AgentTeams: new(true)}
+	var app store.App
+	if err := s.store.DB().NewSelect().Model(&app).Where("id = ?", id).Scan(ctx); err == nil {
+		app.Settings = settings
+		_, err = s.store.DB().NewUpdate().Model(&app).Column("settings").WherePK().Exec(ctx)
+		s.Require().NoError(err)
+		s.useApp(s.data.keyed(store.Organization{ID: app.OrganizationID}, app))
+	} else {
+		organization := store.Organization{Name: "organization-" + s.utils.uuid()}
+		s.Require().NoError(s.store.CreateOrganization(ctx, &organization))
+		app = store.App{ID: id, OrganizationID: organization.ID, Name: "app-" + s.utils.uuid(), Settings: settings}
+		s.Require().NoError(s.store.CreateApp(ctx, &app))
+		s.useApp(s.data.keyed(organization, app))
+	}
+	s.teamsChat = s.chat
+	anya, dana := s.inTeams("red"), s.inTeams()
+	asked := s.teamReadsOn(suiteStreamKey)
+
+	s.Equal(http.StatusCreated, anya.do(http.MethodPost, "/v1/agents/sessions", s.naming(s.configOf("red")), nil))
+	status, payload := anya.call(http.MethodPost, "/v1/agents/sessions", s.naming(s.configOf("blue")))
+	_, unknown := anya.call(http.MethodPost, "/v1/agents/sessions", s.naming(AgentConfig{Id: s.utils.uuid()}))
+	s.Equal(http.StatusNotFound, status, string(payload))
+	var refused, missing ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &refused))
+	s.Require().NoError(json.Unmarshal(unknown, &missing))
+	s.Equal(missing, refused, "the same answer as a config that does not exist")
+	s.Equal(http.StatusCreated, dana.do(http.MethodPost, "/v1/agents/sessions", s.naming(s.configOf("")), nil))
+	s.Equal(http.StatusNotFound, dana.do(http.MethodPost, "/v1/agents/sessions", s.naming(s.configOf("red")), nil))
+	s.Equal(asked+5, s.teamReadsOn(suiteStreamKey), "each session asks the deployment's app")
 }
 
 func (s *AgentTeamsSuite) TestTheDeploymentAppsOwnCustomersForkIsCheckedAgainstItsUsersTeams() {
@@ -716,8 +753,12 @@ func (s *AgentTeamsSuite) recorded(config AgentConfig) CreateSessionRequest {
 
 // teamReads is how many user queries the suite's Stream has been sent.
 func (s *AgentTeamsSuite) teamReads() int {
+	return s.teamReadsOn(teamsAppKey)
+}
+
+func (s *AgentTeamsSuite) teamReadsOn(key string) int {
 	read := 0
-	for _, request := range s.teamsChat.Requests(teamsAppKey) {
+	for _, request := range s.teamsChat.Requests(key) {
 		if request.Method == http.MethodGet && strings.HasSuffix(request.Path, "/users") {
 			read++
 		}
