@@ -331,3 +331,49 @@ func (s *AnomalySuite) TestCloseStopsTheCheckAndGivesTheLockBack() {
 	s.Require().NoError(err)
 	s.True(held, "the lock went with the check")
 }
+
+// A holder whose check fails gives the lock back, so that a router that can check takes it:
+// kept, the lock would leave every router without a check while a shard stays down.
+func (s *AnomalySuite) TestACheckThatFailsGivesTheLockBack() {
+	own := testenv.Database(os.Getenv("ROUTER_POSTGRES_DSN"), "anomaly")
+	broken, err := store.OpenShards(store.Options{DSN: own, Shards: map[string]string{
+		"here": own, "down": "postgres://postgres:postgres@127.0.0.1:1/none?sslmode=disable&dial_timeout=1s",
+	}})
+	s.Require().NoError(err)
+	defer broken.Close()
+	slack := NewSlack("xoxb-test", "C123")
+	slack.baseURL = s.slack.URL
+	failing := NewAnomalies(AnomalyOptions{
+		Store: broken, Poster: slack, Logger: slog.New(slog.DiscardHandler), Every: 20 * time.Millisecond,
+		Now: func() time.Time {
+			s.reads.Add(1)
+			return *s.clock.Load()
+		},
+	})
+	failing.Start()
+	defer failing.Close()
+	s.checked(0)
+
+	other := s.db.CostAnomalyLock()
+	defer other.Release()
+
+	s.Require().Eventually(func() bool {
+		held, err := other.Hold(s.ctx)
+		return err == nil && held
+	}, settleFor, 10*time.Millisecond, "the holder whose check failed let the lock go")
+}
+
+// The day checked is the UTC day, not the clock's own: at UTC+10 it is already the next day.
+func (s *AnomalySuite) TestTheDayIsUTCWhateverTheClocksZone() {
+	spike := organization()
+	s.steady(spike, 4_000_000)
+	s.spent(spike, 0, 40_000_000)
+	// 2026-03-10 15:00 UTC is 2026-03-11 01:00 at UTC+10.
+	at := today.In(time.FixedZone("UTC+10", 10*3600))
+	s.clock.Store(&at)
+
+	s.anomalies().Start()
+	s.checked(0)
+
+	s.Equal([]string{spike}, s.noticed(spike))
+}

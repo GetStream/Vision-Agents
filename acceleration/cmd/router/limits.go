@@ -102,15 +102,24 @@ func limitNotices(settings config.Config, configs *appconfig.Store, logger *slog
 // to read the spend from. It runs whatever the limits' mode: work is priced and recorded with
 // limits off too.
 func costAnomalies(settings config.Config, db *store.Store, logger *slog.Logger) *limitnotice.Anomalies {
+	options, ok := costAnomalyOptions(settings, db, logger)
+	if !ok {
+		return nil
+	}
+	return limitnotice.NewAnomalies(options)
+}
+
+// costAnomalyOptions is how costAnomalies configures the check, and false when it does not run.
+func costAnomalyOptions(settings config.Config, db *store.Store, logger *slog.Logger) (limitnotice.AnomalyOptions, bool) {
 	token := strings.TrimSpace(settings.Limits.SlackToken)
 	channel := strings.TrimSpace(settings.Limits.SlackChannel)
 	if token == "" || channel == "" || db == nil {
-		return nil
+		return limitnotice.AnomalyOptions{}, false
 	}
-	return limitnotice.NewAnomalies(limitnotice.AnomalyOptions{
+	return limitnotice.AnomalyOptions{
 		Store: db, Poster: limitnotice.NewSlack(token, channel), Environment: sandboxEnvironment(),
 		Links: limitnotice.Links{Staff: settings.Limits.StaffURL}, Logger: logger,
-	})
+	}, true
 }
 
 // usageCounters connects to the Redis the usage service keeps its spend counters in, or nil

@@ -42,6 +42,24 @@ func (s *StoreSuite) TestDailySpendIsEachOrganizationsBillableSpendPerUTCDay() {
 		"last minutes of a day are that day's")
 }
 
+// A day is the UTC day whatever time zone the database session is in: without AT TIME ZONE 'UTC'
+// a session in Los Angeles files a request made at 03:00 UTC under the day before.
+func (s *StoreSuite) TestDailySpendIsUTCWhateverTheSessionTimeZone() {
+	day := time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC)
+	la, err := Open(s.dsn + "&timezone=America/Los_Angeles")
+	s.Require().NoError(err)
+	defer la.Close()
+	var zone string
+	s.Require().NoError(la.DB().QueryRowContext(s.ctx, "SHOW timezone").Scan(&zone))
+	s.Require().Equal("America/Los_Angeles", zone, "the session is not in UTC")
+	s.orgSpend(la, "org-tz", day.Add(3*time.Hour), 300)
+
+	spent, err := la.DailySpend(s.ctx, day, day.AddDate(0, 0, 1))
+
+	s.Require().NoError(err)
+	s.Equal([]DaySpend{{OrganizationID: "org-tz", Day: day, CostMicros: 300}}, spent)
+}
+
 func (s *ShardedStoreSuite) TestDailySpendSumsEveryShard() {
 	day := time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC)
 	s.orgSpend(s.store, "org-a", day.Add(time.Hour), 300)
