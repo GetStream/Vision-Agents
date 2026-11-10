@@ -1,4 +1,4 @@
-import type { Turn } from "@stream-io/calypso";
+import type { Turn } from "@stream-io/stream-agents";
 
 /**
  * Closed captions for a spoken conversation: what is being said, a sentence at a time, gone a
