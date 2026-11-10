@@ -208,6 +208,27 @@ func (s *TwilioSuite) TestAnAPIKeyLeavesTheAccountInTheCallAndPurchasePaths() {
 		"DELETE /2010-04-01/Accounts/AC123/IncomingPhoneNumbers/PN9.json",
 	}, paths)
 	s.Equal("SK456", s.seen.user)
+
+	paths = nil
+	s.Require().NoError(provider.ConfigureInbound(s.ctx, phone.Inbound{
+		E164:   "+15125551234",
+		Bridge: phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+	}))
+	s.Equal([]string{
+		"GET /2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json",
+		"POST /2010-04-01/Accounts/AC123/IncomingPhoneNumbers/PN9.json",
+	}, paths)
+	s.Equal("SK456", s.seen.user)
+	s.Equal("key-secret", s.seen.pass)
+
+	paths = nil
+	s.Require().NoError(provider.StopInbound(s.ctx, "+15125551234"))
+	s.Equal([]string{
+		"GET /2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json",
+		"POST /2010-04-01/Accounts/AC123/IncomingPhoneNumbers/PN9.json",
+	}, paths)
+	s.Equal("SK456", s.seen.user)
+	s.Equal("key-secret", s.seen.pass)
 }
 
 const usPrices = `{"iso_country":"US","price_unit":"USD","phone_number_prices":[
