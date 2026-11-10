@@ -6,8 +6,6 @@ name: Release .NET SDK
 on:
   push:
     tags: [ 'sdk-dotnet-v*' ]
-  pull_request: # TEMP: proves the OIDC exchange, removed before merge
-    paths: [ '.github/workflows/release-sdk-dotnet.yml' ]
 
 permissions:
   contents: read
@@ -17,25 +15,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  oidc-check: # TEMP: removed before merge
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-    steps:
-      - name: NuGet login
-        id: login
-        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
-        with:
-          user: yunwang_stream
-
-      - name: Got a key
-        env:
-          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
-        run: test -n "$NUGET_API_KEY" && echo "nuget.org issued a temporary API key"
-
   release:
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
