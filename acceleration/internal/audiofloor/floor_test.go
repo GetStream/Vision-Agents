@@ -408,7 +408,13 @@ func (s *FloorSuite) TestAFinalBeforeTheVoiceStoppedSettlesTheWords() {
 	time.Sleep(1300 * time.Millisecond) // the final is older than the voice's last frame will be
 	s.say(300, true)
 	began := time.Now()
-	s.say(1200, false)
+	// The pause's second check ends the turn (p_eot 0.3 clears the bar from 500 ms), and a check
+	// is asked on a frame once the one before has answered: silence handed over all at once could
+	// be in before the first check answered, leaving the second unasked and the turn unended.
+	for range 1200 / 20 {
+		s.say(20, false)
+		time.Sleep(5 * time.Millisecond)
+	}
 	end := s.final()
 	s.Less(time.Since(began), finalWait/2, "with the ruling, not finalWait later")
 	s.Equal("Tell me a story.", end.Text)
