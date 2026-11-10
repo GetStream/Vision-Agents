@@ -666,14 +666,17 @@ class TestChecks:
         audit.main([], [("Spend", ("TEST_AUDIT_KEY",), check)], {})
         assert "Spend | 0.00 | USD spent this month |" in capsys.readouterr().out
 
+    @pytest.mark.parametrize("key_sid", [None, ""])
     def test_twilio_needs_its_account_sid(
-        self, vendor: Vendor, monkeypatch: pytest.MonkeyPatch
+        self, vendor: Vendor, monkeypatch: pytest.MonkeyPatch, key_sid: str | None
     ) -> None:
         monkeypatch.delenv("TWILIO_ACCOUNT_SID", raising=False)
         monkeypatch.delenv("TWILIO_API_KEY_SID", raising=False)
         with pytest.raises(audit.AuditError, match="TWILIO_ACCOUNT_SID"):
             audit.twilio(KEY, vendor.url)
         monkeypatch.setenv("TWILIO_ACCOUNT_SID", "AC1")
+        if key_sid is not None:
+            monkeypatch.setenv("TWILIO_API_KEY_SID", key_sid)
         vendor.answer(
             "/2010-04-01/Accounts/AC1/Balance.json",
             {"balance": "6.5", "currency": "USD"},
