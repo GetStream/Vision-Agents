@@ -586,6 +586,22 @@ func (s *AgentSuite) TestAReleasedReplyDroppedIsLoggedAsSentToTheVoice() {
 	s.Equal(true, logged[0]["sent_to_voice"])
 }
 
+// The hold is the caller's time, not the voice's: the voice's part of the turn starts when the
+// reply is let go to it.
+func (s *AgentSuite) TestAHeldReplysVoiceTimeLeavesOutTheHold() {
+	s.join(true)
+	turn := s.answering("Hello? Hello. Hello.")
+	s.greetedOver(turn, s.mutters, "Hello?")
+	s.model.writes(turn, "Hi, yes, I can hear you.")
+	s.model.finishes(turn)
+
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never measured")
+	measured, _ := firstOf[Turn](s.reported())
+	half := float64(callerHold.Milliseconds()) / 2
+	s.Less(measured.TTSToAudioMs, half, "the voice's time took in the hold")
+	s.Greater(measured.TextToTTSMs, half, "the hold was left out of the turn")
+}
+
 func (s *AgentSuite) TestAReplyStartedBeforeTheRulingIsDroppedTheSameWay() {
 	s.speculates = true
 	s.join(true)

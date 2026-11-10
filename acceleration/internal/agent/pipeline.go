@@ -932,6 +932,9 @@ func (a *Agent) sayAgain(voice *ttsrouter.Session, held *heldReply) {
 		// request that only ends the utterance has nothing to keep.
 		if text != "" {
 			a.sendingLocked(held.turnID, heard.synthesisID, text, heard.message)
+			if held.greeting {
+				a.turns.released(held.turnID, time.Now())
+			}
 			a.turns.voiced(held.turnID)
 		}
 		a.mu.Unlock()

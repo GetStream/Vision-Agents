@@ -409,6 +409,16 @@ func (t *turnTracker) voiced(turnID string) {
 	}
 }
 
+// released moves the start of a turn's voice to when the reply held for a caller's greeting
+// first goes to it: the hold is the caller's time, not the voice's.
+func (t *turnTracker) released(turnID string, at time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil && !current.voiced {
+		current.ttsAt = at
+	}
+}
+
 // sentToVoice reports whether any of a turn's reply has been handed to the voice.
 func (t *turnTracker) sentToVoice(turnID string) bool {
 	t.mu.Lock()
