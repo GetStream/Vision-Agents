@@ -512,11 +512,8 @@ func (c *converse) stopSpent(ready candidate) (Action, bool) {
 		return Action{}, false
 	}
 	// A stop ruled over the agent's echo alone was ruled on no words of the caller's: what they
-	// said is the turn's to show, and it is spent if it is a stop and nothing more, or does not
-	// take the floor at all, as the echo's residue does ("with." left of "Tomorrow in Lisbon, it
-	// will be sunny with."): answered, its reply came back as echo, whose residue was answered,
-	// twenty times on one call of the gate's stop probe.
-	if stop.words == "" && takesFloor(ready.Text) && !stopAlone(ready.Text) || stop.words != "" && saysMore(ready.Text, stop.words) {
+	// said is the turn's to show, and it is spent if it is a stop and nothing more.
+	if stop.words == "" && !stopAlone(ready.Text) || stop.words != "" && saysMore(ready.Text, stop.words) {
 		return Action{}, false
 	}
 	c.cadence.Resolve(ready.ID, false)

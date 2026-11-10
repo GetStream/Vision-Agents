@@ -8570,10 +8570,7 @@ func (s *AgentSuite) TestACheckOverTheAgentStopsItAtOnce() {
 // caller's words, the stop spends a turn of its utterance that is a stop alone, and one that
 // says more is the caller's to have answered.
 func (s *AgentSuite) TestAStopRuledOverTheAgentsEchoAloneStopsIt() {
-	// The last is the agent's echo with a word of the caller's at its end, all the final had: the
-	// residue is spent, as answering it set off a loop of answers to the reply's own echo.
-	const echoed = "Tomorrow in Lisbon, it will be sunny with."
-	cases := map[string]bool{"Stop.": false, "No, no.": false, "Wait, hold on.": false, "No wait, I meant Lisbon, not Porto.": true, echoed: false}
+	cases := map[string]bool{"Stop.": false, "No, no.": false, "Wait, hold on.": false, "No wait, I meant Lisbon, not Porto.": true}
 	for said, answered := range cases {
 		s.Run(said, func() {
 			s.join(true)
@@ -8597,17 +8594,12 @@ func (s *AgentSuite) TestAStopRuledOverTheAgentsEchoAloneStopsIt() {
 			s.eventually(func() bool { return s.voice.interrupted() == 1 }, "the voice kept talking")
 
 			s.model.reply = []string{"Lisbon it is."}
-			final := stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Utterance: 2, Text: said,
-				Provider: audiofloor.ProviderName, Language: "en", Confidence: 1}
-			if said == echoed {
-				// Its audio came while the reply was going out, so the echo is taken for it.
-				final.AudioDurationMs, final.ProcessingTimeMs = 1500, 100
-			}
-			s.ears.emitter.Send(final)
+			s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Utterance: 2, Text: said,
+				Provider: audiofloor.ProviderName, Language: "en", Confidence: 1})
 			s.eventually(func() bool {
 				return slices.ContainsFunc(s.reported(), func(event Event) bool {
 					d, ok := event.(Decided)
-					return ok && (d.Text == said || said == echoed && d.Text != "") && (d.Kind == string(ActIgnore) || d.Kind == string(ActAnswer))
+					return ok && d.Text == said && (d.Kind == string(ActIgnore) || d.Kind == string(ActAnswer))
 				})
 			}, "what the caller said was not ruled on")
 			if !answered {
