@@ -13,7 +13,9 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.activity_area import ActivityArea
+    from ..models.activity_latency import ActivityLatency
     from ..models.activity_meter import ActivityMeter
+    from ..models.activity_sessions import ActivitySessions
 
 
 T = TypeVar("T", bound="OrganizationActivity")
@@ -36,6 +38,11 @@ class OrganizationActivity:
         shards (list[str] | None): The names of the shards whose requests the meters sum, this one's first. A deployment
             that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone.
             Areas are read from the database every shard shares and cover all of them.
+        latency (list[ActivityLatency] | None): How long the turns of the organization's apps took, every agent summed,
+            one item per leg: stt_latency, llm_ttft, tts_ttfb, then roundtrip. Turns are kept by the hour they started in,
+            so they count the whole hour since falls in. The percentiles are read off bins 5% wide, so they are within 5% of
+            the true ones.
+        sessions (ActivitySessions):
         first_seen (datetime.datetime | Unset): When the first request of any area arrived, absent when none did.
         last_seen (datetime.datetime | Unset): When the last request of any area arrived, absent when none did.
     """
@@ -46,6 +53,8 @@ class OrganizationActivity:
     organization_id: str
     since: datetime.datetime
     shards: list[str] | None
+    latency: list[ActivityLatency] | None
+    sessions: ActivitySessions
     first_seen: datetime.datetime | Unset = UNSET
     last_seen: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -84,6 +93,18 @@ class OrganizationActivity:
         else:
             shards = self.shards
 
+        latency: list[dict[str, Any]] | None
+        if isinstance(self.latency, list):
+            latency = []
+            for latency_type_0_item_data in self.latency:
+                latency_type_0_item = latency_type_0_item_data.to_dict()
+                latency.append(latency_type_0_item)
+
+        else:
+            latency = self.latency
+
+        sessions = self.sessions.to_dict()
+
         first_seen: str | Unset = UNSET
         if not isinstance(self.first_seen, Unset):
             first_seen = self.first_seen.isoformat()
@@ -102,6 +123,8 @@ class OrganizationActivity:
                 "organization_id": organization_id,
                 "since": since,
                 "shards": shards,
+                "latency": latency,
+                "sessions": sessions,
             }
         )
         if first_seen is not UNSET:
@@ -114,7 +137,9 @@ class OrganizationActivity:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.activity_area import ActivityArea
+        from ..models.activity_latency import ActivityLatency
         from ..models.activity_meter import ActivityMeter
+        from ..models.activity_sessions import ActivitySessions
 
         d = dict(src_dict)
 
@@ -181,6 +206,30 @@ class OrganizationActivity:
 
         shards = _parse_shards(d.pop("shards"))
 
+        def _parse_latency(data: object) -> list[ActivityLatency] | None:
+            if data is None:
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                latency_type_0 = []
+                _latency_type_0 = data
+                for latency_type_0_item_data in _latency_type_0:
+                    latency_type_0_item = ActivityLatency.from_dict(
+                        latency_type_0_item_data
+                    )
+
+                    latency_type_0.append(latency_type_0_item)
+
+                return latency_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[ActivityLatency] | None, data)
+
+        latency = _parse_latency(d.pop("latency"))
+
+        sessions = ActivitySessions.from_dict(d.pop("sessions"))
+
         _first_seen = d.pop("first_seen", UNSET)
         first_seen: datetime.datetime | Unset
         if isinstance(_first_seen, Unset):
@@ -202,6 +251,8 @@ class OrganizationActivity:
             organization_id=organization_id,
             since=since,
             shards=shards,
+            latency=latency,
+            sessions=sessions,
             first_seen=first_seen,
             last_seen=last_seen,
         )

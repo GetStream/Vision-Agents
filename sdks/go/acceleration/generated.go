@@ -3349,8 +3349,35 @@ type ActivityBucket struct {
 	VoiceMinutes float64 `json:"voice_minutes"`
 }
 
+// ActivityEnding defines model for ActivityEnding.
+type ActivityEnding struct {
+	// EndReason Why the session ended, with whose fault it was and the stage it came at: agent_hangup, the agent hung up (fault none, stage conversation); transferred, the agent handed the caller to a person (fault none, stage conversation); hangup, the caller left (fault caller, stage conversation); start, nobody joined the phone call in time (fault carrier, stage ringing); unanswered, the call placed was never answered (fault caller, stage ringing); voicemail, an answering machine picked up the call placed, and the agent left its message or hung up (fault none, stage ringing); closed, the session was closed through the API, or replaced by a newer one (fault none, stage conversation); shutdown, the router ended the session as it shut down (fault router, stage conversation); agent_failed, the agent left the call or answered no turn for a failure of the router's own (fault router, stage conversation); model_failed, a model vendor failed: the agent left the call or answered no turn (fault vendor, stage conversation); model_config_refused, the model failed on the customer's own key or model, or refused a setting, and the agent answered no turn (fault customer_config, stage conversation); model_no_credit, the credit or spend limits refused the model's work, and the agent answered no turn (fault customer_credit, stage conversation).
+	EndReason *SessionEndReason `json:"end_reason,omitempty"`
+
+	// Sessions How many ended so.
+	Sessions int64 `json:"sessions"`
+}
+
 // ActivityGranularity Separate from Granularity, and coarser, because distinct users cannot be summed: a month of them is who came back rather than the sum of its days.
 type ActivityGranularity string
+
+// ActivityLatency defines model for ActivityLatency.
+type ActivityLatency struct {
+	// Leg The leg: stt_latency, the speech-to-text vendor's decode of the transcript that settled the turn; llm_ttft, asking the model to its first token; tts_ttfb, the first sentence sent to its first audio; roundtrip, the settled transcript to the first audio published.
+	Leg string `json:"leg"`
+
+	// P50Ms The median, in milliseconds. Absent when no turn had the leg.
+	P50Ms *float64 `json:"p50_ms,omitempty"`
+
+	// P95Ms The 95th percentile, in milliseconds. Absent when no turn had the leg.
+	P95Ms *float64 `json:"p95_ms,omitempty"`
+
+	// P99Ms The 99th percentile, in milliseconds. Absent when no turn had the leg.
+	P99Ms *float64 `json:"p99_ms,omitempty"`
+
+	// Turns How many turns the leg was counted for.
+	Turns int64 `json:"turns"`
+}
 
 // ActivityMeter defines model for ActivityMeter.
 type ActivityMeter struct {
@@ -3377,6 +3404,45 @@ type ActivityMeter struct {
 
 	// Requests How many requests. Runtime and sandbox are time, not requests, and read 0.
 	Requests int64 `json:"requests"`
+}
+
+// ActivitySession defines model for ActivitySession.
+type ActivitySession struct {
+	// AgentName The name of the agent config it was opened with.
+	AgentName string `json:"agent_name"`
+
+	// AppId The app it was opened in.
+	AppId string `json:"app_id"`
+
+	// ClosedAt When it ended. Absent while it runs.
+	ClosedAt *time.Time `json:"closed_at,omitempty"`
+
+	// CreatedAt When it was opened.
+	CreatedAt time.Time `json:"created_at"`
+
+	// EndReason Why the session ended, with whose fault it was and the stage it came at: agent_hangup, the agent hung up (fault none, stage conversation); transferred, the agent handed the caller to a person (fault none, stage conversation); hangup, the caller left (fault caller, stage conversation); start, nobody joined the phone call in time (fault carrier, stage ringing); unanswered, the call placed was never answered (fault caller, stage ringing); voicemail, an answering machine picked up the call placed, and the agent left its message or hung up (fault none, stage ringing); closed, the session was closed through the API, or replaced by a newer one (fault none, stage conversation); shutdown, the router ended the session as it shut down (fault router, stage conversation); agent_failed, the agent left the call or answered no turn for a failure of the router's own (fault router, stage conversation); model_failed, a model vendor failed: the agent left the call or answered no turn (fault vendor, stage conversation); model_config_refused, the model failed on the customer's own key or model, or refused a setting, and the agent answered no turn (fault customer_config, stage conversation); model_no_credit, the credit or spend limits refused the model's work, and the agent answered no turn (fault customer_credit, stage conversation).
+	EndReason *SessionEndReason `json:"end_reason,omitempty"`
+
+	// Id The session.
+	Id string `json:"id"`
+
+	// Modality text, voice or video.
+	Modality string `json:"modality"`
+}
+
+// ActivitySessions defines model for ActivitySessions.
+type ActivitySessions struct {
+	// Ended How many of them ended for each reason, by reason, the ones with no reason kept first.
+	Ended *[]ActivityEnding `json:"ended"`
+
+	// Latest The 20 opened last, newest first.
+	Latest *[]ActivitySession `json:"latest"`
+
+	// Opened How many sessions were opened, running ones included.
+	Opened int64 `json:"opened"`
+
+	// Running How many of them have not ended.
+	Running int64 `json:"running"`
 }
 
 // ActivityStep The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
@@ -7430,11 +7496,15 @@ type OrganizationActivity struct {
 	// LastSeen When the last request of any area arrived, absent when none did.
 	LastSeen *time.Time `json:"last_seen,omitempty"`
 
+	// Latency How long the turns of the organization's apps took, every agent summed, one item per leg: stt_latency, llm_ttft, tts_ttfb, then roundtrip. Turns are kept by the hour they started in, so they count the whole hour since falls in. The percentiles are read off bins 5% wide, so they are within 5% of the true ones.
+	Latency *[]ActivityLatency `json:"latency"`
+
 	// Meters What the organization's apps' work came to, by modality, from the shards listed in shards.
 	Meters *[]ActivityMeter `json:"meters"`
 
 	// OrganizationId The organization.
-	OrganizationId string `json:"organization_id"`
+	OrganizationId string           `json:"organization_id"`
+	Sessions       ActivitySessions `json:"sessions"`
 
 	// Shards The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them.
 	Shards *[]string `json:"shards"`
