@@ -586,6 +586,11 @@ type AgentConfig struct {
 	// Channels are the lines this agent answers on outside a Stream Chat channel: a
 	// WhatsApp number, a number to text, an iMessage line.
 	Channels AgentChannels `bun:"channels,type:jsonb,notnull"`
+	// ChatChannels are the Stream Chat channel types of the customer's own app this agent
+	// answers in besides agent channels, such as a team's group channels
+	// (20261222120000_agent_config_chat_channels.sql). Empty, as every config starts, answers
+	// in agent channels alone.
+	ChatChannels []ChatChannel `bun:"chat_channels,type:jsonb,notnull"`
 	// Scheduling is whether the agent may schedule tasks for its users, and the
 	// defaults those tasks take. The zero value is off.
 	Scheduling AgentScheduling `bun:"scheduling,type:jsonb,notnull"`
@@ -942,6 +947,14 @@ type AgentChannels struct {
 	IMessage *ChannelLine `json:"imessage,omitempty"`
 	// Identity is how a sender becomes an end user: phone or link. Empty is phone.
 	Identity string `json:"identity,omitempty"`
+}
+
+// ChatChannel is one Stream Chat channel type an agent config answers in, stored in
+// agent_configs.chat_channels. An object rather than the type's name alone, so how the agent
+// answers in channels of the type can be said beside it.
+type ChatChannel struct {
+	// Type is the channel type's name, as Stream Chat names it in a cid (type:id).
+	Type string `json:"type"`
 }
 
 // AgentScheduling is an agent config's scheduled-task settings, stored in

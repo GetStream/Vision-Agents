@@ -73,7 +73,7 @@ func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) erro
 var configColumns = []string{
 	"name", "role", "mode", "region", "stt", "tts", "sts", "voice", "llm", "llm_fallbacks", "subagent",
 	"video_source", "video_max_frames", "search", "instructions", "greeting", "greeting_mode", "guardrail", "review_instructions",
-	"skills", "connectors", "left_out_connectors", "channels", "scheduling", "calls", "keyterms", "visible_tools", "knowledge_namespace", "sandbox", "sandbox_options", "harness", "tags",
+	"skills", "connectors", "left_out_connectors", "channels", "chat_channels", "scheduling", "calls", "keyterms", "visible_tools", "knowledge_namespace", "sandbox", "sandbox_options", "harness", "tags",
 	"dispatch_incoming_call", "dispatch_text", "episode_cards", "episode_cards_record", "progressive_tools", "tool_output_retention", "resume_history", "floor_control", "sync_hash", "updated_at",
 }
 
@@ -279,6 +279,31 @@ func (s *Store) AgentConfig(ctx context.Context, customerID, id string) (AgentCo
 		return AgentConfig{}, stack.Wrap(fmt.Errorf("store: agent config: %w", err))
 	}
 	return config, nil
+}
+
+// AgentConfigAnsweringChatChannel returns the customer's live agent config that answers in
+// Stream Chat channels of the type channelType (AgentConfig.ChatChannels): the oldest, when
+// more than one names it, as the oldest config binding a line answers on it. A test copy
+// (DraftOfTag) answers in none. found is false when no config names the type.
+func (s *Store) AgentConfigAnsweringChatChannel(ctx context.Context, customerID, channelType string) (config AgentConfig, found bool, err error) {
+	if customerID == "" || channelType == "" {
+		return AgentConfig{}, false, stack.Wrap(errors.New("store: a customer and a channel type are required"))
+	}
+	err = s.db.NewSelect().Model(&config).
+		Where("customer_id = ?", customerID).
+		Where("deleted_at IS NULL").
+		Where(notTestCopy).
+		Where("chat_channels @> jsonb_build_array(jsonb_build_object('type', ?::text))", channelType).
+		Order("created_at", "id").
+		Limit(1).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AgentConfig{}, false, nil
+	}
+	if err != nil {
+		return AgentConfig{}, false, stack.Wrap(fmt.Errorf("store: agent config answering chat channel: %w", err))
+	}
+	return config, true, nil
 }
 
 // AgentConfigOwner returns a config by id alone, without being told whose it is.
