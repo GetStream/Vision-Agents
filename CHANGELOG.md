@@ -12,6 +12,9 @@ Each voice session observes, once when the agent leaves, the media quality of th
 ### Model calls are traced under the OpenTelemetry GenAI names
 
 With tracing on, each LLM model call has a `chat <model>` span with `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.model`, the token counts the provider reported (`gen_ai.usage.*`) and `error.type`, after the GenAI conventions at commit `e6658f14c9d9`. The `router_*` metrics are unchanged; `acceleration/internal/llmrouter/AGENTS.md` maps them to the GenAI metric names (AI-2838, #1894).
+### Agent teams: Chat's team isolation for agent configs and channels
+
+An app with the `agent_teams` setting on (set by Stream, off by default) keeps each team's agent configs to its own users, as Chat multi-tenancy does: an end user opens a config only if their Stream user shares its `team` tag (a config of no team is open only to users in no team), and is answered as for an unknown config otherwise. Backends are not limited. The agent channel and voice transcript channel a session makes are in its config's team. With the setting off nothing changes (AI-3059, #1885, #1887).
 
 ### The Go SDK has a README that installs and an sdk-go skill
 
@@ -489,6 +492,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 `Folder.load`, and so `Agent.new(folder: "…")`, raise a `ConfigurationError` for a folder whose agent.yaml names `plugins:`, with an error that names the file and points to `connectors:`. An empty or null `plugins` still loads and sends nothing, as before. Folder sync no longer sends `plugins`, and the warning that plugins are deprecated is gone, as is the check that no name is under both `connectors` and `plugins`. Move each plugin to a `connectors:` entry (AI-2528).
 
 ## Bug Fixes
+
+### A search provider that fails answers 500, not 400
+
+`POST /v1/search` answers a question its provider could not answer, or a session it could not open with a provider, with a 500 `internal_error` that says only `something went wrong`, instead of a 400 `invalid_request` carrying the provider's own error text. The router API 5xx monitor now counts a search outage. A request the router refuses (an unknown target, a term nothing serves), a model the customer's policies do not allow, and a refusal about money keep their 400, 402, 403 and 429 answers. The provider's error is in the access log under the request id. A search whose caller hung up before it was answered is a 400 that says so, not a 500. A request asking for a term the named or listed models do not take, a data policy no candidate meets, an input kind no candidate accepts, or more tags than a row carries once the policies' tags are added is marked as the caller's to change: on a stream socket it now ends with 1008 instead of 1011 (AI-3080).
 
 ### ship_stale counts only the usage rows a sweep can ship
 

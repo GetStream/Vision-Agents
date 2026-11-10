@@ -151,6 +151,9 @@ func (s *Server) createRun(ctx context.Context, request *createRunRequest) (*cre
 	defer cancel()
 
 	created, err := s.sessions.Create(ctx, spec)
+	if errors.Is(err, session.ErrAppSettingsUnreadable) {
+		return nil, err
+	}
 	if err != nil {
 		return nil, runFailed(ctx, err, APIError{Type: ErrorTypeInvalidRequest, Code: codeInvalidConfig, Message: err.Error()})
 	}
