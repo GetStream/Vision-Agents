@@ -232,3 +232,27 @@ func (s *OrganizationActivitySuite) TestModelCallsOnThreeDaysAreSteadyUse() {
 
 	s.Equal(activityStepSteadyUse, s.read(s.app.organization.ID, time.Time{}).FurthestStep)
 }
+
+// Defect: an app of another organization whose id equals this organization's id is summed into
+// this organization's meters, because the organization's id is always read as an app.
+func (s *OrganizationActivitySuite) TestAnAppOfAnotherOrganizationWithThisOrganizationsIdIsNotRead() {
+	stranger := s.data.createApp()
+	app := store.App{ID: s.app.organization.ID, OrganizationID: stranger.organization.ID, Name: "app-" + s.utils.uuid()}
+	s.Require().NoError(s.store.CreateApp(context.Background(), &app))
+	s.spent(app.ID, stranger.organization.ID, 100)
+
+	s.Empty(s.read(s.app.organization.ID, time.Time{}).Meters)
+	s.Len(s.read(stranger.organization.ID, time.Time{}).Meters, 1)
+}
+
+// Defect: an app registered under another organization but last seen under this
+// one, which is this one's, left out because its registration says otherwise.
+func (s *OrganizationActivitySuite) TestAnAppLastSeenUnderThisOrganizationIsReadWhateverItsRegistrationSays() {
+	stranger := s.data.createApp()
+	app := store.App{ID: s.app.organization.ID, OrganizationID: stranger.organization.ID, Name: "app-" + s.utils.uuid()}
+	s.Require().NoError(s.store.CreateApp(context.Background(), &app))
+	s.Require().NoError(s.store.JoinOrganization(context.Background(), app.ID, s.app.organization.ID))
+	s.spent(app.ID, s.app.organization.ID, 100)
+
+	s.Require().Len(s.read(s.app.organization.ID, time.Time{}).Meters, 1)
+}

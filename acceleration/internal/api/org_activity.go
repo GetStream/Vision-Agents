@@ -111,7 +111,7 @@ func (s *Server) getOrganizationActivity(ctx context.Context, request *organizat
 	if since.Before(now.Add(-activityHorizon)) {
 		return nil, errActivityHorizon
 	}
-	apps, err := s.store.OrganizationApps(ctx, request.OrgID)
+	apps, err := s.store.OrganizationActivityApps(ctx, request.OrgID)
 	if err != nil {
 		return nil, err
 	}
