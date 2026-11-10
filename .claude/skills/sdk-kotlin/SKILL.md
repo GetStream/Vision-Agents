@@ -1,6 +1,6 @@
 ---
 name: sdk-kotlin
-description: How to build and extend the Kotlin/Android SDK in sdks/kotlin. Read this before changing vision-agents-core, or before adding a Kotlin client for a new endpoint.
+description: How to build and extend the Kotlin/Android SDK in sdks/kotlin. Read this before changing stream-agents-android-core, or before adding a Kotlin client for a new endpoint.
 ---
 
 # Kotlin SDK conventions
@@ -16,12 +16,12 @@ Assume Kotlin 2.4, JVM 17 bytecode, AGP 9, Gradle with the version catalogue in
 ## The module, and what it is called
 
 ```
-core  io.getstream:vision-agents-core  io.getstream.visionagents.android.core  Android library: HTTP, socket, state, Stream Chat, Stream Video
+core  io.getstream:stream-agents-android-core  io.getstream.agents.android.core  Android library: HTTP, socket, state, Stream Chat, Stream Video
 ```
 
-One module, as Swift is one package (`VisionAgentsCore`). The artifact is named after it,
+One module, as Swift is one package (`StreamAgents`). The artifact follows Stream's Android names,
 written the way Maven writes names: the group is Stream's `io.getstream`, the artifact is
-kebab-case, and the package is the reverse-DNS lower case Kotlin requires. `vision-agents-core`
+kebab-case, and the package is the reverse-DNS lower case Kotlin requires. `stream-agents-android-core`
 sits beside Stream's own `stream-video-android-*` and `stream-chat-android-*` in a dependency list
 and says which product it is.
 

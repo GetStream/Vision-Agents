@@ -1,5 +1,5 @@
 import SwiftUI
-import VisionAgentsCore
+import StreamAgents
 
 /// Closed captions for a spoken conversation: what is being said, a sentence at a time, gone a
 /// moment after the talking stops.

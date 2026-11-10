@@ -136,13 +136,14 @@ func boundShipping(ctx context.Context, tx bun.Tx) error {
 	return err
 }
 
-// Unshipped is how many of this shard's rows are still to reach the usage service, and how
-// long ago the oldest of them started: zero when there is none.
+// Unshipped is how many of this shard's rows with an organization are still to reach the usage
+// service, and how long ago the oldest of them started: zero when there is none. A row with
+// none is left out: the sweeper skips it until its app joins one, and reports it as unowned.
 func (s *Store) Unshipped(ctx context.Context) (int64, time.Duration, error) {
 	var rows int64
 	var oldest float64
 	err := s.shard.QueryRowContext(ctx,
-		"SELECT count(*), COALESCE(EXTRACT(EPOCH FROM now() - min(started_at)), 0)::float8 FROM requests WHERE to_ship",
+		"SELECT count(*), COALESCE(EXTRACT(EPOCH FROM now() - min(started_at)), 0)::float8 FROM requests WHERE to_ship AND organization_id <> ''",
 	).Scan(&rows, &oldest)
 	if err != nil {
 		return 0, 0, stack.Wrap(fmt.Errorf("store: unshipped: %w", err))

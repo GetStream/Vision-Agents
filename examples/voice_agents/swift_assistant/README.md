@@ -16,7 +16,7 @@ backend/main.go      the backend half that stays up: Stream tokens, sending from
 a2ui/                how the agent writes interactive UI in A2UI, generated from the app's components
 openui/              the same in OpenUI
 prompts/             what generates a2ui/ and openui/, with the SDK's renderers
-app/                 the phone half: SwiftUI over VisionAgentsCore and StreamChatAI
+app/                 the phone half: SwiftUI over StreamAgents and StreamChatAI
 ```
 
 ## Run it

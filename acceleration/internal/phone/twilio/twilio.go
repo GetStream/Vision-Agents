@@ -1,9 +1,10 @@
 // Package twilio buys and operates phone numbers at Twilio.
 //
 // Twilio's number API is the 2010-era one: form-encoded requests, basic auth with the
-// account SID and auth token, JSON responses. Inbound calls reach an agent by pointing the
-// number's voice webhook at TwiML that dials the Stream trunk, and outbound calls are
-// created with the same TwiML inline, because Stream cannot dial out itself.
+// account SID and auth token (or an API key SID and its secret), JSON responses. Inbound
+// calls reach an agent by pointing the number's voice webhook at TwiML that dials the Stream
+// trunk, and outbound calls are created with the same TwiML inline, because Stream cannot
+// dial out itself.
 package twilio
 
 import (
@@ -31,6 +32,7 @@ import (
 const (
 	accountSIDEnvVar = "TWILIO_ACCOUNT_SID"
 	authTokenEnvVar  = "TWILIO_AUTH_TOKEN"
+	apiKeySIDEnvVar  = "TWILIO_API_KEY_SID"
 )
 
 const (
@@ -59,7 +61,9 @@ const maxRingSeconds = 600
 type Options struct {
 	// AccountSID defaults to TWILIO_ACCOUNT_SID.
 	AccountSID string
-	// AuthToken defaults to TWILIO_AUTH_TOKEN.
+	// APIKeySID defaults to TWILIO_API_KEY_SID.
+	APIKeySID string
+	// AuthToken defaults to TWILIO_AUTH_TOKEN. With APIKeySID set it is that key's secret.
 	AuthToken string
 	// BaseURL defaults to Twilio's API host.
 	BaseURL string
@@ -74,6 +78,8 @@ type Options struct {
 // Provider is Twilio. It satisfies phone.Provider.
 type Provider struct {
 	accountSID string
+	// user is who requests are signed as: the API key when there is one, else the account.
+	user       string
 	authToken  string
 	baseURL    string
 	pricingURL string
@@ -97,6 +103,9 @@ func New(options Options) (*Provider, error) {
 	if options.AuthToken == "" {
 		options.AuthToken = os.Getenv(authTokenEnvVar)
 	}
+	if options.APIKeySID == "" {
+		options.APIKeySID = os.Getenv(apiKeySIDEnvVar)
+	}
 	if options.AccountSID == "" || options.AuthToken == "" {
 		return nil, stack.Wrap(errors.New("twilio: " + accountSIDEnvVar + " and " + authTokenEnvVar + " are required"))
 	}
@@ -115,6 +124,7 @@ func New(options Options) (*Provider, error) {
 
 	return &Provider{
 		accountSID: options.AccountSID,
+		user:       cmp.Or(options.APIKeySID, options.AccountSID),
 		authToken:  options.AuthToken,
 		baseURL:    strings.TrimSuffix(options.BaseURL, "/"),
 		pricingURL: strings.TrimSuffix(options.PricingURL, "/"),
@@ -521,7 +531,7 @@ func (p *Provider) do(ctx context.Context, method, base, path string, query, for
 	if err != nil {
 		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "could not build the request", Cause: err})
 	}
-	request.SetBasicAuth(p.accountSID, p.authToken)
+	request.SetBasicAuth(p.user, p.authToken)
 	request.Header.Set("Accept", "application/json")
 	if form != nil {
 		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")

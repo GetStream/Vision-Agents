@@ -1,7 +1,7 @@
 # Kotlin SDK
 
-One Android library for talking to an agent from an Android app: `io.getstream:vision-agents-core`,
-package `io.getstream.visionagents.android.core`. It holds sessions, responses, the event socket
+One Android library for talking to an agent from an Android app: `io.getstream:stream-agents-android-core`,
+package `io.getstream.agents.android.core`. It holds sessions, responses, the event socket
 and the conversation as `StateFlow`; the Stream Chat channel a text conversation is kept in; and
 joining the call, so the conversation can be spoken. It depends on Stream Chat (7.18.0) and
 Stream Video (1.34.0), and needs minSdk 24 and compileSdk 37, which is what Stream's SDKs require.
@@ -25,7 +25,7 @@ dependencyResolutionManagement {
 ## Using them
 
 ```kotlin
-val agents = VisionAgents(apiKey = "your_api_key")
+val agents = StreamAgents(apiKey = "your_api_key")
 agents.setUser(User(id = "jlahey")) { yourBackend.agentToken() }
 
 // In writing. No call is joined, nothing is transcribed or spoken.
@@ -49,10 +49,10 @@ voice.join()
 agents.disconnect()
 ```
 
-`VisionAgents(apiKey = ...)` reaches Stream's hosted router in us-east4; pass `url` for another router. For another
+`StreamAgents(apiKey = ...)` reaches Stream's hosted router in us-east4; pass `url` for another router. For another
 region, pass `url = Backend.regionUrl("europe-west4")`. A router
 running locally with nothing in front of it is reached by customer id instead:
-`VisionAgents(url = "http://localhost:8080", customerId = "acme")`. Pass `apiKey` beside it and
+`StreamAgents(url = "http://localhost:8080", customerId = "acme")`. Pass `apiKey` beside it and
 the key is Stream's alone, so chat and video connect on a local router too.
 
 An app targeting SDK 37 reaches a router on the local network (the emulator's `10.0.2.2`, or a
@@ -299,19 +299,19 @@ cd <repo>
 
 # unit tests against a real loopback router, no mocks, and the release build
 docker run --rm --platform linux/amd64 -u root -v "$PWD":/repo \
-  -v ~/.cache/vision-agents-kotlin/gradle-android:/gradle-home -e GRADLE_USER_HOME=/gradle-home \
+  -v ~/.cache/stream-agents-kotlin/gradle-android:/gradle-home -e GRADLE_USER_HOME=/gradle-home \
   -w /repo/sdks/kotlin cimg/android:2026.08.1 \
   ./gradlew :core:testDebugUnitTest :core:assembleRelease
 
 # the same, plus the live tests against a running router
 docker run --rm --platform linux/amd64 -u root -v "$PWD":/repo \
-  -v ~/.cache/vision-agents-kotlin/gradle-android:/gradle-home -e GRADLE_USER_HOME=/gradle-home \
+  -v ~/.cache/stream-agents-kotlin/gradle-android:/gradle-home -e GRADLE_USER_HOME=/gradle-home \
   -e VISION_AGENTS_URL=http://host.docker.internal:8091 -e VISION_AGENTS_CUSTOMER_ID=examples \
   -w /repo/sdks/kotlin cimg/android:2026.08.1 ./gradlew :core:testDebugUnitTest
 
 # the same, plus a device token's 403s against a router in api_key mode
 docker run --rm --platform linux/amd64 -u root -v "$PWD":/repo \
-  -v ~/.cache/vision-agents-kotlin/gradle-android:/gradle-home -e GRADLE_USER_HOME=/gradle-home \
+  -v ~/.cache/stream-agents-kotlin/gradle-android:/gradle-home -e GRADLE_USER_HOME=/gradle-home \
   -e INTEGRATION_ROUTER_URL=http://host.docker.internal:8099 \
   -e INTEGRATION_ROUTER_KEY=vak_live_… -e INTEGRATION_ROUTER_SECRET=vas_live_… \
   -w /repo/sdks/kotlin cimg/android:2026.08.1 ./gradlew :core:testDebugUnitTest

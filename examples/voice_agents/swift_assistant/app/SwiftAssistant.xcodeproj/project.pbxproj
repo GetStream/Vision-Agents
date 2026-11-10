@@ -23,7 +23,7 @@
 		B2000111 /* TripComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000011 /* TripComponents.swift */; };
 		B2000113 /* Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000013 /* Settings.swift */; };
 		B2000112 /* UIComponents.json in Resources */ = {isa = PBXBuildFile; fileRef = B2000012 /* UIComponents.json */; };
-		B2000201 /* VisionAgentsCore in Frameworks */ = {isa = PBXBuildFile; productRef = B2000301 /* VisionAgentsCore */; };
+		B2000201 /* StreamAgents in Frameworks */ = {isa = PBXBuildFile; productRef = B2000301 /* StreamAgents */; };
 		B2000202 /* StreamChat in Frameworks */ = {isa = PBXBuildFile; productRef = B2000302 /* StreamChat */; };
 		B2000203 /* StreamChatAI in Frameworks */ = {isa = PBXBuildFile; productRef = B2000303 /* StreamChatAI */; };
 		B2000204 /* StreamVideo in Frameworks */ = {isa = PBXBuildFile; productRef = B2000304 /* StreamVideo */; };
@@ -58,7 +58,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				B2000201 /* VisionAgentsCore in Frameworks */,
+				B2000201 /* StreamAgents in Frameworks */,
 				B2000202 /* StreamChat in Frameworks */,
 				B2000203 /* StreamChatAI in Frameworks */,
 				B2000204 /* StreamVideo in Frameworks */,
@@ -128,7 +128,7 @@
 			);
 			name = SwiftAssistant;
 			packageProductDependencies = (
-				B2000301 /* VisionAgentsCore */,
+				B2000301 /* StreamAgents */,
 				B2000302 /* StreamChat */,
 				B2000303 /* StreamChatAI */,
 				B2000304 /* StreamVideo */,
@@ -356,9 +356,9 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		B2000301 /* VisionAgentsCore */ = {
+		B2000301 /* StreamAgents */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = VisionAgentsCore;
+			productName = StreamAgents;
 		};
 		B2000302 /* StreamChat */ = {
 			isa = XCSwiftPackageProductDependency;

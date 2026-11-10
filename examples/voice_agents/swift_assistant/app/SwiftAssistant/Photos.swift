@@ -1,5 +1,5 @@
 import UIKit
-import VisionAgentsCore
+import StreamAgents
 
 /// Photos from the composer, as the router takes them.
 ///

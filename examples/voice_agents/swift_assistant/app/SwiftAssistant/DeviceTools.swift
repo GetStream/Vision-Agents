@@ -1,7 +1,7 @@
 import CoreLocation
 import EventKit
 import Foundation
-import VisionAgentsCore
+import StreamAgents
 
 /// What the agent can ask this phone: the time and place, the calendar and reminders, and to
 /// send an email from the person's Gmail.

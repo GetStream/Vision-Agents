@@ -192,6 +192,7 @@ func (s *RoutingSuite) TestPolicyTagsMustFitBesideTheRequestsBeforeRouting() {
 	_, _, err := router.Select(s.ctx, Request{CustomerID: "acme", Target: "quick/en", Tags: tags})
 
 	s.ErrorContains(err, "at most 16 tags")
+	s.ErrorIs(err, ErrRequest, "the customer's to change: their tags and their policies'")
 }
 
 func (s *RoutingSuite) TestPolicyTagsOverrideTheRequestsWithoutChangingThem() {

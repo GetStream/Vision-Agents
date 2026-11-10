@@ -142,6 +142,13 @@ class AgentConfigRequest:
             the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one
             of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A
             native agent (sts) takes the vendor's own voice name instead, such as marin at OpenAI.
+        llm_fallbacks (list[str] | Unset): Where a response goes when llm fails it, in order: each a provider/model, a
+            capability shortcut or one of your custom/ models, as llm takes. llm stays the first choice. A response it fails
+            is asked of each next one in turn, and one it says nothing in for as long as a reply may is also asked of
+            another, the first to start answering kept, so a model you serve yourself can be backed by one Stream serves. A
+            response that has started is never moved, however slowly it goes on. Omitted or null on an update, the list
+            stored stays as it is; an empty list removes it. A target this deployment does not route, or one with no
+            instance in the agent's region, is refused.
     """
 
     name: str
@@ -180,6 +187,7 @@ class AgentConfigRequest:
     video: SessionVideo | Unset = UNSET
     visible_tools: list[str] | Unset = UNSET
     voice: str | Unset = UNSET
+    llm_fallbacks: list[str] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -323,6 +331,10 @@ class AgentConfigRequest:
 
         voice = self.voice
 
+        llm_fallbacks: list[str] | Unset = UNSET
+        if not isinstance(self.llm_fallbacks, Unset):
+            llm_fallbacks = self.llm_fallbacks
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -400,6 +412,8 @@ class AgentConfigRequest:
             field_dict["visible_tools"] = visible_tools
         if voice is not UNSET:
             field_dict["voice"] = voice
+        if llm_fallbacks is not UNSET:
+            field_dict["llm_fallbacks"] = llm_fallbacks
 
         return field_dict
 
@@ -634,6 +648,8 @@ class AgentConfigRequest:
 
         voice = d.pop("voice", UNSET)
 
+        llm_fallbacks = cast(list[str], d.pop("llm_fallbacks", UNSET))
+
         agent_config_request = cls(
             name=name,
             calls=calls,
@@ -671,6 +687,7 @@ class AgentConfigRequest:
             video=video,
             visible_tools=visible_tools,
             voice=voice,
+            llm_fallbacks=llm_fallbacks,
         )
 
         agent_config_request.additional_properties = d

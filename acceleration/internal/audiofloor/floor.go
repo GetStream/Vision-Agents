@@ -23,6 +23,14 @@ import (
 // most calls. Past it the utterance ends on the words of that run as they stand.
 const finalWait = time.Second
 
+// runLead is how long after a run of speech begins the transcriber writing the words has shown
+// some of it: AssemblyAI's first words of a run came 260 to 440 ms after its voice began on a
+// live call. An utterance the floor ended with nothing open and words settled waits for a run
+// begun before the voice stopped only until runLead after it stopped, not finalWait: past that,
+// what kept the speech gate voiced after the transcriber's last final (a breath, the room, the
+// line) was no words.
+const runLead = 700 * time.Millisecond
+
 var floorWords = promauto.NewCounterVec(prometheus.CounterOpts{
 	Namespace: "router",
 	Name:      "chorus_asr_floor_words_total",
@@ -30,6 +38,13 @@ var floorWords = promauto.NewCounterVec(prometheus.CounterOpts{
 		"settled (the transcriber had written its final since the voice stopped), final (its final came within the wait), " +
 		"run (it began another run first), partial (no final within the wait: the words as they stood) or none (it wrote nothing).",
 }, []string{"settled"})
+
+var floorHandovers = promauto.NewCounterVec(prometheus.CounterOpts{
+	Namespace: "router",
+	Name:      "chorus_asr_floor_handovers_total",
+	Help: "Times a chorus-asr floor that rules alone handed a participant's turns to the transcriber writing their words, " +
+		"its server answering no check for a while (to=transcriber), and took them back once it answered again (to=chorus-asr).",
+}, []string{"to"})
 
 // NewFloor returns an unstarted transcriber that rules on the floor alone, for a participant
 // whose words another transcriber writes. It hears their audio and asks about each of their
@@ -46,9 +61,11 @@ var floorWords = promauto.NewCounterVec(prometheus.CounterOpts{
 //
 // A pause no check can rule on ends at the other transcriber's own end of a run, once the
 // voice has paused, or at endAfter. A server that will never rule (Misconfigured), or that
-// answers none of failoverAfter checks in a row over failoverWindow (Unreachable), is down for
-// the call: the floor steps aside, says so on its events (stt.Disconnected), and takes no more
-// words (Heard), which are then the listener's, as they would be with no floor.
+// answers none of failoverAfter checks in a row over failoverWindow (Unreachable), is down: the
+// floor steps aside, says so on its events (stt.Disconnected), and takes no more words (Heard),
+// which are then the listener's, as they would be with no floor. It asks the server again
+// meanwhile (probe), and once it answers takes the floor back at the caller's next quiet moment
+// (retake), saying so (stt.Connected).
 func NewFloor(client *Client, languages []string, finalize func() (bool, error), logger *slog.Logger) *Transcriber {
 	t := NewTranscriber(client, DefaultModel, languages, logger)
 	t.words, t.finalize, t.interims = &spoken{utterance: 1, logger: logger}, finalize, false
@@ -59,7 +76,13 @@ func NewFloor(client *Client, languages []string, finalize func() (bool, error),
 // words, for a floor that rules alone (NewFloor), and says whether it took it: once the floor
 // has stepped aside it takes none. What the floor makes of the words goes out on Events.
 func (t *Transcriber) Heard(transcript stt.Transcript) bool {
-	if t.words == nil || t.stepped.Load() {
+	if t.words == nil {
+		return false
+	}
+	if t.stepped.Load() {
+		// The words are the listener's, but whether the transcriber has a run open is what says
+		// the floor can be taken back without cutting into one.
+		t.writerOpen.Store(!transcript.Final())
 		return false
 	}
 	interim, show, force := t.words.heard(transcript)
@@ -196,12 +219,18 @@ func (t *Transcriber) decideWords(ctx context.Context, agent Agent, turn Turn, a
 	return answer, said, nil
 }
 
-// checked counts a check of a floor that rules alone, which err says the server did not rule
-// on, and has the floor step aside once the server is down for the call: it will never rule
-// (Misconfigured), or it answered none of failoverAfter checks in a row, the last at least
-// failoverWindow after the first. A check answered starts the count again.
-func (t *Transcriber) checked(err error) {
+// checked counts a check of a floor that rules alone, asked of participant within deadline,
+// which err says the server did not rule on, and has the floor step aside once the server is
+// down: it will never rule (Misconfigured), or it answered none of failoverAfter checks in a
+// row, the last at least failoverWindow after the first. A check answered starts the count
+// again. One that ran out of a deadline shorter than a check at a pause has, a check over the
+// agent's (harness.HearDeadline), counts neither way: it says the server took longer than that
+// to answer, not that it is down.
+func (t *Transcriber) checked(err error, deadline time.Duration, participant stt.Participant) {
 	if t.words == nil || errors.Is(err, context.Canceled) {
+		return
+	}
+	if errors.Is(err, context.DeadlineExceeded) && deadline < pauseDeadline() {
 		return
 	}
 	t.mu.Lock()
@@ -225,9 +254,138 @@ func (t *Transcriber) checked(err error) {
 	if !t.stepped.CompareAndSwap(false, true) {
 		return
 	}
-	t.logger.Warn("the chorus-asr server can't rule on this participant's floor, so the transcriber writing the words ends their turns for the rest of the session",
+	t.mu.Lock()
+	t.asideSince = time.Now()
+	t.mu.Unlock()
+	t.writerOpen.Store(t.words.openRun())
+	floorHandovers.WithLabelValues("transcriber").Inc()
+	t.logger.Warn("the chorus-asr server can't rule on this participant's floor, so the transcriber writing the words ends their turns until it answers again",
 		"error", err)
 	t.emitter.Send(stt.Disconnected{Provider: ProviderName, Model: t.model, Reason: stack.Wrap(err).Error(), At: time.Now()})
+	// Asked from a check, itself one of t.running: Close has not begun to wait on it.
+	t.running.Add(1)
+	go t.probe(participant)
+}
+
+// pauseDeadline is how long a check at a pause has for its ruling (harness.HearDeadline): a
+// check given less, over the agent, that runs out of it is no sign of a server that is down.
+func pauseDeadline() time.Duration { return harness.HearDeadline(harness.FlowTurn{}) }
+
+// probe asks the server, once a wait from probeFirst doubling to probeCap has passed, whether it
+// rules again, until it answers one within a pause's deadline (answered) or the session closes.
+// It asks what a check asks, the policy and a decision about the participant's last second, so
+// that an answer says the checks will be answered, not only that the server is up.
+func (t *Transcriber) probe(participant stt.Participant) {
+	defer t.running.Done()
+	for {
+		t.mu.Lock()
+		if t.probeWait == 0 {
+			t.probeWait = t.probeFirst
+		} else {
+			t.probeWait = min(2*t.probeWait, t.probeCap)
+		}
+		wait := t.probeWait
+		t.mu.Unlock()
+		timer := time.NewTimer(wait)
+		select {
+		case <-t.ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		err := t.probeOnce(participant)
+		if err == nil {
+			t.answered.Store(true)
+			return
+		}
+		if t.ctx.Err() != nil {
+			return
+		}
+		t.logger.Debug("the chorus-asr server still does not rule on the floor", "waited_ms", wait.Milliseconds(), "error", err)
+	}
+}
+
+// probeOnce is one probe: what a check at a pause asks, the policy and a decision about the
+// participant's last second, within a pause's deadline.
+func (t *Transcriber) probeOnce(participant stt.Participant) error {
+	ctx, cancel := context.WithTimeout(t.ctx, pauseDeadline())
+	defer cancel()
+	if _, err := t.client.Policy(ctx); err != nil {
+		return err
+	}
+	t.mu.Lock()
+	asker := t.asker
+	t.mu.Unlock()
+	turn := harness.FlowTurn{}
+	if asker != nil {
+		turn = asker.Moment(participant)
+	}
+	turn.ParticipantID, turn.Audio, turn.Paused, turn.Unfinished = participant.ID, t.heard.Last(time.Second), writeAfter, false
+	_, err := t.client.Decide(ctx, Agent{Instructions: turn.Instructions, Tools: turn.Tools, Languages: t.languages}, turnOf(turn), turn.Audio)
+	return err
+}
+
+// aside hears pcm for a floor that stepped aside: it asks about nothing, but keeps the audio and
+// the speech detector going, and takes the floor back (retake) once the server answered a probe
+// and the caller has been quiet for retakeQuiet with nothing open at the other transcriber,
+// which is asked to settle what it has open once. It runs on the session's goroutine.
+func (t *Transcriber) aside(pcm stt.PcmData, participant stt.Participant) error {
+	for samples := pcm.Samples; len(samples) > 0; {
+		n := copy(t.frame[t.filled:], samples)
+		samples, t.filled = samples[n:], t.filled+n
+		if t.filled < frameSamples {
+			break
+		}
+		t.filled = 0
+		if err := t.heard.Write(t.frame[:]); err != nil {
+			return err
+		}
+		score, err := t.detector.AnalyzeInt16(t.frame[:])
+		if err != nil {
+			return stack.Wrap(err)
+		}
+		t.windows++
+		if t.windows > detectorWarmup && score >= speechScore && level(t.frame[:]) >= voiceLevel {
+			t.asideQuiet = 0
+		} else {
+			t.asideQuiet += frame
+		}
+	}
+	if !t.answered.Load() || t.asideQuiet < retakeQuiet {
+		return nil
+	}
+	if t.writerOpen.Load() {
+		if !t.retakeForced {
+			t.retakeForced = true
+			t.force()
+		}
+		return nil
+	}
+	t.retake(participant)
+	return nil
+}
+
+// retake gives the floor back to chorus-asr once its server rules again, at a quiet moment: the
+// utterance it left open is over, its words the listener's, and the next begins with no audio
+// and no words of its own yet, as a session's first does. It runs on the session's goroutine.
+func (t *Transcriber) retake(participant stt.Participant) {
+	heard := t.heard.Frames()
+	t.sent.ended(t.utterance + 1)
+	t.utterance++
+	t.start, t.ended, t.voiced, t.fresh, t.quiet, t.spoken, t.talked, t.toldAt = heard, heard, false, false, 0, 0, 0, 0
+	t.asideQuiet, t.retakeForced = 0, false
+	t.mu.Lock()
+	t.newUtteranceLocked()
+	t.unruled = 0
+	out := time.Since(t.asideSince)
+	t.mu.Unlock()
+	t.words.restart(t.utterance + 1)
+	t.answered.Store(false)
+	t.stepped.Store(false)
+	floorHandovers.WithLabelValues("chorus-asr").Inc()
+	t.logger.Info("the chorus-asr server rules on this participant's floor again, so it ends their turns again",
+		"participant", participant.ID, "out_ms", out.Milliseconds())
+	t.emitter.Send(stt.Connected{Provider: ProviderName, Model: t.model, At: time.Now()})
 }
 
 func milliseconds(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
@@ -277,7 +435,10 @@ type cut struct {
 	at        time.Time
 	forced    bool
 	said      chan Words
-	timer     *time.Timer
+	// timer gives up on the words at until: finalWait after the cut, or after the run it
+	// waits for began, and runLead after the voice stopped for one with nothing open.
+	timer *time.Timer
+	until time.Time
 }
 
 // heard keeps transcript, and says what to show of the utterance's words meanwhile, and
@@ -305,6 +466,12 @@ func (w *spoken) heard(transcript stt.Transcript) (interim stt.Transcript, show,
 		c.run = run
 		force = !transcript.Final() && !c.forced
 		c.forced = c.forced || force
+		// A run begun while the cut waited out runLead has its final waited for as one open at
+		// the cut is.
+		if until := time.Now().Add(finalWait); until.After(c.until) {
+			c.until = until
+			c.timer.Reset(finalWait)
+		}
 	}
 	w.provider, w.model = transcript.Provider, transcript.Model
 	if transcript.Language != "" {
@@ -357,7 +524,8 @@ func (w *spoken) heard(transcript stt.Transcript) (interim stt.Transcript, show,
 // end ends the words of utterance, which the floor ended at a pause the voice stopped for at
 // stopped: at once if the transcriber has written its final since and has nothing open, and
 // otherwise once it writes the final of the run it has open, or of the first it writes, up to
-// finalWait. It says whether the transcriber is to be asked for that final: it has a run open.
+// finalWait, or, with nothing open and words settled, up to runLead after stopped. It says
+// whether the transcriber is to be asked for that final: it has a run open.
 func (w *spoken) end(utterance int64, stopped time.Time) (<-chan Words, bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -373,25 +541,36 @@ func (w *spoken) end(utterance int64, stopped time.Time) (<-chan Words, bool) {
 		w.deliverLocked(c, "settled")
 		return c.said, false
 	}
-	if strings.TrimSpace(w.open) != "" {
+	wait := finalWait
+	switch {
+	case strings.TrimSpace(w.open) != "":
 		c.run, c.forced = w.run, true
+	case len(w.settled) > 0:
+		if wait = time.Until(stopped.Add(runLead)); wait <= 0 {
+			w.deliverLocked(c, "settled")
+			return c.said, false
+		}
 	}
-	w.cut = c
-	c.timer = time.AfterFunc(finalWait, func() { w.giveUp(c) })
+	w.cut, c.until = c, time.Now().Add(wait)
+	c.timer = time.AfterFunc(wait, func() { w.giveUp(c) })
 	return c.said, c.forced
 }
 
 // giveUp ends the words of an utterance whose final did not come within finalWait, on the
-// words as they stand.
+// words as they stand, or whose words were settled and no run began within runLead of the
+// voice stopping.
 func (w *spoken) giveUp(c *cut) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.cut != c {
+	if w.cut != c || time.Now().Before(c.until) {
 		return
 	}
 	settled := "none"
-	if strings.TrimSpace(w.open) != "" {
+	switch {
+	case strings.TrimSpace(w.open) != "":
 		w.spent, settled = w.run, "partial"
+	case len(w.settled) > 0:
+		settled = "settled"
 	}
 	w.deliverLocked(c, settled)
 }
@@ -461,6 +640,26 @@ func (w *spoken) writer() (provider, model string) {
 
 // failedOver ends the run the transcriber that handed the session over had open, its words as
 // they stand: the next numbers its runs afresh.
+// openRun says the transcriber has a run open: words it has not settled.
+func (w *spoken) openRun() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return strings.TrimSpace(w.open) != ""
+}
+
+// restart begins utterance afresh, for a floor that takes the floor back: what was gathered
+// while it stood aside was the listener's, and an utterance still waiting for its words has
+// them as they stand.
+func (w *spoken) restart(utterance int64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if c := w.cut; c != nil {
+		w.deliverLocked(c, "none")
+	}
+	w.settled, w.open, w.run, w.spent, w.began = nil, "", 0, 0, time.Time{}
+	w.cut, w.utterance = nil, utterance
+}
+
 func (w *spoken) failedOver() {
 	w.mu.Lock()
 	defer w.mu.Unlock()

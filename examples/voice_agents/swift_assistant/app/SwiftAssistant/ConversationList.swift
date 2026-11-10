@@ -1,5 +1,5 @@
 import SwiftUI
-import VisionAgentsCore
+import StreamAgents
 
 /// The sidebar: a new conversation, the settings, a search, and the conversations there were,
 /// by day.

@@ -109,6 +109,8 @@ class AgentConfig:
         voice (str | Unset): The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or
             one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own
             voice name instead.
+        llm_fallbacks (list[str] | Unset): Where a response goes, in order, when llm fails it. Absent when there are
+            none.
     """
 
     created_at: datetime.datetime
@@ -149,6 +151,7 @@ class AgentConfig:
     video: SessionVideo | Unset = UNSET
     visible_tools: list[str] | Unset = UNSET
     voice: str | Unset = UNSET
+    llm_fallbacks: list[str] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -276,6 +279,10 @@ class AgentConfig:
 
         voice = self.voice
 
+        llm_fallbacks: list[str] | Unset = UNSET
+        if not isinstance(self.llm_fallbacks, Unset):
+            llm_fallbacks = self.llm_fallbacks
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -352,6 +359,8 @@ class AgentConfig:
             field_dict["visible_tools"] = visible_tools
         if voice is not UNSET:
             field_dict["voice"] = voice
+        if llm_fallbacks is not UNSET:
+            field_dict["llm_fallbacks"] = llm_fallbacks
 
         return field_dict
 
@@ -545,6 +554,8 @@ class AgentConfig:
 
         voice = d.pop("voice", UNSET)
 
+        llm_fallbacks = cast(list[str], d.pop("llm_fallbacks", UNSET))
+
         agent_config = cls(
             created_at=created_at,
             id=id,
@@ -584,6 +595,7 @@ class AgentConfig:
             video=video,
             visible_tools=visible_tools,
             voice=voice,
+            llm_fallbacks=llm_fallbacks,
         )
 
         agent_config.additional_properties = d

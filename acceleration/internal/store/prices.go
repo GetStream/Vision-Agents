@@ -559,11 +559,11 @@ type VendorCostRow struct {
 // vendorCosts is every row since a time whose vendor reported what it charged, with the list's
 // cost at the vendor's rates: base_cost_micros once something writes it, else cost_micros,
 // which is the same figure for a row priced before either was written. A malformed figure is skipped,
-// never cast, so one bad row cannot fail the read. %s is the usage id's expression.
+// never cast, so one bad row cannot fail the read.
 const vendorCosts = `
-SELECT id, %s, modality, provider, model, started_at, vendor, base
+SELECT id, usage_id, modality, provider, model, started_at, vendor, base
 FROM (
-    SELECT id, %s, modality, provider, model, started_at,
+    SELECT id, coalesce(usage_id::text, '') AS usage_id, modality, provider, model, started_at,
            CASE WHEN attributes->>'vendor_cost_micros' ~ '^[0-9]{1,18}$'
                 THEN (attributes->>'vendor_cost_micros')::bigint END AS vendor,
            CASE WHEN price_version = '' THEN cost_micros ELSE base_cost_micros END AS base
@@ -635,16 +635,7 @@ func vendorCostGaps(ctx context.Context, db bun.IDB, since time.Time, widest int
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL statement_timeout = %d", max(timeout.Milliseconds(), 1))); err != nil {
 			return err
 		}
-		usageID := "''"
-		var hasUsageID bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.columns
-WHERE table_schema = current_schema() AND table_name = 'requests' AND column_name = 'usage_id')`).Scan(&hasUsageID); err != nil {
-			return err
-		}
-		if hasUsageID {
-			usageID = "coalesce(usage_id::text, '')"
-		}
-		rows, err := tx.QueryContext(ctx, fmt.Sprintf(vendorCosts, usageID+" AS usage_id", usageID+" AS usage_id"), since)
+		rows, err := tx.QueryContext(ctx, vendorCosts, since)
 		if err != nil {
 			return err
 		}

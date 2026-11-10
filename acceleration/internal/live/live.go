@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/rueidis"
 	"github.com/redis/rueidis/rueidisotel"
 
@@ -104,6 +105,7 @@ type Client struct {
 	// shard's, since latency is regional.
 	redis   rueidis.Client
 	shard   rueidis.Client
+	metrics redisMetrics
 	options Options
 
 	snapshot snapshot
@@ -139,14 +141,18 @@ func New(options Options) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	metrics := newRedisMetrics()
+	client = metrics.measure(client, "shared")
 	shard := client
 	if options.Shard.Address != "" && options.Shard.Address != options.Address {
 		if shard, err = connect(options.Shard.Address, options.Shard.Username, options.Shard.Password); err != nil {
 			client.Close()
 			return nil, fmt.Errorf("live: shard: %w", err)
 		}
+		shard = metrics.measure(shard, "shard")
 	}
-	c := &Client{redis: client, shard: shard, options: options, now: time.Now, stop: make(chan struct{}), stopped: make(chan struct{})}
+	c := &Client{redis: client, shard: shard, metrics: metrics, options: options, now: time.Now, stop: make(chan struct{}),
+		stopped: make(chan struct{})}
 	c.snapshot = snapshot{models: map[string]Model{}, counts: map[string]counts{}, refreshedAt: c.now()}
 	clients.Store(c, struct{}{})
 	if options.Refresh > 0 {
@@ -175,6 +181,11 @@ func (c *Client) Redis() rueidis.Client { return c.redis }
 
 // ShardRedis exposes this shard's client, for what only this shard's nodes need to hear.
 func (c *Client) ShardRedis() rueidis.Client { return c.shard }
+
+// Collectors serve the latency and errors of the client's round trips to Redis.
+func (c *Client) Collectors() []prometheus.Collector {
+	return []prometheus.Collector{c.metrics.seconds, c.metrics.errors}
+}
 
 // Close stops the refresh and releases the connections.
 func (c *Client) Close() {

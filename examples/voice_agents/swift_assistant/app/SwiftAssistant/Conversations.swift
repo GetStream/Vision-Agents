@@ -1,6 +1,6 @@
 import Foundation
 import Observation
-import VisionAgentsCore
+import StreamAgents
 
 /// This person's conversations with the assistant, most recently active first.
 ///
