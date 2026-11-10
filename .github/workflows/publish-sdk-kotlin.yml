@@ -2,22 +2,20 @@ name: Publish Kotlin SDK
 
 # Publishes io.getstream:stream-agents-android-core to the Stream repository (stream-io-repo.com).
 #
-# A push to accelerate that changes sdks/kotlin publishes what gradle.properties' `version` says:
-# - X.Y.Z-SNAPSHOT publishes snapshot X.Y.Z-<yyyyMMddHHmm>-SNAPSHOT, which expires after 7 days.
-#   X.Y.Z must be newer than the last release.
-# - X.Y.Z newer than the last `sdk-kotlin-v*` tag publishes that release, then tags the commit
-#   `sdk-kotlin-vX.Y.Z`. X.Y.Z equal to the last release publishes snapshot
-#   X.Y.(Z+1)-<yyyyMMddHHmm>-SNAPSHOT.
-# - A pull request from a branch named release-kotlin-X.Y.Z (or release-kotlin-X.Y.Z-SNAPSHOT)
-#   runs the same version check: it fails before the merge unless version is the branch's, newer
-#   than the last release and not already published. Other pull requests do not run this
-#   workflow's jobs.
+# Only release-kotlin-* branches publish, and gradle.properties' `version` must match the branch:
+# - A push to release-kotlin-X.Y.Z-SNAPSHOT (version=X.Y.Z-SNAPSHOT) publishes snapshot
+#   X.Y.Z-<yyyyMMddHHmm>-SNAPSHOT, which expires after 7 days. X.Y.Z must be newer than the last
+#   release.
+# - A pull request from release-kotlin-X.Y.Z (version=X.Y.Z) fails unless X.Y.Z is newer than the
+#   last `sdk-kotlin-v*` tag and not already published. Merging it into accelerate publishes the
+#   release, then tags the commit `sdk-kotlin-vX.Y.Z`.
+# - Any other push to accelerate publishes nothing, and other pull requests do not run the jobs.
 #
 # There is no GitHub release: publishing one starts the Python release (release.yml), and the
 # repository's releases are the Python packages'.
 on:
   push:
-    branches: [ "accelerate" ]
+    branches: [ "accelerate", "release-kotlin-*-SNAPSHOT" ]
     paths:
       - 'sdks/kotlin/**'
       - '.github/workflows/publish-sdk-kotlin.yml'
@@ -53,19 +51,23 @@ jobs:
       - name: Work out the version
         id: version
         env:
-          HEAD_REF: ${{ github.head_ref }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
           set -euo pipefail
           version=$(sed -n 's/^version=//p' sdks/kotlin/gradle.properties)
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-SNAPSHOT)?$ ]]; then
             echo "::error file=sdks/kotlin/gradle.properties::version=$version is not X.Y.Z or X.Y.Z-SNAPSHOT"; exit 1
           fi
-          # A pull request from release-kotlin-X.Y.Z releases X.Y.Z, the version gradle.properties says.
-          if [[ "$HEAD_REF" =~ ^release-kotlin-(.*)$ ]] && [ "${BASH_REMATCH[1]}" != "$version" ]; then
-            echo "::error file=sdks/kotlin/gradle.properties::$HEAD_REF releases ${BASH_REMATCH[1]}, but version=$version"; exit 1
+          # release-kotlin-X.Y.Z publishes X.Y.Z, the version gradle.properties says.
+          if [[ "$BRANCH" =~ ^release-kotlin-(.*)$ ]] && [ "${BASH_REMATCH[1]}" != "$version" ]; then
+            echo "::error file=sdks/kotlin/gradle.properties::$BRANCH publishes ${BASH_REMATCH[1]}, but version=$version"; exit 1
           fi
           last=$(git tag -l 'sdk-kotlin-v*' | sed 's/^sdk-kotlin-v//' | sort -V | tail -1)
-          if [[ "$version" == *-SNAPSHOT ]]; then
+          if [ "$BRANCH" = accelerate ] && { [[ "$version" == *-SNAPSHOT ]] || [ "$version" = "$last" ]; }; then
+            # Not a release: snapshots are published from release-kotlin-X.Y.Z-SNAPSHOT only.
+            echo "channel=none" >> "$GITHUB_OUTPUT"
+            exit 0
+          elif [[ "$version" == *-SNAPSHOT ]]; then
             # A snapshot of X.Y.Z sorts below release X.Y.Z, so X.Y.Z must be one still to come.
             base="${version%-SNAPSHOT}"
             if [ -n "$last" ] && { [ "$base" = "$last" ] || [ "$(printf '%s\n%s\n' "$last" "$base" | sort -V | tail -1)" != "$base" ]; }; then
@@ -74,12 +76,7 @@ jobs:
             version="$base-$(date -u +%Y%m%d%H%M)-SNAPSHOT"
             channel=snapshots
           elif [ "$version" = "$last" ]; then
-            if [[ "$HEAD_REF" == release-kotlin-* ]]; then
-              echo "::error file=sdks/kotlin/gradle.properties::$version is already released"; exit 1
-            fi
-            IFS=. read -r major minor patch <<< "$version"
-            version="$major.$minor.$((patch + 1))-$(date -u +%Y%m%d%H%M)-SNAPSHOT"
-            channel=snapshots
+            echo "::error file=sdks/kotlin/gradle.properties::$version is already released"; exit 1
           elif [ "$(printf '%s\n%s\n' "$last" "$version" | sort -V | tail -1)" = "$version" ]; then
             pom="https://stream-io-repo.com/io/getstream/stream-agents-android-core/$version/stream-agents-android-core-$version.pom"
             if curl -sfI "$pom" >/dev/null; then
@@ -101,7 +98,7 @@ jobs:
   publish:
     name: Build, sign and stage
     needs: version
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && needs.version.outputs.channel != 'none'
     runs-on: ubuntu-latest
     defaults:
       run:
