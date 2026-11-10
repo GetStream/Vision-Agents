@@ -1995,6 +1995,36 @@ at error instead, because an access log at a busy deployment is the one stream n
 all of. A preflight is not logged, and the query string is never logged: a socket names its
 customer there and a telephony vendor names a token.
 
+### Stream staff's operations (`/v1/ops`)
+
+The routes under `/v1/ops` are Stream staff's: they take the ops key (`ROUTER_AUTH_OPS_KEY`) in
+`X-Ops-Key` and no app's credentials. An app's key, even its backend's, is answered 401, and so
+is every call on a deployment with no ops key. They are tagged `Staff` in the spec.
+
+| Route | What it is for |
+| ----- | -------------- |
+| `GET /v1/ops/orgs/{org_id}/activity` | Whether an organization tried Agents, how far it got and how much it used |
+| `GET`, `PUT`, `DELETE /v1/ops/customers/{customer_id}/telephony-suspension` | Stop an app using the phone, and lift it |
+| `GET /v1/ops/use-cases`, `GET /v1/ops/use-cases/{id}`, `POST /v1/ops/use-cases/{id}/review` | Review 10DLC use cases |
+| `PUT`, `DELETE /v1/ops/customers/{customer_id}/connectors/{id}/provider-app` | Make Stream's own app a customer's provider app, and stop it |
+| `POST /v1/ops/stats/rollup` | Aggregate request rows into a rollup table |
+
+An organization's activity reads `customer_activity` for every app of the organization and
+`requests` on every shard, from `since` (RFC 3339, at most 90 days ago, 30 days ago when left
+out):
+
+```bash
+curl -H "X-Ops-Key: $ROUTER_AUTH_OPS_KEY" "localhost:8080/v1/ops/orgs/$ORG_ID/activity?since=2026-11-01T00:00:00Z"
+```
+
+`areas` is one item per area and client, `meters` one per modality (requests, tokens, audio,
+characters, time and cost), and `first_seen` and `last_seen` the first and last request of any
+area. `furthest_step` is the furthest of `dashboard_reads`, `agent_setup` and `conversations`
+with a request answered rather than refused, or `steady_use` once conversations or model calls
+were answered on three UTC days, else `none`. An organization with nothing recorded is a 200
+with empty lists. A deployment that leaves `postgres.shards` unset reads its own shard's
+`requests` alone (see Shards).
+
 ### The usage service
 
 `cmd/usage` is a second binary in the same image, with a database of its own. Producers ship
