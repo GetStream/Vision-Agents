@@ -429,6 +429,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### JavaScript: an Agent opens its sessions on its synced config
+
+An `Agent` without `pipeline.config` now names its stored config by `name` when it opens a session (`join`, `chat`, `answer`, `reply`, `startCall`, `waitForCall`), so the session runs on the instructions, skills and knowledge `agent.sync()` stored. It used to name no config, so such a session ran on the router's defaults and the agent's instructions never reached it. An agent that was never synced under its name is now refused with a 404, `there is no agent called <name>`, where it used to open a session: call `await agent.sync()` before opening one, or pass `pipeline.config` to name a stored config yourself.
 ### Swift: VisionAgentsCore is StreamAgents
 
 The Swift SDK's product and module are `StreamAgents`, and its client is `StreamAgents`: `import StreamAgents`, then `StreamAgents(apiKey:)` or `StreamAgents(url:customerID:)` where it was `VisionAgents(...)`. Nothing else in the API changed. An app adding the package with SPM takes the `StreamAgents` product from the same repository URL. The package is `stream-agents`, so its test scheme is `stream-agents`. The empty `sdks/swift/ui` and `sdks/swift/rtc` directories are gone.
@@ -498,6 +501,9 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### JavaScript: reliable configuration, shutdown and transport failures
+
+Agents respect an empty skill override and verify the remote sync fingerprint. Attaching a watcher no longer stops an existing conversation on failure. Closing a session after losing its socket stops it over HTTP, reports stop failures and ends unwatched sessions locally. Dispatch refuses ambiguous hosted tool names, cancels pending socket upgrades and settles pending tool holds on shutdown. Stream connections refuse tokens for a different signed-in user, and concurrent guest refreshes share one request. Safe requests retry truncated response bodies; text responses and event streams retain their formats. A `responses.create` retried after its answer was lost, which the router answers with no id, looks up the turn the first send started, so the response it returns names that turn. Socket receive queues are bounded. Folder loading propagates filesystem failures, preserves quoted hashes and rejects malformed durations. An ended voice session must be started or attached again before joining.
 ### A search provider that fails answers 500, not 400
 
 `POST /v1/search` answers a question its provider could not answer, or a session it could not open with a provider, with a 500 `internal_error` that says only `something went wrong`, instead of a 400 `invalid_request` carrying the provider's own error text. The router API 5xx monitor now counts a search outage. A request the router refuses (an unknown target, a term nothing serves), a model the customer's policies do not allow, and a refusal about money keep their 400, 402, 403 and 429 answers. The provider's error is in the access log under the request id. A search whose caller hung up before it was answered is a 400 that says so, not a 500. A request asking for a term the named or listed models do not take, a data policy no candidate meets, an input kind no candidate accepts, or more tags than a row carries once the policies' tags are added is marked as the caller's to change: on a stream socket it now ends with 1008 instead of 1011 (AI-3080).

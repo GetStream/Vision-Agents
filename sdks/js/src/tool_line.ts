@@ -7,8 +7,13 @@ export class Holds {
   private readonly holding = new Set<string>();
 
   /** Sends the hold and waits for the router to say whether the call was. */
-  async ask(id: string, send: () => void): Promise<boolean> {
+  async ask(id: string, send: () => void, signal?: AbortSignal): Promise<boolean> {
+    if (signal?.aborted) {
+      return false;
+    }
     const answer = new Promise<boolean>((resolve) => this.waiting.set(id, resolve));
+    const aborted = () => this.answer(id, false);
+    signal?.addEventListener("abort", aborted, { once: true });
     try {
       send();
       const held = await answer;
@@ -17,6 +22,7 @@ export class Holds {
       }
       return held;
     } finally {
+      signal?.removeEventListener("abort", aborted);
       this.waiting.delete(id);
     }
   }
@@ -36,13 +42,22 @@ export class Holds {
     this.holding.delete(id);
     this.waiting.get(id)?.(false);
   }
+
+  /** Ends waits whose acknowledgement can no longer arrive on this connection. */
+  clear(): void {
+    for (const answer of this.waiting.values()) {
+      answer(false);
+    }
+    this.waiting.clear();
+    this.holding.clear();
+  }
 }
 
 /** A call's way back to its session, over the socket that delivered it. */
 export function socketLine(send: (frame: Record<string, unknown>) => void, holds: Holds): ToolLine {
   return {
     update: (id, said, verbatim) => send({ type: "tool_update", tool_call_id: id, text: said, verbatim }),
-    hold: (id) => holds.ask(id, () => send({ type: "tool_hold", tool_call_id: id })),
+    hold: (id, signal) => holds.ask(id, () => send({ type: "tool_hold", tool_call_id: id }), signal),
   };
 }
 

@@ -98,6 +98,21 @@ went wrong. Branch on `code` (`not_configured`, `validation_failed`, ...) or `ty
 message, and expect codes you do not know; quote `requestId` to support, since a 500 says only
 "something went wrong".
 
+A request that never got an answer is a `RouterError` with status 0, its network error as
+`cause`; one the caller aborted rejects with the signal's own `AbortError`, and a call missing a
+path parameter with a `ConfigurationError`, so neither looks like something worth retrying.
+A request that is safe to send twice (GET, PUT, DELETE, and `responses.create`, which the router
+answers once per request id) is sent again after a network failure or a 429, 502, 503 or 504,
+up to `maxRetries` times (2 unless the client says), waiting longer each time and as long as
+`Retry-After` asks. To ask again yourself after a failure that may have reached the router,
+pass the same `requestId` to `responses.create`. When the router took the question and only its
+answer was lost, it answers the retry with no id, and `responses.create` looks up the turn by
+what was asked, so the response it returns still names that turn.
+
+A connection lost while reading a response body follows the same retry policy. Invalid JSON
+is reported with the operation and request id and is not retried. Text responses remain
+strings; event-stream responses return a `ReadableStream<Uint8Array>` for the caller to read.
+
 ## Spend limits and teams
 
 A backend caps what the organization, its apps, keys, end users, teams and usage categories may
@@ -227,6 +242,7 @@ agent.tools.register<{ city: string }>({
   run: async ({ city }) => fetchWeather(city),
 });
 
+await agent.sync();
 const session = await agent.join();
 console.log(await agent.monitorURL(session));
 
@@ -240,7 +256,9 @@ for await (const event of session.events()) {
 instructions, the same skills, the same knowledge, with nothing transcribed and nothing
 spoken. `session.voice.stop()` carries a conversation on in writing and
 `session.voice.start()` puts the agent back on the call. Instructions reach the backend
-with `agent.sync()`: a session runs on the stored config's.
+with `agent.sync()`: a session runs on the stored config's. Without `pipeline.config`,
+`chat` and `join` select that config by the agent's name, so an agent that was never synced
+under its name is refused with a 404 `there is no agent called <name>`: sync it first.
 
 `new Agent({ timezone: "Europe/Lisbon" })` is the zone the agent's sessions are in, and `join`,
 `chat`, `answer`, `reply`, `startCall` and `waitForCall` each take a `timezone` for the person on
@@ -348,7 +366,9 @@ dispatch.onMessage(async (message) => {
     await dispatch.answer(message);
     return;
   }
-  const session = await dispatch.sessionFor(message, () => new Agent({ name: "John" }));
+  const session = await dispatch.sessionFor(message, () => new Agent({
+    name: "John", pipeline: { config: "support" },
+  }));
   const images = (message.images ?? []).map(({ url }) => ({ url }));
   await session.responses.create(message.text, { images });
 });
@@ -360,6 +380,12 @@ await dispatch.run();
 worker rather than queueing behind it. Several workers can wait at once, and the work is
 shared between them. Each call and message is reported `done` to the router when its handler
 returns, with the error when it throws, which is what frees the room it took.
+
+A connection that drops, as one does when the network blinks or the router is redeployed, is
+dialled again with a growing wait, while the calls already being handled carry on. After
+`maxReconnects` tries in a row (10 unless the worker says) `run` rejects with the error, so a
+supervisor can restart the process; a router closing the connection on purpose ends `run`
+normally.
 
 A message usually arrives here only when no agent is running on its channel — one written to
 an agent that is already running is answered by the router from that session, because that
@@ -384,6 +410,10 @@ tool takes the same `interruptible`, `timeoutMs` and `approval` (asked only on a
 call), is handed its `toolCallContext`, and is aborted when the router gives up on it. `run`
 works with only hosted tools and no handler, and throws `HostingRefusedError` if the router
 refuses them.
+
+Tool names must be unique across the agents hosted by one worker. Use separate workers when
+agents need different implementations of a tool with the same name. `stop` also cancels a
+socket upgrade still in progress; work already running is drained.
 
 Server side only. A worker is offered other people's callers, so anything that can open
 that socket could answer for the whole app.

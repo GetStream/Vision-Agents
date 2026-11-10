@@ -126,7 +126,7 @@ export interface ToolLine {
   /** Says how the call is going, or with `verbatim`, words to say as written. */
   update(id: string, text: string, verbatim: boolean): void;
   /** Asks for the call to keep going when the caller talks over the agent; resolves with whether it was still running to be held. */
-  hold(id: string): Promise<boolean>;
+  hold(id: string, signal?: AbortSignal): Promise<boolean>;
 }
 
 /** Why the signal `disallowInterruptions` returns is aborted when the call had already been stopped. */
@@ -198,7 +198,11 @@ export class ToolCall implements ToolCallFields {
     if (!this.line || !this.id) {
       return this.lasting;
     }
-    if (!(await this.line.hold(this.id))) {
+    const held = await this.line.hold(this.id, this.lasting);
+    if (this.lasting.aborted) {
+      return this.lasting;
+    }
+    if (!held) {
       return AbortSignal.abort(new CallNotHeldError(this.id));
     }
     return this.lasting;

@@ -896,8 +896,11 @@ describe("Agent", () => {
     });
 
     it("only reads back a directory nothing has touched since .agent_sync was written", async () => {
-      const stored = { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z" };
-      router.serve("POST", "/v1/agents/sync", { body: { unchanged: false, config: stored } });
+      const stored = { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z", sync_hash: "" };
+      router.serve("POST", "/v1/agents/sync", (request) => {
+        stored.sync_hash = (request.body as Schemas["SyncAgentRequest"]).hash;
+        return { body: { unchanged: false, config: stored } };
+      });
       router.serve("GET", "/v1/agents/configs", { body: [stored] });
       const root = join(await mkdtemp(join(tmpdir(), "vision-agents-")), "jean");
       await mkdir(root);

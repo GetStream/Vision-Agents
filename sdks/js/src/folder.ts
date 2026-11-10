@@ -72,11 +72,11 @@ const SIMULATION_COUNTS = new Set(["variations", "max_turns"]);
  * sees; the body is the prompt only the subagent sees.
  */
 export async function loadFolder(path: string): Promise<Folder> {
-  const info = await stat(path).catch(() => undefined);
+  const info = await stat(path).catch(missing);
   if (!info?.isDirectory()) {
     throw new ConfigurationError(`${path} is not an agent directory`);
   }
-  const declaration = await readFile(join(path, AGENT_FILE), "utf8").catch(() => undefined);
+  const declaration = await readFile(join(path, AGENT_FILE), "utf8").catch(missing);
   if (declaration === undefined) {
     throw new ConfigurationError(`${path} has no ${AGENT_FILE}, so it is not an agent directory`);
   }
@@ -110,7 +110,7 @@ export async function loadFolder(path: string): Promise<Folder> {
 async function loadSimulations(
   path: string,
 ): Promise<Schemas["SimulationDeclaration"][] | undefined> {
-  const info = await stat(path).catch(() => undefined);
+  const info = await stat(path).catch(missing);
   if (!info) {
     return undefined;
   }
@@ -146,7 +146,7 @@ async function loadSimulations(
  * whatever files it comes with, nested as deep as they are.
  */
 async function loadSkills(path: string): Promise<Skill[]> {
-  const entries = await readdir(path, { withFileTypes: true }).catch(() => []);
+  const entries = (await readdir(path, { withFileTypes: true }).catch(missing)) ?? [];
   const skills: Skill[] = [];
   const declared = new Map<string, string>();
 
@@ -161,7 +161,7 @@ async function loadSkills(path: string): Promise<Skill[]> {
       continue;
     }
 
-    const content = await readFile(file, "utf8").catch(() => undefined);
+    const content = await readFile(file, "utf8").catch(missing);
     if (content === undefined) {
       throw new ConfigurationError(
         `${join(path, entry.name)} has no ${SKILL_FILE}, so it is not a skill`,
@@ -289,16 +289,14 @@ function parseDeadline(value: string, where: string): number {
     return Math.round(Number(value) * 1000);
   }
 
+  if (!/^(?:\d+(?:\.\d+)?(?:ms|s|m|h))+$/.test(value)) {
+    throw new ConfigurationError(`${where}: ${JSON.stringify(value)} is not a deadline`);
+  }
   const parts = value.matchAll(/(\d+(?:\.\d+)?)(ms|s|m|h)/g);
   const units: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_600_000 };
   let total = 0;
-  let matched = false;
   for (const [, amount, unit] of parts) {
-    matched = true;
     total += Number(amount) * (units[unit as string] ?? 0);
-  }
-  if (!matched) {
-    throw new ConfigurationError(`${where}: ${JSON.stringify(value)} is not a deadline`);
   }
   return Math.round(total);
 }
@@ -319,7 +317,7 @@ function cutFrontmatter(content: string): [frontmatter: string, body: string] {
 }
 
 async function loadKnowledge(path: string): Promise<{ source: string; text: string }[]> {
-  const info = await stat(path).catch(() => undefined);
+  const info = await stat(path).catch(missing);
   if (!info) {
     return [];
   }
@@ -520,7 +518,7 @@ export function parseSimulations(
       } else if (written.length > 0) {
         throw new ConfigurationError(`${where}: ${key} is one value, not a list`);
       } else {
-        current[key] = scalar(inline.replace(/\s+#.*$/, "")) ?? "";
+        current[key] = scalar(uncomment(inline)) ?? "";
       }
     } else if (SIMULATION_COUNTS.has(key)) {
       current[key] = count(scalar(inline) ?? "", key, where);
@@ -625,7 +623,7 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
       throw new ConfigurationError(`${where}: ${JSON.stringify(line)} is not a key and a value`);
     }
     const key = entry[1] as string;
-    const inline = (entry[2] ?? "").replace(/\s+#.*$/, "").trim();
+    const inline = uncomment(entry[2] ?? "").trim();
 
     // What is indented under a key with nothing after it is its list or its mapping.
     const indented: string[] = [];
@@ -740,7 +738,7 @@ function listed(
   let keyColumn = -1;
   let value: { inline: string; nested: string[] } | undefined;
   for (const line of lines) {
-    const trimmed = line.replace(/\s+#.*$/, "").trim();
+    const trimmed = uncomment(line).trim();
     if (!trimmed || trimmed.startsWith("#")) {
       continue;
     }
@@ -817,7 +815,7 @@ function channels(
   let keyColumn = -1;
   let value: Written | undefined;
   for (const line of lines) {
-    const trimmed = line.replace(/\s+#.*$/, "").trim();
+    const trimmed = uncomment(line).trim();
     if (!trimmed || trimmed.startsWith("#")) {
       continue;
     }
@@ -936,7 +934,7 @@ function sandboxOptions(lines: string[], inline: string, where: string): Schemas
   let keyColumn = -1;
   let value: Written | undefined;
   for (const line of lines) {
-    const trimmed = line.replace(/\s+#.*$/, "").trim();
+    const trimmed = uncomment(line).trim();
     if (!trimmed || trimmed.startsWith("#")) {
       continue;
     }
@@ -1063,7 +1061,7 @@ function floorControlBlock(lines: string[], where: string): Map<string, Tree> | 
   let keyColumn = -1;
   let last: string | undefined;
   for (const line of lines) {
-    const trimmed = line.replace(/\s+#.*$/, "").trim();
+    const trimmed = uncomment(line).trim();
     if (!trimmed || trimmed.startsWith("#")) {
       continue;
     }
@@ -1391,9 +1389,13 @@ function greeting(declared: Record<string, string>, where: string): Schemas["Gre
 function stampAt(path: string): SyncStamp {
   return {
     async read() {
-      const recorded: unknown = await readFile(path, "utf8")
-        .then((text) => JSON.parse(text) as unknown)
-        .catch(() => undefined);
+      const content = await readFile(path, "utf8").catch(missing);
+      let recorded: unknown;
+      try {
+        recorded = content === undefined ? undefined : JSON.parse(content);
+      } catch {
+        return "";
+      }
       const hash = recorded && typeof recorded === "object" ? (recorded as { hash?: unknown }).hash : "";
       return typeof hash === "string" ? hash : "";
     },
@@ -1405,5 +1407,37 @@ function stampAt(path: string): SyncStamp {
 }
 
 async function maybeRead(path: string): Promise<string> {
-  return readFile(path, "utf8").catch(() => "");
+  return (await readFile(path, "utf8").catch(missing)) ?? "";
+}
+
+function missing(cause: unknown): undefined {
+  if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") {
+    return undefined;
+  }
+  throw cause;
+}
+
+/** A hash in a quoted scalar is text, not the start of a YAML comment. */
+function uncomment(line: string): string {
+  let quote = "";
+  for (let index = 0; index < line.length; index++) {
+    const char = line[index];
+    if (quote) {
+      if (char === "\\" && quote === '"') {
+        index++;
+      } else if (char === quote) {
+        if (quote === "'" && line[index + 1] === "'") {
+          index++;
+        } else {
+          quote = "";
+        }
+      }
+    } else if ((char === '"' || char === "'") &&
+      (index === 0 || /\s/.test(line[index - 1]!) || "[{,:".includes(line[index - 1]!))) {
+      quote = char;
+    } else if (char === "#" && (index === 0 || /\s/.test(line[index - 1]!))) {
+      return line.slice(0, index);
+    }
+  }
+  return line;
 }

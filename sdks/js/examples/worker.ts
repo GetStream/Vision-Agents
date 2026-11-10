@@ -14,17 +14,17 @@ import { Agent, Dispatch } from "@stream-io/calypso";
 
 const dispatch = new Dispatch({ capacity: 4 });
 
-const john = () =>
-  new Agent({
-    name: "John",
-    instructions: "You answer the phone for a bike shop. Be brief and be warm.",
-    pipeline: { llm: "llm-fast", stt: "en-low-latency", tts: "sonic_36" },
-  });
+const john = new Agent({
+  name: "John",
+  instructions: "You answer the phone for a bike shop. Be brief and be warm.",
+  pipeline: { llm: "llm-fast", stt: "en-low-latency", tts: "sonic_36" },
+});
+await john.sync();
 
 dispatch.onCall(async (call) => {
   console.log(`answering ${call.callerNumber || "a caller"} on ${call.calledNumber}`);
 
-  const session = await john().answer(call);
+  const session = await john.answer(call);
   await session.wait();
 
   console.log(`${call.callId} ended`);
@@ -33,7 +33,7 @@ dispatch.onCall(async (call) => {
 dispatch.onMessage(async (message) => {
   console.log(`${message.userName || message.userId} wrote: ${message.text}`);
 
-  const session = await dispatch.sessionFor(message, john);
+  const session = await dispatch.sessionFor(message, () => john);
   const images = (message.images ?? []).map(({ url }) => ({ url }));
   await session.responses.create(message.text, { images });
 });

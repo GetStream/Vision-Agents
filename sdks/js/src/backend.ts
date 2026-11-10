@@ -12,8 +12,14 @@ export const API_KEY_ENV = "STREAM_API_KEY";
 export const API_SECRET_ENV = "STREAM_API_SECRET";
 export const AUTHENTICATE_ENV = "STREAM_ACCELERATION_AUTHENTICATE";
 
-/** How long a token minted here lasts. Short, because it is minted per request. */
+/** How long a token minted here lasts. */
 const TOKEN_VALIDITY_SECONDS = 60 * 60;
+
+/** How many tokens of its own a backend keeps signed at once. */
+const MINTED_LIMIT = 64;
+
+/** How many times a request safe to send twice is retried when nothing says. */
+const DEFAULT_MAX_RETRIES = 2;
 
 /**
  * Where a router with no proxy in front of it reads the team and usage categories, the team
@@ -244,6 +250,12 @@ export interface BackendOptions {
    * and none starting `team:`. Kept sorted, each once. Carried the way `team` is.
    */
   usageCategories?: readonly string[];
+  /**
+   * How many times a request that is safe to send twice is sent again after the router could
+   * not be reached or answered 429, 502, 503 or 504, waiting longer before each. Defaults to 2;
+   * 0 reports the first failure.
+   */
+  maxRetries?: number;
   /** Used for every request. Defaults to the global fetch. */
   fetch?: typeof fetch;
   /** Used for every socket. Defaults to the global WebSocket. */
@@ -267,6 +279,8 @@ export class Backend {
   readonly team: string | undefined;
   /** The usage categories the work is counted against, sorted, each once. */
   readonly usageCategories: readonly string[];
+  /** How many times a transient failure of a request safe to send twice is retried. */
+  readonly maxRetries: number;
   /** Whether the router is told the customer rather than shown a credential. */
   private readonly byCustomer: boolean;
   /**
@@ -295,6 +309,11 @@ export class Backend {
   private user: StreamUser | undefined;
   /** The end user `actingFor` named, sent beside this backend's own credential. */
   private actingForValue = "";
+  /**
+   * The tokens this backend signed with its secret, by their claims, kept until a minute before
+   * they expire: signing one is a key import and an HMAC, and every request carries one.
+   */
+  private minted = new Map<string, { token: Promise<string>; expiresAt: number }>();
   private readonly fetchImpl: typeof fetch;
   private readonly webSocketImpl: WebSocketConstructor | undefined;
 
@@ -320,6 +339,10 @@ export class Backend {
     this.declaredSecret = Boolean(options.apiSecret);
     this.token = options.token;
     this.userIdValue = options.userId ?? "";
+    this.maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
+    if (!Number.isInteger(this.maxRetries) || this.maxRetries < 0) {
+      throw new ConfigurationError(`maxRetries is a count of retries, not ${String(options.maxRetries)}`);
+    }
     this.authenticate =
       options.authenticate ?? (boolean(env(AUTHENTICATE_ENV)) || hosted(this.url));
     // A customer that was named is chosen over a key that was also passed, because the key
@@ -558,8 +581,8 @@ export class Backend {
   /**
    * What every request to the router carries.
    *
-   * A token minted here is minted per call, so a client left idle longer than a token lasts
-   * does not wake up holding an expired one. A token function's answer is kept instead, and
+   * A token minted here is kept until a minute before it expires and then minted again, so a
+   * client left idle longer than a token lasts does not wake up holding an expired one. A token function's answer is kept instead, and
    * asked for again after a 401 (see `userToken`). `anonymously` sends the key alone, for a
    * guest asked for by nobody yet.
    */
@@ -721,7 +744,33 @@ export class Backend {
    * user to hold. Which of its users a backend is acting for goes in a header instead.
    */
   private serverToken(): Promise<string> {
-    return signToken({ server: true, ...this.categoryClaims() }, this.apiSecret);
+    return this.mint({ server: true, ...this.categoryClaims() });
+  }
+
+  /**
+   * A token signed with this backend's secret, the same one for the same claims until it is
+   * within a minute of expiring.
+   */
+  private mint(claims: Record<string, unknown>): Promise<string> {
+    const key = JSON.stringify(claims);
+    const now = Date.now();
+    const held = this.minted.get(key);
+    if (held && held.expiresAt - now > EXPIRY_MARGIN_MS) {
+      return held.token;
+    }
+    const token = signToken(claims, this.apiSecret);
+    // Bounded, though in practice it holds one or two: the claims are the server's own and the
+    // user this backend was built for.
+    if (this.minted.size >= MINTED_LIMIT) {
+      this.minted.clear();
+    }
+    this.minted.set(key, { token, expiresAt: now + TOKEN_VALIDITY_SECONDS * 1000 });
+    token.catch(() => {
+      if (this.minted.get(key)?.token === token) {
+        this.minted.delete(key);
+      }
+    });
+    return token;
   }
 
   /**
@@ -736,7 +785,7 @@ export class Backend {
       return this.userToken();
     }
     return this.userId
-      ? signToken({ user_id: this.userId, ...this.categoryClaims() }, this.apiSecret)
+      ? this.mint({ user_id: this.userId, ...this.categoryClaims() })
       : this.serverToken();
   }
 

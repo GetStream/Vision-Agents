@@ -84,6 +84,12 @@ export type RequestOptions<Op> = QueryOf<Omit<ParametersOf<Op>, "header" | "cook
     readonly signal?: AbortSignal;
     /** Sent alongside the credentials, for a header a deployment of its own wants. */
     readonly headers?: Readonly<Record<string, string>>;
+    /**
+     * Whether sending the request twice does what sending it once does, so a failure in
+     * between may be retried. GET, PUT and DELETE are; a POST or PATCH is only when it says
+     * so, such as one carrying a request id the router answers once.
+     */
+    readonly idempotent?: boolean;
   };
 
 type ResponsesOf<Op> = Op extends { readonly responses: infer R } ? R : never;
@@ -98,7 +104,11 @@ export type Result<Op> = {
     content: { readonly "application/json": infer B };
   }
     ? B
-    : void;
+    : ResponsesOf<Op>[S] extends { content: { readonly "text/event-stream": string } }
+      ? ReadableStream<Uint8Array>
+      : ResponsesOf<Op>[S] extends { content: { readonly "text/plain": string } }
+        ? string
+        : void;
 }[Extract<keyof ResponsesOf<Op>, 200 | 201 | 202 | 204>];
 
 /** Whether the options can be left out entirely, which they can when nothing is required. */
@@ -305,16 +315,19 @@ export class Client {
   }
 
   private async send<T>(method: Method, template: string, options: unknown): Promise<T> {
-    const { path, query, body, signal, headers } = (options ?? {}) as {
+    const { path, query, body, signal, headers, idempotent, [ON_RETRY]: resending } = (options ?? {}) as {
       path?: Record<string, string | number>;
       query?: Record<string, unknown>;
       body?: unknown;
       signal?: AbortSignal;
       headers?: Record<string, string>;
+      idempotent?: boolean;
+      [ON_RETRY]?: () => void;
     };
 
     const operation = `${method.toUpperCase()} ${template}`;
     const anonymously = operation === "POST /v1/agents/guests" && this.backend.anonymous;
+    const retryable = idempotent ?? (method === "get" || method === "put" || method === "delete");
     const url = new URL(this.backend.url + fill(template, path));
     for (const [name, value] of Object.entries({ ...this.backend.query(), ...query })) {
       if (value === undefined || value === null) {
@@ -344,33 +357,170 @@ export class Client {
       try {
         return await this.backend.request(url.toString(), request);
       } catch (cause) {
+        // The caller's own abort is theirs to see as it is: reported as a router that could
+        // not be reached, a caller retrying those would send again what it just cancelled.
+        if (signal?.aborted) {
+          throw signal.reason ?? cause;
+        }
         // A request that never arrived is reported as such rather than as a status, because
         // a caller retrying on a network failure and one retrying on a 500 are different.
-        throw new RouterError(0, operation, `could not reach the router: ${String(cause)}`);
+        throw new RouterError(0, operation, `could not reach the router: ${String(cause)}`, { cause });
       }
     };
 
-    let response = await attempt();
-    // A 401 is the token having expired more often than anything else, so a token function
-    // is asked for a fresh one and the request sent once more. Once: a second refusal is the
-    // token being wrong rather than old, and asking again would only ask the app's backend
-    // the same question in a loop.
-    if (response.status === 401 && !anonymously && this.backend.expireToken(sent)) {
-      await response.body?.cancel();
-      response = await attempt();
-    }
+    let retries = 0;
+    let refreshed = false;
+    while (true) {
+      let response: Response;
+      try {
+        response = await attempt();
+      } catch (cause) {
+        if (!(cause instanceof RouterError) || !retryable || retries >= this.backend.maxRetries) {
+          throw cause;
+        }
+        await pause(backoff(retries), signal);
+        retries += 1;
+        resending?.();
+        continue;
+      }
 
-    if (anonymously && response.status === 401) {
-      throw new ConfigurationError(ANONYMOUS_GUEST_REFUSED);
+      // A 401 is the token having expired more often than anything else, so a token function
+      // is asked for a fresh one and the request sent once more. Once: a second refusal is the
+      // token being wrong rather than old, and asking again would only ask the app's backend
+      // the same question in a loop.
+      if (response.status === 401 && !refreshed && !anonymously && this.backend.expireToken(sent)) {
+        refreshed = true;
+        await response.body?.cancel();
+        continue;
+      }
+
+      // A router that is busy or being replaced says so with these, and answers the same
+      // request a moment later. Only one that is safe to send twice is, and only a few times:
+      // past that the failure is the caller's to see rather than this client's to hide.
+      if (retryable && TRANSIENT.has(response.status) && retries < this.backend.maxRetries) {
+        const after = retryAfterMs(response);
+        if (after === undefined || after <= MAX_RETRY_AFTER_MS) {
+          await response.body?.cancel();
+          await pause(after ?? backoff(retries), signal);
+          retries += 1;
+          resending?.();
+          continue;
+        }
+      }
+
+      if (anonymously && response.status === 401) {
+        throw new ConfigurationError(ANONYMOUS_GUEST_REFUSED);
+      }
+      if (!response.ok) {
+        throw await errorOf(response, operation);
+      }
+      const mediaType = response.headers.get("Content-Type")?.split(";")[0]?.trim().toLowerCase();
+      if (
+        response.status === 204 ||
+        (response.headers.get("Content-Length") === "0" &&
+          mediaType !== "text/plain" && mediaType !== "text/event-stream")
+      ) {
+        return undefined as T;
+      }
+      if (mediaType === "text/event-stream") {
+        if (!response.body) {
+          throw new RouterError(response.status, operation, "the router returned no event stream");
+        }
+        return response.body as T;
+      }
+      let content: string;
+      try {
+        content = await response.text();
+      } catch (cause) {
+        if (signal?.aborted) {
+          throw signal.reason ?? cause;
+        }
+        if (retryable && retries < this.backend.maxRetries) {
+          await pause(backoff(retries), signal);
+          retries += 1;
+          resending?.();
+          continue;
+        }
+        throw new RouterError(0, operation, "the connection ended before the router's response was read", {
+          cause,
+          requestId: response.headers.get("X-Request-Id") || undefined,
+        });
+      }
+      if (mediaType === "text/plain") {
+        return content as T;
+      }
+      try {
+        return JSON.parse(content) as T;
+      } catch (cause) {
+        throw new RouterError(response.status, operation, "the router returned invalid JSON", {
+          cause,
+          requestId: response.headers.get("X-Request-Id") || undefined,
+        });
+      }
     }
-    if (!response.ok) {
-      throw await errorOf(response, operation);
-    }
-    if (response.status === 204 || response.headers.get("Content-Length") === "0") {
-      return undefined as T;
-    }
-    return (await response.json()) as T;
   }
+}
+
+const ON_RETRY = Symbol("calypso.onRetry");
+
+/**
+ * @internal Request options that call `heard` each time the request is sent again, for a caller
+ * whose answer means something different when the router may have seen it before.
+ */
+export function onRetry(heard: () => void): Record<never, never> {
+  return { [ON_RETRY]: heard };
+}
+
+/** The answers that say the router could not take the request just now, rather than that it was wrong. */
+const TRANSIENT = new Set([429, 502, 503, 504]);
+
+/** The first wait before a retry; each one after doubles it, up to `MAX_BACKOFF_MS`. */
+const BASE_BACKOFF_MS = 250;
+const MAX_BACKOFF_MS = 4_000;
+
+/** The longest `Retry-After` waited out; a router asking for longer is reported instead. */
+const MAX_RETRY_AFTER_MS = 30_000;
+
+/**
+ * How long to wait before retry `retries` (from 0): doubling, with half of it random so a
+ * burst of clients refused together does not come back together.
+ */
+function backoff(retries: number): number {
+  const ceiling = Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** retries);
+  return ceiling / 2 + Math.random() * (ceiling / 2);
+}
+
+/** What the response's `Retry-After` asks for, in milliseconds, as seconds or as a date. */
+function retryAfterMs(response: Response): number | undefined {
+  const header = response.headers.get("Retry-After");
+  if (!header) {
+    return undefined;
+  }
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) {
+    return Math.max(0, seconds * 1000);
+  }
+  const at = Date.parse(header);
+  return Number.isNaN(at) ? undefined : Math.max(0, at - Date.now());
+}
+
+/** Waits, or rejects with the signal's reason as soon as it aborts. */
+function pause(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const aborted = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", aborted);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", aborted, { once: true });
+  });
 }
 
 /** Puts the path parameters into the template, so `{id}` is never sent literally. */
@@ -378,7 +528,8 @@ function fill(template: string, path: Record<string, string | number> | undefine
   return template.replace(/\{(\w+)\}/g, (_, name: string) => {
     const value = path?.[name];
     if (value === undefined) {
-      throw new RouterError(0, template, `${template} needs a ${name}`);
+      // Nothing was sent: this is a mistake in the call, which no retry would fix.
+      throw new ConfigurationError(`${template} needs a ${name}`);
     }
     return encodeURIComponent(String(value));
   });
