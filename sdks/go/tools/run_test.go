@@ -90,19 +90,37 @@ func (s *RunSuite) TestAToolsOwnConcurrencyHoldsBelowTheRegistrys() {
 func (s *RunSuite) TestACallWaitingForAPlaceTimesOutOnItsOwnDeadline() {
 	release := make(chan struct{})
 	defer close(release)
+	holding := make(chan struct{}, 1)
 	// The function ignores its context, so the first call holds the one place until released.
 	s.Require().NoError(Register(s.registry, "query", "Query the database", func(context.Context, struct{}) (any, error) {
+		holding <- struct{}{}
 		<-release
 		return "ok", nil
 	}, Concurrency(1), Timeout(100*time.Millisecond)))
 	go func() { _, _ = s.registry.Run(context.Background(), Call{ID: "first"}, "query", "{}") }()
-	time.Sleep(20 * time.Millisecond)
+	<-holding
 
 	began := time.Now()
 	_, err := s.registry.Run(s.T().Context(), Call{ID: "second"}, "query", "{}")
 
 	s.ErrorIs(err, context.DeadlineExceeded)
 	s.Less(time.Since(began), time.Second)
+}
+
+func (s *RunSuite) TestARunningCallIsStoppedAtItsTimeout() {
+	stopped := make(chan error, 1)
+	s.Require().NoError(Register(s.registry, "query", "Query the database", func(ctx context.Context, _ struct{}) (any, error) {
+		<-ctx.Done()
+		stopped <- ctx.Err()
+		return nil, ctx.Err()
+	}, Timeout(50*time.Millisecond)))
+
+	began := time.Now()
+	_, err := s.registry.Run(s.T().Context(), Call{ID: "call-1"}, "query", "{}")
+
+	s.ErrorIs(err, context.DeadlineExceeded)
+	s.Less(time.Since(began), time.Second)
+	s.ErrorIs(<-stopped, context.DeadlineExceeded, "the function's own context was not ended by the timeout")
 }
 
 func (s *RunSuite) TestAFunctionReadsTheCallItIsRunningFor() {

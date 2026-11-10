@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -125,7 +126,7 @@ func (s *ImageRouterIntegrationSuite) TestAnImageRowSaysTheSizeItWasDrawnAtWhich
 	s.Require().NoError(err)
 	router, err := New(Options{
 		Config: routing.ModalityConfig{Providers: []routing.ProviderConfig{
-			{Provider: "quick", Model: "fast", Languages: []string{"en"}},
+			{Provider: "quick", Model: "fast", Languages: []string{"en"}, Terms: []options.Term{options.Size}},
 		}},
 		Registry: registry,
 		Store:    s.store,

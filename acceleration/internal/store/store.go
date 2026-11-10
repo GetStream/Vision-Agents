@@ -207,6 +207,14 @@ var usageIndexes = []struct{ name, create string }{
 	// (20261206120000_agent_logs_source_id.sql).
 	{"agent_logs_source_idx", "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS agent_logs_source_idx ON agent_logs (customer_id, source_id) " +
 		"WHERE source_id IS NOT NULL"},
+	// What a link's join finds one omni-channel's rows of an agent by (20261212100000_user_phones.sql).
+	{"contact_map_conversation", "CREATE INDEX CONCURRENTLY IF NOT EXISTS contact_map_conversation ON contact_map (customer_id, agent_config_id, conversation_id)"},
+	// The rows a link set aside, by their number (20261217110000_user_phone_history.sql).
+	{"contact_map_retired", "CREATE INDEX CONCURRENTLY IF NOT EXISTS contact_map_retired ON contact_map " +
+		"(customer_id, (regexp_replace(address, '^retired:[^:]*:', ''))) WHERE address LIKE 'retired:%'"},
+	// The leg digits are pressed on (20261215120000_call_legs_vendor_call_id.sql).
+	{"call_legs_vendor_call_idx", "CREATE INDEX CONCURRENTLY IF NOT EXISTS call_legs_vendor_call_idx ON call_legs (vendor_call_id) " +
+		"WHERE vendor_call_id IS NOT NULL"},
 }
 
 // ensureUsageIndexes builds each usage index that is missing, dropping one a failed build left
@@ -828,7 +836,7 @@ const spendGroupByModality = "modality"
 // row carries. A label key never holds a ':', so none of them shadows a label of the same name.
 const (
 	SpendGroupByApp      = "who:app"
-	SpendGroupByAPIKey   = "who:api_key"
+	SpendGroupByOrigin   = "who:origin"
 	SpendGroupByUser     = "who:user"
 	SpendGroupByTeam     = "who:team"
 	SpendGroupByCategory = "who:category"
@@ -844,7 +852,7 @@ func spendGroups(groupBy string, acrossApps bool) (value, join string, ok bool) 
 		return "modality", "", true
 	case SpendGroupByApp:
 		return "customer_id", "", true
-	case SpendGroupByAPIKey:
+	case SpendGroupByOrigin:
 		return "api_key", "", true
 	case SpendGroupByUser:
 		if acrossApps {

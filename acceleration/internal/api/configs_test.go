@@ -5,28 +5,22 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/stretchr/testify/require"
 )
 
 type ConfigsSuite struct {
 	RouterSuite
-	// describing runs whenever the router asks a config's MCP server about itself, which a
-	// save does between checking the config and writing it. Nil runs nothing.
-	describing atomic.Pointer[func()]
-	// logged is what the router logged, for the tests of the deprecation it warns of.
-	logged *lockedLog
 }
 
 func TestConfigsSuite(t *testing.T) {
@@ -35,18 +29,9 @@ func TestConfigsSuite(t *testing.T) {
 
 // SetupSuite registers the scheme the built-ins name, so the app can define a custom
 // connector of its own, and seeds the built-ins as a router start does. Seeding is
-// idempotent, so suites running beside this one see the same rows. An MCP server is
-// reached by no one, as mcpTransport's default, after running describing.
+// idempotent, so suites running beside this one see the same rows.
 func (s *ConfigsSuite) SetupSuite() {
 	s.connectors = core.Registry{Schemes: map[string]core.Scheme{"oauth2_code": namedScheme("oauth2_code")}}
-	s.pluginHTTP = &http.Client{Transport: roundTripper(func(*http.Request) (*http.Response, error) {
-		if describing := s.describing.Load(); describing != nil {
-			(*describing)()
-		}
-		return nil, errors.New("tests reach no real MCP server")
-	})}
-	s.logged = &lockedLog{}
-	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
@@ -221,26 +206,88 @@ func (s *ConfigsSuite) TestAConfigLeavesNothingToDispatchUnlessItSaysSo() {
 	s.Equal(Disabled, value(value(patched.Dispatch).IncomingCall), "a setting left out keeps what is stored")
 }
 
-// Episode cards are off unless a config turns them on, and an update that leaves the setting
-// out keeps it, so a client that does not know it cannot turn the cards off by saving.
+// Episode cards are off unless a config says otherwise, each mode is read back as it was sent,
+// and an update that leaves the setting out keeps it, so a client that does not know it cannot
+// turn the cards off by saving. Catches a mode stored as another: record as off or on, which
+// the two columns tell apart (store.AgentConfig.WritesCards), on stored without the column the
+// previous release reads.
 func (s *ConfigsSuite) TestAConfigWritesNoEpisodeCardsUnlessItSaysSo() {
 	unnamed := s.createConfig(map[string]any{"name": "support"})
-	s.False(value(unnamed.EpisodeCards))
+	s.Equal(EpisodeCardsOff, value(unnamed.EpisodeCards))
+	s.storedCards(unnamed.Id, false, false)
 
 	var patched AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch,
-		"/v1/agents/configs/"+unnamed.Id, map[string]any{"episode_cards": true}, &patched))
-	s.True(value(patched.EpisodeCards))
+		"/v1/agents/configs/"+unnamed.Id, map[string]any{"episode_cards": "record"}, &patched))
+	s.Equal(EpisodeCardsRecord, value(patched.EpisodeCards))
+	s.storedCards(unnamed.Id, false, true)
 
 	var saved AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut,
 		"/v1/agents/configs/"+unnamed.Id, map[string]any{"name": "support"}, &saved))
-	s.True(value(saved.EpisodeCards), "a setting left out on an update stays")
+	s.Equal(EpisodeCardsRecord, value(saved.EpisodeCards), "a setting left out on an update stays")
+	s.storedCards(unnamed.Id, false, true)
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut,
+		"/v1/agents/configs/"+unnamed.Id, map[string]any{"name": "support", "episode_cards": "on"}, &saved))
+	s.Equal(EpisodeCardsOn, value(saved.EpisodeCards))
+	s.storedCards(unnamed.Id, true, false)
 
 	var read AgentConfig
 	s.Require().Equal(http.StatusOK,
 		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+unnamed.Id, nil, &read))
-	s.True(value(read.EpisodeCards))
+	s.Equal(EpisodeCardsOn, value(read.EpisodeCards))
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch,
+		"/v1/agents/configs/"+unnamed.Id, map[string]any{"episode_cards": "off"}, &patched))
+	s.Equal(EpisodeCardsOff, value(patched.EpisodeCards))
+	s.storedCards(unnamed.Id, false, false)
+
+	created := s.createConfig(map[string]any{"name": "recorder", "episode_cards": "record"})
+	s.Equal(EpisodeCardsRecord, value(created.EpisodeCards))
+	s.storedCards(created.Id, false, true)
+}
+
+// A stored config with both columns on, which no write here makes, reads as on: the column the
+// previous release reads decides, so both releases take it the same way.
+func (s *ConfigsSuite) TestAConfigWithBothCardColumnsOnReadsAsOn() {
+	created := s.createConfig(map[string]any{"name": "support"})
+	_, err := s.store.DB().ExecContext(context.Background(),
+		"UPDATE agent_configs SET episode_cards = true, episode_cards_record = true WHERE id = ?", created.Id)
+	s.Require().NoError(err)
+
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+	s.Equal(EpisodeCardsOn, value(read.EpisodeCards))
+}
+
+// episode_cards takes off, record and on alone, on create, update and patch: the boolean it was
+// is refused (400), so a client written for it learns of the change rather than saving a mode
+// it did not mean, and so is any other value, cased otherwise or empty. Catches a value
+// accepted that the enum does not name, and stored as some mode.
+func (s *ConfigsSuite) TestEpisodeCardsTakesOnlyOffRecordOrOn() {
+	created := s.createConfig(map[string]any{"name": "support", "episode_cards": "record"})
+	for _, sent := range []any{true, false, "true", "On", "", "recorded", 1} {
+		for _, write := range []struct{ method, path string }{
+			{http.MethodPost, "/v1/agents/configs"},
+			{http.MethodPut, "/v1/agents/configs/" + created.Id},
+			{http.MethodPatch, "/v1/agents/configs/" + created.Id},
+		} {
+			status, body := s.serverClient.call(write.method, write.path, map[string]any{"name": "support-" + s.utils.uuid(), "episode_cards": sent})
+			s.Equal(http.StatusBadRequest, status, "%s %v", write.method, sent)
+			s.Contains(string(body), `"code":"validation_failed"`, "%s %v", write.method, sent)
+		}
+	}
+	s.storedCards(created.Id, false, true)
+}
+
+// storedCards checks the two columns a config's mode is stored in.
+func (s *ConfigsSuite) storedCards(id string, on, record bool) {
+	s.T().Helper()
+	stored, err := s.store.AgentConfig(context.Background(), s.customerID(), id)
+	s.Require().NoError(err)
+	s.Equal(on, stored.EpisodeCards, "episode_cards")
+	s.Equal(record, stored.EpisodeCardsRecord, "episode_cards_record")
 }
 
 // Tools are offered whole unless a config asks for them progressively, and an update that
@@ -527,258 +574,6 @@ func (s *ConfigsSuite) TestAnAllowedDomainThatIsAnIPAddressIsRefused() {
 	s.Contains(failure, `"203.0.113.7" is not a domain`)
 }
 
-func (s *ConfigsSuite) TestAConfigRemembersTheMCPServersItNamesByURL() {
-	created := s.createConfig(map[string]any{"name": "concierge", "mcp_servers": []map[string]any{
-		{"name": "tablejourney", "url": "https://tablejourney.com/mcp"},
-	}})
-
-	var read AgentConfig
-	s.Require().Equal(http.StatusOK,
-		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
-	s.Equal([]McpServer{{Name: "tablejourney", Url: "https://tablejourney.com/mcp"}}, value(read.McpServers))
-
-	var patched AgentConfig
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
-		map[string]any{"mcp_servers": []map[string]any{}}, &patched))
-	s.Nil(patched.McpServers)
-}
-
-func (s *ConfigsSuite) TestAConfigRemembersHowItReachesAPlugin() {
-	created := s.createConfig(map[string]any{
-		"name": "triage",
-		"plugins": []any{
-			"sentry",
-			map[string]any{"name": "linear", "user": true, "readonly": true, "scopes": []string{"read", " "}},
-			map[string]any{"name": "google_calendar", "user": true},
-		},
-	})
-
-	var read AgentConfig
-	s.Require().Equal(http.StatusOK,
-		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
-	s.Equal([]PluginEntry{
-		{Name: "sentry"},
-		{Name: "linear", Readonly: pointerTo(true), Scopes: &[]string{"read"}},
-		{Name: "google_calendar"},
-	}, value(read.Plugins), "user is answered only where it differs from the catalog")
-
-	var raw map[string]any
-	s.Require().Equal(http.StatusOK,
-		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &raw))
-	s.Equal("sentry", raw["plugins"].([]any)[0], "an entry with no options answers as its id")
-
-	var patched AgentConfig
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
-		map[string]any{"plugins": []any{"linear"}}, &patched))
-	s.Equal([]PluginEntry{{Name: "linear"}}, value(patched.Plugins))
-}
-
-func (s *ConfigsSuite) TestAPluginLeftToTheCatalogIsConnectedTheWayTheCatalogSays() {
-	created := s.createConfig(map[string]any{
-		"name":    "triage",
-		"plugins": []any{"sentry", "google_calendar", map[string]any{"name": "linear", "user": false}},
-	})
-
-	stored, err := s.store.AgentConfig(context.Background(), s.customerID(), created.Id)
-	s.Require().NoError(err)
-	s.Equal([]store.PluginEntry{{Name: "sentry"}, {Name: "google_calendar", User: true}, {Name: "linear"}},
-		stored.Plugins, "a company's account is the app's, a person's own each user's, unless the entry says")
-	s.Equal([]PluginEntry{{Name: "sentry"}, {Name: "google_calendar"}, {Name: "linear", User: pointerTo(false)}},
-		value(created.Plugins))
-}
-
-func (s *ConfigsSuite) TestAReadonlyPluginWithNoReadOnlyEndpointIsRefused() {
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name":    "triage",
-		"plugins": []any{map[string]any{"name": "sentry", "readonly": true}},
-	})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "read-only")
-}
-
-func (s *ConfigsSuite) TestAConfigRemembersWhichToolsetsAPluginIsLimitedTo() {
-	created := s.createConfig(map[string]any{
-		"name":    "scheduler",
-		"plugins": []any{map[string]any{"name": "calcom", "user": true, "toolsets": []string{"bookings", "availability"}}},
-	})
-
-	s.Equal([]PluginEntry{{Name: "calcom", Toolsets: &[]string{"bookings", "availability"}}},
-		value(created.Plugins))
-}
-
-func (s *ConfigsSuite) TestAToolsetThePluginDoesNotHaveIsRefused() {
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name":    "scheduler",
-		"plugins": []any{map[string]any{"name": "calcom", "user": true, "toolsets": []string{"invoices"}}},
-	})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "invoices")
-}
-
-func (s *ConfigsSuite) TestAConfigRemembersWhichToolsEachServerOffers() {
-	created := s.createConfig(map[string]any{
-		"name":    "researcher",
-		"plugins": []any{map[string]any{"name": "google_drive", "user": true, "tools": []string{"search_files", "read_*"}}},
-		"mcp_servers": []map[string]any{
-			{"name": "tablejourney", "url": "https://tablejourney.com/mcp", "tools": []string{"search_restaurants"}},
-		},
-	})
-
-	s.Equal([]PluginEntry{{Name: "google_drive", Tools: &[]string{"search_files", "read_*"}}},
-		value(created.Plugins))
-	s.Equal([]McpServer{{Name: "tablejourney", Url: "https://tablejourney.com/mcp", Tools: &[]string{"search_restaurants"}}},
-		value(created.McpServers))
-}
-
-func (s *ConfigsSuite) TestAToolPatternThatCannotBeReadIsRefused() {
-	for body, message := range map[string]string{
-		"plugins":     `plugins: "read_[*" is not a tool name or pattern`,
-		"mcp_servers": `mcp_servers: tablejourney: "read_[*" is not a tool name or pattern`,
-	} {
-		config := map[string]any{"name": "researcher"}
-		if body == "plugins" {
-			config["plugins"] = []any{map[string]any{"name": "google_drive", "user": true, "tools": []string{"read_[*"}}}
-		} else {
-			config["mcp_servers"] = []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp", "tools": []string{"read_[*"}}}
-		}
-		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", config)
-
-		s.Equal(http.StatusBadRequest, status)
-		s.Equal(message, failure)
-	}
-}
-
-func (s *ConfigsSuite) TestAScopeThePluginsServerDoesNotAcceptIsRefused() {
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name":    "researcher",
-		"plugins": []any{map[string]any{"name": "google_drive", "scopes": []string{"https://www.googleapis.com/auth/gmail.readonly"}}},
-	})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "gmail.readonly")
-}
-
-func (s *ConfigsSuite) TestAPluginNotInTheCatalogIsRefused() {
-	for _, entry := range []any{"jira", map[string]any{"name": "jira", "readonly": true}} {
-		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-			"name":    "triage",
-			"plugins": []any{entry},
-		})
-
-		s.Equal(http.StatusBadRequest, status)
-		s.Contains(failure, "jira")
-	}
-}
-
-func (s *ConfigsSuite) TestAPluginNamedTwiceInAListIsRefused() {
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name":    "triage",
-		"plugins": []any{"linear", map[string]any{"name": "linear", "readonly": true}},
-	})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "linear is named twice")
-}
-
-func (s *ConfigsSuite) TestAPluginEntryThatIsNeitherAnIdNorAnObjectIsRefused() {
-	for _, entry := range []any{"", 7, map[string]any{"readonly": true}} {
-		status, _ := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-			"name":    "triage",
-			"plugins": []any{entry},
-		})
-
-		s.Equal(http.StatusBadRequest, status, "%v", entry)
-	}
-}
-
-func (s *ConfigsSuite) TestAnMCPServerThatCannotBeNamedOrReachedSafelyIsRefused() {
-	for _, refused := range []struct {
-		server  map[string]any
-		failure string
-	}{
-		{map[string]any{"name": "tablejourney", "url": "http://tablejourney.com/mcp"}, "https"},
-		{map[string]any{"name": "slack", "url": "https://mcp.slack.example/mcp"}, "catalog"},
-		{map[string]any{"name": "table__journey", "url": "https://tablejourney.com/mcp"}, "__"},
-		{map[string]any{"name": "TableJourney", "url": "https://tablejourney.com/mcp"}, "name"},
-	} {
-		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
-			map[string]any{"name": "concierge", "mcp_servers": []map[string]any{refused.server}})
-
-		s.Equal(http.StatusBadRequest, status, refused.server)
-		s.Contains(failure, refused.failure)
-	}
-}
-
-func (s *ConfigsSuite) TestTwoMCPServersWithOneNameAreRefused() {
-	server := map[string]any{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}
-
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
-		map[string]any{"name": "concierge", "mcp_servers": []map[string]any{server, server}})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "twice")
-}
-
-// privateMCPURLs are servers a session could never reach, since it dials only public
-// addresses: one on a private network, a loopback or link-local address, or a name that
-// does not resolve.
-var privateMCPURLs = []string{
-	"https://10.1.2.3/mcp",            // Private-Use, RFC 1918
-	"https://100.101.102.103/mcp",     // a Tailscale node: 100.64.0.0/10, https://tailscale.com/kb/1015/100.x-addresses
-	"https://[fd7a:115c:a1e0::1]/mcp", // a Tailscale node over IPv6: fd7a:115c:a1e0::/48, same page
-	"https://127.0.0.1:8443/mcp",      // Loopback, RFC 1122 section 3.2.1.3
-	"https://169.254.169.254/mcp",     // the cloud metadata server, Link Local, RFC 3927
-	"https://localhost/mcp",           // resolves to loopback, RFC 6761 section 6.3
-	"https://mcp.wwsd.invalid/mcp",    // never resolves, RFC 6761 section 6.4
-}
-
-func (s *ConfigsSuite) TestAnMCPServerOnAPrivateAddressIsRefusedWithAPlainError() {
-	for _, url := range privateMCPURLs {
-		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
-			map[string]any{"name": "concierge", "mcp_servers": []map[string]any{{"name": "wwsd", "url": url}}})
-
-		s.Equal(http.StatusBadRequest, status, url)
-		s.Contains(failure, "mcp_servers: wwsd: only public https URLs are reachable", url)
-	}
-}
-
-func (s *ConfigsSuite) TestARefusalNamesThePrivateMCPServerAfterAPublicOne() {
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name": "concierge",
-		"mcp_servers": []map[string]any{
-			{"name": "docs", "url": "https://8.8.8.8/mcp"}, // public, Google DNS
-			{"name": "wwsd", "url": privateMCPURLs[1]},
-		}})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "mcp_servers: wwsd: only public https URLs are reachable")
-	s.NotContains(failure, "docs")
-}
-
-func (s *ConfigsSuite) TestReplacingOrPatchingAConfigRefusesAPrivateMCPServer() {
-	created := s.createConfig(map[string]any{"name": "concierge"})
-	servers := []map[string]any{{"name": "wwsd", "url": privateMCPURLs[1]}}
-
-	status, failure := s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+created.Id,
-		map[string]any{"name": "concierge", "mcp_servers": servers})
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "wwsd: only public https URLs are reachable")
-
-	status, failure = s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
-		map[string]any{"mcp_servers": servers})
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "wwsd: only public https URLs are reachable")
-}
-
-func (s *ConfigsSuite) TestAPublicMCPServerKeepsThePathAndQueryItWasGiven() {
-	created := s.createConfig(map[string]any{"name": "concierge",
-		"mcp_servers": []map[string]any{{"name": "wwsd", "url": "https://8.8.8.8/mcp?workspace=wwsd"}}})
-
-	s.Equal([]McpServer{{Name: "wwsd", Url: "https://8.8.8.8/mcp?workspace=wwsd"}}, value(created.McpServers))
-}
-
 // webhookGuardrail is a guardrail.md asking the server at url.
 func webhookGuardrail(url string) string {
 	return "---\ntype: webhook\nurl: " + url + "\n---\nMy server decides."
@@ -853,14 +648,55 @@ func (s *ConfigsSuite) TestAPublicGuardrailWebhookIsKeptAsWritten() {
 	s.Equal(webhookGuardrail("https://[2001:4860:4860::8888]/check"), value(patched.Guardrail))
 }
 
-func (s *ConfigsSuite) TestAConfigStoredWithAPrivateMCPServerStillReads() {
-	config := store.AgentConfig{CustomerID: s.customerID(), Name: "concierge", Mode: "text",
-		MCPServers: []store.MCPServer{{Name: "wwsd", URL: privateMCPURLs[1]}}}
-	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+// TestAConfigStoredNamingPluginsAndMCPServersReadsWithoutThem: a row written before they were
+// refused still reads, in the config and in the list, and shows none of them, so a client that
+// saves what it read back is not refused for what it never set.
+func (s *ConfigsSuite) TestAConfigStoredNamingPluginsAndMCPServersReadsWithoutThem() {
+	config := s.storedWithPlugins()
 
-	var read AgentConfig
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+config.ID, nil, &read))
-	s.Equal([]McpServer{{Name: "wwsd", Url: privateMCPURLs[1]}}, value(read.McpServers))
+	status, raw := s.serverClient.call(http.MethodGet, "/v1/agents/configs/"+config.ID, nil)
+	s.Require().Equal(http.StatusOK, status)
+	var read map[string]any
+	s.Require().NoError(json.Unmarshal(raw, &read))
+	s.Equal("Be brief.", read["instructions"])
+	for _, key := range []string{"plugins", "plugin_events", "mcp_servers"} {
+		s.NotContains(read, key)
+	}
+	status, raw = s.serverClient.call(http.MethodGet, "/v1/agents/configs", nil)
+	s.Require().Equal(http.StatusOK, status)
+	s.Contains(string(raw), config.ID)
+	for _, key := range []string{`"plugins"`, `"plugin_events"`, `"mcp_servers"`} {
+		s.NotContains(string(raw), key)
+	}
+
+	for _, key := range []string{"id", "created_at", "updated_at", "sync_hash", "duration"} {
+		delete(read, key)
+	}
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+config.ID, read, nil))
+}
+
+// storedWithPlugins is a config whose row names a plugin, a plugin event and an MCP server, as
+// one saved before they were refused does: written into the columns, as no request can now.
+func (s *ConfigsSuite) storedWithPlugins() store.AgentConfig {
+	config := store.AgentConfig{CustomerID: s.customerID(), Name: "legacy-" + s.utils.uuid(), Mode: "text",
+		Instructions: "Be brief."}
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+	nameRetired(s.T(), s.store, config.ID)
+	return config
+}
+
+// nameRetired writes a plugin, a plugin event and an MCP server into the columns of config's
+// row, which the model no longer has, as a save before they were refused left them.
+func nameRetired(t *testing.T, stored *store.Store, config string) {
+	t.Helper()
+	result, err := stored.DB().ExecContext(context.Background(), `UPDATE agent_configs
+		SET plugins = '["linear"]', plugin_events = '[{"plugin":"linear","event":"issue.created"}]',
+		    mcp_servers = '[{"name":"wwsd","url":"https://mcp.wwsd.invalid/mcp"}]'
+		WHERE id = ?`, config)
+	require.NoError(t, err)
+	written, err := result.RowsAffected()
+	require.NoError(t, err)
+	require.EqualValues(t, 1, written)
 }
 
 func (s *ConfigsSuite) TestAVoiceConfigPinnedToABatchTranscriberIsRefused() {
@@ -1302,35 +1138,6 @@ func (s *ConfigsSuite) TestAFixedBindingToADeletedConnectionIsRefused() {
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, connection)
-}
-
-// The save checks the connection, then asks its MCP servers about themselves, then writes.
-// A delete in between is seen by the write, which runs in a transaction of its own (AI-889).
-func (s *ConfigsSuite) TestAFixedBindingToAConnectionDeletedDuringTheSaveIsRefused() {
-	connection := s.connection("")
-	var once sync.Once
-	deleted := make(chan error, 1)
-	describing := func() {
-		once.Do(func() {
-			deleted <- s.store.DeleteUnboundConnectorConnection(context.Background(), s.customerID(), connection)
-		})
-	}
-	s.describing.Store(&describing)
-	defer s.describing.Store(nil)
-
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name":        "support",
-		"mcp_servers": []map[string]any{{"name": "crm", "url": "https://8.8.8.8/mcp"}},
-		"connectors":  []map[string]any{fixedSlack("inbox", connection)},
-	})
-
-	s.Require().Len(deleted, 1, "the connection was deleted while the save described its MCP server")
-	s.Require().NoError(<-deleted)
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, connection)
-	var listed []AgentConfig
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs", nil, &listed))
-	s.Empty(listed, "nothing is stored")
 }
 
 func (s *ConfigsSuite) TestAFixedBindingNeedsAConnection() {
@@ -1904,97 +1711,6 @@ func (s *ConfigsSuite) TestAFixedBindingThroughAnotherConnectorsConnectionIsRefu
 	s.Contains(failure, slack)
 }
 
-// A binding called what a plugin is, to another connector: the session keeps the plugin
-// (Spec.withoutBoundPlugins drops only a plugin whose connector a binding names), and both
-// would offer linear__<tool>.
-func (s *ConfigsSuite) TestABindingCalledWhatAPluginOfTheConfigIsIsRefused() {
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name": "support", "plugins": []string{"linear"}, "connectors": []map[string]any{sessionSlack("linear")},
-	})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "plugin")
-}
-
-// The plugin entry the binding shares its name with must be the binding's own connector: a
-// binding called linear to the connector slack leaves both offering linear__<tool>.
-func (s *ConfigsSuite) TestABindingCalledWhatAPluginIsToAnotherConnectorIsRefusedWhenThePluginIsNotItsConnector() {
-	binding := sessionSlack("linear")
-	binding["connector_id"] = "slack"
-
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name": "support", "plugins": []string{"linear", "slack"}, "connectors": []map[string]any{binding},
-	})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, `plugin "linear"`)
-}
-
-func (s *ConfigsSuite) TestABindingCalledWhatAUserPluginOfTheConfigIsIsRefused() {
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name":       "support",
-		"plugins":    []any{map[string]any{"name": "linear", "user": true}},
-		"connectors": []map[string]any{sessionSlack("linear")},
-	})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, `plugin "linear"`)
-}
-
-// TestABindingToThePluginsOwnConnectorIsCalledWhatThePluginIs: a binding under a plugin
-// entry's id, to the connector of that id, beside the entry (AI-994 F42). The session drops
-// the entry for the binding (Spec.withoutBoundPlugins), so the two never offer the same
-// name, and the config stays editable.
-func (s *ConfigsSuite) TestABindingToThePluginsOwnConnectorIsCalledWhatThePluginIs() {
-	for _, user := range []bool{false, true} {
-		created := s.createConfig(map[string]any{
-			"name":       "support-" + s.utils.uuid(),
-			"plugins":    []any{map[string]any{"name": "slack", "user": user}},
-			"connectors": []map[string]any{sessionSlack("slack")},
-		})
-
-		s.Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
-			map[string]any{"instructions": "Answer briefly."}, nil), "user: %v", user)
-
-		read := s.read(created.Id)
-		s.Equal("Answer briefly.", value(read.Instructions), "user: %v", user)
-		s.Len(value(read.Connectors), 1, "user: %v", user)
-	}
-}
-
-// TestASavedPluginEntryABindingReplacesIsNotCountedAsUnbound: the deprecation warning is the
-// evidence for removing plugins, so an entry the session drops for a binding (a migrated
-// config's, with connectors on) is not real use, and an entry no binding replaces (linear, beside a slack binding) is.
-func (s *ConfigsSuite) TestASavedPluginEntryABindingReplacesIsNotCountedAsUnbound() {
-	migrated := s.createConfig(map[string]any{
-		"name":       "migrated-" + s.utils.uuid(),
-		"plugins":    []any{map[string]any{"name": "slack"}},
-		"connectors": []map[string]any{sessionSlack("slack")},
-	})
-	live := s.createConfig(map[string]any{
-		"name":       "live-" + s.utils.uuid(),
-		"plugins":    []any{map[string]any{"name": "slack"}, map[string]any{"name": "linear"}},
-		"connectors": []map[string]any{sessionSlack("inbox")},
-	})
-
-	for id, unbound := range map[string]string{migrated.Id: "unbound=0", live.Id: "unbound=1"} {
-		lines := deprecations(s.logged, plugins.PathConfigSave, id)
-		s.Require().Len(lines, 1, id)
-		s.Contains(lines[0], " "+unbound+" ", id)
-	}
-}
-
-func (s *ConfigsSuite) TestABindingCalledWhatAnMCPServerOfTheConfigIsIsRefused() {
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name":        "support",
-		"mcp_servers": []map[string]any{{"name": "crm", "url": "https://8.8.8.8/mcp"}},
-		"connectors":  []map[string]any{sessionSlack("crm")},
-	})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, `MCP server "crm"`)
-}
-
 func (s *ConfigsSuite) TestABindingWithANullToolsListIsRefused() {
 	binding := sessionSlack("inbox")
 	binding["tools"] = nil
@@ -2003,27 +1719,6 @@ func (s *ConfigsSuite) TestABindingWithANullToolsListIsRefused() {
 		map[string]any{"name": "support", "connectors": []map[string]any{binding}})
 
 	s.Equal(http.StatusBadRequest, status)
-}
-
-func (s *ConfigsSuite) TestPatchingInAPluginABindingIsCalledIsRefused() {
-	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{sessionSlack("linear")}})
-
-	status, failure := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
-		map[string]any{"plugins": []string{"linear"}})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "plugin")
-	s.Nil(s.read(created.Id).Plugins)
-}
-
-func (s *ConfigsSuite) TestUpdatingInAPluginAKeptBindingIsCalledIsRefused() {
-	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{sessionSlack("linear")}})
-
-	status, failure := s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+created.Id,
-		map[string]any{"name": "support", "plugins": []string{"linear"}})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "plugin")
 }
 
 func (s *ConfigsSuite) TestMoreBindingsThanAConfigMayHoldAreRefused() {
@@ -2290,14 +1985,12 @@ func (s *ConfigsSuite) TestNessyBesideSeveralOutboundToolsNamesThemAll() {
 
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
 		"name": "athena", "sandbox": "daytona", "sandbox_options": map[string]any{"network": true},
-		"connectors":  []map[string]any{sessionGitHubGranting("code", "create_issue"), sessionNessy("customers")},
-		"mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}},
-		"plugins":     []map[string]any{{"name": "github"}},
+		"connectors": []map[string]any{sessionGitHubGranting("code", "create_issue"), sessionNessy("customers")},
 	})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, `connector binding "customers" binds "nessy"`)
-	s.Contains(failure, `and connector binding "code", MCP server "tablejourney", plugin "github", `+
+	s.Contains(failure, `and connector binding "code", `+
 		`the sandbox's network access can send data out with no person's approval`)
 }
 
@@ -2395,6 +2088,381 @@ func (s *ConfigsSuite) TestNessyBesideAWriteToolOfDriveDocsOrBigQueryNamesEachBi
 		`connector binding "bq_execute", connector binding "bq_cancel" can send data out with no person's approval`)
 }
 
+// Every tool gmail.yaml, google_calendar.yaml, linear.yaml and slack.yaml list in
+// read_only_tools only reads, so a binding granting only those sits beside nessy (AI-2756).
+func (s *ConfigsSuite) TestNessyBesideOnlyTheReadOnlyToolsOfGmailCalendarLinearAndSlackIsAccepted() {
+	s.useInternalApp()
+
+	created := s.createConfig(map[string]any{"name": "athena", "connectors": []map[string]any{
+		sessionNessy("customers"),
+		sessionGranting("gmail", "mail", "list_drafts", "get_draft", "get_thread", "get_message", "search_threads",
+			"list_labels"),
+		sessionGranting("google_calendar", "calendar", "list_events", "get_event", "list_calendars",
+			"suggest_time", "search_events"),
+		sessionGranting("linear", "tracker", "get_attachment", "list_agent_skills", "get_agent_skill",
+			"list_comments", "list_cycles", "list_custom_views", "get_document", "list_documents", "get_issue",
+			"list_issues", "list_issue_statuses", "get_issue_status", "list_issue_labels", "list_projects",
+			"get_project", "list_project_labels", "list_release_pipelines", "list_releases", "get_release",
+			"list_release_notes", "get_release_note", "list_milestones", "get_milestone", "get_notifications",
+			"list_teams", "get_team", "get_triage_responsibility", "list_templates", "get_template", "list_users",
+			"get_user", "get_workspace", "get_diff", "list_diffs", "get_diff_threads",
+			"whoami", "list_customers", "list_customer_needs", "list_initiatives", "get_initiative",
+			"list_initiative_labels", "get_status_updates"),
+		sessionGranting("slack", "chat", "slack_search_public", "slack_search_public_and_private",
+			"slack_search_channels", "slack_search_users", "slack_read_channel", "slack_read_thread",
+			"slack_read_canvas", "slack_read_user_profile", "slack_read_list", "slack_read_file",
+			"slack_list_channel_members", "slack_list_user_channels", "slack_search_emojis"),
+	}})
+
+	s.Len(value(created.Connectors), 5)
+}
+
+// A tool the four sources leave out of read_only_tools may send data out: one that writes, and
+// linear's extract_images, which fetches URLs from markdown the model passes. A binding granting one
+// is refused and named; a binding granting only listed tools is not, and the same write tool
+// held by require_approval is accepted.
+func (s *ConfigsSuite) TestNessyBesideAToolGmailCalendarLinearOrSlackLeaveOutNamesEachBindingGrantingOne() {
+	s.useInternalApp()
+	trash := sessionGranting("gmail", "mail_trash", "search_threads", "trash_thread")
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "athena", "connectors": []map[string]any{
+			sessionNessy("customers"),
+			sessionGranting("gmail", "mail_read", "search_threads", "get_thread"),
+			trash,
+			sessionGranting("gmail", "mail_draft", "create_draft"),
+			sessionGranting("google_calendar", "calendar_create", "list_events", "create_event"),
+			sessionGranting("google_calendar", "calendar_respond", "respond_to_event"),
+			sessionGranting("linear", "linear_save", "get_issue", "save_issue"),
+			sessionGranting("linear", "linear_images", "extract_images"),
+			sessionGranting("slack", "slack_send", "slack_read_channel", "slack_send_message"),
+			sessionGranting("slack", "slack_schedule", "slack_schedule_message"),
+		},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector binding "customers" binds "nessy", whose tools read private data, `+
+		`and connector binding "mail_trash", connector binding "mail_draft", connector binding "calendar_create", `+
+		`connector binding "calendar_respond", connector binding "linear_save", connector binding "linear_images", `+
+		`connector binding "slack_send", connector binding "slack_schedule" can send data out with no person's approval`)
+	trash["require_approval"] = []string{"trash_thread"}
+	created := s.createConfig(map[string]any{"name": "athena", "connectors": []map[string]any{sessionNessy("customers"), trash}})
+	s.Len(value(created.Connectors), 2)
+}
+
+// Gmail and Google Calendar have no golden, so this pins the tools their read_only_tools leave out
+// (AI-2756): a binding granting every other tool of each is refused, and the 400 names exactly these.
+// A tool added to either list drops out of the message and fails the test.
+func (s *ConfigsSuite) TestNessyBesideEveryToolGmailAndCalendarLeaveOutNamesExactlyThoseTools() {
+	s.useInternalApp()
+	gmail := []string{"create_draft", "label_thread", "unlabel_thread", "apply_sensitive_thread_label",
+		"trash_thread", "untrash_thread", "mark_thread_spam", "unmark_thread_spam", "label_message",
+		"update_message_labels", "unlabel_message", "apply_sensitive_message_label", "trash_message",
+		"untrash_message", "mark_message_spam", "unmark_message_spam", "create_label"}
+	calendar := []string{"create_event", "update_event", "delete_event", "respond_to_event"}
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "athena", "connectors": []map[string]any{
+			sessionNessy("customers"),
+			sessionGranting("gmail", "mail", gmail...),
+			sessionGranting("google_calendar", "calendar", calendar...),
+		},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `or add to each binding's require_approval its tools that do not only read: `+
+		`"mail" `+strings.Join(gmail, ", ")+`; "calendar" `+strings.Join(calendar, ", "))
+}
+
+// GET .../tools says which tools only read by the rule a config save checks beside nessy
+// (AI-2788): linear.yaml lists list_issues in read_only_tools and leaves out
+// search_documentation, which Athena took for a read on 2026-11-05, and save_issue. A binding
+// granting by name exactly the tools flagged read_only is accepted beside nessy; one granting a
+// tool flagged otherwise as well is refused, naming that tool.
+func (s *ConfigsSuite) TestABindingBesideNessyMayGrantExactlyTheToolsFlaggedReadOnly() {
+	s.useInternalApp()
+	id := s.connectionTo("linear", "")
+	s.listTools(id, "list_issues", "search_documentation", "save_issue")
+
+	readOnly := s.readOnlyTools(id)
+
+	s.Equal(map[string]bool{"list_issues": true, "search_documentation": false, "save_issue": false}, readOnly)
+	var reads, others []string
+	for name, only := range readOnly {
+		if only {
+			reads = append(reads, name)
+		} else {
+			others = append(others, name)
+		}
+	}
+	created := s.createConfig(map[string]any{"name": "athena", "connectors": []map[string]any{
+		sessionNessy("customers"), sessionGranting("linear", "tracker", reads...)}})
+	s.Len(value(created.Connectors), 2)
+	for _, other := range others {
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+			"name": "triage", "connectors": []map[string]any{
+				sessionNessy("customers"), sessionGranting("linear", "tracker", append(slices.Clone(reads), other)...)}})
+
+		s.Equal(http.StatusBadRequest, status, other)
+		s.Contains(failure, `"tracker" `+other)
+	}
+}
+
+// read_only is read from the connector's latest revision, as a config save beside nessy reads
+// it (SensitiveBindingsComplaint), not from the revision the connection pins: a connection
+// pinned to revision 1, which leaves search_documentation out of read_only_tools, flags it
+// read_only once revision 2 lists it, and a binding granting it sits beside nessy.
+func (s *ConfigsSuite) TestReadOnlyIsTheConnectorsLatestRevisionsAsAConfigSaveChecks() {
+	s.useInternalApp()
+	ctx := context.Background()
+	linear, err := s.store.LatestConnectorDefinition(ctx, s.customerID(), "linear")
+	s.Require().NoError(err)
+	manifest := linear.Manifest
+	manifest.ID = "custom_t" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	manifest.Sources = []core.SourceRule{{Kind: "mcp", Endpoint: "mcp", ReadOnlyTools: []string{"list_issues"}}}
+	_, err = s.store.CreateConnectorDefinition(ctx, s.customerID(), manifest)
+	s.Require().NoError(err)
+	id := s.connectionTo(manifest.ID, "")
+	manifest.Sources = []core.SourceRule{{Kind: "mcp", Endpoint: "mcp",
+		ReadOnlyTools: []string{"list_issues", "search_documentation"}}}
+	revised, err := s.store.CreateConnectorDefinition(ctx, s.customerID(), manifest)
+	s.Require().NoError(err)
+	connection, err := s.store.ConnectorConnection(ctx, s.customerID(), id)
+	s.Require().NoError(err)
+	s.Require().Equal([]int{1, 2}, []int{connection.DefinitionRevision, revised.Revision})
+	s.listTools(id, "list_issues", "search_documentation", "save_issue")
+
+	readOnly := s.readOnlyTools(id)
+
+	s.Equal(map[string]bool{"list_issues": true, "search_documentation": true, "save_issue": false}, readOnly)
+	created := s.createConfig(map[string]any{"name": "athena", "connectors": []map[string]any{
+		sessionNessy("customers"), sessionGranting(manifest.ID, "tracker", "list_issues", "search_documentation")}})
+	s.Len(value(created.Connectors), 2)
+}
+
+// A grant by name does not say which source of a connector a tool comes from, so a tool is
+// read_only only when every source lists it in read_only_tools or says outbound: false, and the
+// save beside nessy agrees. The first source lists search_documentation too, the second does not:
+// it is not read_only and a binding granting it is refused, while list_issues and get_issue are
+// listed by both and accepted. The third source says outbound: false and changes neither.
+func (s *ConfigsSuite) TestReadOnlyOfAConnectorWithSeveralSourcesNeedsEverySourceToSayIt() {
+	s.useInternalApp()
+	ctx := context.Background()
+	linear, err := s.store.LatestConnectorDefinition(ctx, s.customerID(), "linear")
+	s.Require().NoError(err)
+	manifest := linear.Manifest
+	manifest.ID = "custom_t" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	manifest.Sources = []core.SourceRule{
+		{Kind: "mcp", Endpoint: "mcp", ReadOnlyTools: []string{"list_issues", "get_issue", "search_documentation"}},
+		{Kind: "mcp", Endpoint: "mcp", ReadOnlyTools: []string{"list_issues", "get_issue"}},
+		{Kind: "mcp", Endpoint: "mcp", Outbound: new(false)}}
+	_, err = s.store.CreateConnectorDefinition(ctx, s.customerID(), manifest)
+	s.Require().NoError(err)
+	id := s.connectionTo(manifest.ID, "")
+	s.listTools(id, "list_issues", "get_issue", "search_documentation", "save_issue")
+
+	readOnly := s.readOnlyTools(id)
+
+	s.Equal(map[string]bool{"list_issues": true, "get_issue": true, "search_documentation": false, "save_issue": false}, readOnly)
+	created := s.createConfig(map[string]any{"name": "athena", "connectors": []map[string]any{
+		sessionNessy("customers"), sessionGranting(manifest.ID, "tracker", "list_issues", "get_issue")}})
+	s.Len(value(created.Connectors), 2)
+	for _, other := range []string{"search_documentation", "save_issue"} {
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+			"name": "triage", "connectors": []map[string]any{
+				sessionNessy("customers"), sessionGranting(manifest.ID, "tracker", "list_issues", other)}})
+
+		s.Equal(http.StatusBadRequest, status, other)
+		s.Contains(failure, `"tracker" `+other)
+	}
+}
+
+// A connection whose connector the app can no longer see (nessy, an internal connector, once the app
+// loses internal_connectors) still lists its tools, none of them read_only: a config save skips
+// a binding with no definition, so this read does not fail where it answered before (AI-2788).
+func (s *ConfigsSuite) TestAConnectionWhoseConnectorTheAppCanNoLongerSeeListsItsToolsAsNotReadOnly() {
+	s.useInternalApp()
+	id := s.connectionTo("nessy", "")
+	s.listTools(id, "org_lookup")
+	_, err := s.store.DB().NewUpdate().Model(&store.App{ID: s.customerID(), Settings: store.AppSettings{}}).
+		Column("settings").WherePK().Exec(context.Background())
+	s.Require().NoError(err)
+
+	readOnly := s.readOnlyTools(id)
+
+	s.Equal(map[string]bool{"org_lookup": false}, readOnly)
+}
+
+// listTools stores names as the tools a validate of the connection listed.
+func (s *ConfigsSuite) listTools(id string, names ...string) {
+	tools := make([]store.ConnectorTool, 0, len(names))
+	for _, name := range names {
+		tools = append(tools, store.ConnectorTool{Name: name, InputSchema: map[string]any{"type": "object"}})
+	}
+	s.Require().NoError(s.store.SetConnectorConnectionTools(context.Background(), s.customerID(), id, tools,
+		"digest", time.Now()))
+}
+
+// readOnlyTools is GET .../tools as each tool's name and read_only.
+func (s *ConfigsSuite) readOnlyTools(id string) map[string]bool {
+	var tools ConnectionTools
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections/"+id+"/tools", nil, &tools))
+	readOnly := make(map[string]bool, len(tools.Tools))
+	for _, tool := range tools.Tools {
+		readOnly[tool.Name] = tool.ReadOnly
+	}
+	return readOnly
+}
+
+// Every tool calcom.yaml, calendly.yaml, github.yaml, gong.yaml, hubspot.yaml, linear_app.yaml,
+// metabase.yaml, notion.yaml and sentry.yaml list in read_only_tools only reads, so a binding
+// granting only those sits beside nessy (AI-2777). linear_app grants a few of linear.yaml's,
+// which it lists too (TestToolsetSuite/TestLinearAppListsTheReadOnlyToolsLinearDoes).
+func (s *ConfigsSuite) TestNessyBesideOnlyTheReadOnlyToolsOfTheOtherMCPConnectorsIsAccepted() {
+	s.useInternalApp()
+
+	created := s.createConfig(map[string]any{"name": "athena", "connectors": []map[string]any{
+		sessionNessy("customers"),
+		sessionGranting("calcom", "scheduling", "get_app_link", "get_me", "get_event_types",
+			"get_event_type", "get_event_type_settings", "get_event_type_history",
+			"get_scheduling_config", "get_crm_sync_errors", "get_events", "get_event",
+			"get_bookings", "get_booking", "get_booking_attendees", "get_booking_attendee",
+			"get_booking_routing_trace", "get_org_team_bookings", "get_org_user_bookings",
+			"get_schedules", "get_schedule", "get_default_schedule", "get_availability",
+			"get_busy_times", "get_connected_calendars", "get_conferencing_apps", "get_my_teams",
+			"get_org_teams", "get_team_memberships", "get_team_membership", "get_org_memberships",
+			"get_org_membership", "get_org_attributes", "get_org_attribute",
+			"get_attribute_options", "get_user_attributes", "get_user_attribute_history",
+			"get_org_routing_forms", "get_org_routing_form_responses", "get_team_routing_forms",
+			"get_routing_form", "get_routing_form_history", "describe_api_operation"),
+		sessionGranting("calendly", "booking", "event_types-list_event_types",
+			"event_types-get_event_type", "event_types-list_event_type_available_times",
+			"event_types-list_event_type_availability_schedule",
+			"locations-list_user_meeting_locations", "meetings-list_events", "meetings-get_event",
+			"meetings-list_event_invitees", "meetings-get_event_invitee",
+			"meetings-get_invitee_no_show", "availability-list_user_availability_schedules",
+			"availability-get_user_availability_schedule", "availability-list_user_busy_times",
+			"routing_forms-list_routing_forms", "routing_forms-get_routing_form",
+			"routing_forms-list_routing_form_submissions",
+			"routing_forms-get_routing_form_submission", "users-get_current_user",
+			"users-get_user", "organizations-get_organization",
+			"organizations-list_organization_memberships",
+			"organizations-get_organization_membership",
+			"organizations-list_organization_invitations", "notetaker-list_recaps",
+			"notetaker-get_recap", "notetaker-get_recap_transcript", "list_calendly_skills"),
+		sessionGranting("github", "code", "get_me", "get_team_members", "get_teams", "ui_get",
+			"get_commit", "get_file_contents", "get_latest_release", "get_release_by_tag",
+			"get_tag", "list_branches", "list_commits", "list_releases",
+			"list_repository_collaborators", "list_tags", "search_code", "search_commits",
+			"search_repositories", "get_label", "issue_read", "list_issue_fields",
+			"list_issue_types", "list_issues", "search_issues", "list_pull_requests",
+			"pull_request_read", "search_pull_requests", "search_users", "actions_get",
+			"actions_list", "get_job_logs"),
+		sessionGranting("gong", "calls", "generate_brief"),
+		sessionGranting("hubspot", "crm", "get_user_details", "get_organization_details",
+			"discover_hubspot_schema", "search_crm_objects", "get_crm_objects",
+			"search_properties", "get_properties", "search_owners",
+			"get_campaign_attribution_reports", "read_campaign_data", "search_conversations",
+			"get_conversation_channel_metadata", "search_intent_signals",
+			"get_marketing_email_analytics", "get_content_analytics_report", "get_aeo_metrics",
+			"render_asset", "tool_guidance"),
+		sessionGranting("metabase", "analytics", "browse_collection", "browse_data",
+			"execute_query", "get_content", "get_parameter_values", "glossary", "learn",
+			"render_drill_through", "run_saved_question", "search", "visualize_query"),
+		sessionGranting("notion", "docs", "notion-download-attachment", "notion-download-skill",
+			"notion-fetch", "notion-get-async-task", "notion-get-comments",
+			"notion-get-enabled-skills", "notion-get-file-download-urls", "notion-get-groups",
+			"notion-get-self", "notion-get-session-status", "notion-get-suggested-edit",
+			"notion-get-teams", "notion-get-tool-access", "notion-get-users",
+			"notion-get-version-changes", "notion-list-favorite-pages",
+			"notion-list-page-backlinks", "notion-list-private-pages", "notion-list-recent-pages",
+			"notion-list-session-events", "notion-list-shared-pages", "notion-memory-search",
+			"notion-query-data-sources", "notion-query-meeting-notes",
+			"notion-query-multiple-data-sources", "notion-query-sessions",
+			"notion-read-session-event", "notion-search-agents",
+			"notion-search-sessions", "notion-view-version", "notion-wait-session"),
+		sessionGranting("sentry", "errors", "find_alert_rules", "find_dashboards",
+			"find_dropped_events", "find_dsns", "find_metric_monitors", "find_monitors",
+			"find_organizations", "find_projects", "find_releases", "find_teams",
+			"find_uptime_monitors", "get_agent_conversation_details",
+			"get_ai_conversation_details", "get_alert_options", "get_alert_rule",
+			"get_dashboard_details", "get_event_attachment", "get_event_stacktrace",
+			"get_issue_activity", "get_issue_breadcrumbs", "get_issue_details",
+			"get_issue_tag_values", "get_issue_user_reports", "get_latest_base_snapshot",
+			"get_metric_monitor_details", "get_monitor_details", "get_profile",
+			"get_profile_details", "get_release_details", "get_replay_details",
+			"get_sentry_mcp_info", "get_sentry_resource", "get_snapshot", "get_snapshot_image",
+			"get_span_details", "get_trace_details", "get_uptime_monitor_details",
+			"search_agent_conversations", "search_ai_conversations", "whoami"),
+		sessionGranting("linear_app", "tracker", "get_issue", "list_issues", "get_attachment"),
+	}})
+
+	s.Len(value(created.Connectors), 10)
+}
+
+// HubSpot, Notion and Sentry have no golden, so this pins every tool their vendors list that
+// their read_only_tools leave out (AI-2777): a binding granting all of them is refused, and the
+// 400 names exactly these. Cal.com, Calendly, GitHub and Gong have goldens; their bindings grant the
+// tools left out for a reason other than a write: a search of public docs or an API catalog, a
+// call of any operation, a routing form response, a booking link anyone may open, a workflow
+// run, a question the model sends to Gong's AI. A tool added to any list drops out of the message
+// and fails the test.
+func (s *ConfigsSuite) TestNessyBesideAToolTheOtherMCPConnectorsLeaveOutNamesExactlyThoseTools() {
+	s.useInternalApp()
+	calcom := []string{"search_docs", "find_api_operation", "call_api_operation",
+		"calculate_routing_form_slots"}
+	calendly := []string{"scheduling_links-create_single_use_scheduling_link", "shares-create_share"}
+	github := []string{"actions_run_trigger", "issue_write"}
+	hubspot := []string{"manage_aeo_prompts", "manage_aeo_recommendations", "manage_blog_post",
+		"manage_campaign_objects", "manage_crm_objects", "manage_custom_pipelines",
+		"manage_custom_properties", "manage_landing_page", "manage_marketing_email",
+		"manage_onboarding", "manage_segment", "manage_website_page", "query_crm_data",
+		"submit_feedback"}
+	gong := []string{"ask_account", "ask_deal"}
+	notion := []string{"notion-ai-search", "notion-calendar-cancel-events",
+		"notion-calendar-create-events", "notion-calendar-list-calendar-resources",
+		"notion-calendar-list-calendars", "notion-calendar-list-contacts",
+		"notion-calendar-list-coworkers-events", "notion-calendar-list-events",
+		"notion-calendar-update-events", "notion-connector-search", "notion-convert-page-to-skill",
+		"notion-create-attachment", "notion-create-comment", "notion-create-database",
+		"notion-create-file-upload", "notion-create-folder", "notion-create-pages",
+		"notion-create-suggested-edit", "notion-create-view", "notion-delete-comment",
+		"notion-delete-databases", "notion-delete-pages", "notion-duplicate-page",
+		"notion-move-pages", "notion-resolve-suggested-edit", "notion-restore-pages",
+		"notion-restore-version", "notion-search", "notion-send-message-to-session", "notion-set-comment-reaction",
+		"notion-set-discussion-resolved", "notion-spawn-session", "notion-stop-session",
+		"notion-update-comment", "notion-update-data-source", "notion-update-enabled-skills",
+		"notion-update-folder", "notion-update-page", "notion-update-view", "notion-upload-skill"}
+	sentry := []string{"add_issue_note", "add_team_to_project", "analyze_issue_with_seer",
+		"create_alert_rule", "create_dsn", "create_metric_monitor", "create_monitor",
+		"create_project", "create_team", "create_uptime_monitor", "delete_alert_rule",
+		"delete_metric_monitor", "delete_monitor_environment", "delete_uptime_monitor", "get_doc",
+		"link_issue", "onboarding_status_update", "remove_team_from_project", "search_docs",
+		"search_errors", "search_events", "search_issue_events", "search_issues", "search_logs",
+		"search_metrics", "search_profiles", "search_replays", "search_traces",
+		"submit_feedback_to_sentry_team", "unlink_issue", "update_alert_rule", "update_dsn",
+		"update_issue", "update_metric_monitor", "update_project", "update_uptime_monitor"}
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "athena", "connectors": []map[string]any{
+			sessionNessy("customers"),
+			sessionGranting("calcom", "scheduling", calcom...),
+			sessionGranting("calendly", "booking", calendly...),
+			sessionGranting("github", "code", github...),
+			sessionGranting("gong", "calls", gong...),
+			sessionGranting("hubspot", "crm", hubspot...),
+			sessionGranting("notion", "docs", notion...),
+			sessionGranting("sentry", "errors", sentry...),
+		},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `or add to each binding's require_approval its tools that do not only read: `+
+		`"scheduling" `+strings.Join(calcom, ", ")+`; "booking" `+strings.Join(calendly, ", ")+
+		`; "code" `+strings.Join(github, ", ")+`; "calls" `+strings.Join(gong, ", ")+`; "crm" `+strings.Join(hubspot, ", ")+
+		`; "docs" `+strings.Join(notion, ", ")+`; "errors" `+strings.Join(sentry, ", "))
+}
+
 // nessy.yaml's source says outbound: false, so nessy alone, or twice, is accepted.
 func (s *ConfigsSuite) TestNessyAloneIsAccepted() {
 	s.useInternalApp()
@@ -2403,34 +2471,6 @@ func (s *ConfigsSuite) TestNessyAloneIsAccepted() {
 		"connectors": []map[string]any{sessionNessy("customers"), sessionNessy("billing")}})
 
 	s.Len(value(created.Connectors), 2)
-}
-
-func (s *ConfigsSuite) TestNessyBesideAnMCPServerIsRefused() {
-	s.useInternalApp()
-
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name": "athena", "connectors": []map[string]any{sessionNessy("customers")},
-		"mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}},
-	})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, `and MCP server "tablejourney" can send data out`)
-}
-
-// A plugin's read-only endpoint offers no tool that writes (PluginEntry.Readonly), so only the
-// plugin reached at its full one is refused.
-func (s *ConfigsSuite) TestNessyBesideAPluginIsRefusedUnlessItIsReadOnly() {
-	s.useInternalApp()
-	s.createConfig(map[string]any{"name": "athena", "connectors": []map[string]any{sessionNessy("customers")},
-		"plugins": []map[string]any{{"name": "linear", "readonly": true}}})
-
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name": "builder", "connectors": []map[string]any{sessionNessy("customers")},
-		"plugins": []map[string]any{{"name": "linear", "readonly": true}, {"name": "github"}},
-	})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, `and plugin "github" can send data out`)
 }
 
 // A sandbox reaches no network unless its options open some (sandbox.Config.Isolated), and
@@ -2465,16 +2505,16 @@ func (s *ConfigsSuite) TestAnUpdateOrAPatchBringingNessyBesideAnOutboundToolIsRe
 		"connectors": []map[string]any{sessionNessy("customers")}})
 
 	updated, updateFailure := s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+created.Id,
-		map[string]any{"name": "athena", "mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}}})
+		map[string]any{"name": "athena", "sandbox": "daytona", "sandbox_options": map[string]any{"network": true}})
 	patched, patchFailure := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
 		map[string]any{"connectors": []map[string]any{sessionNessy("customers"), sessionGitHubGranting("code", "create_issue")}})
 
 	s.Equal(http.StatusBadRequest, updated)
-	s.Contains(updateFailure, `and MCP server "tablejourney" can send data out`)
+	s.Contains(updateFailure, `and the sandbox's network access can send data out`)
 	s.Equal(http.StatusBadRequest, patched)
 	s.Contains(patchFailure, `and connector binding "code" can send data out`)
 	s.Len(value(s.read(created.Id).Connectors), 1)
-	s.Nil(s.read(created.Id).McpServers)
+	s.Nil(s.read(created.Id).Sandbox)
 }
 
 // TestAConfigWithoutASensitiveConnectorKeepsItsOutboundTools is the control: the base,
@@ -2482,9 +2522,7 @@ func (s *ConfigsSuite) TestAnUpdateOrAPatchBringingNessyBesideAnOutboundToolIsRe
 func (s *ConfigsSuite) TestAConfigWithoutASensitiveConnectorKeepsItsOutboundTools() {
 	created := s.createConfig(map[string]any{
 		"name": "builder", "sandbox": "daytona", "sandbox_options": map[string]any{"network": true},
-		"connectors":  []map[string]any{sessionGitHubGranting("code", "create_issue")},
-		"mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}},
-		"plugins":     []map[string]any{{"name": "github"}},
+		"connectors": []map[string]any{sessionGitHubGranting("code", "create_issue")},
 	})
 
 	s.Len(value(created.Connectors), 1)
@@ -2502,6 +2540,37 @@ func (s *ConfigsSuite) TestAConfigWithoutASensitiveConnectorKeepsTheWriteToolsOf
 	}})
 
 	s.Len(value(created.Connectors), 3)
+}
+
+// TestAConfigWithoutASensitiveConnectorKeepsTheWriteToolsOfGmailCalendarLinearAndSlack is the
+// control: the base, 90167d722, answered 201 to the same request (checked by running this
+// test on that commit).
+func (s *ConfigsSuite) TestAConfigWithoutASensitiveConnectorKeepsTheWriteToolsOfGmailCalendarLinearAndSlack() {
+	created := s.createConfig(map[string]any{"name": "builder", "connectors": []map[string]any{
+		sessionGranting("gmail", "mail", "trash_thread", "create_draft"),
+		sessionGranting("google_calendar", "calendar", "create_event", "delete_event"),
+		sessionGranting("linear", "tracker", "save_issue", "extract_images"),
+		sessionGranting("slack", "chat", "slack_send_message", "slack_add_reaction"),
+	}})
+
+	s.Len(value(created.Connectors), 4)
+}
+
+// TestAConfigWithoutASensitiveConnectorKeepsTheWriteToolsOfTheOtherMCPConnectors is the control:
+// the base, f82b5987a, answered 201 to the same request (checked by running this test on that
+// commit).
+func (s *ConfigsSuite) TestAConfigWithoutASensitiveConnectorKeepsTheWriteToolsOfTheOtherMCPConnectors() {
+	created := s.createConfig(map[string]any{"name": "builder", "connectors": []map[string]any{
+		sessionGranting("calcom", "scheduling", "create_booking", "search_docs"),
+		sessionGranting("calendly", "booking", "shares-create_share"),
+		sessionGranting("github", "code", "issue_write"),
+		sessionGranting("hubspot", "crm", "manage_crm_objects", "query_crm_data"),
+		sessionGranting("linear_app", "tracker", "save_issue"),
+		sessionGranting("notion", "docs", "notion-update-page", "notion-connector-search"),
+		sessionGranting("sentry", "errors", "update_issue", "search_issues"),
+	}})
+
+	s.Len(value(created.Connectors), 7)
 }
 
 // TestAnUpdateKeepingABindingToAForceDeletedConnectorIsAccepted: a forced connector delete

@@ -171,6 +171,57 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class AddContactsRequest
+    {
+
+        /// <summary>
+        /// Up to 1,000.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("contacts")]
+        public System.Collections.Generic.List<ContactInput> Contacts { get; set; } = new System.Collections.Generic.List<ContactInput>();
+
+        /// <summary>
+        /// The region, as ISO 3166-1 alpha-2, a number without a country code is read in. Omitted is the campaign's default_country, else US.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("default_country")]
+        public string? DefaultCountry { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class AddContactsResponse
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("added")]
+        public int Added { get; set; } = default!;
+
+        /// <summary>
+        /// In the order sent.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("refused")]
+        public System.Collections.Generic.List<RefusedContact> Refused { get; set; } = new System.Collections.Generic.List<RefusedContact>();
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class AddTrunkNumberRequest
     {
 
@@ -328,10 +379,16 @@ namespace GetStream.VisionAgents.Models
         public AgentDispatch? Dispatch { get; set; } = default!;
 
         /// <summary>
-        /// Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each session on a thread channel or a phone call starts with the person's other cards.
+        /// What this agent does with episode cards. record and on write a card into the person's omni-channel for each phone call, app chat conversation and SMS, WhatsApp, iMessage or Slack thread under this agent. Only on has each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in start with the person's other cards. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("episode_cards")]
-        public bool? EpisodeCards { get; set; } = default!;
+        public string? EpisodeCards { get; set; } = default!;
+
+        /// <summary>
+        /// The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. Absent for the default flow controller.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("floor_control")]
+        public FloorControl? FloorControl { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("greeting")]
         public Greeting? Greeting { get; set; } = default!;
@@ -369,28 +426,11 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("llm_fallbacks")]
         public System.Collections.Generic.List<string>? LlmFallbacks { get; set; } = default!;
 
-        [System.Text.Json.Serialization.JsonPropertyName("mcp_servers")]
-        public System.Collections.Generic.List<McpServer>? McpServers { get; set; } = default!;
-
         [System.Text.Json.Serialization.JsonPropertyName("mode")]
         public string Mode { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("name")]
         public string Name { get; set; } = default!;
-
-        /// <summary>
-        /// Deprecated: use the events of a fixed binding under connectors.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("plugin_events")]
-        [System.Obsolete]
-        public System.Collections.Generic.List<PluginEvent>? PluginEvents { get; set; } = default!;
-
-        /// <summary>
-        /// Deprecated: use connectors, a binding to a connector.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("plugins")]
-        [System.Obsolete]
-        public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
 
         /// <summary>
         /// Where the agent's work is done: every model its sessions run, its knowledge base and its sandbox are in it. us unless the agent's agent.yaml or config names another.
@@ -501,7 +541,13 @@ namespace GetStream.VisionAgents.Models
         public AgentDispatch? Dispatch { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("episode_cards")]
-        public bool? EpisodeCards { get; set; } = default!;
+        public string? EpisodeCards { get; set; } = default!;
+
+        /// <summary>
+        /// Replaces the choice whole. Left out or null, the stored choice stays; an empty object is the default flow controller again.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("floor_control")]
+        public FloorControl? FloorControl { get; set; } = default!;
 
         /// <summary>
         /// Replaces the greeting whole. An empty text removes it.
@@ -536,8 +582,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("llm_fallbacks")]
         public System.Collections.Generic.List<string>? LlmFallbacks { get; set; } = default!;
 
+        /// <summary>
+        /// No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("mcp_servers")]
-        public System.Collections.Generic.List<McpServer>? McpServers { get; set; } = default!;
+        [System.Obsolete]
+        public System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object>>? McpServers { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("mode")]
         public string? Mode { get; set; } = default!;
@@ -549,14 +599,14 @@ namespace GetStream.VisionAgents.Models
         public string? Name { get; set; } = default!;
 
         /// <summary>
-        /// Deprecated: use the events of a fixed binding under connectors.
+        /// No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugin_events")]
         [System.Obsolete]
-        public System.Collections.Generic.List<PluginEvent>? PluginEvents { get; set; } = default!;
+        public System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object>>? PluginEvents { get; set; } = default!;
 
         /// <summary>
-        /// Deprecated: use connectors, a binding to a connector.
+        /// No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugins")]
         [System.Obsolete]
@@ -647,7 +697,7 @@ namespace GetStream.VisionAgents.Models
         public AgentChannels? Channels { get; set; } = default!;
 
         /// <summary>
-        /// The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
+        /// The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("connectors")]
         public System.Collections.Generic.List<AgentConnectorBinding>? Connectors { get; set; } = default!;
@@ -656,10 +706,16 @@ namespace GetStream.VisionAgents.Models
         public AgentDispatch? Dispatch { get; set; } = default!;
 
         /// <summary>
-        /// Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. On, a session on a thread channel or a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
+        /// What this agent does with episode cards, for each phone call under it, each run of messages a Stream user writes to it in an agent channel of the app chat, and each thread of its SMS, WhatsApp, iMessage and Slack channel connections. record and on write the conversation's card, and its summary once it ends, into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number, the app chat's Stream user id or the Slack user. Only on reads them: a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any. off by default, and then a conversation writes no card and a session runs as it always did. Left out on an update, the stored setting stays.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("episode_cards")]
-        public bool? EpisodeCards { get; set; } = default!;
+        public string? EpisodeCards { get; set; } = default!;
+
+        /// <summary>
+        /// The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. A session request's wins over this. Left out or null on a create, the default flow controller; left out or null on an update, the stored choice stays; an empty object is the default flow controller again.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("floor_control")]
+        public FloorControl? FloorControl { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("greeting")]
         public Greeting? Greeting { get; set; } = default!;
@@ -701,10 +757,11 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.List<string>? LlmFallbacks { get; set; } = default!;
 
         /// <summary>
-        /// MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as &lt;name&gt;__&lt;tool&gt;.
+        /// No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("mcp_servers")]
-        public System.Collections.Generic.List<McpServer>? McpServers { get; set; } = default!;
+        [System.Obsolete]
+        public System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object>>? McpServers { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("mode")]
         public string? Mode { get; set; } = default!;
@@ -716,14 +773,14 @@ namespace GetStream.VisionAgents.Models
         public string Name { get; set; } = default!;
 
         /// <summary>
-        /// Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
+        /// No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugin_events")]
         [System.Obsolete]
-        public System.Collections.Generic.List<PluginEvent>? PluginEvents { get; set; } = default!;
+        public System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object>>? PluginEvents { get; set; } = default!;
 
         /// <summary>
-        /// Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
+        /// No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugins")]
         [System.Obsolete]
@@ -793,13 +850,13 @@ namespace GetStream.VisionAgents.Models
         public string? Subagent { get; set; } = default!;
 
         /// <summary>
-        /// Cost labels, carried onto every request a session using it makes. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds.
+        /// Cost labels, carried onto every request a session using it makes. The team tag is also the team those sessions are counted under, its spend limits included, when whoever opens one names none: neither the caller's token nor the session's team field. It is 1 to 59 letters, digits, _ . and -, and a config naming another team tag is refused. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tags")]
         public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
 
         /// <summary>
-        /// How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored settings stay.
+        /// How the agent is offered its connector tools. Left out on an update, the stored settings stay.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tools")]
         public AgentTools? Tools { get; set; } = default!;
@@ -1340,6 +1397,81 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class AgentUser
+    {
+
+        /// <summary>
+        /// true when the user reads all of what the number ever said. Left out otherwise.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("include_phone_history")]
+        public bool? IncludePhoneHistory { get; set; } = default!;
+
+        /// <summary>
+        /// The number linked to the user, in E.164; null when none is.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("phone")]
+        public string? Phone { get; set; } = default!;
+
+        /// <summary>
+        /// From when on the user reads what the number said: the link's time, the time of a request with include_phone_history false, or the phone_history_since sent. Left out with include_phone_history true, or with no number.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("phone_history_since")]
+        public System.DateTimeOffset? PhoneHistorySince { get; set; } = default!;
+
+        /// <summary>
+        /// The Stream user id, as the app's own token signs it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("user_id")]
+        public string UserId { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// Who one of the app's users is, as the app's backend knows it. phone is required: a number, or null for none.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class AgentUserRequest
+    {
+
+        /// <summary>
+        /// How much of what the number said before this request the user reads. true: all of it, ever. false: none of it, from this request on. Left out with phone_history_since left out too: from the link on for a number new to the user, and what was stored for the number the user has. true with phone_history_since is refused (400); false with it, phone_history_since applies.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("include_phone_history")]
+        public bool? IncludePhoneHistory { get; set; } = default!;
+
+        /// <summary>
+        /// The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. What the number said before the link is not the user's, unless include_phone_history or phone_history_since says otherwise: the user reads none of its earlier cards, whether the agent had episode_cards on at the link or turns them on later, and a session on the number's SMS, WhatsApp or iMessage thread is handed none of the thread's earlier messages. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("phone")]
+        public string? Phone { get; set; } = default!;
+
+        /// <summary>
+        /// The user reads what the number said from this time on, in RFC 3339, such as 2026-11-02T00:00:00Z: a conversation that started before it is left out whole. A time in the future is refused (400).
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("phone_history_since")]
+        public System.DateTimeOffset? PhoneHistorySince { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class AnalyzeReviewsRequest
     {
 
@@ -1765,27 +1897,6 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("return_url")]
         public string? ReturnUrl { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class AuthorizePluginRequest
-    {
-
-        /// <summary>
-        /// The shop hostname. Required for plugins that have no single global URL.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("instance_url")]
-        public string? InstanceUrl { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -2528,47 +2639,353 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class CallingHours
+    {
+
+        /// <summary>
+        /// YYYY-MM-DD, the contact's local date, on which nobody is rung.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("excluded_dates")]
+        public System.Collections.Generic.List<string> ExcludedDates { get; set; } = new System.Collections.Generic.List<string>();
+
+        [System.Text.Json.Serialization.JsonPropertyName("time_zone")]
+        public CampaignTimeZone TimeZone { get; set; } = new CampaignTimeZone();
+
+        /// <summary>
+        /// Keyed monday to sunday. A day left out rings nobody.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("windows")]
+        public System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<CallingWindow>?> Windows { get; set; } = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<CallingWindow>?>();
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class CallingWindow
+    {
+
+        /// <summary>
+        /// HH:MM, up to 24:00. A window does not cross midnight.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("end")]
+        public string End { get; set; } = default!;
+
+        /// <summary>
+        /// HH:MM, on a 15-minute step.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("start")]
+        public string Start { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class Campaign
     {
 
+        [System.Text.Json.Serialization.JsonPropertyName("calling_hours")]
+        public CallingHours CallingHours { get; set; } = new CallingHours();
+
+        /// <summary>
+        /// When it had nobody left to ring.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("completed_at")]
+        public System.DateTimeOffset? CompletedAt { get; set; } = default!;
+
+        /// <summary>
+        /// How many of these calls may be happening at once.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("concurrency")]
         public int Concurrency { get; set; } = default!;
 
+        /// <summary>
+        /// The agent config the calls are made with, the same as the sequence's step names.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("config_id")]
         public string ConfigId { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("contacts")]
+        public ContactCounts Contacts { get; set; } = new ContactCounts();
 
         [System.Text.Json.Serialization.JsonPropertyName("created_at")]
         public System.DateTimeOffset CreatedAt { get; set; } = default!;
 
-        [System.Text.Json.Serialization.JsonPropertyName("finished_at")]
-        public System.DateTimeOffset? FinishedAt { get; set; } = default!;
+        /// <summary>
+        /// The region, as ISO 3166-1 alpha-2, a contact's number without a country code is read in.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("default_country")]
+        public string DefaultCountry { get; set; } = default!;
 
+        /// <summary>
+        /// One of the app's own numbers, which is what the person sees.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("from_number")]
         public string FromNumber { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("id")]
         public string Id { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("launched_at")]
+        public System.DateTimeOffset? LaunchedAt { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("name")]
         public string Name { get; set; } = default!;
 
         /// <summary>
-        /// Why the router paused the campaign itself, as the code of what refused its next call: telephony_suspended, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached. The contact that call was for is rung once the campaign is started again. Absent for a campaign the customer paused, and cleared by starting it.
+        /// Why the router paused the campaign itself: the code of what refused its next call, for example telephony_suspended, account_suspended, insufficient_credits, system_limit_reached, spend_limit_reached, user_limit_reached or spend_check_unavailable, config_missing when its agent config was deleted, session_refused when its agent config makes a session that cannot open, or voicemail_needs_exact_words when its step leaves a voicemail message and its agent config became speech-to-speech. The contact that call was for is rung once the campaign is resumed. Absent for a campaign somebody paused, and cleared by resuming it.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("paused_reason")]
         public string? PausedReason { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("sequence")]
+        public CampaignSequence Sequence { get; set; } = new CampaignSequence();
+
+        /// <summary>
+        /// When it was launched to start ringing.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("start_at")]
+        public System.DateTimeOffset? StartAt { get; set; } = default!;
+
+        /// <summary>
+        /// When it first rang anybody.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("started_at")]
         public System.DateTimeOffset? StartedAt { get; set; } = default!;
 
-        /// <summary>
-        /// One of `draft`, `running`, `paused`, `finished`.
-        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("state")]
         public string State { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("stopped_at")]
+        public System.DateTimeOffset? StoppedAt { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("tags")]
-        public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
+        public System.Collections.Generic.Dictionary<string, string> Tags { get; set; } = new System.Collections.Generic.Dictionary<string, string>();
+
+        [System.Text.Json.Serialization.JsonPropertyName("type")]
+        public string Type { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class CampaignAnalytics
+    {
+
+        /// <summary>
+        /// Calls placed that ended, by how the phone says they ended: completed, busy, no_answer, failed, canceled or unknown. A call an answering machine took is completed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("call_outcomes")]
+        public System.Collections.Generic.Dictionary<string, long> CallOutcomes { get; set; } = new System.Collections.Generic.Dictionary<string, long>();
+
+        /// <summary>
+        /// Contacts who answered at least one call.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("connected")]
+        public long Connected { get; set; } = default!;
+
+        /// <summary>
+        /// converted / dialed, 0 when nobody was dialed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("conversion_rate")]
+        public double ConversionRate { get; set; } = default!;
+
+        /// <summary>
+        /// Contacts that ended successfully.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("converted")]
+        public long Converted { get; set; } = default!;
+
+        /// <summary>
+        /// Contacts with at least one call placed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("dialed")]
+        public long Dialed { get; set; } = default!;
+
+        /// <summary>
+        /// Oldest first, only the days with a dial.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("dials_per_day")]
+        public System.Collections.Generic.List<CampaignDialDay> DialsPerDay { get; set; } = new System.Collections.Generic.List<CampaignDialDay>();
+
+        /// <summary>
+        /// Contacts that are done, by outcome id, no_response included.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("outcomes")]
+        public System.Collections.Generic.Dictionary<string, long> Outcomes { get; set; } = new System.Collections.Generic.Dictionary<string, long>();
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class CampaignAttempt
+    {
+
+        /// <summary>
+        /// Minutes after the previous attempt started, pushed into the calling hours.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("delay_minutes")]
+        public long DelayMinutes { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class CampaignDialDay
+    {
+
+        /// <summary>
+        /// Calls a person picked up and spoke on.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("answered")]
+        public long Answered { get; set; } = default!;
+
+        /// <summary>
+        /// YYYY-MM-DD, in UTC.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("date")]
+        [System.Text.Json.Serialization.JsonConverter(typeof(DateFormatConverter))]
+        public System.DateTimeOffset Date { get; set; } = default!;
+
+        /// <summary>
+        /// Calls placed, answering machines included.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("dials")]
+        public long Dials { get; set; } = default!;
+
+        /// <summary>
+        /// Calls an answering machine took.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("voicemail")]
+        public long Voicemail { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class CampaignNext
+    {
+
+        /// <summary>
+        /// How the contact ends: successful counts as converted.
+        /// <br/>
+        /// <br/>One of `successful`, `unsuccessful`.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("end")]
+        public string? End { get; set; } = default!;
+
+        /// <summary>
+        /// Reserved for branching to another step, which is refused for now.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("step")]
+        public string? Step { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class CampaignOutcome
+    {
+
+        /// <summary>
+        /// What the call has to have been for this outcome, which the model reading the transcript goes by.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("description")]
+        public string Description { get; set; } = default!;
+
+        /// <summary>
+        /// Lowercase letters, digits and underscores, starting with a letter.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("id")]
+        public string Id { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("name")]
+        public string Name { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("next")]
+        public CampaignNext Next { get; set; } = new CampaignNext();
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class CampaignPage
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("has_more")]
+        public bool HasMore { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("items")]
+        public System.Collections.Generic.List<Campaign> Items { get; set; } = new System.Collections.Generic.List<Campaign>();
+
+        /// <summary>
+        /// Pass as cursor for the next page. Absent on the last.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("next_cursor")]
+        public string? NextCursor { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -2586,28 +3003,222 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// How many of these calls may be happening at once.
+        /// Omitted is weekdays 09:00 to 18:00 where the contact is, on create.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("calling_hours")]
+        public CallingHours? CallingHours { get; set; } = default!;
+
+        /// <summary>
+        /// How many of these calls may be happening at once. Omitted is 1 on create.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("concurrency")]
         public int? Concurrency { get; set; } = default!;
 
         /// <summary>
-        /// The agent config the calls are made with.
+        /// The agent config the calls are made with. Setting it sets the sequence's step's too.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("config_id")]
+        public string? ConfigId { get; set; } = default!;
+
+        /// <summary>
+        /// The region, as ISO 3166-1 alpha-2, a contact's number without a country code is read in.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("default_country")]
+        public string? DefaultCountry { get; set; } = default!;
+
+        /// <summary>
+        /// One of the app's own numbers, which is what the person sees.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("from_number")]
+        public string? FromNumber { get; set; } = default!;
+
+        /// <summary>
+        /// Required on create.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("name")]
+        public string? Name { get; set; } = default!;
+
+        /// <summary>
+        /// Omitted is four attempts over twenty days, with double dial, on create. Its step's config_id is the campaign's: sending both, they must agree.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("sequence")]
+        public CampaignSequence? Sequence { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("tags")]
+        public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
+
+        /// <summary>
+        /// Omitted is standard on create. It never changes.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("type")]
+        public string? Type { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class CampaignRoute
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("next")]
+        public CampaignNext Next { get; set; } = new CampaignNext();
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class CampaignSequence
+    {
+
+        /// <summary>
+        /// Ring again at once when the first call of an attempt is not answered.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("double_dial")]
+        public bool DoubleDial { get; set; } = default!;
+
+        /// <summary>
+        /// Exactly one step for now.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("steps")]
+        public System.Collections.Generic.List<CampaignStep> Steps { get; set; } = new System.Collections.Generic.List<CampaignStep>();
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class CampaignStep
+    {
+
+        /// <summary>
+        /// 1 to 10. The first has a delay of 0.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("attempts")]
+        public System.Collections.Generic.List<CampaignAttempt> Attempts { get; set; } = new System.Collections.Generic.List<CampaignAttempt>();
+
+        /// <summary>
+        /// The agent config the step rings with, the same as the campaign's config_id.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("config_id")]
         public string ConfigId { get; set; } = default!;
 
         /// <summary>
-        /// One of your own numbers, which is what the person sees.
+        /// What this conversation is for, told to the agent on every call of the step. {{variable}} placeholders are filled from the contact. Required to launch.
         /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("from_number")]
-        public string FromNumber { get; set; } = default!;
+        [System.Text.Json.Serialization.JsonPropertyName("goal")]
+        public string? Goal { get; set; } = default!;
 
-        [System.Text.Json.Serialization.JsonPropertyName("name")]
-        public string Name { get; set; } = default!;
+        /// <summary>
+        /// step_1, for now.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("id")]
+        public string Id { get; set; } = default!;
 
-        [System.Text.Json.Serialization.JsonPropertyName("tags")]
-        public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
+        /// <summary>
+        /// Where running out of attempts leads. It ends unsuccessfully.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("no_response")]
+        public CampaignRoute NoResponse { get; set; } = new CampaignRoute();
+
+        /// <summary>
+        /// Where an answered call none of the outcomes fit leads.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("other")]
+        public CampaignRoute Other { get; set; } = new CampaignRoute();
+
+        /// <summary>
+        /// What an answered call can end as. do_not_call is built in.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("outcomes")]
+        public System.Collections.Generic.List<CampaignOutcome> Outcomes { get; set; } = new System.Collections.Generic.List<CampaignOutcome>();
+
+        /// <summary>
+        /// What the agent does when an answering machine picks up. Absent is off: the agent talks to a machine as to a person. Leaving a message needs an agent that is not speech-to-speech.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("voicemail")]
+        public CampaignVoicemail? Voicemail { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class CampaignTimeZone
+    {
+
+        /// <summary>
+        /// An IANA zone, used by contact mode.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("fallback")]
+        public string Fallback { get; set; } = default!;
+
+        /// <summary>
+        /// An IANA zone, used by fixed mode.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("fixed")]
+        public string? Fixed { get; set; } = default!;
+
+        /// <summary>
+        /// contact reads the hours where each contact is: their time_zone, else their number's, else fallback. fixed reads them in fixed.
+        /// <br/>
+        /// <br/>One of `contact`, `fixed`.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("mode")]
+        public string Mode { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class CampaignVoicemail
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("action")]
+        public string Action { get; set; } = default!;
+
+        /// <summary>
+        /// {{variable}} placeholders are filled from the contact, then it is said word for word once the greeting has ended, and the call ends. Required to launch for leave_message, and not only spaces.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("message")]
+        public string? Message { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -3669,6 +4280,12 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.List<string>? NeedsScopes { get; set; } = default!;
 
         /// <summary>
+        /// Whether the tool only reads, as the connector's latest revision says: every source of the connector lists it in read_only_tools or says outbound: false (a grant by name does not say which source a tool comes from). False too when the connector is gone. A binding may grant such a tool by name beside a sensitive connector without require_approval; any other tool there needs require_approval.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("read_only")]
+        public bool ReadOnly { get; set; } = default!;
+
+        /// <summary>
         /// The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("schema_digest")]
@@ -4068,7 +4685,7 @@ namespace GetStream.VisionAgents.Models
         public string OwnerType { get; set; } = default!;
 
         /// <summary>
-        /// Why: consent, credentials or plugin_migrate for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.
+        /// Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("reason")]
         public string? Reason { get; set; } = default!;
@@ -4678,44 +5295,86 @@ namespace GetStream.VisionAgents.Models
     public partial class Contact
     {
 
+        /// <summary>
+        /// Every dial made to them, oldest first. Only on a contact read alone.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("attempts")]
-        public int Attempts { get; set; } = default!;
+        public System.Collections.Generic.List<ContactAttempt>? Attempts { get; set; } = default!;
 
         /// <summary>
-        /// The call this contact became, which is what the call paths take.
+        /// Attempts that placed at least one call.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("attempts_made")]
+        public int AttemptsMade { get; set; } = default!;
+
+        /// <summary>
+        /// The attempts the sequence makes at most.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("attempts_total")]
+        public int AttemptsTotal { get; set; } = default!;
+
+        /// <summary>
+        /// The last call placed to them, which is what the call paths take.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("call_id")]
         public string? CallId { get; set; } = default!;
 
         /// <summary>
-        /// Why they could not be rung, when they could not be.
+        /// They ended successfully.
         /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("error")]
-        public string? Error { get; set; } = default!;
+        [System.Text.Json.Serialization.JsonPropertyName("converted")]
+        public bool Converted { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("created_at")]
+        public System.DateTimeOffset CreatedAt { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("id")]
         public string Id { get; set; } = default!;
 
-        [System.Text.Json.Serialization.JsonPropertyName("instructions")]
-        public string? Instructions { get; set; } = default!;
+        /// <summary>
+        /// When they are next rung, while they are waiting to be.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("next_attempt_at")]
+        public System.DateTimeOffset? NextAttemptAt { get; set; } = default!;
 
         /// <summary>
-        /// How the call to them ended, once it has. The state still says only whether they were rung.
+        /// The id of the outcome they ended with, once they have.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("outcome")]
         public string? Outcome { get; set; } = default!;
 
         /// <summary>
-        /// One of `pending`, `calling`, `done`, `failed`.
+        /// Why they were rejected, failed or stopped.
         /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("state")]
-        public string State { get; set; } = default!;
+        [System.Text.Json.Serialization.JsonPropertyName("reason")]
+        public string? Reason { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("stage")]
+        public string Stage { get; set; } = default!;
+
+        /// <summary>
+        /// The IANA zone they were added with.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("time_zone")]
+        public string? TimeZone { get; set; } = default!;
+
+        /// <summary>
+        /// E.164.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("to_number")]
         public string ToNumber { get; set; } = default!;
 
-        [System.Text.Json.Serialization.JsonPropertyName("vendor_call_id")]
-        public string? VendorCallId { get; set; } = default!;
+        /// <summary>
+        /// Filled into the agent's {{placeholders}} on their calls.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("variables")]
+        public System.Collections.Generic.Dictionary<string, string> Variables { get; set; } = new System.Collections.Generic.Dictionary<string, string>();
+
+        /// <summary>
+        /// The IANA zone the calling hours are read in for them: the campaign's fixed zone, else their time_zone, else their number's, else the campaign's fallback.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("zone")]
+        public string Zone { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -4729,11 +5388,161 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class ContactsRequest
+    public partial class ContactAttempt
     {
 
-        [System.Text.Json.Serialization.JsonPropertyName("contacts")]
-        public System.Collections.Generic.List<Contacts> Contacts { get; set; } = new System.Collections.Generic.List<Contacts>();
+        /// <summary>
+        /// Which attempt of the sequence, from 1.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("attempt")]
+        public int Attempt { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("call_id")]
+        public string? CallId { get; set; } = default!;
+
+        /// <summary>
+        /// How the call the dial placed ended, as the phone says. Absent while it is happening and for a dial that placed none.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("call_outcome")]
+        public string? CallOutcome { get; set; } = default!;
+
+        /// <summary>
+        /// 1, or 2 for the second call of a double dial.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("dial")]
+        public int Dial { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("ended_at")]
+        public System.DateTimeOffset? EndedAt { get; set; } = default!;
+
+        /// <summary>
+        /// The outcome an answered call was read as: no_response when nobody but the agent spoke.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("outcome")]
+        public string? Outcome { get; set; } = default!;
+
+        /// <summary>
+        /// Why the dial placed no call: invalid_number, refused, deferred, paused or not_placed (the router stopped before the call went out). voicemail for a call an answering machine took. Empty for any other call, whose end call_outcome says.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("result")]
+        public string Result { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("started_at")]
+        public System.DateTimeOffset StartedAt { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ContactCounts
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("completed")]
+        public long Completed { get; set; } = default!;
+
+        /// <summary>
+        /// Contacts that ended successfully.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("converted")]
+        public long Converted { get; set; } = default!;
+
+        /// <summary>
+        /// Contacts with at least one call placed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("dialed")]
+        public long Dialed { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("enrolled")]
+        public long Enrolled { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("failed")]
+        public long Failed { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("in_progress")]
+        public long InProgress { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("rejected")]
+        public long Rejected { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("stopped")]
+        public long Stopped { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("total")]
+        public long Total { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ContactInput
+    {
+
+        /// <summary>
+        /// What to say to this person, added to whatever the config already says. Up to 2,000 characters; longer fails the whole request with 400.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("instructions")]
+        public string? Instructions { get; set; } = default!;
+
+        /// <summary>
+        /// An IANA zone, which a campaign reading its hours where each contact is goes by before the number's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("time_zone")]
+        public string? TimeZone { get; set; } = default!;
+
+        /// <summary>
+        /// With or without a country code.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("to_number")]
+        public string ToNumber { get; set; } = default!;
+
+        /// <summary>
+        /// Filled into the agent's {{placeholders}}. Names are lowercase letters, digits and underscores, starting with a letter; up to 50, each value up to 1,000 characters on one line.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("variables")]
+        public System.Collections.Generic.Dictionary<string, string>? Variables { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ContactPage
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("has_more")]
+        public bool HasMore { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("items")]
+        public System.Collections.Generic.List<Contact> Items { get; set; } = new System.Collections.Generic.List<Contact>();
+
+        /// <summary>
+        /// Pass as cursor for the next page. Absent on the last.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("next_cursor")]
+        public string? NextCursor { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -4837,7 +5646,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+        /// A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("audio")]
         public AudioSource? Audio { get; set; } = default!;
@@ -4858,7 +5667,7 @@ namespace GetStream.VisionAgents.Models
         public string? ReasoningEffort { get; set; } = default!;
 
         /// <summary>
-        /// Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and videos are refused. A retry with the same id, text, images and voice note starts no second turn and returns no id. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.
+        /// Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and the frames of videos are shown to the model alone. A retry with the same id, text, images and voice note starts no second turn, returns no id and does not fetch its videos again: videos are not part of what a retry is matched on. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("request_id")]
         public string? RequestId { get; set; } = default!;
@@ -4868,6 +5677,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("text")]
         public string Text { get; set; } = default!;
+
+        /// <summary>
+        /// What the person did in the generated UI of an earlier reply, such as tapping a place or submitting a form, which the text says in their words: an object naming the reply (message_id), the UI's format and the action (name), with what it carries (payload), of at most 8 KB as JSON. Their message carries it as custom.ai_ui_action, and the model is told it after the text.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("ui_action")]
+        public System.Collections.Generic.Dictionary<string, object>? UiAction { get; set; } = default!;
 
         /// <summary>
         /// Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
@@ -5071,6 +5886,12 @@ namespace GetStream.VisionAgents.Models
         public string? Description { get; set; } = default!;
 
         /// <summary>
+        /// The model that controls the floor in this session, and how long a caller may wait once they stop, over the agent config's. Left out or null, the config's; an empty object is the default flow controller. The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("floor_control")]
+        public FloorControl? FloorControl { get; set; } = default!;
+
+        /// <summary>
         /// What the agent opens the call with, over what the config says.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("greeting")]
@@ -5195,6 +6016,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tags")]
         public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
+
+        /// <summary>
+        /// The team the session's work is counted under, its team spend limits included, as team:&lt;name&gt; is among a token's usage categories: 1 to 59 letters, digits, _ . and -. Left out, the session is counted under the team the caller's token names, else the agent config's team tag. A token naming another team is refused with a 400: the team a token was signed for is not moved. Server-side only: a device sending it is refused with a 403, since its team is the one its token was signed for.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("team")]
+        public string? Team { get; set; } = default!;
 
         /// <summary>
         /// The end user's IANA timezone, such as Europe/Amsterdam, which a device knows and the router does not. It sets the zone the agent reads dates in for this session and, for a user the caller may name, is remembered as theirs for the scheduled tasks and sessions that follow. An unknown zone is refused with a 400 invalid_timezone.
@@ -5938,6 +6765,29 @@ namespace GetStream.VisionAgents.Models
 
     }
 
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class DuplicateCampaignRequest
+    {
+
+        /// <summary>
+        /// none, all, or the contacts never rung, which a stopped or completed campaign alone knows.
+        /// <br/>
+        /// <br/>One of `none`, `all`, `not_contacted`.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("contacts")]
+        public string Contacts { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
     /// <summary>
     /// The quota a user is held to: each number is the first set of the user's own, the app's, the organization's and the router's default. Both are 0 on a router that counts nothing.
     /// </summary>
@@ -6021,7 +6871,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), and &lt;resource&gt;_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+        /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), and &lt;resource&gt;_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("code")]
         public string Code { get; set; } = default!;
@@ -6070,6 +6920,27 @@ namespace GetStream.VisionAgents.Models
             get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
             set { _additionalProperties = value; }
         }
+
+    }
+
+    /// <summary>
+    /// The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class FloorControl
+    {
+
+        /// <summary>
+        /// The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("max_wait_ms")]
+        public long? MaxWaitMs { get; set; } = default!;
+
+        /// <summary>
+        /// The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one there is. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured).
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("model")]
+        public string? Model { get; set; } = default!;
 
     }
 
@@ -6218,6 +7089,12 @@ namespace GetStream.VisionAgents.Models
         public string? Name { get; set; } = default!;
 
         /// <summary>
+        /// What this guest sends back, with their id, to be given a fresh token once this one has expired. Keep it where the token is kept. It works once: every answer to it carries the next one, so store it each time. Absent where the deployment records no guests, and from a refresh made with the guest's own token while they already hold one, which keeps working.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("refresh_secret")]
+        public string? RefreshSecret { get; set; } = default!;
+
+        /// <summary>
         /// A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries role guest, so an app that has turned guests off refuses it.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("token")]
@@ -6242,16 +7119,22 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.Dictionary<string, object>? Custom { get; set; } = default!;
 
         /// <summary>
-        /// A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a guest of this customer returns that guest with a fresh token rather than failing, because coming back is the same person.
+        /// A guest coming back, to be given a fresh token as the same guest. Only honoured for a caller that proves it is that guest: the app's backend, the guest's own still-valid token, or the refresh_secret they were last handed. Any other caller is minted a new guest, as if no id had been sent, because a guest id is no secret: it is the author of their messages. Omitted mints a new guest.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("id")]
         public string? Id { get; set; } = default!;
 
         /// <summary>
-        /// What to call them, for a transcript a person reads later.
+        /// What to call a new guest, for a transcript a person reads later. A guest coming back keeps their name unless the app's backend renames them.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("name")]
         public string? Name { get; set; } = default!;
+
+        /// <summary>
+        /// The refresh_secret this guest was last handed, sent with their id once their token has expired. Spent by being used. One that is wrong or already spent mints a new guest instead.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("refresh_secret")]
+        public string? RefreshSecret { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -6561,8 +7444,26 @@ namespace GetStream.VisionAgents.Models
     public partial class IndexedKnowledgeDocument
     {
 
+        /// <summary>
+        /// The size of the file uploaded, or of the text posted. 0 for a document written before sizes were kept.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("bytes")]
+        public long Bytes { get; set; } = default!;
+
+        /// <summary>
+        /// The type the file was uploaded as, or text/markdown for text posted. Empty for a document written before types were kept.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("content_type")]
+        public string ContentType { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("created_at")]
         public System.DateTimeOffset CreatedAt { get; set; } = default!;
+
+        /// <summary>
+        /// Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("error")]
+        public string? Error { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("id")]
         public string Id { get; set; } = default!;
@@ -6571,7 +7472,13 @@ namespace GetStream.VisionAgents.Models
         public string Namespace { get; set; } = default!;
 
         /// <summary>
-        /// How many passages it was last cut into.
+        /// How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("pages")]
+        public int Pages { get; set; } = default!;
+
+        /// <summary>
+        /// How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("passages")]
         public int Passages { get; set; } = default!;
@@ -6582,8 +7489,11 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("source")]
         public string Source { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("state")]
+        public string State { get; set; } = default!;
+
         /// <summary>
-        /// The document as it was last posted. Only reading one document fills it in, and one written before its text was kept has none.
+        /// The document as it was last posted, or as its file was read: Markdown, each page of a file opening with an &lt;!-- page N --&gt; comment. Only reading one document fills it in, and one written before its text was kept has none.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("text")]
         public string? Text { get; set; } = default!;
@@ -6679,7 +7589,7 @@ namespace GetStream.VisionAgents.Models
         public long Images { get; set; } = default!;
 
         /// <summary>
-        /// The system prompt: the agent's instructions, skills and plugin guidance.
+        /// The system prompt: the agent's instructions, skills and connector guidance.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("instructions")]
         public long Instructions { get; set; } = default!;
@@ -6946,6 +7856,33 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("url")]
         public string Url { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class LaunchCampaignRequest
+    {
+
+        /// <summary>
+        /// Must be true: the people on the campaign agreed to be called by it. Recorded with the time.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("consent")]
+        public bool Consent { get; set; } = default!;
+
+        /// <summary>
+        /// When to start ringing. Omitted is now; up to a minute in the past is now too.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("start_at")]
+        public System.DateTimeOffset? StartAt { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -7937,105 +8874,6 @@ namespace GetStream.VisionAgents.Models
 
     }
 
-    /// <summary>
-    /// An MCP server the plugin catalog does not have. Every session opens it at the start and offers its tools to the model; the instructions the server gives are added to the agent's own. It is opened with no login unless it sets scopes or user, when it logs in with OAuth as its protected-resource metadata says, registering a client of its own, and saving it is refused when the server advertises no such login.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class McpServer
-    {
-
-        /// <summary>
-        /// How the server described itself when the config was saved. Absent when it did not answer.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("branding")]
-        public McpServerBranding? Branding { get; set; } = default!;
-
-        /// <summary>
-        /// What its tools are prefixed with, as &lt;name&gt;__&lt;tool&gt;. Lowercase, without __, and not a catalog plugin's id.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("name")]
-        public string Name { get; set; } = default!;
-
-        /// <summary>
-        /// Whether the server requires an OAuth login, as it said when the config was saved: protected-resource metadata, or a 401 to a request without a token. Without user, the app logs in once, from the dashboard. Absent when it could not be asked, which a session starting asks again.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("needs_login")]
-        public bool? NeedsLogin { get; set; } = default!;
-
-        /// <summary>
-        /// The OAuth scopes its login asks for at consent. Left out, the login asks for the scopes_supported the server advertises. Only a server that needs a login may set it. A login made before a change keeps what it was granted.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("scopes")]
-        public System.Collections.Generic.List<string>? Scopes { get; set; } = default!;
-
-        /// <summary>
-        /// Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("tools")]
-        public System.Collections.Generic.List<string>? Tools { get; set; } = default!;
-
-        /// <summary>
-        /// Its Streamable HTTP endpoint: a public https URL. A host on a private network, loopback or link-local address, or one that does not resolve, is refused: the router reaches only public addresses.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("url")]
-        public string Url { get; set; } = default!;
-
-        /// <summary>
-        /// Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for a plugin with user, rather than the app once, from the dashboard. Only a server that needs a login may set it.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("user")]
-        public bool? User { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    /// <summary>
-    /// The serverInfo an MCP server answers initialize with. Every field is optional, and a server that sends only its name and version is titled by its name.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class McpServerBranding
-    {
-
-        [System.Text.Json.Serialization.JsonPropertyName("description")]
-        public string? Description { get; set; } = default!;
-
-        /// <summary>
-        /// Its first icon served over https, as the server links it.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("icon_url")]
-        public string? IconUrl { get; set; } = default!;
-
-        /// <summary>
-        /// Its display title, or its name when it gives none.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("title")]
-        public string? Title { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("version")]
-        public string? Version { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("website_url")]
-        public string? WebsiteUrl { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class MessageContent
     {
@@ -8066,6 +8904,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("error_code")]
         public string? ErrorCode { get; set; } = default!;
+
+        /// <summary>
+        /// What the failure said, absent when success is true: for a provider that answered with an error, the start of its body. Bearer tokens, API keys, authorization headers and URL credentials in it are redacted, and a long one is cut short. Absent for a failure that said nothing, and for a request recorded before the router kept it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("error_message")]
+        public string? ErrorMessage { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("input_tokens")]
         public long? InputTokens { get; set; } = default!;
@@ -8258,6 +9102,126 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
+    /// Who reads the page, and what may happen to it afterwards.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class OcrOptions
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("data_policy")]
+        public DataPolicy? DataPolicy { get; set; } = default!;
+
+        /// <summary>
+        /// Summarise each chart, diagram, photo or table drawn as a picture where it is on the page, as its words and a quote that opens with **Figure:**. Only vision language models can, so they are tried first and Mistral OCR last, for the text alone; ocr-figures names the ones that do it best.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("figures")]
+        public bool? Figures { get; set; } = default!;
+
+        /// <summary>
+        /// A priority list of where to try, in the order given, which wins over target when it holds anything.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("providers")]
+        public System.Collections.Generic.List<string>? Providers { get; set; } = default!;
+
+        /// <summary>
+        /// A provider/model or a shortcut. Defaults to ocr-default.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("target")]
+        public string? Target { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class OcrRequest
+    {
+
+        /// <summary>
+        /// The page, base64. A JPEG or PNG of at most 10 MiB and 10,000 pixels a side; a page drawn at 150 to 200 dpi reads well.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("image")]
+        public byte[] Image { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("options")]
+        public OcrOptions? Options { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("tags")]
+        public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class OcrResult
+    {
+
+        /// <summary>
+        /// Millionths of a dollar, priced per page or per token from what the model billed. Zero when it failed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("cost_micros")]
+        public long CostMicros { get; set; } = default!;
+
+        /// <summary>
+        /// What went wrong, in words. Absent when the page was read.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("error")]
+        public string? Error { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("error_code")]
+        public string? ErrorCode { get; set; } = default!;
+
+        /// <summary>
+        /// This response's own id, for logs. Nothing is stored under it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("id")]
+        public string Id { get; set; } = default!;
+
+        /// <summary>
+        /// The page's text as Markdown, headings, lists and tables kept. Empty for a page with no text on it, or when the reading failed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("markdown")]
+        public string Markdown { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("model")]
+        public string? Model { get; set; } = default!;
+
+        /// <summary>
+        /// Who read it, or who failed to. Absent when nothing got as far as a provider.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("provider")]
+        public string? Provider { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("status")]
+        public string Status { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
     /// One tool as the model sees it.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
@@ -8352,7 +9316,7 @@ namespace GetStream.VisionAgents.Models
         public string Recipient { get; set; } = default!;
 
         /// <summary>
-        /// keyword when they texted STOP, otherwise api or dashboard.
+        /// keyword when they texted STOP, campaign when they asked a campaign call not to call again, otherwise api or dashboard.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("source")]
         public string Source { get; set; } = default!;
@@ -8568,6 +9532,12 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.Dictionary<string, string>? Custom { get; set; } = default!;
 
         /// <summary>
+        /// Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. A verdict the vendor cannot make, or none within 40 seconds of the answer, counts as a machine while the person called has said nothing to the agent. What the agent then does is the session's phone.voicemail.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("detect_voicemail")]
+        public bool? DetectVoicemail { get; set; } = default!;
+
+        /// <summary>
         /// One of the customer's own numbers, which is what the person sees.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("from")]
@@ -8638,353 +9608,6 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("vendor_call_id")]
         public string VendorCallId { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    /// <summary>
-    /// One hosted MCP server from the built-in catalog.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class Plugin
-    {
-
-        [System.Text.Json.Serialization.JsonPropertyName("category")]
-        public string Category { get; set; } = default!;
-
-        /// <summary>
-        /// True when the provider registers no client on the fly, so a config needs one of the app's own, set with setPluginClient, before anybody can connect the plugin.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("client_required")]
-        public bool? ClientRequired { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("description")]
-        public string Description { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("id")]
-        public string Id { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("instance_hint")]
-        public string? InstanceHint { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("instance_required")]
-        public bool? InstanceRequired { get; set; } = default!;
-
-        /// <summary>
-        /// Where this deployment serves the plugin's logo, as an SVG needing no credential.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("logo_url")]
-        public string LogoUrl { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("name")]
-        public string Name { get; set; } = default!;
-
-        /// <summary>
-        /// True when the plugin has a read-only endpoint an agent may pick on its entry.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("readonly")]
-        public bool? Readonly { get; set; } = default!;
-
-        /// <summary>
-        /// The redirect URI that client has to list, which is this deployment's. Only with client_required.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("redirect_uri")]
-        public string? RedirectUri { get; set; } = default!;
-
-        /// <summary>
-        /// The OAuth scopes an agent may ask for on its entry, as the server advertises them. Absent when the server says nothing, and any scope is then passed through.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("scopes_supported")]
-        public System.Collections.Generic.List<string>? ScopesSupported { get; set; } = default!;
-
-        /// <summary>
-        /// What to do there, in order, before pasting the client into setPluginClient. Absent when the catalog has no instructions for the plugin.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("setup_steps")]
-        public System.Collections.Generic.List<PluginSetupStep>? SetupSteps { get; set; } = default!;
-
-        /// <summary>
-        /// Where the app creates that client with the provider. Only with client_required.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("setup_url")]
-        public System.Uri? SetupUrl { get; set; } = default!;
-
-        /// <summary>
-        /// The groups of tools an agent may limit the plugin to on its entry. Absent when it cannot be limited.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("toolsets")]
-        public System.Collections.Generic.List<string>? Toolsets { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class PluginAuthorization
-    {
-
-        /// <summary>
-        /// The URL the browser should open to finish the login.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("authorize_url")]
-        public string AuthorizeUrl { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    /// <summary>
-    /// The OAuth client a config logs a plugin in with. Its secret is sealed and never returned.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class PluginClient
-    {
-
-        /// <summary>
-        /// The client id the provider issued.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("client_id")]
-        public string ClientId { get; set; } = default!;
-
-        /// <summary>
-        /// Whether a client secret is stored. It is never returned.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("has_secret")]
-        public bool HasSecret { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    /// <summary>
-    /// A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has logged into yet is not_connected, which is what a dashboard reminds the app to finish, unless it has user, when each end user connects it in the conversation.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class PluginConnection
-    {
-
-        [System.Text.Json.Serialization.JsonPropertyName("category")]
-        public string? Category { get; set; } = default!;
-
-        /// <summary>
-        /// The OAuth client the config set for the plugin. Absent when it set none.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("client")]
-        public PluginClient? Client { get; set; } = default!;
-
-        /// <summary>
-        /// True when nobody can connect the plugin until the config has a client of the app's own, set with setPluginClient.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("client_required")]
-        public bool? ClientRequired { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("description")]
-        public string? Description { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("instance_hint")]
-        public string? InstanceHint { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("instance_required")]
-        public bool? InstanceRequired { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("instance_url")]
-        public string? InstanceUrl { get; set; } = default!;
-
-        /// <summary>
-        /// Where this deployment serves the plugin's logo, as an SVG needing no credential. Empty for an MCP server named by URL.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("logo_url")]
-        public string LogoUrl { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("name")]
-        public string Name { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("plugin_id")]
-        public string PluginId { get; set; } = default!;
-
-        /// <summary>
-        /// The app's login. Always not_connected for a plugin with user, which the app does not log into.
-        /// <br/>
-        /// <br/>One of `pending`, `connected`, `failed`, `not_connected`.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("status")]
-        public string Status { get; set; } = default!;
-
-        /// <summary>
-        /// True when the config names the plugin with user: each end user connects their own account in the conversation.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("user")]
-        public bool? User { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class PluginEntry
-    {
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    /// <summary>
-    /// One MCP event an agent subscribes to on a plugin it names. Each event that arrives opens a text conversation from the config, as whoever's login it came through, with the event's data as the first thing said to it.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class PluginEvent
-    {
-
-        /// <summary>
-        /// The event's filters, as its inputSchema describes them.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("arguments")]
-        public System.Collections.Generic.Dictionary<string, object>? Arguments { get; set; } = default!;
-
-        /// <summary>
-        /// The event's name, as the server's events/list gives it, such as comment.created.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("event")]
-        public string Event { get; set; } = default!;
-
-        /// <summary>
-        /// What the agent does with the event when it arrives, added to its instructions for that conversation.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("instructions")]
-        public string? Instructions { get; set; } = default!;
-
-        /// <summary>
-        /// A catalog plugin the config names under plugins.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("plugin")]
-        public string Plugin { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    /// <summary>
-    /// One thing to do with a plugin's provider before its OAuth client can be set.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class PluginSetupStep
-    {
-
-        /// <summary>
-        /// How to do it with the provider.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("description")]
-        public string Description { get; set; } = default!;
-
-        /// <summary>
-        /// What the step does, in a few words.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("title")]
-        public string Title { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    /// <summary>
-    /// One catalog plugin an agent names, with how it is reached and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class PluginWithOptions
-    {
-
-        /// <summary>
-        /// A catalog plugin id, such as linear.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("name")]
-        public string Name { get; set; } = default!;
-
-        /// <summary>
-        /// Reach the plugin's read-only MCP endpoint, which offers no tool that writes and asks for read access at consent. Only a plugin whose vendor runs one may set it, such as linear.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("readonly")]
-        public bool? Readonly { get; set; } = default!;
-
-        /// <summary>
-        /// The OAuth scopes asked for at consent, in place of the catalog's. Left out asks for the catalog's, or the read-only endpoint's when readonly is set.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("scopes")]
-        public System.Collections.Generic.List<string>? Scopes { get; set; } = default!;
-
-        /// <summary>
-        /// Offer the model only the server's tools matching these names or path.Match patterns, such as search_files or read_*. A tool left out is neither listed nor callable. Left out offers every tool.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("tools")]
-        public System.Collections.Generic.List<string>? Tools { get; set; } = default!;
-
-        /// <summary>
-        /// Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("toolsets")]
-        public System.Collections.Generic.List<string>? Toolsets { get; set; } = default!;
-
-        /// <summary>
-        /// Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it, as a plugin_authorization attachment. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("user")]
-        public bool? User { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -10307,7 +10930,7 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
-    /// What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user &lt;id&gt;, every user of app &lt;id&gt;, every user of organization &lt;id&gt;), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+    /// What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A quota set here is counted per user only, never by the address a device calls from, which many users can share; the router's default counts a device by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user &lt;id&gt;, every user of app &lt;id&gt;, every user of organization &lt;id&gt;), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class Quota
@@ -10454,11 +11077,41 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class RefusedContact
+    {
+
+        /// <summary>
+        /// Its place in contacts, from 0.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("index")]
+        public int Index { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("reason")]
+        public string Reason { get; set; } = default!;
+
+        /// <summary>
+        /// As it was sent.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("to_number")]
+        public string ToNumber { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class RespondRequest
     {
 
         /// <summary>
-        /// A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+        /// A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("audio")]
         public AudioSource? Audio { get; set; } = default!;
@@ -10470,13 +11123,19 @@ namespace GetStream.VisionAgents.Models
         public string? ClientId { get; set; } = default!;
 
         /// <summary>
-        /// Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, a voice note is uploaded and shown on the person's message. A retry with the same id, text and voice note does not restart inference.
+        /// Photos to answer about, as on createResponse. With a request_id, or with no text in a session kept in Stream Chat, they are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message. The model sees them with this question alone. Refused before any turn starts when the agent has neither a vision skill nor a conversation model that accepts images.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("images")]
+        public System.Collections.Generic.List<ImageSource>? Images { get; set; } = default!;
+
+        /// <summary>
+        /// Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, photos and a voice note are uploaded and shown on the person's message. A retry with the same id, text, photos and voice note does not restart inference.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("request_id")]
         public string? RequestId { get; set; } = default!;
 
         /// <summary>
-        /// What to answer, as though it had been said. May be empty when audio carries the question.
+        /// What to answer, as though it had been said. May be empty when photos or audio carry the question.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("text")]
         public string Text { get; set; } = default!;
@@ -11205,7 +11864,7 @@ namespace GetStream.VisionAgents.Models
         public string DeliveredTo { get; set; } = default!;
 
         /// <summary>
-        /// Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again; that call may have carried the task out, so the run does not count toward the five failures in a row), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached; on a missed run, task_paused (a run's time came while its task was paused). The full error is in the router's logs. Null otherwise.
+        /// Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again; that call may have carried the task out, so the run does not count toward the five failures in a row), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached, spend_limit_reached or user_limit_reached, none of which is tried again, or spend_check_unavailable (the router could not check what the organization has spent, so the run is tried again); on a missed run, task_paused (a run's time came while its task was paused). The full error is in the router's logs. Null otherwise.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("error")]
         public string? Error { get; set; } = default!;
@@ -11575,10 +12234,22 @@ namespace GetStream.VisionAgents.Models
         public string? Description { get; set; } = default!;
 
         /// <summary>
-        /// Why the session ended. Absent while it is running, and for a session that ended before this was kept or by being stopped.
+        /// Whose doing end_reason was. Absent while the session is running.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("end_fault")]
+        public string? EndFault { get; set; } = default!;
+
+        /// <summary>
+        /// Why the session ended. Absent while it is running, and for a session that ended before this was kept.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("end_reason")]
         public string? EndReason { get; set; } = default!;
+
+        /// <summary>
+        /// How far the session had got when it ended. Absent while it is running.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("end_stage")]
+        public string? EndStage { get; set; } = default!;
 
         /// <summary>
         /// The session this one continued from, empty for one opened fresh.
@@ -11952,6 +12623,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("vendor_call_id")]
         public string? VendorCallId { get; set; } = default!;
 
+        /// <summary>
+        /// What the agent does when an answering machine picks up the call placed. A vendor's verdict needs detect_voicemail on the call placed, on a vendor that reports a machine. A verdict the vendor cannot make counts as a machine while nobody has spoken to the agent. Without any verdict, a call where nobody speaks to the agent for 40 seconds after answering counts as a machine. A fax is hung up on. Absent, the agent talks to a machine as to a person. A speech-to-speech session cannot say a fixed message, so leave_message is refused for one; a session switched to speech-to-speech later hangs up without leaving it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("voicemail")]
+        public SessionVoicemail? Voicemail { get; set; } = default!;
+
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
         [System.Text.Json.Serialization.JsonExtensionData]
@@ -11998,7 +12675,7 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.List<ImageSource>? Images { get; set; } = default!;
 
         /// <summary>
-        /// Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. Text only when present.
+        /// Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("request_id")]
         public string? RequestId { get; set; } = default!;
@@ -12235,6 +12912,33 @@ namespace GetStream.VisionAgents.Models
 
     }
 
+    /// <summary>
+    /// What the agent does when an answering machine picks up.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class SessionVoicemail
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("action")]
+        public string Action { get; set; } = default!;
+
+        /// <summary>
+        /// Said word for word once the machine's greeting has ended, or once the call counts as a machine, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("message")]
+        public string? Message { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class SetNumberAgentRequest
     {
@@ -12250,42 +12954,6 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("config_id")]
         public string? ConfigId { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    /// <summary>
-    /// The OAuth client an app registered with a plugin's provider, with the redirect URI &lt;public url&gt;/v1/agents/plugins/callback.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class SetPluginClientRequest
-    {
-
-        /// <summary>
-        /// The client id the provider issued.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("client_id")]
-        public string ClientId { get; set; } = default!;
-
-        /// <summary>
-        /// The client secret the provider issued. Left out for a public client.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("client_secret")]
-        public string? ClientSecret { get; set; } = default!;
-
-        /// <summary>
-        /// Also name the plugin under the config's plugins with user, so that each end user connects their own account in the conversation, the first time the agent needs it. Left out names nothing: the app connects the plugin once with authorize, which names it as the app's.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("user")]
-        public bool? User { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -13761,6 +14429,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("dispatch")]
         public AgentDispatch? Dispatch { get; set; } = default!;
 
+        /// <summary>
+        /// agent.yaml's floor_control: the model that controls the agent's floor, and how long a caller may wait once they stop. Sent, it replaces the stored choice whole, and an empty object is the default flow controller again; left out or null, the stored one stays, and an agent that never chose has the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400), and so is a max_wait_ms shorter than every point the chorus-asr server publishes, before anything is written. When the server cannot be asked the wait is kept and a warning says so, as it does of a point that fails the server's dictation guard.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("floor_control")]
+        public FloorControl? FloorControl { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("greeting")]
         public Greeting? Greeting { get; set; } = default!;
 
@@ -13804,10 +14478,11 @@ namespace GetStream.VisionAgents.Models
         public string? Llm { get; set; } = default!;
 
         /// <summary>
-        /// MCP servers outside the plugin catalog, opened by their URL with no login.
+        /// No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("mcp_servers")]
-        public System.Collections.Generic.List<McpServer>? McpServers { get; set; } = default!;
+        [System.Obsolete]
+        public System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object>>? McpServers { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("mode")]
         public string? Mode { get; set; } = default!;
@@ -13819,14 +14494,14 @@ namespace GetStream.VisionAgents.Models
         public string Name { get; set; } = default!;
 
         /// <summary>
-        /// Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
+        /// No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugin_events")]
         [System.Obsolete]
-        public System.Collections.Generic.List<PluginEvent>? PluginEvents { get; set; } = default!;
+        public System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object>>? PluginEvents { get; set; } = default!;
 
         /// <summary>
-        /// Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
+        /// No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugins")]
         [System.Obsolete]
@@ -13890,7 +14565,7 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
 
         /// <summary>
-        /// How plugin, MCP server and connector tools are offered. A setting left out keeps what is stored.
+        /// How connector tools are offered. A setting left out keeps what is stored.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tools")]
         public AgentTools? Tools { get; set; } = default!;
@@ -15269,12 +15944,6 @@ namespace GetStream.VisionAgents.Models
         public string? AgentId { get; set; } = default!;
 
         /// <summary>
-        /// The public API key the work was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:&lt;name&gt;.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("api_key")]
-        public string ApiKey { get; set; } = default!;
-
-        /// <summary>
         /// The app the work was for.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("app_id")]
@@ -15327,6 +15996,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("occurred_at")]
         public System.DateTimeOffset OccurredAt { get; set; } = default!;
+
+        /// <summary>
+        /// Who started the work: the public API key it was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:&lt;name&gt;.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("origin")]
+        public string Origin { get; set; } = default!;
 
         /// <summary>
         /// Who did the work, such as openai.
@@ -16028,7 +16703,7 @@ namespace GetStream.VisionAgents.Models
         public int? MaxFrames { get; set; } = default!;
 
         /// <summary>
-        /// Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+        /// Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... An MP4, MOV, 3GP, MKV or WebM file, at most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("url")]
         public string Url { get; set; } = default!;
@@ -16414,35 +17089,31 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class Contacts
-    {
-
-        /// <summary>
-        /// What to say to this person, added to whatever the config already says.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("instructions")]
-        public string? Instructions { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("to_number")]
-        public string ToNumber { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public enum SessionSortDirection : long
     {
 
         __1 = -1,
 
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    internal class DateFormatConverter : System.Text.Json.Serialization.JsonConverter<System.DateTimeOffset>
+    {
+        public override System.DateTimeOffset Read(ref System.Text.Json.Utf8JsonReader reader, System.Type typeToConvert, System.Text.Json.JsonSerializerOptions options)
+        {
+            var dateTime = reader.GetString();
+            if (dateTime == null)
+            {
+                throw new System.Text.Json.JsonException("Unexpected JsonTokenType.Null");
+            }
+
+            return System.DateTimeOffset.Parse(dateTime);
+        }
+
+        public override void Write(System.Text.Json.Utf8JsonWriter writer, System.DateTimeOffset value, System.Text.Json.JsonSerializerOptions options)
+        {
+            writer.WriteStringValue(value.ToString("yyyy-MM-dd"));
+        }
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NSwag", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]

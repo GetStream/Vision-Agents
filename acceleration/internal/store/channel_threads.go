@@ -169,6 +169,36 @@ func (s *Store) AddChannelThreadMember(ctx context.Context, channelID, member st
 	return nil
 }
 
+// SetChannelThreadStarter records starter as the person who started a thread channel's chat, by
+// the contact map address the episode their message opens has
+// (20261217090000_agent_config_episode_cards_record.sql). One already recorded is left as it
+// is, so the first admitted message's author stays the chat's starter.
+func (s *Store) SetChannelThreadStarter(ctx context.Context, channelID, starter string) error {
+	if channelID == "" || starter == "" {
+		return stack.Wrap(errors.New("store: a channel id and a starter are required"))
+	}
+	_, err := s.db.NewRaw("INSERT INTO channel_thread_starters (channel_id, starter) VALUES (?, ?) ON CONFLICT DO NOTHING",
+		channelID, starter).Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: set channel thread starter: %w", err))
+	}
+	return nil
+}
+
+// ChannelThreadStarter is the person who started a thread channel's chat
+// (SetChannelThreadStarter), or "" when none is recorded.
+func (s *Store) ChannelThreadStarter(ctx context.Context, channelID string) (string, error) {
+	var starter string
+	err := s.db.NewRaw("SELECT starter FROM channel_thread_starters WHERE channel_id = ?", channelID).Scan(ctx, &starter)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", stack.Wrap(fmt.Errorf("store: channel thread starter: %w", err))
+	}
+	return starter, nil
+}
+
 // ChannelThreadMemberOptedOut is whether a person recorded in a thread channel's chat
 // (AddChannelThreadMember) has a live opt-out of the customer's channel, or of all of them, as
 // OptedOut reads one.

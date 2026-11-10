@@ -71,8 +71,25 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 	if len(videos) > maxVideos {
 		return nil, invalidRequest(fmt.Sprintf("at most %d videos go with one response", maxVideos))
 	}
-	if len(videos) > 0 && value(request.Body.RequestId) != "" {
-		return nil, invalidRequest("a request id carries text and images, not videos")
+	if len(videos) > 0 {
+		if request.Body.Audio != nil {
+			// With a voice note the question is checked as it is before the note is heard
+			// (withHeardNote), the agent's refusal first, so the order of refusals is the same
+			// whether or not videos go with it.
+			asked := options.LLM{MaxOutputTokens: request.Body.MaxOutputTokens, ReasoningEffort: value(request.Body.ReasoningEffort)}
+			if _, err := found.CheckRespond(ctx, value(request.Body.RequestId), request.Body.Text, true, asked); err != nil {
+				return nil, refusedResponse(err)
+			}
+		}
+		sample, err := found.SampleVideos(ctx, value(request.Body.RequestId), request.Body.Text)
+		if err != nil {
+			return nil, refusedResponse(err)
+		}
+		if !sample {
+			// The retry of a question already taken is answered with its receipt, so its
+			// videos are not fetched again.
+			videos = nil
+		}
 	}
 	for index, sent := range videos {
 		frames, length, err := video.Frames(ctx, sent.Url, value(sent.MaxFrames))
@@ -85,6 +102,10 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 		}
 	}
 
+	action := value(request.Body.UiAction)
+	if !conversation.ValidUIAction(action) {
+		return nil, invalidRequest(fmt.Sprintf("a ui_action names message_id, format and name, in at most %d bytes", conversation.MaxUIAction))
+	}
 	asked := options.LLM{MaxOutputTokens: request.Body.MaxOutputTokens, ReasoningEffort: value(request.Body.ReasoningEffort)}
 	commandID := value(request.Body.RequestId)
 	text, notes, failure := s.withHeardNote(ctx, found, commandID, request.Body.Text, request.Body.Audio, len(parts) > 0, asked)
@@ -94,9 +115,14 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 
 	var responseID string
 	if commandID != "" && found.Durable() {
-		_, responseID, err = found.RespondCommand(ctx, commandID, text, "", parts, asked, notes...)
+		_, responseID, err = found.RespondCommandWithAction(ctx, commandID, text, "", parts, asked, action, notes...)
 	} else {
-		responseID, err = found.Respond(ctx, text, parts, asked, parts[:len(images)]...)
+		told := text
+		// A session not kept in Stream Chat has no reply to read the words of.
+		if note := conversation.DescribeUIAction(action, ""); note != "" {
+			told += "\n\n" + note
+		}
+		responseID, err = found.Respond(ctx, told, parts, asked, parts[:len(images)]...)
 	}
 	if err != nil {
 		return nil, refusedResponse(err)
@@ -438,13 +464,14 @@ type AgentResponsePage struct {
 
 // CreateResponseRequest is the CreateResponseRequest schema.
 type CreateResponseRequest struct {
-	RequestId       *string        `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and videos are refused. A retry with the same id, text, images and voice note starts no second turn and returns no id. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images." pattern:"^[A-Za-z0-9_-]{1,128}$"`
-	Audio           *AudioSource   `json:"audio,omitempty" doc:"A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing."`
-	Images          *[]ImageSource `json:"images,omitempty"`
-	MaxOutputTokens *int           `json:"max_output_tokens,omitempty" doc:"Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's." minimum:"1"`
-	ReasoningEffort *string        `json:"reasoning_effort,omitempty" doc:"How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's."`
-	Text            string         `json:"text" doc:"What to answer, as though it had been said. May be empty when images or audio carry the question. Images with no text are shown on the person's message in a session kept in Stream Chat, so they are then data URIs, at most 8, with or without a request_id."`
-	Videos          *[]VideoSource `json:"videos,omitempty" doc:"Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole." maxItems:"2"`
+	RequestId       *string         `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and the frames of videos are shown to the model alone. A retry with the same id, text, images and voice note starts no second turn, returns no id and does not fetch its videos again: videos are not part of what a retry is matched on. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images." pattern:"^[A-Za-z0-9_-]{1,128}$"`
+	Audio           *AudioSource    `json:"audio,omitempty" doc:"A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region."`
+	Images          *[]ImageSource  `json:"images,omitempty"`
+	MaxOutputTokens *int            `json:"max_output_tokens,omitempty" doc:"Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's." minimum:"1"`
+	ReasoningEffort *string         `json:"reasoning_effort,omitempty" doc:"How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's."`
+	Text            string          `json:"text" doc:"What to answer, as though it had been said. May be empty when images or audio carry the question. Images with no text are shown on the person's message in a session kept in Stream Chat, so they are then data URIs, at most 8, with or without a request_id."`
+	UiAction        *map[string]any `json:"ui_action,omitempty" doc:"What the person did in the generated UI of an earlier reply, such as tapping a place or submitting a form, which the text says in their words: an object naming the reply (message_id), the UI's format and the action (name), with what it carries (payload), of at most 8 KB as JSON. Their message carries it as custom.ai_ui_action, and the model is told it after the text."`
+	Videos          *[]VideoSource  `json:"videos,omitempty" doc:"Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole." maxItems:"2"`
 }
 
 func (*CreateResponseRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

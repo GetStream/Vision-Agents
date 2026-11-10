@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -34,8 +35,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/concurrency"
@@ -46,6 +47,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/files"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -55,8 +57,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
@@ -159,6 +159,10 @@ type Options struct {
 	// Streams serves the per-modality sockets, for callers running their own pipeline.
 	// Absent when the deployment routes nothing itself.
 	Streams *Streams
+	// AudioFloor is the router's chorus-asr server, which an agent's floor control opts in to.
+	// Absent, such a floor control is refused. Present, a floor control's max_wait_ms is
+	// checked against what the server publishes.
+	AudioFloor *audiofloor.Client
 	// Stream resolves which Stream app, and which credential, the router acts in for each
 	// customer: tokens, guests and the transcripts read back. Absent when the deployment
 	// has no Stream app at all, in which case those paths say so.
@@ -167,17 +171,10 @@ type Options struct {
 	// caller it verified. The server tokens it forwards are trusted only with it, since
 	// without it every caller passes as a backend.
 	ProxyDeclaresKind bool
-	// Campaigns rings lists of people. Absent without telephony or sessions, in which
-	// case a campaign can be written down but not run.
-	Campaigns *campaign.Runner
 	// Simulations puts an agent through a conversation somebody wrote down and rules on
 	// how it went. Absent without sessions or model routing, in which case a simulation
 	// can be written down but not run.
 	Simulations *simulation.Runner
-	// PluginEvents subscribes agents to their plugins' MCP events and answers deliveries.
-	// Absent without a database or sessions, in which case a config's plugin_events are
-	// stored but nothing subscribes to them.
-	PluginEvents *pluginevents.Service
 	// Channels answers what arrives on the app's WhatsApp, text and iMessage lines. Absent
 	// without a database, sessions or a key encryption key, in which case a line cannot be
 	// connected and nothing is delivered.
@@ -203,6 +200,9 @@ type Options struct {
 	// without a database or without something that can read a page, in which case the url
 	// paths say so rather than accepting a subscription nothing would honour.
 	KnowledgeURLs *urls.Service
+	// KnowledgeFiles takes files uploaded to those bases and reads them in the background.
+	// Absent, an upload is refused as not configured.
+	KnowledgeFiles *files.Service
 	// Voices holds the voices customers brought with them. Absent when the deployment has
 	// no object storage, in which case there is nowhere to keep a recording and the voice
 	// paths say so.
@@ -240,9 +240,10 @@ type Options struct {
 	// PrivateModelEndpoints lets a customer's model sit on a private address or plain http,
 	// which only a router no other tenant shares should allow.
 	PrivateModelEndpoints bool
-	// PublicURL is where this process is reachable, which plugin OAuth callbacks need.
+	// PublicURL is where this process is reachable, which connector OAuth callbacks need.
 	PublicURL string
-	// DashboardURL is where a finished plugin login sends the browser.
+	// DashboardURL is where a finished connector consent sends the browser when no return_url
+	// was given, and the page a consent is launched from.
 	DashboardURL string
 	// AuthMode is how this deployment decided that, which a handler needs when the mode
 	// itself is the answer: moving a customer's data is refused outright in noauth,
@@ -326,10 +327,7 @@ type Options struct {
 	// how much of X-Forwarded-For is believed when working out who a request is from.
 	// Empty means none of it is, and the connection's own address is used.
 	TrustedProxies []netip.Prefix
-	// PluginHTTP reaches plugins' MCP servers and their auth servers: a login, its callback,
-	// and a config's MCP servers describing themselves. Absent reaches only public hosts.
-	PluginHTTP *http.Client
-	Logger     *slog.Logger
+	Logger         *slog.Logger
 }
 
 // Server serves the router's HTTP API.
@@ -350,17 +348,18 @@ type Server struct {
 	forwarder          *node.Forwarder
 	peerCredentials    [][]byte // what a peer may present: one credential per key of the keyring
 	streams            *Streams
+	audioFloor         *audiofloor.Client // nil without a chorus-asr server
 	stream             *streamapp.Clients
 	proxyDeclaresKind  bool
 	hookSecret         string
 	telnyxPublicKey    ed25519.PublicKey
 	chatInboundKeys    []ed25519.PublicKey
 	telnyxConnectionID string
-	campaigns          *campaign.Runner
 	simulations        *simulation.Runner
 	knowledge          *metered.Knowledge
 	knowledgeLimits    ingest.Limits
 	pages              *urls.Service
+	knowledgeFiles     *files.Service
 	voices             *voices.Service
 	library            *voices.Catalogue
 	dispatch           *dispatch.Pool
@@ -369,8 +368,6 @@ type Server struct {
 	corsOrigins        []string
 	publicURL          string
 	dashboardURL       string
-	oauth              *plugins.Auth
-	pluginEvents       *pluginevents.Service
 	channels           *channels.Service
 	dlc                *dlc.Service
 	gate               *dlc.Gate
@@ -379,6 +376,7 @@ type Server struct {
 	authenticator      auth.Authenticator
 	authMode           auth.Mode
 	dataRetention      time.Duration
+	exportWritesWait   time.Duration
 	quota              *quota.Limiter
 	policies           *policy.Enforcer
 	connectors         core.Registry
@@ -401,6 +399,14 @@ type Server struct {
 	mcpEvents       *mcpevents.Service
 	// episodes ends a call's episodes on call.session_ended.
 	episodes *omnichannel.Closer
+	// chatCards opens the episodes of the app chat and writes their cards (chatEpisode); nil
+	// without a store or Stream clients.
+	chatCards *omnichannel.Cards
+	// chatCardsWriting counts the chat cards being written off a hook's request
+	// (ChatCardsRunning).
+	chatCardsWriting atomic.Int32
+	// owing is what each running session still owes an app chat's channel (retire).
+	owing owedReplies
 	// readCallStats and callStatsWaits are how an ended phone call's sites are read from
 	// Stream, and how long to wait before each read. Tests replace both.
 	readCallStats  readCallStats
@@ -423,6 +429,16 @@ type Server struct {
 	imageHTTP *http.Client
 	// callbackHTTP posts a finished recording to its callback.
 	callbackHTTP *http.Client
+	// scheduledPoll is how often a delivery waiting on the holding session looks again: a call
+	// ending, a peer's directory entry lapsing (a Redis round trip). A reply finishing, or a
+	// person's reply a follow-up waits out, is looked for every replyPoll.
+	scheduledPoll time.Duration
+	// replyPoll is how often a delivery reading back a follow-up's reply looks at it again. A
+	// look reads the conversation held in memory (conversation.Conversation.FollowUpReply,
+	// Session.FollowUp: a lock and a map), so it costs next to nothing; at scheduledPoll a reply
+	// that finished just after a look waited up to 2 s to leave, and every thread task took 2 s
+	// at least. 100 ms is not a delay a person waiting for a text notices.
+	replyPoll time.Duration
 
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
@@ -535,17 +551,18 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		directory:          options.Directory,
 		workers:            options.Workers,
 		streams:            options.Streams,
+		audioFloor:         options.AudioFloor,
 		stream:             options.Stream,
 		proxyDeclaresKind:  options.ProxyDeclaresKind,
 		hookSecret:         options.HookSecret,
 		telnyxPublicKey:    options.TelnyxPublicKey,
 		chatInboundKeys:    options.ChatInboundKeys,
 		telnyxConnectionID: options.TelnyxConnectionID,
-		campaigns:          options.Campaigns,
 		simulations:        options.Simulations,
 		knowledge:          options.Knowledge,
 		knowledgeLimits:    options.KnowledgeLimits,
 		pages:              options.KnowledgeURLs,
+		knowledgeFiles:     options.KnowledgeFiles,
 		voices:             options.Voices,
 		library:            options.VoiceLibrary,
 		dispatch:           options.Dispatch,
@@ -557,6 +574,9 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		authenticator:      authenticator,
 		authMode:           authMode,
 		dataRetention:      retention,
+		exportWritesWait:   exportWritesWait,
+		scheduledPoll:      2 * time.Second,
+		replyPoll:          100 * time.Millisecond,
 		quota:              options.Quota,
 		policies:           options.Policies,
 		connectors:         options.Connectors,
@@ -572,21 +592,14 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		operatorApps:       options.OperatorProviderApps,
 		trusted:            options.TrustedProxies,
 		upgrader:           newUpgrader(authMode),
-		oauth: &plugins.Auth{
-			HTTP:         options.PluginHTTP,
-			PublicURL:    options.PublicURL,
-			DashboardURL: options.DashboardURL,
-			Clients:      session.PluginClients(options.Store, options.Secrets),
-		},
-		pluginEvents: options.PluginEvents,
-		channels:     options.Channels,
-		dlc:          options.DLC,
-		gate:         options.Gate,
-		opsKey:       options.OpsKey,
-		manageKey:    options.ManageKey,
-		popularity:   newPopularity(options.Store, logger),
-		logger:       logger,
-		draining:     make(chan struct{}),
+		channels:           options.Channels,
+		dlc:                options.DLC,
+		gate:               options.Gate,
+		opsKey:             options.OpsKey,
+		manageKey:          options.ManageKey,
+		popularity:         newPopularity(options.Store, logger),
+		logger:             logger,
+		draining:           make(chan struct{}),
 	}
 	if options.Store != nil && options.ConnectorSecrets != nil {
 		credentials, err := pgsealed.New(options.Store, options.ConnectorSecrets)
@@ -614,6 +627,9 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	}
 	if server.channelBridge == nil {
 		server.channelBridge = droppingBridge{logger: logger}
+	}
+	if cards, err := omnichannel.New(omnichannel.Options{Store: options.Store, Stream: options.Stream}); err == nil {
+		server.chatCards = cards
 	}
 	serverSide, err := serverSideRoutes(server.newAPI(chi.NewRouter()).OpenAPI())
 	if err != nil {
@@ -644,6 +660,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	}
 	if server.phone != nil {
 		server.phone.OnUnanswered(server.endUnanswered)
+		server.phone.OnMachine(server.tellMachine)
 	}
 	return server, nil
 }
@@ -703,10 +720,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/agents/logs/{id}", s.getAgentLog)
 	mux.HandleFunc("GET /v1/data/export", s.exportData)
 	mux.HandleFunc("POST /v1/data/import", s.importData)
+	mux.HandleFunc("POST "+knowledgeFilesPath, s.uploadKnowledgeFile)
 	mux.HandleFunc("GET /v1/data/changes", s.listDataChanges)
 	mux.HandleFunc("POST "+scheduledPeerPath, s.deliverScheduledForPeer)
 	mux.HandleFunc("POST "+chatInboundPeerPath, s.answerChatInboundForPeer)
 	mux.HandleFunc("POST "+unansweredPeerPath, s.endUnansweredForPeer)
+	mux.HandleFunc("POST "+machinePeerPath, s.tellMachineForPeer)
 	mux.HandleFunc("GET /v1/agents/sessions/{id}/events", s.watchSession)
 	mux.HandleFunc("GET /v1/agents/socket", s.openSocketSession)
 	mux.HandleFunc("GET /v1/{modality}/stream", s.streamModality)
@@ -714,13 +733,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST /v1/phone/status/{token}", s.receiveCallStatus)
+	mux.HandleFunc("POST /v1/phone/machine/{token}", s.receiveCallMachine)
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
 	mux.HandleFunc("POST "+phone.CallHookPath+"/{app}", s.receiveCallEvent)
 	mux.HandleFunc("POST "+telnyxCallHookPath, s.receiveTelnyxCall)
 	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
 	mux.HandleFunc("POST "+chat.MessageHookPath+"/{app}", s.receiveMessageEvent)
 	mux.HandleFunc("POST "+chatInboundPath, s.receiveChatInbound)
-	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)
 	mux.HandleFunc("GET "+connectorLaunchPath+"{id}", s.serveConnectorLaunch)
 	mux.HandleFunc("POST "+connectorLaunchPath+"{id}", s.handOffConnectorLaunch)
 	mux.HandleFunc("GET "+ConnectorCallbackPath, s.finishConnectorConsent)
@@ -734,8 +753,6 @@ func (s *Server) Handler() http.Handler {
 			mux.HandleFunc(method+" "+connectionProxyPath+"*", s.proxyConnection)
 		}
 	}
-	mux.HandleFunc("GET /v1/agents/plugins/{plugin_id}/logo", s.servePluginLogo)
-	mux.HandleFunc("POST "+plugins.EventsPath+"{token}", s.receivePluginEvent)
 	mux.HandleFunc("POST "+mcpevents.Path+"{token}", s.receiveConnectionEvent)
 	mux.HandleFunc("GET "+channels.HookPath+"{token}", s.receiveChannelMessage)
 	mux.HandleFunc("POST "+channels.HookPath+"{token}", s.receiveChannelMessage)
@@ -757,8 +774,8 @@ func (s *Server) Handler() http.Handler {
 	// WaitForDelivery is false because most of what is served here is a long-
 	// lived socket; blocking the handler's return on event delivery would hold
 	// the connection open past its use. The flush in cmd/router covers shutdown.
-	served := withSentry(withRequestID(withTrace(withTiming(withCORS(s.authMode,
-		s.onOwningNode(s.withCustomer(s.withCost(s.withRequestLog(s.withQuota(s.withServerSide(handler)))))))))))
+	served := withSentry(withRequestID(withTrace(withMetrics(mux, withTiming(withCORS(s.authMode,
+		s.onOwningNode(s.withCustomer(s.withCost(s.withRequestLog(s.withQuota(s.withServerSide(handler))))))))))))
 	if s.directory == nil {
 		return served
 	}
@@ -1044,7 +1061,7 @@ func (l *loggedResponse) Unwrap() http.ResponseWriter {
 // a path that spells it differently.
 //
 // An operation declaring no security at all is skipped in both directions. It is reached
-// before there is a caller to classify — the health check and the plugin redirect, where
+// before there is a caller to classify — the health check and the consent callback, where
 // the browser arrives from the identity provider — so there is nobody to refuse.
 func serverSideRoutes(document *huma.OpenAPI) (*http.ServeMux, error) {
 	operations := specifiedOperations(document)
@@ -1767,6 +1784,9 @@ func (s *Server) getSpend(ctx context.Context, request *getSpendRequest) (*getSp
 	if request.GroupBy.ptr() != nil && *request.GroupBy.ptr() != "" {
 		groupBy = *request.GroupBy.ptr()
 	}
+	if groupBy == spendGroupByOldOrigin {
+		return nil, errGroupByOriginRenamed
+	}
 	limit := defaultSpendGroups
 	if request.Limit.ptr() != nil {
 		limit = *request.Limit.ptr()
@@ -1794,8 +1814,11 @@ func (s *Server) getSpend(ctx context.Context, request *getSpendRequest) (*getSp
 // team:<name>, which every row the team's users asked for carries.
 func usageFilterOf(request *getSpendRequest) (store.UsageFilter, error) {
 	var who store.UsageFilter
-	if key := request.APIKey.ptr(); key != nil {
-		who.APIKey = *key
+	if request.APIKeyID != "" {
+		return store.UsageFilter{}, errOriginRenamed
+	}
+	if origin := request.Origin.ptr(); origin != nil {
+		who.APIKey = *origin
 	}
 	if user := request.UserID.ptr(); user != nil {
 		who.UserID = *user
@@ -1993,6 +2016,10 @@ const (
 	defaultSpendGroups  = 6
 )
 
+// spendGroupByOldOrigin is who:origin's old name, refused rather than read as a cost label:
+// no label key holds a ':', so it would answer the whole spend as one group.
+const spendGroupByOldOrigin = "who:api_key"
+
 // activityGranularityOf defaults to daily, matching the spec.
 func activityGranularityOf(requested *ActivityGranularity) store.ActivityGranularity {
 	if requested != nil && *requested == ActivityGranularityMonthly {
@@ -2159,8 +2186,9 @@ func (s *Server) registerServer(api huma.API) {
 		Summary:     "What the calling customer spent, grouped",
 		Description: "Spend across every modality at once, which is what a bill is. group_by decides what the " +
 			"series are: \"modality\" for where the money went, who asked for it (\"who:app\", " +
-			"\"who:api_key\", \"who:user\", \"who:team\" or \"who:category\"), or a cost label for what it " +
-			"was spent on. A label key holds no ':', so a label named app is still grouped by as " +
+			"\"who:origin\", \"who:user\", \"who:team\" or \"who:category\"), or a cost label for what it " +
+			"was spent on. \"who:origin\" groups by the key the work was started with, or the origin of work " +
+			"no key started, such as hook:chat. A label key holds no ':', so a label named app is still grouped by as " +
 			"group_by=app. \"who:team\" groups by the team the user's token named, work with none under the " +
 			"empty value; \"who:category\" by the other usage categories, and a request carrying several " +
 			"counts once in each, so those rows add up to more than the total.\n" +
@@ -2176,7 +2204,7 @@ func (s *Server) registerServer(api huma.API) {
 		// Declared rather than read off the input, so the default is documented without
 		// being filled in: the handler tells a parameter left out from one sent.
 		Parameters: []*huma.Param{
-			{Name: "group_by", In: "query", Description: "\"modality\", who asked (who:app, who:api_key, who:user, who:team or who:category), or the cost label to group by.", Schema: &huma.Schema{Type: huma.TypeString, Default: "modality"}},
+			{Name: "group_by", In: "query", Description: "\"modality\", who asked (who:app, who:origin, who:user, who:team or who:category), or the cost label to group by.", Schema: &huma.Schema{Type: huma.TypeString, Default: "modality"}},
 			{Name: "limit", In: "query", Description: "How many values keep a series of their own.", Schema: &huma.Schema{Type: huma.TypeInteger, Minimum: bound(1), Maximum: bound(50), Default: 6}},
 		},
 		Responses: map[string]*huma.Response{
@@ -2322,17 +2350,21 @@ func (SpendScope) Schema(registry huma.Registry) *huma.Schema {
 }
 
 type getSpendRequest struct {
-	GroupBy     optionalParam[string]      `query:"group_by" doc:"\"modality\", who asked (who:app, who:api_key, who:user, who:team or who:category), or the cost label to group by."`
+	GroupBy     optionalParam[string]      `query:"group_by" doc:"\"modality\", who asked (who:app, who:origin, who:user, who:team or who:category), or the cost label to group by."`
 	Scope       optionalParam[SpendScope]  `query:"scope" doc:"Whose spend: app, the default, or organization."`
 	Granularity optionalParam[Granularity] `query:"granularity"`
 	From        time.Time                  `query:"from" doc:"Start of the window, inclusive." required:"true"`
 	To          time.Time                  `query:"to" doc:"End of the window, exclusive." required:"true"`
 	Limit       optionalParam[int]         `query:"limit" doc:"How many values keep a series of their own." minimum:"1" maximum:"50"`
 	Tag         optionalParam[[]string]    `query:"tag,explode" doc:"Only count requests carrying every one of these cost labels, each written \"key:value\". Repeat for several."`
-	APIKey      optionalParam[string]      `query:"api_key" doc:"Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat." maxLength:"255"`
+	Origin      optionalParam[string]      `query:"origin" doc:"Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat." maxLength:"255"`
 	UserID      optionalParam[string]      `query:"user_id" doc:"Only count usage for this end user of the app." maxLength:"255"`
 	Team        optionalParam[string]      `query:"team" doc:"Only count usage for this team: its users' tokens name it in their team claim." pattern:"^[A-Za-z0-9_.-]{1,59}$"`
 	Category    optionalParam[[]string]    `query:"category,explode" doc:"Only count usage carrying every one of these usage categories, as the tokens name them. Repeat for several."`
+
+	// APIKeyID is origin's old name, refused rather than ignored: a caller still sending it
+	// would otherwise read every key's spend as if it were one key's.
+	APIKeyID string `query:"api_key_id" hidden:"true"`
 }
 
 type getSpendResponse struct {

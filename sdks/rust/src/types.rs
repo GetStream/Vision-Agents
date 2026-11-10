@@ -33,16 +33,7 @@ pub struct Account {
 }
 ///Where balance_micros stands: exhausted at or below 0, low at or below the threshold.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AccountBalanceState {
     #[serde(rename = "ok")]
@@ -51,6 +42,9 @@ pub enum AccountBalanceState {
     Low,
     #[serde(rename = "exhausted")]
     Exhausted,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AccountBalanceState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -58,6 +52,7 @@ impl ::std::fmt::Display for AccountBalanceState {
             Self::Ok => f.write_str("ok"),
             Self::Low => f.write_str("low"),
             Self::Exhausted => f.write_str("exhausted"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -88,16 +83,7 @@ impl ::std::convert::TryFrom<::std::string::String> for AccountBalanceState {
 }
 ///Whose threshold it is: the tier's, the one Stream set for this organization, or the organization policy's balance_warning_micros, which wins over both.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AccountBalanceWarningSource {
     #[serde(rename = "tier")]
@@ -106,6 +92,9 @@ pub enum AccountBalanceWarningSource {
     Account,
     #[serde(rename = "organization_policy")]
     OrganizationPolicy,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AccountBalanceWarningSource {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -113,6 +102,7 @@ impl ::std::fmt::Display for AccountBalanceWarningSource {
             Self::Tier => f.write_str("tier"),
             Self::Account => f.write_str("account"),
             Self::OrganizationPolicy => f.write_str("organization_policy"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -143,28 +133,23 @@ impl ::std::convert::TryFrom<::std::string::String> for AccountBalanceWarningSou
 }
 ///suspended: Stream refuses every request of the organization, free work included, until it restores it.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AccountStatus {
     #[serde(rename = "active")]
     Active,
     #[serde(rename = "suspended")]
     Suspended,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AccountStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Active => f.write_str("active"),
             Self::Suspended => f.write_str("suspended"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -210,28 +195,23 @@ pub struct ActivityBucket {
 }
 ///Separate from Granularity, and coarser, because distinct users cannot be summed: a month of them is who came back rather than the sum of its days.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ActivityGranularity {
     #[serde(rename = "daily")]
     Daily,
     #[serde(rename = "monthly")]
     Monthly,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ActivityGranularity {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Daily => f.write_str("daily"),
             Self::Monthly => f.write_str("monthly"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -258,6 +238,22 @@ impl ::std::convert::TryFrom<::std::string::String> for ActivityGranularity {
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
+}
+///`AddContactsRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct AddContactsRequest {
+    ///Up to 1,000.
+    pub contacts: ::std::vec::Vec<ContactInput>,
+    ///The region, as ISO 3166-1 alpha-2, a number without a country code is read in. Omitted is the campaign's default_country, else US.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub default_country: ::std::option::Option<::std::string::String>,
+}
+///`AddContactsResponse`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct AddContactsResponse {
+    pub added: i64,
+    ///In the order sent.
+    pub refused: ::std::vec::Vec<RefusedContact>,
 }
 ///`AddTrunkNumberRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
@@ -325,9 +321,12 @@ pub struct AgentConfig {
     pub created_at: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
-    ///Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each session on a thread channel or a phone call starts with the person's other cards.
+    ///What this agent does with episode cards. record and on write a card into the person's omni-channel for each phone call, app chat conversation and SMS, WhatsApp, iMessage or Slack thread under this agent. Only on has each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in start with the person's other cards. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub episode_cards: ::std::option::Option<bool>,
+    pub episode_cards: ::std::option::Option<EpisodeCardsMode>,
+    ///The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. Absent for the default flow controller.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub floor_control: ::std::option::Option<FloorControl>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<Greeting>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -349,16 +348,8 @@ pub struct AgentConfig {
     ///Where a response goes, in order, when llm fails it. Absent when there are none.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub llm_fallbacks: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub mcp_servers: ::std::option::Option<::std::vec::Vec<McpServer>>,
     pub mode: AgentMode,
     pub name: ::std::string::String,
-    ///Deprecated: use the events of a fixed binding under connectors.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub plugin_events: ::std::option::Option<::std::vec::Vec<PluginEvent>>,
-    ///Deprecated: use connectors, a binding to a connector.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
     ///Where the agent's work is done: every model its sessions run, its knowledge base and its sandbox are in it. us unless the agent's agent.yaml or config names another.
     pub region: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -420,7 +411,10 @@ pub struct AgentConfigPatch {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub episode_cards: ::std::option::Option<bool>,
+    pub episode_cards: ::std::option::Option<EpisodeCardsMode>,
+    ///Replaces the choice whole. Left out or null, the stored choice stays; an empty object is the default flow controller again.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub floor_control: ::std::option::Option<FloorControl>,
     ///Replaces the greeting whole. An empty text removes it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<Greeting>,
@@ -440,19 +434,24 @@ pub struct AgentConfigPatch {
     ///Replaces the list whole. An empty list removes it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub llm_fallbacks: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    ///No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub mcp_servers: ::std::option::Option<::std::vec::Vec<McpServer>>,
+    pub mcp_servers: ::std::option::Option<
+        ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+    >,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub mode: ::std::option::Option<AgentMode>,
     ///What the config is called, which is unique among the customer's own.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub name: ::std::option::Option<::std::string::String>,
-    ///Deprecated: use the events of a fixed binding under connectors.
+    ///No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub plugin_events: ::std::option::Option<::std::vec::Vec<PluginEvent>>,
-    ///Deprecated: use connectors, a binding to a connector.
+    pub plugin_events: ::std::option::Option<
+        ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+    >,
+    ///No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
+    pub plugins: ::std::option::Option<::std::vec::Vec<AgentConfigPatchPluginsItem>>,
     ///Where the agent's work is done: us or eu for now. A change naming a model with no instance there, a knowledge base kept in another region, or a sandbox where none runs there is refused (400), naming each.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub region: ::std::option::Option<::std::string::String>,
@@ -497,6 +496,20 @@ pub struct AgentConfigPatch {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub voice: ::std::option::Option<::std::string::String>,
 }
+///`AgentConfigPatchPluginsItem`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(untagged)]
+pub enum AgentConfigPatchPluginsItem {
+    String(::std::string::String),
+    Object(::serde_json::Map<::std::string::String, ::serde_json::Value>),
+}
+impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+    for AgentConfigPatchPluginsItem
+{
+    fn from(value: ::serde_json::Map<::std::string::String, ::serde_json::Value>) -> Self {
+        Self::Object(value)
+    }
+}
 ///`AgentConfigRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct AgentConfigRequest {
@@ -506,14 +519,17 @@ pub struct AgentConfigRequest {
     ///Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub channels: ::std::option::Option<AgentChannels>,
-    ///The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
+    ///The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
-    ///Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. On, a session on a thread channel or a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
+    ///What this agent does with episode cards, for each phone call under it, each run of messages a Stream user writes to it in an agent channel of the app chat, and each thread of its SMS, WhatsApp, iMessage and Slack channel connections. record and on write the conversation's card, and its summary once it ends, into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number, the app chat's Stream user id or the Slack user. Only on reads them: a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any. off by default, and then a conversation writes no card and a session runs as it always did. Left out on an update, the stored setting stays.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub episode_cards: ::std::option::Option<bool>,
+    pub episode_cards: ::std::option::Option<EpisodeCardsMode>,
+    ///The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. A session request's wins over this. Left out or null on a create, the default flow controller; left out or null on an update, the stored choice stays; an empty object is the default flow controller again.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub floor_control: ::std::option::Option<FloorControl>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<Greeting>,
     ///A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
@@ -535,19 +551,23 @@ pub struct AgentConfigRequest {
     ///Where a response goes when llm fails it, in order: each a provider/model, a capability shortcut or one of your custom/ models, as llm takes. llm stays the first choice. A response it fails is asked of each next one in turn, and one it says nothing in for as long as a reply may is also asked of another, the first to start answering kept, so a model you serve yourself can be backed by one Stream serves. A response that has started is never moved, however slowly it goes on. Omitted or null on an update, the list stored stays as it is; an empty list removes it. A target this deployment does not route, or one with no instance in the agent's region, is refused.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub llm_fallbacks: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-    ///MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>.
+    ///No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub mcp_servers: ::std::option::Option<::std::vec::Vec<McpServer>>,
+    pub mcp_servers: ::std::option::Option<
+        ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+    >,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub mode: ::std::option::Option<AgentMode>,
     ///What the config is called, which is unique among the customer's own.
     pub name: ::std::string::String,
-    ///Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
+    ///No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub plugin_events: ::std::option::Option<::std::vec::Vec<PluginEvent>>,
-    ///Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
+    pub plugin_events: ::std::option::Option<
+        ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+    >,
+    ///No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
+    pub plugins: ::std::option::Option<::std::vec::Vec<AgentConfigRequestPluginsItem>>,
     ///Where the agent's work is done: us or eu for now. Every model its sessions run, its knowledge base and its sandbox are in it, and none of its work is served in another region. A config naming a model with no instance there, a knowledge_namespace kept in another region, or a sandbox where none runs there is refused (400), naming each: a knowledge base is never moved. Left out, a new agent is in us and an update keeps the stored region.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub region: ::std::option::Option<::std::string::String>,
@@ -581,13 +601,13 @@ pub struct AgentConfigRequest {
     ///The slower model a voice agent hands its skills to, while the voice model keeps talking. Only a voice agent names one: a text agent runs everything, skills included, on its llm. Empty leaves the default subagent.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub subagent: ::std::option::Option<::std::string::String>,
-    ///Cost labels, carried onto every request a session using it makes. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds.
+    ///Cost labels, carried onto every request a session using it makes. The team tag is also the team those sessions are counted under, its spend limits included, when whoever opens one names none: neither the caller's token nor the session's team field. It is 1 to 59 letters, digits, _ . and -, and a config naming another team tag is refused. A config tagged draft_of, naming the config it copies, is a test copy: it answers no message on a channel connection and subscribes to no event, which stay with the live config, and it may bind a channel connection another config binds.
     #[serde(
         default,
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
-    ///How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored settings stay.
+    ///How the agent is offered its connector tools. Left out on an update, the stored settings stay.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tools: ::std::option::Option<AgentTools>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -600,6 +620,20 @@ pub struct AgentConfigRequest {
     ///The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native agent (sts) takes the vendor's own voice name instead, such as marin at OpenAI.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub voice: ::std::option::Option<::std::string::String>,
+}
+///`AgentConfigRequestPluginsItem`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(untagged)]
+pub enum AgentConfigRequestPluginsItem {
+    String(::std::string::String),
+    Object(::serde_json::Map<::std::string::String, ::serde_json::Value>),
+}
+impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+    for AgentConfigRequestPluginsItem
+{
+    fn from(value: ::serde_json::Map<::std::string::String, ::serde_json::Value>) -> Self {
+        Self::Object(value)
+    }
 }
 ///A connector whose tools an agent config may call, under an alias. The binding is the grant: the tools it lists, each pinned to the schema it was reviewed against, or for a tool a session binding grants by name alone, to the schema its connection first offered it with. Or tool_patterns, names or path.Match patterns, pinned per connection on first use, on a session binding or a fixed one. A binding has one or the other.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
@@ -642,30 +676,25 @@ pub struct AgentConnectorSelection {
     #[serde(rename = "type")]
     pub type_: AgentConnectorSelectionType,
 }
-///fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is the user whose login subscribed the plugin event (none for the app's own login), or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
+///fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is nobody for an MCP event, which it opens as the app, or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AgentConnectorSelectionType {
     #[serde(rename = "fixed")]
     Fixed,
     #[serde(rename = "session")]
     Session,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AgentConnectorSelectionType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Fixed => f.write_str("fixed"),
             Self::Session => f.write_str("session"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -735,16 +764,7 @@ pub struct AgentLogPage {
 }
 ///`AgentLogSeverity`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AgentLogSeverity {
     #[serde(rename = "info")]
@@ -753,6 +773,9 @@ pub enum AgentLogSeverity {
     Warn,
     #[serde(rename = "error")]
     Error,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AgentLogSeverity {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -760,6 +783,7 @@ impl ::std::fmt::Display for AgentLogSeverity {
             Self::Info => f.write_str("info"),
             Self::Warn => f.write_str("warn"),
             Self::Error => f.write_str("error"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -790,16 +814,7 @@ impl ::std::convert::TryFrom<::std::string::String> for AgentLogSeverity {
 }
 ///`AgentLogSource`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AgentLogSource {
     #[serde(rename = "user")]
@@ -810,6 +825,9 @@ pub enum AgentLogSource {
     Tool,
     #[serde(rename = "system")]
     System,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AgentLogSource {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -818,6 +836,7 @@ impl ::std::fmt::Display for AgentLogSource {
             Self::Agent => f.write_str("agent"),
             Self::Tool => f.write_str("tool"),
             Self::System => f.write_str("system"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -849,28 +868,23 @@ impl ::std::convert::TryFrom<::std::string::String> for AgentLogSource {
 }
 ///Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AgentMode {
     #[serde(rename = "voice")]
     Voice,
     #[serde(rename = "text")]
     Text,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AgentMode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Voice => f.write_str("voice"),
             Self::Text => f.write_str("text"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -934,16 +948,7 @@ pub struct AgentResponseItem {
 }
 ///`AgentResponseItemKind`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AgentResponseItemKind {
     #[serde(rename = "said")]
@@ -960,6 +965,9 @@ pub enum AgentResponseItemKind {
     Blocked,
     #[serde(rename = "error")]
     Error,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AgentResponseItemKind {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -971,6 +979,7 @@ impl ::std::fmt::Display for AgentResponseItemKind {
             Self::Answer => f.write_str("answer"),
             Self::Blocked => f.write_str("blocked"),
             Self::Error => f.write_str("error"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -1023,16 +1032,7 @@ pub struct AgentResponsePage {
 }
 ///cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. refused is a turn the prompt injection screen refused: a rewind or a fork carries what it asked forward as withheld.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AgentResponseStatus {
     #[serde(rename = "running")]
@@ -1045,6 +1045,9 @@ pub enum AgentResponseStatus {
     Cancelled,
     #[serde(rename = "refused")]
     Refused,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AgentResponseStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -1054,6 +1057,7 @@ impl ::std::fmt::Display for AgentResponseStatus {
             Self::Failed => f.write_str("failed"),
             Self::Cancelled => f.write_str("cancelled"),
             Self::Refused => f.write_str("refused"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -1093,25 +1097,20 @@ pub struct AgentReview {
 }
 ///What the agent is for in the app, beyond answering people. agent_moderator is the app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AgentRole {
     #[serde(rename = "agent_moderator")]
     AgentModerator,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AgentRole {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::AgentModerator => f.write_str("agent_moderator"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -1174,6 +1173,34 @@ pub struct AgentTools {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub progressive: ::std::option::Option<bool>,
 }
+///`AgentUser`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct AgentUser {
+    ///true when the user reads all of what the number ever said. Left out otherwise.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub include_phone_history: ::std::option::Option<bool>,
+    ///The number linked to the user, in E.164; null when none is.
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub phone: ::std::option::Option<::std::string::String>,
+    ///From when on the user reads what the number said: the link's time, the time of a request with include_phone_history false, or the phone_history_since sent. Left out with include_phone_history true, or with no number.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub phone_history_since: ::std::option::Option<::std::string::String>,
+    ///The Stream user id, as the app's own token signs it.
+    pub user_id: ::std::string::String,
+}
+///Who one of the app's users is, as the app's backend knows it. phone is required: a number, or null for none.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct AgentUserRequest {
+    ///How much of what the number said before this request the user reads. true: all of it, ever. false: none of it, from this request on. Left out with phone_history_since left out too: from the link on for a number new to the user, and what was stored for the number the user has. true with phone_history_since is refused (400); false with it, phone_history_since applies.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub include_phone_history: ::std::option::Option<bool>,
+    ///The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. What the number said before the link is not the user's, unless include_phone_history or phone_history_since says otherwise: the user reads none of its earlier cards, whether the agent had episode_cards on at the link or turns them on later, and a session on the number's SMS, WhatsApp or iMessage thread is handed none of the thread's earlier messages. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub phone: ::std::option::Option<::std::string::String>,
+    ///The user reads what the number said from this time on, in RFC 3339, such as 2026-11-02T00:00:00Z: a conversation that started before it is left out whole. A time in the future is refused (400).
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub phone_history_since: ::std::option::Option<::std::string::String>,
+}
 ///`AnalyzeReviewsRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct AnalyzeReviewsRequest {
@@ -1234,16 +1261,7 @@ pub struct AudioSource {
 }
 ///created, updated or deleted for a change somebody made one at a time. synced is a whole agent directory written at once by POST /v1/agents/sync, and is what a later sync measures the edits made since against.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AuditAction {
     #[serde(rename = "created")]
@@ -1254,6 +1272,9 @@ pub enum AuditAction {
     Deleted,
     #[serde(rename = "synced")]
     Synced,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AuditAction {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -1262,6 +1283,7 @@ impl ::std::fmt::Display for AuditAction {
             Self::Updated => f.write_str("updated"),
             Self::Deleted => f.write_str("deleted"),
             Self::Synced => f.write_str("synced"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -1372,16 +1394,7 @@ pub struct AuditQuery {
 }
 ///What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff made through the management API is kept under the organization's id. provider_key is a key the app keeps for its own account at a vendor, named <provider>/<region>; its changes show the key's last four characters at most, never the key.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AuditResourceType {
     #[serde(rename = "agent_config")]
@@ -1406,6 +1419,9 @@ pub enum AuditResourceType {
     Limit,
     #[serde(rename = "provider_key")]
     ProviderKey,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AuditResourceType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -1421,6 +1437,7 @@ impl ::std::fmt::Display for AuditResourceType {
             Self::EndUser => f.write_str("end_user"),
             Self::Limit => f.write_str("limit"),
             Self::ProviderKey => f.write_str("provider_key"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -1459,16 +1476,7 @@ impl ::std::convert::TryFrom<::std::string::String> for AuditResourceType {
 }
 ///Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it. manage is the management API, called with the manage key, which no header can claim.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AuditSource {
     #[serde(rename = "dashboard")]
@@ -1481,6 +1489,9 @@ pub enum AuditSource {
     Api,
     #[serde(rename = "manage")]
     Manage,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AuditSource {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -1490,6 +1501,7 @@ impl ::std::fmt::Display for AuditSource {
             Self::Sdk => f.write_str("sdk"),
             Self::Api => f.write_str("api"),
             Self::Manage => f.write_str("manage"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -1535,28 +1547,23 @@ pub struct Authorization {
 }
 ///consent for a connection no account was connected to yet, reconnect for one that has been connected before, which must come back with the same provider account.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AuthorizationKind {
     #[serde(rename = "consent")]
     Consent,
     #[serde(rename = "reconnect")]
     Reconnect,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AuthorizationKind {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Consent => f.write_str("consent"),
             Self::Reconnect => f.write_str("reconnect"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -1590,13 +1597,6 @@ pub struct AuthorizationRequest {
     ///The app's own page the browser goes back to when the consent ends, with connection_id and status added to its query and its own query kept: the query comes back re-encoded with its keys sorted (?a=1&a=2&b becomes ?a=1&a=2&b=&connection_id=...&status=...), and a connection_id or status already in it is replaced by the router's. The launch page then takes the handoff only from a page of this URL's origin, which opens launch_url. Absent or empty, the consent goes back to the dashboard. An absolute URL of at most 2048 bytes, whose host is ASCII (an internationalized one in punycode, xn--) and not an IPv4-mapped IPv6 address, since a browser's origin would not match it: https, or http on a loopback host (localhost, 127.0.0.0/8 or [::1]) for local development (RFC 8252 sections 7.3 and 8.3), with no user name or password, no fragment (RFC 6749 section 3.1.2) and a query of key=value pairs. A native app may instead name its own private-use scheme, in reverse domain form (RFC 8252 section 7.1), such as com.example.app:/connected, which needs no host: its launch page then takes handoff_token from its own fragment, and the callback hands the browser back to the app.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub return_url: ::std::option::Option<::std::string::String>,
-}
-///`AuthorizePluginRequest`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
-pub struct AuthorizePluginRequest {
-    ///The shop hostname. Required for plugins that have no single global URL.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instance_url: ::std::option::Option<::std::string::String>,
 }
 ///`AvailableNumber`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -1681,16 +1681,7 @@ pub struct BusinessProfile {
 }
 ///`BusinessProfileLegalEntityType`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum BusinessProfileLegalEntityType {
     #[serde(rename = "corporation")]
@@ -1703,6 +1694,9 @@ pub enum BusinessProfileLegalEntityType {
     SoleProprietor,
     #[serde(rename = "other")]
     Other,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for BusinessProfileLegalEntityType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -1712,6 +1706,7 @@ impl ::std::fmt::Display for BusinessProfileLegalEntityType {
             Self::Partnership => f.write_str("partnership"),
             Self::SoleProprietor => f.write_str("sole_proprietor"),
             Self::Other => f.write_str("other"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -1744,16 +1739,7 @@ impl ::std::convert::TryFrom<::std::string::String> for BusinessProfileLegalEnti
 }
 ///`BusinessProfileOrganizationType`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum BusinessProfileOrganizationType {
     #[serde(rename = "private")]
@@ -1764,6 +1750,9 @@ pub enum BusinessProfileOrganizationType {
     Nonprofit,
     #[serde(rename = "government")]
     Government,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for BusinessProfileOrganizationType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -1772,6 +1761,7 @@ impl ::std::fmt::Display for BusinessProfileOrganizationType {
             Self::Public => f.write_str("public"),
             Self::Nonprofit => f.write_str("nonprofit"),
             Self::Government => f.write_str("government"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -1858,16 +1848,7 @@ pub struct BusinessProfileRequest {
 }
 ///`BusinessProfileRequestLegalEntityType`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum BusinessProfileRequestLegalEntityType {
     #[serde(rename = "corporation")]
@@ -1880,6 +1861,9 @@ pub enum BusinessProfileRequestLegalEntityType {
     SoleProprietor,
     #[serde(rename = "other")]
     Other,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for BusinessProfileRequestLegalEntityType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -1889,6 +1873,7 @@ impl ::std::fmt::Display for BusinessProfileRequestLegalEntityType {
             Self::Partnership => f.write_str("partnership"),
             Self::SoleProprietor => f.write_str("sole_proprietor"),
             Self::Other => f.write_str("other"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -1921,16 +1906,7 @@ impl ::std::convert::TryFrom<::std::string::String> for BusinessProfileRequestLe
 }
 ///`BusinessProfileRequestOrganizationType`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum BusinessProfileRequestOrganizationType {
     #[serde(rename = "private")]
@@ -1941,6 +1917,9 @@ pub enum BusinessProfileRequestOrganizationType {
     Nonprofit,
     #[serde(rename = "government")]
     Government,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for BusinessProfileRequestOrganizationType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -1949,6 +1928,7 @@ impl ::std::fmt::Display for BusinessProfileRequestOrganizationType {
             Self::Public => f.write_str("public"),
             Self::Nonprofit => f.write_str("nonprofit"),
             Self::Government => f.write_str("government"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -2081,28 +2061,23 @@ pub struct Call {
 }
 ///`CallDirection`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum CallDirection {
     #[serde(rename = "inbound")]
     Inbound,
     #[serde(rename = "outbound")]
     Outbound,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for CallDirection {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Inbound => f.write_str("inbound"),
             Self::Outbound => f.write_str("outbound"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -2158,16 +2133,7 @@ failed: the vendor could not place it, for a bad number or a carrier fault.
 canceled: the vendor says the call was hung up before an answer.
 unknown: the vendor reports nothing about how it ended, and the phone never joined.*/
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum CallOutcome {
     #[serde(rename = "completed")]
@@ -2182,6 +2148,9 @@ pub enum CallOutcome {
     Canceled,
     #[serde(rename = "unknown")]
     Unknown,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for CallOutcome {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -2192,6 +2161,7 @@ impl ::std::fmt::Display for CallOutcome {
             Self::Failed => f.write_str("failed"),
             Self::Canceled => f.write_str("canceled"),
             Self::Unknown => f.write_str("unknown"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -2279,76 +2249,255 @@ pub struct CallUsage {
     ///How many calls to a model it took, transcription and speech included.
     pub requests: i64,
 }
+///`CallingHours`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct CallingHours {
+    ///YYYY-MM-DD, the contact's local date, on which nobody is rung.
+    pub excluded_dates: ::std::vec::Vec<::std::string::String>,
+    pub time_zone: CampaignTimeZone,
+    ///Keyed monday to sunday. A day left out rings nobody.
+    pub windows: ::std::collections::BTreeMap<
+        ::std::string::String,
+        ::std::option::Option<::std::vec::Vec<CallingWindow>>,
+    >,
+}
+///`CallingWindow`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct CallingWindow {
+    ///HH:MM, up to 24:00. A window does not cross midnight.
+    pub end: ::std::string::String,
+    ///HH:MM, on a 15-minute step.
+    pub start: ::std::string::String,
+}
 ///`Campaign`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct Campaign {
-    pub concurrency: i64,
-    pub config_id: ::std::string::String,
-    pub created_at: ::std::string::String,
+    pub calling_hours: CallingHours,
+    ///When it had nobody left to ring.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub finished_at: ::std::option::Option<::std::string::String>,
+    pub completed_at: ::std::option::Option<::std::string::String>,
+    ///How many of these calls may be happening at once.
+    pub concurrency: i64,
+    ///The agent config the calls are made with, the same as the sequence's step names.
+    pub config_id: ::std::string::String,
+    pub contacts: ContactCounts,
+    pub created_at: ::std::string::String,
+    ///The region, as ISO 3166-1 alpha-2, a contact's number without a country code is read in.
+    pub default_country: ::std::string::String,
+    ///One of the app's own numbers, which is what the person sees.
     pub from_number: ::std::string::String,
     pub id: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub launched_at: ::std::option::Option<::std::string::String>,
     pub name: ::std::string::String,
-    ///Why the router paused the campaign itself, as the code of what refused its next call: telephony_suspended, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached. The contact that call was for is rung once the campaign is started again. Absent for a campaign the customer paused, and cleared by starting it.
+    ///Why the router paused the campaign itself: the code of what refused its next call, for example telephony_suspended, account_suspended, insufficient_credits, system_limit_reached, spend_limit_reached, user_limit_reached or spend_check_unavailable, config_missing when its agent config was deleted, session_refused when its agent config makes a session that cannot open, or voicemail_needs_exact_words when its step leaves a voicemail message and its agent config became speech-to-speech. The contact that call was for is rung once the campaign is resumed. Absent for a campaign somebody paused, and cleared by resuming it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub paused_reason: ::std::option::Option<::std::string::String>,
+    pub sequence: CampaignSequence,
+    ///When it was launched to start ringing.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub start_at: ::std::option::Option<::std::string::String>,
+    ///When it first rang anybody.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub started_at: ::std::option::Option<::std::string::String>,
     pub state: CampaignState,
-    #[serde(
-        default,
-        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
-    )]
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub stopped_at: ::std::option::Option<::std::string::String>,
     pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    #[serde(rename = "type")]
+    pub type_: CampaignType,
+}
+///`CampaignAnalytics`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct CampaignAnalytics {
+    ///Calls placed that ended, by how the phone says they ended: completed, busy, no_answer, failed, canceled or unknown. A call an answering machine took is completed.
+    pub call_outcomes: ::std::collections::BTreeMap<::std::string::String, i64>,
+    ///Contacts who answered at least one call.
+    pub connected: i64,
+    ///converted / dialed, 0 when nobody was dialed.
+    pub conversion_rate: f64,
+    ///Contacts that ended successfully.
+    pub converted: i64,
+    ///Contacts with at least one call placed.
+    pub dialed: i64,
+    ///Oldest first, only the days with a dial.
+    pub dials_per_day: ::std::vec::Vec<CampaignDialDay>,
+    ///Contacts that are done, by outcome id, no_response included.
+    pub outcomes: ::std::collections::BTreeMap<::std::string::String, i64>,
+}
+///`CampaignAttempt`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct CampaignAttempt {
+    ///Minutes after the previous attempt started, pushed into the calling hours.
+    pub delay_minutes: i64,
+}
+///`CampaignDialDay`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct CampaignDialDay {
+    ///Calls a person picked up and spoke on.
+    pub answered: i64,
+    ///YYYY-MM-DD, in UTC.
+    pub date: ::std::string::String,
+    ///Calls placed, answering machines included.
+    pub dials: i64,
+    ///Calls an answering machine took.
+    pub voicemail: i64,
+}
+///`CampaignNext`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct CampaignNext {
+    ///How the contact ends: successful counts as converted.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub end: ::std::option::Option<CampaignNextEnd>,
+    ///Reserved for branching to another step, which is refused for now.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub step: ::std::option::Option<::std::string::String>,
+}
+///How the contact ends: successful counts as converted.
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum CampaignNextEnd {
+    #[serde(rename = "successful")]
+    Successful,
+    #[serde(rename = "unsuccessful")]
+    Unsuccessful,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for CampaignNextEnd {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Successful => f.write_str("successful"),
+            Self::Unsuccessful => f.write_str("unsuccessful"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for CampaignNextEnd {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "successful" => Ok(Self::Successful),
+            "unsuccessful" => Ok(Self::Unsuccessful),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CampaignNextEnd {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CampaignNextEnd {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`CampaignOutcome`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct CampaignOutcome {
+    ///What the call has to have been for this outcome, which the model reading the transcript goes by.
+    pub description: ::std::string::String,
+    ///Lowercase letters, digits and underscores, starting with a letter.
+    pub id: ::std::string::String,
+    pub name: ::std::string::String,
+    pub next: CampaignNext,
+}
+///`CampaignPage`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct CampaignPage {
+    pub has_more: bool,
+    pub items: ::std::vec::Vec<Campaign>,
+    ///Pass as cursor for the next page. Absent on the last.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub next_cursor: ::std::option::Option<::std::string::String>,
 }
 ///`CampaignRequest`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 pub struct CampaignRequest {
-    ///How many of these calls may be happening at once.
+    ///Omitted is weekdays 09:00 to 18:00 where the contact is, on create.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub calling_hours: ::std::option::Option<CallingHours>,
+    ///How many of these calls may be happening at once. Omitted is 1 on create.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub concurrency: ::std::option::Option<i64>,
-    ///The agent config the calls are made with.
-    pub config_id: ::std::string::String,
-    ///One of your own numbers, which is what the person sees.
-    pub from_number: ::std::string::String,
-    pub name: ::std::string::String,
+    ///The agent config the calls are made with. Setting it sets the sequence's step's too.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub config_id: ::std::option::Option<::std::string::String>,
+    ///The region, as ISO 3166-1 alpha-2, a contact's number without a country code is read in.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub default_country: ::std::option::Option<::std::string::String>,
+    ///One of the app's own numbers, which is what the person sees.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub from_number: ::std::option::Option<::std::string::String>,
+    ///Required on create.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub name: ::std::option::Option<::std::string::String>,
+    ///Omitted is four attempts over twenty days, with double dial, on create. Its step's config_id is the campaign's: sending both, they must agree.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub sequence: ::std::option::Option<CampaignSequence>,
     #[serde(
         default,
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    ///Omitted is standard on create. It never changes.
+    #[serde(
+        rename = "type",
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub type_: ::std::option::Option<CampaignType>,
 }
-///`CampaignState`
+///`CampaignRoute`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct CampaignRoute {
+    pub next: CampaignNext,
+}
+///`CampaignSequence`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct CampaignSequence {
+    ///Ring again at once when the first call of an attempt is not answered.
+    pub double_dial: bool,
+    ///Exactly one step for now.
+    pub steps: ::std::vec::Vec<CampaignStep>,
+}
+///Where a campaign is: draft until it is launched, scheduled until its start_at, running while it rings people, paused while it rings nobody new, stopped for good, completed once it has nobody left to ring.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum CampaignState {
     #[serde(rename = "draft")]
     Draft,
+    #[serde(rename = "scheduled")]
+    Scheduled,
     #[serde(rename = "running")]
     Running,
     #[serde(rename = "paused")]
     Paused,
-    #[serde(rename = "finished")]
-    Finished,
+    #[serde(rename = "stopped")]
+    Stopped,
+    #[serde(rename = "completed")]
+    Completed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for CampaignState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Draft => f.write_str("draft"),
+            Self::Scheduled => f.write_str("scheduled"),
             Self::Running => f.write_str("running"),
             Self::Paused => f.write_str("paused"),
-            Self::Finished => f.write_str("finished"),
+            Self::Stopped => f.write_str("stopped"),
+            Self::Completed => f.write_str("completed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -2357,9 +2506,11 @@ impl ::std::str::FromStr for CampaignState {
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
             "draft" => Ok(Self::Draft),
+            "scheduled" => Ok(Self::Scheduled),
             "running" => Ok(Self::Running),
             "paused" => Ok(Self::Paused),
-            "finished" => Ok(Self::Finished),
+            "stopped" => Ok(Self::Stopped),
+            "completed" => Ok(Self::Completed),
             _ => Err("invalid value".into()),
         }
     }
@@ -2371,6 +2522,191 @@ impl ::std::convert::TryFrom<&str> for CampaignState {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for CampaignState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`CampaignStep`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct CampaignStep {
+    ///1 to 10. The first has a delay of 0.
+    pub attempts: ::std::vec::Vec<CampaignAttempt>,
+    ///The agent config the step rings with, the same as the campaign's config_id.
+    pub config_id: ::std::string::String,
+    ///What this conversation is for, told to the agent on every call of the step. {{variable}} placeholders are filled from the contact. Required to launch.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub goal: ::std::option::Option<::std::string::String>,
+    ///step_1, for now.
+    pub id: ::std::string::String,
+    ///Where running out of attempts leads. It ends unsuccessfully.
+    pub no_response: CampaignRoute,
+    ///Where an answered call none of the outcomes fit leads.
+    pub other: CampaignRoute,
+    ///What an answered call can end as. do_not_call is built in.
+    pub outcomes: ::std::vec::Vec<CampaignOutcome>,
+    ///What the agent does when an answering machine picks up. Absent is off: the agent talks to a machine as to a person. Leaving a message needs an agent that is not speech-to-speech.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub voicemail: ::std::option::Option<CampaignVoicemail>,
+}
+///`CampaignTimeZone`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct CampaignTimeZone {
+    ///An IANA zone, used by contact mode.
+    pub fallback: ::std::string::String,
+    ///An IANA zone, used by fixed mode.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub fixed: ::std::option::Option<::std::string::String>,
+    ///contact reads the hours where each contact is: their time_zone, else their number's, else fallback. fixed reads them in fixed.
+    pub mode: CampaignTimeZoneMode,
+}
+///contact reads the hours where each contact is: their time_zone, else their number's, else fallback. fixed reads them in fixed.
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum CampaignTimeZoneMode {
+    #[serde(rename = "contact")]
+    Contact,
+    #[serde(rename = "fixed")]
+    Fixed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for CampaignTimeZoneMode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Contact => f.write_str("contact"),
+            Self::Fixed => f.write_str("fixed"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for CampaignTimeZoneMode {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "contact" => Ok(Self::Contact),
+            "fixed" => Ok(Self::Fixed),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CampaignTimeZoneMode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CampaignTimeZoneMode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///What a campaign rings. standard rings the contacts it was given; auto_enroll is refused for now. Fixed once the campaign is created.
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum CampaignType {
+    #[serde(rename = "standard")]
+    Standard,
+    #[serde(rename = "auto_enroll")]
+    AutoEnroll,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for CampaignType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Standard => f.write_str("standard"),
+            Self::AutoEnroll => f.write_str("auto_enroll"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for CampaignType {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "standard" => Ok(Self::Standard),
+            "auto_enroll" => Ok(Self::AutoEnroll),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CampaignType {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CampaignType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`CampaignVoicemail`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct CampaignVoicemail {
+    pub action: CampaignVoicemailAction,
+    ///{{variable}} placeholders are filled from the contact, then it is said word for word once the greeting has ended, and the call ends. Required to launch for leave_message, and not only spaces.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub message: ::std::option::Option<::std::string::String>,
+}
+/**off: the agent talks to a machine as to a person. The default.
+hang_up: end the call at once, saying nothing.
+leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.*/
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum CampaignVoicemailAction {
+    #[serde(rename = "off")]
+    Off,
+    #[serde(rename = "hang_up")]
+    HangUp,
+    #[serde(rename = "leave_message")]
+    LeaveMessage,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for CampaignVoicemailAction {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Off => f.write_str("off"),
+            Self::HangUp => f.write_str("hang_up"),
+            Self::LeaveMessage => f.write_str("leave_message"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for CampaignVoicemailAction {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "off" => Ok(Self::Off),
+            "hang_up" => Ok(Self::HangUp),
+            "leave_message" => Ok(Self::LeaveMessage),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CampaignVoicemailAction {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CampaignVoicemailAction {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -2415,28 +2751,23 @@ pub struct ChannelAccount {
 }
 ///How a sender becomes an end user. phone makes each number an end user of its own, phone:+15551234567, so anybody who writes is answered. link answers only a number somebody tied to an end user with a code from POST /v1/agents/channels/links, which is what an agent reading a person's own calendar or orders needs. Omitted is phone.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ChannelIdentity {
     #[serde(rename = "phone")]
     Phone,
     #[serde(rename = "link")]
     Link,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ChannelIdentity {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Phone => f.write_str("phone"),
             Self::Link => f.write_str("link"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -2466,16 +2797,7 @@ impl ::std::convert::TryFrom<::std::string::String> for ChannelIdentity {
 }
 ///A channel a conversation can be carried over.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ChannelKind {
     #[serde(rename = "whatsapp")]
@@ -2484,6 +2806,9 @@ pub enum ChannelKind {
     Sms,
     #[serde(rename = "imessage")]
     Imessage,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ChannelKind {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -2491,6 +2816,7 @@ impl ::std::fmt::Display for ChannelKind {
             Self::Whatsapp => f.write_str("whatsapp"),
             Self::Sms => f.write_str("sms"),
             Self::Imessage => f.write_str("imessage"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -2645,16 +2971,7 @@ pub struct ClassifyQuestion {
 }
 ///noul is yes or no, answered as the probability of yes. choice picks one of named options. score places the state along ordered levels.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ClassifyQuestionType {
     #[serde(rename = "noul")]
@@ -2663,6 +2980,9 @@ pub enum ClassifyQuestionType {
     Choice,
     #[serde(rename = "score")]
     Score,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ClassifyQuestionType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -2670,6 +2990,7 @@ impl ::std::fmt::Display for ClassifyQuestionType {
             Self::Noul => f.write_str("noul"),
             Self::Choice => f.write_str("choice"),
             Self::Score => f.write_str("score"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -2829,16 +3150,7 @@ pub struct ConnectionCredentials {
 }
 ///current when the connection reads its connector's latest revision, or an earlier one that differs from it only in what a config is checked against (sensitive, and which tools only read or send data out), outdated when a later one changes what the connection reads, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again, and for a none connection by saving its empty credentials again.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ConnectionDefinitionStatus {
     #[serde(rename = "current")]
@@ -2847,6 +3159,9 @@ pub enum ConnectionDefinitionStatus {
     Outdated,
     #[serde(rename = "broken")]
     Broken,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ConnectionDefinitionStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -2854,6 +3169,7 @@ impl ::std::fmt::Display for ConnectionDefinitionStatus {
             Self::Current => f.write_str("current"),
             Self::Outdated => f.write_str("outdated"),
             Self::Broken => f.write_str("broken"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -2948,28 +3264,23 @@ pub struct ConnectionOwner {
 }
 ///app is the app's own account, user one user's.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ConnectionOwnerType {
     #[serde(rename = "app")]
     App,
     #[serde(rename = "user")]
     User,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ConnectionOwnerType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::App => f.write_str("app"),
             Self::User => f.write_str("user"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -3029,16 +3340,7 @@ pub struct ConnectionRequest {
 }
 ///pending until an account is connected, then connected, needs_reauthorization once the provider stops accepting its credential, and disconnected when it is deleted.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ConnectionStatus {
     #[serde(rename = "pending")]
@@ -3049,6 +3351,9 @@ pub enum ConnectionStatus {
     NeedsReauthorization,
     #[serde(rename = "disconnected")]
     Disconnected,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ConnectionStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -3057,6 +3362,7 @@ impl ::std::fmt::Display for ConnectionStatus {
             Self::Connected => f.write_str("connected"),
             Self::NeedsReauthorization => f.write_str("needs_reauthorization"),
             Self::Disconnected => f.write_str("disconnected"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -3109,6 +3415,8 @@ pub struct ConnectionTool {
     ///The scopes a call of the tool needs, as the connector says. Absent when it says none.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub needs_scopes: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    ///Whether the tool only reads, as the connector's latest revision says: every source of the connector lists it in read_only_tools or says outbound: false (a grant by name does not say which source a tool comes from). False too when the connector is gone. A binding may grant such a tool by name beside a sensitive connector without require_approval; any other tool there needs require_approval.
+    pub read_only: bool,
     ///The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again.
     pub schema_digest: ::std::string::String,
 }
@@ -3184,16 +3492,7 @@ pub struct ConnectionValidationRequest {
 }
 ///connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant. failed: the provider could not be reached or listed nothing usable, or the provider refused a consent (code connector_consent_refused); error says why.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ConnectionValidationStatus {
     #[serde(rename = "connected")]
@@ -3208,6 +3507,9 @@ pub enum ConnectionValidationStatus {
     NeedsReapproval,
     #[serde(rename = "failed")]
     Failed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ConnectionValidationStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -3218,6 +3520,7 @@ impl ::std::fmt::Display for ConnectionValidationStatus {
             Self::NeedsScopes => f.write_str("needs_scopes"),
             Self::NeedsReapproval => f.write_str("needs_reapproval"),
             Self::Failed => f.write_str("failed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -3287,18 +3590,9 @@ pub struct Connector {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub setup: ::std::option::Option<ConnectorSetup>,
 }
-///grant_created: a consent, a credentials write or router plugins migrate gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app's backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.
+///grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app's backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ConnectorAuditAction {
     #[serde(rename = "grant_created")]
@@ -3313,6 +3607,9 @@ pub enum ConnectorAuditAction {
     ProxyCall,
     #[serde(rename = "tool_reapproved")]
     ToolReapproved,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ConnectorAuditAction {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -3323,6 +3620,7 @@ impl ::std::fmt::Display for ConnectorAuditAction {
             Self::TokenExport => f.write_str("token_export"),
             Self::ProxyCall => f.write_str("proxy_call"),
             Self::ToolReapproved => f.write_str("tool_reapproved"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -3397,7 +3695,7 @@ pub struct ConnectorAuditEvent {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub latency_ms: ::std::option::Option<i64>,
     pub owner_type: ConnectionOwnerType,
-    ///Why: consent, credentials or plugin_migrate for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.
+    ///Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub reason: ::std::option::Option<::std::string::String>,
     ///The X-Request-Id of the API request that caused it. For a change a session's tool call caused, that is the request that created the session, not the one that asked for the turn. Absent for an incognito session's, and once the connection's user was deleted.
@@ -3469,28 +3767,23 @@ pub struct ConnectorClient {
 }
 ///How a private_key_jwt assertion is signed, and set only for it.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ConnectorClientAlg {
     #[serde(rename = "RS256")]
     Rs256,
     #[serde(rename = "PS256")]
     Ps256,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ConnectorClientAlg {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Rs256 => f.write_str("RS256"),
             Self::Ps256 => f.write_str("PS256"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -3520,16 +3813,7 @@ impl ::std::convert::TryFrom<::std::string::String> for ConnectorClientAlg {
 }
 ///How the OAuth client authenticates at the token endpoint, as the IANA OAuth token endpoint authentication methods registry spells it.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ConnectorClientAuthMethod {
     #[serde(rename = "none")]
@@ -3542,6 +3826,9 @@ pub enum ConnectorClientAuthMethod {
     PrivateKeyJwt,
     #[serde(rename = "tls_client_auth")]
     TlsClientAuth,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ConnectorClientAuthMethod {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -3551,6 +3838,7 @@ impl ::std::fmt::Display for ConnectorClientAuthMethod {
             Self::ClientSecretBasic => f.write_str("client_secret_basic"),
             Self::PrivateKeyJwt => f.write_str("private_key_jwt"),
             Self::TlsClientAuth => f.write_str("tls_client_auth"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -3583,16 +3871,7 @@ impl ::std::convert::TryFrom<::std::string::String> for ConnectorClientAuthMetho
 }
 ///operator is this deployment's own client, customer one the app registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ConnectorClientRegistrationMethod {
     #[serde(rename = "operator")]
@@ -3605,6 +3884,9 @@ pub enum ConnectorClientRegistrationMethod {
     Dcr,
     #[serde(rename = "cimd")]
     Cimd,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ConnectorClientRegistrationMethod {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -3614,6 +3896,7 @@ impl ::std::fmt::Display for ConnectorClientRegistrationMethod {
             Self::Managed => f.write_str("managed"),
             Self::Dcr => f.write_str("dcr"),
             Self::Cimd => f.write_str("cimd"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -3685,28 +3968,23 @@ pub struct ConnectorEventDestinationSecret {
 }
 ///Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there. A Slack reply that does not mention the bot, in a thread the agent is not in yet, is unhandled when it arrives. If the mention that starts the thread arrives within 10 minutes, as when Slack retries the mention, the agent answers the reply too. The forward is not taken back, and no event says that the agent answered it.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ConnectorEventForward {
     #[serde(rename = "unhandled")]
     Unhandled,
     #[serde(rename = "all")]
     All,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ConnectorEventForward {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Unhandled => f.write_str("unhandled"),
             Self::All => f.write_str("all"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -3770,16 +4048,7 @@ pub struct ConnectorOAuthClient {
 }
 ///How the app's own OAuth client authenticates at the token endpoint (RFC 7591 section 2): none for a public client, which has no secret, client_secret_basic or client_secret_post.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ConnectorOAuthClientAuthMethod {
     #[serde(rename = "none")]
@@ -3788,6 +4057,9 @@ pub enum ConnectorOAuthClientAuthMethod {
     ClientSecretBasic,
     #[serde(rename = "client_secret_post")]
     ClientSecretPost,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ConnectorOAuthClientAuthMethod {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -3795,6 +4067,7 @@ impl ::std::fmt::Display for ConnectorOAuthClientAuthMethod {
             Self::None => f.write_str("none"),
             Self::ClientSecretBasic => f.write_str("client_secret_basic"),
             Self::ClientSecretPost => f.write_str("client_secret_post"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -3845,28 +4118,23 @@ pub struct ConnectorOAuthClientRequest {
 }
 ///cancel stops waiting for the call when the turn is interrupted, and tells the provider to stop it unless cancellable is false. wait lets the call finish, up to the binding's timeout, and its result goes into the conversation for the next turn.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ConnectorOnInterrupt {
     #[serde(rename = "cancel")]
     Cancel,
     #[serde(rename = "wait")]
     Wait,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ConnectorOnInterrupt {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Cancel => f.write_str("cancel"),
             Self::Wait => f.write_str("wait"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -3972,95 +4240,164 @@ pub struct ConnectorToolGrant {
 ///`Contact`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct Contact {
-    pub attempts: i64,
-    ///The call this contact became, which is what the call paths take.
+    ///Every dial made to them, oldest first. Only on a contact read alone.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub attempts: ::std::option::Option<::std::vec::Vec<ContactAttempt>>,
+    ///Attempts that placed at least one call.
+    pub attempts_made: i64,
+    ///The attempts the sequence makes at most.
+    pub attempts_total: i64,
+    ///The last call placed to them, which is what the call paths take.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub call_id: ::std::option::Option<::std::string::String>,
-    ///Why they could not be rung, when they could not be.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub error: ::std::option::Option<::std::string::String>,
+    ///They ended successfully.
+    pub converted: bool,
+    pub created_at: ::std::string::String,
     pub id: ::std::string::String,
+    ///When they are next rung, while they are waiting to be.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub next_attempt_at: ::std::option::Option<::std::string::String>,
+    ///The id of the outcome they ended with, once they have.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub outcome: ::std::option::Option<::std::string::String>,
+    ///Why they were rejected, failed or stopped.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub reason: ::std::option::Option<::std::string::String>,
+    pub stage: ContactStage,
+    ///The IANA zone they were added with.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub time_zone: ::std::option::Option<::std::string::String>,
+    ///E.164.
+    pub to_number: ::std::string::String,
+    ///Filled into the agent's {{placeholders}} on their calls.
+    pub variables: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    ///The IANA zone the calling hours are read in for them: the campaign's fixed zone, else their time_zone, else their number's, else the campaign's fallback.
+    pub zone: ::std::string::String,
+}
+///`ContactAttempt`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ContactAttempt {
+    ///Which attempt of the sequence, from 1.
+    pub attempt: i64,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub call_id: ::std::option::Option<::std::string::String>,
+    ///How the call the dial placed ended, as the phone says. Absent while it is happening and for a dial that placed none.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub call_outcome: ::std::option::Option<CallOutcome>,
+    ///1, or 2 for the second call of a double dial.
+    pub dial: i64,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub ended_at: ::std::option::Option<::std::string::String>,
+    ///The outcome an answered call was read as: no_response when nobody but the agent spoke.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub outcome: ::std::option::Option<::std::string::String>,
+    ///Why the dial placed no call: invalid_number, refused, deferred, paused or not_placed (the router stopped before the call went out). voicemail for a call an answering machine took. Empty for any other call, whose end call_outcome says.
+    pub result: ::std::string::String,
+    pub started_at: ::std::string::String,
+}
+///`ContactCounts`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ContactCounts {
+    pub completed: i64,
+    ///Contacts that ended successfully.
+    pub converted: i64,
+    ///Contacts with at least one call placed.
+    pub dialed: i64,
+    pub enrolled: i64,
+    pub failed: i64,
+    pub in_progress: i64,
+    pub rejected: i64,
+    pub stopped: i64,
+    pub total: i64,
+}
+///`ContactInput`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ContactInput {
+    ///What to say to this person, added to whatever the config already says. Up to 2,000 characters; longer fails the whole request with 400.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub instructions: ::std::option::Option<::std::string::String>,
-    ///How the call to them ended, once it has. The state still says only whether they were rung.
+    ///An IANA zone, which a campaign reading its hours where each contact is goes by before the number's.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub outcome: ::std::option::Option<CallOutcome>,
-    pub state: ContactState,
+    pub time_zone: ::std::option::Option<::std::string::String>,
+    ///With or without a country code.
     pub to_number: ::std::string::String,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub vendor_call_id: ::std::option::Option<::std::string::String>,
+    ///Filled into the agent's {{placeholders}}. Names are lowercase letters, digits and underscores, starting with a letter; up to 50, each value up to 1,000 characters on one line.
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub variables: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
 }
-///`ContactState`
+///`ContactPage`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ContactPage {
+    pub has_more: bool,
+    pub items: ::std::vec::Vec<Contact>,
+    ///Pass as cursor for the next page. Absent on the last.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub next_cursor: ::std::option::Option<::std::string::String>,
+}
+///Where a contact is: enrolled while waiting to be rung, in_progress while a call to them happens or is being read, completed once the sequence is done with them, rejected when their number was refused before any call, stopped when they were left unrung, failed when a call could not be made.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
-pub enum ContactState {
-    #[serde(rename = "pending")]
-    Pending,
-    #[serde(rename = "calling")]
-    Calling,
-    #[serde(rename = "done")]
-    Done,
+pub enum ContactStage {
+    #[serde(rename = "enrolled")]
+    Enrolled,
+    #[serde(rename = "in_progress")]
+    InProgress,
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "rejected")]
+    Rejected,
+    #[serde(rename = "stopped")]
+    Stopped,
     #[serde(rename = "failed")]
     Failed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
-impl ::std::fmt::Display for ContactState {
+impl ::std::fmt::Display for ContactStage {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
-            Self::Pending => f.write_str("pending"),
-            Self::Calling => f.write_str("calling"),
-            Self::Done => f.write_str("done"),
+            Self::Enrolled => f.write_str("enrolled"),
+            Self::InProgress => f.write_str("in_progress"),
+            Self::Completed => f.write_str("completed"),
+            Self::Rejected => f.write_str("rejected"),
+            Self::Stopped => f.write_str("stopped"),
             Self::Failed => f.write_str("failed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
-impl ::std::str::FromStr for ContactState {
+impl ::std::str::FromStr for ContactStage {
     type Err = self::error::ConversionError;
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
-            "pending" => Ok(Self::Pending),
-            "calling" => Ok(Self::Calling),
-            "done" => Ok(Self::Done),
+            "enrolled" => Ok(Self::Enrolled),
+            "in_progress" => Ok(Self::InProgress),
+            "completed" => Ok(Self::Completed),
+            "rejected" => Ok(Self::Rejected),
+            "stopped" => Ok(Self::Stopped),
             "failed" => Ok(Self::Failed),
             _ => Err("invalid value".into()),
         }
     }
 }
-impl ::std::convert::TryFrom<&str> for ContactState {
+impl ::std::convert::TryFrom<&str> for ContactStage {
     type Error = self::error::ConversionError;
     fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
 }
-impl ::std::convert::TryFrom<::std::string::String> for ContactState {
+impl ::std::convert::TryFrom<::std::string::String> for ContactStage {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
-}
-///`ContactsRequest`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
-pub struct ContactsRequest {
-    pub contacts: ::std::vec::Vec<ContactsRequestContactsItem>,
-}
-///`ContactsRequestContactsItem`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
-pub struct ContactsRequestContactsItem {
-    ///What to say to this person, added to whatever the config already says.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instructions: ::std::option::Option<::std::string::String>,
-    pub to_number: ::std::string::String,
 }
 ///`ContentPart`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
@@ -4099,28 +4436,23 @@ pub struct CreateOptOutRequest {
 }
 ///Omitted is api.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum CreateOptOutRequestSource {
     #[serde(rename = "api")]
     Api,
     #[serde(rename = "dashboard")]
     Dashboard,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for CreateOptOutRequestSource {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Api => f.write_str("api"),
             Self::Dashboard => f.write_str("dashboard"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -4151,7 +4483,7 @@ impl ::std::convert::TryFrom<::std::string::String> for CreateOptOutRequestSourc
 ///`CreateResponseRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct CreateResponseRequest {
-    ///A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+    ///A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub audio: ::std::option::Option<AudioSource>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -4162,11 +4494,14 @@ pub struct CreateResponseRequest {
     ///How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub reasoning_effort: ::std::option::Option<::std::string::String>,
-    ///Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and videos are refused. A retry with the same id, text, images and voice note starts no second turn and returns no id. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.
+    ///Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and the frames of videos are shown to the model alone. A retry with the same id, text, images and voice note starts no second turn, returns no id and does not fetch its videos again: videos are not part of what a retry is matched on. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub request_id: ::std::option::Option<::std::string::String>,
     ///What to answer, as though it had been said. May be empty when images or audio carry the question. Images with no text are shown on the person's message in a session kept in Stream Chat, so they are then data URIs, at most 8, with or without a request_id.
     pub text: ::std::string::String,
+    ///What the person did in the generated UI of an earlier reply, such as tapping a place or submitting a form, which the text says in their words: an object naming the reply (message_id), the UI's format and the action (name), with what it carries (payload), of at most 8 KB as JSON. Their message carries it as custom.ai_ui_action, and the model is told it after the text.
+    #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
+    pub ui_action: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
     ///Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub videos: ::std::option::Option<::std::vec::Vec<VideoSource>>,
@@ -4255,6 +4590,9 @@ pub struct CreateSessionRequest {
     ///A longer note about the conversation, searched alongside the title.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub description: ::std::option::Option<::std::string::String>,
+    ///The model that controls the floor in this session, and how long a caller may wait once they stop, over the agent config's. Left out or null, the config's; an empty object is the default flow controller. The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub floor_control: ::std::option::Option<FloorControl>,
     ///What the agent opens the call with, over what the config says.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<Greeting>,
@@ -4323,6 +4661,9 @@ pub struct CreateSessionRequest {
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    ///The team the session's work is counted under, its team spend limits included, as team:<name> is among a token's usage categories: 1 to 59 letters, digits, _ . and -. Left out, the session is counted under the team the caller's token names, else the agent config's team tag. A token naming another team is refused with a 400: the team a token was signed for is not moved. Server-side only: a device sending it is refused with a 403, since its team is the one its token was signed for.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub team: ::std::option::Option<::std::string::String>,
     ///The end user's IANA timezone, such as Europe/Amsterdam, which a device knows and the router does not. It sets the zone the agent reads dates in for this session and, for a user the caller may name, is remembered as theirs for the scheduled tasks and sessions that follow. An unknown zone is refused with a 400 invalid_timezone.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub timezone: ::std::option::Option<::std::string::String>,
@@ -4390,16 +4731,7 @@ pub struct CreditEntry {
 }
 ///`CreditEntryKind`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum CreditEntryKind {
     #[serde(rename = "top_up")]
@@ -4414,6 +4746,9 @@ pub enum CreditEntryKind {
     DisputeReversal,
     #[serde(rename = "adjustment")]
     Adjustment,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for CreditEntryKind {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -4424,6 +4759,7 @@ impl ::std::fmt::Display for CreditEntryKind {
             Self::Dispute => f.write_str("dispute"),
             Self::DisputeReversal => f.write_str("dispute_reversal"),
             Self::Adjustment => f.write_str("adjustment"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -4550,16 +4886,7 @@ pub struct CustomModelRequest {
 }
 ///Whether the host trains on what it is sent. Declared with retention, or a session with a data policy is never routed here.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum CustomModelRequestTrainsOnData {
     #[serde(rename = "yes")]
@@ -4568,6 +4895,9 @@ pub enum CustomModelRequestTrainsOnData {
     No,
     #[serde(rename = "unknown")]
     Unknown,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for CustomModelRequestTrainsOnData {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -4575,6 +4905,7 @@ impl ::std::fmt::Display for CustomModelRequestTrainsOnData {
             Self::Yes => f.write_str("yes"),
             Self::No => f.write_str("no"),
             Self::Unknown => f.write_str("unknown"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -4620,16 +4951,7 @@ pub struct DataChange {
 }
 ///`DataChangeOp`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum DataChangeOp {
     #[serde(rename = "insert")]
@@ -4638,6 +4960,9 @@ pub enum DataChangeOp {
     Update,
     #[serde(rename = "delete")]
     Delete,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for DataChangeOp {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -4645,6 +4970,7 @@ impl ::std::fmt::Display for DataChangeOp {
             Self::Insert => f.write_str("insert"),
             Self::Update => f.write_str("update"),
             Self::Delete => f.write_str("delete"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -4713,16 +5039,7 @@ pub struct DataPolicy {
 }
 ///What a conversation decided. Asking puts a settled turn to the flow controller; waiting leaves it because the caller has not finished; ignoring drops speech meant for somebody else; answering replies to it; queueing holds it until the agent has stopped talking; interrupting abandons the reply being spoken and shortening ends it early; a backchannel is a listening noise that never reaches the model; superseding drops a ruling about words that have since changed; compacting replaces old history with a summary; delegating hands work to the subagent and settling is that work coming back, answered or not.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum DecisionKind {
     #[serde(rename = "ask")]
@@ -4751,6 +5068,9 @@ pub enum DecisionKind {
     Settle,
     #[serde(rename = "fail")]
     Fail,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for DecisionKind {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -4768,6 +5088,7 @@ impl ::std::fmt::Display for DecisionKind {
             Self::Delegate => f.write_str("delegate"),
             Self::Settle => f.write_str("settle"),
             Self::Fail => f.write_str("fail"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -4828,16 +5149,7 @@ pub struct DetectionBox {
 }
 ///Why a detection found nothing, absent when it completed. unsupported_option is a class, setting or overwrite no candidate could honour; provider_failed anything else a provider did wrong; timeout the 30 seconds running out; cancelled the caller hanging up.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum DetectionErrorCode {
     #[serde(rename = "unsupported_option")]
@@ -4848,6 +5160,9 @@ pub enum DetectionErrorCode {
     Timeout,
     #[serde(rename = "cancelled")]
     Cancelled,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for DetectionErrorCode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -4856,6 +5171,7 @@ impl ::std::fmt::Display for DetectionErrorCode {
             Self::ProviderFailed => f.write_str("provider_failed"),
             Self::Timeout => f.write_str("timeout"),
             Self::Cancelled => f.write_str("cancelled"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -4943,28 +5259,23 @@ pub struct DetectionResult {
 }
 ///Whether the image was looked at. A failed detection says why in error_code and error.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum DetectionStatus {
     #[serde(rename = "completed")]
     Completed,
     #[serde(rename = "failed")]
     Failed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for DetectionStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Completed => f.write_str("completed"),
             Self::Failed => f.write_str("failed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -4994,28 +5305,23 @@ impl ::std::convert::TryFrom<::std::string::String> for DetectionStatus {
 }
 ///Whether this kind of work is left to the customer's own dispatch worker.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum DispatchSetting {
     #[serde(rename = "enabled")]
     Enabled,
     #[serde(rename = "disabled")]
     Disabled,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for DispatchSetting {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Enabled => f.write_str("enabled"),
             Self::Disabled => f.write_str("disabled"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5036,6 +5342,62 @@ impl ::std::convert::TryFrom<&str> for DispatchSetting {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for DispatchSetting {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`DuplicateCampaignRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct DuplicateCampaignRequest {
+    ///none, all, or the contacts never rung, which a stopped or completed campaign alone knows.
+    pub contacts: DuplicateCampaignRequestContacts,
+}
+///none, all, or the contacts never rung, which a stopped or completed campaign alone knows.
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum DuplicateCampaignRequestContacts {
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "all")]
+    All,
+    #[serde(rename = "not_contacted")]
+    NotContacted,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for DuplicateCampaignRequestContacts {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::None => f.write_str("none"),
+            Self::All => f.write_str("all"),
+            Self::NotContacted => f.write_str("not_contacted"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for DuplicateCampaignRequestContacts {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "none" => Ok(Self::None),
+            "all" => Ok(Self::All),
+            "not_contacted" => Ok(Self::NotContacted),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for DuplicateCampaignRequestContacts {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for DuplicateCampaignRequestContacts {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -5065,28 +5427,23 @@ pub struct EndCallSettings {
 }
 ///What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum Endpointing {
     #[serde(rename = "silence")]
     Silence,
     #[serde(rename = "semantic")]
     Semantic,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for Endpointing {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Silence => f.write_str("silence"),
             Self::Semantic => f.write_str("semantic"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5114,6 +5471,56 @@ impl ::std::convert::TryFrom<::std::string::String> for Endpointing {
         value.parse()
     }
 }
+///What the agent does with episode cards, the same for every channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off writes none and reads none. record writes each conversation's card and its summary into the person's omni-channel, and no session reads them. on writes them as record does, and a session starts with the person's other cards. Turning record into on reads what record wrote.
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum EpisodeCardsMode {
+    #[serde(rename = "off")]
+    Off,
+    #[serde(rename = "record")]
+    Record,
+    #[serde(rename = "on")]
+    On,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for EpisodeCardsMode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Off => f.write_str("off"),
+            Self::Record => f.write_str("record"),
+            Self::On => f.write_str("on"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for EpisodeCardsMode {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "off" => Ok(Self::Off),
+            "record" => Ok(Self::Record),
+            "on" => Ok(Self::On),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for EpisodeCardsMode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for EpisodeCardsMode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///Matches one value exactly: "value" is short for {"$eq": "value"}.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 #[serde(untagged, deny_unknown_fields)]
@@ -5127,7 +5534,7 @@ pub enum Equals {
 ///`ErrorDetail`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct ErrorDetail {
-    ///What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+    ///What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
     pub code: ::std::string::String,
     ///Where the code is explained.
     pub doc_url: ::std::string::String,
@@ -5143,16 +5550,7 @@ pub struct ErrorResponse {
 }
 ///The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, payment_required 402, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ErrorType {
     #[serde(rename = "invalid_request")]
@@ -5185,6 +5583,9 @@ pub enum ErrorType {
     Unavailable,
     #[serde(rename = "timeout")]
     Timeout,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ErrorType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -5204,6 +5605,7 @@ impl ::std::fmt::Display for ErrorType {
             Self::Internal => f.write_str("internal"),
             Self::Unavailable => f.write_str("unavailable"),
             Self::Timeout => f.write_str("timeout"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5243,6 +5645,17 @@ impl ::std::convert::TryFrom<::std::string::String> for ErrorType {
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
+}
+///The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct FloorControl {
+    ///The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub max_wait_ms: ::std::option::Option<i64>,
+    ///The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one there is. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured).
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub model: ::std::option::Option<::std::string::String>,
 }
 ///Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
@@ -5286,28 +5699,23 @@ pub struct GeneratedImage {
 }
 ///What the picture is, read off the picture itself rather than the provider's label.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum GeneratedImageMediaType {
     #[serde(rename = "image/png")]
     ImagePng,
     #[serde(rename = "image/jpeg")]
     ImageJpeg,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for GeneratedImageMediaType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::ImagePng => f.write_str("image/png"),
             Self::ImageJpeg => f.write_str("image/jpeg"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5337,28 +5745,23 @@ impl ::std::convert::TryFrom<::std::string::String> for GeneratedImageMediaType 
 }
 ///`Granularity`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum Granularity {
     #[serde(rename = "hourly")]
     Hourly,
     #[serde(rename = "daily")]
     Daily,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for Granularity {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Hourly => f.write_str("hourly"),
             Self::Daily => f.write_str("daily"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5396,28 +5799,23 @@ pub struct Greeting {
 }
 ///exact says the text word for word. variation has the model say its own variation of it on every call, so callers do not hear the same opening each time. A speech-to-speech model cannot say exact words, so it always says its own rendering of the text.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum GreetingMode {
     #[serde(rename = "exact")]
     Exact,
     #[serde(rename = "variation")]
     Variation,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for GreetingMode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Exact => f.write_str("exact"),
             Self::Variation => f.write_str("variation"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5456,6 +5854,9 @@ pub struct GuestUser {
     pub id: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub name: ::std::option::Option<::std::string::String>,
+    ///What this guest sends back, with their id, to be given a fresh token once this one has expired. Keep it where the token is kept. It works once: every answer to it carries the next one, so store it each time. Absent where the deployment records no guests, and from a refresh made with the guest's own token while they already hold one, which keeps working.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub refresh_secret: ::std::option::Option<::std::string::String>,
     ///A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries role guest, so an app that has turned guests off refuses it.
     pub token: ::std::string::String,
 }
@@ -5464,34 +5865,32 @@ pub struct GuestUser {
 pub struct GuestUserRequest {
     #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
     pub custom: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-    ///A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a guest of this customer returns that guest with a fresh token rather than failing, because coming back is the same person.
+    ///A guest coming back, to be given a fresh token as the same guest. Only honoured for a caller that proves it is that guest: the app's backend, the guest's own still-valid token, or the refresh_secret they were last handed. Any other caller is minted a new guest, as if no id had been sent, because a guest id is no secret: it is the author of their messages. Omitted mints a new guest.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub id: ::std::option::Option<::std::string::String>,
-    ///What to call them, for a transcript a person reads later.
+    ///What to call a new guest, for a transcript a person reads later. A guest coming back keeps their name unless the app's backend renames them.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub name: ::std::option::Option<::std::string::String>,
+    ///The refresh_secret this guest was last handed, sent with their id once their token has expired. Spent by being used. One that is wrong or already spent mints a new guest instead.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub refresh_secret: ::std::option::Option<::std::string::String>,
 }
 ///Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum Harness {
     #[serde(rename = "default")]
     Default,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for Harness {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Default => f.write_str("default"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5527,28 +5926,23 @@ pub struct HealthStatus {
 }
 ///`HealthStatusStatus`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum HealthStatusStatus {
     #[serde(rename = "ok")]
     Ok,
     #[serde(rename = "degraded")]
     Degraded,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for HealthStatusStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Ok => f.write_str("ok"),
             Self::Degraded => f.write_str("degraded"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5590,28 +5984,23 @@ pub struct HistoryMessage {
 }
 ///user is what a person said, assistant what the agent answered. These are the only turns a resumed conversation hands the model; instructions say anything a system message would.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum HistoryRole {
     #[serde(rename = "user")]
     User,
     #[serde(rename = "assistant")]
     Assistant,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for HistoryRole {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::User => f.write_str("user"),
             Self::Assistant => f.write_str("assistant"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5662,25 +6051,20 @@ pub struct ImageContentPart {
 }
 ///`ImageContentPartType`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ImageContentPartType {
     #[serde(rename = "image_url")]
     ImageUrl,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ImageContentPartType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::ImageUrl => f.write_str("image_url"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5709,16 +6093,7 @@ impl ::std::convert::TryFrom<::std::string::String> for ImageContentPartType {
 }
 ///Why a generation drew nothing, absent when it completed. content_filtered is a safety filter refusing the prompt or the picture; unsupported_option a size, shape or setting no candidate could honour; provider_failed anything else a provider did wrong; timeout the 240 seconds running out; cancelled the caller hanging up.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ImageErrorCode {
     #[serde(rename = "content_filtered")]
@@ -5731,6 +6106,9 @@ pub enum ImageErrorCode {
     Timeout,
     #[serde(rename = "cancelled")]
     Cancelled,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ImageErrorCode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -5740,6 +6118,7 @@ impl ::std::fmt::Display for ImageErrorCode {
             Self::ProviderFailed => f.write_str("provider_failed"),
             Self::Timeout => f.write_str("timeout"),
             Self::Cancelled => f.write_str("cancelled"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5806,28 +6185,23 @@ pub struct ImageGenerationRequest {
 }
 ///Whether the pictures were drawn. A failed generation says why in error_code and error.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ImageGenerationStatus {
     #[serde(rename = "completed")]
     Completed,
     #[serde(rename = "failed")]
     Failed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ImageGenerationStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Completed => f.write_str("completed"),
             Self::Failed => f.write_str("failed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5885,28 +6259,23 @@ pub struct ImageOptions {
 }
 ///The encoding, on a model that can be asked for one.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ImageOptionsOutputFormat {
     #[serde(rename = "png")]
     Png,
     #[serde(rename = "jpeg")]
     Jpeg,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ImageOptionsOutputFormat {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Png => f.write_str("png"),
             Self::Jpeg => f.write_str("jpeg"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5944,16 +6313,7 @@ pub struct ImageSource {
 }
 ///`ImageSourceDetail`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ImageSourceDetail {
     #[serde(rename = "auto")]
@@ -5962,6 +6322,9 @@ pub enum ImageSourceDetail {
     Low,
     #[serde(rename = "high")]
     High,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ImageSourceDetail {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -5969,6 +6332,7 @@ impl ::std::fmt::Display for ImageSourceDetail {
             Self::Auto => f.write_str("auto"),
             Self::Low => f.write_str("low"),
             Self::High => f.write_str("high"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5998,16 +6362,26 @@ impl ::std::convert::TryFrom<::std::string::String> for ImageSourceDetail {
     }
 }
 ///`IndexedKnowledgeDocument`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct IndexedKnowledgeDocument {
+    ///The size of the file uploaded, or of the text posted. 0 for a document written before sizes were kept.
+    pub bytes: i64,
+    ///The type the file was uploaded as, or text/markdown for text posted. Empty for a document written before types were kept.
+    pub content_type: ::std::string::String,
     pub created_at: ::std::string::String,
+    ///Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error: ::std::option::Option<::std::string::String>,
     pub id: ::std::string::String,
     pub namespace: ::std::string::String,
-    ///How many passages it was last cut into.
+    ///How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet.
+    pub pages: i64,
+    ///How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read.
     pub passages: i64,
     ///What the document was posted as, and what its passages are keyed by.
     pub source: ::std::string::String,
-    ///The document as it was last posted. Only reading one document fills it in, and one written before its text was kept has none.
+    pub state: KnowledgeDocumentState,
+    ///The document as it was last posted, or as its file was read: Markdown, each page of a file opening with an <!-- page N --> comment. Only reading one document fills it in, and one written before its text was kept has none.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub text: ::std::option::Option<::std::string::String>,
     ///When it was last written.
@@ -6037,7 +6411,7 @@ pub struct IngestedKnowledge {
 pub struct InputParts {
     ///Pictures, attached or returned by a tool.
     pub images: i64,
-    ///The system prompt: the agent's instructions, skills and plugin guidance.
+    ///The system prompt: the agent's instructions, skills and connector guidance.
     pub instructions: i64,
     ///The conversation's words, from either side.
     pub messages: i64,
@@ -6062,16 +6436,7 @@ pub struct InvocationArgument {
 }
 ///The argument's JSON type.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum InvocationArgumentType {
     #[serde(rename = "object")]
@@ -6086,6 +6451,9 @@ pub enum InvocationArgumentType {
     Boolean,
     #[serde(rename = "null")]
     Null,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for InvocationArgumentType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -6096,6 +6464,7 @@ impl ::std::fmt::Display for InvocationArgumentType {
             Self::Number => f.write_str("number"),
             Self::Boolean => f.write_str("boolean"),
             Self::Null => f.write_str("null"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -6129,16 +6498,7 @@ impl ::std::convert::TryFrom<::std::string::String> for InvocationArgumentType {
 }
 ///customer_auth: the provider refused the connection's credential, or it had none; reconnect it. external_server: the provider answered with a failure or could not be reached. client_timeout: the router stopped waiting before the provider answered, and nothing says it got the call. outcome_unknown: the call was sent and cut off, by the binding's timeout or an interrupted turn, so it may have been done. denied: the router refused it before anything was sent.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum InvocationErrorType {
     #[serde(rename = "customer_auth")]
@@ -6151,6 +6511,9 @@ pub enum InvocationErrorType {
     OutcomeUnknown,
     #[serde(rename = "denied")]
     Denied,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for InvocationErrorType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -6160,6 +6523,7 @@ impl ::std::fmt::Display for InvocationErrorType {
             Self::ClientTimeout => f.write_str("client_timeout"),
             Self::OutcomeUnknown => f.write_str("outcome_unknown"),
             Self::Denied => f.write_str("denied"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -6197,6 +6561,56 @@ pub struct KnowledgeDocument {
     pub source: ::std::string::String,
     ///The document, whole. It is cut into passages here.
     pub text: ::std::string::String,
+}
+///Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum KnowledgeDocumentState {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "indexed")]
+    Indexed,
+    #[serde(rename = "failed")]
+    Failed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for KnowledgeDocumentState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Pending => f.write_str("pending"),
+            Self::Indexed => f.write_str("indexed"),
+            Self::Failed => f.write_str("failed"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for KnowledgeDocumentState {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "indexed" => Ok(Self::Indexed),
+            "failed" => Ok(Self::Failed),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for KnowledgeDocumentState {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for KnowledgeDocumentState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`KnowledgePassage`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -6264,16 +6678,7 @@ pub struct KnowledgeUrlRequest {
 }
 ///Where the page has got to. Pending means it has been added and its first read is queued or being retried; failed means every attempt failed.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum KnowledgeUrlState {
     #[serde(rename = "pending")]
@@ -6282,6 +6687,9 @@ pub enum KnowledgeUrlState {
     Indexed,
     #[serde(rename = "failed")]
     Failed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for KnowledgeUrlState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -6289,6 +6697,7 @@ impl ::std::fmt::Display for KnowledgeUrlState {
             Self::Pending => f.write_str("pending"),
             Self::Indexed => f.write_str("indexed"),
             Self::Failed => f.write_str("failed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -6316,6 +6725,15 @@ impl ::std::convert::TryFrom<::std::string::String> for KnowledgeUrlState {
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
+}
+///`LaunchCampaignRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct LaunchCampaignRequest {
+    ///Must be true: the people on the campaign agreed to be called by it. Recorded with the time.
+    pub consent: bool,
+    ///When to start ringing. Omitted is now; up to a minute in the past is now too.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub start_at: ::std::option::Option<::std::string::String>,
 }
 ///A connector agent.yaml names that a sync left out, because the app has no connection by the id or label it names.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -6481,16 +6899,7 @@ pub struct LimitGrantRevocation {
 }
 ///Where a grant stands: live (it is drawn once a limit of its subject is spent), used (it paid for its amount), expired (past expires_at) or revoked.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum LimitGrantState {
     #[serde(rename = "live")]
@@ -6501,6 +6910,9 @@ pub enum LimitGrantState {
     Expired,
     #[serde(rename = "revoked")]
     Revoked,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for LimitGrantState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -6509,6 +6921,7 @@ impl ::std::fmt::Display for LimitGrantState {
             Self::Used => f.write_str("used"),
             Self::Expired => f.write_str("expired"),
             Self::Revoked => f.write_str("revoked"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -6585,16 +6998,7 @@ pub struct LimitInput {
 }
 ///The window a limit counts spend over, in UTC: the day, the week from Monday, 14 days counted from Monday 2024-01-01, or the calendar month.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum LimitInterval {
     #[serde(rename = "daily")]
@@ -6605,6 +7009,9 @@ pub enum LimitInterval {
     Biweekly,
     #[serde(rename = "monthly")]
     Monthly,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for LimitInterval {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -6613,6 +7020,7 @@ impl ::std::fmt::Display for LimitInterval {
             Self::Weekly => f.write_str("weekly"),
             Self::Biweekly => f.write_str("biweekly"),
             Self::Monthly => f.write_str("monthly"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -6644,16 +7052,7 @@ impl ::std::convert::TryFrom<::std::string::String> for LimitInterval {
 }
 ///Whose ids a limit names. A key's or a user's limit at organization or app level is a default for every key or user there, each counted on its own; at api_key or user level it names one. The most specific level wins. Every other subject has one level: the organization, a category and a team are organization level; an app, and a category or team within one, app level.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum LimitLevel {
     #[serde(rename = "organization")]
@@ -6664,6 +7063,9 @@ pub enum LimitLevel {
     ApiKey,
     #[serde(rename = "user")]
     User,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for LimitLevel {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -6672,6 +7074,7 @@ impl ::std::fmt::Display for LimitLevel {
             Self::App => f.write_str("app"),
             Self::ApiKey => f.write_str("api_key"),
             Self::User => f.write_str("user"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -6737,16 +7140,7 @@ pub struct LimitResetInput {
 }
 ///Whose spend a limit counts: the organization, one app, a key, an end user of an app, a usage category across the organization or within one app, or a team across the organization or within one app. A team is the user's team, as its token names it.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum LimitSubject {
     #[serde(rename = "organization")]
@@ -6765,6 +7159,9 @@ pub enum LimitSubject {
     Team,
     #[serde(rename = "app_team")]
     AppTeam,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for LimitSubject {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -6777,6 +7174,7 @@ impl ::std::fmt::Display for LimitSubject {
             Self::AppCategory => f.write_str("app_category"),
             Self::Team => f.write_str("team"),
             Self::AppTeam => f.write_str("app_team"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -6896,28 +7294,23 @@ pub struct LlmOptions {
 }
 ///Whether the answer is prose or a JSON object.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum LlmOptionsFormat {
     #[serde(rename = "text")]
     Text,
     #[serde(rename = "json_object")]
     JsonObject,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for LlmOptionsFormat {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Text => f.write_str("text"),
             Self::JsonObject => f.write_str("json_object"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -6947,16 +7340,7 @@ impl ::std::convert::TryFrom<::std::string::String> for LlmOptionsFormat {
 }
 ///How long the model may think before answering, on the models that think.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum LlmOptionsReasoningEffort {
     #[serde(rename = "minimal")]
@@ -6967,6 +7351,9 @@ pub enum LlmOptionsReasoningEffort {
     Medium,
     #[serde(rename = "high")]
     High,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for LlmOptionsReasoningEffort {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -6975,6 +7362,7 @@ impl ::std::fmt::Display for LlmOptionsReasoningEffort {
             Self::Low => f.write_str("low"),
             Self::Medium => f.write_str("medium"),
             Self::High => f.write_str("high"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -7006,16 +7394,7 @@ impl ::std::convert::TryFrom<::std::string::String> for LlmOptionsReasoningEffor
 }
 ///`LlmOptionsVerbosity`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum LlmOptionsVerbosity {
     #[serde(rename = "low")]
@@ -7024,6 +7403,9 @@ pub enum LlmOptionsVerbosity {
     Medium,
     #[serde(rename = "high")]
     High,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for LlmOptionsVerbosity {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -7031,6 +7413,7 @@ impl ::std::fmt::Display for LlmOptionsVerbosity {
             Self::Low => f.write_str("low"),
             Self::Medium => f.write_str("medium"),
             Self::High => f.write_str("high"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -7153,45 +7536,6 @@ pub struct ManageStatus {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub name: ::std::option::Option<::std::string::String>,
 }
-///An MCP server the plugin catalog does not have. Every session opens it at the start and offers its tools to the model; the instructions the server gives are added to the agent's own. It is opened with no login unless it sets scopes or user, when it logs in with OAuth as its protected-resource metadata says, registering a client of its own, and saving it is refused when the server advertises no such login.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
-pub struct McpServer {
-    ///How the server described itself when the config was saved. Absent when it did not answer.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub branding: ::std::option::Option<McpServerBranding>,
-    ///What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id.
-    pub name: ::std::string::String,
-    ///Whether the server requires an OAuth login, as it said when the config was saved: protected-resource metadata, or a 401 to a request without a token. Without user, the app logs in once, from the dashboard. Absent when it could not be asked, which a session starting asks again.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub needs_login: ::std::option::Option<bool>,
-    ///The OAuth scopes its login asks for at consent. Left out, the login asks for the scopes_supported the server advertises. Only a server that needs a login may set it. A login made before a change keeps what it was granted.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub scopes: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-    ///Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub tools: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-    ///Its Streamable HTTP endpoint: a public https URL. A host on a private network, loopback or link-local address, or one that does not resolve, is refused: the router reaches only public addresses.
-    pub url: ::std::string::String,
-    ///Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for a plugin with user, rather than the app once, from the dashboard. Only a server that needs a login may set it.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub user: ::std::option::Option<bool>,
-}
-///The serverInfo an MCP server answers initialize with. Every field is optional, and a server that sends only its name and version is titled by its name.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
-pub struct McpServerBranding {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub description: ::std::option::Option<::std::string::String>,
-    ///Its first icon served over https, as the server links it.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub icon_url: ::std::option::Option<::std::string::String>,
-    ///Its display title, or its name when it gives none.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub title: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub version: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub website_url: ::std::option::Option<::std::string::String>,
-}
 ///`MessageContent`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 #[serde(untagged)]
@@ -7204,18 +7548,9 @@ impl ::std::convert::From<::std::vec::Vec<ContentPart>> for MessageContent {
         Self::Array(value)
     }
 }
-///What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, and detection is boxes found in one. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+///What kind of work was done. The first nine are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, detection is boxes found in one, and ocr is the text of a page read from a picture of it. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum Modality {
     #[serde(rename = "stt")]
@@ -7234,12 +7569,17 @@ pub enum Modality {
     Image,
     #[serde(rename = "detection")]
     Detection,
+    #[serde(rename = "ocr")]
+    Ocr,
     #[serde(rename = "memory")]
     Memory,
     #[serde(rename = "knowledge")]
     Knowledge,
     #[serde(rename = "phone")]
     Phone,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for Modality {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -7252,9 +7592,11 @@ impl ::std::fmt::Display for Modality {
             Self::DecisionModel => f.write_str("decision_model"),
             Self::Image => f.write_str("image"),
             Self::Detection => f.write_str("detection"),
+            Self::Ocr => f.write_str("ocr"),
             Self::Memory => f.write_str("memory"),
             Self::Knowledge => f.write_str("knowledge"),
             Self::Phone => f.write_str("phone"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -7270,6 +7612,7 @@ impl ::std::str::FromStr for Modality {
             "decision_model" => Ok(Self::DecisionModel),
             "image" => Ok(Self::Image),
             "detection" => Ok(Self::Detection),
+            "ocr" => Ok(Self::Ocr),
             "memory" => Ok(Self::Memory),
             "knowledge" => Ok(Self::Knowledge),
             "phone" => Ok(Self::Phone),
@@ -7300,6 +7643,9 @@ pub struct ModelCallTiming {
     ///Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. key_refused is the vendor refusing the key the app keeps for it (BYOK), and the router's own instance of the model was asked next. refused is a response the prompt injection screen refused: the provider answered as asked, so it is no failure of the provider's either. Any other code, timeout included, is a failure and counts against the provider's health, unless it was on the app's own key.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub error_code: ::std::option::Option<::std::string::String>,
+    ///What the failure said, absent when success is true: for a provider that answered with an error, the start of its body. Bearer tokens, API keys, authorization headers and URL credentials in it are redacted, and a long one is cut short. Absent for a failure that said nothing, and for a request recorded before the router kept it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error_message: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub input_tokens: ::std::option::Option<i64>,
     pub model: ::std::string::String,
@@ -7349,16 +7695,7 @@ pub struct ModelOverwrites {
 }
 ///How hard to reason before answering. It becomes the reasoning effort on the request, which is the vocabulary the providers that support one already speak, and means nothing to a model that does not reason.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ModelOverwritesThinking {
     #[serde(rename = "none")]
@@ -7371,6 +7708,9 @@ pub enum ModelOverwritesThinking {
     Medium,
     #[serde(rename = "high")]
     High,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ModelOverwritesThinking {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -7380,6 +7720,7 @@ impl ::std::fmt::Display for ModelOverwritesThinking {
             Self::Low => f.write_str("low"),
             Self::Medium => f.write_str("medium"),
             Self::High => f.write_str("high"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -7412,16 +7753,7 @@ impl ::std::convert::TryFrom<::std::string::String> for ModelOverwritesThinking 
 }
 ///How much detail to give. Dropped for models that do not take it.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ModelOverwritesVerbosity {
     #[serde(rename = "low")]
@@ -7430,6 +7762,9 @@ pub enum ModelOverwritesVerbosity {
     Medium,
     #[serde(rename = "high")]
     High,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ModelOverwritesVerbosity {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -7437,6 +7772,7 @@ impl ::std::fmt::Display for ModelOverwritesVerbosity {
             Self::Low => f.write_str("low"),
             Self::Medium => f.write_str("medium"),
             Self::High => f.write_str("high"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -7487,6 +7823,151 @@ pub struct NumberSearchResult {
     ///Vendors that were not part of the answer. A search that reached two of eight vendors found what two vendors had, and deciding whether to buy needs to know which.
     pub skipped: ::std::vec::Vec<SkippedVendor>,
 }
+///Why a page was not read, absent when it was. provider_failed is every candidate failing; timeout the 150 seconds running out; cancelled the caller hanging up.
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum OcrErrorCode {
+    #[serde(rename = "provider_failed")]
+    ProviderFailed,
+    #[serde(rename = "timeout")]
+    Timeout,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for OcrErrorCode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::ProviderFailed => f.write_str("provider_failed"),
+            Self::Timeout => f.write_str("timeout"),
+            Self::Cancelled => f.write_str("cancelled"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for OcrErrorCode {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "provider_failed" => Ok(Self::ProviderFailed),
+            "timeout" => Ok(Self::Timeout),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for OcrErrorCode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for OcrErrorCode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///Who reads the page, and what may happen to it afterwards.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct OcrOptions {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub data_policy: ::std::option::Option<DataPolicy>,
+    ///Summarise each chart, diagram, photo or table drawn as a picture where it is on the page, as its words and a quote that opens with **Figure:**. Only vision language models can, so they are tried first and Mistral OCR last, for the text alone; ocr-figures names the ones that do it best.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub figures: ::std::option::Option<bool>,
+    ///A priority list of where to try, in the order given, which wins over target when it holds anything.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub providers: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    ///A provider/model or a shortcut. Defaults to ocr-default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub target: ::std::option::Option<::std::string::String>,
+}
+///`OcrRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct OcrRequest {
+    ///The page, base64. A JPEG or PNG of at most 10 MiB and 10,000 pixels a side; a page drawn at 150 to 200 dpi reads well.
+    pub image: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub options: ::std::option::Option<OcrOptions>,
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+}
+///`OcrResult`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct OcrResult {
+    ///Millionths of a dollar, priced per page or per token from what the model billed. Zero when it failed.
+    pub cost_micros: i64,
+    ///What went wrong, in words. Absent when the page was read.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error_code: ::std::option::Option<OcrErrorCode>,
+    ///This response's own id, for logs. Nothing is stored under it.
+    pub id: ::std::string::String,
+    ///The page's text as Markdown, headings, lists and tables kept. Empty for a page with no text on it, or when the reading failed.
+    pub markdown: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub model: ::std::option::Option<::std::string::String>,
+    ///Who read it, or who failed to. Absent when nothing got as far as a provider.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub provider: ::std::option::Option<::std::string::String>,
+    pub status: OcrStatus,
+}
+///Whether the page was read. A failed reading says why in error_code and error.
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum OcrStatus {
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "failed")]
+    Failed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for OcrStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Completed => f.write_str("completed"),
+            Self::Failed => f.write_str("failed"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for OcrStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for OcrStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for OcrStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///One tool as the model sees it.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct OfferedTool {
@@ -7517,21 +7998,12 @@ pub struct OptOut {
     pub id: ::std::string::String,
     ///The number, in E.164.
     pub recipient: ::std::string::String,
-    ///keyword when they texted STOP, otherwise api or dashboard.
+    ///keyword when they texted STOP, campaign when they asked a campaign call not to call again, otherwise api or dashboard.
     pub source: ::std::string::String,
 }
 ///The channel a recipient opted out of, or all of them.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum OptOutChannel {
     #[serde(rename = "sms")]
@@ -7544,6 +8016,9 @@ pub enum OptOutChannel {
     Imessage,
     #[serde(rename = "all")]
     All,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for OptOutChannel {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -7553,6 +8028,7 @@ impl ::std::fmt::Display for OptOutChannel {
             Self::Whatsapp => f.write_str("whatsapp"),
             Self::Imessage => f.write_str("imessage"),
             Self::All => f.write_str("all"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -7594,16 +8070,7 @@ pub struct OptOutPage {
 }
 ///What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum PhoneCapability {
     #[serde(rename = "voice")]
@@ -7622,6 +8089,9 @@ pub enum PhoneCapability {
     InternationalSms,
     #[serde(rename = "local_calling")]
     LocalCalling,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for PhoneCapability {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -7634,6 +8104,7 @@ impl ::std::fmt::Display for PhoneCapability {
             Self::HdVoice => f.write_str("hd_voice"),
             Self::InternationalSms => f.write_str("international_sms"),
             Self::LocalCalling => f.write_str("local_calling"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -7696,16 +8167,7 @@ pub struct PhoneNumber {
 }
 ///What kind of number it is, which decides who pays for the call.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum PhoneNumberType {
     #[serde(rename = "local")]
@@ -7714,6 +8176,9 @@ pub enum PhoneNumberType {
     TollFree,
     #[serde(rename = "mobile")]
     Mobile,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for PhoneNumberType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -7721,6 +8186,7 @@ impl ::std::fmt::Display for PhoneNumberType {
             Self::Local => f.write_str("local"),
             Self::TollFree => f.write_str("toll_free"),
             Self::Mobile => f.write_str("mobile"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -7751,16 +8217,7 @@ impl ::std::convert::TryFrom<::std::string::String> for PhoneNumberType {
 }
 ///`PhoneOperation`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum PhoneOperation {
     #[serde(rename = "search")]
@@ -7775,6 +8232,9 @@ pub enum PhoneOperation {
     Dial,
     #[serde(rename = "send_digits")]
     SendDigits,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for PhoneOperation {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -7785,6 +8245,7 @@ impl ::std::fmt::Display for PhoneOperation {
             Self::Attach => f.write_str("attach"),
             Self::Dial => f.write_str("dial"),
             Self::SendDigits => f.write_str("send_digits"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -7858,6 +8319,9 @@ pub struct PlaceCallRequest {
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub custom: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    ///Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. A verdict the vendor cannot make, or none within 40 seconds of the answer, counts as a machine while the person called has said nothing to the agent. What the agent then does is the session's phone.voicemail.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub detect_voicemail: ::std::option::Option<bool>,
     ///One of the customer's own numbers, which is what the person sees.
     pub from: ::std::string::String,
     ///Carried to the person's leg as custom SIP headers. Only some vendors can express these, and one that cannot refuses the call.
@@ -7894,198 +8358,6 @@ pub struct PlacedCall {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub vendor: ::std::option::Option<::std::string::String>,
     pub vendor_call_id: ::std::string::String,
-}
-///One hosted MCP server from the built-in catalog.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
-pub struct Plugin {
-    pub category: ::std::string::String,
-    ///True when the provider registers no client on the fly, so a config needs one of the app's own, set with setPluginClient, before anybody can connect the plugin.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub client_required: ::std::option::Option<bool>,
-    pub description: ::std::string::String,
-    pub id: ::std::string::String,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instance_hint: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instance_required: ::std::option::Option<bool>,
-    ///Where this deployment serves the plugin's logo, as an SVG needing no credential.
-    pub logo_url: ::std::string::String,
-    pub name: ::std::string::String,
-    ///True when the plugin has a read-only endpoint an agent may pick on its entry.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub readonly: ::std::option::Option<bool>,
-    ///The redirect URI that client has to list, which is this deployment's. Only with client_required.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub redirect_uri: ::std::option::Option<::std::string::String>,
-    ///The OAuth scopes an agent may ask for on its entry, as the server advertises them. Absent when the server says nothing, and any scope is then passed through.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub scopes_supported: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-    ///What to do there, in order, before pasting the client into setPluginClient. Absent when the catalog has no instructions for the plugin.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub setup_steps: ::std::option::Option<::std::vec::Vec<PluginSetupStep>>,
-    ///Where the app creates that client with the provider. Only with client_required.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub setup_url: ::std::option::Option<::std::string::String>,
-    ///The groups of tools an agent may limit the plugin to on its entry. Absent when it cannot be limited.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub toolsets: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-}
-///`PluginAuthorization`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
-pub struct PluginAuthorization {
-    ///The URL the browser should open to finish the login.
-    pub authorize_url: ::std::string::String,
-}
-///The OAuth client a config logs a plugin in with. Its secret is sealed and never returned.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
-pub struct PluginClient {
-    ///The client id the provider issued.
-    pub client_id: ::std::string::String,
-    ///Whether a client secret is stored. It is never returned.
-    pub has_secret: bool,
-}
-///A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has logged into yet is not_connected, which is what a dashboard reminds the app to finish, unless it has user, when each end user connects it in the conversation.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
-pub struct PluginConnection {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub category: ::std::option::Option<::std::string::String>,
-    ///The OAuth client the config set for the plugin. Absent when it set none.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub client: ::std::option::Option<PluginClient>,
-    ///True when nobody can connect the plugin until the config has a client of the app's own, set with setPluginClient.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub client_required: ::std::option::Option<bool>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub description: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instance_hint: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instance_required: ::std::option::Option<bool>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instance_url: ::std::option::Option<::std::string::String>,
-    ///Where this deployment serves the plugin's logo, as an SVG needing no credential. Empty for an MCP server named by URL.
-    pub logo_url: ::std::string::String,
-    pub name: ::std::string::String,
-    pub plugin_id: ::std::string::String,
-    ///The app's login. Always not_connected for a plugin with user, which the app does not log into.
-    pub status: PluginConnectionStatus,
-    ///True when the config names the plugin with user: each end user connects their own account in the conversation.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub user: ::std::option::Option<bool>,
-}
-///The app's login. Always not_connected for a plugin with user, which the app does not log into.
-#[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-)]
-pub enum PluginConnectionStatus {
-    #[serde(rename = "pending")]
-    Pending,
-    #[serde(rename = "connected")]
-    Connected,
-    #[serde(rename = "failed")]
-    Failed,
-    #[serde(rename = "not_connected")]
-    NotConnected,
-}
-impl ::std::fmt::Display for PluginConnectionStatus {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        match *self {
-            Self::Pending => f.write_str("pending"),
-            Self::Connected => f.write_str("connected"),
-            Self::Failed => f.write_str("failed"),
-            Self::NotConnected => f.write_str("not_connected"),
-        }
-    }
-}
-impl ::std::str::FromStr for PluginConnectionStatus {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        match value {
-            "pending" => Ok(Self::Pending),
-            "connected" => Ok(Self::Connected),
-            "failed" => Ok(Self::Failed),
-            "not_connected" => Ok(Self::NotConnected),
-            _ => Err("invalid value".into()),
-        }
-    }
-}
-impl ::std::convert::TryFrom<&str> for PluginConnectionStatus {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for PluginConnectionStatus {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-///One catalog plugin an agent names: its id, such as sentry, or an object naming it with how it is reached.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
-#[serde(untagged)]
-pub enum PluginEntry {
-    String(::std::string::String),
-    PluginWithOptions(PluginWithOptions),
-}
-impl ::std::convert::From<PluginWithOptions> for PluginEntry {
-    fn from(value: PluginWithOptions) -> Self {
-        Self::PluginWithOptions(value)
-    }
-}
-///One MCP event an agent subscribes to on a plugin it names. Each event that arrives opens a text conversation from the config, as whoever's login it came through, with the event's data as the first thing said to it.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
-pub struct PluginEvent {
-    ///The event's filters, as its inputSchema describes them.
-    #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
-    pub arguments: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-    ///The event's name, as the server's events/list gives it, such as comment.created.
-    pub event: ::std::string::String,
-    ///What the agent does with the event when it arrives, added to its instructions for that conversation.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instructions: ::std::option::Option<::std::string::String>,
-    ///A catalog plugin the config names under plugins.
-    pub plugin: ::std::string::String,
-}
-///One thing to do with a plugin's provider before its OAuth client can be set.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
-pub struct PluginSetupStep {
-    ///How to do it with the provider.
-    pub description: ::std::string::String,
-    ///What the step does, in a few words.
-    pub title: ::std::string::String,
-}
-///One catalog plugin an agent names, with how it is reached and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
-pub struct PluginWithOptions {
-    ///A catalog plugin id, such as linear.
-    pub name: ::std::string::String,
-    ///Reach the plugin's read-only MCP endpoint, which offers no tool that writes and asks for read access at consent. Only a plugin whose vendor runs one may set it, such as linear.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub readonly: ::std::option::Option<bool>,
-    ///The OAuth scopes asked for at consent, in place of the catalog's. Left out asks for the catalog's, or the read-only endpoint's when readonly is set.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub scopes: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-    ///Offer the model only the server's tools matching these names or path.Match patterns, such as search_files or read_*. A tool left out is neither listed nor callable. Left out offers every tool.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub tools: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-    ///Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub toolsets: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-    ///Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it, as a plugin_authorization attachment. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub user: ::std::option::Option<bool>,
 }
 ///What an organization or an app decided about data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off. Spend limits are not here: they are /v1/spend/limits.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
@@ -8135,16 +8407,7 @@ pub struct PolicyDataPolicy {
 }
 ///Whose policy: an organization's, an app's, or one end user's.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum PolicyScope {
     #[serde(rename = "organization")]
@@ -8153,6 +8416,9 @@ pub enum PolicyScope {
     App,
     #[serde(rename = "user")]
     User,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for PolicyScope {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -8160,6 +8426,7 @@ impl ::std::fmt::Display for PolicyScope {
             Self::Organization => f.write_str("organization"),
             Self::App => f.write_str("app"),
             Self::User => f.write_str("user"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -8362,16 +8629,7 @@ pub struct PriceChangeInput {
 }
 ///What wrote the change: seed is a database's first load from the router's price files, release the items a release's price files had that the database lacked, and api a change made through the management API.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum PriceChangeKind {
     #[serde(rename = "seed")]
@@ -8380,6 +8638,9 @@ pub enum PriceChangeKind {
     Release,
     #[serde(rename = "api")]
     Api,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for PriceChangeKind {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -8387,6 +8648,7 @@ impl ::std::fmt::Display for PriceChangeKind {
             Self::Seed => f.write_str("seed"),
             Self::Release => f.write_str("release"),
             Self::Api => f.write_str("api"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -8778,7 +9040,7 @@ pub struct ProviderPrice {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub per_million_output_tokens: ::std::option::Option<f64>,
 }
-///What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+///What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A quota set here is counted per user only, never by the address a device calls from, which many users can share; the router's default counts a device by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 pub struct Quota {
     ///How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the next level's applies: the app's, then the organization's, then the router's default.
@@ -8790,16 +9052,7 @@ pub struct Quota {
 }
 ///Who set a number of a quota: the user's own policy, the app's, the organization's, or the router's default. The router's default counts the user's devices only; every other counts the app's backend acting for the user too.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum QuotaLevel {
     #[serde(rename = "user")]
@@ -8810,6 +9063,9 @@ pub enum QuotaLevel {
     Organization,
     #[serde(rename = "default")]
     Default,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for QuotaLevel {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -8818,6 +9074,7 @@ impl ::std::fmt::Display for QuotaLevel {
             Self::App => f.write_str("app"),
             Self::Organization => f.write_str("organization"),
             Self::Default => f.write_str("default"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -8906,16 +9163,7 @@ pub struct RecordingSource {
 }
 ///Where a job has got to. A failed job carries the reason in `error`, and a completed one carries its result.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum RecordingStatus {
     #[serde(rename = "queued")]
@@ -8926,6 +9174,9 @@ pub enum RecordingStatus {
     Completed,
     #[serde(rename = "failed")]
     Failed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for RecordingStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -8934,6 +9185,7 @@ impl ::std::fmt::Display for RecordingStatus {
             Self::Running => f.write_str("running"),
             Self::Completed => f.write_str("completed"),
             Self::Failed => f.write_str("failed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -8963,19 +9215,85 @@ impl ::std::convert::TryFrom<::std::string::String> for RecordingStatus {
         value.parse()
     }
 }
+///`RefusedContact`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct RefusedContact {
+    ///Its place in contacts, from 0.
+    pub index: i64,
+    pub reason: RefusedReason,
+    ///As it was sent.
+    pub to_number: ::std::string::String,
+}
+///Why a contact was not added: invalid_number is a number that cannot be read, duplicate one the campaign already holds or the request repeats, invalid_variable more than 50 variables, a variable with a bad name, or a value too long or over more than one line, invalid_time_zone a time zone that is not an IANA one.
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum RefusedReason {
+    #[serde(rename = "invalid_number")]
+    InvalidNumber,
+    #[serde(rename = "duplicate")]
+    Duplicate,
+    #[serde(rename = "invalid_variable")]
+    InvalidVariable,
+    #[serde(rename = "invalid_time_zone")]
+    InvalidTimeZone,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for RefusedReason {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::InvalidNumber => f.write_str("invalid_number"),
+            Self::Duplicate => f.write_str("duplicate"),
+            Self::InvalidVariable => f.write_str("invalid_variable"),
+            Self::InvalidTimeZone => f.write_str("invalid_time_zone"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for RefusedReason {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "invalid_number" => Ok(Self::InvalidNumber),
+            "duplicate" => Ok(Self::Duplicate),
+            "invalid_variable" => Ok(Self::InvalidVariable),
+            "invalid_time_zone" => Ok(Self::InvalidTimeZone),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for RefusedReason {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for RefusedReason {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///`RespondRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct RespondRequest {
-    ///A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+    ///A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub audio: ::std::option::Option<AudioSource>,
     ///The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub client_id: ::std::option::Option<::std::string::String>,
-    ///Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, a voice note is uploaded and shown on the person's message. A retry with the same id, text and voice note does not restart inference.
+    ///Photos to answer about, as on createResponse. With a request_id, or with no text in a session kept in Stream Chat, they are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message. The model sees them with this question alone. Refused before any turn starts when the agent has neither a vision skill nor a conversation model that accepts images.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub images: ::std::option::Option<::std::vec::Vec<ImageSource>>,
+    ///Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, photos and a voice note are uploaded and shown on the person's message. A retry with the same id, text, photos and voice note does not restart inference.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub request_id: ::std::option::Option<::std::string::String>,
-    ///What to answer, as though it had been said. May be empty when audio carries the question.
+    ///What to answer, as though it had been said. May be empty when photos or audio carry the question.
     pub text: ::std::string::String,
 }
 ///How a conversation is handed back to the model when a session carries it on.
@@ -8993,16 +9311,7 @@ pub struct ResumeHistory {
 }
 ///Who moved a use case: the app, Stream staff or the vendor.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ReviewActor {
     #[serde(rename = "app")]
@@ -9011,6 +9320,9 @@ pub enum ReviewActor {
     Staff,
     #[serde(rename = "vendor")]
     Vendor,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ReviewActor {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -9018,6 +9330,7 @@ impl ::std::fmt::Display for ReviewActor {
             Self::App => f.write_str("app"),
             Self::Staff => f.write_str("staff"),
             Self::Vendor => f.write_str("vendor"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -9068,16 +9381,7 @@ pub struct ReviewCause {
 }
 ///approve sends the use case to the vendor; request_changes hands it back to the app to edit; reject ends it.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ReviewDecision {
     #[serde(rename = "approve")]
@@ -9086,6 +9390,9 @@ pub enum ReviewDecision {
     RequestChanges,
     #[serde(rename = "reject")]
     Reject,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ReviewDecision {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -9093,6 +9400,7 @@ impl ::std::fmt::Display for ReviewDecision {
             Self::Approve => f.write_str("approve"),
             Self::RequestChanges => f.write_str("request_changes"),
             Self::Reject => f.write_str("reject"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -9228,25 +9536,20 @@ pub struct Run {
 }
 ///Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum Sandbox {
     #[serde(rename = "daytona")]
     Daytona,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for Sandbox {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Daytona => f.write_str("daytona"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -9295,16 +9598,7 @@ pub struct SandboxLimits {
 }
 ///What a sandbox may reach: nothing, an allow list, or anything.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SandboxLimitsNetwork {
     #[serde(rename = "none")]
@@ -9313,6 +9607,9 @@ pub enum SandboxLimitsNetwork {
     AllowList,
     #[serde(rename = "any")]
     Any,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SandboxLimitsNetwork {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -9320,6 +9617,7 @@ impl ::std::fmt::Display for SandboxLimitsNetwork {
             Self::None => f.write_str("none"),
             Self::AllowList => f.write_str("allow_list"),
             Self::Any => f.write_str("any"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -9421,28 +9719,23 @@ pub struct ScheduledTask {
 }
 ///agent when the model made it in a conversation, api when a backend did.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ScheduledTaskCreatedBy {
     #[serde(rename = "agent")]
     Agent,
     #[serde(rename = "api")]
     Api,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ScheduledTaskCreatedBy {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Agent => f.write_str("agent"),
             Self::Api => f.write_str("api"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -9503,7 +9796,7 @@ pub struct ScheduledTaskRun {
     pub attempts: i64,
     ///Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands.
     pub delivered_to: ::std::string::String,
-    ///Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again; that call may have carried the task out, so the run does not count toward the five failures in a row), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached; on a missed run, task_paused (a run's time came while its task was paused). The full error is in the router's logs. Null otherwise.
+    ///Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again; that call may have carried the task out, so the run does not count toward the five failures in a row), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached, spend_limit_reached or user_limit_reached, none of which is tried again, or spend_check_unavailable (the router could not check what the organization has spent, so the run is tried again); on a missed run, task_paused (a run's time came while its task was paused). The full error is in the router's logs. Null otherwise.
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub error: ::std::option::Option<::std::string::String>,
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
@@ -9531,16 +9824,7 @@ pub struct ScheduledTaskRunPage {
 }
 ///running (retries included), delivered, failed, or missed (it fell outside the grace period, its call would have rung more than 15 minutes late, or it came while the task was paused).
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ScheduledTaskRunState {
     #[serde(rename = "running")]
@@ -9551,6 +9835,9 @@ pub enum ScheduledTaskRunState {
     Failed,
     #[serde(rename = "missed")]
     Missed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ScheduledTaskRunState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -9559,6 +9846,7 @@ impl ::std::fmt::Display for ScheduledTaskRunState {
             Self::Delivered => f.write_str("delivered"),
             Self::Failed => f.write_str("failed"),
             Self::Missed => f.write_str("missed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -9590,28 +9878,23 @@ impl ::std::convert::TryFrom<::std::string::String> for ScheduledTaskRunState {
 }
 ///schedule when it came due, manual when it was run by hand.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ScheduledTaskRunTrigger {
     #[serde(rename = "schedule")]
     Schedule,
     #[serde(rename = "manual")]
     Manual,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ScheduledTaskRunTrigger {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Schedule => f.write_str("schedule"),
             Self::Manual => f.write_str("manual"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -9663,16 +9946,7 @@ pub struct ScheduledTaskSchedule {
 }
 ///active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (a one-shot whose occurrence failed, or a recurrence auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ScheduledTaskState {
     #[serde(rename = "active")]
@@ -9683,6 +9957,9 @@ pub enum ScheduledTaskState {
     Completed,
     #[serde(rename = "failed")]
     Failed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ScheduledTaskState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -9691,6 +9968,7 @@ impl ::std::fmt::Display for ScheduledTaskState {
             Self::Paused => f.write_str("paused"),
             Self::Completed => f.write_str("completed"),
             Self::Failed => f.write_str("failed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -9733,16 +10011,7 @@ pub struct SearchAnswer {
 }
 ///How much work a search is worth. instant answers from the index in a few hundred milliseconds; deep crawls and reasons over what it finds and can take tens of seconds. Providers offer different ladders, so each one maps these four onto its own.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SearchDepth {
     #[serde(rename = "instant")]
@@ -9753,6 +10022,9 @@ pub enum SearchDepth {
     Standard,
     #[serde(rename = "deep")]
     Deep,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SearchDepth {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -9761,6 +10033,7 @@ impl ::std::fmt::Display for SearchDepth {
             Self::Fast => f.write_str("fast"),
             Self::Standard => f.write_str("standard"),
             Self::Deep => f.write_str("deep"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -9827,16 +10100,7 @@ pub struct SearchOptions {
 }
 ///`SearchOptionsContentsItem`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SearchOptionsContentsItem {
     #[serde(rename = "text")]
@@ -9845,6 +10109,9 @@ pub enum SearchOptionsContentsItem {
     Highlights,
     #[serde(rename = "summary")]
     Summary,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SearchOptionsContentsItem {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -9852,6 +10119,7 @@ impl ::std::fmt::Display for SearchOptionsContentsItem {
             Self::Text => f.write_str("text"),
             Self::Highlights => f.write_str("highlights"),
             Self::Summary => f.write_str("summary"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -9939,9 +10207,15 @@ pub struct Session {
     pub custom: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub description: ::std::option::Option<::std::string::String>,
-    ///Why the session ended. Absent while it is running, and for a session that ended before this was kept or by being stopped.
+    ///Whose doing end_reason was. Absent while the session is running.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub end_fault: ::std::option::Option<SessionEndFault>,
+    ///Why the session ended. Absent while it is running, and for a session that ended before this was kept.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub end_reason: ::std::option::Option<SessionEndReason>,
+    ///How far the session had got when it ended. Absent while it is running.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub end_stage: ::std::option::Option<SessionEndStage>,
     ///The session this one continued from, empty for one opened fresh.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub forked_from: ::std::option::Option<::std::string::String>,
@@ -10035,18 +10309,75 @@ pub struct SessionConnectorBinding {
     ///The binding's alias in the agent config.
     pub name: ::std::string::String,
 }
-///Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.
+///Whose doing a session's end was: none, the agent or the app ended it; caller, the person on the call; router, the router itself; vendor, a model vendor; carrier, the phone carrier; customer_config, the app's configuration or its own key; customer_credit, the organization's credit or spend limits.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum SessionEndFault {
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "caller")]
+    Caller,
+    #[serde(rename = "router")]
+    Router,
+    #[serde(rename = "vendor")]
+    Vendor,
+    #[serde(rename = "carrier")]
+    Carrier,
+    #[serde(rename = "customer_config")]
+    CustomerConfig,
+    #[serde(rename = "customer_credit")]
+    CustomerCredit,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for SessionEndFault {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::None => f.write_str("none"),
+            Self::Caller => f.write_str("caller"),
+            Self::Router => f.write_str("router"),
+            Self::Vendor => f.write_str("vendor"),
+            Self::Carrier => f.write_str("carrier"),
+            Self::CustomerConfig => f.write_str("customer_config"),
+            Self::CustomerCredit => f.write_str("customer_credit"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for SessionEndFault {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "none" => Ok(Self::None),
+            "caller" => Ok(Self::Caller),
+            "router" => Ok(Self::Router),
+            "vendor" => Ok(Self::Vendor),
+            "carrier" => Ok(Self::Carrier),
+            "customer_config" => Ok(Self::CustomerConfig),
+            "customer_credit" => Ok(Self::CustomerCredit),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for SessionEndFault {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SessionEndFault {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///Why the session ended, with whose fault it was and the stage it came at: agent_hangup, the agent hung up (fault none, stage conversation); transferred, the agent handed the caller to a person (fault none, stage conversation); hangup, the caller left (fault caller, stage conversation); start, nobody joined the phone call in time (fault carrier, stage ringing); unanswered, the call placed was never answered (fault caller, stage ringing); voicemail, an answering machine picked up the call placed, and the agent left its message or hung up (fault none, stage ringing); closed, the session was closed through the API, or replaced by a newer one (fault none, stage conversation); shutdown, the router ended the session as it shut down (fault router, stage conversation); agent_failed, the agent left the call or answered no turn for a failure of the router's own (fault router, stage conversation); model_failed, a model vendor failed: the agent left the call or answered no turn (fault vendor, stage conversation); model_config_refused, the model failed on the customer's own key or model, or refused a setting, and the agent answered no turn (fault customer_config, stage conversation); model_no_credit, the credit or spend limits refused the model's work, and the agent answered no turn (fault customer_credit, stage conversation).
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SessionEndReason {
     #[serde(rename = "agent_hangup")]
@@ -10059,6 +10390,23 @@ pub enum SessionEndReason {
     Start,
     #[serde(rename = "unanswered")]
     Unanswered,
+    #[serde(rename = "voicemail")]
+    Voicemail,
+    #[serde(rename = "closed")]
+    Closed,
+    #[serde(rename = "shutdown")]
+    Shutdown,
+    #[serde(rename = "agent_failed")]
+    AgentFailed,
+    #[serde(rename = "model_failed")]
+    ModelFailed,
+    #[serde(rename = "model_config_refused")]
+    ModelConfigRefused,
+    #[serde(rename = "model_no_credit")]
+    ModelNoCredit,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SessionEndReason {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -10068,6 +10416,14 @@ impl ::std::fmt::Display for SessionEndReason {
             Self::Hangup => f.write_str("hangup"),
             Self::Start => f.write_str("start"),
             Self::Unanswered => f.write_str("unanswered"),
+            Self::Voicemail => f.write_str("voicemail"),
+            Self::Closed => f.write_str("closed"),
+            Self::Shutdown => f.write_str("shutdown"),
+            Self::AgentFailed => f.write_str("agent_failed"),
+            Self::ModelFailed => f.write_str("model_failed"),
+            Self::ModelConfigRefused => f.write_str("model_config_refused"),
+            Self::ModelNoCredit => f.write_str("model_no_credit"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -10080,6 +10436,13 @@ impl ::std::str::FromStr for SessionEndReason {
             "hangup" => Ok(Self::Hangup),
             "start" => Ok(Self::Start),
             "unanswered" => Ok(Self::Unanswered),
+            "voicemail" => Ok(Self::Voicemail),
+            "closed" => Ok(Self::Closed),
+            "shutdown" => Ok(Self::Shutdown),
+            "agent_failed" => Ok(Self::AgentFailed),
+            "model_failed" => Ok(Self::ModelFailed),
+            "model_config_refused" => Ok(Self::ModelConfigRefused),
+            "model_no_credit" => Ok(Self::ModelNoCredit),
             _ => Err("invalid value".into()),
         }
     }
@@ -10091,6 +10454,52 @@ impl ::std::convert::TryFrom<&str> for SessionEndReason {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for SessionEndReason {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///How far a session had got when it ended: ringing, before a person was on the line of a phone call; conversation, once the session was open.
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum SessionEndStage {
+    #[serde(rename = "ringing")]
+    Ringing,
+    #[serde(rename = "conversation")]
+    Conversation,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for SessionEndStage {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Ringing => f.write_str("ringing"),
+            Self::Conversation => f.write_str("conversation"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for SessionEndStage {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "ringing" => Ok(Self::Ringing),
+            "conversation" => Ok(Self::Conversation),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for SessionEndStage {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SessionEndStage {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -10153,16 +10562,7 @@ pub struct SessionMemory {
 }
 ///How the user took part: text for a conversation held in writing, voice for a call, and video once the agent has seen the user's video. It only moves up, from text or voice to video.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SessionModality {
     #[serde(rename = "text")]
@@ -10171,6 +10571,9 @@ pub enum SessionModality {
     Voice,
     #[serde(rename = "video")]
     Video,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SessionModality {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -10178,6 +10581,7 @@ impl ::std::fmt::Display for SessionModality {
             Self::Text => f.write_str("text"),
             Self::Voice => f.write_str("voice"),
             Self::Video => f.write_str("video"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -10208,16 +10612,7 @@ impl ::std::convert::TryFrom<::std::string::String> for SessionModality {
 }
 ///How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SessionMode {
     #[serde(rename = "cascade")]
@@ -10226,6 +10621,9 @@ pub enum SessionMode {
     Native,
     #[serde(rename = "text")]
     Text,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SessionMode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -10233,6 +10631,7 @@ impl ::std::fmt::Display for SessionMode {
             Self::Cascade => f.write_str("cascade"),
             Self::Native => f.write_str("native"),
             Self::Text => f.write_str("text"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -10281,6 +10680,9 @@ pub struct SessionPhone {
     ///The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub vendor_call_id: ::std::option::Option<::std::string::String>,
+    ///What the agent does when an answering machine picks up the call placed. A vendor's verdict needs detect_voicemail on the call placed, on a vendor that reports a machine. A verdict the vendor cannot make counts as a machine while nobody has spoken to the agent. Without any verdict, a call where nobody speaks to the agent for 40 seconds after answering counts as a machine. A fax is hung up on. Absent, the agent talks to a machine as to a person. A speech-to-speech session cannot say a fixed message, so leave_message is refused for one; a session switched to speech-to-speech later hangs up without leaving it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub voicemail: ::std::option::Option<SessionVoicemail>,
 }
 ///`SessionQuery`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
@@ -10303,7 +10705,7 @@ pub struct SessionQuery {
 pub struct SessionRespondCommand {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub images: ::std::option::Option<::std::vec::Vec<ImageSource>>,
-    ///Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. Text only when present.
+    ///Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub request_id: ::std::option::Option<::std::string::String>,
     pub text: ::std::string::String,
@@ -10312,25 +10714,20 @@ pub struct SessionRespondCommand {
 }
 ///`SessionRespondCommandType`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SessionRespondCommandType {
     #[serde(rename = "respond")]
     Respond,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SessionRespondCommandType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Respond => f.write_str("respond"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -10384,16 +10781,7 @@ pub struct SessionSettingsRequest {
 }
 ///`SessionSettingsRequestThinking`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SessionSettingsRequestThinking {
     #[serde(rename = "none")]
@@ -10406,6 +10794,9 @@ pub enum SessionSettingsRequestThinking {
     Medium,
     #[serde(rename = "high")]
     High,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SessionSettingsRequestThinking {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -10415,6 +10806,7 @@ impl ::std::fmt::Display for SessionSettingsRequestThinking {
             Self::Low => f.write_str("low"),
             Self::Medium => f.write_str("medium"),
             Self::High => f.write_str("high"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -10447,16 +10839,7 @@ impl ::std::convert::TryFrom<::std::string::String> for SessionSettingsRequestTh
 }
 ///`SessionSettingsRequestVerbosity`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SessionSettingsRequestVerbosity {
     #[serde(rename = "low")]
@@ -10465,6 +10848,9 @@ pub enum SessionSettingsRequestVerbosity {
     Medium,
     #[serde(rename = "high")]
     High,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SessionSettingsRequestVerbosity {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -10472,6 +10858,7 @@ impl ::std::fmt::Display for SessionSettingsRequestVerbosity {
             Self::Low => f.write_str("low"),
             Self::Medium => f.write_str("medium"),
             Self::High => f.write_str("high"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -10545,28 +10932,23 @@ impl<'de> ::serde::Deserialize<'de> for SessionSortDirection {
 }
 ///updated_at is the most recently active first. relevance is the best match first, and only sorts a text search.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SessionSortField {
     #[serde(rename = "updated_at")]
     UpdatedAt,
     #[serde(rename = "relevance")]
     Relevance,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SessionSortField {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::UpdatedAt => f.write_str("updated_at"),
             Self::Relevance => f.write_str("relevance"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -10596,28 +10978,23 @@ impl ::std::convert::TryFrom<::std::string::String> for SessionSortField {
 }
 ///Whether the agent is still in the call.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SessionState {
     #[serde(rename = "live")]
     Live,
     #[serde(rename = "ended")]
     Ended,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SessionState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Live => f.write_str("live"),
             Self::Ended => f.write_str("ended"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -10689,28 +11066,23 @@ pub struct SessionToolApproval {
 }
 ///Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SessionToolExecutor {
     #[serde(rename = "server")]
     Server,
     #[serde(rename = "client")]
     Client,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SessionToolExecutor {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Server => f.write_str("server"),
             Self::Client => f.write_str("client"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -10748,6 +11120,14 @@ pub struct SessionVideo {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub source: ::std::option::Option<::std::string::String>,
 }
+///What the agent does when an answering machine picks up.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct SessionVoicemail {
+    pub action: VoicemailAction,
+    ///Said word for word once the machine's greeting has ended, or once the call counts as a machine, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub message: ::std::option::Option<::std::string::String>,
+}
 ///`SetNumberAgentRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 pub struct SetNumberAgentRequest {
@@ -10757,18 +11137,6 @@ pub struct SetNumberAgentRequest {
     ///The id of the agent config that answers the number. Give this or agent.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub config_id: ::std::option::Option<::std::string::String>,
-}
-///The OAuth client an app registered with a plugin's provider, with the redirect URI <public url>/v1/agents/plugins/callback.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
-pub struct SetPluginClientRequest {
-    ///The client id the provider issued.
-    pub client_id: ::std::string::String,
-    ///The client secret the provider issued. Left out for a public client.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub client_secret: ::std::option::Option<::std::string::String>,
-    ///Also name the plugin under the config's plugins with user, so that each end user connects their own account in the conversation, the first time the agent needs it. Left out names nothing: the app connects the plugin once with authorize, which names it as the app's.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub user: ::std::option::Option<bool>,
 }
 ///`SetSandboxRecipientsRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -10842,16 +11210,7 @@ pub struct SimulationCase {
 }
 ///Why the conversation stopped.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SimulationCaseEnded {
     #[serde(rename = "complete")]
@@ -10862,6 +11221,9 @@ pub enum SimulationCaseEnded {
     Timeout,
     #[serde(rename = "failed")]
     Failed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SimulationCaseEnded {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -10870,6 +11232,7 @@ impl ::std::fmt::Display for SimulationCaseEnded {
             Self::Turns => f.write_str("turns"),
             Self::Timeout => f.write_str("timeout"),
             Self::Failed => f.write_str("failed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -10901,16 +11264,7 @@ impl ::std::convert::TryFrom<::std::string::String> for SimulationCaseEnded {
 }
 ///`SimulationCaseState`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SimulationCaseState {
     #[serde(rename = "pending")]
@@ -10925,6 +11279,9 @@ pub enum SimulationCaseState {
     Errored,
     #[serde(rename = "cancelled")]
     Cancelled,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SimulationCaseState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -10935,6 +11292,7 @@ impl ::std::fmt::Display for SimulationCaseState {
             Self::Failed => f.write_str("failed"),
             Self::Errored => f.write_str("errored"),
             Self::Cancelled => f.write_str("cancelled"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11002,28 +11360,23 @@ pub struct SimulationDeclaration {
 }
 ///Text when left out.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SimulationDeclarationMode {
     #[serde(rename = "text")]
     Text,
     #[serde(rename = "audio")]
     Audio,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SimulationDeclarationMode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Text => f.write_str("text"),
             Self::Audio => f.write_str("audio"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11065,28 +11418,23 @@ pub struct SimulationLine {
 }
 ///`SimulationMode`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SimulationMode {
     #[serde(rename = "text")]
     Text,
     #[serde(rename = "audio")]
     Audio,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SimulationMode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Text => f.write_str("text"),
             Self::Audio => f.write_str("audio"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11156,28 +11504,23 @@ pub struct SimulationRequest {
 }
 ///Text hands the agent the words, which tests everything between hearing and answering. Audio generates speech and runs the whole pipeline, so what is judged is what a caller would actually have heard. Text when left out.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SimulationRequestMode {
     #[serde(rename = "text")]
     Text,
     #[serde(rename = "audio")]
     Audio,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SimulationRequestMode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Text => f.write_str("text"),
             Self::Audio => f.write_str("audio"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11238,28 +11581,23 @@ pub struct SimulationRun {
 }
 ///`SimulationRunMode`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SimulationRunMode {
     #[serde(rename = "text")]
     Text,
     #[serde(rename = "audio")]
     Audio,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SimulationRunMode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Text => f.write_str("text"),
             Self::Audio => f.write_str("audio"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11289,16 +11627,7 @@ impl ::std::convert::TryFrom<::std::string::String> for SimulationRunMode {
 }
 ///A run passed only if every one of its conversations did. A conversation that never got as far as a ruling leaves the run errored rather than failed.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SimulationRunState {
     #[serde(rename = "running")]
@@ -11311,6 +11640,9 @@ pub enum SimulationRunState {
     Cancelled,
     #[serde(rename = "errored")]
     Errored,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SimulationRunState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -11320,6 +11652,7 @@ impl ::std::fmt::Display for SimulationRunState {
             Self::Failed => f.write_str("failed"),
             Self::Cancelled => f.write_str("cancelled"),
             Self::Errored => f.write_str("errored"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11371,16 +11704,7 @@ pub struct SipTrunk {
 }
 ///`SipTrunkTransport`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SipTrunkTransport {
     #[serde(rename = "udp")]
@@ -11389,6 +11713,9 @@ pub enum SipTrunkTransport {
     Tcp,
     #[serde(rename = "tls")]
     Tls,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SipTrunkTransport {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -11396,6 +11723,7 @@ impl ::std::fmt::Display for SipTrunkTransport {
             Self::Udp => f.write_str("udp"),
             Self::Tcp => f.write_str("tcp"),
             Self::Tls => f.write_str("tls"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11569,28 +11897,23 @@ pub struct SpendHardLimitWindow {
 }
 ///Whose spend is counted, or whose usage events are listed: the calling app's, or every app's of its organization. organization is server-side only.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SpendScope {
     #[serde(rename = "app")]
     App,
     #[serde(rename = "organization")]
     Organization,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SpendScope {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::App => f.write_str("app"),
             Self::Organization => f.write_str("organization"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11695,28 +12018,23 @@ pub struct StreamSettings {
 }
 ///Whose Stream app the router acts in. deployment is one app, the router's own, for every app it serves; app is each app's own.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum StreamTenancy {
     #[serde(rename = "deployment")]
     Deployment,
     #[serde(rename = "app")]
     App,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for StreamTenancy {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Deployment => f.write_str("deployment"),
             Self::App => f.write_str("app"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11746,16 +12064,7 @@ impl ::std::convert::TryFrom<::std::string::String> for StreamTenancy {
 }
 ///Whether a Stream app holds a type the router needs. unknown is a type Stream could not be asked about.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum StreamTypeState {
     #[serde(rename = "present")]
@@ -11766,6 +12075,9 @@ pub enum StreamTypeState {
     Unsafe,
     #[serde(rename = "unknown")]
     Unknown,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for StreamTypeState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -11774,6 +12086,7 @@ impl ::std::fmt::Display for StreamTypeState {
             Self::Missing => f.write_str("missing"),
             Self::Unsafe => f.write_str("unsafe"),
             Self::Unknown => f.write_str("unknown"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11805,16 +12118,7 @@ impl ::std::convert::TryFrom<::std::string::String> for StreamTypeState {
 }
 ///Which Stream app the calling app's work is written into: this_app is its own, deployment_app is the router's own app, shared with every app it serves that has none, and nowhere is no app at all, so conversations are not kept and calls cannot be made.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum StreamWritesInto {
     #[serde(rename = "this_app")]
@@ -11823,6 +12127,9 @@ pub enum StreamWritesInto {
     DeploymentApp,
     #[serde(rename = "nowhere")]
     Nowhere,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for StreamWritesInto {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -11830,6 +12137,7 @@ impl ::std::fmt::Display for StreamWritesInto {
             Self::ThisApp => f.write_str("this_app"),
             Self::DeploymentApp => f.write_str("deployment_app"),
             Self::Nowhere => f.write_str("nowhere"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11910,16 +12218,7 @@ pub struct StsOptions {
 }
 ///What decides the caller has finished: a silence timer, a model reading the words, or nothing, which leaves the turns to the caller. Omitting it leaves the vendor's default. Only some models read the words, so semantic is a term.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum StsOptionsTurnDetection {
     #[serde(rename = "server_vad")]
@@ -11928,6 +12227,9 @@ pub enum StsOptionsTurnDetection {
     Semantic,
     #[serde(rename = "none")]
     None,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for StsOptionsTurnDetection {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -11935,6 +12237,7 @@ impl ::std::fmt::Display for StsOptionsTurnDetection {
             Self::ServerVad => f.write_str("server_vad"),
             Self::Semantic => f.write_str("semantic"),
             Self::None => f.write_str("none"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -12089,6 +12392,9 @@ pub struct SyncAgentRequest {
     pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
+    ///agent.yaml's floor_control: the model that controls the agent's floor, and how long a caller may wait once they stop. Sent, it replaces the stored choice whole, and an empty object is the default flow controller again; left out or null, the stored one stays, and an agent that never chose has the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400), and so is a max_wait_ms shorter than every point the chorus-asr server publishes, before anything is written. When the server cannot be asked the wait is kept and a warning says so, as it does of a point that fails the server's dictation guard.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub floor_control: ::std::option::Option<FloorControl>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<Greeting>,
     ///The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered.
@@ -12112,19 +12418,23 @@ pub struct SyncAgentRequest {
     pub left_out_connectors: ::std::option::Option<::std::vec::Vec<LeftOutConnector>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub llm: ::std::option::Option<::std::string::String>,
-    ///MCP servers outside the plugin catalog, opened by their URL with no login.
+    ///No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub mcp_servers: ::std::option::Option<::std::vec::Vec<McpServer>>,
+    pub mcp_servers: ::std::option::Option<
+        ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+    >,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub mode: ::std::option::Option<AgentMode>,
     ///What the config is called, which is also the directory's name.
     pub name: ::std::string::String,
-    ///Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
+    ///No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub plugin_events: ::std::option::Option<::std::vec::Vec<PluginEvent>>,
-    ///Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
+    pub plugin_events: ::std::option::Option<
+        ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+    >,
+    ///No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
+    pub plugins: ::std::option::Option<::std::vec::Vec<SyncAgentRequestPluginsItem>>,
     ///agent.yaml's region: where the agent's work is done, us or eu for now. Every model its sessions run is served there and nowhere else, its knowledge base is kept there, and its sandbox is made there. A sync is refused (400), before anything is written, when a model the agent names has no instance there, naming each and the region, when its knowledge base is already kept in another region, since a knowledge base is never moved, or when it names a sandbox and none runs there. Left out, a new agent is in us and a stored one keeps its region.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub region: ::std::option::Option<::std::string::String>,
@@ -12160,7 +12470,7 @@ pub struct SyncAgentRequest {
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
-    ///How plugin, MCP server and connector tools are offered. A setting left out keeps what is stored.
+    ///How connector tools are offered. A setting left out keeps what is stored.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tools: ::std::option::Option<AgentTools>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -12170,6 +12480,20 @@ pub struct SyncAgentRequest {
     ///The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub voice: ::std::option::Option<::std::string::String>,
+}
+///`SyncAgentRequestPluginsItem`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(untagged)]
+pub enum SyncAgentRequestPluginsItem {
+    String(::std::string::String),
+    Object(::serde_json::Map<::std::string::String, ::serde_json::Value>),
+}
+impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+    for SyncAgentRequestPluginsItem
+{
+    fn from(value: ::serde_json::Map<::std::string::String, ::serde_json::Value>) -> Self {
+        Self::Object(value)
+    }
 }
 ///`SyncAgentResult`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
@@ -12258,25 +12582,20 @@ pub struct TextContentPart {
 }
 ///`TextContentPartType`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum TextContentPartType {
     #[serde(rename = "text")]
     Text,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for TextContentPartType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Text => f.write_str("text"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -12314,28 +12633,23 @@ pub struct TextMatch {
 }
 ///What the model optimises for.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum Tier {
     #[serde(rename = "low-latency")]
     LowLatency,
     #[serde(rename = "high-quality")]
     HighQuality,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for Tier {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::LowLatency => f.write_str("low-latency"),
             Self::HighQuality => f.write_str("high-quality"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -12454,25 +12768,20 @@ pub struct ToolApprovalCommand {
 }
 ///`ToolApprovalCommandType`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ToolApprovalCommandType {
     #[serde(rename = "tool_approval")]
     ToolApproval,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ToolApprovalCommandType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::ToolApproval => f.write_str("tool_approval"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -12516,25 +12825,20 @@ pub struct ToolResultCommand {
 }
 ///`ToolResultCommandType`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ToolResultCommandType {
     #[serde(rename = "tool_result")]
     ToolResult,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ToolResultCommandType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::ToolResult => f.write_str("tool_result"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -12589,16 +12893,7 @@ pub struct TranscriptEntity {
 }
 ///What a finished transcript is rendered as. json carries the words and speakers; srt and vtt are subtitle files. Recording only.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum TranscriptFormat {
     #[serde(rename = "json")]
@@ -12607,6 +12902,9 @@ pub enum TranscriptFormat {
     Srt,
     #[serde(rename = "vtt")]
     Vtt,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for TranscriptFormat {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -12614,6 +12912,7 @@ impl ::std::fmt::Display for TranscriptFormat {
             Self::Json => f.write_str("json"),
             Self::Srt => f.write_str("srt"),
             Self::Vtt => f.write_str("vtt"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -12672,16 +12971,7 @@ pub struct TranscriptMessage {
 }
 ///Why the agent said the line unasked: the call's greeting, a check-in on a caller gone quiet, or an update on work still running. Absent on an answer.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum TranscriptMessagePurpose {
     #[serde(rename = "greeting")]
@@ -12690,6 +12980,9 @@ pub enum TranscriptMessagePurpose {
     Checkin,
     #[serde(rename = "update")]
     Update,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for TranscriptMessagePurpose {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -12697,6 +12990,7 @@ impl ::std::fmt::Display for TranscriptMessagePurpose {
             Self::Greeting => f.write_str("greeting"),
             Self::Checkin => f.write_str("checkin"),
             Self::Update => f.write_str("update"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -12778,28 +13072,23 @@ pub struct Transcription {
 }
 ///How faithfully the transcript follows what was said. verbatim keeps the ums, the repetitions and the false starts; smart removes them, tidies the grammar and formats the result, which is why it cannot also diarize or time the words - they may no longer be the words that were spoken. Almost no provider offers both, so this narrows where a request can go.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum TranscriptionMode {
     #[serde(rename = "verbatim")]
     Verbatim,
     #[serde(rename = "smart")]
     Smart,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for TranscriptionMode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Verbatim => f.write_str("verbatim"),
             Self::Smart => f.write_str("smart"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -13081,16 +13370,7 @@ pub struct UpdateSessionRequest {
 }
 ///`UpdateSessionRequestThinking`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum UpdateSessionRequestThinking {
     #[serde(rename = "none")]
@@ -13103,6 +13383,9 @@ pub enum UpdateSessionRequestThinking {
     Medium,
     #[serde(rename = "high")]
     High,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for UpdateSessionRequestThinking {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -13112,6 +13395,7 @@ impl ::std::fmt::Display for UpdateSessionRequestThinking {
             Self::Low => f.write_str("low"),
             Self::Medium => f.write_str("medium"),
             Self::High => f.write_str("high"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -13144,16 +13428,7 @@ impl ::std::convert::TryFrom<::std::string::String> for UpdateSessionRequestThin
 }
 ///`UpdateSessionRequestVerbosity`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum UpdateSessionRequestVerbosity {
     #[serde(rename = "low")]
@@ -13162,6 +13437,9 @@ pub enum UpdateSessionRequestVerbosity {
     Medium,
     #[serde(rename = "high")]
     High,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for UpdateSessionRequestVerbosity {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -13169,6 +13447,7 @@ impl ::std::fmt::Display for UpdateSessionRequestVerbosity {
             Self::Low => f.write_str("low"),
             Self::Medium => f.write_str("medium"),
             Self::High => f.write_str("high"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -13225,8 +13504,6 @@ pub struct UsageEvent {
     ///The agent the work was done for.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub agent_id: ::std::option::Option<::std::string::String>,
-    ///The public API key the work was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:<name>.
-    pub api_key: ::std::string::String,
     ///The app the work was for.
     pub app_id: ::std::string::String,
     ///What chose the price or explains the work, such as country or direction.
@@ -13252,6 +13529,8 @@ pub struct UsageEvent {
     pub model: ::std::option::Option<::std::string::String>,
     ///When the work happened.
     pub occurred_at: ::std::string::String,
+    ///Who started the work: the public API key it was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:<name>.
+    pub origin: ::std::string::String,
     ///Who did the work, such as openai.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub provider: ::std::option::Option<::std::string::String>,
@@ -13507,16 +13786,7 @@ pub struct UseCaseReview {
 }
 ///Where a use case stands. draft, changes_requested and vendor_rejected can be edited and submitted; submitted waits on Stream's review; vendor_pending on the vendor's; approved numbers may send. rejected is final.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum UseCaseStatus {
     #[serde(rename = "draft")]
@@ -13533,6 +13803,9 @@ pub enum UseCaseStatus {
     Approved,
     #[serde(rename = "vendor_rejected")]
     VendorRejected,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for UseCaseStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -13544,6 +13817,7 @@ impl ::std::fmt::Display for UseCaseStatus {
             Self::VendorPending => f.write_str("vendor_pending"),
             Self::Approved => f.write_str("approved"),
             Self::VendorRejected => f.write_str("vendor_rejected"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -13622,7 +13896,7 @@ pub struct VideoSource {
     ///How many frames to sample, evenly spaced across the clip. Default 8.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub max_frames: ::std::option::Option<i64>,
-    ///Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+    ///Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... An MP4, MOV, 3GP, MKV or WebM file, at most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
     pub url: ::std::string::String,
 }
 ///`Voice`
@@ -13658,16 +13932,7 @@ pub struct VoiceBinding {
 }
 ///`VoiceBindingState`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum VoiceBindingState {
     #[serde(rename = "pending")]
@@ -13676,6 +13941,9 @@ pub enum VoiceBindingState {
     Ready,
     #[serde(rename = "failed")]
     Failed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for VoiceBindingState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -13683,6 +13951,7 @@ impl ::std::fmt::Display for VoiceBindingState {
             Self::Pending => f.write_str("pending"),
             Self::Ready => f.write_str("ready"),
             Self::Failed => f.write_str("failed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -13796,6 +14065,53 @@ pub struct VoiceSampleRequest {
     ///What is said in the recording. Optional, and the providers that use one clone more faithfully with it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub transcript: ::std::option::Option<::std::string::String>,
+}
+/**hang_up: end the call at once, saying nothing.
+leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.*/
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum VoicemailAction {
+    #[serde(rename = "hang_up")]
+    HangUp,
+    #[serde(rename = "leave_message")]
+    LeaveMessage,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for VoicemailAction {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::HangUp => f.write_str("hang_up"),
+            Self::LeaveMessage => f.write_str("leave_message"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for VoicemailAction {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "hang_up" => Ok(Self::HangUp),
+            "leave_message" => Ok(Self::LeaveMessage),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for VoicemailAction {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for VoicemailAction {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`WhatsAppProfile`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]

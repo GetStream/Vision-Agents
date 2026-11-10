@@ -314,6 +314,33 @@ func (s *CartesiaSuite) TestCloseIsIdempotentAndClosesEvents() {
 	}
 }
 
+func (s *CartesiaSuite) TestCloseSettlesAnUtteranceThatNeverFinished() {
+	fake := newFakeCartesia()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{})
+
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "u1", Text: "hello", Final: true}))
+	s.generations(conn, 1)
+	s.Require().NoError(speak(conn, "u1", make([]int16, 2400)))
+	s.collect(provider, func(event tts.Event) bool {
+		_, ok := event.(tts.AudioChunk)
+		return ok
+	})
+
+	s.Require().NoError(provider.Close())
+
+	var completes []tts.SynthesisComplete
+	for _, event := range s.collect(provider, func(tts.Event) bool { return false }) {
+		if complete, ok := event.(tts.SynthesisComplete); ok {
+			completes = append(completes, complete)
+		}
+	}
+	s.Require().Len(completes, 1, "an utterance cut off by the hang-up is still billed")
+	s.Equal("u1", completes[0].SynthesisID)
+	s.EqualValues(5, completes[0].Characters, "the text Cartesia was sent")
+	s.True(completes[0].Interrupted)
+}
+
 func (s *CartesiaSuite) TestAnUtteranceStreamsTextOnOneContextAndThenEndsIt() {
 	fake := newFakeCartesia()
 	defer fake.close()

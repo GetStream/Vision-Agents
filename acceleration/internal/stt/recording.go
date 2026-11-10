@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -81,6 +82,11 @@ type Transcription struct {
 	Entities []Entity
 	// AudioDurationMs is how long the recording was, which is what it is billed on.
 	AudioDurationMs int64
+}
+
+// Used is the recording's length, the meter a transcription is priced on.
+func (t Transcription) Used() pricing.Quantities {
+	return pricing.Quantities{pricing.AudioMs: t.AudioDurationMs}
 }
 
 // Word is one word and when it was said.

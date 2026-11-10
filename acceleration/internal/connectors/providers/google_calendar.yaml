@@ -1,5 +1,7 @@
 # Google Calendar's hosted MCP server, moved from the plugin catalog
-# (internal/plugins/plugins.yaml, entry google_calendar, «[plugin]» below; T58 in
+# (deleted since; last at
+# https://github.com/GetStream/Vision-Agents/blob/ee92fe19f83c406e07ea792cb0bb4fe387c22dc5/acceleration/internal/plugins/plugins.yaml,
+# entry google_calendar, «[plugin]» below; T58 in
 # acceleration/docs/connectors/subtasks.md on connectors/planning). Vendor pages, opened
 # October 7, 2026:
 #   [setup] https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server
@@ -17,8 +19,9 @@
 #         S256], authorization_response_iss_parameter_supported true, no registration_endpoint.
 id: google_calendar
 # A new revision for any change to what this file says; see AGENTS.md. 2 stores rotating:
-# false, which revision 1 was stored without (refresh.rotating became a pointer).
-revision: 2
+# false, which revision 1 was stored without (refresh.rotating became a pointer). 3 lists the
+# tools that only read.
+revision: 3
 # [plugin]
 name: Google Calendar
 category: Scheduling
@@ -57,8 +60,8 @@ client:
   # hand, and [as] has no registration_endpoint. [plugin] is client_required, with an agent's
   # own client before the deployment's.
   registration: [operator, customer]
-  # The plugin sends client_secret_post (setClientSecret in internal/plugins/oauth.go); [as]
-  # lists it.
+  # The plugin sends client_secret_post (setClientSecret in
+  # https://github.com/GetStream/Vision-Agents/blob/ee92fe19f83c406e07ea792cb0bb4fe387c22dc5/acceleration/internal/plugins/oauth.go); [as] lists it.
   auth_method: client_secret_post
   # One Cloud-project client serves Calendar, Drive, Docs and Gmail ([plugin]'s setup steps
   # say so), so the four share GOOGLE_MCP_CLIENT_ID and GOOGLE_MCP_CLIENT_SECRET. The plugin
@@ -91,3 +94,16 @@ rate_limit:
 sources:
   - kind: mcp
     endpoint: mcp
+    # The tools that only read, from the tool list at
+    # https://developers.google.com/workspace/calendar/api/v3/reference/mcp (opened 2026-11-04,
+    # «Last updated 2026-07-17»): each tool's page under tools_list/ marks it «Read Only
+    # Hint». create_event, update_event, delete_event and respond_to_event change a calendar
+    # (each page: «Read Only Hint: ❌»), so they are left out, as is a tool added later. The
+    # server's tools/list, read 2026-11-04, names these nine tools and no other, and describes
+    # each listed one as returning or suggesting, never changing anything.
+    read_only_tools:
+      - list_events
+      - get_event
+      - list_calendars
+      - suggest_time
+      - search_events

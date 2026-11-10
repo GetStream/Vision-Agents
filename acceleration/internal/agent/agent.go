@@ -24,6 +24,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
@@ -146,6 +147,15 @@ type Options struct {
 	// when JudgeTarget names one. Nil or an empty JudgeTarget keeps the language model.
 	Judge       *decisionrouter.Router
 	JudgeTarget string
+	// AudioFloor is the chorus-asr model the flow controller asks first when
+	// AudioFloorMode is Act. Nil or another mode asks it nothing.
+	// AudioFloorMode is this agent's own floor control: agents on one router share the
+	// client and nothing else of it.
+	AudioFloor     *audiofloor.Client
+	AudioFloorMode audiofloor.Mode
+	// EndOfTurn is the agent's choice of when the audio floor model has a turn with the
+	// floor free ended. The zero value is the server's default.
+	EndOfTurn audiofloor.EndOfTurn
 	// Skills are what the voice model may hand over to the subagent. A written
 	// conversation with no subagent loads them itself, with load_skill.
 	Skills harness.Skills
@@ -164,6 +174,10 @@ type Options struct {
 	// which is how a caller outside this process owns its own tools.
 	ToolRunner    ToolRunner
 	OnToolStarted func(ToolStarted)
+	// OnHeard is told of each Heard before it is sent, on the goroutine that heard the
+	// words, so its owner knows of them before the turn answering them runs, however far
+	// behind it reads Events. It must return at once.
+	OnHeard func(Heard)
 	// ToolPolicy is what the tool named asks of the agent (its connector binding's policy).
 	// Nil, or the zero ToolPolicy for a tool, is how every tool has always run.
 	ToolPolicy func(tool string) ToolPolicy
@@ -332,6 +346,9 @@ type Agent struct {
 	// first speculative reply to a turn of the caller's until the turn is answered.
 	speculations map[string]*speculation
 	speculating  string
+	// speculated numbers the replies started speculatively, so a harness that is told to
+	// forget one does not forget the answer asked for under the same id after it.
+	speculated uint64
 	// pumps are the goroutines draining those streams into replies.
 	pumps sync.WaitGroup
 
@@ -353,6 +370,9 @@ type Agent struct {
 	// turns measures each exchange end to end and, when a store is configured, records it.
 	turns     *turnTracker
 	turnStore *turnRecorder
+	// audioFloor keeps what the chorus-asr model hears for the flow controller's Hearer. Nil
+	// unless Options.AudioFloorMode asks it.
+	audioFloor *audioFloor
 	// decisionStore keeps what the conversation decided for an hour, so a call can be read
 	// back after the process that held it is gone.
 	decisionStore *decisionRecorder
@@ -411,6 +431,8 @@ type Agent struct {
 	// hearings tally what each participant has been heard to say, kept for the whole call
 	// so a line at its end covers those who left.
 	hearings map[string]*hearing
+	// carried is what the call carried that is not one participant's (CallAudio).
+	carried carried
 	// learnedTerms are names the caller said and the agent has said back, which the
 	// transcriber is told to expect for the rest of the call (keyterms.go).
 	learnedTerms []string
@@ -440,6 +462,9 @@ type Agent struct {
 	// what may be heard, because the agent starts a turn for itself while the turn before
 	// it is still being spoken.
 	speakingTurn string
+	// held is the reply a voice replacing a lost one is to say, and what of it that voice
+	// has still to be sent. Nil while no voice is replaced or it has been sent all of it.
+	held *heldReply
 	// saying is the reply as the caller has heard it so far, so a controller ruling on
 	// words that overlap it can tell a correction from the line echoing back. It is the
 	// spoken text as it streams, or the whole phrase for a greeting or a murmur.
@@ -477,6 +502,9 @@ type Agent struct {
 	// interrupting holds off new replies until the voice, edge and old model stream have
 	// all finished the interruption cleanup.
 	interrupting bool
+	// gaveWay is the turn the agent last gave the floor up on, stopping it or shortening it,
+	// which it has until it takes the next (pauseAsker.GivenWay).
+	gaveWay string
 	// generating is true while the voice model is still writing the current reply.
 	generating bool
 	// composing is true from asking for a line the agent chose to say (compose) until it
@@ -520,6 +548,10 @@ type Agent struct {
 	// turnImages are the images that last thing came with, kept the same way, so the reply
 	// after a tool still sees what it was asked about. The next turn drops them.
 	turnImages []llm.ImagePart
+	// turnSaid is the last turn's words as its replies are sent them while turnImages go
+	// with them, and turnKept the same words as history keeps them, with the note of its
+	// photos.
+	turnSaid, turnKept string
 
 	joined bool
 	closed bool
@@ -528,7 +560,13 @@ type Agent struct {
 	// delegated work coming back is attributed to the person who is waiting for it.
 	lastParticipant stt.Participant
 	lastHeardAt     time.Time
-	lastSpokeAt     time.Time
+	// talkedAt is when the caller last said more than a murmur (takesFloor), which is what
+	// overtakes a check-in held for the next voice.
+	talkedAt    time.Time
+	lastSpokeAt time.Time
+	// voiceOut is when the agent's voice went out on the edge's track, which is when an echo
+	// of it on the caller's line can be in their audio (withoutEcho).
+	voiceOut voiceOut
 	// The native agent's own state. A speech-to-speech model takes one stream, so bound
 	// is the participant whose audio it hears and arrivals is everyone whose audio has
 	// come in, heard or not, which is what a warm transfer counts. waitingSince is when the
@@ -574,6 +612,19 @@ type Agent struct {
 	// history: a request for help was written to the harness, not said, so remembering
 	// it would have the model reading its own instructions back on the next turn.
 	spoken strings.Builder
+	// voicedChars and voicedMs are the characters and the audio of the syntheses ratedVoice
+	// finished whole on the call: its speaking rate, by which how long the caller has heard
+	// an utterance says how much of it they have heard (replyHeardLocked). A voice that
+	// replaces another speaks at a rate of its own, measured afresh.
+	voicedChars, voicedMs float64
+	ratedVoice            *ttsrouter.Session
+	// keptReply is the turn whose line the agent last kept in the history as its own: what it
+	// goes on saying once the turn's text is no longer held (replyLocked).
+	keptReply string
+	// pausesAsked says chorus-asr asks the model about the pauses of this agent's callers for it
+	// (actsOnChorusASR), whatever transcriber writes their words, as the last listener opened
+	// for one does.
+	pausesAsked atomic.Bool
 	// replying is the turn whose text the chunker and the harness are holding, so a
 	// completion arriving late for an abandoned turn cannot clear the one after it.
 	replying string
@@ -690,6 +741,7 @@ func New(options Options) (*Agent, error) {
 	agent := &Agent{
 		options:          options,
 		logger:           logger,
+		audioFloor:       newAudioFloor(options.AudioFloor, options.AudioFloorMode, options.EndOfTurn, logger),
 		emitter:          emitter,
 		prompt:           options.Instructions,
 		zone:             zone,
@@ -722,8 +774,15 @@ func New(options Options) (*Agent, error) {
 		agent.decisionStore = newDecisionRecorder(options.Live, owner, logger)
 		record = agent.decisionStore.Record
 	}
+	if agent.audioFloor.asksOnPauses() {
+		// Acting on chorus-asr, its transcriber's final is the end the agent's end-of-turn
+		// point ruled, which is answered at once.
+		settling.endedBy = audiofloor.ProviderName
+	}
 	agent.converse = newConverse(settling, listening, emitter, record, 0, logger)
+	agent.converse.onHeard = options.OnHeard
 	agent.turns = newTurnTracker(owner, agent.finishTurn)
+	agent.turns.native = agent.native
 	agent.nativeMode.Store(native)
 
 	if options.Memory != nil {
@@ -758,6 +817,12 @@ func (a *Agent) finishTurn(turn Turn) {
 		"first_audible_frame_ms", turn.FirstAudibleFrameMs,
 		"speech_end_to_audible_ms", turn.SpeechEndToAudibleMs,
 		"interrupted", turn.Interrupted)
+	// Only a caller's turn is timed from when they stopped: the agent's own lines, a tool's
+	// answer among them, start the clock when the agent starts them. A turn a scheduled task
+	// fired answers nobody's silence either.
+	if started.kind == kindCaller && !started.scheduled {
+		observeTurnLatency(turn, started.pipeline)
+	}
 	a.emitter.Send(turn)
 	if a.turnStore != nil {
 		a.turnStore.Record(turn)
@@ -817,9 +882,12 @@ func (a *Agent) Join(ctx context.Context) error {
 	a.mu.Unlock()
 
 	if !a.options.Text {
+		startup := StartupOf(ctx)
+		startup.JoinStarted(time.Now())
 		if err := a.options.Edge.Join(a.ctx); err != nil {
 			return stack.Wrap(fmt.Errorf("agent: join edge: %w", err))
 		}
+		startup.JoinEnded(time.Now())
 		a.running.Add(1)
 		go a.consumeEdge()
 
@@ -892,7 +960,7 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 	// session reads its caller's lines from Responding instead.
 	typed := func() {
 		if !a.options.Text {
-			a.emitter.Send(Heard{Participant: caller, Text: text})
+			sendHeard(a.emitter, a.options.OnHeard, Heard{Participant: caller, Text: text})
 		}
 	}
 	if len(images) > 0 {
@@ -904,12 +972,17 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 		}
 		id := replyPrefix + turnStamp()
 		attached := make([]llm.ImagePart, 0, len(images))
+		// The frames of a video are not photos the turn is kept with a note of.
+		photos := 0
 		for _, image := range images {
 			if err := image.Validate(); err != nil {
 				return "", err
 			}
 			image.Data = append([]byte(nil), image.Data...)
 			attached = append(attached, image)
+			if !image.Video {
+				photos++
+			}
 		}
 		switch {
 		case current.Offers(visionSkill):
@@ -931,10 +1004,10 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 				return "", err
 			}
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender, scheduled, "")
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author, photos: photos}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender, scheduled, "")
 		case model != nil && model.Capabilities().Accepts(llm.ModalityImage):
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author}, "", attached, asked, sender, scheduled, "")
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author, photos: photos}, "", attached, asked, sender, scheduled, "")
 		default:
 			return "", stack.Wrap(ErrCannotSeeImages)
 		}
@@ -950,7 +1023,7 @@ const imagesAlone = "The caller sent these images without a message. Describe wh
 
 // PhotoNote is said as history keeps it once the photos sent with it have been seen: followed
 // by a note that they were sent, rather than the photos again, or the note alone for photos
-// sent with no words. said is as it is with no photos.
+// sent with no words or only blanks. said is as it is with no photos.
 func PhotoNote(said string, photos int) string {
 	var note string
 	switch {
@@ -961,7 +1034,7 @@ func PhotoNote(said string, photos int) string {
 	default:
 		note = fmt.Sprintf("[sent with %d photos, not shown again]", photos)
 	}
-	if said == "" {
+	if strings.TrimSpace(said) == "" {
 		return note
 	}
 	return said + "\n\n" + note
@@ -1113,7 +1186,7 @@ func (a *Agent) Ask(ctx context.Context, text string, images ...llm.ImagePart) (
 		a.mu.Unlock()
 		return "", stack.Wrap(ErrCannotSeeImages)
 	}
-	a.history = append(toolPicturesSeen(a.history), llm.Message{Role: llm.User, Content: PhotoNote(harness.Defang(text), len(images))})
+	a.history = append(toolPicturesSeen(a.history), llm.Message{Role: llm.User, Content: PhotoNote(harness.Defang(text), len(images)), Typed: true})
 	history := make([]llm.Message, len(a.history))
 	for i, message := range a.history {
 		history[i] = named(message)
@@ -1217,7 +1290,7 @@ func (a *Agent) sayFor(text, purpose string) error {
 		a.mu.Unlock()
 		return stack.Wrap(errors.New("agent: not joined"))
 	}
-	a.speakingTurn = turnID
+	a.speakingTurn, a.keptReply = turnID, turnID
 	a.saying = text
 	// The model reads what the agent said from the history, so a line said without it has
 	// to be kept too, or the caller's answer to a greeting's question reaches it with no
@@ -1248,6 +1321,9 @@ func (a *Agent) sayFor(text, purpose string) error {
 			a.abandoned[turnID] = struct{}{}
 			a.speakingTurn = ""
 			a.saying = ""
+			// Nothing of it was heard, so nobody was given the floor: an earlier turn the agent
+			// gave way on is not the one it is on (GivenWay).
+			a.gaveWay = ""
 		}
 		a.mu.Unlock()
 		a.interrupted(turnID, stt.Participant{}, interruption{cause: causeVoiceRefused})
@@ -1295,7 +1371,7 @@ func (a *Agent) Greet(ctx context.Context, greeting string, vary bool) error {
 	if vary {
 		line, err := a.compose(ctx, fmt.Sprintf(greetPurpose, greeting))
 		if err != nil {
-			a.logger.Warn("could not vary the greeting, saying it as written", "error", err)
+			a.logger.Warn("could not vary the greeting, saying it as written", append(a.replyModel(), "error", err)...)
 		} else if line != "" {
 			greeting = line
 		}
@@ -1436,6 +1512,9 @@ func (a *Agent) close() error {
 	p, released := a.releasePipeline(false)
 	failures = append(failures, released...)
 
+	// A caller turn still waiting for a line said for it gets none now, and is reported while
+	// the emitter still takes it.
+	a.turns.giveUp()
 	// Left is sent before the emitter closes, and the emitter closes before the consumers
 	// are waited on: a consumer blocked emitting to a caller that has stopped reading has
 	// to be let go of, or shutdown would depend on someone draining the channel.
@@ -1481,11 +1560,13 @@ func (a *Agent) consumeEdge() {
 			tallies[inbound.Participant.ID] = tally
 		}
 		tally.heardAudio(inbound.Audio)
+		a.audioFloor.heard(inbound)
 		if a.switching.Load() {
 			continue
 		}
 		// A native model hears one stream rather than one per participant.
 		if a.native() {
+			a.carried.native.Store(true)
 			a.hear(inbound)
 			continue
 		}
@@ -1515,6 +1596,7 @@ func (a *Agent) consumeRoster(roster Roster) {
 // attend reports one arrival or departure.
 func (a *Agent) attend(attendance Attendance) {
 	if attendance.Joined {
+		a.carried.attended.Store(true)
 		a.mu.Lock()
 		delete(a.departed, attendance.Participant.ID)
 		a.mu.Unlock()
@@ -1527,6 +1609,7 @@ func (a *Agent) attend(attendance Attendance) {
 		return
 	}
 	a.unbind(attendance.Participant)
+	a.audioFloor.forget(attendance.Participant.ID)
 	a.mu.Lock()
 	a.departed[attendance.Participant.ID] = time.Time{}
 	listener := a.listeners[attendance.Participant.ID]
@@ -1609,10 +1692,31 @@ func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) 
 	if err != nil {
 		return nil, fmt.Errorf("agent: start stt for %s: %w", participant.ID, err)
 	}
+	// A new transcriber numbers the participant's utterances from one again: a stop ruled
+	// in one of the last one's is spent, and is forgotten before this one can rule another.
+	a.converse.forgetStop(participant.ID)
+	// Acting on chorus-asr, it times the caller's pauses from the audio and asks about each,
+	// and about the caller talking over the agent, whatever transcriber writes the words. As
+	// chorus-asr's transcriber, it writes the words of each pause in the same pass. With
+	// another, a floor of its own hears the participant beside it (audioFloor.rules), and the
+	// words are that transcriber's, settled as each utterance the floor ended. The contract is
+	// kept while it does (actsOnChorusASR).
+	asks := false
+	var floor *audiofloor.Transcriber
+	if a.audioFloor.asksOnPauses() {
+		if pauses, ok := session.Serving().(audiofloor.Pauses); ok {
+			pauses.AskOnPauses(pauseAsker{a})
+			asks = true
+		} else if floor = a.audioFloor.rules(participant, session, a.options.LanguageHints, pauseAsker{a}); floor != nil {
+			asks = true
+		}
+	}
+	a.pausesAsked.Store(asks)
 
 	a.mu.Lock()
 	if a.closed {
 		a.mu.Unlock()
+		a.audioFloor.drop(participant.ID, floor)
 		_ = session.Close()
 		return nil, errors.New("agent: closed")
 	}
@@ -1621,6 +1725,7 @@ func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) 
 	if _, gone := a.departed[participant.ID]; gone {
 		a.running.Add(1)
 		a.mu.Unlock()
+		a.audioFloor.drop(participant.ID, floor)
 		go func() {
 			defer a.running.Done()
 			a.closeListener(session)
@@ -1631,7 +1736,7 @@ func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) 
 	a.mu.Unlock()
 
 	a.running.Add(1)
-	go a.consumeSTT(participant.ID, session)
+	go a.consumeSTT(participant.ID, session, floor)
 	return session, nil
 }
 
@@ -1670,14 +1775,22 @@ func (a *Agent) closeListener(session *sttrouter.Session) {
 	}
 }
 
-// consumeSTT feeds transcript revisions to the cadence controller.
-func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
+// consumeSTT feeds transcript revisions to the cadence controller, or, where a floor of
+// chorus-asr's own rules on the participant's turns (audioFloor.rules), to that floor, whose
+// utterances the cadence controller is fed instead (consumeFloor).
+func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session, floor *audiofloor.Transcriber) {
 	defer a.running.Done()
 	defer a.dropListener(participantID, session)
+	if floor != nil {
+		defer a.audioFloor.drop(participantID, floor)
+		a.running.Add(1)
+		go a.consumeFloor(participantID, floor)
+	}
 
 	tally := a.heardFrom(participantID)
 	partials := sttPartials.WithLabelValues(session.Provider())
 	finals := sttFinals.WithLabelValues(session.Provider())
+	count := func(heard stt.Transcript) { tally.heardWords(heard, partials, finals) }
 	for event := range session.Events() {
 		switch typed := event.(type) {
 		case stt.Transcript:
@@ -1686,23 +1799,33 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
 					"provider", typed.Provider, "participant", typed.Participant.ID, "mode", typed.Mode)
 				continue
 			}
-			tally.heardWords(typed, partials, finals)
-			a.logger.Debug("transcribed",
-				"provider", typed.Provider, "model", typed.Model,
-				"participant", typed.Participant.ID, "mode", typed.Mode, "text", typed.Text,
-				"confidence", typed.Confidence, "latency_ms", typed.ProcessingTimeMs)
-			a.mu.Lock()
-			a.lastHeardAt = time.Now()
-			a.lastParticipant = typed.Participant
-			a.mu.Unlock()
-			a.act(a.converse.Observe(typed, a.floor()))
+			if floor != nil && floor.Heard(typed) {
+				// The floor's to settle into its utterances: the words, not when the turn ends.
+				count(typed)
+				a.logger.Debug("transcribed, for the floor",
+					"provider", typed.Provider, "model", typed.Model,
+					"participant", typed.Participant.ID, "mode", typed.Mode, "text", typed.Text,
+					"utterance", typed.Utterance, "latency_ms", typed.ProcessingTimeMs)
+				a.mu.Lock()
+				a.lastHeardAt = time.Now()
+				a.lastParticipant = typed.Participant
+				a.mu.Unlock()
+				continue
+			}
+			a.transcribed(typed, count)
 
 		case stt.Connected:
 			a.logger.Info("listening", "provider", typed.Provider, "model", typed.Model)
 
 		case stt.Failover:
 			// What the participant said as the vendor refused is lost; what they say next
-			// is heard by the next model.
+			// is heard by the next model, which numbers their utterances afresh. A floor's
+			// utterances are its own, numbered on.
+			if floor != nil {
+				floor.FailedOver()
+			} else {
+				a.converse.forgetStop(participantID)
+			}
 			a.logger.Warn("the transcriber refused the session, the next model took it over",
 				"from", typed.From, "provider", typed.Provider, "model", typed.Model, "error", typed.Err)
 			partials = sttPartials.WithLabelValues(typed.Provider)
@@ -1727,6 +1850,74 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
 			if typed.Fatal {
 				return
 			}
+		}
+	}
+}
+
+// transcribed hands the conversation a transcript of a participant's words, without the
+// agent's own voice heard back in them, counting it by count.
+func (a *Agent) transcribed(typed stt.Transcript, count func(stt.Transcript)) {
+	left, ok := a.droppingEcho(typed, "the transcriber")
+	if !ok {
+		return
+	}
+	typed.Text = left
+	if count != nil {
+		count(typed)
+	}
+	a.logger.Debug("transcribed",
+		"provider", typed.Provider, "model", typed.Model,
+		"participant", typed.Participant.ID, "mode", typed.Mode, "text", typed.Text,
+		"confidence", typed.Confidence, "latency_ms", typed.ProcessingTimeMs)
+	a.mu.Lock()
+	a.lastHeardAt = time.Now()
+	if takesFloor(typed.Text) {
+		a.talkedAt = a.lastHeardAt
+	}
+	a.lastParticipant = typed.Participant
+	a.mu.Unlock()
+	if typed.Interim {
+		// Words of a turn still going on, from a transcriber that will say when it
+		// has ended: shown, and acted on when the final comes.
+		a.converse.Glimpsed(typed)
+		return
+	}
+	a.act(a.converse.Observe(typed, a.floor()))
+}
+
+// consumeFloor feeds the utterances a floor of chorus-asr's own ended (audioFloor.rules) to
+// the cadence controller, as chorus-asr's transcriber's are fed it: the words so far as
+// interims, and each utterance's final once its words are settled, with the ruling that
+// ended it. A floor that steps aside, its server down, leaves the turns to the transcriber
+// that writes the words, and the contract with them (actsOnChorusASR), until it says it rules
+// again (stt.Connected after it stepped aside).
+func (a *Agent) consumeFloor(participantID string, floor *audiofloor.Transcriber) {
+	defer a.running.Done()
+	var asideSince time.Time
+	for event := range floor.Events() {
+		switch typed := event.(type) {
+		case stt.Transcript:
+			if strings.TrimSpace(typed.Text) == "" {
+				continue
+			}
+			a.transcribed(typed, nil)
+		case stt.Disconnected:
+			if typed.Clean {
+				continue
+			}
+			asideSince = typed.At
+			a.pausesAsked.Store(false)
+			a.logger.Warn("chorus-asr no longer rules on a participant's floor, the transcriber writing the words ends their turns",
+				"participant", participantID, "reason", typed.Reason)
+		case stt.Connected:
+			// The floor's first Connected is its start: only one after it stepped aside is news.
+			if asideSince.IsZero() {
+				continue
+			}
+			a.pausesAsked.Store(true)
+			a.logger.Info("chorus-asr rules on a participant's floor again",
+				"participant", participantID, "out_ms", typed.At.Sub(asideSince).Milliseconds())
+			asideSince = time.Time{}
 		}
 	}
 }
@@ -1864,7 +2055,7 @@ func (a *Agent) perform(action Action) {
 		a.interrupt(action.Participant, action.Interruption)
 
 	case ActShorten:
-		a.shorten()
+		a.shorten(action.Participant, action.TurnID, action.Interruption)
 
 	case ActAnswer:
 		a.mu.Lock()
@@ -1907,25 +2098,21 @@ func (a *Agent) ask(ready candidate) {
 	// Pending tools still own the turn even after its spoken acknowledgement ends.
 	// The flow controller must be able to stop that work on a caller's correction.
 	speaking := a.generating || a.utterances > 0 || a.pendingTools > 0
-	reply := a.saying
-	if reply == "" {
-		reply = lastAssistantSaid(history)
-	}
+	reply, unsaid := a.replyLocked(history)
+	heard, measured := a.replyHeardLocked(reply, time.Now())
 	anotherVoice := a.anotherVoiceLocked(ready)
 	participant := ready.Participant.Name
 	if participant == "" {
 		participant = a.speakerLocked(ready.Participant).label
 	}
+	tools := a.options.Tools.Tools
 	a.mu.Unlock()
 
 	// Speech the voice has finished sending is still on its way out of the edge, so the
 	// agent counts as speaking until it has drained.
 	speaking = speaking || a.speechPending()
 
-	if a.speculate(current, ready, speaking, anotherVoice) {
-		return
-	}
-	if err := current.Decide(harness.FlowTurn{
+	turn := harness.FlowTurn{
 		ID:           ready.ID,
 		Instructions: instructions,
 		History:      history,
@@ -1933,12 +2120,22 @@ func (a *Agent) ask(ready candidate) {
 		Text:         ready.Said(),
 		Speaking:     speaking,
 		Reply:        reply,
+		Heard:        heard,
+		Measured:     measured,
+		Unsaid:       unsaid,
 		Unfinished:   ready.Unfinished,
 		AnotherVoice: anotherVoice,
 		Waited:       a.converse.waitedOn(ready),
 		Ended:        ready.Ended,
 		InParts:      a.converse.inParts(ready.Participant.ID),
-	}); err != nil {
+		Paused:       time.Since(ready.RevisedAt),
+		FirstPause:   a.converse.firstPause(ready),
+	}
+	a.audioFloor.listen(&turn, ready.Participant.ID, ready.Text, tools)
+	if a.speculate(current, ready, speaking, anotherVoice) {
+		return
+	}
+	if err := current.Decide(turn); err != nil {
 		a.dropSpeculation(ready.ID)
 		a.converse.Unasked(ready.ID)
 		a.fail(err, "flow")
@@ -1991,6 +2188,21 @@ type heard struct {
 	typed bool
 	// author is the Stream user who wrote a typed turn in a thread channel (WithAuthor).
 	author string
+	// photos is how many photos a typed turn came with, whether the model or the vision
+	// skill looks at them, not counting the frames of a video.
+	photos int
+}
+
+// replyLocked is what the agent is saying, as the flow controller is told it (FlowTurn.Reply):
+// the turn's text so far, or before it has any the agent's last line in history, and unsaid
+// when that line is not the turn's own but the one before a turn that has written and said
+// nothing yet, as the answer after a tool's result is until its first words. Agent.mu must
+// be held.
+func (a *Agent) replyLocked(history []llm.Message) (reply string, unsaid bool) {
+	if a.saying != "" {
+		return a.saying, false
+	}
+	return lastAssistantSaid(history), a.keptReply != a.speakingTurn
 }
 
 func lastAssistantSaid(history []llm.Message) string {
@@ -2104,7 +2316,7 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	if question := a.takeApprovalQuestionsLocked(); question != "" {
 		return a.askLocked(turnID, question)
 	}
-	history := a.replayLocked()
+	history := a.turnReplayLocked()
 	participant := a.lastParticipant
 	a.speakingTurn = turnID
 	a.generating = true
@@ -2162,8 +2374,8 @@ func (a *Agent) respondTurn(
 		said = stt.Participant{ID: listened.author, UserID: listened.author}
 		a.writers = true
 	}
-	a.keepTurnLocked(said, text, images)
-	history := a.replayLocked()
+	a.keepTurnLocked(said, text, listened.photos, images, listened.typed)
+	history := a.turnReplayLocked()
 	// This turn is answered, however it was asked, so what is speculated on next is a turn
 	// of its own.
 	a.speculating = ""
@@ -2187,6 +2399,9 @@ func (a *Agent) respondTurn(
 	a.mu.Unlock()
 
 	a.turns.started(turnID, kindCaller)
+	if scheduled {
+		a.turns.scheduledTurn(turnID)
+	}
 	a.turns.begin(turnID, participant, listened.at, listened.revisedAt, listened.sttLatencyMs)
 	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Prompt: text})
 
@@ -2242,11 +2457,19 @@ func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Mes
 	return turn
 }
 
-// keepTurnLocked adds a turn being answered to the conversation and counts who said it.
+// keepTurnLocked adds a turn being answered to the conversation and counts who said it, typed
+// saying it was written or handed in rather than said on the call (llm.Message.Typed).
 // What tools showed the model before it stand as a note from here on (toolPicturesSeen),
-// and only this turn's images go with its replies.
-func (a *Agent) keepTurnLocked(participant stt.Participant, text string, images []llm.ImagePart) {
-	a.history = append(toolPicturesSeen(a.history), a.userTurnLocked(participant, text))
+// and only this turn's images go with its replies. The turn is kept with a note of its
+// photos (PhotoNote), as an aside and a thread's history are; turnReplayLocked sends its
+// words alone while its images go with it.
+func (a *Agent) keepTurnLocked(participant stt.Participant, text string, photos int, images []llm.ImagePart, typed bool) {
+	turn := a.userTurnLocked(participant, text)
+	turn.Typed = typed
+	a.turnSaid = turn.Content
+	turn.Content = PhotoNote(turn.Content, photos)
+	a.turnKept = turn.Content
+	a.history = append(toolPicturesSeen(a.history), turn)
 	a.turnImages = images
 	if a.missed.participant == participant.ID {
 		a.missed = unheardReply{}
@@ -2317,6 +2540,29 @@ func personOf(participant stt.Participant) string {
 // of another person's line, so they go.
 func speakerLabel(participant stt.Participant) string {
 	return strings.Join(strings.Fields(strings.ReplaceAll(participant.Name, ":", "")), " ")
+}
+
+// turnReplayLocked is replayLocked for a reply sent with the last turn's images. The message
+// they go with is the turn's words alone: its note stands for the images once they are gone,
+// and says they are not shown, which is untrue while they are.
+func (a *Agent) turnReplayLocked() []llm.Message {
+	replay := a.replayLocked()
+	if len(a.turnImages) == 0 {
+		return replay
+	}
+	// The images go with the last message from the caller (harness.WithImages), which is
+	// not the turn's when something written in as theirs came after it. The turn's own
+	// message is sent as its words wherever it sits, so no note stands beside the images.
+	for at := len(a.history) - 1; at >= 0; at-- {
+		if a.history[at].Role != llm.User || a.history[at].Content != a.turnKept {
+			continue
+		}
+		said := a.history[at]
+		said.Content = a.turnSaid
+		replay[at] = named(said)
+		break
+	}
+	return replay
 }
 
 func (a *Agent) replayLocked() []llm.Message {
@@ -2405,7 +2651,7 @@ func (a *Agent) checkIn(participant stt.Participant, purpose string) {
 		}()
 		line, err := a.compose(ctx, purpose)
 		if err != nil {
-			a.logger.Warn("could not write a line to say", "kind", kind, "error", err)
+			a.logger.Warn("could not write a line to say", append(a.replyModel(), "kind", kind, "error", err)...)
 			return
 		}
 		a.sayComposed(participant, line, purpose, asked)
@@ -2438,13 +2684,19 @@ func (a *Agent) sayComposed(participant stt.Participant, line, purpose string, a
 		return
 	}
 
-	turnID := backchannelPrefix + turnStamp()
+	// Acting on chorus-asr, the line is a turn of the agent's own, which a caller talking
+	// over it stops (actsOnChorusASR); otherwise it goes out as it always has, as a murmur.
+	prefix := backchannelPrefix
+	if a.actsOnChorusASR() {
+		prefix = ownPrefix
+	}
+	turnID := prefix + turnStamp()
 	a.mu.Lock()
 	if a.tts == nil {
 		a.mu.Unlock()
 		return
 	}
-	a.speakingTurn = turnID
+	a.speakingTurn, a.keptReply = turnID, turnID
 	a.saying = line
 	said := llm.Message{Role: llm.Assistant, Content: line}
 	if callsOpen(a.history) {
@@ -2589,13 +2841,13 @@ func (a *Agent) generate(turn harness.Turn, screen string) error {
 		a.logger.Debug("a turn arrived while the models were changing, so it was dropped", "turn", turn.ID)
 		return nil
 	}
-	current := a.harness
+	current, model := a.harness, a.llm
 	ctx, cancel := context.WithCancel(a.chargedLocked(a.ctx, a.scheduled))
 	a.generatingCancel[turn.ID] = cancel
 	a.pumps.Add(1)
 	a.mu.Unlock()
 
-	go a.startReply(current, turn, ctx, screen)
+	go a.startReply(current, model, turn, ctx, screen)
 	return nil
 }
 
@@ -2622,7 +2874,7 @@ func (a *Agent) chargedLocked(ctx context.Context, scheduled bool) context.Conte
 // the check had still not finished by the time the model began answering. A turn the
 // policy refuses has cost some tokens nobody will read, which is the trade.
 func (a *Agent) startReply(
-	current *harness.Harness, turn harness.Turn, ctx context.Context, screen string,
+	current *harness.Harness, model *llmrouter.Session, turn harness.Turn, ctx context.Context, screen string,
 ) {
 	defer a.pumps.Done()
 	defer a.finishGenerate(turn.ID)
@@ -2651,7 +2903,7 @@ func (a *Agent) startReply(
 		a.mu.Lock()
 		replies := a.replies
 		a.mu.Unlock()
-		replies <- llm.ResponseFailed{ResponseID: turn.ID, Err: err, Context: "llm"}
+		replies <- createFailed(turn.ID, model, err)
 		replies <- llm.ResponseCompleted{Response: llm.Response{ID: turn.ID, Status: llm.StatusFailed}}
 		return
 	}
@@ -2837,7 +3089,7 @@ func (a *Agent) handle(event llm.Event) {
 			a.emitter.Send(Error{Err: typed.Err, Context: "llm", TurnID: typed.ResponseID})
 			return
 		}
-		a.fail(typed.Err, "llm")
+		a.fail(typed.Err, "llm", "provider", typed.Provider, "model", typed.Model)
 
 	case llm.ResponseCompleted:
 		if !a.speaking(typed.Response.ID) {
@@ -2983,6 +3235,11 @@ func (a *Agent) finish(response llm.Response) {
 			a.fail(err, "tts")
 		}
 	}
+	// A reply that handed work on and said nothing leaves the caller waiting for what is said
+	// for it later. In writing nothing is heard, so there is nothing to wait for.
+	if !a.options.Text && (len(calls) > 0 || a.harness.Delegating() || a.harness.Pending()) {
+		a.turns.owes(response.ID, "")
+	}
 	// How many syntheses the turn produces is only settled once the reply is, and it is
 	// what tells the tracker when the turn has finished being spoken.
 	a.turns.completed(response.ID, response.TimeToFirstTokenMs, a.expectedSyntheses(response.ID))
@@ -3031,6 +3288,9 @@ func (a *Agent) finish(response llm.Response) {
 			ToolCalls: calls,
 			Reasoning: response.ReasoningText,
 		})
+		if said != "" {
+			a.keptReply = response.ID
+		}
 	}
 	exchange := lastExchange(a.history)
 	history := append([]llm.Message(nil), a.history...)
@@ -3175,6 +3435,10 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 	// lost is set once the voice has gone, which a provider may say twice: as a fatal error
 	// and as the socket dropping.
 	lost := false
+	// handedOver is the turn the voice that replaced this one says again, whose audio and
+	// completions from this voice are no longer the turn's.
+	handedOver := ""
+	handed := func(synthesisID string) bool { return handedOver != "" && turnOf(synthesisID) == handedOver }
 	// An expressive voice can read a phrase 20 to 30 dB below the one before it, which a
 	// caller hears as the agent trailing off and their phone hears as it having finished.
 	leveller := audio.NewLeveller()
@@ -3189,6 +3453,11 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 	for event := range voice.Events() {
 		switch typed := event.(type) {
 		case tts.AudioChunk:
+			if handed(typed.SynthesisID) {
+				// Paid for and never published, as audio of an abandoned turn is.
+				a.turns.dropped(handedOver, typed.Audio.DurationMs())
+				continue
+			}
 			// Audio from an abandoned turn is dropped here rather than published, so
 			// barge-in silences the agent even while the provider is still sending.
 			//
@@ -3210,12 +3479,14 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				}
 				continue
 			}
+			a.turns.wentOut(turnOf(typed.SynthesisID), time.Now())
 			speech := leveller.Level(typed.Audio)
+			queued := time.Now()
 			var err error
 			if marks {
 				// Publishing returns once the chunk is queued, which for a long one is well
 				// after the participants could have heard it begin, so the edge says when.
-				err = marked.PublishAudioMarked(speech, withUtterance(a.turns.marksFor(turnOf(typed.SynthesisID)), heard))
+				err = marked.PublishAudioMarked(speech, a.carried.marked(withUtterance(a.turns.marksFor(turnOf(typed.SynthesisID)), heard)))
 			} else {
 				err = a.options.Edge.PublishAudio(speech)
 			}
@@ -3235,9 +3506,7 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				heard.FirstAudiblePulled(time.Now())
 			}
 			overlapping.published(typed.SynthesisID, typed.Audio.DurationMs())
-			a.mu.Lock()
-			a.lastSpokeAt = time.Now()
-			a.mu.Unlock()
+			a.spoke(queued, time.Now(), speech)
 			// The wait ends when the participant can hear something, so this is timed
 			// after the publish rather than before it.
 			a.turns.firstAudio(turnOf(typed.SynthesisID), time.Now())
@@ -3254,7 +3523,24 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				"caller_talking", a.converse.Listening())
 
 		case tts.SynthesisComplete:
+			if handed(typed.SynthesisID) {
+				// Taken, it would settle the turn before the next voice has said it.
+				a.logger.Debug("the lost voice finished an utterance the next one says",
+					"synthesis", typed.SynthesisID, "synthesis_cut", typed.Interrupted)
+				continue
+			}
 			done := a.takeUtterance(typed.SynthesisID)
+			if !typed.Interrupted && typed.Characters > 0 && typed.AudioDurationMs > 0 {
+				// Cut short, a synthesis was billed all of its text and made only part of its
+				// audio, so only whole ones say how fast the voice speaks.
+				a.mu.Lock()
+				if a.ratedVoice != voice {
+					a.ratedVoice, a.voicedChars, a.voicedMs = voice, 0, 0
+				}
+				a.voicedChars += float64(typed.Characters)
+				a.voicedMs += typed.AudioDurationMs
+				a.mu.Unlock()
+			}
 			if heardID == typed.SynthesisID {
 				heard, heardID = nil, ""
 			}
@@ -3302,14 +3588,14 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				"provider", typed.Provider, "model", typed.Model, "reason", typed.Reason)
 			if !lost {
 				lost = true
-				a.loseVoice(p, voice)
+				handedOver = a.loseVoice(p, voice)
 			}
 
 		case tts.Error:
 			if typed.Fatal {
 				if !lost {
 					lost = true
-					a.loseVoice(p, voice)
+					handedOver = a.loseVoice(p, voice)
 				}
 			} else if typed.SynthesisID == "" {
 				// A failure naming an utterance still settles it, since the router turns
@@ -3448,7 +3734,7 @@ func summarised(summary string) []llm.Message {
 	}{summary})
 	return []llm.Message{
 		{Role: llm.System, Content: summaryAttribution},
-		{Role: llm.User, Content: string(envelope)},
+		{Role: llm.User, Content: string(envelope), Typed: true},
 	}
 }
 
@@ -3522,7 +3808,8 @@ func (a *Agent) follow() error {
 	a.mu.Unlock()
 
 	// This turn is deliberately not measured. A Turn reports the wait between someone
-	// finishing a sentence and hearing the answer start, and nobody said anything here.
+	// finishing a sentence and hearing the answer start, and nobody said anything here. Its
+	// first audio still ends the wait of a caller turn that said nothing and handed work on.
 	a.turns.started(turnID, kindFollowUp)
 	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Continues: continues})
 
@@ -3621,14 +3908,24 @@ func (a *Agent) speakSentence(turnID, text string, message MessageSpan) error {
 		id := fmt.Sprintf("%s%s%d", turnID, sentenceSuffix, a.sentences)
 		a.sentences++
 		a.begin()
-		return a.synthesize(voice, turnID, tts.Request{ID: id, Text: text, Final: true}, message)
+		return a.sendSentence(voice, turnID, tts.Request{ID: id, Text: text, Final: true}, message, true)
 	}
 
-	if a.openTurn != turnID {
+	opens := a.openTurn != turnID
+	if opens {
 		a.openTurn = turnID
 		a.begin()
 	}
-	return a.synthesize(voice, turnID, tts.Request{ID: turnID, Text: text}, message)
+	return a.sendSentence(voice, turnID, tts.Request{ID: turnID, Text: text}, message, opens)
+}
+
+// sendSentence sends a request of a reply to the voice, unless it is held for the voice
+// replacing a lost one. counted is whether it was counted as being said.
+func (a *Agent) sendSentence(voice *ttsrouter.Session, turnID string, request tts.Request, message MessageSpan, counted bool) error {
+	if a.hold(turnID, request, message, counted) {
+		return nil
+	}
+	return a.synthesize(voice, turnID, request, message)
 }
 
 // speakWhole says a piece of text that is already complete, as one utterance. Its message,
@@ -3656,7 +3953,11 @@ func (a *Agent) closeUtterance(turnID string) error {
 	if voice == nil || !voice.Streaming() || a.openTurn != turnID {
 		return nil
 	}
-	return voice.Synthesize(tts.Request{ID: turnID, Final: true})
+	request := tts.Request{ID: turnID, Final: true}
+	if a.hold(turnID, request, MessageSpan{}, false) {
+		return nil
+	}
+	return voice.Synthesize(request)
 }
 
 // expectedSyntheses is how many syntheses a finished reply will produce in total. A
@@ -3754,6 +4055,10 @@ func (a *Agent) dropUnheard(participant stt.Participant, turnID string, why inte
 		}
 		stale, a.unheard = a.unheard, unheardReply{}
 		a.missed = stale
+		// The tools an interruption cancels are cancelled before the speech is dropped, as
+		// they are when the caller talks over a reply: an end_call waiting on its goodbye
+		// takes the agent gone quiet for the goodbye heard unless the call was cancelled first.
+		a.cancelToolsLocked()
 		return true
 	}, why) {
 		return
@@ -3773,7 +4078,7 @@ func (a *Agent) interrupt(participant stt.Participant, why interruption) {
 
 // abandonReply abandons the reply being spoken, and reports whether there was one. still,
 // when set, is asked under the lock whether it is still the reply to abandon. why is
-// reported with it.
+// reported with it. Acting on chorus-asr, every turn still being said is abandoned with it.
 func (a *Agent) abandonReply(participant stt.Participant, still func(turnID string) bool, why interruption) bool {
 	a.mu.Lock()
 	turnID := a.speakingTurn
@@ -3787,27 +4092,52 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 		a.mu.Unlock()
 		return false
 	}
-	heard, played := a.voiced == turnID, time.Since(a.voicedAt)
-	cut := a.cutShortLocked(turnID, time.Now())
-	outstanding := a.generating || a.audioOutstandingLocked(turnID)
+	now := time.Now()
+	voiced, played := a.voiced, now.Sub(a.voicedAt)
+	cut := a.cutShortLocked(turnID, now)
+	// A reply held for the voice replacing a lost one has none of its speech in flight, and
+	// none of it was heard.
+	outstanding := a.generating || a.audioOutstandingLocked(turnID) || a.heldLocked(turnID)
 	a.abandoned[turnID] = struct{}{}
+	// Acting on chorus-asr, giving the caller the floor silences everything the agent is
+	// saying (README, "The loop's contract"), and the turn it is on may not be all of it: it
+	// takes a turn of its own, to say what a tool came back with, while the reply before is
+	// still playing.
+	var behind []playingTurn
+	if a.actsOnChorusASR() {
+		behind = a.abandonPlayingLocked(turnID, now)
+	}
 	a.interrupting = true
+	a.gaveWay = turnID
 	a.speakingTurn = ""
 	a.generating = false
 	why.reply = a.saying
 	a.saying = ""
 	reply, voice, model, current := a.streams[turnID], a.tts, a.sts, a.harness
 	a.mu.Unlock()
-	if heard {
-		playedBeforeInterrupt.WithLabelValues(a.turns.originOf(turnID).kind).Observe(played.Seconds())
+	// The turn whose audio went out last is the one the caller was hearing.
+	if voiced == turnID || slices.ContainsFunc(behind, func(playing playingTurn) bool { return playing.turnID == voiced }) {
+		playedBeforeInterrupt.WithLabelValues(a.turns.originOf(voiced).kind).Observe(played.Seconds())
 	}
 	// Clear audio already queued at the edge before provider or model interruption can block.
 	// Keep the final drop below as well to catch audio published by an in-flight send.
 	a.dropSpeech()
 
 	a.finishGenerate(turnID)
+	// What the reply was passing on is owed again, and a caller who took the floor over it is
+	// owed it with the reply to what they said: given a turn of its own, it was said again over
+	// them the moment the reply stopped, and what they said went unanswered.
+	release := func(turnID string) { current.Release(turnID) }
+	if why.byCaller() {
+		release = func(turnID string) { current.ReleaseTalkedOver(turnID) }
+	}
 	if current != nil && outstanding {
-		current.Release(turnID)
+		release(turnID)
+	}
+	for _, playing := range behind {
+		if current != nil {
+			release(playing.turnID)
+		}
 	}
 	a.logger.Debug("stopping mid-reply, the caller took the floor",
 		"turn", turnID, "participant", participant.ID)
@@ -3836,6 +4166,10 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 		}
 	}
 
+	for _, playing := range behind {
+		a.interrupted(playing.turnID, participant, why)
+		a.emitter.Send(playing.cut.cut(Interrupted{TurnID: playing.turnID, Participant: participant}))
+	}
 	a.interrupted(turnID, participant, why)
 	a.emitter.Send(cut.cut(Interrupted{TurnID: turnID, Participant: participant}))
 	a.mu.Lock()
@@ -3845,9 +4179,97 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 	return true
 }
 
-// shorten stops the model from adding more while allowing speech already sent to the
-// voice to finish.
-func (a *Agent) shorten() {
+// playingTurn is a turn the agent had moved on from that was still being said when it was
+// cut, and what of it had been heard.
+type playingTurn struct {
+	turnID string
+	cut    cutShort
+}
+
+// abandonPlayingLocked abandons every turn but turnID that still has an utterance being said,
+// so that what the voice goes on sending of it is dropped rather than heard, and returns them.
+// A murmur is left: it is meant to overlap. Agent.mu must be held.
+func (a *Agent) abandonPlayingLocked(turnID string, now time.Time) []playingTurn {
+	var playing []playingTurn
+	for _, heard := range a.heard {
+		if heard.turnID == turnID || strings.HasPrefix(heard.turnID, backchannelPrefix) {
+			continue
+		}
+		if _, gone := a.abandoned[heard.turnID]; gone {
+			continue
+		}
+		a.abandoned[heard.turnID] = struct{}{}
+		playing = append(playing, playingTurn{turnID: heard.turnID, cut: a.cutShortLocked(heard.turnID, now)})
+	}
+	return playing
+}
+
+// shortenTail is how much of what it is saying a shortening lets the agent finish. The
+// caller added one more item for the request being answered (README, "The loop's contract"),
+// and the model was trained on shorten in a demo that let at most this much of the audio
+// playing finish, its voice having no word timing. The router's voices have none either:
+// what the voice was already sent can be seconds of speech, all of it playing on.
+const shortenTail = 250 * time.Millisecond
+
+// shorten has the agent add nothing more to turnID, the reply it is saying, and, acting on
+// chorus-asr, stop saying it shortenTail later, once the item the caller added is to be
+// answered (respondQueued). A line the agent said of its own accord answers no request, so it
+// is stopped at once. Otherwise the reply is shortened as it always was (closeReply).
+func (a *Agent) shorten(participant stt.Participant, turnID string, why interruption) {
+	if !a.actsOnChorusASR() {
+		a.closeReply()
+		return
+	}
+	if turnID == "" || strings.HasPrefix(turnID, backchannelPrefix) {
+		return
+	}
+	saying := func(speaking string) bool { return speaking == turnID }
+	if ownLine(turnID) {
+		a.abandonReply(participant, saying, why)
+		return
+	}
+	a.mu.Lock()
+	reply, ctx := a.streams[turnID], a.ctx
+	if a.closed || ctx == nil {
+		a.mu.Unlock()
+		return
+	}
+	a.running.Add(1)
+	a.gaveWay = turnID
+	a.mu.Unlock()
+	a.logger.Debug("cutting the reply short, letting the audio already sent finish", "turn", turnID, "tail", shortenTail)
+	if reply != nil {
+		if err := reply.Close(); err != nil {
+			a.fail(err, "llm")
+		}
+	}
+	// The agent stays on a turn it has finished saying until it takes the next, so a reply
+	// whose last audio went out within the tail was heard whole, and is not cut.
+	unfinished := func(speaking string) bool {
+		return speaking == turnID && (a.generating || a.audioOutstandingLocked(turnID))
+	}
+	go func() {
+		defer a.running.Done()
+		select {
+		case <-time.After(shortenTail):
+			a.abandonReply(participant, unfinished, why)
+		case <-ctx.Done():
+		}
+	}()
+}
+
+// actsOnChorusASR says the agent keeps the loop's contract (README, "The loop's contract"): it
+// acts on chorus-asr's rulings, and chorus-asr asks about its callers' pauses and about their
+// talking over it, from their audio, whatever transcriber writes their words. Its echo is
+// dropped from their words, a line of its own is then a turn a caller talking over it stops,
+// and a shortened reply stops shortenTail after the ruling. Off, or once chorus-asr's floor has
+// stepped aside, the agent does as it did before chorus-asr: a transcriber that does not drop
+// the agent's echo has a check-in said over it stopped by its own voice.
+func (a *Agent) actsOnChorusASR() bool { return a.pausesAsked.Load() }
+
+// closeReply stops the model from adding more to the reply being said while allowing speech
+// already sent to the voice to finish: a shortening, but for an agent acting on chorus-asr.
+func (a *Agent) closeReply() {
 	a.mu.Lock()
 	turnID := a.speakingTurn
 	reply := a.streams[turnID]
@@ -3859,6 +4281,13 @@ func (a *Agent) shorten() {
 	if err := reply.Close(); err != nil {
 		a.fail(err, "llm")
 	}
+}
+
+// ownLine reports whether a turn is a line the agent said of its own accord, rather than a
+// reply to something somebody asked: a check-in, an update or a hold, or a line said as
+// written, such as the greeting.
+func ownLine(turnID string) bool {
+	return strings.HasPrefix(turnID, ownPrefix) || Scripted(turnID)
 }
 
 // respondQueued answers the turn held back while the agent was talking, if it has
@@ -3878,10 +4307,14 @@ func (a *Agent) speechPending() bool {
 	return ok && playout.SpeechPending()
 }
 
-// dropSpeech throws away speech the agent has published but the caller has not heard yet.
+// dropSpeech throws away speech the agent has published but the caller has not heard yet,
+// which never goes out to be heard back as its echo either.
 func (a *Agent) dropSpeech() {
 	if playout, ok := a.options.Edge.(Playout); ok {
 		playout.DropSpeech()
+		a.mu.Lock()
+		a.voiceOut.dropped(time.Now())
+		a.mu.Unlock()
 	}
 }
 
@@ -3961,12 +4394,34 @@ func (a *Agent) settleVoice(voice *ttsrouter.Session) {
 
 // fail reports a failure without ending the conversation. One bad turn is a lost reply,
 // not a lost call.
-func (a *Agent) fail(err error, context string) {
+func (a *Agent) fail(err error, context string, attrs ...any) {
 	if err == nil {
 		return
 	}
-	a.logger.Error("agent failure", "context", context, "error", err)
+	a.logger.Error("agent failure", append(append([]any{"context", context}, attrs...), "error", err)...)
 	a.emitter.Send(Error{Err: err, Context: context})
+}
+
+// replyModel is the provider and model the reply model routes to, as log attributes, so a
+// search for either finds the line of a line the agent could not write.
+func (a *Agent) replyModel() []any {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.llm == nil {
+		return nil
+	}
+	return []any{"provider", a.llm.Provider(), "model", a.llm.Model()}
+}
+
+// createFailed is a reply whose request never started, sent on as a reply that failed
+// mid-stream is. It names the model it was asked of, so the failure line does too.
+func createFailed(turnID string, model *llmrouter.Session, err error) llm.ResponseFailed {
+	failed := llm.ResponseFailed{ResponseID: turnID, Err: err, Context: "llm"}
+	// A harness with no text model fails its turn before asking anyone.
+	if model != nil {
+		failed.Provider, failed.Model = model.Provider(), model.Model()
+	}
+	return failed
 }
 
 // lastExchange is the turn just finished: what was asked and what was answered. It is the

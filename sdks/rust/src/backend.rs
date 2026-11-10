@@ -22,6 +22,85 @@ pub const DEFAULT_URL: &str = "https://accelerate-us-east4.gcp.stream-io-api.com
 /// How long a token minted here lasts. Short, because one is minted per request.
 pub const TOKEN_VALIDITY_SECONDS: u64 = 60 * 60;
 
+/// Where a caller the proxy is not in front of names its usage categories, its team among
+/// them as `team:<name>`, joined with commas. Behind the proxy they are claims on the token,
+/// and the proxy deletes the header.
+pub const USAGE_CATEGORIES_HEADER: &str = "X-Stream-Usage-Categories";
+
+/// A team is a usage category of its own, `team:<name>`, which is why a team's name is
+/// shorter than a category's and has no `:`.
+const TEAM_PREFIX: &str = "team:";
+/// The most usage categories one caller carries, its team included.
+const MAX_CATEGORIES: usize = 10;
+
+/// Refuses a team name the router would: 1 to 59 characters of A-Z, a-z, 0-9, `_`, `.` and `-`.
+pub(crate) fn check_team(team: &str) -> Result<()> {
+    let allowed = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-');
+    if team.is_empty() || team.len() > 59 || !team.bytes().all(allowed) {
+        return Err(Error::configuration(format!(
+            "team {team:?} is not 1 to 59 characters of A-Z, a-z, 0-9, _ . and -"
+        )));
+    }
+    Ok(())
+}
+
+/// Refuses a usage category the router would: 1 to 64 characters of A-Z, a-z, 0-9, `_`, `.`,
+/// `:` and `-`, and a team written as one.
+pub(crate) fn check_category(category: &str) -> Result<()> {
+    let allowed = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b':' | b'-');
+    if category.is_empty() || category.len() > 64 || !category.bytes().all(allowed) {
+        return Err(Error::configuration(format!(
+            "usage category {category:?} is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -"
+        )));
+    }
+    // In any case, as the proxy reads it: Team:finance would be a second team.
+    if category
+        .get(..TEAM_PREFIX.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(TEAM_PREFIX))
+    {
+        return Err(Error::configuration(format!(
+            "usage category {category:?} names a team: name it as the team instead"
+        )));
+    }
+    Ok(())
+}
+
+/// The categories each once and sorted, as the proxy keeps them, or why the router would
+/// refuse them.
+pub(crate) fn checked_categories<S: AsRef<str>>(
+    team: Option<&str>,
+    categories: &[S],
+) -> Result<Vec<String>> {
+    let mut kept = std::collections::BTreeSet::new();
+    for category in categories {
+        check_category(category.as_ref())?;
+        kept.insert(category.as_ref().to_string());
+    }
+    if let Some(team) = team {
+        check_team(team)?;
+    }
+    let count = kept.len() + usize::from(team.is_some());
+    if count > MAX_CATEGORIES {
+        return Err(Error::configuration(format!(
+            "at most {MAX_CATEGORIES} usage categories, the team included; these are {count}"
+        )));
+    }
+    Ok(kept.into_iter().collect())
+}
+
+/// `claims` with the `team` and `usage_categories` claims, each only when there is one.
+pub(crate) fn with_usage(mut claims: Value, team: Option<&str>, categories: &[String]) -> Value {
+    if let Some(claims) = claims.as_object_mut() {
+        if let Some(team) = team {
+            claims.insert("team".into(), json!(team));
+        }
+        if !categories.is_empty() {
+            claims.insert("usage_categories".into(), json!(categories));
+        }
+    }
+    claims
+}
+
 /// The hosted router held to one region: requests to it are served there and nowhere else,
 /// even when that region is full or down.
 ///
@@ -91,6 +170,17 @@ pub struct ClientOptions {
     /// credential spelled its own way. On for the hosted router, in any region; anywhere else
     /// it falls back to `STREAM_ACCELERATION_AUTHENTICATE`.
     pub authenticate: Option<bool>,
+    /// The customer's team this client's work is counted against, its spend limits included,
+    /// such as `finance`: 1 to 59 characters of A-Z, a-z, 0-9, `_`, `.` and `-`.
+    pub team: Option<String>,
+    /// The customer's own groupings this client's work is counted against, such as
+    /// `project:onboarding`: at most 10 together with the team, each 1 to 64 characters of
+    /// A-Z, a-z, 0-9, `_`, `.`, `:` and `-`, and none starting `team:`. Kept sorted, each once.
+    ///
+    /// The team and the categories are signed into every token minted here, and sent in
+    /// `X-Stream-Usage-Categories` to a router with no proxy in front of it. A token handed in
+    /// carries whatever it was signed with, so neither can be set beside one.
+    pub usage_categories: Vec<String>,
     /// The HTTP client to send with, for a caller that wants its own proxy or timeouts.
     pub http: Option<reqwest::Client>,
 }
@@ -107,6 +197,8 @@ pub(crate) struct Backend {
     /// token, so what is written is still the server's and the model answers it.
     pub acting_for: String,
     pub authenticate: bool,
+    pub team: Option<String>,
+    pub usage_categories: Vec<String>,
 }
 
 impl Backend {
@@ -175,6 +267,14 @@ impl Backend {
                 "api_key needs the secret it belongs to, or a token minted with it",
             ));
         }
+        let team = options.team.clone().filter(|team| !team.is_empty());
+        let usage_categories = checked_categories(team.as_deref(), &options.usage_categories)?;
+        if !token.is_empty() && (team.is_some() || !usage_categories.is_empty()) {
+            return Err(Error::configuration(
+                "a token handed in carries the team and usage categories it was signed with; \
+                 mint it with Client::user_token naming them",
+            ));
+        }
 
         Ok(Backend {
             url,
@@ -185,6 +285,8 @@ impl Backend {
             user_id: options.user_id.clone().unwrap_or_default(),
             acting_for: String::new(),
             authenticate,
+            team,
+            usage_categories,
         })
     }
 
@@ -203,7 +305,18 @@ impl Backend {
         if !self.acting_for.is_empty() {
             headers.push(("X-Stream-User-Id", self.acting_for.clone()));
         }
+        if !self.authenticate && (self.team.is_some() || !self.usage_categories.is_empty()) {
+            let mut named = self.usage_categories.clone();
+            named.extend(self.team.iter().map(|team| format!("{TEAM_PREFIX}{team}")));
+            named.sort();
+            headers.push((USAGE_CATEGORIES_HEADER, named.join(",")));
+        }
         Ok(headers)
+    }
+
+    /// `claims` with this client's team and usage categories, for a token signed here.
+    fn claimed(&self, claims: Value) -> Value {
+        with_usage(claims, self.team.as_deref(), &self.usage_categories)
     }
 
     fn credentials(&self) -> Result<Vec<(&'static str, String)>> {
@@ -227,7 +340,7 @@ impl Backend {
                 "Authorization",
                 format!(
                     "Bearer {}",
-                    sign(json!({"server": true}), &self.api_secret)?
+                    sign(self.claimed(json!({"server": true})), &self.api_secret)?
                 ),
             ));
             headers.push(("Stream-Auth-Type", "server".into()));
@@ -259,9 +372,12 @@ impl Backend {
             return Ok(self.token.clone());
         }
         if !self.user_id.is_empty() {
-            return sign(json!({"user_id": self.user_id}), &self.api_secret);
+            return sign(
+                self.claimed(json!({"user_id": self.user_id})),
+                &self.api_secret,
+            );
         }
-        sign(json!({"server": true}), &self.api_secret)
+        sign(self.claimed(json!({"server": true})), &self.api_secret)
     }
 }
 

@@ -70,12 +70,13 @@ func (s *ConnectorsSuite) TestOnlyAConnectorThatReadsMessagesIsAChannel() {
 	s.False(listed["slack"])
 }
 
-// TestGitHubShowsWhatASandboxGetsForItsAPI: github's sandbox block (revision 9), in a read and
-// in the list, is what code in a sandbox reads (env) and where its token may go (hosts).
+// TestGitHubShowsWhatASandboxGetsForItsAPI: github's sandbox block (revision 9, kept by 10 and
+// 11), in a read and in the list, is what code in a sandbox reads (env) and where its token may go
+// (hosts). Revision 11's LFS download host gets no token, so it is not shown.
 func (s *ConnectorsSuite) TestGitHubShowsWhatASandboxGetsForItsAPI() {
 	want := &ConnectorSandbox{Env: "GITHUB_TOKEN", Hosts: []string{"api.github.com", "uploads.github.com", "github.com"}}
 	github := s.get("github")
-	s.Equal(9, github.Revision)
+	s.Equal(11, github.Revision)
 	s.Equal(want, github.Sandbox)
 	for _, item := range s.list("").Items {
 		if item.ID == "github" {
@@ -120,8 +121,8 @@ func (s *ConnectorsSuite) TestNoOtherConnectorShowsASandbox() {
 	}
 }
 
-// TestAMovedPluginShowsItsSetupSteps: the steps the plugin catalog shows before a client is
-// pasted in come with its connector (T58), and a connector whose manifest has none shows none.
+// TestAMovedPluginShowsItsSetupSteps: the steps the removed plugin catalog showed before a
+// client was pasted in come with its connector (T58), and a connector whose manifest has none shows none.
 func (s *ConnectorsSuite) TestAMovedPluginShowsItsSetupSteps() {
 	calendar := s.get("google_calendar")
 	calcom := s.get("calcom")

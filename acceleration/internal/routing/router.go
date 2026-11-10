@@ -29,6 +29,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -36,8 +38,11 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
+
+var tracer = tracing.Tracer("routing")
 
 // Provider is the little a router needs from a model provider: it can be opened, closed
 // and named. Everything that makes a modality itself lives on the modality's own
@@ -59,7 +64,7 @@ type Inspector interface {
 	Config() ModalityConfig
 	Providers(ctx context.Context) []Candidate
 	Resolve(ctx context.Context, target string, languageHints []string) ([]Candidate, error)
-	InRegion(ctx context.Context, target, region string) (bool, error)
+	InRegion(ctx context.Context, target, region string, languageHints []string) (bool, error)
 }
 
 // ErrVoiceNotPrepared says a customer's own voice exists but this provider was never
@@ -480,7 +485,7 @@ func New[P Provider](options Options[P]) (*Router[P], error) {
 		pricer = list
 	}
 
-	return &Router[P]{
+	router := &Router[P]{
 		validate: options.Validate,
 		modality: options.Modality,
 		config:   options.Config,
@@ -494,7 +499,17 @@ func New[P Provider](options Options[P]) (*Router[P], error) {
 		logger:   logger,
 
 		customerKeys: options.Keys,
-	}, nil
+	}
+	if router.live != nil {
+		var buildable []ProviderConfig
+		for _, provider := range options.Config.Providers {
+			if router.ready(provider) == nil {
+				buildable = append(buildable, provider)
+			}
+		}
+		router.live.Track(router.liveModels(buildable)...)
+	}
+	return router, nil
 }
 
 // instanceKeys refuses an instance its factory cannot build as declared, and reads the key of
@@ -565,11 +580,7 @@ func (r *Router[P]) Close() { r.recorder.Close() }
 
 // Providers returns every configured provider with its live health, in config order.
 func (r *Router[P]) Providers(ctx context.Context) []Candidate {
-	candidates := make([]Candidate, 0, len(r.config.Providers))
-	for _, provider := range r.config.Providers {
-		candidates = append(candidates, Candidate{Config: provider, Health: r.health(ctx, provider)})
-	}
-	return candidates
+	return r.candidates(ctx, r.config.Providers)
 }
 
 // Resolve returns the candidates for a target, best first.
@@ -586,19 +597,18 @@ func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []
 	}
 
 	if instances := r.config.Instances(target); len(instances) > 0 {
-		candidates := make([]Candidate, 0, len(instances))
-		for _, provider := range instances {
-			candidates = append(candidates, Candidate{Config: provider, Health: r.health(ctx, provider)})
-		}
-		return candidates, nil
+		return r.candidates(ctx, instances), nil
 	}
 
 	alias, ok := r.config.Aliases[target]
 	if !ok {
+		if instead, retired := r.config.Retired[target]; retired {
+			return nil, Refused(stack.Wrap(fmt.Errorf("routing: %s is retired; ask for %s instead", target, instead)))
+		}
 		return nil, Refused(stack.Wrap(fmt.Errorf("routing: unknown target %q", target)))
 	}
 
-	var candidates []Candidate
+	var matching []ProviderConfig
 	for _, provider := range r.config.Providers {
 		if !alias.matches(provider) {
 			continue
@@ -607,13 +617,14 @@ func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []
 		if !provider.Speaks(languageHints) {
 			continue
 		}
-		candidates = append(candidates, Candidate{Config: provider, Health: r.health(ctx, provider)})
+		matching = append(matching, provider)
 	}
 
-	if len(candidates) == 0 {
+	if len(matching) == 0 {
 		return nil, stack.Wrap(fmt.Errorf("routing: no provider satisfies %q for languages %s", target, strings.Join(languageHints, ",")))
 	}
 
+	candidates := r.candidates(ctx, matching)
 	rank(candidates)
 	prefer(candidates, alias.Prefer)
 	return candidates, nil
@@ -622,14 +633,15 @@ func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []
 // InRegion reports whether a request naming target could be served in region, empty being
 // pricing.DefaultRegion: whether one of the instances it resolves to runs there, as a
 // provider/model, a capability shortcut or a vendor's name in a priority list resolves. A
-// customer's own model runs in pricing.DefaultRegion alone. A target that resolves to nothing
-// in any region is the resolution's error.
-func (r *Router[P]) InRegion(ctx context.Context, target, region string) (bool, error) {
+// customer's own model runs in pricing.DefaultRegion alone. Only instances that speak every one
+// of languageHints count, as when a request carrying them is routed. A target that resolves to
+// nothing in any region is the resolution's error.
+func (r *Router[P]) InRegion(ctx context.Context, target, region string, languageHints []string) (bool, error) {
 	region = cmp.Or(region, pricing.DefaultRegion)
 	if _, own := CustomName(target); own {
 		return region == pricing.DefaultRegion, nil
 	}
-	candidates, err := r.resolveEntry(ctx, "", target, nil)
+	candidates, err := r.resolveEntry(ctx, "", target, languageHints)
 	if err != nil {
 		return false, err
 	}
@@ -667,7 +679,7 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 // the only one the walk met, it is returned as is, with that candidate's config, as a
 // caller of Select that used the provider itself would have reported it. Otherwise every
 // candidate's error is joined in the order met; a refusal among them keeps ErrRequest, as
-// in Select.
+// in Select. A candidate the walk moves past on a failure counts in router_failovers_total.
 func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, ProviderConfig) error) (ProviderConfig, error) {
 	if request.CustomerID == "" {
 		return ProviderConfig{}, stack.Wrap(errors.New("routing: customer id is required"))
@@ -686,7 +698,7 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 	}
 	// Every row is recorded under the merged tags, so they have to fit what a row carries.
 	if err := admission.Labelled(request.Tags).Validate(); err != nil {
-		return ProviderConfig{}, err
+		return ProviderConfig{}, Refused(err)
 	}
 	request.DataPolicy = request.DataPolicy.Stricter(admission.DataPolicy)
 
@@ -743,6 +755,11 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 	// its own block, so serving there would drop the overwrite in silence. From then on
 	// only that vendor's candidates are tried, and if none reads it the request is refused.
 	overwritten := ""
+	// moved is the candidate the walk last moved past on a failure, a failover once another
+	// candidate is started in its place.
+	var moved *failover
+	// vendorFailed is whether a candidate on the deployment's own key failed at its vendor.
+	vendorFailed := false
 	for _, candidate := range candidates {
 		if overwritten != "" && candidate.Config.Provider != overwritten {
 			continue
@@ -766,14 +783,20 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 			}
 		}
 
+		if moved != nil {
+			countFailover(r.modality, *moved)
+		}
 		provider, err := r.startCandidate(ctx, request, candidate)
 		started := err == nil
+		stage := failoverStart
 		if started {
 			if err = use(provider, candidate.Config); err == nil {
 				return candidate.Config, nil
 			}
 			used, usedErr = candidate.Config, err
+			stage = failoverUse
 		}
+		moved = &failover{config: candidate.Config, stage: stage, reason: failoverReason(candidate.Config, err, ctx.Err() != nil)}
 		met = append(met, fmt.Errorf("%s: %w", candidate.Config.Name(), err))
 		if errors.Is(err, ErrRequest) {
 			// One vendor's models refuse the same voice in the same words, and saying it
@@ -793,6 +816,7 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 			r.logger.Warn("provider failed to start, trying the next candidate",
 				"modality", r.modality, "target", request.Target, "provider", candidate.Config.Name(), "error", err)
 		}
+		vendorFailed = vendorFailed || moved.reason == failoverVendor
 		failures = append(failures, fmt.Errorf("%s: %w", candidate.Config.Name(), err))
 	}
 
@@ -807,8 +831,11 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 	if len(refusals) > 0 {
 		return ProviderConfig{}, stack.Wrap(errors.Join(refusals...))
 	}
-	return ProviderConfig{}, stack.Wrap(fmt.Errorf("routing: every candidate for %q failed: %w",
-		request.Target, errors.Join(failures...)))
+	err = fmt.Errorf("routing: every candidate for %q failed: %w", request.Target, errors.Join(failures...))
+	if vendorFailed {
+		err = vendorsFailed{err: err}
+	}
+	return ProviderConfig{}, stack.Wrap(err)
 }
 
 // Admit asks the customer's policies whether they may spend anything, and what their
@@ -894,7 +921,7 @@ func (r *Router[P]) ownInstance(ctx context.Context, candidate Candidate, key st
 	// The deployment's instance reads as unavailable when it cannot be built, which the
 	// customer's key can be.
 	if r.ready(candidate.Config) != nil {
-		health = r.vendorHealth(ctx, candidate.Config)
+		health = r.vendorHealths(ctx, []ProviderConfig{candidate.Config})[0]
 	}
 	return Candidate{Config: config, Health: health, key: key}
 }
@@ -994,17 +1021,17 @@ func (r *Router[P]) resolveEntry(ctx context.Context, customerID, target string,
 		return candidates, nil
 	}
 
-	var named []Candidate
+	var named []ProviderConfig
 	for _, provider := range r.config.Providers {
 		if provider.Provider != target || !provider.Speaks(languageHints) {
 			continue
 		}
-		named = append(named, Candidate{Config: provider, Health: r.health(ctx, provider)})
+		named = append(named, provider)
 	}
 	if len(named) == 0 {
 		return nil, err
 	}
-	return named, nil
+	return r.candidates(ctx, named), nil
 }
 
 func (r *Router[P]) startCandidate(ctx context.Context, request Request, candidate Candidate) (P, error) {
@@ -1061,7 +1088,14 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 			return zero, stack.Wrap(err)
 		}
 	}
-	if err := provider.Start(ctx); err != nil {
+	started, span := tracer.Start(ctx, "routing.provider.start", trace.WithAttributes(
+		attribute.String("routing.modality", string(r.modality)),
+		attribute.String("routing.provider", candidate.Config.Provider),
+		attribute.String("routing.model", candidate.Config.Model)))
+	err = provider.Start(started)
+	tracing.Fail(span, err)
+	span.End()
+	if err != nil {
 		provider.Close()
 		r.recorder.Record(candidate.Config, Stat{
 			Owner:        request.Owner(),
@@ -1215,35 +1249,72 @@ func (r *Router[P]) ready(config ProviderConfig) error {
 	return r.registry.ReadyAs(config.Provider, r.instanceSpec(Candidate{Config: config}))
 }
 
-// health reads live health, treating a Redis failure as "no information" so a broken
-// stats path cannot take routing down with it. A model this deployment cannot build, for a
-// key or an endpoint it was never given, is unavailable whatever its history says.
+// candidates are the providers with their live health, in order.
+func (r *Router[P]) candidates(ctx context.Context, providers []ProviderConfig) []Candidate {
+	healths := r.healths(ctx, providers)
+	candidates := make([]Candidate, len(providers))
+	for i, provider := range providers {
+		candidates[i] = Candidate{Config: provider, Health: healths[i]}
+	}
+	return candidates
+}
+
+// healths is each provider's live health, in order, from the router's snapshot, with the ones
+// missing from it read together (live.Client.Healths). A model this deployment cannot build,
+// for a key or an endpoint it was never given, is unavailable whatever its history says.
 //
 // Health is kept per provider and model, not per instance: a model's instance in one region
 // shares the errors and latency of its twin in another, which is the vendor's health more
 // than the host's, and a request is only ever served in one region anyway. Work on a
 // customer's own key is kept out of it.
-func (r *Router[P]) health(ctx context.Context, provider ProviderConfig) live.Health {
-	if r.ready(provider) != nil {
-		return live.Health{Provider: provider.Provider, Model: provider.Model}
+func (r *Router[P]) healths(ctx context.Context, providers []ProviderConfig) []live.Health {
+	var ready []ProviderConfig
+	var at []int
+	healths := make([]live.Health, len(providers))
+	for i, provider := range providers {
+		if r.ready(provider) != nil {
+			healths[i] = live.Health{Provider: provider.Provider, Model: provider.Model}
+			continue
+		}
+		ready = append(ready, provider)
+		at = append(at, i)
 	}
-	return r.vendorHealth(ctx, provider)
+	for j, health := range r.vendorHealths(ctx, ready) {
+		healths[at[j]] = health
+	}
+	return healths
 }
 
-// vendorHealth is the provider and model's live health, whether or not this deployment can build
-// it.
-func (r *Router[P]) vendorHealth(ctx context.Context, provider ProviderConfig) live.Health {
+// vendorHealths is each provider and model's live health, whether or not this deployment can
+// build it. A failed read is "no information", so a broken stats path cannot take routing down
+// with it.
+func (r *Router[P]) vendorHealths(ctx context.Context, providers []ProviderConfig) []live.Health {
+	if len(providers) == 0 {
+		return nil
+	}
 	if r.live == nil {
-		return live.Health{Provider: provider.Provider, Model: provider.Model, Available: true}
+		healths := make([]live.Health, len(providers))
+		for i, provider := range providers {
+			healths[i] = live.Health{Provider: provider.Provider, Model: provider.Model, Available: true}
+		}
+		return healths
 	}
 
-	health, err := r.live.Health(ctx, string(r.modality), provider.Provider, provider.Model)
+	healths, err := r.live.Healths(ctx, r.liveModels(providers))
 	if err != nil {
-		r.logger.Warn("health lookup failed, treating provider as unmeasured",
-			"modality", r.modality, "provider", provider.Name(), "error", err)
-		return live.Health{Provider: provider.Provider, Model: provider.Model, Available: true}
+		r.logger.Warn("health lookup failed, treating the providers it missed as unmeasured",
+			"modality", r.modality, "providers", len(providers), "error", err)
 	}
-	return health
+	return healths
+}
+
+// liveModels names the providers' health in the live snapshot.
+func (r *Router[P]) liveModels(providers []ProviderConfig) []live.Model {
+	models := make([]live.Model, len(providers))
+	for i, provider := range providers {
+		models[i] = live.Model{Modality: string(r.modality), Provider: provider.Provider, Model: provider.Model}
+	}
+	return models
 }
 
 // serving narrows candidates to the ones that can express every term the request names.
@@ -1282,9 +1353,9 @@ func serving(candidates []Candidate, terms []options.Term, target string) ([]Can
 		unserved = []string{"that combination of terms"}
 	}
 	if len(candidates) == 1 && candidates[0].Config.Name() == target {
-		return nil, stack.Wrap(fmt.Errorf("routing: %s does not take %s", target, strings.Join(unserved, ", ")))
+		return nil, Refused(stack.Wrap(fmt.Errorf("routing: %s does not take %s", target, strings.Join(unserved, ", "))))
 	}
-	return nil, stack.Wrap(fmt.Errorf("routing: no provider can express %s", strings.Join(unserved, ", ")))
+	return nil, Refused(stack.Wrap(fmt.Errorf("routing: no provider can express %s", strings.Join(unserved, ", "))))
 }
 
 // allowed narrows candidates to the models the customer's policies allow. A request none of
@@ -1371,8 +1442,8 @@ func permitted(candidates []Candidate, policy options.DataPolicy) ([]Candidate, 
 	if len(unmet) == 0 {
 		unmet = []string{"that combination of data policy requirements"}
 	}
-	return nil, stack.Wrap(fmt.Errorf("routing: no provider meets your data policy: none offers %s",
-		strings.Join(unmet, " and ")))
+	return nil, Refused(stack.Wrap(fmt.Errorf("routing: no provider meets your data policy: none offers %s",
+		strings.Join(unmet, " and "))))
 }
 
 // regional narrows candidates to the instances running in the region the work is done in,
@@ -1426,7 +1497,7 @@ func seeing(candidates []Candidate, modalities []string) ([]Candidate, error) {
 	if len(unmet) == 0 {
 		unmet = []string{"that combination of input modalities"}
 	}
-	return nil, stack.Wrap(fmt.Errorf("routing: no provider accepts %s input", strings.Join(unmet, ", ")))
+	return nil, Refused(stack.Wrap(fmt.Errorf("routing: no provider accepts %s input", strings.Join(unmet, ", "))))
 }
 
 // retentionUnmet names a retention requirement nothing offered, in the words it was asked

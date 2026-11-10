@@ -33,14 +33,25 @@ const replicateUsage = `usage: router replicate --from <url> --api-key <key> --a
                 reached directly
   --poll        how often to ask for changes once the copy is done
   --once        stop as soon as there is nothing left to catch up on
+  --full        copy everything again, over what was done here since the last run. A run for
+                an app copied here before carries on from where the last one stopped; without
+                --full it refuses an app this deployment already holds that no run here saved
+                a cursor for, and one whose last run read the source longer ago than
+                ROUTER_DATA_MOVE_RETENTION
   --resume      the cut-over, once the deployment copied from no longer delivers: resume
                 the scheduled tasks the copy paused because they were active there, each
-                at its first occurrence after now, and name the campaigns that were
-                running there, to start here
+                at its first occurrence after now, and name the campaigns still running or
+                scheduled there at the last --once, which it leaves paused. Do not run
+                --once again after --resume: every run makes the deployment copied from
+                the truth again
 
 Until the last --once the deployment copied from is the truth: a change it makes to a
-row overwrites what was done to that row here, a delete included. Once SDKs point here,
-stop writing there.
+row overwrites what was done to that row here, a delete included, and --full overwrites
+every row. Once SDKs point here, stop writing there.
+
+Before the last --once, pause the campaigns there and wait for their calls to end. The
+copy then holds every call made there, and a campaign rings here only once it is resumed
+here.
 
 Copy an app here from one deployment only. A copied agent log is known here by the id it
 had there, so a copy from a second deployment into the same app overwrites the logs whose
@@ -96,12 +107,18 @@ func runReplicate(args []string, settings config.Config, logger *slog.Logger) er
 	if err != nil {
 		return err
 	}
-	customerID, cursor, err := copyEverything(ctx, options.source, pgStore, reservation, options.as, logger)
+	return options.copyAndFollow(ctx, settings, pgStore, reservation, logger)
+}
+
+// copyAndFollow copies the app here, or carries on from the last run's cursor, and follows the
+// source's changes from there.
+func (o replicateOptions) copyAndFollow(ctx context.Context, settings config.Config, pgStore *store.Store, reservation *store.IDReservation, logger *slog.Logger) error {
+	customerID, cursor, err := copyEverything(ctx, o.source, pgStore, reservation, o.as, o.full,
+		settings.DataMove.Retention, logger)
 	if err != nil {
 		return err
 	}
-
-	return follow(ctx, options.source, pgStore, reservation, customerID, cursor, options.poll, options.once, logger)
+	return follow(ctx, o.source, pgStore, reservation, customerID, cursor, o.poll, o.once, logger)
 }
 
 // replicateOptions is what the command line asked replicate for.
@@ -110,6 +127,8 @@ type replicateOptions struct {
 	as     string
 	poll   time.Duration
 	once   bool
+	// full copies the export again over a copy this deployment already holds.
+	full bool
 	// resume is the cut-over, which reads no source.
 	resume bool
 }
@@ -127,6 +146,7 @@ func parseReplicate(args []string) (replicateOptions, error) {
 	as := flags.String("as", "", "the app id the rows land under here")
 	poll := flags.Duration("poll", 2*time.Second, "how often to ask for changes")
 	once := flags.Bool("once", false, "stop once there is nothing left to catch up on")
+	full := flags.Bool("full", false, "copy everything again over what was done here since")
 	resume := flags.Bool("resume", false, "resume what the copy paused")
 	if err := flags.Parse(args); err != nil {
 		return replicateOptions{}, err
@@ -156,12 +176,26 @@ func parseReplicate(args []string) (replicateOptions, error) {
 		as:   *as,
 		poll: *poll,
 		once: *once,
+		full: *full,
 	}, nil
 }
 
 // copyEverything reads the export and writes it here, returning who it turned out to be
-// and the cursor its changes carry on from.
-func copyEverything(ctx context.Context, source *deployment, pgStore *store.Store, reservation *store.IDReservation, as string, logger *slog.Logger) (string, int64, error) {
+// and the cursor its changes carry on from. For an app a run here copied before, it writes
+// nothing and returns the cursor that run saved (carryOn).
+func copyEverything(ctx context.Context, source *deployment, pgStore *store.Store, reservation *store.IDReservation, as string,
+	full bool, retention time.Duration, logger *slog.Logger) (string, int64, error) {
+	asked := time.Now()
+	if as != "" {
+		saved, err := carryOn(ctx, pgStore, as, source.url, full, retention, asked)
+		if err != nil {
+			return "", 0, err
+		}
+		if saved != nil {
+			logger.Info("carrying on from the last run here", "customer", as, "cursor", *saved)
+			return as, *saved, nil
+		}
+	}
 	body, err := source.get(ctx, "/v1/data/export", nil)
 	if err != nil {
 		return "", 0, err
@@ -169,6 +203,9 @@ func copyEverything(ctx context.Context, source *deployment, pgStore *store.Stor
 	defer body.Close()
 
 	customerID := as
+	// decided is whether carryOn has answered for the customer, which without --as only the
+	// export names, before its first row is written.
+	decided := as != ""
 	var cursor *int64
 	rows := int64(0)
 	decoder := json.NewDecoder(body)
@@ -187,6 +224,17 @@ func copyEverything(ctx context.Context, source *deployment, pgStore *store.Stor
 				// keeping its id is the ordinary case, since that is what every row's
 				// customer_id holds and what --app-id on `keys create` is for.
 				customerID = customerOf(line.Row)
+			}
+			if !decided && customerID != "" {
+				decided = true
+				saved, err := carryOn(ctx, pgStore, customerID, source.url, full, retention, asked)
+				if err != nil {
+					return "", 0, err
+				}
+				if saved != nil {
+					logger.Info("carrying on from the last run here", "customer", customerID, "cursor", *saved)
+					return customerID, *saved, nil
+				}
 			}
 			if err := reservation.Cover(ctx, line.Table, line.Row); err != nil {
 				return "", 0, err
@@ -208,9 +256,60 @@ func copyEverything(ctx context.Context, source *deployment, pgStore *store.Stor
 	if customerID == "" {
 		return "", 0, errors.New("the export named no customer: pass --as to say which app these rows are for")
 	}
+	if !decided {
+		saved, err := carryOn(ctx, pgStore, customerID, source.url, full, retention, asked)
+		if err != nil {
+			return "", 0, err
+		}
+		if saved != nil {
+			logger.Info("carrying on from the last run here", "customer", customerID, "cursor", *saved)
+			return customerID, *saved, nil
+		}
+	}
+	if err := pgStore.SaveMoveCursor(ctx, customerID, source.url, cursor, asked); err != nil {
+		return "", 0, err
+	}
 
 	logger.Info("copied a customer", "customer", customerID, "rows", rows, "cursor", *cursor)
 	return customerID, *cursor, nil
+}
+
+// carryOn answers the cursor a run for a customer carries on from: the one the last run here
+// saved, or nil for a copy of the export, which it marks started. A copy of the export writes
+// each row as the source has it, over whatever was done to that row here since, so it is
+// refused for an app this deployment already holds unless full asks for it.
+func carryOn(ctx context.Context, pgStore *store.Store, customerID, source string, full bool, retention time.Duration, asked time.Time) (*int64, error) {
+	if !full {
+		saved, err := pgStore.MoveCursor(ctx, customerID, source)
+		if err != nil {
+			return nil, err
+		}
+		switch {
+		case saved != nil && saved.Cursor != nil:
+			// The source records the app's changes only until its retention after the last read
+			// (StartDataCapture). It answers 410 for a cursor from before that gap, but a source
+			// older than recorded_since answers it with the changes after it as if they were all.
+			if age := time.Since(saved.ReadAt); age >= retention {
+				return nil, fmt.Errorf("the last run here read %s %s ago, longer than this deployment's ROUTER_DATA_MOVE_RETENTION (%s), "+
+					"which this check takes to be the source's own: the source records %s's changes only that long after a read, so writes "+
+					"there since may be missing here. Run this again with --full, which copies everything again over what was done here",
+					source, age.Round(time.Minute), retention, customerID)
+			}
+			return saved.Cursor, nil
+		case saved == nil:
+			table, err := pgStore.HoldingTable(ctx, customerID)
+			if err != nil {
+				return nil, err
+			}
+			if table != "" {
+				return nil, fmt.Errorf("%s already has data here (a row in %s), and no run here saved where its copy from %s stands, as for an app "+
+					"copied before runs saved it: run this again with --full, which copies everything again over what was done here", customerID, table, source)
+			}
+		}
+	}
+	// The cursor is saved once the export has all been written; a run stopped before that leaves
+	// none, and the next run copies the export again.
+	return nil, pgStore.SaveMoveCursor(ctx, customerID, source, nil, asked)
 }
 
 // follow replays what happens at the source from the cursor onwards, until there is
@@ -220,6 +319,7 @@ func follow(ctx context.Context, source *deployment, pgStore *store.Store, reser
 	defer ticker.Stop()
 
 	for {
+		asked := time.Now()
 		body, err := source.get(ctx, "/v1/data/changes", map[string]string{
 			"after": fmt.Sprint(cursor),
 		})
@@ -248,11 +348,15 @@ func follow(ctx context.Context, source *deployment, pgStore *store.Store, reser
 			cursor = page.Cursor
 			logger.Info("caught up on changes", "changes", len(page.Changes), "cursor", cursor)
 		}
+		// Saved after every read rather than only one that brought changes: a read is what keeps
+		// the source recording the app's changes (carryOn).
+		if err := pgStore.SaveMoveCursor(ctx, customerID, source.url, &cursor, asked); err != nil {
+			return err
+		}
 
 		if page.CaughtUp {
 			if once {
-				fmt.Printf("caught up at cursor %d. Point your SDKs here, then run this once more to pick up the last writes. "+
-					"Once the deployment copied from stops delivering, run it with --resume --as %s.\n", cursor, customerID)
+				fmt.Println(caughtUpMessage(cursor, customerID))
 				return nil
 			}
 			fmt.Printf("caught up at cursor %d\n", cursor)
@@ -267,7 +371,18 @@ func follow(ctx context.Context, source *deployment, pgStore *store.Store, reser
 	}
 }
 
-// resumeMove is the cut-over: it resumes what the copy paused and names what is left to start.
+// caughtUpMessage is what --once prints when it has caught up. It names --as for the next run:
+// without it a run opens the source's export just to learn the app, which starts a capture there.
+func caughtUpMessage(cursor int64, customerID string) string {
+	return fmt.Sprintf("caught up at cursor %d. Point your SDKs here, pause the campaigns at the deployment copied from "+
+		"and wait for their calls to end, then run this once more, with --as %s, to pick up the last writes. "+
+		"Once the deployment copied from stops delivering, run it with --resume --as %s, and do not run --once again after that.",
+		cursor, customerID, customerID)
+}
+
+// resumeMove is the cut-over: it resumes the scheduled tasks the copy paused and names the
+// campaigns the source was still running at the last catch-up. It resumes none: one the source
+// rang from after that would ring those contacts again here.
 func resumeMove(ctx context.Context, pgStore *store.Store, customerID string, out io.Writer) error {
 	cutOver := time.Now()
 	if err := pgStore.SkipOccurrencesBeforeCutOver(ctx, customerID, cutOver, nextAfter(cutOver)); err != nil {
@@ -286,7 +401,11 @@ func resumeMove(ctx context.Context, pgStore *store.Store, customerID string, ou
 			"Run --resume again once the user has made room; the oldest are resumed first\n", overLimit)
 	}
 	for _, id := range campaigns {
-		fmt.Fprintf(out, "campaign %s was running where it came from: start it here with POST /v1/agents/campaigns/%s/start\n", id, id)
+		fmt.Fprintf(out, "campaign %s was still running or scheduled where it came from at the last --once, so it stays paused here: "+
+			"contacts rung there since then are still enrolled here, and resuming it here rings them again. "+
+			"Read its contacts there (GET /v1/agents/campaigns/%s/contacts) before you resume it here "+
+			"(POST /v1/agents/campaigns/%s/resume). "+
+			"Do not run --once again after --resume: every run reads the source and makes it the truth again\n", id, id, id)
 	}
 	return nil
 }
@@ -360,7 +479,8 @@ func (d *deployment) get(ctx context.Context, path string, query map[string]stri
 	}
 	if response.StatusCode == http.StatusGone {
 		response.Body.Close()
-		return nil, errors.New("the source no longer keeps the changes since that cursor: start again with a fresh export")
+		return nil, errors.New("the source no longer keeps the changes since that cursor: run this again with --full, " +
+			"which copies everything again over what was done here")
 	}
 	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
 		message, _ := io.ReadAll(io.LimitReader(response.Body, 2048))

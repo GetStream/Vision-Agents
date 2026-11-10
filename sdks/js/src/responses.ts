@@ -13,7 +13,17 @@ export interface CreateResponseOptions {
   maxOutputTokens?: number;
   /** How long the model may think first: one of the efforts the session's model accepts. */
   reasoningEffort?: string;
+  /**
+   * What the person did in the UI an earlier reply showed, which the text says in their words:
+   * the reply (`message_id`), the UI's format and the action (`name`), with what it carries
+   * (`payload`), such as an `AIUIAction`'s JSON. Their message carries it as
+   * `custom.ai_ui_action`, and the model is told it after the text. An empty one is not sent.
+   */
+  uiAction?: UIAction;
 }
+
+/** What the person did in a reply's generated UI, as the router takes it. */
+export type UIAction = NonNullable<Schemas["CreateResponseRequest"]["ui_action"]>;
 
 /**
  * The things one turn was made of, in the order they happened.
@@ -118,20 +128,25 @@ export class Responses {
 
   private readonly client: Client;
   private readonly sessionId: string;
+  private readonly asked: ((text: string) => void) | undefined;
 
-  constructor(client: Client, sessionId: string) {
+  /** `asked` hears each question as it goes, for a transcript that shows it before the router does. */
+  constructor(client: Client, sessionId: string, asked?: (text: string) => void) {
     this.client = client;
     this.sessionId = sessionId;
+    this.asked = asked;
     this.items = new Items(client, sessionId);
   }
 
   /**
    * Asks the agent something and names the turn it answers as.
    *
-   * A text-only question goes with a fresh request id, so a retry of it is answered once. One
-   * with images goes without, because the router refuses a request id alongside media.
+   * Every question goes with a fresh request id, so a retry of it is answered once. A
+   * personal conversation kept in Stream Chat needs one, and with it the images, as data URIs,
+   * are uploaded to the channel and shown on the person's message.
    */
   create(text: string, options: CreateResponseOptions = {}): Promise<AgentResponse> {
+    this.asked?.(text);
     return createResponse(this.client, this.sessionId, text, options);
   }
 
@@ -167,7 +182,7 @@ export class Responses {
 }
 
 /**
- * Creates a response under `requestId`, or under a fresh one when the question is text only.
+ * Creates a response under `requestId`, or under a fresh one.
  *
  * Not exported from the package: naming the request is only for a dispatch worker answering an
  * inbound message, which passes back that message's own request id so the answer lands on it.
@@ -179,7 +194,7 @@ export async function createResponse(
   options: CreateResponseOptions = {},
   requestId = "",
 ): Promise<AgentResponse> {
-  const id = requestId || (options.images?.length ? "" : crypto.randomUUID());
+  const id = requestId || crypto.randomUUID();
   const created = await client.post("/v1/agents/sessions/{id}/responses", {
     path: { id: sessionId },
     body: {
@@ -187,6 +202,7 @@ export async function createResponse(
       ...(options.images?.length ? { images: options.images } : {}),
       ...(options.maxOutputTokens !== undefined ? { max_output_tokens: options.maxOutputTokens } : {}),
       ...(options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {}),
+      ...(options.uiAction && Object.keys(options.uiAction).length ? { ui_action: options.uiAction } : {}),
       ...(id ? { request_id: id } : {}),
     },
   });

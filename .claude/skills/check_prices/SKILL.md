@@ -36,10 +36,10 @@ Pages to start from. A subagent that finds one moved, or a provider missing, fix
 
 | Provider | Pricing page |
 | --- | --- |
-| `openai` | https://platform.openai.com/docs/pricing |
-| `anthropic` | https://docs.anthropic.com/en/docs/about-claude/pricing |
+| `openai` | https://developers.openai.com/api/docs/pricing (each model's page under https://developers.openai.com/api/docs/models/) |
+| `anthropic` | https://platform.claude.com/docs/en/about-claude/pricing |
 | `gemini`, `google` | https://ai.google.dev/gemini-api/docs/pricing |
-| `xai`, `grok` | https://docs.x.ai/docs/models |
+| `xai`, `grok` | https://docs.x.ai/developers/pricing |
 | `deepgram` | https://deepgram.com/pricing |
 | `elevenlabs` | https://elevenlabs.io/pricing/api |
 | `cartesia` | https://cartesia.ai/pricing |
@@ -47,8 +47,11 @@ Pages to start from. A subagent that finds one moved, or a provider missing, fix
 | `inworld` | https://inworld.ai/pricing |
 | `together`, `together-*` | https://www.together.ai/pricing |
 | `openrouter` | https://openrouter.ai/models (each model's page). Decision models are often not listed: check them with step 4b |
-| `perplexity` | https://docs.perplexity.ai/getting-started/pricing |
-| `deepseek` | https://api-docs.deepseek.com/quick_start/pricing |
+| `perplexity` | https://docs.perplexity.ai/docs/getting-started/pricing |
+| `deepseek`, `baseten` | https://www.baseten.co/library/ (each model's page): the `deepseek` provider calls Baseten's Model APIs unless `DEEPSEEK_BASE_URL` names another endpoint, so DeepSeek's own prices do not apply |
+| `qwen` | https://www.alibabacloud.com/help/en/model-studio/model-pricing (International) |
+| `fish` | https://docs.fish.audio/developer-guide/models-pricing/pricing-and-rate-limits |
+| `meta` (WhatsApp) | https://developers.facebook.com/documentation/business-messaging/whatsapp/pricing |
 | `exa` | https://exa.ai/pricing |
 | `tavily` | https://www.tavily.com/pricing |
 | `fal` | https://fal.ai/pricing (each model's page) |
@@ -114,7 +117,7 @@ For each vendor announcement, one price change as JSON in `.claude/skills/check_
 
 - Every entry names its `region`; a change without one is refused. The BYOK twin is an item of its own, so a vendor's new rate is written to it too, with the same rates and its own price in force.
 - An entry replaces the item's entry whole, so it carries every rate and tier the item has, not only the one that moved.
-- It carries the item's price too (`prices`, and `price_tiers` for each of its `tiers`), with the same meters as its rates: the price in force, unchanged, as `router prices show --json` gives it. What customers are charged is the operator's decision, never this skill's; a new item takes its new rates times 1.2 and says so in `reason`.
+- It carries the item's price too (`prices`, and `price_tiers` for each of its `tiers`), with the same meters as its rates: the price in force, unchanged, as `router prices show --json` gives it. What customers are charged is the operator's decision, never this skill's; a new item takes its new rates times 1.08 (`pricing.PriceFactorBps`) and says so in `reason`.
 - `reason` says old → new with units for each model; `source` the URL and the date read; `effective_at` the vendor's date when it is in the future, else leave it out.
 - A `gone` model is withdrawn (`"withdrawn": true`, one entry for each `when` it has) only when it is also gone from `router.yaml`; otherwise report it.
 - Never a markup, and never a price moved.

@@ -223,6 +223,39 @@ func (s *PricingSuite) TestAModalitySplitReplacesTheTotals() {
 	s.Equal(int64(11_608-3_040), quote.OutputCostMicros)
 }
 
+// TestACachedTotalSplitByNoModalityIsSharedOutAtTheCachedRate: a vendor reported 600 of the
+// 1,000 prompt tokens cached and no split of them, so 60% of the 200 text and of the 800 audio
+// is billed at the cached rate, rather than all 1,000 at the fresh ones.
+func (s *PricingSuite) TestACachedTotalSplitByNoModalityIsSharedOutAtTheCachedRate() {
+	list := s.list(realtime)
+	item := Item{Modality: "sts", Provider: "openai", Model: "gpt-realtime-2.1", Region: RegionUS}
+
+	quote := list.Quote(item, Quantities{
+		InputTokens: 1_000, CachedInputTokens: 600, InputTextTokens: 200, InputAudioTokens: 800,
+	})
+
+	// 80 fresh text at $4, 320 fresh audio at $32, and 120 + 480 cached at $0.40 a million.
+	s.Equal(int64(320+10_240+240), quote.CostMicros)
+}
+
+// TestACachedTotalIsKeptAtTheFreshRateWithNoCachedRate: Gemini Live publishes no cached rate,
+// so its cached tokens stay in their modality, at its rate: text at text's, never at the input
+// total's, which is audio's.
+func (s *PricingSuite) TestACachedTotalIsKeptAtTheFreshRateWithNoCachedRate() {
+	live := Entry{Modality: "sts", Provider: "gemini", Model: "live", Region: RegionUS, Rates: map[Meter]Rate{
+		InputTokens: perMillion(3), InputTextTokens: perMillion(0.75), InputAudioTokens: perMillion(3),
+		OutputTokens: perMillion(12),
+	}}
+	list := s.list(live)
+	item := Item{Modality: "sts", Provider: "gemini", Model: "live", Region: RegionUS}
+
+	quote := list.Quote(item, Quantities{
+		InputTokens: 2_600, CachedInputTokens: 2_048, InputTextTokens: 2_400, InputAudioTokens: 200,
+	})
+
+	s.Equal(int64(1_800+600), quote.CostMicros)
+}
+
 func (s *PricingSuite) TestAModalityMeterWithNoRateFallsBackToTheGenericOne() {
 	list := s.list(realtime)
 	item := Item{Modality: "sts", Provider: "openai", Model: "gpt-realtime-2.1", Region: RegionUS}
@@ -587,12 +620,12 @@ func (s *PricingSuite) TestPricedIsTheCostTimesTheFactor() {
 
 	priced := Priced(entry)
 
-	s.Equal(map[Meter]Rate{InputTokens: perMillion(1.65), OutputTokens: {USD: 1.32, Per: 1_000_000, Increment: 10}}, priced.Prices,
-		"1.1 × 1.2 reads 1.32, not 1.3200000000000003")
-	s.Equal([]Tier{{AboveInputTokens: 1_000, Rates: map[Meter]Rate{InputTokens: perMillion(4.8), OutputTokens: perMillion(1.2)}}}, priced.PriceTiers)
+	s.Equal(map[Meter]Rate{InputTokens: perMillion(1.485), OutputTokens: {USD: 1.188, Per: 1_000_000, Increment: 10}}, priced.Prices,
+		"1.1 × 1.08 reads 1.188, not 1.1880000000000002")
+	s.Equal([]Tier{{AboveInputTokens: 1_000, Rates: map[Meter]Rate{InputTokens: perMillion(4.32), OutputTokens: perMillion(1.08)}}}, priced.PriceTiers)
 	s.Equal(entry.Rates, priced.Rates, "the vendor's rates stay as they were")
 	s.Nil(entry.Prices, "the entry handed in is not changed")
-	s.Equal(int64(12_000), int64(PriceFactorBps))
+	s.Equal(int64(10_800), int64(PriceFactorBps))
 
 	own := entry
 	own.Prices = map[Meter]Rate{InputTokens: perMillion(9), OutputTokens: perMillion(9)}
@@ -611,7 +644,7 @@ func (s *PricingSuite) TestAQuotedAmountIsResoldAtTheFactor() {
 	s.False(quote.Billable)
 	resold := list.Quoted(number, 1_000_003)
 
-	s.Equal(int64(1_200_004), resold.CostMicros, "1,000,003 × 1.2 = 1,200,003.6, rounded once")
+	s.Equal(int64(1_080_003), resold.CostMicros, "1,000,003 × 1.08 = 1,080,003.24, rounded once")
 	s.Equal(int64(1_000_003), resold.BaseCostMicros)
 	s.Equal("phone-telnyx-number-us", resold.SKU)
 	s.Equal(QuotedVersion, resold.Version)

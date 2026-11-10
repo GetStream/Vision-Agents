@@ -120,6 +120,7 @@ func (s *VoiceNotesSuite) TestTheVoiceNoteIsShownOnThePersonsMessageWithWhatItSa
 	uploads := s.chat.Uploads()[before:]
 	s.Require().Len(uploads, 1, "the voice note is uploaded once")
 	s.Equal(audio, uploads[0].Data, "what is shown is the voice note as sent")
+	s.Equal(channel, uploads[0].Channel, "the voice note is stored on the conversation's channel")
 	s.Contains(string(attachments), `"asset_url":"`, "the message points at the upload")
 }
 
@@ -447,9 +448,18 @@ func (s *VoiceNotesSuite) TestTextAloneOnRespondIsAnsweredAsBefore() {
 
 	s.Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost, s.respond(opened), map[string]any{"text": plain}, nil))
 	s.Equal(plain, s.lastAsked(plain))
+	// The model is asked before its reply has finished, and a session takes one question at
+	// a time, so the next waits for it as a client does: the same request again until the
+	// session takes it.
+	var status int
+	var payload []byte
+	s.Require().Eventually(func() bool {
+		status, payload = s.serverClient.call(http.MethodPost, s.respond(opened), map[string]any{"request_id": command, "text": kept})
+		return status != http.StatusBadRequest || !strings.Contains(string(payload), "a response is already running")
+	}, settleFor, 50*time.Millisecond, "the session never took the second question")
+	s.Require().Equal(http.StatusOK, status, "%.300s", payload)
 	var receipt CommandReceipt
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, s.respond(opened),
-		map[string]any{"request_id": command, "text": kept}, &receipt))
+	s.Require().NoError(json.Unmarshal(payload, &receipt), "%.300s", payload)
 	s.Equal(command, receipt.RequestId)
 	s.Equal(kept, s.lastAsked(kept))
 	s.heard(since, 0)
@@ -479,6 +489,10 @@ func (s *VoiceNotesSuite) TestTextOverTheDefaultLimitWithoutAVoiceNoteIsRefusedA
 		},
 		"respond with a request id": func(opened Session) (int, []byte) {
 			return s.serverClient.call(http.MethodPost, s.respond(opened), map[string]any{"text": big, "request_id": s.utils.uuid()})
+		},
+		"respond with a photo": func(opened Session) (int, []byte) {
+			return s.serverClient.call(http.MethodPost, s.respond(opened), RespondRequest{
+				Text: big[:1<<20], RequestId: pointerTo(s.utils.uuid()), Images: &[]ImageSource{{Url: "data:image/png;base64," + big[:1<<10]}}})
 		},
 		"createResponse": func(opened Session) (int, []byte) {
 			return s.serverClient.call(http.MethodPost, s.responses(opened), CreateResponseRequest{Text: big})

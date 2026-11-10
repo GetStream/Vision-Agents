@@ -22,11 +22,13 @@ var ErrConnectorConnectionChanged = errors.New("store: connector connection chan
 // credential state is held under; the second is credentialLockKey. Postgres keeps the one-bigint and the
 // two-integer key spaces apart ("note that these two key spaces do not overlap",
 // https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS),
-// and every other advisory lock in this repository takes one bigint
+// and the other advisory locks in this repository take one bigint
 // (hashtextextended(..., 731) in logs.go and the agent_logs migrations,
 // hashtextextended(..., definitionLockSeed) in connectors.go), so no key here can be one of
 // theirs. 839 is this lock's issue, AI-839, as 833 is definitionLockSeed's; the value only
-// has to differ from any other two-integer lock, of which there is none.
+// has to differ from the other two-integer locks: providerAppLockNamespace's 872
+// (config_tokens.go), and the change feed's, whose first key is a change number's high half
+// (record_data_change), 0 and up, and reaches 839 only past 839 << 32 changes.
 const credentialLockNamespace int32 = 839
 
 // credentialDetachedTimeout bounds the statements that run on a context of their own because the

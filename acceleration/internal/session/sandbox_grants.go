@@ -22,7 +22,8 @@ import (
 // otherwise, and, where the latest revision has one, each run says to reconnect it
 // (d.reconnect). The reads come from the connector's latest revision, so a connection pinned
 // to an earlier one gets them without a reconnect: they only narrow what the egress proxy lets
-// through.
+// through. A custom connector deleted since the pinned read gives the sandbox nothing, as it
+// does a late grant (lateGrant), and refuses a required binding as one whose connection is gone.
 func (m *Manager) sandboxGrant(ctx context.Context, binding store.ConnectorBinding, connection store.ConnectorConnection,
 	manifest core.ResolvedManifest, scheme core.Scheme, d *dispatcher) (string, error) {
 	if !binding.Sandbox {
@@ -32,6 +33,14 @@ func (m *Manager) sandboxGrant(ctx context.Context, binding store.ConnectorBindi
 		return unavailableSandbox, nil
 	}
 	latest, err := m.options.Store.LatestConnectorDefinition(ctx, connection.CustomerID, binding.ConnectorID)
+	if errors.Is(err, store.ErrNoConnectorDefinition) {
+		m.logger.Warn("a connector binding gives the sandbox no access: its connector was deleted", "connector", binding.Name,
+			"connection", connection.ID)
+		if binding.Required {
+			return unavailableConnection, nil
+		}
+		return "", nil
+	}
 	if err != nil {
 		return "", err
 	}

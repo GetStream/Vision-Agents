@@ -1,12 +1,14 @@
 package phone
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -173,6 +175,7 @@ func (s *PhoneSuite) TestAnUnknownVendorCannotBeOpened() {
 	_, err := registry.Open("carrier-pigeon")
 
 	s.ErrorContains(err, "not a known vendor")
+	s.ErrorIs(err, ErrInvalid)
 }
 
 func (s *PhoneSuite) TestADeclaredButUnimplementedVendorRefusesEveryOperation() {
@@ -204,7 +207,9 @@ func (s *PhoneSuite) TestOnlyWhatAKeypadHasCanBePressed() {
 	s.NoError(ValidateDigits("ABCD"), "no handset has the fourth column but every vendor's api takes it")
 
 	s.ErrorContains(ValidateDigits(""), "digits to press")
+	s.ErrorIs(ValidateDigits(""), ErrInvalid)
 	s.ErrorContains(ValidateDigits("one"), "keypad can press")
+	s.ErrorIs(ValidateDigits("one"), ErrInvalid)
 	s.ErrorContains(ValidateDigits("press 1"), "keypad can press")
 	s.ErrorContains(ValidateDigits("1E2"), "keypad can press", "the fourth column stops at D")
 }
@@ -247,24 +252,29 @@ func (s *PhoneSuite) TestACallThatCannotBePlacedAsDescribedIsRefused() {
 	missing := valid
 	missing.To = ""
 	s.ErrorContains(missing.Validate(), "from and a to")
+	s.ErrorIs(missing.Validate(), ErrInvalid)
 
 	unbridged := valid
 	unbridged.Bridge = Bridge{}
 	s.ErrorContains(unbridged.Validate(), "uri is required")
+	s.NotErrorIs(unbridged.Validate(), ErrInvalid, "the bridge is the router's own, not the caller's")
 
 	backwards := valid
 	backwards.RingTimeout = -time.Second
 	s.ErrorContains(backwards.Validate(), "less than no time")
+	s.ErrorIs(backwards.Validate(), ErrInvalid)
 
 	words := valid
 	words.InitialDigits = "extension four"
 	s.ErrorContains(words.Validate(), "keypad can press")
+	s.ErrorIs(words.Validate(), ErrInvalid)
 
 	// Twilio stops at 32, so more than that is a call that would be placed with the
 	// digits silently truncated at whichever vendor happened to answer.
 	long := valid
 	long.InitialDigits = strings.Repeat("1", maxInitialDigits+1)
 	s.ErrorContains(long.Validate(), "than the 32")
+	s.ErrorIs(long.Validate(), ErrInvalid)
 }
 
 func (s *PhoneSuite) TestOnlyAFullNumberThatIsNotPremiumRateCanBeDialled() {
@@ -297,6 +307,7 @@ func (s *PhoneSuite) TestACallSaysWhatItIsMissing() {
 
 	_, err = service.Call(s.ctx, CallRequest{From: "+15125551234", To: "+15550001111"})
 	s.ErrorContains(err, "stream credentials")
+	s.ErrorIs(err, ErrNoStream)
 }
 
 func (s *PhoneSuite) TestAVendorThatCannotSendAPasswordWillNotDialWithoutAnAllowlist() {
@@ -359,6 +370,8 @@ func (s *PhoneSuite) TestATransferSaysWhatItIsMissing() {
 	_, err = service.Transfer(s.ctx, TransferRequest{From: "+15125551234", To: "+15550001111"})
 	s.ErrorContains(err, "stream credentials",
 		"a transfer routes a leg into a call, which needs Stream")
+	s.ErrorIs(err, ErrNoStream)
+	s.NotErrorIs(err, ErrInvalid, "the deployment's credentials are not the caller's to change")
 }
 
 func (s *PhoneSuite) TestAVendorIsOpenedOnceAndReused() {
@@ -389,6 +402,8 @@ func (s *PhoneSuite) TestAVendorWithoutItsCredentialsSaysWhichAreMissing() {
 	_, err := registry.Open("twilio")
 
 	s.ErrorContains(err, "TWILIO_AUTH_TOKEN")
+	s.ErrorIs(err, ErrNotConfigured, "the deployment lacks the vendor's settings")
+	s.NotErrorIs(err, ErrInvalid)
 }
 
 func (s *PhoneSuite) TestOnlyVendorsThatCanActuallyBeUsedAreAvailable() {
@@ -540,6 +555,8 @@ func (s *PhoneSuite) TestSearchingWithNoUsableVendorSaysSoRatherThanAnsweringEmp
 	_, err = service.SearchAll(s.ctx, Search{Country: "US"})
 
 	s.ErrorContains(err, "no vendor has the credentials")
+	s.ErrorIs(err, ErrNotConfigured)
+	s.NotErrorIs(err, ErrInvalid)
 }
 
 // serviceWith returns a service whose registry resolves each stub under its own vendor name.
@@ -591,16 +608,22 @@ type stub struct {
 	// inbound is the last number this vendor was told to send to a bridge, so a test can see
 	// the address the service passed on.
 	inbound Inbound
-	// monthly is what a number bought here costs a month.
-	monthly int64
+	// monthly is what a number bought here costs a month, and vendorID the id it sells one
+	// under.
+	monthly  int64
+	vendorID string
 	// ordered counts the numbers this vendor was asked to sell, and released the numbers it
 	// was told to take back.
 	ordered  int
 	released []string
+	// releaseErr is what a release answers, the vendor's other answers left to err.
+	releaseErr error
 	// stopped are the numbers this vendor was told to stop sending callers to the trunk.
 	stopped []string
 	// leg is how this vendor's leg reaches Stream: per call unless a test says otherwise.
 	leg StreamLeg
+	// pressed is every vendorCallID:digits this vendor was asked to press.
+	pressed []string
 }
 
 func (s *stub) StreamLeg() StreamLeg { return s.leg }
@@ -623,12 +646,12 @@ func (s *stub) BuyNumber(_ context.Context, order Order) (Number, error) {
 	if s.err != nil {
 		return Number{}, s.err
 	}
-	return Number{E164: order.E164, Vendor: s.vendor, Country: "US", MonthlyCostMicros: s.monthly}, nil
+	return Number{E164: order.E164, Vendor: s.vendor, VendorID: s.vendorID, Country: "US", MonthlyCostMicros: s.monthly}, nil
 }
 
 func (s *stub) ReleaseNumber(_ context.Context, e164 string) error {
 	s.released = append(s.released, e164)
-	return s.err
+	return cmp.Or(s.releaseErr, s.err)
 }
 
 func (s *stub) ConfigureInbound(_ context.Context, inbound Inbound) error {
@@ -644,9 +667,13 @@ func (s *stub) Dial(_ context.Context, outbound Outbound) (Dialed, error) {
 	return Dialed{VendorCallID: s.vendor + "-call", Status: "dialing"}, nil
 }
 
-func (s *stub) SendDigits(context.Context, string, string) error { return s.err }
+func (s *stub) SendDigits(_ context.Context, vendorCallID, digits string) error {
+	s.pressed = append(s.pressed, vendorCallID+":"+digits)
+	return s.err
+}
 
-// ReadStatus reads a form's result and word, as a vendor's status post would carry them.
+// ReadStatus reads a form's result and word, as a vendor's status post would carry them, and
+// its sip code, ringing and post-dial delay (pdd), as some vendors' do.
 func (s *stub) ReadStatus(_ string, body []byte) (CallStatus, error) {
 	form, err := url.ParseQuery(string(body))
 	if err != nil {
@@ -655,7 +682,24 @@ func (s *stub) ReadStatus(_ string, body []byte) (CallStatus, error) {
 	if !form.Has("word") {
 		return CallStatus{}, errors.New("stub: a status needs a word")
 	}
-	return CallStatus{Result: CallResult(form.Get("result")), Word: form.Get("word")}, nil
+	code, _ := strconv.Atoi(form.Get("sip"))
+	delay, _ := time.ParseDuration(cmp.Or(form.Get("pdd"), "0s"))
+	return CallStatus{
+		Result: CallResult(form.Get("result")), Word: form.Get("word"), SIPCode: code, Ringing: form.Has("ringing"),
+		PostDialDelay: delay,
+	}, nil
+}
+
+// ReadMachine reads a form's machine, as a vendor's machine post would carry it.
+func (s *stub) ReadMachine(_ string, body []byte) (MachineReport, error) {
+	form, err := url.ParseQuery(string(body))
+	if err != nil {
+		return MachineReport{}, err
+	}
+	if !form.Has("machine") {
+		return MachineReport{}, errors.New("stub: a machine report needs a machine")
+	}
+	return MachineReport{Machine: Machine(form.Get("machine")), Word: form.Get("machine")}, nil
 }
 
 // silent is a vendor that reports nothing on the calls it places.
@@ -726,7 +770,7 @@ func (s *PhoneSuite) TestOnlyANumberOnTheCustomersOwnTrunkIsFree() {
 		quote := prices.Quote(number(vendor.Vendor), nil)
 		s.True(quote.Billable && quote.Unpriced, vendor.Vendor)
 		resold := prices.Quoted(number(vendor.Vendor), 1_000_000)
-		s.Equal(int64(1_200_000), resold.CostMicros, vendor.Vendor)
+		s.Equal(int64(1_080_000), resold.CostMicros, vendor.Vendor)
 		s.Equal(int64(1_000_000), resold.BaseCostMicros, vendor.Vendor)
 		s.True(resold.Billable, vendor.Vendor)
 	}
@@ -736,4 +780,19 @@ func (s *PhoneSuite) config() Config {
 	config, err := DefaultConfig()
 	s.Require().NoError(err)
 	return config
+}
+
+func (s *PhoneSuite) TestANumberThatCannotBeDialedIsErrNotDialable() {
+	for _, to := range []string{"+19005550123", "+19765550123", "911", "5125550123", "not a number"} {
+		err := Dialable(to)
+		s.ErrorIs(err, ErrNotDialable, to)
+	}
+	s.NoError(Dialable("+15125550123"))
+}
+
+func (s *PhoneSuite) TestAPremiumNumberIsStillRefusedAsADestination() {
+	err := Dialable("+19005550123")
+	s.ErrorIs(err, ErrDestinationRefused)
+	s.Contains(err.Error(), "premium-rate")
+	s.NotContains(err.Error(), ErrNotDialable.Error())
 }

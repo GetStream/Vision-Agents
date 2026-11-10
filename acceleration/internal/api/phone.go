@@ -238,6 +238,10 @@ func (s *Server) releasePhoneNumber(ctx context.Context, request *releasePhoneNu
 	if isNumberNotHeld(err) {
 		return nil, notFound(err.Error())
 	}
+	if errors.Is(err, phone.ErrNumberSettling) {
+		s.logger.Info("a phone vendor refused to release a number it is still setting up", "error", err)
+		return nil, errNumberSettling
+	}
 	if err != nil {
 		return nil, phoneFailure(s.logger, err)
 	}
@@ -387,9 +391,10 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 	}
 
 	call := phone.CallRequest{
-		Owner: routing.Owner{CustomerID: customerID, Attribution: routing.AttributionFrom(ctx), Tags: tags},
-		From:  request.Body.From,
-		To:    request.Body.To,
+		Owner:         routing.Owner{CustomerID: customerID, Attribution: routing.AttributionFrom(ctx), Tags: tags},
+		From:          request.Body.From,
+		To:            request.Body.To,
+		DetectMachine: value(request.Body.DetectVoicemail),
 	}
 	if request.Body.SessionId != nil {
 		held, ok := conversation.SessionID(*request.Body.SessionId)
@@ -485,6 +490,23 @@ var errNoCallStatus = notFound("that call is not waiting for its status")
 // Like answerPhoneCall it is reached by a telephony vendor rather than a customer, so it
 // carries no customer header: the token made when the call was placed is the only proof.
 func (s *Server) receiveCallStatus(w http.ResponseWriter, r *http.Request) {
+	s.receiveVendorPost(w, r, "status", func(ctx context.Context, token, contentType string, body []byte) error {
+		return s.phone.ReportStatus(ctx, token, contentType, body)
+	})
+}
+
+// receiveCallMachine takes who picked up a placed call from the vendor that placed it, under
+// the same proof as receiveCallStatus.
+func (s *Server) receiveCallMachine(w http.ResponseWriter, r *http.Request) {
+	s.receiveVendorPost(w, r, "machine report", func(ctx context.Context, token, contentType string, body []byte) error {
+		return s.phone.Machine(ctx, token, contentType, body)
+	})
+}
+
+// receiveVendorPost reads what a vendor posted to one of a placed call's URLs and hands it to
+// take, answering the failures every such URL shares.
+func (s *Server) receiveVendorPost(w http.ResponseWriter, r *http.Request, what string,
+	take func(ctx context.Context, token, contentType string, body []byte) error) {
 	if s.phone == nil {
 		writeError(w, errNoCallStatus)
 		return
@@ -492,15 +514,15 @@ func (s *Server) receiveCallStatus(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, callStatusLimit))
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) {
-		writeError(w, payloadTooLarge("a status is at most 64 KiB"))
+		writeError(w, payloadTooLarge("a "+what+" is at most 64 KiB"))
 		return
 	}
 	if err != nil {
-		writeError(w, invalidRequest("could not read that status"))
+		writeError(w, invalidRequest("could not read that "+what))
 		return
 	}
 
-	err = s.phone.ReportStatus(r.Context(), r.PathValue("token"), r.Header.Get("Content-Type"), body)
+	err = take(r.Context(), r.PathValue("token"), r.Header.Get("Content-Type"), body)
 	switch {
 	case errors.Is(err, phone.ErrUnknownStatus):
 		writeError(w, errNoCallStatus)
@@ -573,7 +595,8 @@ func (s *Server) transferPhoneCall(ctx context.Context, request *transferPhoneCa
 
 // pressPhoneDigits presses digits on a call placed from here.
 func (s *Server) pressPhoneDigits(ctx context.Context, request *pressPhoneDigitsRequest) (*struct{}, error) {
-	if _, ok := CustomerFrom(ctx); !ok {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
 		return nil, errMissingCustomer
 	}
 	if request.Body == nil {
@@ -583,7 +606,10 @@ func (s *Server) pressPhoneDigits(ctx context.Context, request *pressPhoneDigits
 		return nil, errNoTelephony
 	}
 
-	err := s.phone.SendDigits(ctx, request.Body.Vendor, request.VendorCallId, request.Body.Digits)
+	err := s.phone.SendDigits(ctx, customerID, request.Body.Vendor, request.VendorCallId, request.Body.Digits)
+	if errors.Is(err, phone.ErrCallNotFound) {
+		return nil, notFound("No call with this vendor_call_id was placed from here.")
+	}
 	if errors.Is(err, phone.ErrNotImplemented) {
 		return nil, notFound(err.Error())
 	}
@@ -611,8 +637,11 @@ var (
 		"it has no key encryption key to seal their trunk passwords with.")
 	errPhoneVendorFailed = APIError{Type: ErrorTypeUnavailable, Code: codePhoneVendorFailed,
 		Message: "The phone vendor could not complete the request. Try again, or contact support if it keeps failing."}
+	errNumberSettling = APIError{Type: ErrorTypeConflict, Code: codePhoneNumberSettling,
+		Message: "The phone vendor is still setting up this number, bought moments ago. Release it again in a minute."}
 	errCallNotConfirmed = APIError{Type: ErrorTypeUnavailable, Code: codePhoneVendorFailed,
 		Message: "The phone vendor did not confirm the call, so it can still ring. Do not place it again at once. Contact support if this keeps happening."}
+	errPhoneNoStream      = notConfigured("phone lines are not available: this deployment has no Stream app to make them in")
 	errCallHookUnpointed  = unavailable("this app's Stream call hook could not be pointed at this router, so its calls would not reach an agent: try again")
 	errNumberNotAttached  = conflict("The number is not attached: attach the number first.")
 	errNumberOnItsOwnCall = conflict("Every caller of this number joins one call: attach the number again so each caller gets a session of their own.")
@@ -620,9 +649,20 @@ var (
 		Message: "This app's telephony is suspended. Contact Stream support."}
 )
 
+// clientPhoneFailures are the failures of a phone operation answered in their own words, as
+// the client asked for something it can change: a request the phone cannot carry out as
+// asked, a number that cannot be dialled or stored, and an app the customer cannot act in. A
+// deployment without Stream credentials, a vendor's credentials or settings, or sip trunks is
+// notConfigured, answered by phoneFailure.
+var clientPhoneFailures = []error{
+	phone.ErrInvalid, phone.ErrNotDialable, store.ErrNotE164,
+	streamapp.ErrNoIdentity, streamapp.ErrStreamAppMoved, streamapp.ErrStreamAppDisconnected, streamapp.ErrReadOnly,
+}
+
 // phoneFailure is the answer to a phone operation that failed. A vendor's own error is logged
-// in full and answered without its words, which can hold an account id. Anything else is the
-// router's or Stream's and says what the client can fix.
+// in full and answered without its words, which can hold an account id. A failure the client
+// can fix says what to fix. Anything else, such as a database that failed, is the router's own:
+// it is returned as is, which Huma answers 500 and logs with its stack.
 func phoneFailure(logger *slog.Logger, err error) error {
 	if errors.Is(err, phone.ErrSuspended) {
 		return errTelephonySuspended
@@ -650,7 +690,19 @@ func phoneFailure(logger *slog.Logger, err error) error {
 			"status", refused.Status, "code", refused.Code, "message", refused.Message, "error", err)
 		return errPhoneVendorFailed
 	}
-	return invalidRequest(err.Error())
+	if errors.Is(err, phone.ErrNoStream) {
+		return errPhoneNoStream
+	}
+	if errors.Is(err, phone.ErrNotConfigured) || errors.Is(err, phone.ErrSIPTrunksDisabled) {
+		// A vendor name and the settings it lacks: the operator's to set, the client's to know.
+		return notConfigured(err.Error())
+	}
+	for _, theirs := range clientPhoneFailures {
+		if errors.Is(err, theirs) {
+			return invalidRequest(err.Error())
+		}
+	}
+	return err
 }
 
 // callFailure is phoneFailure for an operation that starts a call: the vendor may have
@@ -1027,15 +1079,19 @@ func (s *Server) registerPhone(api huma.API) {
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.buyPhoneNumber)
 	huma.Register(api, huma.Operation{
-		OperationID:   "releasePhoneNumber",
-		Method:        http.MethodDelete,
-		Path:          "/v1/phone/numbers/{e164}",
-		Summary:       "Give a number back, which stops its monthly charge",
+		OperationID: "releasePhoneNumber",
+		Method:      http.MethodDelete,
+		Path:        "/v1/phone/numbers/{e164}",
+		Summary:     "Give a number back, which stops its monthly charge",
+		Description: "A vendor still setting up a number bought in the last minute may refuse to give it " +
+			"back: that is a 409 `phone_number_settling`, and the same release goes through once it has. " +
+			"Any other vendor failure is a 503 `phone_vendor_failed`.",
 		DefaultStatus: http.StatusNoContent,
 		Responses: map[string]*huma.Response{
 			"204": {Description: "The number was released"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound,
+			http.StatusConflict, http.StatusServiceUnavailable},
 	}, s.releasePhoneNumber)
 	huma.Register(api, huma.Operation{
 		OperationID: "attachPhoneNumber",
@@ -1521,6 +1577,7 @@ type PhoneVendor struct {
 
 // PlaceCallRequest is the PlaceCallRequest schema.
 type PlaceCallRequest struct {
+	DetectVoicemail    *bool              `json:"detect_voicemail,omitempty" doc:"Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. A verdict the vendor cannot make, or none within 40 seconds of the answer, counts as a machine while the person called has said nothing to the agent. What the agent then does is the session's phone.voicemail."`
 	Custom             *map[string]string `json:"custom,omitempty" doc:"Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set. A call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this custom. A dial that fails once its custom is on the call leaves it there, and it cannot be taken off: retry into that session with the same custom, or use a new session."`
 	From               string             `json:"from" doc:"One of the customer's own numbers, which is what the person sees."`
 	Headers            *map[string]string `json:"headers,omitempty" doc:"Carried to the person's leg as custom SIP headers. Only some vendors can express these, and one that cannot refuses the call."`

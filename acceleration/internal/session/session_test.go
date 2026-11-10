@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
@@ -14,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -29,11 +26,13 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
@@ -195,6 +194,8 @@ type stubLLM struct {
 	// tools, as a model told it may call none does not.
 	called bool
 	sees   bool
+	// refuses, when set, is what every request fails with, as a provider refusing its key.
+	refuses error
 }
 
 func (s *stubLLM) Start(context.Context) error { return nil }
@@ -202,6 +203,10 @@ func (s *stubLLM) Start(context.Context) error { return nil }
 func (s *stubLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	s.mu.Lock()
 	s.asked = append(s.asked, params)
+	if s.refuses != nil {
+		s.mu.Unlock()
+		return nil, s.refuses
+	}
 	offered := len(params.Tools) > 0 && params.ToolChoice != "none"
 	reply := s.reply
 	var calls []llm.ToolCall
@@ -246,15 +251,41 @@ type stubTTS struct {
 
 	mu   sync.Mutex
 	said []tts.Request
+	// holding is a line whose synthesis is not reported complete until held is closed.
+	holding string
+	held    chan struct{}
 }
 
 func (s *stubTTS) Start(context.Context) error { return nil }
 
+// holds keeps the synthesis of text going until the returned func is called.
+func (s *stubTTS) holds(text string) func() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.holding, s.held = text, make(chan struct{})
+	return sync.OnceFunc(func() { close(s.held) })
+}
+
 func (s *stubTTS) Synthesize(request tts.Request) error {
 	s.mu.Lock()
 	s.said = append(s.said, request)
+	held := s.held
+	if request.Text != s.holding {
+		held = nil
+	}
 	s.mu.Unlock()
 
+	if held != nil {
+		go func() {
+			s.emitter.Send(tts.AudioChunk{
+				SynthesisID: request.ID,
+				Audio:       audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1},
+			})
+			<-held
+			s.emitter.Send(tts.SynthesisComplete{SynthesisID: request.ID, AudioDurationMs: 10})
+		}()
+		return nil
+	}
 	if request.Text != "" {
 		s.emitter.Send(tts.AudioChunk{
 			SynthesisID: request.ID,
@@ -348,14 +379,33 @@ type stubTranscript struct {
 	mu      sync.Mutex
 	spoken  []agent.Event
 	written []string
+	// stalled, while open, holds Record back (stall).
+	stalled chan struct{}
 }
 
 func (t *stubTranscript) Start(context.Context) error { return nil }
 
 func (t *stubTranscript) Record(event agent.Event) {
 	t.mu.Lock()
+	stalled := t.stalled
+	t.mu.Unlock()
+	if stalled != nil {
+		<-stalled
+	}
+	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.spoken = append(t.spoken, event)
+}
+
+// stall holds back every event recorded from now until release, as a store slow to write
+// them holds back the session taking its agent's events: the agent goes on meanwhile.
+func (t *stubTranscript) stall() (release func()) {
+	stalled := make(chan struct{})
+	t.mu.Lock()
+	t.stalled = stalled
+	t.mu.Unlock()
+	var once sync.Once
+	return func() { once.Do(func() { close(stalled) }) }
 }
 
 func (t *stubTranscript) Reply(text string) {
@@ -413,6 +463,11 @@ type SessionSuite struct {
 	// gated answers the conversation model instead of stubLLM, for a test that needs a
 	// reply it can hold open while something else happens to the session.
 	gated *gatedLLM
+	// flowGated answers the flow controller instead of a stubLLM, for a test that decides
+	// when its decision lands in a turn.
+	flowGated *gatedLLM
+	// speculates has agents start a reply before the flow controller rules on its turn.
+	speculates bool
 	// conversations persists text commands, for a test that submits one.
 	conversations *persistent.Service
 	// grace is how long a persistent text session outlives its last watcher. Zero is the
@@ -422,15 +477,20 @@ type SessionSuite struct {
 	// identity each edge was built with.
 	apps     *streamapp.Clients
 	edgeApps []streamapp.Identity
-	// plugins is what the manager reaches plugins and MCP servers with, for a test whose
-	// server listens on loopback. Nil is the manager's default, as before.
-	plugins *plugins.Auth
 	// directory is where the manager says which sessions it runs, when a test reads that.
 	directory *node.Directory
 	// present is who is in the call before the next edge joins it, and unattended makes
 	// edges that say nobody comes or goes, as a socket does.
 	present    []stt.Participant
 	unattended bool
+	// speech opens the speech-to-speech model a native session converses with, when a test
+	// wants one. Nil routes none. speechGate is what the speech-to-speech router asks before it
+	// opens one, nil for nothing.
+	speech     func() (sts.STS, error)
+	speechGate routing.Gate
+	// opens is the edge the manager opens for the next voice session, when a test hands one
+	// in: unlike Spec.Edge, it is a call the manager opened.
+	opens agent.Edge
 }
 
 func TestSessionSuite(t *testing.T) {
@@ -444,15 +504,19 @@ func (s *SessionSuite) SetupTest() {
 	s.records = nil
 	s.thinks = false
 	s.gated = nil
+	s.flowGated = nil
+	s.speculates = false
 	s.conversations = nil
 	s.apps = nil
 	s.edgeApps = nil
-	s.plugins = nil
 	s.directory = nil
 	s.ears = nil
 	s.others = nil
 	s.present = nil
 	s.unattended = false
+	s.speech = nil
+	s.speechGate = nil
+	s.opens = nil
 	s.shortensPhoneTimeouts()
 }
 
@@ -496,6 +560,9 @@ func (s *SessionSuite) manages() {
 			}
 			return s.model, nil
 		}
+		if s.flowGated != nil && opened.Load() == 2 {
+			return s.flowGated, nil
+		}
 		other := &stubLLM{reply: "Sure.", sees: s.model.sees}
 		s.othersMu.Lock()
 		s.others = append(s.others, other)
@@ -527,20 +594,37 @@ func (s *SessionSuite) manages() {
 		storing = func(context.Context, Spec, streamapp.Bound, *slog.Logger) (Transcript, error) { return s.records, nil }
 	}
 
+	var conversing *stsrouter.Router
+	if s.speech != nil {
+		native := stsrouter.NewRegistry()
+		native.Register("stub", func(routing.Spec) (sts.STS, error) { return s.speech() })
+		// A native session asks its model to write down what was said.
+		speaking := stubConfig()
+		speaking.Providers[0].Terms = []options.Term{options.InputTranscript, options.OutputTranscript}
+		conversing, err = stsrouter.New(stsrouter.Options{Config: speaking, Registry: native, Logger: logger, Gate: s.speechGate})
+		s.Require().NoError(err)
+		s.T().Cleanup(conversing.Close)
+	}
+
 	manager, err := NewManager(ManagerOptions{
-		LLM:           reasoner,
-		STT:           transcriber,
-		TTS:           speaker,
-		Memory:        remembering,
-		Transcript:    storing,
-		Conversations: s.conversations,
-		Stream:        s.apps,
-		DetachedGrace: s.grace,
-		PluginAuth:    s.plugins,
-		Directory:     s.directory,
-		Logger:        logger,
+		LLM:                reasoner,
+		STT:                transcriber,
+		TTS:                speaker,
+		STS:                conversing,
+		Memory:             remembering,
+		Transcript:         storing,
+		Conversations:      s.conversations,
+		Stream:             s.apps,
+		DetachedGrace:      s.grace,
+		Directory:          s.directory,
+		Logger:             logger,
+		SpeculativeReplies: s.speculates,
 		Edge: func(_ context.Context, _ Spec, stream streamapp.Bound, _ *slog.Logger) (agent.Edge, error) {
 			s.edgeApps = append(s.edgeApps, stream.Identity)
+			if opened := s.opens; opened != nil {
+				s.opens = nil
+				return opened, nil
+			}
 			edge := newQuietEdge(s.present...)
 			s.edges = append(s.edges, edge)
 			if s.unattended {
@@ -2089,7 +2173,8 @@ func (s *SessionSuite) TestAPictureIsShownOnlyToTheReplyItCameWith() {
 		return false
 	}, "the next turn was never asked")
 	s.False(next.HasImage(), "the picture was sent again with a later turn")
-	s.Contains(handed(next), "user: what is this", "the words that came with the picture were forgotten")
+	s.Contains(handed(next), "user: what is this\n\n[sent with a photo, not shown again]",
+		"the words that came with the picture, and that a picture came, were forgotten")
 }
 
 // awaitToolCall waits for the model to ask for a tool, skipping the conversation events
@@ -2122,54 +2207,6 @@ func awaitReply(events <-chan Event) string {
 	}
 }
 
-// TestAnMCPServersToolRunsAsBeforeWhenTheConfigBindsNoConnector: a session with a plugin and
-// no connector binding. Its tools are the plugin's, its call goes through the plugin's
-// runner and its answer reaches the model, and nothing connector-shaped is said on its
-// events. Every connector hook is a no-op without a binding (AI-851).
-func (s *SessionSuite) TestAnMCPServersToolRunsAsBeforeWhenTheConfigBindsNoConnector() {
-	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "notes", Version: "1"}, nil)
-	server.AddTool(&mcpsdk.Tool{
-		Name: "search", Description: "Finds a note.",
-		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
-	},
-		func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
-			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "the note"}}}, nil
-		})
-	provider := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return server },
-		&mcpsdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true}))
-	defer provider.Close()
-	s.plugins = &plugins.Auth{HTTP: provider.Client()}
-	s.manages()
-	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "notes__search", Arguments: "{}"}}
-	needsLogin := false
-	created := s.joins(Spec{MCPServers: []store.MCPServer{{Name: "notes", URL: provider.URL, NeedsLogin: &needsLogin}}})
-
-	events, detach := created.Watch()
-	defer detach()
-	s.hears(created)
-	s.says(created, "find my note")
-
-	var ran *agent.ToolRan
-	deadline := time.After(settleFor)
-	for ran == nil {
-		select {
-		case event := <-events:
-			if _, connector := event.(ConnectorUnavailable); connector {
-				s.Fail("a session with no binding says nothing about connectors")
-			}
-			if finished, ok := event.(agent.ToolRan); ok {
-				ran = &finished
-			}
-		case <-deadline:
-			s.Require().FailNow("the plugin's tool never ran")
-		}
-	}
-	s.Equal("notes__search", ran.Tool)
-	s.Equal("the note", ran.Result)
-	s.NoError(ran.Err)
-	s.Contains(created.current().Tools(), "notes__search")
-}
-
 func awaitToolCall(events <-chan Event) *ToolCall {
 	deadline := time.After(settleFor)
 	for {
@@ -2198,6 +2235,20 @@ func (s *SessionSuite) TestRequestedMemoryRequiresAConfiguredProvider() {
 	s.manages()
 	_, err := s.manager.Create(s.ctx, Spec{Text: true, CustomerID: "acme", Memory: MemorySpec{UserID: "organization-cats"}})
 	s.Require().ErrorContains(err, "memory is unavailable")
+}
+
+// TestMemoryIsRefusedToAnAgentOutsideTheDefaultRegion: the memory provider keeps everything
+// in the US, and an agent in eu has all its work done in eu.
+func (s *SessionSuite) TestMemoryIsRefusedToAnAgentOutsideTheDefaultRegion() {
+	s.remembers = &stubMemory{}
+	s.manages()
+
+	_, err := s.manager.Create(s.ctx, Spec{Text: true, CustomerID: "acme", Region: pricing.RegionEU, Memory: MemorySpec{UserID: "222"}})
+	s.Require().ErrorIs(err, ErrMemoryRegion)
+	s.Empty(s.remembers.scopedTo().UserID, "nothing was recalled")
+
+	created := s.joins(Spec{Region: pricing.RegionUS, Memory: MemorySpec{UserID: "222"}})
+	s.Equal("222", created.Spec().Memory.UserID)
 }
 
 func (s *SessionSuite) TestAChatThatStartsVoiceIsGivenAThinkingModelItCanRoute() {

@@ -1,6 +1,6 @@
 {
   "name": "@stream-io/calypso",
-  "version": "0.2.3",
+  "version": "0.3.1",
   "description": "JavaScript client for the Stream acceleration backend: agents that run there, and the conversations they hold.",
   "license": "Apache-2.0",
   "repository": {
@@ -65,6 +65,7 @@
     "prepublishOnly": "rm -rf dist && tsc -p tsconfig.build.json"
   },
   "devDependencies": {
+    "@stream-io/node-sdk": "^0.8.15",
     "@stream-io/video-client": "^1.61.2",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
@@ -75,8 +76,8 @@
     "zod": "^4.6.7"
   },
   "peerDependencies": {
-    "@stream-io/video-client": ">=1.0.0",
-    "stream-chat": ">=9.0.0"
+    "@stream-io/video-client": "^1.0.0",
+    "stream-chat": "^9.0.0 || ^10.0.0-0"
   },
   "peerDependenciesMeta": {
     "@stream-io/video-client": {

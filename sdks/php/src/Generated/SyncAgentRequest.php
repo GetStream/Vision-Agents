@@ -33,6 +33,8 @@ final readonly class SyncAgentRequest
         /** @var list<AgentConnectorBinding>|null */
         public ?array $connectors = null,
         public ?AgentDispatch $dispatch = null,
+        // agent.yaml's floor_control: the model that controls the agent's floor, and how long a caller may wait once...
+        public ?FloorControl $floorControl = null,
         public ?Greeting $greeting = null,
         // The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Emp...
         public ?string $guardrail = null,
@@ -49,14 +51,14 @@ final readonly class SyncAgentRequest
         /** @var list<LeftOutConnector>|null */
         public ?array $leftOutConnectors = null,
         public ?string $llm = null,
-        // MCP servers outside the plugin catalog, opened by their URL with no login.
-        /** @var list<McpServer>|null */
+        // No longer read: a server named by URL is now a custom connector, so create one for its URL and name it unde...
+        /** @var list<array<string, mixed>>|null */
         public ?array $mcpServers = null,
         public AgentMode|string|null $mode = null,
-        // Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on its p...
-        /** @var list<PluginEvent>|null */
+        // No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty lis...
+        /** @var list<array<string, mixed>>|null */
         public ?array $pluginEvents = null,
-        // Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object...
+        // No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty lis...
         /** @var list<mixed>|null */
         public ?array $plugins = null,
         // agent.yaml's region: where the agent's work is done, us or eu for now. Every model its sessions run is serv...
@@ -81,7 +83,7 @@ final readonly class SyncAgentRequest
         public ?string $subagent = null,
         /** @var array<string, string>|null */
         public ?array $tags = null,
-        // How plugin, MCP server and connector tools are offered. A setting left out keeps what is stored.
+        // How connector tools are offered. A setting left out keeps what is stored.
         public ?AgentTools $tools = null,
         public ?string $tts = null,
         public ?SessionVideo $video = null,
@@ -104,6 +106,7 @@ final readonly class SyncAgentRequest
             checkChanges: array_key_exists('check_changes', $data) && $data['check_changes'] !== null ? Json::bool($data, 'check_changes') : null,
             connectors: array_key_exists('connectors', $data) && $data['connectors'] !== null ? array_map(AgentConnectorBinding::fromArray(...), Json::objects($data, 'connectors')) : null,
             dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
+            floorControl: array_key_exists('floor_control', $data) && $data['floor_control'] !== null ? FloorControl::fromArray(Json::object($data, 'floor_control')) : null,
             greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Greeting::fromArray(Json::object($data, 'greeting')) : null,
             guardrail: array_key_exists('guardrail', $data) && $data['guardrail'] !== null ? Json::string($data, 'guardrail') : null,
             harness: array_key_exists('harness', $data) && $data['harness'] !== null ? Json::enum($data, 'harness', Harness::class) : null,
@@ -113,9 +116,9 @@ final readonly class SyncAgentRequest
             knowledgeUrls: array_key_exists('knowledge_urls', $data) && $data['knowledge_urls'] !== null ? array_map(KnowledgeUrlDeclaration::fromArray(...), Json::objects($data, 'knowledge_urls')) : null,
             leftOutConnectors: array_key_exists('left_out_connectors', $data) && $data['left_out_connectors'] !== null ? array_map(LeftOutConnector::fromArray(...), Json::objects($data, 'left_out_connectors')) : null,
             llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
-            mcpServers: array_key_exists('mcp_servers', $data) && $data['mcp_servers'] !== null ? array_map(McpServer::fromArray(...), Json::objects($data, 'mcp_servers')) : null,
+            mcpServers: array_key_exists('mcp_servers', $data) && $data['mcp_servers'] !== null ? Json::objects($data, 'mcp_servers') : null,
             mode: array_key_exists('mode', $data) && $data['mode'] !== null ? Json::enum($data, 'mode', AgentMode::class) : null,
-            pluginEvents: array_key_exists('plugin_events', $data) && $data['plugin_events'] !== null ? array_map(PluginEvent::fromArray(...), Json::objects($data, 'plugin_events')) : null,
+            pluginEvents: array_key_exists('plugin_events', $data) && $data['plugin_events'] !== null ? Json::objects($data, 'plugin_events') : null,
             plugins: array_key_exists('plugins', $data) && $data['plugins'] !== null ? Json::list($data, 'plugins') : null,
             region: array_key_exists('region', $data) && $data['region'] !== null ? Json::string($data, 'region') : null,
             resumeHistory: array_key_exists('resume_history', $data) && $data['resume_history'] !== null ? ResumeHistory::fromArray(Json::object($data, 'resume_history')) : null,
@@ -165,6 +168,9 @@ final readonly class SyncAgentRequest
         if ($this->dispatch !== null) {
             $out['dispatch'] = $this->dispatch->toArray();
         }
+        if ($this->floorControl !== null) {
+            $out['floor_control'] = $this->floorControl->toArray();
+        }
         if ($this->greeting !== null) {
             $out['greeting'] = $this->greeting->toArray();
         }
@@ -193,13 +199,13 @@ final readonly class SyncAgentRequest
             $out['llm'] = $this->llm;
         }
         if ($this->mcpServers !== null) {
-            $out['mcp_servers'] = array_map(static fn (McpServer $each): array => $each->toArray(), $this->mcpServers);
+            $out['mcp_servers'] = $this->mcpServers;
         }
         if ($this->mode !== null) {
             $out['mode'] = Json::enumValue($this->mode);
         }
         if ($this->pluginEvents !== null) {
-            $out['plugin_events'] = array_map(static fn (PluginEvent $each): array => $each->toArray(), $this->pluginEvents);
+            $out['plugin_events'] = $this->pluginEvents;
         }
         if ($this->plugins !== null) {
             $out['plugins'] = $this->plugins;

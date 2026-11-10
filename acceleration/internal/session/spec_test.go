@@ -1,21 +1,15 @@
 package session
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
-	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -50,6 +44,25 @@ func (s *SpecSuite) TestAConfigsReviewInstructionsAreWhatItsCallsAreReviewedBy()
 	s.Equal("Score the upsell.", spec.ReviewInstructions)
 }
 
+func (s *SpecSuite) TestAConfigsMaxWaitIsWhatItsSessionsEndTurnsBy() {
+	chosen := store.FloorControl{Model: store.FloorControlChorusASR, MaxWaitMs: 900}
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", FloorControl: chosen})
+
+	s.Equal(chosen, spec.FloorControl)
+	s.Equal(audiofloor.EndOfTurn{MaxWaitMs: 900}, EndOfTurnOf(spec.FloorControl))
+	s.Equal(audiofloor.EndOfTurn{}, EndOfTurnOf(store.FloorControl{Model: store.FloorControlChorusASR}), "no wait chosen is the server's default")
+}
+
+func (s *SpecSuite) TestAConfigsFloorControlIsWhatItsSessionsAreRuledBy() {
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", FloorControl: store.FloorControl{Model: store.FloorControlChorusASR}})
+
+	s.Equal(store.FloorControl{Model: store.FloorControlChorusASR}, spec.FloorControl)
+	s.Equal(audiofloor.Act, FloorModeOf(spec.FloorControl))
+	unset := FromConfig(store.AgentConfig{CustomerID: "acme"}).FloorControl
+	s.True(unset.IsZero())
+	s.Equal(audiofloor.Off, FloorModeOf(unset), "none chosen is the default flow controller")
+}
+
 func (s *SpecSuite) TestAConfigsVariedGreetingIsVariedInTheSession() {
 	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Greeting: "Hello.", GreetingMode: store.GreetingVariation})
 
@@ -79,15 +92,6 @@ func (s *SpecSuite) TestThePromptIsWhatTheAgentWasToldWithoutTheClock() {
 	s.Equal(agent.NavigatingInstructions+"\n\nBe brief.\n\nKeep links whole.", spec.prompt())
 }
 
-func (s *SpecSuite) TestAConfigsPluginsBecomeTheSessions() {
-	spec := FromConfig(store.AgentConfig{
-		CustomerID: "acme",
-		Plugins:    []store.PluginEntry{{Name: "slack"}, {Name: "calendly", User: true}},
-	})
-
-	s.Equal([]store.PluginEntry{{Name: "slack"}, {Name: "calendly", User: true}}, spec.Plugins)
-}
-
 func (s *SpecSuite) TestAConfigsConnectorBindingsBecomeTheSessions() {
 	bindings := []store.ConnectorBinding{{Name: "tracker", ConnectorID: "linear",
 		Connection: store.ConnectionBinding{Type: selectionSession}}}
@@ -95,23 +99,6 @@ func (s *SpecSuite) TestAConfigsConnectorBindingsBecomeTheSessions() {
 	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Connectors: bindings})
 
 	s.Equal(bindings, spec.ConnectorBindings)
-}
-
-// TestAConnectorBindingWinsOverAPluginEntryForTheSameProvider: the same provider is a
-// binding's connector_id equal to a plugin entry's name, the id the built-in connectors share
-// with the plugin catalog. The binding's alias plays no part.
-func (s *SpecSuite) TestAConnectorBindingWinsOverAPluginEntryForTheSameProvider() {
-	spec := FromConfig(store.AgentConfig{
-		CustomerID: "acme",
-		Plugins:    []store.PluginEntry{{Name: "linear"}, {Name: "calendly"}, {Name: "gong", User: true}},
-		Connectors: []store.ConnectorBinding{{Name: "tracker", ConnectorID: "linear",
-			Connection: store.ConnectionBinding{Type: selectionSession}}},
-	})
-	spec.CallID = "call-1"
-
-	s.Require().NoError(spec.Normalize())
-
-	s.Equal([]store.PluginEntry{{Name: "calendly"}, {Name: "gong", User: true}}, spec.Plugins)
 }
 
 // TestAVoiceSessionIsKeyedUnderTheAgentIDItNamesBeforeNormalize: KeyedAgentID is what
@@ -148,39 +135,6 @@ func (s *SpecSuite) TestATextSessionNamingNoAgentIDIsKeyedUnderNoneACallerNamed(
 	s.Empty(spec.KeyedAgentID())
 	s.Require().NoError(spec.Normalize())
 	s.NotEmpty(spec.AgentID)
-}
-
-// TestWithoutABindingThePluginsAreLeftExactlyAsConfigured: Normalize's same-provider rule
-// is a no-op for a config that binds no connector, down to an empty list staying empty.
-func (s *SpecSuite) TestWithoutABindingThePluginsAreLeftExactlyAsConfigured() {
-	spec := FromConfig(store.AgentConfig{
-		CustomerID: "acme",
-		Plugins:    []store.PluginEntry{{Name: "linear"}, {Name: "slack", User: true}},
-	})
-	spec.CallID = "call-1"
-	empty := FromConfig(store.AgentConfig{CustomerID: "acme", Plugins: []store.PluginEntry{}})
-	empty.CallID = "call-2"
-
-	s.Require().NoError(spec.Normalize())
-	s.Require().NoError(empty.Normalize())
-
-	s.Equal([]store.PluginEntry{{Name: "linear"}, {Name: "slack", User: true}}, spec.Plugins)
-	s.NotNil(empty.Plugins)
-	s.Empty(empty.Plugins)
-}
-
-func (s *SpecSuite) TestAPluginOfAnotherProviderStaysBesideABinding() {
-	spec := FromConfig(store.AgentConfig{
-		CustomerID: "acme",
-		Plugins:    []store.PluginEntry{{Name: "slack"}},
-		Connectors: []store.ConnectorBinding{{Name: "slack", ConnectorID: "custom_slack",
-			Connection: store.ConnectionBinding{Type: selectionFixed, ConnectionID: "c1"}}},
-	})
-	spec.CallID = "call-1"
-
-	s.Require().NoError(spec.Normalize())
-
-	s.Equal([]store.PluginEntry{{Name: "slack"}}, spec.Plugins)
 }
 
 // A call's transcript goes into the conversation's agent channel, else the agent id's, as
@@ -224,75 +178,6 @@ func (s *SpecSuite) TestHowAConfigsSandboxIsBuiltBecomesTheSessions() {
 	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Sandbox: daytonaProvider, SandboxOptions: options})
 
 	s.Equal(options, spec.SandboxOptions)
-}
-
-func (s *SpecSuite) TestAConfigsMCPServersBecomeTheSessions() {
-	servers := []store.MCPServer{{Name: "tablejourney", URL: "https://tablejourney.com/mcp"}}
-
-	spec := FromConfig(store.AgentConfig{CustomerID: "acme", MCPServers: servers})
-
-	s.Equal(servers, spec.MCPServers)
-}
-
-func (s *SpecSuite) TestAnMCPServersToolsAndInstructionsJoinTheSession() {
-	spec, mcp, tools := s.tablejourney()
-	defer mcp.Close()
-	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp, nil)
-
-	s.Require().Len(tools, 1)
-	s.Equal("tablejourney__search_places", tools[0].Name)
-	s.True(strings.HasPrefix(spec.prompt(), "Be brief.\n\nThe tablejourney tools"), spec.prompt())
-	s.True(strings.HasSuffix(spec.prompt(), "Keep booking links whole."), spec.prompt())
-}
-
-// What the config's MCP servers said comes first, then what each custom connector's server
-// said, each cut to the same 4000 bytes on its own: a cut that splits a rune drops it.
-func (s *SpecSuite) TestMCPServersAndCustomConnectorsSayTheirsInOneBlock() {
-	spec, mcp, _ := s.tablejourney()
-	defer mcp.Close()
-	long := strings.Repeat("a", 3999) + "é" + "never read"
-
-	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp, []serverSaid{
-		{name: "crm", tools: "crm__*", text: long},
-		{name: "archive", tools: "archive__*", text: "Dates are UTC."},
-	})
-
-	s.Equal("Be brief.\n\n"+
-		"The tablejourney tools (tablejourney__*) come with these instructions from their server:\n\nKeep booking links whole.\n\n"+
-		"The crm tools (crm__*) come with these instructions from their server:\n\n"+strings.Repeat("a", 3999)+"\n\n"+
-		"The archive tools (archive__*) come with these instructions from their server:\n\nDates are UTC.",
-		spec.prompt())
-}
-
-// tablejourney is a session told "Be brief." with the MCP server tablejourney attached, which
-// offers search_places and says "Keep booking links whole." about it, and its tools.
-func (s *SpecSuite) tablejourney() (Spec, *plugins.Runtime, []harness.Tool) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			ID     int    `json:"id"`
-			Method string `json:"method"`
-		}
-		s.Require().NoError(json.NewDecoder(r.Body).Decode(&body))
-		var result any
-		switch body.Method {
-		case "notifications/initialized":
-			w.WriteHeader(http.StatusAccepted)
-			return
-		case "initialize":
-			result = map[string]any{"protocolVersion": "2025-03-26", "instructions": "Keep booking links whole."}
-		case "tools/list":
-			result = map[string]any{"tools": []map[string]any{{"name": "search_places", "inputSchema": map[string]any{"type": "object"}}}}
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": body.ID, "result": result})
-	}))
-	s.T().Cleanup(server.Close)
-	needsLogin := false
-	spec := Spec{
-		Instructions: "Be brief.",
-		MCPServers:   []store.MCPServer{{Name: "tablejourney", URL: server.URL, NeedsLogin: &needsLogin}},
-	}
-	mcp, tools, _ := attachPlugins(context.Background(), spec, nil, &plugins.Auth{HTTP: server.Client()}, slog.New(slog.DiscardHandler))
-	return spec, mcp, tools
 }
 
 func (s *SpecSuite) TestKeytermsAreTidiedOnTheWayIn() {

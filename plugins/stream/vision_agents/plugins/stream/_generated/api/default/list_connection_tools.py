@@ -93,8 +93,8 @@ def sync_detailed(
     """List a connection's tools
 
      The tools the connection offered when it was last validated, each with the schema digest an agent
-    config's grant pins. Empty until a validate listed them. Who may read them is who may read the
-    connection.
+    config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them
+    is who may read the connection.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -128,8 +128,8 @@ def sync(
     """List a connection's tools
 
      The tools the connection offered when it was last validated, each with the schema digest an agent
-    config's grant pins. Empty until a validate listed them. Who may read them is who may read the
-    connection.
+    config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them
+    is who may read the connection.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -158,8 +158,8 @@ async def asyncio_detailed(
     """List a connection's tools
 
      The tools the connection offered when it was last validated, each with the schema digest an agent
-    config's grant pins. Empty until a validate listed them. Who may read them is who may read the
-    connection.
+    config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them
+    is who may read the connection.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -191,8 +191,8 @@ async def asyncio(
     """List a connection's tools
 
      The tools the connection offered when it was last validated, each with the schema digest an agent
-    config's grant pins. Empty until a validate listed them. Who may read them is who may read the
-    connection.
+    config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them
+    is who may read the connection.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 

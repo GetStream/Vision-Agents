@@ -144,7 +144,7 @@ type Session struct {
 	// long a reply may say nothing before it is asked of that one as well, flowHedgeAfter the
 	// same for a flow decision. All are unset on a fallback child, which is only ever asked for
 	// a response its parent has chosen it for.
-	hedge          func(context.Context) (*Session, error)
+	hedge          func(context.Context, llm.ResponseParams) (*Session, error)
 	hedgeAfter     time.Duration
 	flowHedgeAfter time.Duration
 	provider       Provider
@@ -240,19 +240,25 @@ func (s *Session) attempt(ctx context.Context, params llm.ResponseParams, hedge 
 		if params.OnTiming != nil {
 			params.OnTiming(llm.CallTiming{OperationID: params.ID, Purpose: params.Purpose,
 				TurnID: params.TurnID, Provider: s.config.Provider, Model: s.config.Model,
-				DurationMs: durationMs, Success: false, ErrorCode: code})
+				DurationMs: durationMs, Success: false, ErrorCode: code, ErrorMessage: store.SafeLogText(message)})
 		}
 		return nil, err
 	}
 	createdAt := time.Now()
 	charged := s.charged(ctx)
 	settled := s.keep(held)
+	// The response settles with its status alone, so what its failure said is taken from the
+	// event that reported it: the last one, as the stream's own Err keeps.
+	var failure string
 	return stream.Observe(func(event llm.Event) {
+		if failed, ok := event.(llm.ResponseFailed); ok {
+			failure = failed.Error()
+		}
 		if completed, done := event.(llm.ResponseCompleted); done {
 			settled()
 			passed.observeStream(s.config, createdAt, completed.Response)
 		}
-		s.observe(startedAt, createdAt, params, hedge, event, owner, charged, reserved)
+		s.observe(startedAt, createdAt, params, hedge, event, owner, charged, reserved, failure)
 	}), nil
 }
 
@@ -335,7 +341,7 @@ func (s *Session) Close() error {
 // One response is one unit of billable work, the way one synthesis is for text-to-speech,
 // and it is recorded once: a failure is carried on the response that failed rather than
 // written as a row of its own, so one turn stays one row.
-func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponseParams, hedge *hedgeAttempt, event llm.Event, owner routing.Owner, charged routing.Caller, reserved uuid.UUID) {
+func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponseParams, hedge *hedgeAttempt, event llm.Event, owner routing.Owner, charged routing.Caller, reserved uuid.UUID, failure string) {
 	completed, settled := event.(llm.ResponseCompleted)
 	if !settled {
 		return
@@ -397,12 +403,17 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 	stat.LatencyMs = measuredLatency(response, ttftMs)
 	stat.Success = served(response)
 	stat.ErrorCode = code
+	// Only a response that did not run to its end says why, so a served one's row and timing
+	// are the ones they always were.
+	if code != "" {
+		stat.ErrorMessage = failure
+	}
 	label(&stat, params, hedge)
 	if params.OnTiming != nil {
 		params.OnTiming(llm.CallTiming{OperationID: response.ID, Purpose: params.Purpose,
 			TurnID: params.TurnID, Provider: s.config.Provider, Model: s.config.Model,
 			TTFTMs: ttftMs, DurationMs: durationMs,
-			Success: served(response), ErrorCode: code,
+			Success: served(response), ErrorCode: code, ErrorMessage: store.SafeLogText(stat.ErrorMessage),
 			InputTokens: usage.InputTokens, CachedInputTokens: usage.CachedInputTokens,
 			OutputTokens: usage.OutputTokens, CostMicros: s.recorder.QuoteStat(s.config, stat).CostMicros})
 	}
@@ -567,8 +578,14 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	// Measured once per request, up to its first attempt: a hedge or a fallback starts later by
 	// design, which is not the router's own time.
 	routing.ObserveLLMStage(s.config, routing.StageRouter, time.Since(enteredAt))
+	passedOver := s.passesOver(params)
+	if passedOver {
+		if alternate, err := s.fallback(ctx, params); err == nil {
+			return screened(alternate, verdict), nil
+		}
+	}
 	stream, err := open(ctx, params)
-	if err == nil || ctx.Err() != nil || s.fallback == nil || params.PreviousResponseID != "" || params.Conversation != "" {
+	if err == nil || passedOver || ctx.Err() != nil || s.fallback == nil || params.PreviousResponseID != "" || params.Conversation != "" {
 		return screened(stream, verdict), stack.Wrap(err)
 	}
 	var apiError *openai.Error
@@ -581,7 +598,17 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	if fallbackErr != nil {
 		return nil, stack.Wrap(errors.Join(err, fallbackErr))
 	}
+	routing.CountHandover(routing.LLM, s.config, err)
 	return screened(alternate, verdict), nil
+}
+
+// passesOver reports whether a response is asked of the other candidates before this
+// session's own model, because that model would ignore the tools the response offers. It
+// is asked of its own model still when none of them answers, which is all a target naming
+// only such a model has. A response continuing from one the provider holds stays put.
+func (s *Session) passesOver(params llm.ResponseParams) bool {
+	return s.config.IgnoresTools && len(params.Tools) > 0 && s.fallback != nil &&
+		params.PreviousResponseID == "" && params.Conversation == ""
 }
 
 // counted reports whether this session's answers count toward a daily limit. A mock

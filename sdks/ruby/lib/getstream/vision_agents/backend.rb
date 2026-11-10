@@ -26,12 +26,22 @@ module GetStream
       # checked: which regions are served is the hosted router's to say, so offering another
       # needs no release of this SDK.
       REGION = /\A[a-z]+-[a-z]+[0-9]+\z/
+      # Where a caller the proxy is not in front of names its usage categories, its team among
+      # them as team:<name>, joined with commas. Behind the proxy they are claims on the token
+      # instead, and the proxy deletes this header.
+      USAGE_CATEGORIES_HEADER = "X-Stream-Usage-Categories"
+      # The rule the router and the proxy hold usage categories to. A team is a category of its
+      # own, team:<name>, which is why its name is shorter and has no ':'.
+      TEAM_PREFIX = "team:"
+      MAX_CATEGORIES = 10
+      TEAM = /\A[A-Za-z0-9_.-]{1,59}\z/
+      CATEGORY = /\A[A-Za-z0-9_.:-]{1,64}\z/
 
       # How long a token minted here lasts. Short, because it is minted per request and a
       # stolen one should stop working sooner than the credential behind it.
       TOKEN_VALIDITY = 60 * 60
 
-      attr_reader :url, :customer_id, :api_key, :user_id, :user
+      attr_reader :url, :customer_id, :api_key, :user_id, :user, :team, :usage_categories
 
       # Every argument falls back to the environment, so a process deployed next to a router
       # needs none of them.
@@ -50,8 +60,17 @@ module GetStream
       #   hosted router, in any region; anywhere else STREAM_ACCELERATION_AUTHENTICATE.
       # @param acting_for [String] the end user a server-side credential speaks for. Unlike
       #   user_id it keeps this backend's own credential; see #acting_for.
+      # @param team [String] the customer's team the work is counted against, such as
+      #   finance: 1 to 59 of A-Za-z0-9_.-.
+      # @param usage_categories [Array<String>] the customer's own groupings the work is
+      #   counted against, such as project:onboarding: each 1 to 64 of A-Za-z0-9_.:-, none
+      #   starting team:, and at most 10 with the team. Kept sorted, each once. The team and
+      #   the categories are signed into every token minted here, and sent in
+      #   X-Stream-Usage-Categories to a router with no proxy in front of it. A token handed in
+      #   carries the ones it was signed with, so neither can be passed with one.
       def initialize(url: nil, customer_id: nil, api_key: nil, api_secret: nil, token: nil,
-                     user_id: nil, authenticate: nil, user: nil, acting_for: nil, region: nil)
+                     user_id: nil, authenticate: nil, user: nil, acting_for: nil, region: nil,
+                     team: nil, usage_categories: [])
         @url = locate(present(url), present(region)).chomp("/")
         @customer_id = customer_id || ENV.fetch(CUSTOMER_ENV, "")
         # Naming a customer is choosing how a router with nothing in front of it is reached,
@@ -69,6 +88,8 @@ module GetStream
         @user = user || {}
         @user_id = (user_id || @user["id"] || @user[:id]).to_s
         @acting_for = acting_for.to_s
+        @team = present(team&.to_s)
+        @usage_categories = Backend.checked_categories(@team, usage_categories)
 
         validate
       end
@@ -105,7 +126,7 @@ module GetStream
       def acting_for(user_id)
         Backend.new(url: @url, customer_id: @customer_id, api_key: @api_key, api_secret: @api_secret,
                     token: @token, user_id: @user_id, authenticate: @authenticate, user: @user,
-                    acting_for: user_id)
+                    acting_for: user_id, team: @team, usage_categories: @usage_categories)
       end
 
       # What every request and socket handshake carries. Minted per read, so a client left
@@ -113,7 +134,50 @@ module GetStream
       def headers
         said = credentials
         said["X-Stream-User-Id"] = @acting_for unless @acting_for.empty?
+        categories = named_categories
+        said[USAGE_CATEGORIES_HEADER] = categories.join(",") unless @authenticate || categories.empty?
         said
+      end
+
+      # The team, or ConfigurationError naming why the router would refuse it.
+      def self.check_team(team)
+        unless team.is_a?(String) && TEAM.match?(team)
+          raise ConfigurationError, "team #{team.inspect} is not 1 to 59 characters of A-Z, a-z, 0-9, _ . and -"
+        end
+
+        team
+      end
+
+      # The usage category, or ConfigurationError naming why the router would refuse it.
+      def self.check_category(category)
+        unless category.is_a?(String) && CATEGORY.match?(category)
+          raise ConfigurationError,
+                "usage category #{category.inspect} is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : and -"
+        end
+        # In any case, as the proxy reads it: Team:finance would be a second team.
+        if category[0, TEAM_PREFIX.size].downcase == TEAM_PREFIX
+          raise ConfigurationError, "usage category #{category.inspect} names a team: use team: for a team"
+        end
+
+        category
+      end
+
+      # The categories each once and sorted, as the proxy keeps them, or ConfigurationError
+      # naming the entry the router would refuse.
+      def self.checked_categories(team, categories)
+        if categories.is_a?(String)
+          raise ConfigurationError,
+                "usage_categories is a list of categories, not the one string #{categories.inspect}"
+        end
+
+        kept = Array(categories).map { |category| check_category(category) }.uniq.sort.freeze
+        check_team(team) unless team.nil?
+        count = kept.size + (team.nil? ? 0 : 1)
+        if count > MAX_CATEGORIES
+          raise ConfigurationError, "at most #{MAX_CATEGORIES} usage categories, the team included; these are #{count}"
+        end
+
+        kept
       end
 
       # The WebSocket URL for a path on the router. Credentials travel as headers.
@@ -186,7 +250,7 @@ module GetStream
           headers["Authorization"] = "Bearer #{@token}"
           headers["Stream-Auth-Type"] = "jwt"
         else
-          headers["Authorization"] = "Bearer #{Backend.sign({ server: true }, @api_secret)}"
+          headers["Authorization"] = "Bearer #{sign(server: true)}"
           headers["Stream-Auth-Type"] = "server"
           headers["X-Stream-User-Id"] = @user_id unless @user_id.empty?
         end
@@ -203,6 +267,11 @@ module GetStream
                 "who is calling is not set; pass customer_id or set #{CUSTOMER_ENV} for a router " \
                 "that trusts one, or api_key with either api_secret or token"
         end
+        if !@token.empty? && (@team || !@usage_categories.empty?)
+          raise ConfigurationError,
+                "a token handed in carries the team and usage categories it was signed with; " \
+                "mint it with them instead"
+        end
         return unless !@api_key.empty? && @api_secret.empty? && @token.empty?
 
         raise ConfigurationError, "api_key needs the secret it belongs to, or a token minted with it"
@@ -212,9 +281,21 @@ module GetStream
       # header to read a backend's choice of user from. Acting for a user keeps the server's.
       def proxy_token
         return @token unless @token.empty?
-        return Backend.sign({ user_id: @user_id }, @api_secret) unless @user_id.empty? || !@acting_for.empty?
+        return sign(user_id: @user_id) unless @user_id.empty? || !@acting_for.empty?
 
-        Backend.sign({ server: true }, @api_secret)
+        sign(server: true)
+      end
+
+      # A token naming this backend's team and usage categories, each only when there is one.
+      def sign(claims)
+        claims[:team] = @team if @team
+        claims[:usage_categories] = @usage_categories unless @usage_categories.empty?
+        Backend.sign(claims, @api_secret)
+      end
+
+      # The team and categories as one list, the team as team:<name>.
+      def named_categories
+        (@usage_categories + (@team ? ["#{TEAM_PREFIX}#{@team}"] : [])).sort
       end
 
       def present(value)

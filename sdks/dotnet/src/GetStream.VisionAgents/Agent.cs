@@ -151,6 +151,17 @@ public sealed record SessionOptions
 
     /// <summary>Models for this conversation alone, over the agent's own.</summary>
     public ModelOverwrites? ModelOverwrites { get; init; }
+
+    /// <summary>
+    /// The team the conversation's work is counted under, its team spend limits included: 1 to
+    /// 59 letters, digits, <c>_ . -</c>. Null is the team the caller's token names, else the
+    /// agent's <c>tags: team</c>.
+    /// </summary>
+    /// <remarks>
+    /// Server side only: a device sending it is refused with a 403, and a token signed for
+    /// another team with a 400.
+    /// </remarks>
+    public string? Team { get; init; }
 }
 
 /// <summary>How an agent is built.</summary>
@@ -268,6 +279,12 @@ public sealed record InboundMessage
     /// <summary>What was written.</summary>
     public string Text { get; init; } = "";
 
+    /// <summary>
+    /// The photos sent with it, as URLs to fetch, empty when none was sent.
+    /// <see cref="Dispatch.AnswerAsync"/> shows them to the model.
+    /// </summary>
+    public IReadOnlyList<InboundImage> Images { get; init; } = [];
+
     /// <summary>The message's id.</summary>
     public string MessageId { get; init; } = "";
 
@@ -283,6 +300,11 @@ public sealed record InboundMessage
     /// <summary>When it arrived.</summary>
     public DateTimeOffset? At { get; init; }
 }
+
+/// <summary>A photo sent with an <see cref="InboundMessage"/>.</summary>
+/// <param name="Url">Where to fetch it.</param>
+/// <param name="MimeType">Its MIME type, empty when the router does not know it.</param>
+public sealed record InboundImage(string Url, string MimeType = "");
 
 /// <summary>
 /// An agent's knowledge base, as somewhere to put more of it.
@@ -689,6 +711,7 @@ public sealed class Agent : IAsyncDisposable
             ProjectId = VisionAgentsClient.Blank(options.ProjectId),
             Custom = options.Custom is { Count: > 0 } custom ? custom.ToDictionary(pair => pair.Key, pair => pair.Value!) : null,
             ModelOverwrites = options.ModelOverwrites,
+            Team = VisionAgentsClient.Blank(options.Team),
             Llm = VisionAgentsClient.Blank(pipeline.Llm),
             Stt = VisionAgentsClient.Blank(pipeline.Stt),
             Tts = VisionAgentsClient.Blank(pipeline.Tts),
@@ -822,6 +845,9 @@ public sealed class Agent : IAsyncDisposable
         request.Dispatch = declared.Dispatch is { } dispatch
             ? new AgentDispatch { IncomingCall = VisionAgentsClient.Blank(dispatch.IncomingCall), Text = VisionAgentsClient.Blank(dispatch.Text) }
             : null;
+        // As written, an empty one ({}) included: that is the default flow controller again.
+        // Which models there are is the router's to say.
+        request.FloorControl = declared.FloorControl;
     }
 
     /// <summary>

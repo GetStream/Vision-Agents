@@ -1,9 +1,12 @@
-import type { Backend, StreamCredentials } from "./backend.js";
+import type { Backend, StreamCredentials, StreamUser } from "./backend.js";
 import { ConfigurationError } from "./errors.js";
 
 /** The parts of a `StreamChat` this package touches. */
 export interface ChatClient {
-  readonly userID?: string;
+  /** Who it is connected as, in stream-chat 10. */
+  readonly userId?: string | undefined;
+  /** Who it is connected as, in stream-chat 9 (a deprecated alias of `userId` in 10). */
+  readonly userID?: string | undefined;
   channel(type: string, id: string): unknown;
   connectUser(user: { id: string }, token: string | (() => Promise<string>)): Promise<unknown>;
   disconnectUser(): Promise<unknown>;
@@ -83,13 +86,13 @@ export class StreamPeers {
   /** The connected `StreamChat` for the current user. */
   async chat(): Promise<ChatClient> {
     if (this.given.chat) {
-      return this.sameUser("chat", this.given.chat, this.given.chat.userID);
+      return this.sameUser("chat", this.given.chat, this.given.chat.userId ?? this.given.chat.userID);
     }
     return this.shared(this.chats, async () => {
       const credentials = await this.credentials("chat");
       const StreamChat = installed(registered.chat, "chat", "stream-chat");
       const client = new StreamChat(credentials.apiKey);
-      await client.connectUser(credentials.user, this.tokens("chat", credentials.token));
+      await client.connectUser(chatUser(client, credentials.user), this.tokens("chat", credentials.token));
       return client;
     });
   }
@@ -130,8 +133,8 @@ export class StreamPeers {
     return client;
   }
 
-  private async credentials(what: string): Promise<StreamCredentials> {
-    const credentials = await this.backend.streamCredentials();
+  private async credentials(what: string, refresh = false): Promise<StreamCredentials> {
+    const credentials = await this.backend.streamCredentials(refresh);
     if (!credentials) {
       throw new ConfigurationError(
         `${what} connects to Stream rather than to this router, so it needs a Stream key and ` +
@@ -145,7 +148,7 @@ export class StreamPeers {
   private tokens(what: string, first: string): () => Promise<string> {
     let unused: string | undefined = first;
     return async () => {
-      const token = unused ?? (await this.credentials(what)).token;
+      const token = unused ?? (await this.credentials(what, true)).token;
       unused = undefined;
       return token;
     };
@@ -176,4 +179,36 @@ function installed<T>(registered: T | undefined, what: string, peer: string): T 
     );
   }
   return registered;
+}
+
+/** What stream-chat 10 takes of a user top level when connecting; the rest goes under `custom`. */
+const CONNECT_FIELDS = new Set(["id", "name", "image", "language", "invisible", "privacy_settings"]);
+
+/**
+ * The user `setUser` named, as the installed stream-chat takes it.
+ *
+ * `StreamUser` keeps the app's own fields top level, which is how stream-chat 9 takes them.
+ * 10 takes them only under `custom`, and a client with `userId` is 10's: 9 has only `userID`,
+ * set once connected. What the app already put under `custom` is kept there.
+ */
+function chatUser(client: ChatClient, user: StreamUser): StreamUser {
+  if (!("userId" in client)) {
+    return user;
+  }
+  const top: StreamUser = { id: user.id };
+  const custom: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(user)) {
+    if (CONNECT_FIELDS.has(key)) {
+      top[key] = value;
+    } else if (key !== "custom") {
+      custom[key] = value;
+    }
+  }
+  const given = user["custom"];
+  if (typeof given === "object" && given !== null && !Array.isArray(given)) {
+    Object.assign(custom, given);
+  } else if (given !== undefined) {
+    custom["custom"] = given;
+  }
+  return Object.keys(custom).length > 0 ? { ...top, custom } : top;
 }

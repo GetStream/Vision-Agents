@@ -12,7 +12,8 @@ npm install @stream-io/calypso
 ```
 
 Node 22 or newer, or any browser. No runtime dependencies: `fetch`, `WebSocket` and Web
-Crypto are all taken from the runtime.
+Crypto are all taken from the runtime. `session.chat()` works with `stream-chat` 9 or 10
+(10 needs Node 22.18 or newer).
 
 ## The three ways to say who is calling
 
@@ -21,6 +22,7 @@ Which one a deployment uses is a property of the deployment rather than a choice
 | Credential | Who it is | Reaches |
 | --- | --- | --- |
 | `customerId` | A router with nothing in front of it, which is a laptop | everything |
+| `customerId` + `setUser` | A page on that laptop | the conversations that user owns |
 | `apiKey` + `apiSecret` | A process you run | everything |
 | `apiKey` + `token` | A browser | the conversations that user owns |
 
@@ -33,6 +35,15 @@ const api = new Client();
 // In a browser, with a token your backend minted for this user.
 const api = new Client({ apiKey: "vak_live_…", token: () => fetch("/api/token").then((r) => r.text()) });
 ```
+
+A token function is asked once and its answer kept. It is asked again when the router answers
+401, and the request is sent once more; when a socket is refused, and the socket dialled once
+more; when the token it holds expires within a minute, read from the JWT's `exp`; and after
+`setUser` or `clearUser`. Requests that need a token while one is being fetched wait for that
+fetch, and requests refused together ask for one new token between them. A token passed as a
+string is the only one there is, so a 401 with it is final.
+
+Search is the one routed modality a page may reach: `api.router({ config: "healthcare" }).search("what changed in the pricing page")`.
 
 `url` falls back to `STREAM_ACCELERATION_URL`, then Stream's hosted router, so it is only
 passed for a self-hosted or local one. The hosted router is us-east4's; for another region,
@@ -53,11 +64,18 @@ A router running locally with nothing in front of it is reached by customer id:
 const api = new Client({ url: "http://localhost:8080", customerId: "examples" });
 ```
 
+A page there names its user with `setUser`, and is then that user rather than the app's
+backend: it lists only their conversations, and `serverSide` is false. A server that passes
+`userId` instead stays the backend, acting for that user.
+
 It is a switch rather than an extra header or two because the two spellings contradict each
 other: a router reached directly needs `Stream-Auth-Type: server` before it admits a
 backend, and that is the one thing the proxy refuses. Opt in rather than let the presence of
 a credential decide, because a Stream key and secret are in the environment for plenty of
 reasons that have nothing to do with this router.
+
+A page that signs somebody out calls `api.clearUser()`, and a guest from `api.guestUser()` is
+acted as with `api.setUser(guest)`, which takes the token it was minted with.
 
 A secret belongs on a server. A browser holding one could rewrite every agent in the app,
 which is why the browser passes a token instead — and why the operations that configure an
@@ -80,6 +98,56 @@ went wrong. Branch on `code` (`not_configured`, `validation_failed`, ...) or `ty
 message, and expect codes you do not know; quote `requestId` to support, since a 500 says only
 "something went wrong".
 
+## Spend limits and teams
+
+A backend caps what the organization, its apps, keys, end users, teams and usage categories may
+spend in each day, week, two weeks or month. Amounts are `USD`, held exactly as the millionths
+of a dollar the router counts in, and never built from a fractional number: `USD.dollars(20)`,
+`USD.cents(1250)`, or `USD.parse("12.50")` (a string of dollars is taken anywhere an amount is).
+
+```ts
+import { Client, USD } from "@stream-io/calypso";
+
+const api = new Client(); // STREAM_API_KEY and STREAM_API_SECRET: server side only
+await api.spendLimits.create({ subject: "organization", interval: "monthly", amount: USD.dollars(20_000) });
+
+// Every key of app 1234 may spend $50 a day, and the CI key $10.
+await api.spendLimits.create({ subject: "api_key", appId: "1234", interval: "daily", amount: USD.dollars(50) });
+await api.spendLimits.create({
+  subject: "api_key", appId: "1234", apiKey: "mz7kq2xa9b", interval: "daily", amount: USD.dollars(10), note: "CI key",
+});
+const [ci] = await api.spendLimits.list({ subject: "api_key", appId: "1234", apiKey: "mz7kq2xa9b" });
+await api.spendLimits.setAmount(ci!.id, USD.dollars(25));
+await api.spendLimits.delete(ci!.id);
+
+// Every user of app 1234 may spend $20 a day, and user-42 $50.
+await api.spendLimits.create({ subject: "user", appId: "1234", interval: "daily", amount: USD.dollars(20) });
+await api.spendLimits.create({ subject: "user", appId: "1234", userId: "user-42", interval: "daily", amount: USD.dollars(50) });
+
+// Created or changed, whichever the team needs.
+await api.teams.setLimit("finance", { interval: "monthly", amount: USD.dollars(8_000) });
+
+// Work counted under the team: one session, or everything a client does.
+const session = await api.agent("docs").sessions.create({ team: "finance" });
+const finance = new Client({ team: "finance" });
+
+// Count user-42's week from now. Nothing is refunded.
+await api.spendLimits.reset({
+  subject: "user", appId: "1234", userId: "user-42", intervals: ["weekly"], reason: "refunded a duplicate run",
+});
+```
+
+An agent whose `agent.yaml` has `tags: team: finance` counts its sessions under that team when
+neither the caller's token nor the session names one.
+
+A client built with `team` (and `usageCategories`) signs them into every token it mints, and
+sends them in `X-Stream-Usage-Categories` to a router with no proxy in front of it. A device's
+token carries its own, from `api.createUserToken("user-42", { team: "finance" })`, so neither can
+be passed beside a token; a session naming a team other than its token's is refused with a 400,
+and a device naming one at all with a 403. What the router answers is in micros too:
+`USD.fromMicros(limit.limit_micros)` prints as `$20000.00`. Work a limit refuses is a
+`RouterError` of 402 `spend_limit_reached`, or 429 `user_limit_reached` for one end user's.
+
 ## A conversation somebody comes back to
 
 A text conversation is kept in Stream Chat, so what was said outlives the session that
@@ -94,6 +162,13 @@ await session.responses.create("Where is my order?");
 // Later: ana's conversations still running, without paging through every one that ended.
 const live = await support.sessions.query({ agentId: "ana-support", state: "live" });
 
+// This month's, labelled for the trip, the most recently changed first.
+const trip = await support.sessions.query({
+  createdSince: new Date("2026-11-01"),
+  custom: { topic: "lisbon" },
+  sort: "updated_at",
+});
+
 // Carry one on, running or ended, by the id of the session it was held in.
 const again = await support.sessions.resume(session.id);
 ```
@@ -107,10 +182,32 @@ and the hour in. Opened from a page and left out, it is the zone the browser rep
 device, when that reads as a zone name; anywhere else nothing is read from the machine, and
 `timezone: ""` sends none anywhere, leaving the user's stored zone to decide.
 
+`memory: {}` has the session recall what the agent learned about the user in earlier ones, and
+keep what it learns in this one, with `filter` and `app_id` to narrow it. From a page it is
+remembered for the user `setUser` named, whatever `user_id` it was handed, since a device may
+only name its own; a backend names whichever of its users it means, or the one it acts for.
+
 `session.close()` stops a conversation and keeps everything it recorded and remembered, so
 a conversation in writing is usually left running. `session.delete()`, or
 `sessions.delete(id)` without a handle, deletes it with its turns and what it taught
-memory.
+memory. A conversation this process is not holding is renamed with `sessions.update(id, …)`,
+put on its call and taken off with `sessions.startVoice(id)` and `sessions.stopVoice(id)`,
+stopped with `sessions.close(id)` and forked with `sessions.fork(id, …)`.
+
+### What the agent holds for later
+
+`api.scheduledTasks` is the reminders and later work agents hold for the user `setUser` named:
+what a person does with a reminder they already have. The agent makes one in a conversation,
+and the app's backend can make one in their name; a device cannot.
+
+```ts
+const page = await api.scheduledTasks.list({ state: "active" });
+await api.scheduledTasks.update(page.items[0].id, { next: { in: "PT15M" } }); // snooze
+await api.scheduledTasks.pause(id);
+await api.scheduledTasks.resume(id);
+const runs = await api.scheduledTasks.runs(id);
+await api.scheduledTasks.delete(id);
+```
 
 ## An agent
 
@@ -203,7 +300,9 @@ agent.tools.register<{ flight_id: string }>({
   default it keeps running and the model is told it is still going.
 - `timeoutMs` is how long one call may take, in place of the session's. A call that takes
   longer is aborted and fails.
-- `approval` is asked before each call runs. In writing the call waits in `session.approvals`.
+- `approval` is asked before each call runs. In writing the call waits in `session.approvals`
+  until `session.decide(id, { allowed })` answers it; a page follows the list in
+  `session.conversation`, which says when it changes, a cancel by the model included.
   On a voice call the agent asks the caller out loud, with each `{name}` in the title filled in
   from the call's arguments, and runs the call on a yes within 15 seconds, with
   `toolCallContext.approved` set. A `{name}` that is not in `parameters` is refused when the
@@ -218,6 +317,13 @@ then on, for a write that must not stop halfway, and resolves with the signal to
 only the timeout and the socket ending abort. When the call had already been stopped, that
 signal is already aborted with a `CallNotHeldError`. A call the router addresses to another
 watcher of the session (`run: false`) is left for whoever runs it.
+
+A function shows the model a picture by returning a `ToolOutput`: its `text`, and `images`
+as URLs or data URIs, which the model sees with that call's result.
+
+```ts
+run: async () => new ToolOutput({ text: "The desk, just now.", images: [{ url: dataUri }] }),
+```
 
 ## Agent dispatch
 
@@ -243,7 +349,8 @@ dispatch.onMessage(async (message) => {
     return;
   }
   const session = await dispatch.sessionFor(message, () => new Agent({ name: "John" }));
-  await session.responses.create(message.text);
+  const images = (message.images ?? []).map(({ url }) => ({ url }));
+  await session.responses.create(message.text, { images });
 });
 
 await dispatch.run();
@@ -260,7 +367,8 @@ agent is the one that knows what has been said. `sessionFor` keeps one conversat
 channel for the same reason. The exception is an agent whose agent.yaml says
 `dispatch: {text: enabled}`: what its end users write comes here with the `sessionId` it was
 written to and a `requestId`, unanswered, and `dispatch.answer(message)` has the model answer
-it, with this worker's credential acting for the user who wrote it.
+it, with this worker's credential acting for the user who wrote it. The photos sent with a
+message come in `images`, by URL, and `dispatch.answer` shows them to the model.
 
 A worker can also host tools for every session opened under an agent id, including one a
 browser opened, where the session's own process cannot reach what the tool needs:
@@ -328,6 +436,20 @@ base and its sandbox are there and nowhere else. Left out, the stored region sta
 agent is in `us`. The router refuses a sync naming a model with no instance in the region,
 naming each, and one whose knowledge base is already kept in another region.
 
+`floor_control` is the model that controls the agent's floor, and how long a caller may wait
+once they stop, sent as written:
+
+```yaml
+floor_control:
+  model: stream/chorus-asr
+  max_wait_ms: 800      # optional; left out, the server's default point
+```
+
+Left out or null, the stored choice stays, and an agent that never chose has the default flow
+controller; `floor_control: {}` is the default flow controller again. The router refuses
+`stream/chorus-asr` without a chorus-asr server, and a `max_wait_ms` shorter than every point
+the server has measured.
+
 Each file in `simulations/` is a list of `name`, `scenario` and `assertion`, with `mode`,
 `variations`, `max_turns`, `caller_*`, `judge_target` and `tags` optional. With a
 `simulations/` directory the config's simulations become exactly what it declares, so an
@@ -363,6 +485,8 @@ await voice.leave(); // and closes the session start() made; end() always does
 is a race, and rejects when it fails, for example when the person denies the microphone.
 Asking twice joins once. `VoiceSession.of(session)` joins a session that already has voice
 on, one switched over with `session.voice.start()`; leaving it leaves the session running.
+`VoiceSession.attach(api, sessionId)` does the same from the session's id alone, with a watcher
+of its own that runs no tools, as the phones do.
 
 `status` is what the agent is doing in the states `VoiceGlow` and `VoiceWave` in
 `stream-chat-react/ai-components` take: `connecting` until joined, `speaking` while the agent
@@ -381,6 +505,29 @@ What the agent is doing is on every session, voice or not, as `session.state`: `
 `listening`, `responding`, `working` (with the `skills` thinking) and `ended`. It is fed from
 the socket beside `events()`, so it takes nothing from a loop reading them, and has the same
 `get` and `subscribe`. It is not the session's lifecycle, which is `session.created.state`.
+
+`session.conversation` is the rest of what a page shows, fed the same way: `turns`, what this
+device typed, what was transcribed on the call and the agent's replies as they were written;
+`failure`, what the agent last reported going wrong, such as speech recognition on a call,
+with `failureContext` naming the part (`stt`, `llm`, `sts`, `tts`) and `failureAt` when, until
+the agent next hears, answers or speaks;
+`approvals`, the calls waiting for the person; and `connected`, with `socketError` saying why
+the socket stopped when it did not end normally. A failed join, mute or camera rejects and is
+kept as `failure` on the voice session's snapshot too.
+
+```ts
+const { turns, approvals, failure } = useSyncExternalStore(
+  session.conversation.subscribe,
+  session.conversation.get,
+);
+```
+
+When a call of one of the agent's connectors waits for the person to sign in, its step in the
+Chat channel is `awaiting_authorization`, with the router's sign-in page and a handoff token.
+A page opens it in a popup from a page of the session's `return_url` origin and posts it the
+token; Not now is `session.declineLogin(toolCallId)`, and the router ends the call and tells
+the agent. A `connector_scope_required` event, the step-up a call needs, reads as
+`connectorScopeRequiredOf(event)`.
 
 ## A reply as it is heard
 
@@ -416,7 +563,7 @@ does not say is counted in the voice's characters. A cut freezes the turn at wha
 before the track got to it, behind speech still queued, starts when that has played
 (`delay_ms` on `speaking`). A voice that takes a sentence at a time can still start another
 after a pause, so show a reply in full once `done` is true and its message is no longer
-`generating`.
+`generating` (`message.generating` in stream-chat 9, `message.custom.generating` in 10).
 
 A reply's message usually arrives before its audio starts, and Chat can even be faster than the
 session socket. While the agent is on the call, a turn is `{ chars: 0, done: false }` until its
@@ -500,7 +647,9 @@ client — see [acceleration/README.md](../../acceleration/README.md).
 The tests run against a real HTTP server and a real WebSocket upgrade rather than a stubbed
 `fetch`, so what they exercise is the request this SDK actually puts on the wire.
 
-`npm test` is hermetic and is what CI runs. The two live suites are not part of it and are
+`npm test` is hermetic and is what CI runs, once with the `stream-chat` 9 the lockfile has
+and once with 10. To run it against 10 here: `npm install --no-save stream-chat@^10.0.0-0`,
+then `npm test`, then `npm ci` to go back. The two live suites are not part of it and are
 not in CI: they talk to a deployment, and they skip rather than fail when there is none to
 talk to — a laptop with no router up, or a checkout with no credentials, is not a broken
 build. `test:local` wants a router on `LOCAL_ACCELERATION_URL`, default

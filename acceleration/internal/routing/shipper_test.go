@@ -265,7 +265,7 @@ func (s *WriterSuite) TestAShippedEventCarriesTheRowsIdentityAndBillable() {
 		request.UsageCategories = []string{"team:core", "support"}
 		request.SessionID, request.AgentID, request.CallID, request.Purpose = "session-1", "agent-1", "call-1", "reply"
 		request.Billable, request.BaseCostMicros, request.PriceVersion = false, 20, "price-change-1"
-		request.SKU = "llm-openai-gpt"
+		request.SKU, request.Region, request.BYOK = "llm-openai-gpt", pricing.RegionEU, true
 		request.Meters = pricing.Quantities{pricing.Requests: 2}
 		request.Attributes = map[string]string{"service_tier": "flex"}
 		request.Tags = map[string]string{"project": "p"}
@@ -287,6 +287,8 @@ func (s *WriterSuite) TestAShippedEventCarriesTheRowsIdentityAndBillable() {
 	s.EqualValues(20, event.BaseCostMicros)
 	s.Equal("price-change-1", event.PriceVersion)
 	s.Equal("llm-openai-gpt", event.SKU)
+	s.Equal(pricing.RegionEU, event.Region)
+	s.True(event.BYOK)
 	s.Equal(map[string]int64{"output_tokens": 10, "requests": 2}, event.Quantities)
 	s.Equal(map[string]string{"service_tier": "flex"}, event.Attributes)
 	s.Equal(map[string]string{"project": "p"}, event.Tags)
@@ -503,7 +505,7 @@ func (s *WriterSuite) TestARowWithNoOrganizationWaitsForOne() {
 	s.Equal(1.0, testutil.ToFloat64(usageUnowned)-before)
 	s.True(s.rows()[0].ToShip, "waiting for its app to join an organization")
 	s.Empty(s.events(service))
-	s.EqualValues(1, sweeper.unshipped.Load())
+	s.Zero(sweeper.unshipped.Load(), "counted by unowned, which warns, and not by the shipping gauges, which page")
 	s.Contains(s.logs.String(), "app="+s.customer)
 
 	s.Require().NoError(s.store.JoinOrganization(s.ctx, s.customer, s.organization))
@@ -515,6 +517,39 @@ func (s *WriterSuite) TestARowWithNoOrganizationWaitsForOne() {
 	s.Require().Len(events, 1)
 	s.Equal(s.organization, events[0].OrganizationID)
 	s.Zero(sweeper.unshipped.Load())
+}
+
+func (s *WriterSuite) TestTheShippingGaugesCountOnlyRowsWithAnOrganization() {
+	writer := s.shippingWriter(s.usageService(), func(options *WriterOptions) { options.Usage = nil })
+	writer.enqueue(s.row(func(request *store.Request) { request.StartedAt = time.Now().UTC().Add(-time.Hour) }))
+	writer.enqueue(s.owned(func(request *store.Request) { request.StartedAt = time.Now().UTC().Add(-20 * time.Minute) }))
+	s.written(2)
+	// Only this test's rows: a row another test left would be counted too.
+	_, err := s.store.ShardDB().ExecContext(s.ctx, "UPDATE requests SET to_ship = true WHERE customer_id = ?", s.customer)
+	s.Require().NoError(err)
+	sweeper := s.sweeper(nil)
+
+	s.Require().NoError(sweeper.count(s.ctx))
+
+	s.EqualValues(1, sweeper.unshipped.Load(), "the row with no organization is not counted")
+	s.GreaterOrEqual(time.Duration(sweeper.oldest.Load()), 20*time.Minute)
+	s.Less(time.Duration(sweeper.oldest.Load()), 40*time.Minute, "the oldest is the row with an organization")
+	s.Less(unshippedOldest(), (40 * time.Minute).Seconds(), "which is what ship_stale reads")
+}
+
+func (s *WriterSuite) TestTheShippingGaugesCountARowWithAnOrganizationAlone() {
+	writer := s.shippingWriter(s.usageService(), func(options *WriterOptions) { options.Usage = nil })
+	writer.enqueue(s.owned(func(request *store.Request) { request.StartedAt = time.Now().UTC().Add(-20 * time.Minute) }))
+	s.written(1)
+	_, err := s.store.ShardDB().ExecContext(s.ctx, "UPDATE requests SET to_ship = true WHERE customer_id = ?", s.customer)
+	s.Require().NoError(err)
+	sweeper := s.sweeper(nil)
+
+	s.Require().NoError(sweeper.count(s.ctx))
+
+	s.EqualValues(1, sweeper.unshipped.Load())
+	s.GreaterOrEqual(time.Duration(sweeper.oldest.Load()), 20*time.Minute)
+	s.GreaterOrEqual(unshippedOldest(), (20 * time.Minute).Seconds())
 }
 
 func (s *WriterSuite) TestTheSweeperPagesPastRowsThatWaitForAnOrganization() {

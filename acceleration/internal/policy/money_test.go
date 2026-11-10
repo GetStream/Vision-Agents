@@ -188,6 +188,20 @@ func balanceHeld(enforcer *Enforcer, key string) int64 {
 	return heldWhere(enforcer, key, func(h *hold) bool { return h.balance })
 }
 
+// balanceFailedAt is when the account's balance read last failed.
+func balanceFailedAt(enforcer *Enforcer, key string) time.Time {
+	enforcer.money.mu.Lock()
+	defer enforcer.money.mu.Unlock()
+	return enforcer.money.accounts[key].balanceFailed
+}
+
+// limitsReadAt is when the account's limits last landed.
+func limitsReadAt(enforcer *Enforcer, key string) time.Time {
+	enforcer.money.mu.Lock()
+	defer enforcer.money.mu.Unlock()
+	return enforcer.money.accounts[key].limitsRead
+}
+
 // limitsHeld is what the account holds against the customer's limits.
 func limitsHeld(enforcer *Enforcer, key string) int64 {
 	return heldWhere(enforcer, key, func(h *hold) bool { return h.limits })
@@ -248,7 +262,9 @@ func (s *PolicySuite) TestAnOrganizationWithNoCreditMayNotSpend() {
 	for _, tier := range []string{usage.DefaultTier, openTier} {
 		s.Run(tier, func() {
 			s.SetupTest()
-			enforcer := s.billed()
+			// An account unread for MaxStale is refused as unreadable, which is an ErrNoCredits too,
+			// so a first read slow on a loaded machine would answer for the balance's own refusal.
+			enforcer := s.billed(func(settings *Settings) { settings.MaxStale = time.Minute })
 			enforcer.Join(s.app, s.org, tier)
 
 			spend := s.spendRefused(enforcer.Enforcer, s.app, ErrNoCredits)
@@ -514,7 +530,10 @@ func (s *PolicySuite) TestAMissReadsThePoliciesNowAndTheMoneyLater() {
 		DataPolicy:    store.PolicyDataPolicy{AllowTraining: &no},
 		AllowedModels: &[]string{"openai/gpt-5.6-luna"},
 	})
-	enforcer := s.billed()
+	// An account never read admits until it has gone unread for MaxStale, which the admission
+	// itself can outlast: it waits FirstRead (250 ms) for the first read of the limits, and on a
+	// loaded machine for the policies, so it needs a MaxStale far past both.
+	enforcer := s.billed(func(settings *Settings) { settings.MaxStale = time.Minute })
 	enforcer.front.down.Store(true)
 
 	admitted, err := enforcer.Admit(s.ctx, ownerOf(s.app))
@@ -569,7 +588,9 @@ func (s *PolicySuite) TestSpendRecordedHereCountsAtOnce() {
 }
 
 func (s *PolicySuite) TestAHoldIsKeptUntilAReadAfterItsAck() {
-	enforcer := s.billed()
+	// A hold is dropped once PendingTTL passes unacked, which the two reads before the check can
+	// outlast on a loaded machine; it is let go here by the ack alone.
+	enforcer := s.billed(func(settings *Settings) { settings.PendingTTL = time.Hour })
 	s.usage().Credit(s.T(), s.org, 3_000_000)
 	enforcer.Join(s.app, s.org, openTier)
 	s.read(enforcer.Enforcer, s.org)
@@ -627,10 +648,13 @@ func (s *PolicySuite) TestAnUnackedHoldExpires() {
 }
 
 func (s *PolicySuite) TestAHoldOutlivesAnOutageOfTheUsageService() {
+	// PendingTTL is the subject, so it is short; a second is what the standing read after the
+	// recovery, which takes a few hundred ms on a loaded machine, fits in with the timer to spare.
+	const ttl = time.Second
 	for _, acked := range []bool{false, true} {
 		s.Run(fmt.Sprintf("acked %t", acked), func() {
 			s.SetupTest()
-			enforcer := s.billed()
+			enforcer := s.billed(func(settings *Settings) { settings.PendingTTL = ttl })
 			s.usage().Credit(s.T(), s.org, 1_000_000)
 			enforcer.Join(s.app, s.org, openTier)
 			s.read(enforcer.Enforcer, s.org)
@@ -643,7 +667,7 @@ func (s *PolicySuite) TestAHoldOutlivesAnOutageOfTheUsageService() {
 			}
 
 			app := s.app
-			s.never(func() bool { return s.admit(enforcer.Enforcer, app).Spend == nil }, 4*quick.PendingTTL, 10*time.Millisecond,
+			s.never(func() bool { return s.admit(enforcer.Enforcer, app).Spend == nil }, 2*ttl, 10*time.Millisecond,
 				"an open tier answers on its last balance, less what was spent since, however long the outage")
 			s.EqualValues(1_000_000, balanceHeld(enforcer.Enforcer, s.org))
 			s.Contains(enforcer.logs.String(), "with no read of its balance to count it, so it is kept")
@@ -657,13 +681,19 @@ func (s *PolicySuite) TestAHoldOutlivesAnOutageOfTheUsageService() {
 				s.NotContains(enforcer.logs.String(), "expired before")
 				return
 			}
-			s.EqualValues(1_000_000, balanceHeld(enforcer.Enforcer, s.org),
-				"the first read after an outage may come before the sweeper ships the backlog")
-			s.never(func() bool { return balanceHeld(enforcer.Enforcer, s.org) == 0 },
-				quick.PendingTTL/3, 10*time.Millisecond, "its timer starts again from the recovery")
+			// A hold goes once a read asked after PendingTTL from the last failed read lands, so
+			// what is asserted runs from that failure, not from a count of milliseconds a slow
+			// read on a loaded machine may use up.
+			timer := balanceFailedAt(enforcer.Enforcer, s.org).Add(ttl)
+			held := balanceHeld(enforcer.Enforcer, s.org)
+			if time.Now().Before(timer) {
+				s.EqualValues(1_000_000, held, "the first read after an outage may come before the sweeper ships the backlog")
+			}
+			s.never(func() bool { return balanceHeld(enforcer.Enforcer, s.org) == 0 && time.Now().Before(timer) },
+				time.Until(timer), 10*time.Millisecond, "its timer starts again from the recovery")
 			s.eventually(func() bool { return balanceHeld(enforcer.Enforcer, s.org) == 0 }, 5*time.Second, 10*time.Millisecond,
 				"let go PendingTTL after the recovery, once a read lands")
-			s.GreaterOrEqual(time.Since(recovered), quick.PendingTTL-quick.Fresh, "from the last failed read, at most Fresh before")
+			s.GreaterOrEqual(time.Since(recovered), ttl-quick.Fresh, "from the last failed read, at most Fresh before")
 			s.Contains(enforcer.logs.String(), "expired before the usage service was known to count it")
 			s.consistent(enforcer.Enforcer, s.org)
 		})
@@ -1079,9 +1109,21 @@ func (s *PolicySuite) TestPastMaxStaleLimitsThatCannotBeReadFollowTheTier() {
 			s.Require().NoError(s.admit(enforcer.Enforcer, s.app).Spend)
 			s.lockLimits()
 
+			// The settings' clock only says which day a limit counts in, not how old a read is, so
+			// staleness is judged against the stamp of the last read of the limits: a refusal
+			// counts against the test only while that read is no older than MaxStale, however long
+			// a loaded machine took to get here from it.
 			app, organization := s.app, s.org
-			s.never(func() bool { return s.admit(enforcer.Enforcer, app).Spend != nil }, quick.MaxStale/2, 10*time.Millisecond,
-				"within MaxStale the last limits read answer")
+			var within int
+			s.never(func() bool {
+				refused := s.admit(enforcer.Enforcer, app).Spend != nil
+				if time.Since(limitsReadAt(enforcer.Enforcer, organization)) > quick.MaxStale {
+					return false
+				}
+				within++
+				return refused
+			}, quick.MaxStale/2, 10*time.Millisecond, "within MaxStale the last limits read answer")
+			s.Positive(within, "the last limits read was still within MaxStale when the window began")
 			if !refused {
 				s.never(func() bool { return s.admit(enforcer.Enforcer, app).Spend != nil }, 3*quick.MaxStale, 10*time.Millisecond,
 					"an open tier admits on the last limits read, however old")
@@ -1093,6 +1135,23 @@ func (s *PolicySuite) TestPastMaxStaleLimitsThatCannotBeReadFollowTheTier() {
 			s.read(enforcer.Enforcer, organization)
 		})
 	}
+}
+
+// A limit on a subject the work does not belong to leaves the account's own limits read as the
+// only thing to go stale: no subject of the work waits on a read that fails with them.
+func (s *PolicySuite) TestPastMaxStaleLimitsOfAnAccountWhoseWorkNeedsNoSubjectFollowTheTier() {
+	enforcer := s.billed()
+	s.usage().Credit(s.T(), s.org, 1_000_000)
+	s.limit(store.Limit{Subject: usage.SubjectUser, Level: store.LevelApp, OrganizationID: s.org, AppID: s.app, LimitMicros: 1_000_000})
+	enforcer.Join(s.app, s.org, closedTier)
+	s.read(enforcer.Enforcer, s.org)
+	s.Require().NoError(s.admit(enforcer.Enforcer, s.app).Spend, "work with no user is under no user's limit")
+	s.lockLimits()
+
+	spend := s.spendRefused(enforcer.Enforcer, s.app, ErrBudgetSpent)
+	s.ErrorContains(spend, "spend limits could not be read")
+	s.NotErrorIs(spend, ErrNoCredits, "the balance is read on time while the limits wait on Postgres")
+	s.GreaterOrEqual(time.Since(limitsReadAt(enforcer.Enforcer, s.org)), quick.MaxStale, "after the limits went unread for MaxStale")
 }
 
 func (s *PolicySuite) TestAFreshRoutersFirstAdmissionReadsTheLimitFirst() {

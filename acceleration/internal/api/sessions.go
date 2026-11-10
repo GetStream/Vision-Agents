@@ -43,9 +43,16 @@ func (s *Server) configFor(ctx context.Context, customerID string, configID, nam
 		return nil, errNoConfigs
 	}
 
+	teams, err := s.teamsGateFor(ctx, customerID)
+	if err != nil {
+		return nil, err
+	}
 	if id != "" {
 		found, err := s.configs.AgentConfig(ctx, customerID, id)
 		if err != nil {
+			return nil, errUnknownConfig
+		}
+		if teams.refuses(found) {
 			return nil, errUnknownConfig
 		}
 		return &found, nil
@@ -59,6 +66,9 @@ func (s *Server) configFor(ctx context.Context, customerID string, configID, nam
 		// Refused rather than started unconfigured. A typo in a name would otherwise get a
 		// working session with default instructions, which is far harder to notice than an
 		// error: the agent answers, just not as the agent that was asked for.
+		return nil, notFound("there is no agent called " + named)
+	}
+	if teams.refuses(found) {
 		return nil, notFound("there is no agent called " + named)
 	}
 	return &found, nil
@@ -97,20 +107,19 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	}
 	// A fork naming no config goes on with its parent's, as the config is now rather than as
 	// the parent was opened with. A config deleted since leaves the fork what its parent had;
-	// a config that cannot be read fails the fork rather than dropping what it decides.
+	// a config that cannot be read fails the fork rather than dropping what it decides. An end
+	// user is checked against its team as if they had named it, and a deleted one is refused.
 	var current *store.AgentConfig
 	currentConfig := func() error {
 		if config != nil || s.store == nil || parent.ConfigID() == "" {
 			return nil
 		}
-		read, err := s.store.AgentConfig(ctx, customerID, parent.ConfigID())
-		switch {
-		case err == nil:
-			current = &read
-		case !errors.Is(err, store.ErrNoAgentConfig):
+		teams, err := s.teamsGateFor(ctx, customerID)
+		if err != nil {
 			return err
 		}
-		return nil
+		current, err = s.configOpenedWith(ctx, customerID, parent.ConfigID(), teams)
+		return err
 	}
 	// An ended parent's fork is built from it, so it is read first. A live parent's fork, an
 	// incognito one or one on a thread is refused by forkSpec before any config is needed.
@@ -251,8 +260,11 @@ func (s *Server) saySession(ctx context.Context, request *saySessionRequest) (*s
 
 // respondSession answers a piece of text through the model.
 func (s *Server) respondSession(ctx context.Context, request *respondSessionRequest) (*respondSessionResponse, error) {
+	// It answers once the turn starts, as createResponse does; a voice note's transcription is
+	// the turn's cost.
+	leaveUncosted(ctx)
 	if request.Body != nil {
-		if err := refuseOversizeWithoutAudio(request.Body.Audio, len(request.Body.Text)); err != nil {
+		if err := refuseOversizeWithoutAudio(request.Body.Audio, sizeOfRespond(request.Body)); err != nil {
 			return nil, err
 		}
 	}
@@ -261,32 +273,47 @@ func (s *Server) respondSession(ctx context.Context, request *respondSessionRequ
 		return nil, failure
 	}
 	defer sent()
-	if request.Body == nil || (request.Body.Text == "" && request.Body.Audio == nil) {
+	if request.Body == nil || (request.Body.Text == "" && request.Body.Audio == nil && len(value(request.Body.Images)) == 0) {
 		return nil, invalidRequest("there is nothing to answer")
+	}
+	wires := make([]wireImage, 0, len(value(request.Body.Images)))
+	for _, sent := range value(request.Body.Images) {
+		wires = append(wires, wireImage{URL: sent.Url, Detail: string(value(sent.Detail))})
+	}
+	images, err := imagesFromWire(wires)
+	if err != nil {
+		return nil, invalidRequest(err.Error())
 	}
 
 	id := value(request.Body.RequestId)
-	text, notes, failure := s.withHeardNote(ctx, found, id, request.Body.Text, request.Body.Audio, false, options.LLM{})
+	text, notes, failure := s.withHeardNote(ctx, found, id, request.Body.Text, request.Body.Audio, len(images) > 0, options.LLM{})
 	if failure != nil {
 		return nil, failure
 	}
 	if id != "" && found.Durable() {
-		receipt, _, err := found.RespondCommand(ctx, id, text, value(request.Body.ClientId), nil, options.LLM{}, notes...)
-		if errors.Is(err, conversation.ErrCommandConflict) {
-			return nil, conflict(err.Error())
-		}
+		receipt, _, err := found.RespondCommand(ctx, id, text, value(request.Body.ClientId), images, options.LLM{}, notes...)
 		if err != nil {
-			return nil, invalidRequest(err.Error())
+			return nil, refusedResponse(err)
 		}
 		return &respondSessionResponse{Status: http.StatusOK, Body: &CommandReceipt{
 			RequestId: receipt.CommandID, UserMessageId: receipt.UserMessageID,
 			AssistantMessageId: receipt.AssistantMessageID, State: receipt.State, Duplicate: receipt.Duplicate,
 		}}, nil
 	}
-	if _, err := found.Respond(ctx, text, nil, options.LLM{}); err != nil {
-		return nil, invalidRequest(err.Error())
+	if _, err := found.Respond(ctx, text, images, options.LLM{}, images...); err != nil {
+		return nil, refusedResponse(err)
 	}
 	return &respondSessionResponse{Status: http.StatusNoContent}, nil
+}
+
+// sizeOfRespond is what a respond body holds besides a voice note, counted as sizeOfResponse
+// counts a createResponse body.
+func sizeOfRespond(body *RespondRequest) int {
+	size := len(body.Text)
+	for _, image := range value(body.Images) {
+		size += len(image.Url)
+	}
+	return size
 }
 
 // respondSessionResponse is a durable command's receipt, or nothing when the text named no
@@ -515,6 +542,10 @@ func (s *Server) sessionToAnswer(ctx context.Context, id string) (*session.Sessi
 		// Ended here, so the spec it ran on is still at hand, tools and instructions included.
 		// It is carried on in writing, whether or not it ended on a call.
 		spec = found.Spec().Written()
+		// Only for an end user still in its config's team, as one carried on from its row is.
+		if failure = s.refuseOutsideTeam(ctx, spec.CustomerID, spec.ConfigID); failure != nil {
+			return nil, nil, failure
+		}
 		spec.Phone, spec.Edge = nil, nil
 		spec.Reopened = found.CreatedAt()
 	case errors.Is(failure, errUnknownSession):
@@ -575,6 +606,9 @@ func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, 
 	if row.ResumeHistory != (store.ResumeHistory{}) {
 		spec.ResumeHistory = row.ResumeHistory
 	}
+	if !row.FloorControl.IsZero() {
+		spec.FloorControl = row.FloorControl
+	}
 	spec.ForkedFrom = row.ForkedFrom
 	// The caller's connections go on with the chat; the session checks each against the
 	// config as it is now and the caller asking, as it did when the chat opened.
@@ -587,6 +621,9 @@ func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, 
 		spec.Attribution = routing.AttributionFrom(ctx)
 		spec.Attribution.APIKey, spec.Attribution.UsageCategories = row.APIKey, row.UsageCategories
 	}
+	// Its team too: the one it was opened under is in those categories, and a team the config
+	// was tagged with since does not move a conversation already under way.
+	spec.Team = ""
 	// The row keeps the call voice was last on, which voice goes back to once started.
 	return spec.Holding(session.Call{Type: row.CallType, ID: row.CallID}), nil
 }
@@ -665,6 +702,10 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	if request.Call != nil {
 		spec.CallType, spec.CallID = request.Call.Type, request.Call.Id
 	}
+	// Over the config's team tag: the backend opening it knows which team the work is for.
+	if request.Team != nil {
+		spec.Team = *request.Team
+	}
 	// The conversation is kept in Stream Chat unless it is incognito, which Normalize turns
 	// off, so any Chat client can read it back, typed and spoken.
 	spec.PersistConversation = true
@@ -686,6 +727,7 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 		spec.Custom = *request.Custom
 	}
 	spec.ResumeHistory = resumeHistoryOr(spec.ResumeHistory, request.ResumeHistory)
+	spec.FloorControl = floorControlOr(spec.FloorControl, request.FloorControl)
 	if request.ModelOverwrites != nil {
 		spec.ModelOverwrites = modelOverwritesOf(*request.ModelOverwrites)
 	}
@@ -747,6 +789,12 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 			Number:       request.Phone.Number,
 			Vendor:       value(request.Phone.Vendor),
 			VendorCallID: value(request.Phone.VendorCallId),
+		}
+		if plan := request.Phone.Voicemail; plan != nil {
+			spec.Voicemail = &session.VoicemailPlan{}
+			if plan.Action == VoicemailActionLeaveMessage {
+				spec.Voicemail.Message = value(plan.Message)
+			}
 		}
 	}
 	if request.Video != nil {
@@ -928,7 +976,46 @@ func mergeStored(rendered *Session, row *store.AgentSession) {
 		reason := SessionEndReason(row.EndReason)
 		rendered.EndReason = &reason
 	}
+	if info, known := session.EndReason(row.EndReason).Info(); known {
+		fault, stage := SessionEndFault(info.Fault), SessionEndStage(info.Stage)
+		rendered.EndFault, rendered.EndStage = &fault, &stage
+	}
 	rendered.LastResponseAt = row.LastResponseAt
+}
+
+// SessionEndReason is why a session ended: a session.EndReasons value a row can keep.
+type SessionEndReason string
+
+func (SessionEndReason) Schema(registry huma.Registry) *huma.Schema {
+	var values, meanings []string
+	for _, info := range session.EndReasons {
+		// A session that never opened has no row to keep its reason on.
+		if info.Stage == session.StageStarting {
+			continue
+		}
+		values = append(values, string(info.Reason))
+		meanings = append(meanings, string(info.Reason)+", "+info.Meaning+
+			" (fault "+string(info.Fault)+", stage "+string(info.Stage)+")")
+	}
+	return namedEnum(registry, "SessionEndReason", "Why the session ended, with whose fault it was and the stage it came at: "+
+		strings.Join(meanings, "; ")+".", values...)
+}
+
+// SessionEndFault is whose doing a session's end was.
+type SessionEndFault string
+
+func (SessionEndFault) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "SessionEndFault", "Whose doing a session's end was: none, the agent or the app ended it; caller, the person on the call; router, the router itself; vendor, a model vendor; carrier, the phone carrier; customer_config, the app's configuration or its own key; customer_credit, the organization's credit or spend limits.",
+		string(session.FaultNone), string(session.FaultCaller), string(session.FaultRouter), string(session.FaultVendor),
+		string(session.FaultCarrier), string(session.FaultCustomerConfig), string(session.FaultCustomerCredit))
+}
+
+// SessionEndStage is how far a session had got when it ended.
+type SessionEndStage string
+
+func (SessionEndStage) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "SessionEndStage", "How far a session had got when it ended: ringing, before a person was on the line of a phone call; conversation, once the session was open.",
+		string(session.StageRinging), string(session.StageConversation))
 }
 
 // modelOverwritesOf reads what the caller asked to change about the models. The name is
@@ -1461,10 +1548,11 @@ func (e ModelOverwritesVerbosity) Valid() bool {
 
 // RespondRequest is the RespondRequest schema.
 type RespondRequest struct {
-	ClientId  *string      `json:"client_id,omitempty" doc:"The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it." pattern:"^[A-Za-z0-9_.:-]{1,128}$"`
-	RequestId *string      `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, a voice note is uploaded and shown on the person's message. A retry with the same id, text and voice note does not restart inference." pattern:"^[A-Za-z0-9_-]{1,128}$"`
-	Audio     *AudioSource `json:"audio,omitempty" doc:"A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing."`
-	Text      string       `json:"text" doc:"What to answer, as though it had been said. May be empty when audio carries the question."`
+	ClientId  *string        `json:"client_id,omitempty" doc:"The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it." pattern:"^[A-Za-z0-9_.:-]{1,128}$"`
+	RequestId *string        `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, photos and a voice note are uploaded and shown on the person's message. A retry with the same id, text, photos and voice note does not restart inference." pattern:"^[A-Za-z0-9_-]{1,128}$"`
+	Audio     *AudioSource   `json:"audio,omitempty" doc:"A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region."`
+	Images    *[]ImageSource `json:"images,omitempty" doc:"Photos to answer about, as on createResponse. With a request_id, or with no text in a session kept in Stream Chat, they are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message. The model sees them with this question alone. Refused before any turn starts when the agent has neither a vision skill nor a conversation model that accepts images."`
+	Text      string         `json:"text" doc:"What to answer, as though it had been said. May be empty when photos or audio carry the question."`
 }
 
 // RewindSessionRequest is the RewindSessionRequest schema.

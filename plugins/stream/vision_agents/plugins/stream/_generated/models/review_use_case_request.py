@@ -52,7 +52,7 @@ class ReviewUseCaseRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        decision = ReviewDecision(d.pop("decision"))
+        decision = ReviewDecision._decode(d.pop("decision"))
 
         notes = d.pop("notes", UNSET)
 

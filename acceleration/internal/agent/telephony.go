@@ -143,6 +143,12 @@ type Ender interface {
 	EndCall(ctx context.Context) error
 }
 
+// EndDeferred is an Ender putting the hang-up off: the call ends later by itself, and the
+// model is told Reason rather than that hanging up failed.
+type EndDeferred struct{ Reason string }
+
+func (e *EndDeferred) Error() string { return "agent: hanging up is put off: " + e.Reason }
+
 // Destination is a number the agent may hand the caller to, which the model asks for by
 // Name and never sees the Number of.
 type Destination struct {
@@ -351,14 +357,14 @@ func answeredSinceCaller(history []llm.Message, call llm.ToolCall, connected []s
 }
 
 // routerStatuses are the statuses only the router answers a connector call it held back with
-// (internal/session: connector_login.go, step_up.go, connector_tools.go; internal/plugins:
-// user.go) until the person signs in or grants a scope. A tool does not use them for its own
-// results, so they count on the status alone.
+// (internal/session: connector_login.go, step_up.go, connector_tools.go) until the person signs
+// in or grants a scope. A tool does not use them for its own results, so they count on the
+// status alone.
 var routerStatuses = []string{"authorization_required", "scope_required", "credential_rejected"}
 
 // sharedStatuses are statuses the router also answers with when a sign-in or an approval ended
 // without the person acting (internal/session: connector_login.go, connector_approval.go;
-// internal/plugins/user.go; internal/conversation/parts.go) but a third-party tool uses too:
+// internal/conversation/parts.go) but a third-party tool uses too:
 // {"status":"stopped","recording_id":"r1"} is a write that was done. They count only in the
 // router's own shape, exactly {status, message}.
 var sharedStatuses = []string{"declined", "expired", "failed", "stopped", "unavailable"}
@@ -806,6 +812,11 @@ func (a *Agent) followsTool(requested harness.ToolRequested) bool {
 // the call.
 func (a *Agent) callTool(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, bool, error) {
 	if err := ctx.Err(); err != nil {
+		// An end_call cancelled before it ran is a goodbye the caller spoke over, as one
+		// cancelled while it waits on the goodbye is (endCall), and the model is told so.
+		if call.Name == toolEndCall && a.options.Ender != nil && !a.options.Text && !a.native() {
+			return llm.TextParts(endCallCancelled), false, nil
+		}
 		return nil, false, err
 	}
 	if a.native() && (call.Name == delegateSkill || call.Name == cancelSkill) {
@@ -1145,13 +1156,21 @@ func (a *Agent) transfer(ctx context.Context, call llm.ToolCall) (string, bool, 
 
 // endCall hangs up once the goodbye the model said with the call has been heard. The
 // caller speaking before then cancels ctx, which keeps the call; after, the call ends.
+//
+// Finish returns once the agent is quiet, and a goodbye the caller cut off leaves it as
+// quiet as one heard to its end: an interruption cancels ctx and then drops the speech, and
+// Finish, looking after both, as a busy machine has it, takes the quiet for the goodbye heard.
+// A cancelled ctx is the caller's, however Finish returned.
 func (a *Agent) endCall(ctx context.Context) (string, bool, error) {
-	if a.Finish(ctx) != nil {
+	if a.Finish(ctx) != nil || ctx.Err() != nil {
 		return endCallCancelled, false, nil
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), endCallTimeout)
 	defer cancel()
 	if err := a.options.Ender.EndCall(ctx); err != nil {
+		if deferred, ok := errors.AsType[*EndDeferred](err); ok {
+			return deferred.Reason, false, nil
+		}
 		return "", false, fmt.Errorf("agent: end the call: %w", err)
 	}
 	return "You have ended the call.", true, nil
@@ -1278,7 +1297,8 @@ func (a *Agent) resolveToolLocked(call llm.ToolCall, parts []llm.ContentPart, ho
 			return
 		}
 		if hold.answered {
-			message = llm.Message{Role: llm.User}
+			// On the caller's side for the provider's sake, and said by nobody on the call.
+			message = llm.Message{Role: llm.User, Typed: true}
 			parts = append(llm.TextParts(fmt.Sprintf(lateResult, call.Name, call.ID)), parts...)
 			late = true
 		}
@@ -1420,6 +1440,16 @@ func (a *Agent) stopTools() {
 		cancel()
 	}
 	a.toolReply = false
+}
+
+// cancelToolsLocked cancels the tools stopTools cancels, and leaves the ones it answers
+// (toolHolds) to it. The caller holds the lock.
+func (a *Agent) cancelToolsLocked() {
+	for id, cancel := range a.toolCancels {
+		if a.toolHolds[id] == nil {
+			cancel()
+		}
+	}
 }
 
 // HoldTool makes a running call that an interruption would cancel outlive one from now on,

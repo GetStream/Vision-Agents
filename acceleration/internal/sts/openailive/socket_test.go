@@ -513,12 +513,14 @@ func (s *OpenAILiveSocketSuite) TestTheSessionsSecondsAndItsBackendAreReported()
 	s.Require().NoError(<-closed)
 
 	var seconds []int64
+	var final []bool
 	var backend []sts.BackendUsage
 	var disconnected int
 	for event := range provider.Events() {
 		switch typed := event.(type) {
 		case sts.SessionUsage:
 			seconds = append(seconds, typed.Seconds)
+			final = append(final, typed.Final)
 		case sts.BackendUsage:
 			backend = append(backend, typed)
 		case sts.Disconnected:
@@ -526,6 +528,7 @@ func (s *OpenAILiveSocketSuite) TestTheSessionsSecondsAndItsBackendAreReported()
 		}
 	}
 	s.Equal([]int64{13, 28, 29}, seconds, "each running total as the vendor counts it, rounded, the last as it closed")
+	s.Equal([]bool{false, false, true}, final, "only session.closed's report is final")
 	s.Equal(1, disconnected, "session.closed is read, seconds and all")
 	s.Equal([]sts.BackendUsage{{
 		ResponseID:  "resp_1",

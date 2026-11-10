@@ -11,18 +11,35 @@ use GetStream\VisionAgents\Json;
 final readonly class Contact
 {
     public function __construct(
-        public int $attempts,
+        // Attempts that placed at least one call.
+        public int $attemptsMade,
+        // The attempts the sequence makes at most.
+        public int $attemptsTotal,
+        // They ended successfully.
+        public bool $converted,
+        public \DateTimeImmutable $createdAt,
         public string $id,
-        public string $state,
+        public ContactStage|string $stage,
+        // E.164.
         public string $toNumber,
-        // The call this contact became, which is what the call paths take.
+        // Filled into the agent's {{placeholders}} on their calls.
+        /** @var array<string, string> */
+        public array $variables,
+        // The IANA zone the calling hours are read in for them: the campaign's fixed zone, else their time_zone, else...
+        public string $zone,
+        // Every dial made to them, oldest first. Only on a contact read alone.
+        /** @var list<ContactAttempt>|null */
+        public ?array $attempts = null,
+        // The last call placed to them, which is what the call paths take.
         public ?string $callId = null,
-        // Why they could not be rung, when they could not be.
-        public ?string $error = null,
-        public ?string $instructions = null,
-        // How the call to them ended, once it has. The state still says only whether they were rung.
-        public CallOutcome|string|null $outcome = null,
-        public ?string $vendorCallId = null,
+        // When they are next rung, while they are waiting to be.
+        public ?\DateTimeImmutable $nextAttemptAt = null,
+        // The id of the outcome they ended with, once they have.
+        public ?string $outcome = null,
+        // Why they were rejected, failed or stopped.
+        public ?string $reason = null,
+        // The IANA zone they were added with.
+        public ?string $timeZone = null,
     ) {
     }
 
@@ -32,15 +49,21 @@ final readonly class Contact
     public static function fromArray(array $data): self
     {
         return new self(
-            attempts: Json::int($data, 'attempts'),
+            attemptsMade: Json::int($data, 'attempts_made'),
+            attemptsTotal: Json::int($data, 'attempts_total'),
+            converted: Json::bool($data, 'converted'),
+            createdAt: Json::date($data, 'created_at'),
             id: Json::string($data, 'id'),
-            state: Json::string($data, 'state'),
+            stage: Json::enum($data, 'stage', ContactStage::class),
             toNumber: Json::string($data, 'to_number'),
+            variables: Json::stringMap($data, 'variables'),
+            zone: Json::string($data, 'zone'),
+            attempts: array_key_exists('attempts', $data) && $data['attempts'] !== null ? array_map(ContactAttempt::fromArray(...), Json::objects($data, 'attempts')) : null,
             callId: array_key_exists('call_id', $data) && $data['call_id'] !== null ? Json::string($data, 'call_id') : null,
-            error: array_key_exists('error', $data) && $data['error'] !== null ? Json::string($data, 'error') : null,
-            instructions: array_key_exists('instructions', $data) && $data['instructions'] !== null ? Json::string($data, 'instructions') : null,
-            outcome: array_key_exists('outcome', $data) && $data['outcome'] !== null ? Json::enum($data, 'outcome', CallOutcome::class) : null,
-            vendorCallId: array_key_exists('vendor_call_id', $data) && $data['vendor_call_id'] !== null ? Json::string($data, 'vendor_call_id') : null,
+            nextAttemptAt: array_key_exists('next_attempt_at', $data) && $data['next_attempt_at'] !== null ? Json::date($data, 'next_attempt_at') : null,
+            outcome: array_key_exists('outcome', $data) && $data['outcome'] !== null ? Json::string($data, 'outcome') : null,
+            reason: array_key_exists('reason', $data) && $data['reason'] !== null ? Json::string($data, 'reason') : null,
+            timeZone: array_key_exists('time_zone', $data) && $data['time_zone'] !== null ? Json::string($data, 'time_zone') : null,
         );
     }
 
@@ -52,24 +75,32 @@ final readonly class Contact
     public function toArray(): array
     {
         $out = [];
-        $out['attempts'] = $this->attempts;
+        $out['attempts_made'] = $this->attemptsMade;
+        $out['attempts_total'] = $this->attemptsTotal;
+        $out['converted'] = $this->converted;
+        $out['created_at'] = Json::dateValue($this->createdAt);
         $out['id'] = $this->id;
-        $out['state'] = $this->state;
+        $out['stage'] = Json::enumValue($this->stage);
         $out['to_number'] = $this->toNumber;
+        $out['variables'] = $this->variables;
+        $out['zone'] = $this->zone;
+        if ($this->attempts !== null) {
+            $out['attempts'] = array_map(static fn (ContactAttempt $each): array => $each->toArray(), $this->attempts);
+        }
         if ($this->callId !== null) {
             $out['call_id'] = $this->callId;
         }
-        if ($this->error !== null) {
-            $out['error'] = $this->error;
-        }
-        if ($this->instructions !== null) {
-            $out['instructions'] = $this->instructions;
+        if ($this->nextAttemptAt !== null) {
+            $out['next_attempt_at'] = Json::dateValue($this->nextAttemptAt);
         }
         if ($this->outcome !== null) {
-            $out['outcome'] = Json::enumValue($this->outcome);
+            $out['outcome'] = $this->outcome;
         }
-        if ($this->vendorCallId !== null) {
-            $out['vendor_call_id'] = $this->vendorCallId;
+        if ($this->reason !== null) {
+            $out['reason'] = $this->reason;
+        }
+        if ($this->timeZone !== null) {
+            $out['time_zone'] = $this->timeZone;
         }
         return $out;
     }

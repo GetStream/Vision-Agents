@@ -117,7 +117,7 @@ class ConnectionValidation:
         d = dict(src_dict)
         connection_id = d.pop("connection_id")
 
-        status = ConnectionValidationStatus(d.pop("status"))
+        status = ConnectionValidationStatus._decode(d.pop("status"))
 
         def _parse_changed_tools(data: object) -> list[str] | None | Unset:
             if data is None:

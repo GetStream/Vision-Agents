@@ -90,6 +90,10 @@ type Request struct {
 	PriceVersion string `bun:"price_version,notnull"`
 	// SKU is the priced item's, as its entry names it: empty for work no entry matched.
 	SKU string `bun:"sku,notnull"`
+	// Region and BYOK are the priced item's, whether or not an entry matched it: where the
+	// work ran, and whether on the customer's own key. Rows from before them read "" and false.
+	Region string `bun:"region,notnull"`
+	BYOK   bool   `bun:"byok,notnull"`
 	// BaseCostMicros is the cost at the vendor's rates, for reference, so the margin on the
 	// row is CostMicros - BaseCostMicros.
 	BaseCostMicros int64 `bun:"base_cost_micros,notnull"`
@@ -458,6 +462,8 @@ type CallLeg struct {
 	StreamSessionID    string `bun:"stream_session_id,notnull"`
 	ParticipantSession string `bun:"participant_session,notnull"`
 	Vendor             string `bun:"vendor,notnull"`
+	// VendorCallID is the vendor's id for an outbound leg. Empty for an inbound one.
+	VendorCallID string `bun:"vendor_call_id,nullzero"`
 	// Direction is Inbound or Outbound.
 	Direction    string `bun:"direction,notnull"`
 	LocalNumber  string `bun:"local_number,notnull"`
@@ -567,24 +573,16 @@ type AgentConfig struct {
 	// Skills names entries in the skill registry rather than carrying their instructions,
 	// so editing a skill changes every config that uses it.
 	Skills []string `bun:"skills,type:jsonb"`
-	// Plugins names hosted MCP servers this agent is allowed to reach, from the built-in
-	// catalog, each with how it is reached. The app logs into one once; one marked User is
-	// connected by each end user with their own account, from the conversation, when the
-	// model first needs it. An app's plugin without a connected row is one that was attached
-	// and then the login expired or was revoked.
-	Plugins []PluginEntry `bun:"plugins,type:jsonb"`
 	// Connectors are the connectors this agent may call tools of, each under an alias.
 	Connectors []ConnectorBinding `bun:"connectors,type:jsonb"`
 	// LeftOutConnectors are the connectors agent.yaml named that the last sync left out of
 	// Connectors, because the app has no connection by the id or label they name. Only a
 	// sync writes them, as the SDK sent them; nothing reads them but the API.
 	LeftOutConnectors []LeftOutConnector `bun:"left_out_connectors,type:jsonb"`
-	// PluginEvents are the MCP events the agent subscribes to on its plugins, each opening
-	// a conversation of its own when it arrives.
-	PluginEvents []PluginEvent `bun:"plugin_events,type:jsonb"`
-	// MCPServers are MCP servers outside the catalog that the agent's sessions open by
-	// their URL, with no login unless one sets scopes or user.
-	MCPServers []MCPServer `bun:"mcp_servers,type:jsonb"`
+	// The row's plugins, plugin_events and mcp_servers columns, from before connectors, are
+	// not modelled: no code reads them, a save leaves them as they are and an insert gives them
+	// their default [].
+
 	// Channels are the lines this agent answers on outside a Stream Chat channel: a
 	// WhatsApp number, a number to text, an iMessage line.
 	Channels AgentChannels `bun:"channels,type:jsonb,notnull"`
@@ -614,11 +612,15 @@ type AgentConfig struct {
 	// model, and the model only answers when the worker asks it to.
 	DispatchIncomingCall bool `bun:"dispatch_incoming_call,notnull"`
 	DispatchText         bool `bun:"dispatch_text,notnull"`
-	// EpisodeCards has each phone call under the config write an episode card into the
-	// caller's omni-channel (20261007042200_agent_config_episode_cards.sql), and each session
-	// on a thread channel or a phone call under it start with the person's other cards. Off
-	// unless a config turns it on.
+	// EpisodeCards has each session under the config start with the person's other episode
+	// cards (20261007042200_agent_config_episode_cards.sql), and the config write them as
+	// record does: the on mode. Off unless a config turns it on.
 	EpisodeCards bool `bun:"episode_cards,notnull"`
+	// EpisodeCardsRecord has each call, app chat and channel thread under the config write
+	// its episode card and summary into the person's omni-channel while no session reads them
+	// (20261217090000_agent_config_episode_cards_record.sql): the record mode. Read only beside
+	// EpisodeCards off; WritesCards is the two together.
+	EpisodeCardsRecord bool `bun:"episode_cards_record,notnull"`
 	// ProgressiveTools offers plugin, MCP server and connector tools by a summary, and
 	// sends a tool's full description the first time it is called instead of running it
 	// (20261008130000_agent_config_progressive_tools.sql). Off unless a config turns it on.
@@ -632,12 +634,23 @@ type AgentConfig struct {
 	// ResumeHistory is how the config's sessions are handed back a conversation they
 	// carry on. The zero value is the router's default.
 	ResumeHistory ResumeHistory `bun:"resume_history,type:jsonb,notnull"`
+	// FloorControl is the model that controls the floor in the config's sessions, and how
+	// long a caller may wait once they stop, as the config chose
+	// (20261221090000_floor_control_max_wait.sql). The zero value, NULL, is the default flow
+	// controller.
+	FloorControl FloorControl `bun:"floor_control,type:jsonb,nullzero"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
 	// if it was never synced from a directory.
 	SyncHash  string     `bun:"sync_hash,notnull"`
 	CreatedAt time.Time  `bun:"created_at,notnull"`
 	UpdatedAt time.Time  `bun:"updated_at,notnull"`
 	DeletedAt *time.Time `bun:"deleted_at"`
+}
+
+// WritesCards is whether the config's calls, app chats and channel threads write episode
+// cards and their summaries: on (EpisodeCards) or record (EpisodeCardsRecord).
+func (c AgentConfig) WritesCards() bool {
+	return c.EpisodeCards || c.EpisodeCardsRecord
 }
 
 // ConnectorBinding is one connector an agent config may call tools of, as it is stored in
@@ -878,99 +891,6 @@ type Skill struct {
 	DeletedAt  *time.Time `bun:"deleted_at"`
 }
 
-// How far a plugin login has got.
-const (
-	// PluginPending means the browser is still at the provider.
-	PluginPending = "pending"
-	// PluginConnected means tokens are stored and a session may use them.
-	PluginConnected = "connected"
-	// PluginFailed means the exchange did not work.
-	PluginFailed = "failed"
-)
-
-// PluginConnection is one hosted MCP server authorized for one agent config, by the app
-// or by one of its end users.
-type PluginConnection struct {
-	bun.BaseModel `bun:"table:agent_plugin_connections,alias:apc"`
-
-	ID         string `bun:"id,pk"`
-	CustomerID string `bun:"customer_id,notnull"`
-	ConfigID   string `bun:"config_id,notnull"`
-	PluginID   string `bun:"plugin_id,notnull"`
-	// UserID is the end user whose account this is. Empty is the app's own login, made once
-	// on the dashboard and used by every session of the config.
-	UserID string `bun:"user_id,notnull"`
-	// InstanceURL is the shop or org hostname for plugins that have no single global URL,
-	// or the URL of an MCP server named by URL, whose login is good only there.
-	InstanceURL  string     `bun:"instance_url,notnull"`
-	AccessToken  string     `bun:"access_token,notnull"`
-	RefreshToken string     `bun:"refresh_token,notnull"`
-	ExpiresAt    *time.Time `bun:"expires_at"`
-	Status       string     `bun:"status,notnull"`
-	// OAuthState, CodeVerifier, ClientID and TokenEndpoint are what the callback needs
-	// to finish the login. They are cleared once the connection is connected.
-	OAuthState    string     `bun:"oauth_state,notnull"`
-	CodeVerifier  string     `bun:"code_verifier,notnull"`
-	ClientID      string     `bun:"client_id,notnull"`
-	TokenEndpoint string     `bun:"token_endpoint,notnull"`
-	CreatedAt     time.Time  `bun:"created_at,notnull"`
-	UpdatedAt     time.Time  `bun:"updated_at,notnull"`
-	DeletedAt     *time.Time `bun:"deleted_at"`
-}
-
-// PluginClient is the OAuth client one agent config logs into one plugin with, for a
-// plugin that registers no client on the fly.
-type PluginClient struct {
-	bun.BaseModel `bun:"table:agent_plugin_clients,alias:apcl"`
-
-	CustomerID string `bun:"customer_id,pk"`
-	ConfigID   string `bun:"config_id,pk"`
-	PluginID   string `bun:"plugin_id,pk"`
-	ClientID   string `bun:"client_id,notnull"`
-	// SecretSealed is the client secret, sealed under SecretKEKVersion with the customer,
-	// the config and the plugin as additional data. Empty for a public client.
-	SecretSealed     []byte    `bun:"secret_sealed"`
-	SecretKEKVersion int       `bun:"kek_version,notnull"`
-	CreatedAt        time.Time `bun:"created_at,notnull"`
-	UpdatedAt        time.Time `bun:"updated_at,notnull"`
-}
-
-// MCPServer is an MCP server an agent reaches by its URL rather than from the catalog.
-type MCPServer struct {
-	// Name prefixes its tools, as a plugin's id does.
-	Name string `json:"name"`
-	URL  string `json:"url"`
-	// Tools offer only the server's tools matching these names or path.Match patterns.
-	// Empty offers every tool.
-	Tools []string `json:"tools,omitempty"`
-	// Scopes are what its login asks for at consent, in place of what the server
-	// advertises.
-	Scopes []string `json:"scopes,omitempty"`
-	// User has each end user log in with their own account, in the conversation, rather
-	// than the app once, on the dashboard.
-	User bool `json:"user,omitempty"`
-	// Branding is how the server described itself when the config was saved. Nil when it
-	// did not answer.
-	Branding *MCPBranding `json:"branding,omitempty"`
-	// NeedsLogin is whether the server said it requires an OAuth login when the config was
-	// saved. Nil when it could not be asked, which a session starting asks again.
-	NeedsLogin *bool `json:"needs_login,omitempty"`
-}
-
-// AppLogin reports whether the app logs into the server once, on the dashboard.
-func (s MCPServer) AppLogin() bool {
-	return !s.User && s.NeedsLogin != nil && *s.NeedsLogin
-}
-
-// MCPBranding is what an MCP server said about itself at initialize.
-type MCPBranding struct {
-	Title       string `json:"title,omitempty"`
-	Description string `json:"description,omitempty"`
-	Version     string `json:"version,omitempty"`
-	IconURL     string `json:"icon_url,omitempty"`
-	WebsiteURL  string `json:"website_url,omitempty"`
-}
-
 // ChannelIdentity is who a number is to one agent, and where its conversation is kept.
 type ChannelIdentity struct {
 	bun.BaseModel `bun:"table:channel_identities,alias:ci"`
@@ -1115,7 +1035,7 @@ type ChannelLine struct {
 // ChannelAccount is one app's line on a channel: the number people write to and the
 // credentials of the provider carrying it.
 //
-// It belongs to the app rather than to an agent, the way a plugin login does: the number is
+// It belongs to the app rather than to an agent, the way a removed plugin login did: the number is
 // connected once and any number of configs name it.
 type ChannelAccount struct {
 	bun.BaseModel `bun:"table:channel_accounts,alias:ca"`
@@ -1137,99 +1057,6 @@ type ChannelAccount struct {
 	CreatedAt         time.Time  `bun:"created_at,notnull"`
 	UpdatedAt         time.Time  `bun:"updated_at,notnull"`
 	DeletedAt         *time.Time `bun:"deleted_at"`
-}
-
-// PluginEntry is one catalog plugin an agent config names, and how it is reached. Only
-// Name is required; without the rest the plugin is the catalog's.
-type PluginEntry struct {
-	Name string `json:"name"`
-	// User has each end user connect the plugin with their own account, in the conversation,
-	// rather than the app once.
-	User bool `json:"user,omitempty"`
-	// Readonly reaches the plugin's read-only endpoint.
-	Readonly bool `json:"readonly,omitempty"`
-	// Scopes are asked for at consent in place of the catalog's.
-	Scopes []string `json:"scopes,omitempty"`
-	// Toolsets limit the server to these groups of tools. Empty offers every tool.
-	Toolsets []string `json:"toolsets,omitempty"`
-	// Tools offer only the server's tools matching these names or path.Match patterns.
-	// Empty offers every tool.
-	Tools []string `json:"tools,omitempty"`
-}
-
-// PluginNames are the ids entries name.
-func PluginNames(entries []PluginEntry) []string {
-	names := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		names = append(names, entry.Name)
-	}
-	return names
-}
-
-// NamesPlugin reports whether entries name the plugin id.
-func NamesPlugin(entries []PluginEntry, id string) bool {
-	return slices.ContainsFunc(entries, func(entry PluginEntry) bool { return entry.Name == id })
-}
-
-// AppPlugins are the entries the app logs into once.
-func AppPlugins(entries []PluginEntry) []PluginEntry {
-	return slices.DeleteFunc(slices.Clone(entries), func(entry PluginEntry) bool { return entry.User })
-}
-
-// UserPlugins are the entries each end user connects with their own account.
-func UserPlugins(entries []PluginEntry) []PluginEntry {
-	return slices.DeleteFunc(slices.Clone(entries), func(entry PluginEntry) bool { return !entry.User })
-}
-
-// PluginEvent is one MCP event an agent config subscribes to on a plugin it names.
-type PluginEvent struct {
-	Plugin string `json:"plugin"`
-	Event  string `json:"event"`
-	// Arguments are the event's filters, as its inputSchema describes them.
-	Arguments map[string]any `json:"arguments,omitempty"`
-	// Instructions say what the agent does with the event when it arrives.
-	Instructions string `json:"instructions,omitempty"`
-}
-
-// How far a plugin event subscription has got.
-const (
-	// PluginEventPending means the server has not yet accepted it.
-	PluginEventPending = "pending"
-	// PluginEventActive means the server accepted it and delivers to its callback.
-	PluginEventActive = "active"
-	// PluginEventFailed means the server refused it, and Error says why.
-	PluginEventFailed = "failed"
-)
-
-// PluginEventSubscription is one declared event subscribed to with one login: the app's
-// own, or one end user's.
-type PluginEventSubscription struct {
-	bun.BaseModel `bun:"table:agent_plugin_event_subscriptions,alias:apes"`
-
-	ID         string `bun:"id,pk"`
-	CustomerID string `bun:"customer_id,notnull"`
-	ConfigID   string `bun:"config_id,notnull"`
-	PluginID   string `bun:"plugin_id,notnull"`
-	// UserID is whose login subscribed. Empty is the app's own.
-	UserID    string         `bun:"user_id,notnull"`
-	Event     string         `bun:"event,notnull"`
-	Arguments map[string]any `bun:"arguments,type:jsonb,notnull"`
-	// Key is the event and its arguments as canonical JSON, hashed, so the same filters
-	// in another key order are the same subscription.
-	Key string `bun:"key,notnull"`
-	// Token is the callback's path segment and Secret what deliveries to it are signed with.
-	Token  string `bun:"token,notnull"`
-	Secret string `bun:"secret,notnull"`
-	// RemoteID is the id the server gave the subscription.
-	RemoteID string `bun:"remote_id,notnull"`
-	// RefreshBefore is when the server stops delivering unless subscribed to again. Nil
-	// is a subscription that does not expire.
-	RefreshBefore *time.Time `bun:"refresh_before"`
-	Status        string     `bun:"status,notnull"`
-	Error         string     `bun:"error,notnull"`
-	CreatedAt     time.Time  `bun:"created_at,notnull"`
-	UpdatedAt     time.Time  `bun:"updated_at,notnull"`
-	DeletedAt     *time.Time `bun:"deleted_at"`
 }
 
 // Where a knowledge url has got to.
@@ -1289,11 +1116,35 @@ type KnowledgeDocument struct {
 	// Source is what the passages are keyed by, and what a reader would call the document.
 	Source   string `bun:"source,notnull"`
 	Passages int    `bun:"passages,notnull"`
-	// Text is the document as it was posted. Listings leave it out.
-	Text      string    `bun:"text,notnull"`
+	// Text is the document as it was posted, or as its file was read. Listings leave it out.
+	Text string `bun:"text,notnull"`
+	// State is pending while an uploaded file waits to be read, failed when it could not
+	// be, and indexed otherwise. Error says why it failed.
+	State string `bun:"state,notnull"`
+	Error string `bun:"error,notnull"`
+	// Pages is how many pages the uploaded file had, 0 for text and for a file without pages.
+	Pages int `bun:"pages,notnull"`
+	// ContentType and Bytes are what was sent: the file's type as the upload named it, and
+	// its size.
+	ContentType string `bun:"content_type,notnull"`
+	Bytes       int64  `bun:"bytes,notnull"`
+	// ObjectKey is the uploaded file in the knowledge bucket while it waits to be read, and
+	// empty once it has been. A read that finds another key here was overtaken by a newer
+	// upload of the same source, and leaves the row to it.
+	ObjectKey string    `bun:"object_key,notnull"`
 	CreatedAt time.Time `bun:"created_at,notnull"`
 	UpdatedAt time.Time `bun:"updated_at,notnull"`
 }
+
+// Where a knowledge document has got to.
+const (
+	// KnowledgeDocumentPending is an uploaded file not read yet.
+	KnowledgeDocumentPending = "pending"
+	// KnowledgeDocumentIndexed is a document whose passages can be looked up.
+	KnowledgeDocumentIndexed = "indexed"
+	// KnowledgeDocumentFailed is an uploaded file that could not be read, and Error says why.
+	KnowledgeDocumentFailed = "failed"
+)
 
 // What a provider has made of a voice's samples.
 const (
@@ -1386,6 +1237,11 @@ type Call struct {
 	// CallID is the Stream call, and AgentID is the transcript channel.
 	CallID  string `bun:"call_id,notnull"`
 	AgentID string `bun:"agent_id,notnull"`
+	// ConversationID is the conversation the call was bound to when it started, as its
+	// session's row names it. It outlives that row, so a deleted session's call can still
+	// find its transcript. Empty for a call from before the column, and for one that kept
+	// no conversation.
+	ConversationID string `bun:"conversation_id,nullzero"`
 	// ConfigID names the agent config the call ran under. Empty when the caller spelled
 	// the whole spec out.
 	ConfigID   string `bun:"config_id,nullzero"`
@@ -1432,22 +1288,41 @@ type Call struct {
 const (
 	// Draft is a campaign that has never been started.
 	Draft = "draft"
+	// Scheduled is a launched campaign waiting for its start time.
+	Scheduled = "scheduled"
 	// Running means the runner is working through its contacts.
 	Running = "running"
 	// Paused means it was stopped partway and can be started again.
 	Paused = "paused"
-	// Finished means there is nobody left to ring.
-	Finished = "finished"
+	// Stopped means somebody ended it for good before every contact was done.
+	Stopped = "stopped"
+	// Completed means there is nobody left to ring.
+	Completed = "completed"
 )
 
-// What became of one contact.
+// What kind of campaign it is.
 const (
-	// Pending is somebody who has not been rung yet.
-	Pending = "pending"
-	// Calling is a call happening now.
-	Calling = "calling"
-	// Done is somebody who was rung, whatever they said.
-	Done = "done"
+	// Standard is a campaign that rings the contacts it was given.
+	Standard = "standard"
+	// AutoEnroll is reserved: nothing creates one yet.
+	AutoEnroll = "auto_enroll"
+)
+
+// Where one contact is in the campaign's sequence.
+const (
+	// Enrolled is somebody waiting for their next attempt.
+	Enrolled = "enrolled"
+	// InProgress is a call happening now.
+	InProgress = "in_progress"
+	// AwaitingOutcome is a call that was answered whose outcome is not yet classified. It
+	// does not count toward concurrency, and the API shows it as in_progress.
+	AwaitingOutcome = "awaiting_outcome"
+	// ContactCompleted is somebody the sequence is finished with.
+	ContactCompleted = "completed"
+	// Rejected is a number that was refused before any call.
+	Rejected = "rejected"
+	// ContactStopped is somebody left unrung because the campaign was stopped.
+	ContactStopped = "stopped"
 	// Failed is a call that could not be made.
 	Failed = "failed"
 )
@@ -1464,12 +1339,24 @@ type Campaign struct {
 	// FromNumber is one of the customer's own, which is what the person sees.
 	FromNumber string `bun:"from_number,notnull"`
 	// Concurrency is how many of these calls may be happening at once.
-	Concurrency int               `bun:"concurrency,notnull"`
-	State       string            `bun:"state,notnull"`
-	Tags        map[string]string `bun:"tags,type:jsonb,nullzero"`
-	CreatedAt   time.Time         `bun:"created_at,notnull"`
-	StartedAt   *time.Time        `bun:"started_at"`
-	FinishedAt  *time.Time        `bun:"finished_at"`
+	Concurrency int `bun:"concurrency,notnull"`
+	// Sequence is the steps each contact goes through, and CallingHours when they may be
+	// rung. Both are null on a draft until the API fills them.
+	Sequence     json.RawMessage `bun:"sequence,type:jsonb"`
+	CallingHours json.RawMessage `bun:"calling_hours,type:jsonb"`
+	// DefaultCountry is the region a contact's number without a country code is read in.
+	DefaultCountry string            `bun:"default_country,notnull"`
+	State          string            `bun:"state,notnull"`
+	Type           string            `bun:"type,notnull"`
+	Tags           map[string]string `bun:"tags,type:jsonb,nullzero"`
+	CreatedAt      time.Time         `bun:"created_at,notnull"`
+	StartAt        *time.Time        `bun:"start_at"`
+	LaunchedAt     *time.Time        `bun:"launched_at"`
+	StartedAt      *time.Time        `bun:"started_at"`
+	StoppedAt      *time.Time        `bun:"stopped_at"`
+	ConsentAt      *time.Time        `bun:"consent_at"`
+	// FinishedAt is when the campaign completed.
+	FinishedAt *time.Time `bun:"finished_at"`
 	// PausedReason is the code of what refused a call when the router paused the campaign
 	// itself, as telephony_suspended or insufficient_credits; empty otherwise.
 	PausedReason string `bun:"paused_reason,nullzero"`
@@ -1491,14 +1378,55 @@ type Contact struct {
 	CampaignID string `bun:"campaign_id,notnull"`
 	ToNumber   string `bun:"to_number,notnull"`
 	// Instructions are what to say to this person, added to whatever the config says.
-	Instructions string `bun:"instructions,notnull"`
-	State        string `bun:"state,notnull"`
-	Attempts     int    `bun:"attempts,notnull"`
-	// CallID is the calls row this contact became.
+	Instructions string            `bun:"instructions,notnull"`
+	Variables    map[string]string `bun:"variables,type:jsonb"`
+	TimeZone     string            `bun:"time_zone,notnull"`
+	Stage        string            `bun:"stage,notnull"`
+	StepID       string            `bun:"step_id,notnull"`
+	// Attempt is how many attempts of the current step have been used.
+	Attempt       int        `bun:"attempt,notnull"`
+	NextAttemptAt *time.Time `bun:"next_attempt_at"`
+	// LeasedBy and LeasedUntil say which runner holds the contact while it is rung.
+	LeasedBy    string     `bun:"leased_by,notnull"`
+	LeasedUntil *time.Time `bun:"leased_until"`
+	Outcome     string     `bun:"outcome,notnull"`
+	Converted   bool       `bun:"converted,notnull"`
+	// CallID is the calls row of the last dial.
 	CallID       string    `bun:"call_id,nullzero"`
 	VendorCallID string    `bun:"vendor_call_id,nullzero"`
-	Error        string    `bun:"error,nullzero"`
+	Reason       string    `bun:"reason,nullzero"`
 	CreatedAt    time.Time `bun:"created_at,notnull"`
+}
+
+// CampaignAttempt is one dial of one contact.
+type CampaignAttempt struct {
+	bun.BaseModel `bun:"table:campaign_attempts,alias:ca"`
+
+	ID         string `bun:"id,pk"`
+	CampaignID string `bun:"campaign_id,notnull"`
+	ContactID  string `bun:"contact_id,notnull"`
+	StepID     string `bun:"step_id,notnull"`
+	Attempt    int    `bun:"attempt,notnull"`
+	// Dial is 1, or 2 for the second call of a double dial.
+	Dial         int    `bun:"dial,notnull"`
+	CallID       string `bun:"call_id,notnull"`
+	VendorCallID string `bun:"vendor_call_id,notnull"`
+	// Result is why the dial placed no call: invalid_number, refused, deferred, paused or
+	// not_placed. It is voicemail for a call an answering machine took, and empty for any other.
+	Result string `bun:"result,notnull"`
+	// CallOutcome is how the placed call ended, a phone outcome. Empty while the call is
+	// happening, and for a dial that placed none.
+	CallOutcome string `bun:"call_outcome,nullzero"`
+	Outcome     string `bun:"outcome,notnull"`
+	Converted   bool   `bun:"converted,notnull"`
+	// ClassifyState is empty, pending, done or abandoned: whether an answered call's outcome
+	// is still to be read from its transcript. Abandoned is one whose contact settled before
+	// it was read.
+	ClassifyState string     `bun:"classify_state,notnull"`
+	ClassifyAfter *time.Time `bun:"classify_after"`
+	ClassifyTries int        `bun:"classify_tries,notnull"`
+	StartedAt     time.Time  `bun:"started_at,notnull"`
+	EndedAt       *time.Time `bun:"ended_at"`
 }
 
 // Which pipeline a simulation puts the agent through.
@@ -1513,6 +1441,8 @@ const (
 
 // How a run or one of its conversations ended.
 const (
+	// SimulationPending is a case not yet started.
+	SimulationPending = "pending"
 	// SimulationRunning means the conversations are still being had.
 	SimulationRunning = "running"
 	// SimulationPassed means the judge was satisfied. A run passed only if every one of
@@ -1783,6 +1713,16 @@ type AppSettings struct {
 	// (visibleTo in connectors.go). Stream sets it on its own apps; no operation writes
 	// settings, so an app cannot set it on itself. Nil is no.
 	InternalConnectors *bool `json:"internal_connectors,omitempty"`
+	// AgentTeams is whether an end user opens only the agent configs of a team they are in,
+	// by Chat's shared-team rule (api.teamsGate). Stream sets it, as it does
+	// InternalConnectors. Nil is no: an app that never asked keeps every config open to
+	// every user, as before the setting existed.
+	AgentTeams *bool `json:"agent_teams,omitempty"`
+}
+
+// AgentTeamsChecked reports whether the app keeps each team's agent configs to its own users.
+func (s AppSettings) AgentTeamsChecked() bool {
+	return s.AgentTeams != nil && *s.AgentTeams
 }
 
 // AnonymousAllowed reports whether the app takes callers who presented no token.
@@ -1859,6 +1799,27 @@ type ModelOverwrites struct {
 // worth not writing a row for.
 func (m ModelOverwrites) Empty() bool {
 	return m == ModelOverwrites{}
+}
+
+// FloorControl is the model that controls an agent's floor, hearing the audio: when a
+// caller's turn has ended, and what is done about speech over the agent. The zero value is the
+// default flow controller, which every agent has until it opts in. MaxWaitMs is the most a
+// caller who has finished may wait for the answer: the point of the server's measured
+// trade-off with the fewest cut-ins whose p90 wait is within it (audiofloor.Policy.Resolve).
+// Zero is the server's default point.
+type FloorControl struct {
+	Model     string `json:"model,omitempty"`
+	MaxWaitMs int    `json:"max_wait_ms,omitempty"`
+}
+
+// FloorControlChorusASR has chorus-asr control the floor, the one model there is, named as
+// the stream/chorus-asr transcriber is.
+const FloorControlChorusASR = "stream/chorus-asr"
+
+// IsZero reports whether no model was chosen, which is the default flow controller. It is
+// also what the nullzero columns read.
+func (f FloorControl) IsZero() bool {
+	return f == FloorControl{}
 }
 
 // ResumeHistory is how much of a conversation a model is handed back when a session opens
@@ -1955,15 +1916,18 @@ type AgentSession struct {
 	// ResumeHistory is what the session was opened with, which reopening it keeps. Zero
 	// takes the config's.
 	ResumeHistory ResumeHistory `bun:"resume_history,type:jsonb,nullzero"`
-	State         string        `bun:"state,notnull"`
+	// FloorControl is what the session was opened with over its config's, which reopening
+	// it keeps. Zero takes the config's.
+	FloorControl FloorControl `bun:"floor_control,type:jsonb,nullzero"`
+	State        string       `bun:"state,notnull"`
 	// Modality is ModalityText, ModalityVoice or ModalityVideo.
 	Modality  string    `bun:"modality,notnull"`
 	CreatedAt time.Time `bun:"created_at,notnull"`
 	UpdatedAt time.Time `bun:"updated_at,notnull"`
 	// ClosedAt is nil while the session is still running.
 	ClosedAt *time.Time `bun:"closed_at"`
-	// EndReason is why it ended (session.EndReason), empty while it runs and for one stopped
-	// by its caller.
+	// EndReason is why it ended (session.EndReason), empty while it runs and for one that
+	// ended before reasons were kept.
 	EndReason      string     `bun:"end_reason,notnull"`
 	LastResponseAt *time.Time `bun:"last_response_at"`
 	// Rank is how well a search matched, zero outside a search.
@@ -2069,6 +2033,8 @@ type Exchange struct {
 	Answer     string
 	// Refused is a turn the prompt injection screen refused, whose Said is not to be replayed.
 	Refused bool
+	// At is when the response was started, set by Opening only.
+	At time.Time
 }
 
 // Reply is what one reply a conversation's transcript wrote did: its answer and tool_result
@@ -2190,6 +2156,10 @@ type User struct {
 	// person's conversations onto another's account.
 	ClaimedBy string     `bun:"claimed_by,nullzero"`
 	ClaimedAt *time.Time `bun:"claimed_at"`
+	// RefreshSecretHash is the SHA-256 of the refresh secret this guest was last handed
+	// (GuestSecretHash), nil for one handed none. Never sent anywhere: it is the credential
+	// that lets a guest whose token expired come back as themselves.
+	RefreshSecretHash []byte `bun:"refresh_secret_hash,nullzero" json:"-"`
 }
 
 // BusinessProfile is who an app is, written once and reused by every channel it registers

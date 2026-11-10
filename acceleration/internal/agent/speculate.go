@@ -11,6 +11,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
@@ -33,6 +34,8 @@ type speculation struct {
 	ready   candidate
 	turn    harness.Turn
 	harness *harness.Harness
+	// model is the reply model beside harness, which a failed request is reported against.
+	model *llmrouter.Session
 	// history is how long the conversation was when the reply was built on it. A turn that
 	// changed it in the meantime is not what the reply answers.
 	history   int
@@ -102,10 +105,12 @@ func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, a
 	if a.speculating == "" {
 		a.speculating = uuid.NewString()
 	}
+	a.speculated++
 	spec := &speculation{
 		id:      a.speculating,
 		ready:   ready,
 		harness: current,
+		model:   a.llm,
 		history: len(a.history),
 		turn: harness.Turn{
 			ID:           ready.ID,
@@ -113,6 +118,7 @@ func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, a
 			Tell:         tell,
 			History:      append(a.replayLocked(), named(said)),
 			Note:         note,
+			Generation:   a.speculated,
 		},
 		startedAt: time.Now(),
 		ctx:       ctx,
@@ -155,7 +161,7 @@ func (a *Agent) runSpeculation(spec *speculation) {
 			for stream.Next() {
 			}
 		}
-		spec.harness.Forget(spec.turn.ID)
+		spec.harness.Forget(spec.turn.ID, spec.turn.Generation)
 		return
 	}
 
@@ -168,7 +174,7 @@ func (a *Agent) runSpeculation(spec *speculation) {
 		a.mu.Lock()
 		replies := a.replies
 		a.mu.Unlock()
-		replies <- llm.ResponseFailed{ResponseID: turnID, Err: err, Context: "llm"}
+		replies <- createFailed(turnID, spec.model, err)
 		replies <- llm.ResponseCompleted{Response: llm.Response{ID: turnID, Status: llm.StatusFailed}}
 		return
 	}
@@ -210,7 +216,7 @@ func (a *Agent) adoptSpeculation(ready candidate, note string) (adopted bool, sp
 		spec.drop()
 		return false, spec.id
 	}
-	a.keepTurnLocked(ready.Participant, ready.Said(), nil)
+	a.keepTurnLocked(ready.Participant, ready.Said(), 0, nil, false)
 	a.speakingTurn = ready.ID
 	a.generating = true
 	a.toolRounds = 0
@@ -219,6 +225,7 @@ func (a *Agent) adoptSpeculation(ready candidate, note string) (adopted bool, sp
 	a.sender = routing.Caller{}
 	a.scheduled = false
 	a.lastParticipant = ready.Participant
+	a.heardCaller = true
 	a.generatingCancel[ready.ID] = spec.cancel
 	a.mu.Unlock()
 

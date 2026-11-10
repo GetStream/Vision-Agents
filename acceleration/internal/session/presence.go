@@ -144,8 +144,15 @@ func (s *Session) observe(run *presence, event Event) {
 				greet()
 			})
 		}
-		if _, ok := phone.CallerNumber(reported.Participant.UserID); ok {
+		if number, ok := phone.CallerNumber(reported.Participant.UserID); ok {
 			s.callerSeen.Store(true)
+			// The line's own number is the vendor's leg of a call the agent placed.
+			if !ownLine(spec, number) {
+				s.hearCaller(number)
+			}
+			if spec.Voicemail != nil {
+				s.answered()
+			}
 		}
 		if run.settled && s.phoneSession(spec) {
 			s.ClearTimeout()
@@ -171,13 +178,53 @@ func (s *Session) observe(run *presence, event Event) {
 			// Voice was stopped and started again after the caller hung up.
 			s.SetTimeout(hangupTimeout, TimeoutHangup)
 		case first && spec.Phone != nil:
-			if spec.Phone.VendorCallID != "" {
-				s.SetTimeout(outboundStartTimeout, TimeoutStart)
-			} else {
-				s.SetTimeout(inboundStartTimeout, TimeoutStart)
-			}
+			s.SetTimeout(startTimeout(spec.Phone), TimeoutStart)
 		}
 	}
+}
+
+// startTimeout is how long a phone session waits for anybody to join its call before it ends.
+func startTimeout(phone *PhoneSpec) time.Duration {
+	if phone.VendorCallID != "" {
+		return outboundStartTimeout
+	}
+	return inboundStartTimeout
+}
+
+// hearCaller keeps the number of the first phone caller to join the session's call, the line
+// itself aside, for a card that waits for them (awaitCaller). An empty number is nobody: the
+// session closed before a caller joined (Session.close).
+func (s *Session) hearCaller(number string) {
+	s.callerMu.Lock()
+	defer s.callerMu.Unlock()
+	if s.callerHeard == nil {
+		s.callerHeard = make(chan struct{})
+	}
+	select {
+	case <-s.callerHeard:
+	default:
+		s.caller = number
+		close(s.callerHeard)
+	}
+}
+
+// awaitCaller is the number of the first phone caller to join the session's call, waiting
+// for one until ctx is done. Empty when none joined by then.
+func (s *Session) awaitCaller(ctx context.Context) string {
+	s.callerMu.Lock()
+	if s.callerHeard == nil {
+		s.callerHeard = make(chan struct{})
+	}
+	heard := s.callerHeard
+	s.callerMu.Unlock()
+	select {
+	case <-heard:
+	case <-ctx.Done():
+		return ""
+	}
+	s.callerMu.Lock()
+	defer s.callerMu.Unlock()
+	return s.caller
 }
 
 // isAgent reports whether a participant is the agent itself under another user, such as

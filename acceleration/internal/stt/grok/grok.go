@@ -60,6 +60,12 @@ const (
 // what it is still holding and report it as transcript.done.
 const controlTypeAudioDone = "audio.done"
 
+// controlTypeFinalize ends the utterance in progress at once, as the speaker having stopped
+// would: the server reports it as speech_final without waiting for its endpointing, and the
+// session goes on (docs.x.ai/developers/rest-api-reference/inference/voice.md, read
+// 2026-11-07).
+const controlTypeFinalize = "finalize"
+
 // Options configures the provider. APIKey falls back to XAI_API_KEY.
 type Options struct {
 	APIKey string
@@ -256,6 +262,21 @@ func (s *STT) ProcessAudio(pcm stt.PcmData, participant stt.Participant) error {
 
 // Events returns transcript revisions.
 func (s *STT) Events() <-chan stt.Event { return s.emitter.Events() }
+
+// Finalize asks the server to settle the utterance in progress now (stt.Finalizer): its final
+// comes as the speaker having stopped does.
+func (s *STT) Finalize() error {
+	s.mu.Lock()
+	closed, started := s.closed, s.started
+	s.mu.Unlock()
+	if closed || !started || s.conn == nil {
+		return errors.New("grok: session not open")
+	}
+	if err := s.write(websocket.TextMessage, []byte(`{"type":"`+controlTypeFinalize+`"}`)); err != nil {
+		return fmt.Errorf("grok: finalize: %w", err)
+	}
+	return nil
+}
 
 // Close ends the audio stream, waits for what is still being transcribed, then tears the
 // connection down.

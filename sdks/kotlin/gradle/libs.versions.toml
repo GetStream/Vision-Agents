@@ -6,7 +6,7 @@ serialization = "1.11.0"
 ktor = "3.6.0"
 okhttp = "5.5.0"
 stream-video = "1.34.0"
-stream-chat = "7.15.0"
+stream-chat = "7.18.0"
 
 [libraries]
 coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }

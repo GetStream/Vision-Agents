@@ -846,6 +846,101 @@ func (s *ConfigSuite) TestStreamTenancyIsDeploymentOrApp() {
 	s.ErrorContains(err, "stream.tenancy")
 }
 
+// The router's floor control is gone: each agent opts in to chorus-asr's itself. A router
+// still given it starts, acts on it for nothing, and says what took its place.
+func (s *ConfigSuite) TestTheRoutersFloorControlIsNoLongerRead() {
+	settings, _, err := Load("")
+	s.Require().NoError(err)
+	s.Empty(settings.Retired)
+
+	for _, mode := range []string{"act", "shadow", "on"} {
+		s.T().Setenv("ROUTER_CHORUS_ASR_MODE", mode)
+		settings, _, err = Load("")
+		s.Require().NoError(err, "a router given %q starts", mode)
+		s.Equal([]string{chorusASRModeRetired}, settings.Retired)
+		s.Contains(settings.Retired[0], "floor_control")
+	}
+
+	file := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(file, []byte("agent:\n  chorus_asr_mode: act\n"), 0o600))
+	s.T().Setenv("ROUTER_CHORUS_ASR_MODE", "")
+	settings, _, err = Load("")
+	s.Require().NoError(err)
+	s.Empty(settings.Retired, "an empty variable sets nothing")
+	settings, _, err = Load(file)
+	s.Require().NoError(err)
+	s.Equal([]string{chorusASRModeRetired}, settings.Retired, "and so is a file that names it")
+}
+
+func (s *ConfigSuite) TestTheAudioFloorsAudioIsOpusOrPCM() {
+	s.T().Setenv("ROUTER_CHORUS_ASR_AUDIO", "mp3")
+	_, _, err := Load("")
+	s.ErrorContains(err, "ROUTER_CHORUS_ASR_AUDIO")
+	s.T().Setenv("ROUTER_CHORUS_ASR_AUDIO", "pcm")
+	settings, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal("pcm", settings.Agent.AudioFloorAudio)
+}
+
+func (s *ConfigSuite) TestTheAudioFloorsInterimsAreOnOrOff() {
+	s.T().Setenv("ROUTER_CHORUS_ASR_INTERIMS", "yes")
+	_, _, err := Load("")
+	s.ErrorContains(err, "ROUTER_CHORUS_ASR_INTERIMS")
+	s.T().Setenv("ROUTER_CHORUS_ASR_INTERIMS", "off")
+	settings, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal("off", settings.Agent.AudioFloorInterims)
+}
+
+// The router waits 250ms for a ruling while the caller talks over the agent unless the
+// deployment says otherwise, from 100ms to 450ms: a longer wait can't keep the agent's stop
+// within 800 ms of the caller's first word, and is refused when the settings load.
+func (s *ConfigSuite) TestTheAudioFloorsWaitOverTheAgentIsFrom100To450ms() {
+	settings, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(250*time.Millisecond, settings.Agent.AudioFloorOverlapTimeout)
+	for setting, wait := range map[string]time.Duration{"100ms": 100 * time.Millisecond, "400ms": 400 * time.Millisecond, "450ms": 450 * time.Millisecond} {
+		s.T().Setenv("ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT", setting)
+		settings, _, err = Load("")
+		s.Require().NoError(err, setting)
+		s.Equal(wait, settings.Agent.AudioFloorOverlapTimeout)
+	}
+	for _, setting := range []string{"0", "99ms", "451ms", "1s"} {
+		s.T().Setenv("ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT", setting)
+		_, _, err = Load("")
+		s.Require().Error(err, setting)
+		s.ErrorContains(err, "(ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT) is from 100ms to 450ms", setting)
+		s.ErrorContains(err, "800 ms", setting)
+	}
+	s.T().Setenv("ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT", "400")
+	_, _, err = Load("")
+	s.ErrorContains(err, "chorus_asr_overlap_timeout", "a duration has its unit")
+}
+
+// The server's address is an http or https URL the client appends its paths to, so one with
+// a query or fragment, or of another scheme, is refused when the settings load rather than
+// at the first call.
+func (s *ConfigSuite) TestTheAudioFloorsURLIsAServersAddress() {
+	for _, bad := range []string{"floor:8080", "ftp://floor:8080", "http:///v1", "http://floor:8080/v1?x=1", "http://floor:8080/#v1", "://floor"} {
+		s.T().Setenv("ROUTER_CHORUS_ASR_URL", bad)
+		_, _, err := Load("")
+		s.ErrorContains(err, "ROUTER_CHORUS_ASR_URL", bad)
+	}
+	for _, good := range []string{"http://floor:8080", "https://floor.example/chorus-asr/", "http://127.0.0.1:8792", "https://model-x.api.baseten.co/environments/production/sync"} {
+		s.T().Setenv("ROUTER_CHORUS_ASR_URL", good)
+		settings, _, err := Load("")
+		s.Require().NoError(err, good)
+		s.Equal(good, settings.Agent.AudioFloorURL)
+	}
+}
+
+func (s *ConfigSuite) TestTheAudioFloorsKeyIsRead() {
+	s.T().Setenv("ROUTER_CHORUS_ASR_API_KEY", "a-key")
+	settings, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal("a-key", settings.Agent.AudioFloorAPIKey)
+}
+
 func (s *ConfigSuite) TestAppModeIsRefusedWithoutPostgres() {
 	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
 	s.T().Setenv("ROUTER_POSTGRES_DSN", "")

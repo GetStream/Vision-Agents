@@ -6,8 +6,10 @@
 // run of messages on one external thread, gets one card there: a message with a source, the
 // episode's status, when it started and the channel that holds its raw text. The raw text
 // stays in the thread channel or the call channel. The channel bridge writes a card on a
-// thread's first message, the session manager when a call's session starts. A session under
-// an agent config that turned the cards on starts with the person's other cards (Context).
+// thread's first message, the session manager when a call's session starts, and the message
+// path (api.chatEpisode) on the first message of a run in an app chat's agent channel. A
+// session under an agent config that turned the cards on starts with the person's other cards
+// (Context).
 package omnichannel
 
 import (
@@ -97,7 +99,7 @@ func New(options Options) (*Cards, error) {
 
 // Person is who an episode is with, as the contact map keys them.
 type Person struct {
-	// Kind is store.ContactPhone or store.ContactSlack.
+	// Kind is store.ContactPhone, store.ContactSlack or store.ContactStreamUser.
 	Kind    string
 	Address string
 }
@@ -146,6 +148,26 @@ func SlackUser(teamID, userID string) (Person, error) {
 	return Person{Kind: store.ContactSlack, Address: teamID + ":" + userID}, nil
 }
 
+// StreamUser is the person a Stream user of the app chat is: the message's user id, which
+// Stream signed through the customer's own token, in the Stream app the message came from.
+// Never a custom field of the user, which a user may set on themselves. A user id is one
+// person in one app only, so the address is the app's pk and the user id
+// (store.StreamUserAddress, which a link finds the row by): anya_123 of app 111 is never
+// anya_123 of app 222. Until a customer links the user to a number, their chat
+// episodes go to an omni-channel of their own.
+func StreamUser(appPK int64, userID string) (Person, error) {
+	if appPK <= 0 || userID == "" {
+		return Person{}, stack.Wrap(errors.New("omnichannel: a Stream app and a Stream user are required"))
+	}
+	return Person{Kind: store.ContactStreamUser, Address: store.StreamUserAddress(appPK, userID)}, nil
+}
+
+// IsOmniChannel is whether an agent channel's id is an omni-channel's, where cards are
+// written: a message in one is never the start of an episode of its own.
+func IsOmniChannel(channelID string) bool {
+	return strings.HasPrefix(channelID, omniChannelPrefix)
+}
+
 // Episode is the start of an episode, as the channel bridge or the call path sees it.
 type Episode struct {
 	CustomerID    string
@@ -153,7 +175,8 @@ type Episode struct {
 	// AgentName is the name the omni-channel's agent user is shown by, for a new omni-channel.
 	AgentName string
 	Person    Person
-	// Source is the card's source: store.EpisodeCall or store.EpisodeSlack.
+	// Source is the card's source: store.EpisodeCall, store.EpisodeSlack, store.EpisodeChat, or
+	// the channel bridge's.
 	Source string
 	// ThreadChannel is the cid of the channel with the raw text.
 	ThreadChannel string
@@ -161,6 +184,9 @@ type Episode struct {
 	CallID    string
 	SessionID string
 	StartedAt time.Time
+	// Began is when a call began by this process's monotonic clock, which dates its episode by
+	// Postgres's clock in place of StartedAt (store.Episode.Began).
+	Began time.Time
 	// StreamAppPK is the app a new omni-channel is made in: the thread's or the call's.
 	StreamAppPK int64
 }
@@ -197,6 +223,7 @@ func (c *Cards) Open(ctx context.Context, episode Episode) (Opened, error) {
 		CallID:        episode.CallID,
 		SessionID:     episode.SessionID,
 		StartedAt:     episode.StartedAt,
+		Began:         episode.Began,
 		StreamAppPK:   contact.StreamAppPK,
 	}
 	opened, err := c.store.OpenEpisode(ctx, &row)

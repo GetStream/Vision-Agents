@@ -146,6 +146,7 @@ type ConnectionTool struct {
 	InputSchema  map[string]any `json:"input_schema" doc:"The JSON Schema of its arguments."`
 	SchemaDigest string         `json:"schema_digest" doc:"The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again."`
 	NeedsScopes  []string       `json:"needs_scopes,omitempty" doc:"The scopes a call of the tool needs, as the connector says. Absent when it says none."`
+	ReadOnly     bool           `json:"read_only" doc:"Whether the tool only reads, as the connector's latest revision says: every source of the connector lists it in read_only_tools or says outbound: false (a grant by name does not say which source a tool comes from). False too when the connector is gone. A binding may grant such a tool by name beside a sensitive connector without require_approval; any other tool there needs require_approval."`
 }
 
 // ConnectionTools is the tools a connection offered when it was last validated.
@@ -221,7 +222,7 @@ func (s *Server) registerConnectionTools(api huma.API) {
 		Path:        "/v1/agents/connections/{id}/tools",
 		Summary:     "List a connection's tools",
 		Description: "The tools the connection offered when it was last validated, each with the " +
-			"schema digest an agent config's grant pins. Empty until a validate listed them. Who " +
+			"schema digest an agent config's grant pins and whether it only reads. Empty until a validate listed them. Who " +
 			"may read them is who may read the connection.\n\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
 			"end user's device.",
@@ -433,15 +434,23 @@ func (s *Server) checkConnection(ctx context.Context, connection store.Connector
 		Manifest:   manifest,
 		HTTP:       &client,
 	}
+	// The source's requests carry an Exchange, which redacts the provider's words for the log
+	// line of a refused credential, as a session's tool call does (session.dispatcher.send).
+	observed, exchange := core.WithExchange(ctx)
 	var specs []core.ToolSpec
 	for _, kind := range sourceKinds(manifest) {
 		source, found := s.connectors.ToolSources[kind]
 		if !found {
 			return failed(connection, fmt.Sprintf("this deployment has no %s tool source", kind)), nil
 		}
-		listed, err := source.Discover(ctx, binding)
+		listed, err := source.Discover(observed, binding)
 		if err != nil {
 			if refusedStatic(s.connectors.Schemes, connection.AuthScheme, answered.status()) {
+				// validationAfter answers a fixed sentence with none of the provider's words, so this line keeps them.
+				s.logger.Warn("a validate's credential was refused by the provider", "connection", connection.ID,
+					"connector", connection.ConnectorID, "provider_status", answered.status(),
+					"provider_message", core.LoggedMessage(err, exchange.Redact),
+					"provider_body", core.LoggedBody(exchange.ErrorBody()))
 				// The 401 path's move (core.Transports invalidates a refused credential nothing
 				// renews), so the row and the validate say the same: replace the token or key.
 				// Invalidate leaves a connection whose credentials changed since Resolve alone.
@@ -727,11 +736,20 @@ func (s *Server) listConnectionTools(ctx context.Context, request *connectionReq
 	if err != nil {
 		return nil, err
 	}
+	// The latest revision, not the one the connection pins: it is what a config save checks a
+	// binding beside a sensitive connector against (SensitiveBindingsComplaint).
+	// A connector the app can no longer see has no definition: a save skips such a binding, so
+	// no tool of it is a read (read_only false) and the tools are still listed.
+	definition, err := s.store.LatestConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID)
+	if err != nil && !errors.Is(err, store.ErrNoConnectorDefinition) {
+		return nil, err
+	}
+	known := err == nil
 	tools := make([]ConnectionTool, 0, len(connection.CachedTools))
 	for _, tool := range connection.CachedTools {
 		tools = append(tools, ConnectionTool{Name: tool.Name, Description: tool.Description,
 			InputSchema: maps.Clone(tool.InputSchema), SchemaDigest: tool.SchemaDigest,
-			NeedsScopes: slices.Clone(tool.NeedsScopes)})
+			NeedsScopes: slices.Clone(tool.NeedsScopes), ReadOnly: known && !definition.Manifest.SendsOutTool(tool.Name)})
 	}
 	return &connectionToolsResponse{Body: ConnectionTools{ConnectionID: connection.ID, Tools: tools,
 		Digest: connection.ToolsDigest, CheckedAt: connection.ToolsCheckedAt}}, nil

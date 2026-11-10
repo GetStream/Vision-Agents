@@ -76,7 +76,7 @@ class ConnectorOAuthClientRequest:
         if isinstance(_auth_method, Unset):
             auth_method = UNSET
         else:
-            auth_method = ConnectorOAuthClientAuthMethod(_auth_method)
+            auth_method = ConnectorOAuthClientAuthMethod._decode(_auth_method)
 
         client_id = d.pop("client_id", UNSET)
 

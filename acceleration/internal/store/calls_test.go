@@ -73,3 +73,87 @@ func (s *StoreSuite) TestACallKeepsTheTimeItFirstEnded() {
 	s.Require().NotNil(read.EndedAt)
 	s.WithinDuration(s.base.Add(time.Minute), *read.EndedAt, time.Second)
 }
+
+func (s *StoreSuite) TestACallStartedAgainLearnsTheConversationItWasBoundTo() {
+	// A call row from before the column has none. The session carrying on under the same id
+	// names its conversation, and the row keeps it from then on.
+	call := Call{
+		ID: "session-learns-conversation", CustomerID: "acme",
+		CallID: "call-1", AgentID: "agent-learns-conversation", StartedAt: s.base,
+	}
+	s.Require().NoError(s.store.StartCall(s.ctx, &call))
+	before, err := s.store.Call(s.ctx, "acme", call.ID)
+	s.Require().NoError(err)
+	s.Require().Empty(before.ConversationID)
+
+	again := call
+	again.ConversationID = "agent:support-1"
+	s.Require().NoError(s.store.StartCall(s.ctx, &again))
+
+	read, err := s.store.Call(s.ctx, "acme", call.ID)
+	s.Require().NoError(err)
+	s.Equal("agent:support-1", read.ConversationID)
+}
+
+func (s *StoreSuite) TestACallStartedAgainKeepsTheConversationItWasBoundTo() {
+	call := Call{
+		ID: "session-keeps-conversation", CustomerID: "acme",
+		CallID: "call-1", AgentID: "agent-keeps-conversation", StartedAt: s.base,
+		ConversationID: "agent:first",
+	}
+	s.Require().NoError(s.store.StartCall(s.ctx, &call))
+
+	again := call
+	again.ConversationID = "agent:second"
+	s.Require().NoError(s.store.StartCall(s.ctx, &again))
+	third := call
+	third.ConversationID = ""
+	s.Require().NoError(s.store.StartCall(s.ctx, &third))
+
+	read, err := s.store.Call(s.ctx, "acme", call.ID)
+	s.Require().NoError(err)
+	s.Equal("agent:first", read.ConversationID)
+}
+
+func (s *StoreSuite) TestACallTheRouterPlacedIsStoredAsOutboundBetweenItsNumbers() {
+	// A client opening the session of a call it placed may name neither number.
+	s.placedPhoneCall("placed", func(call *PhoneCall) {
+		call.CustomerID, call.CallType, call.CallID = "acme", "agent", "session-placed"
+	})
+	call := Call{ID: "session-placed", CustomerID: "acme", CallID: "session-placed", AgentID: "agent-placed", StartedAt: s.base}
+	s.Require().NoError(s.store.StartCall(s.ctx, &call))
+
+	read, err := s.store.Call(s.ctx, "acme", call.ID)
+	s.Require().NoError(err)
+	s.Equal(Outbound, read.Direction)
+	s.Equal("+15125550100", read.FromNumber)
+	s.Equal("+15125550199", read.ToNumber)
+}
+
+func (s *StoreSuite) TestAnArrivingCallIsStoredAsInboundEvenWhereAnotherCustomerPlacedOne() {
+	s.placedPhoneCall("theirs", func(call *PhoneCall) {
+		call.CustomerID, call.CallType, call.CallID = "someone-else", "agent", "session-arrived"
+	})
+	call := Call{ID: "session-arrived", CustomerID: "acme", CallID: "session-arrived", AgentID: "agent-arrived",
+		FromNumber: "+15125550142", StartedAt: s.base}
+	s.Require().NoError(s.store.StartCall(s.ctx, &call))
+
+	read, err := s.store.Call(s.ctx, "acme", call.ID)
+	s.Require().NoError(err)
+	s.Equal(Inbound, read.Direction)
+	s.Equal("+15125550142", read.FromNumber)
+	s.Empty(read.ToNumber)
+}
+
+func (s *ShardedStoreSuite) TestACallAnotherShardPlacedIsStoredAsOutbound() {
+	placed := PhoneCall{Token: "there", CustomerID: "acme", CallType: "agent", CallID: "session-there", Vendor: "telnyx",
+		LocalNumber: "+15125550100", RemoteNumber: "+15125550199", PlacedAt: s.base}
+	s.Require().NoError(s.other.InsertPhoneCall(s.ctx, &placed))
+	call := Call{ID: "session-there", CustomerID: "acme", CallID: "session-there", AgentID: "agent-there", StartedAt: s.base}
+	s.Require().NoError(s.store.StartCall(s.ctx, &call))
+
+	read, err := s.store.Call(s.ctx, "acme", call.ID)
+	s.Require().NoError(err)
+	s.Equal(Outbound, read.Direction)
+	s.Equal("+15125550199", read.ToNumber)
+}

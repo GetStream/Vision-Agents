@@ -14,6 +14,7 @@
 package openairealtime
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -157,7 +158,12 @@ const (
 	eventTranscriptDoneV1  = "response.audio_transcript.done"
 	eventArgumentsDone     = "response.function_call_arguments.done"
 	eventResponseDone      = "response.done"
+	eventRateLimits        = "rate_limits.updated"
 )
+
+// rateLimitNames are the limits rate_limits.updated reports, the only ones kept:
+// https://developers.openai.com/api/reference/resources/realtime/server-events (rate_limits.updated).
+var rateLimitNames = []string{"requests", "tokens"}
 
 // cancelNotActive is what the server says about a cancel that found nothing to cancel,
 // which is not news to anyone.
@@ -329,7 +335,13 @@ type serverEvent struct {
 	Error      *apiError   `json:"error"`
 	// Usage is where xAI reports what a reply cost: on response.done beside the response,
 	// whose own usage it leaves empty.
-	Usage *usage `json:"usage"`
+	Usage      *usage      `json:"usage"`
+	RateLimits []rateLimit `json:"rate_limits"`
+}
+
+type rateLimit struct {
+	Name      string   `json:"name"`
+	Remaining *float64 `json:"remaining"`
 }
 
 type response struct {
@@ -427,6 +439,8 @@ type STS struct {
 	emitter      *sts.Emitter
 
 	conn *websocket.Conn
+	// key is the key conn was opened with, set before the read loop starts.
+	key string
 	// writeMu serialises writes: a websocket connection allows only one writer.
 	writeMu sync.Mutex
 
@@ -630,7 +644,7 @@ func (s *STS) Start(ctx context.Context) error {
 	s.mu.Unlock()
 
 	dialer := &websocket.Dialer{HandshakeTimeout: s.options.HandshakeTimeout}
-	conn, response, _, err := s.keys.Dial(ctx, dialer, func(key string) (string, http.Header) {
+	conn, response, key, err := s.keys.Dial(ctx, dialer, func(key string) (string, http.Header) {
 		return s.endpoint(), http.Header{"Authorization": []string{"Bearer " + key}}
 	})
 	if err != nil {
@@ -639,7 +653,7 @@ func (s *STS) Start(ctx context.Context) error {
 		}
 		return stack.Wrap(fmt.Errorf("%s: dial: %w", s.options.Vendor.Provider, err))
 	}
-	s.conn = conn
+	s.conn, s.key = conn, key
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 
@@ -900,6 +914,19 @@ func (s *STS) SampleRate() int { return s.options.Vendor.OutputSampleRate }
 
 // Capabilities implements sts.STS.
 func (s *STS) Capabilities() sts.Capabilities { return s.capabilities }
+
+// TranscriptionModel is the transcriber OpenAI bills writing down the caller's turns to, apart
+// from the conversation, and empty where nothing is billed so: no transcript was asked for, or
+// the vendor is not OpenAI.
+func (s *STS) TranscriptionModel() string {
+	if s.dialect != DialectOpenAI {
+		return ""
+	}
+	if configured := s.transcription(); configured != nil {
+		return configured.Model
+	}
+	return ""
+}
 
 // Client exposes the underlying WebSocket so callers can use the protocol directly.
 func (s *STS) Client() *websocket.Conn { return s.conn }
@@ -1250,6 +1277,13 @@ func (s *STS) handleMessage(event serverEvent) {
 	case eventError:
 		s.fail(event)
 
+	case eventRateLimits:
+		for _, limit := range event.RateLimits {
+			if limit.Remaining != nil && slices.Contains(rateLimitNames, limit.Name) {
+				s.keys.Remaining(s.key, limit.Name, *limit.Remaining)
+			}
+		}
+
 	default:
 		if s.logger.Enabled(context.Background(), slog.LevelDebug) {
 			s.logger.Debug("unhandled frame", "type", event.Type)
@@ -1304,10 +1338,7 @@ func (s *STS) transcribed(event serverEvent) {
 	if s.dialect != DialectOpenAI || used == nil || event.ItemID == "" {
 		return
 	}
-	model := openaiTranscriber
-	if configured := s.transcription(); configured != nil && configured.Model != "" {
-		model = configured.Model
-	}
+	model := cmp.Or(s.TranscriptionModel(), openaiTranscriber)
 	if used.Type == "duration" {
 		if used.Seconds > 0 {
 			s.emitter.Send(sts.TranscriptionUsage{ItemID: event.ItemID, Model: model, AudioMs: int64(math.Round(used.Seconds * 1000))})

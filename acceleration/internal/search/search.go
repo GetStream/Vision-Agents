@@ -62,10 +62,26 @@ type Result struct {
 	Answer string
 	// Documents are the sources behind it, most relevant first.
 	Documents []Document
+	// VendorMicros is what the provider said the search cost it, in millionths of a dollar,
+	// where it says: Perplexity's sonar does, for its tokens and searches together.
+	VendorMicros int64
+	// Usage is what a provider that bills by more than the call used: Sonar bills the
+	// tokens its model read and wrote, and each web search it ran as a request. Nil is
+	// one request.
+	Usage pricing.Quantities
 }
 
-// Used is one request: a search API bills by the call rather than by what it read.
-func (Result) Used() pricing.Quantities { return pricing.Quantities{pricing.Requests: 1} }
+// Used is what the search is priced on: one request, since a search API bills by the
+// call rather than by what it read, unless the provider counted more.
+func (r Result) Used() pricing.Quantities {
+	if r.Usage != nil {
+		return r.Usage
+	}
+	return pricing.Quantities{pricing.Requests: 1}
+}
+
+// VendorCostMicros is kept beside the row to check the price list by, never to price it.
+func (r Result) VendorCostMicros() int64 { return r.VendorMicros }
 
 // Document is one source that bears on the question.
 type Document struct {
@@ -92,7 +108,7 @@ type Provider interface {
 	Close() error
 	// Provider is the stable provider name used in stats, e.g. "tavily".
 	Provider() string
-	// Model is which of a provider's modes is in use, e.g. "sonar-pro". Providers differ
+	// Model is which of a provider's modes is in use, e.g. "sonar". Providers differ
 	// more between their own modes than they do from each other, so this is what a
 	// routing target actually chooses between.
 	Model() string

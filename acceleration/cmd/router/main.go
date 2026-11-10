@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"math"
@@ -30,6 +31,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/billable"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
@@ -59,6 +61,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/extract"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/files"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
@@ -68,12 +72,11 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/ocrrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/siptrunk"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/providerkeys"
@@ -183,13 +186,16 @@ const usage = `usage: router [--config path] [command]
 func main() {
 	path, command, args := arguments(os.Args[1:])
 	settings, from, configErr := config.Load(path)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel(settings)}))
+	logger := newLogger(os.Stderr, logLevel(settings))
 	slog.SetDefault(logger)
 	if configErr != nil {
 		logger.Error("router stopped", "error", configErr)
 		os.Exit(1)
 	}
 	logger.Info("loaded configuration", "from", from)
+	for _, retired := range settings.Retired {
+		logger.Warn(retired)
+	}
 
 	// Dsn is deliberately not set. The SDK reads SENTRY_DSN and
 	// SENTRY_ENVIRONMENT itself, so the DSN stays out of this repository and an
@@ -198,11 +204,7 @@ func main() {
 	//
 	// A failed Init is logged, not fatal: a malformed DSN is a configuration
 	// mistake, but it is a bad reason to refuse to serve calls.
-	if err := sentry.Init(sentry.ClientOptions{
-		Release:          release,
-		ServerName:       "acceleration-router",
-		AttachStacktrace: true,
-	}); err != nil {
+	if err := sentry.Init(sentryOptions()); err != nil {
 		logger.Error("sentry is disabled", "error", err)
 	}
 
@@ -289,6 +291,23 @@ func logLevel(settings config.Config) slog.Level {
 		return slog.LevelInfo
 	}
 	return level
+}
+
+// newLogger is the router's logger, which writes text to w and takes every credential out of
+// what it prints: a provider's error can echo the key the router sent it.
+func newLogger(w io.Writer, level slog.Level) *slog.Logger {
+	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level, ReplaceAttr: store.RedactLogAttr}))
+}
+
+// sentryOptions are the router's Sentry options. An event carries an error's text, which can
+// echo the key a provider was sent, so it is redacted as the log is.
+func sentryOptions() sentry.ClientOptions {
+	return sentry.ClientOptions{
+		Release:          release,
+		ServerName:       "acceleration-router",
+		AttachStacktrace: true,
+		BeforeSend:       store.RedactSentryEvent,
+	}
 }
 
 // newSecretSealer builds the keyring the secrets the router holds for its customers are
@@ -647,6 +666,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	} else {
 		logger.Warn("no redis configured, routing will not use live health", "setting", "redis.addr")
 	}
+	defer serveSaturation(pgStore, liveClient, logger)()
 	usageClient, err := newUsageClient(settings, pgStore, logger)
 	if err != nil {
 		return err
@@ -716,6 +736,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// with limits off. Money is read from the usage service, and from Postgres without one.
 	warnLimits(settings, logger)
 	warnKnowledgeLimits(settings, logger)
+	// Checked here as well as where the backends are built, since a router that cannot build
+	// them serves without knowledge rather than failing.
+	if err := knowledgeRegionsApart(knowledgeRegions(settings.Knowledge)); err != nil {
+		return err
+	}
 	if err := limitsNeedSomewhereToRead(settings, pgStore); err != nil {
 		return err
 	}
@@ -805,10 +830,17 @@ func run(settings config.Config, logger *slog.Logger) error {
 	routers := map[routing.Modality]routing.Inspector{}
 	streams := &api.Streams{}
 
+	// One chorus-asr server serves every agent: as a transcriber where one names it, and
+	// to the flow controller of an agent whose floor control opts in.
+	floor := audiofloor.Open(settings.Agent)
+
 	if section, ok := capabilities[routing.STT]; ok {
 		transcribers := sttrouter.DefaultRegistry()
 		if settings.MockProviders {
 			sttrouter.RegisterMock(transcribers)
+		}
+		if floor != nil {
+			sttrouter.RegisterAudioFloor(transcribers, floor)
 		}
 		speech, err := sttrouter.New(sttrouter.Options{
 			Config:   section,
@@ -1034,6 +1066,27 @@ func run(settings config.Config, logger *slog.Logger) error {
 		streams.Detection = detecting
 	}
 
+	// OCR is served the same way. Its vision language models are built the way the LLM
+	// router builds them, so they read the same keys.
+	if section, ok := capabilities[routing.OCR]; ok {
+		reading, err := ocrrouter.New(ocrrouter.Options{
+			Config:   section,
+			Registry: ocrrouter.DefaultRegistry(),
+			Store:    pgStore,
+			Live:     liveClient,
+			Gate:     gate,
+			Pricer:   prices,
+			Writer:   usageWriter,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer reading.Close()
+		routers[routing.OCR] = reading
+		streams.OCR = reading
+	}
+
 	// Every Stream action taken for a customer, a call joined, a line made, a transcript
 	// written, a token minted, is taken in the app this resolves for them.
 	streamClients, err := newStreamClients(settings, pgStore, secrets, logger)
@@ -1069,7 +1122,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if policies != nil {
 		dlcGate.Charging(policies).Limiting(settings.Limits.Mode)
 	}
-	telephony, err := buildPhone(settings, vendorConfig, pgStore, phoneRecorder, streamClients, dlcGate, secrets, logger)
+	telephony, err := buildPhone(settings, vendorConfig, pgStore, liveClient, phoneRecorder, streamClients, dlcGate, secrets, logger)
 	if err != nil {
 		return err
 	}
@@ -1104,12 +1157,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	pluginAuth := &plugins.Auth{
-		PublicURL:    settings.PublicURL,
-		DashboardURL: settings.DashboardURL,
-		Clients:      session.PluginClients(pgStore, secrets),
-	}
-
 	// An LLM-only deployment serves text sessions; voice modes validate their own
 	// speech dependencies before a call is opened.
 	sessionConnectors := session.Connectors{Registry: connectors, Transports: connectorTransports,
@@ -1120,7 +1167,16 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if connectorResolver != nil {
 		sessionConnectors.Resolver = connectorResolver
 	}
-	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, streamClients, pluginAuth,
+	// Closed after sessions.Shutdown, which is deferred below it: a campaign call is held until
+	// its session ends, so the dialer waits for its calls only once the sessions are ended,
+	// and writes how each went while Postgres is still open.
+	var dialer *campaign.Runner
+	defer func() {
+		if dialer != nil {
+			dialer.Close()
+		}
+	}()
+	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, floor, streamClients,
 		sessionConnectors, prices, policies, customerKeys, logger)
 	if err != nil {
 		return err
@@ -1128,39 +1184,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if sessions != nil {
 		defer sessions.Shutdown()
 	}
-	// A campaign is a phone call, a conversation and a row, so it runs only where all
-	// three are configured. Elsewhere the campaign paths say so.
-	var campaigns *campaign.Runner
-	if pgStore != nil && telephony != nil && sessions != nil {
-		campaigns, err = campaign.New(campaign.Options{
-			Store:    pgStore,
-			Phone:    telephony,
-			Sessions: sessions,
-			Logger:   logger,
-		})
-		if err != nil {
-			return err
-		}
-		defer campaigns.Close()
-	}
-
-	// A plugin event opens a conversation and is subscribed to from a row, so events need
-	// both. Elsewhere a config's plugin_events are stored and nothing subscribes to them.
-	var events *pluginevents.Service
-	if pgStore != nil && sessions != nil {
-		events, err = pluginevents.New(pluginevents.Options{
-			Store:    pgStore,
-			Sessions: sessions,
-			Auth:     pluginAuth,
-			Logger:   logger,
-		})
-		if err != nil {
-			return err
-		}
-		events.Start()
-		defer events.Close()
-	}
-
 	// A simulation is a conversation, a model to judge it and a row, so it too runs only
 	// where all three are configured. Elsewhere a simulation can be written down but the
 	// path that runs it says why it cannot.
@@ -1208,6 +1231,35 @@ func run(settings config.Config, logger *slog.Logger) error {
 			return err
 		}
 		defer pages.Close()
+	}
+
+	// A file uploaded to a knowledge base waits in its own bucket until a worker reads it.
+	// Without the bucket, or any of what the urls need, uploads say so.
+	knowledgeBucket, err := blob.Open(ctx, settings.KnowledgeBucketURL)
+	if err != nil {
+		return err
+	}
+	if knowledgeBucket != nil {
+		defer knowledgeBucket.Close()
+	}
+	var scans files.Reader
+	if streams.OCR != nil {
+		scans = streams.OCR
+	}
+	var shardHolds rueidis.Client
+	if liveClient != nil {
+		shardHolds = liveClient.ShardRedis()
+	}
+	uploads, err := buildKnowledgeFiles(pgStore, shardRedis(settings.Redis), shardHolds, base, knowledgeBucket, scans,
+		knowledgeLimits(settings.Knowledge), logger)
+	if err != nil {
+		return err
+	}
+	if uploads != nil {
+		if err := uploads.Start(); err != nil {
+			return err
+		}
+		defer uploads.Close()
 	}
 
 	// Inbound calls are answered by whoever is connected to the dispatch socket, so the
@@ -1320,6 +1372,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		Voices:                voiceService,
 		VoiceLibrary:          library,
 		KnowledgeURLs:         pages,
+		KnowledgeFiles:        uploads,
 		Store:                 pgStore,
 		Configs:               configs,
 		Users:                 endUsers,
@@ -1330,15 +1383,14 @@ func run(settings config.Config, logger *slog.Logger) error {
 		Directory:             directory,
 		Workers:               everyWorker,
 		Streams:               streams,
+		AudioFloor:            floor,
 		Stream:                streamClients,
 		ProxyDeclaresKind:     settings.Auth.ProxyDeclaresKind,
 		HookSecret:            settings.Stream.APISecret,
 		TelnyxPublicKey:       telnyxPublicKey,
 		ChatInboundKeys:       chatInboundKeys,
 		TelnyxConnectionID:    settings.Telnyx.ConnectionID,
-		Campaigns:             campaigns,
 		Simulations:           simulations,
-		PluginEvents:          events,
 		DLC:                   registrations,
 		Gate:                  dlcGate,
 		OpsKey:                settings.Auth.OpsKey,
@@ -1521,6 +1573,28 @@ func run(settings config.Config, logger *slog.Logger) error {
 		scheduler.Start(ctx)
 		defer scheduler.Close()
 	}
+	// Every router runs the campaign dialer: running campaigns are in Postgres, and each
+	// contact's next call is claimed by one router at a time. It claims until the stop signal
+	// ends ctx; the drain then waits for its calls, as for the sessions.
+	if pgStore != nil && sessions != nil && streams.LLM != nil {
+		dialer, err = campaign.New(campaign.Options{
+			Store:       pgStore,
+			Dialer:      campaign.NewPhoneDialer(telephony, sessions, pgStore, logger),
+			Transcripts: server,
+			Classifier:  campaign.NewClassifier(streams.LLM),
+			Logger:      logger,
+		})
+		if err != nil {
+			return err
+		}
+		if err := dialer.Start(ctx); err != nil {
+			return err
+		}
+		logger.Info("campaign dialer started", "owner", dialer.Owner())
+	} else {
+		logger.Warn("campaigns will not dial: the dialer needs postgres, sessions and an llm",
+			"postgres", pgStore != nil, "sessions", sessions != nil, "llm", streams.LLM != nil)
+	}
 	// Every router answers the Stream Chat messages queued for it, whichever one queued them,
 	// where Stream Chat deliveries are set up (chat.inbound_keys): nothing else queues one.
 	var deliveries *chatinbound.Worker
@@ -1586,7 +1660,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			public:          httpServer,
 			peers:           peerServer,
 			drainWork:       server.Drain,
-			held:            func() int { return running(sessions, scheduler, bridge, deliveries) },
+			held:            func() int { return running(sessions, scheduler, bridge, deliveries, server, dialer) },
 			telephony:       telephony,
 			handOverMetrics: handOverMetrics,
 			handOverProxy:   handOverSandboxProxy,
@@ -1619,7 +1693,7 @@ type stopping struct {
 	// drainWork sends away the work that reconnects, the dispatch workers.
 	drainWork func()
 	// held is how many sessions, scheduled deliveries, inbound writes and
-	// turns, and chat answers the process is still running.
+	// turns, chat answers and campaign calls the process is still running.
 	held      func() int
 	telephony *phone.Service
 	// handOverMetrics stops the metrics listener when a drain starts, so the router taking
@@ -1701,11 +1775,15 @@ func stopServing(s stopping) error {
 }
 
 // running is how many sessions, scheduled deliveries, inbound writes and the turns they handed
-// over, and chat answers a router holds; one without one of them holds none of its work. A
-// turn counts until it ends, also before the session it opens is counted.
+// over, chat answers, the app chat's episode cards and campaign calls a router holds; one
+// without one of them holds none of its work. A turn counts until it ends, also before the
+// session it opens is counted, and so does a campaign call placed before its session exists.
 func running(sessions *session.Manager, scheduler *scheduling.Scheduler, bridge *channelbridge.Bridge,
-	deliveries *chatinbound.Worker) int {
+	deliveries *chatinbound.Worker, server *api.Server, dialer *campaign.Runner) int {
 	held := 0
+	if dialer != nil {
+		held += dialer.Running()
+	}
 	if sessions != nil {
 		held += sessions.Len()
 	}
@@ -1717,6 +1795,9 @@ func running(sessions *session.Manager, scheduler *scheduling.Scheduler, bridge 
 	}
 	if deliveries != nil {
 		held += deliveries.Running()
+	}
+	if server != nil {
+		held += server.ChatCardsRunning()
 	}
 	return held
 }
@@ -1937,8 +2018,8 @@ func buildSessions(
 	base *metered.Knowledge,
 	finding *searchrouter.Router,
 	judging *decisionrouter.Router,
+	floor *audiofloor.Client,
 	stream *streamapp.Clients,
-	pluginAuth *plugins.Auth,
 	connectors session.Connectors,
 	prices pricing.Pricer,
 	policies *policy.Enforcer,
@@ -1971,6 +2052,8 @@ func buildSessions(
 		Classifier: judging,
 		FlowJudge:  settings.Agent.FlowJudge,
 		Phone:      telephony,
+		// Off unless the deployment names a server and an agent opts in.
+		AudioFloor: floor,
 		// Off unless the deployment asks: a reply started before its ruling is paid for
 		// whether or not it is spoken.
 		SpeculativeReplies: settings.Agent.SpeculativeReplies,
@@ -1985,7 +2068,6 @@ func buildSessions(
 		Transcript:         transcriptFor(settings.Agent.ChatTimings),
 		Configs:            configs,
 		Directory:          directory,
-		PluginAuth:         pluginAuth,
 		// The session's dispatcher shares the validate endpoint's transports, so each
 		// connection has one outbound client in the router.
 		Connectors: connectors,
@@ -2040,6 +2122,49 @@ func buildKnowledgeURLs(
 	})
 }
 
+// buildKnowledgeFiles is the service that reads files uploaded to a knowledge base, or nil
+// when a file would have nowhere to wait, nowhere to be queued or nowhere to be written.
+// Without scans, a file whose pages are all scans is refused as having no text.
+//
+// redis and shared are this shard's own Redis, not the one every shard shares: a task names
+// a row of this shard's database and a file in this shard's bucket, so a worker of another
+// shard would find no row, take the upload for one overtaken and delete its file.
+func buildKnowledgeFiles(
+	pgStore *store.Store,
+	redis config.Redis,
+	shared rueidis.Client,
+	base *metered.Knowledge,
+	bucket *blob.Bucket,
+	scans files.Reader,
+	limits ingest.Limits,
+	logger *slog.Logger,
+) (*files.Service, error) {
+	if pgStore == nil || shared == nil || base == nil || bucket == nil {
+		logger.Debug("not taking knowledge files",
+			"database", pgStore != nil, "redis", shared != nil, "knowledge", base != nil, "bucket", bucket != nil)
+		return nil, nil
+	}
+	return files.New(files.Options{
+		Store:     pgStore,
+		Redis:     queueRedis(redis, shared),
+		Bucket:    bucket,
+		Extractor: extract.New(extract.Options{Logger: logger}),
+		Knowledge: base,
+		OCR:       scans,
+		Limits:    limits,
+		Logger:    logger,
+	})
+}
+
+// shardRedis is this shard's own Redis, or the shared one when the shard has none, as
+// live.New picks it.
+func shardRedis(redis config.Redis) config.Redis {
+	if redis.Shard.Addr == "" {
+		return redis
+	}
+	return config.Redis{Addr: redis.Shard.Addr, Username: redis.Shard.Username, Password: redis.Shard.Password}
+}
+
 // queueRedis is how asynq reaches redis, the Redis shared is a client of. asynq does not find
 // out for itself whether that is a cluster, and a client of one node is answered MOVED for
 // every key another shard holds, so it is told what rueidis found when it connected.
@@ -2090,12 +2215,9 @@ func knowledgeAccounts(settings config.Knowledge, timeout time.Duration, logger 
 // gcp-us-central1, as before regions. One key, TURBOPUFFER_API_KEY, is the organization's in
 // every turbopuffer region.
 func knowledgeBackends(settings config.Knowledge, timeout time.Duration, logger *slog.Logger) (map[string]knowledge.Backend, error) {
-	mapped := maps.Clone(settings.Regions)
-	if mapped == nil {
-		mapped = map[string]string{}
-	}
-	if _, ok := mapped[pricing.DefaultRegion]; !ok {
-		mapped[pricing.DefaultRegion] = ""
+	mapped := knowledgeRegions(settings)
+	if err := knowledgeRegionsApart(mapped); err != nil {
+		return nil, err
 	}
 	backends := make(map[string]knowledge.Backend, len(mapped))
 	for region, theirs := range mapped {
@@ -2106,6 +2228,35 @@ func knowledgeBackends(settings config.Knowledge, timeout time.Duration, logger 
 		backends[region] = backend
 	}
 	return backends, nil
+}
+
+// knowledgeRegions is each region knowledge is kept in, mapped to the turbopuffer region the
+// settings name for it, the default region always among them and empty where none is named.
+func knowledgeRegions(settings config.Knowledge) map[string]string {
+	mapped := maps.Clone(settings.Regions)
+	if mapped == nil {
+		mapped = map[string]string{}
+	}
+	if _, ok := mapped[pricing.DefaultRegion]; !ok {
+		mapped[pricing.DefaultRegion] = ""
+	}
+	return mapped
+}
+
+// knowledgeRegionsApart refuses two regions kept in one turbopuffer region, the default
+// region's included: its knowledge bases would be listed under both, and the storage job would
+// bill each twice.
+func knowledgeRegionsApart(mapped map[string]string) error {
+	served := map[string]string{}
+	for _, region := range slices.Sorted(maps.Keys(mapped)) {
+		theirs := turbopuffer.Region(mapped[region])
+		if other, ok := served[theirs]; ok {
+			return fmt.Errorf("knowledge.regions (ROUTER_KNOWLEDGE_REGIONS) keeps %s and %s in one turbopuffer region, %s: "+
+				"give each its own", other, region, theirs)
+		}
+		served[theirs] = region
+	}
+	return nil
 }
 
 // knowledgeCost is the knowledge provider's rates as the settings name them.
@@ -2248,6 +2399,7 @@ func buildPhone(
 	settings config.Config,
 	vendorConfig phone.Config,
 	pgStore *store.Store,
+	liveClient *live.Client,
 	recorder *routing.Recorder,
 	stream *streamapp.Clients,
 	gate *dlc.Gate,
@@ -2267,8 +2419,15 @@ func buildPhone(
 		logger.Info("no key encryption key, calls through customers' own sip trunks are off")
 	}
 
+	// The Redis of every shard: the node that ends a refused call's leg need not be the one
+	// that refused it.
+	var refusals rueidis.Client
+	if liveClient != nil {
+		refusals = liveClient.Redis()
+	}
 	return phone.NewService(phone.ServiceOptions{
 		Registry:  vendors.Registry(vendorConfig),
+		Redis:     refusals,
 		Store:     pgStore,
 		Apps:      phone.AppsOf(stream),
 		Recorder:  recorder,

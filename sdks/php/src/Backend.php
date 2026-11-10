@@ -47,6 +47,10 @@ final readonly class Backend
     /** The end user this backend speaks for while keeping its own server credential. */
     public string $onBehalfOf;
     public bool $authenticate;
+    /** The customer's team the work is counted against, its spend limits included. */
+    public ?string $team;
+    /** @var list<string> the customer's own groupings the work is counted against, sorted, each once */
+    public array $usageCategories;
     private string $apiSecret;
     private string $token;
 
@@ -68,6 +72,15 @@ final readonly class Backend
      * @param string $onBehalfOf the end user a server-side caller speaks for, keeping its own credential
      * @param ?string $region holds this to the hosted router in one region, such as us-east4;
      *     it cannot be passed together with `$url`
+     * @param ?string $team the customer's team the work is counted against, such as `finance`:
+     *     1 to 59 characters of A-Z, a-z, 0-9, _ . and -
+     * @param array<string> $usageCategories the customer's own groupings the work is counted
+     *     against, such as `project:onboarding`: at most 10 together with the team, each 1 to 64
+     *     characters of A-Z, a-z, 0-9, _ . : and -, and none starting `team:`
+     *
+     * The team and the categories are signed into every token minted here, and sent in
+     * `X-Stream-Usage-Categories` to a router with no proxy in front of it. A token handed in
+     * carries whatever it was signed with, so neither can be passed beside one.
      */
     public function __construct(
         ?string $url = null,
@@ -79,7 +92,14 @@ final readonly class Backend
         ?bool $authenticate = null,
         string $onBehalfOf = '',
         ?string $region = null,
+        ?string $team = null,
+        array $usageCategories = [],
     ) {
+        $this->team = $team === '' ? null : $team;
+        $this->usageCategories = UsageCategories::checked($this->team, $usageCategories);
+        if ($token !== '' && ($this->team !== null || $this->usageCategories !== [])) {
+            throw new ConfigurationException('a token handed in carries the team and usage categories it was signed with; mint it with userToken(..., team: ..., usageCategories: ...)');
+        }
         $this->url = rtrim(self::locate($url, $region), '/');
         $this->customerId = $customerId ?? self::env(self::CUSTOMER_ENV) ?? '';
         // Naming a customer is choosing how a router with nothing in front of it is reached,
@@ -132,7 +152,7 @@ final readonly class Backend
      */
     public function actingFor(string $userId): self
     {
-        return new self($this->url, $this->apiKey === '' ? $this->customerId : '', $this->apiKey, $this->apiSecret, $this->token, $userId, $this->authenticate);
+        return new self($this->url, $this->apiKey === '' ? $this->customerId : '', $this->apiKey, $this->apiSecret, $this->token, $userId, $this->authenticate, team: $this->team, usageCategories: $this->usageCategories);
     }
 
     /**
@@ -146,7 +166,30 @@ final readonly class Backend
         if (!$this->serverSide()) {
             throw new ConfigurationException('only a server-side backend can act on behalf of a user');
         }
-        return new self($this->url, $this->apiKey === '' ? $this->customerId : '', $this->apiKey, $this->apiSecret, $this->token, $this->userId, $this->authenticate, $userId);
+        return new self($this->url, $this->apiKey === '' ? $this->customerId : '', $this->apiKey, $this->apiSecret, $this->token, $this->userId, $this->authenticate, $userId, team: $this->team, usageCategories: $this->usageCategories);
+    }
+
+    /**
+     * A token for one end user to hold, naming their team and usage categories.
+     *
+     * The claims are fixed when it is signed, so a device holding it cannot move its own work
+     * to another team or category. Needs the secret.
+     *
+     * @param array<string> $usageCategories
+     */
+    public function userToken(string $userId, ?string $team = null, array $usageCategories = [], int $validitySeconds = self::TOKEN_VALIDITY_SECONDS): string
+    {
+        if ($this->apiSecret === '') {
+            throw new ConfigurationException('a user token is signed with the app\'s secret, which only a backend holds');
+        }
+        if ($userId === '') {
+            throw new ConfigurationException('a user token needs the user\'s id');
+        }
+        if ($validitySeconds <= 0) {
+            throw new ConfigurationException('a user token has to be valid for some seconds');
+        }
+        $team = $team === '' ? null : $team;
+        return self::sign(['user_id' => $userId, ...UsageCategories::claims($team, UsageCategories::checked($team, $usageCategories))], $this->apiSecret, $validitySeconds);
     }
 
     /**
@@ -166,7 +209,7 @@ final readonly class Backend
                     . ' for a router that trusts one, or apiKey with apiSecret or a token',
                 );
             }
-            return ['X-Customer-Id' => $this->customerId, ...$this->userHeader()];
+            return ['X-Customer-Id' => $this->customerId, ...$this->userHeader(), ...$this->categoryHeader()];
         }
         if ($this->apiSecret === '' && $this->token === '') {
             throw new ConfigurationException('apiKey needs the secret it belongs to, or a token minted with it');
@@ -185,9 +228,9 @@ final readonly class Backend
 
         $headers = ['X-Api-Key' => $this->apiKey];
         if ($this->apiSecret !== '') {
-            $headers['Authorization'] = 'Bearer ' . self::sign(['server' => true], $this->apiSecret);
+            $headers['Authorization'] = 'Bearer ' . self::sign(['server' => true, ...$this->categoryClaims()], $this->apiSecret);
             $headers['Stream-Auth-Type'] = 'server';
-            return [...$headers, ...$this->userHeader()];
+            return [...$headers, ...$this->userHeader(), ...$this->categoryHeader()];
         }
         $headers['Authorization'] = 'Bearer ' . $this->token;
         $headers['Stream-Auth-Type'] = 'jwt';
@@ -253,8 +296,8 @@ final readonly class Backend
             return $this->token;
         }
         return $this->userId !== '' && $this->onBehalfOf === ''
-            ? self::sign(['user_id' => $this->userId], $this->apiSecret)
-            : self::sign(['server' => true], $this->apiSecret);
+            ? self::sign(['user_id' => $this->userId, ...$this->categoryClaims()], $this->apiSecret)
+            : self::sign(['server' => true, ...$this->categoryClaims()], $this->apiSecret);
     }
 
     /**
@@ -264,6 +307,22 @@ final readonly class Backend
     {
         $user = $this->onBehalfOf !== '' ? $this->onBehalfOf : $this->userId;
         return $user === '' ? [] : ['X-Stream-User-Id' => $user];
+    }
+
+    /**
+     * @return array<string, string|list<string>>
+     */
+    private function categoryClaims(): array
+    {
+        return UsageCategories::claims($this->team, $this->usageCategories);
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function categoryHeader(): array
+    {
+        return UsageCategories::header($this->team, $this->usageCategories);
     }
 
     /**

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 )
@@ -46,6 +48,11 @@ type RouterError struct {
 	// Operation is what was being asked for, when the error names it: "looking up the
 	// agent docs".
 	Operation string
+	// RetryAfter is how long the router asked to be given before the same request is sent
+	// again, read off its Retry-After, and zero when it sent none. A 429 for an end user's
+	// spent limit (user_limit_reached) or for too many runs at once (concurrency_limited)
+	// and a 503 spend_check_unavailable carry one. The SDK retries nothing itself.
+	RetryAfter time.Duration
 
 	// opening is what Error says ahead of the operation: the package that asked, which is
 	// how this SDK's errors have always started.
@@ -61,11 +68,12 @@ type RouterError struct {
 // with. otherwise is the message for an answer with no body.
 func NewRouterError(response *http.Response, body []byte, from, operation, otherwise string) *RouterError {
 	refused := &RouterError{
-		Status:    response.StatusCode,
-		Message:   otherwise,
-		RequestID: response.Header.Get(RequestIDHeader),
-		Operation: operation,
-		opening:   from,
+		Status:     response.StatusCode,
+		Message:    otherwise,
+		RequestID:  response.Header.Get(RequestIDHeader),
+		Operation:  operation,
+		RetryAfter: retryAfter(response.Header.Get("Retry-After"), time.Now()),
+		opening:    from,
 	}
 
 	var envelope acceleration.ErrorResponse
@@ -100,7 +108,7 @@ func (e *RouterError) Error() string {
 // (spend_limit_reached). Retrying does not help until credit is added or the limit resets,
 // which Message says when; a model that costs nothing is still served. A suspended
 // organization is a permission failure instead, account_suspended, and a spent limit on one end
-// user is a rate limit, user_limit_reached, with Retry-After.
+// user is a rate limit, user_limit_reached, with RetryAfter set.
 func (e *RouterError) PaymentRequired() bool {
 	return e.Type == string(acceleration.ErrorTypePaymentRequired) || e.Status == http.StatusPaymentRequired
 }
@@ -108,9 +116,24 @@ func (e *RouterError) PaymentRequired() bool {
 // SpendCheckUnavailable reports whether the router refused work that costs money because it
 // could not share what the organization is spending with the other routers for a while
 // (spend_check_unavailable, a 503). It is no refusal of the organization's money: retry after a
-// few seconds, as Retry-After says, and a model that costs nothing is still served.
+// few seconds, as RetryAfter says, and a model that costs nothing is still served.
 func (e *RouterError) SpendCheckUnavailable() bool {
 	return e.Code == "spend_check_unavailable"
+}
+
+// retryAfter reads a Retry-After, which is either whole seconds or an HTTP date (RFC 9110
+// section 10.2.3). One that reads as neither, or a date already past, is no wait.
+func retryAfter(header string, now time.Time) time.Duration {
+	if header == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(strings.TrimSpace(header)); err == nil {
+		return max(time.Duration(seconds)*time.Second, 0)
+	}
+	if at, err := http.ParseTime(header); err == nil {
+		return max(at.Sub(now), 0)
+	}
+	return 0
 }
 
 // Unwrap is what the socket dialler said, for a refused upgrade, and nil otherwise.

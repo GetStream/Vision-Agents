@@ -26,6 +26,9 @@ export class Socket {
   private readonly arrived: Message[] = [];
   private readonly waiting: ((next: IteratorResult<Message>) => void)[] = [];
   private ended = false;
+  /** Set by `close()`, so a socket this side shut is never taken for one that failed. */
+  private closing = false;
+  private failure: SocketClosedError | undefined;
 
   private constructor(socket: WebSocketLike) {
     this.socket = socket;
@@ -33,6 +36,28 @@ export class Socket {
     this.socket.addEventListener("message", this.receive);
     this.socket.addEventListener("close", this.finish);
     this.socket.addEventListener("error", this.finish);
+  }
+
+  /**
+   * Opens a socket on a path of the router, credentials included, and tries once more with a
+   * fresh token if it is refused.
+   *
+   * A browser is not told why an upgrade was refused, so a token the router no longer takes
+   * looks like any other refusal: when a token function is what the socket carried, it is
+   * asked for a new one and the socket dialled again. Once, for the same reason a request is
+   * retried once: a second refusal is not the token being old.
+   */
+  static async dial(backend: Backend, path: string, query: Record<string, string> = {}): Promise<Socket> {
+    const url = await backend.socketURL(path, query);
+    try {
+      return await Socket.open(backend, url);
+    } catch (cause) {
+      const carried = new URL(url).searchParams.get("token") ?? undefined;
+      if (!backend.expireToken(carried)) {
+        throw cause;
+      }
+      return Socket.open(backend, await backend.socketURL(path, query));
+    }
   }
 
   /** Dials the router and resolves once the upgrade is through. */
@@ -65,6 +90,15 @@ export class Socket {
       raw.addEventListener("error", refused);
       raw.addEventListener("close", refused);
     });
+  }
+
+  /**
+   * Why the socket stopped, when it did not end normally: an error, or the router closing it
+   * with anything but a normal close. Undefined while it is open, after `close()`, and after a
+   * normal close. `messages()` ends the same way either way, so this is how a reader tells.
+   */
+  get closedBy(): SocketClosedError | undefined {
+    return this.failure;
   }
 
   /** Whether the socket can still carry a message. */
@@ -117,6 +151,7 @@ export class Socket {
 
   /** Shuts the socket. Safe to call twice. */
   close(): void {
+    this.closing = true;
     if (this.socket.readyState <= 1) {
       this.socket.close();
     }
@@ -144,14 +179,25 @@ export class Socket {
     }
   };
 
-  private readonly finish = () => {
+  private readonly finish = (event?: Event) => {
     if (this.ended) {
+      // A browser reports a dropped socket as an error and then the close, and only the close
+      // says which code and why.
+      if (event?.type === "close" && !this.closing) {
+        this.failure = failureOf(event) ?? this.failure;
+      }
+      this.socket.removeEventListener("close", this.finish);
       return;
     }
     this.ended = true;
+    if (!this.closing && event) {
+      this.failure = failureOf(event);
+    }
     this.socket.removeEventListener("message", this.receive);
-    this.socket.removeEventListener("close", this.finish);
     this.socket.removeEventListener("error", this.finish);
+    if (event?.type !== "error") {
+      this.socket.removeEventListener("close", this.finish);
+    }
     for (const resolve of this.waiting.splice(0)) {
       resolve({ done: true, value: undefined });
     }
@@ -165,6 +211,21 @@ export class Socket {
     }
     this.arrived.push(message);
   }
+}
+
+/**
+ * What a close or error event says went wrong, or undefined for a normal close: 1000, or 1005
+ * when the far side sent no code at all.
+ */
+function failureOf(event: Event): SocketClosedError | undefined {
+  if (event.type === "error") {
+    return new SocketClosedError("the socket to the router failed");
+  }
+  const { code, reason } = event as Event & { code?: number; reason?: string };
+  if (code === undefined || code === 1000 || code === 1005) {
+    return undefined;
+  }
+  return new SocketClosedError(`the router closed the socket (${code}${reason ? `: ${reason}` : ""})`);
 }
 
 /** Reads a string field, or the empty string if it is absent or another type. */

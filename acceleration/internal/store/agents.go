@@ -73,8 +73,8 @@ func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) erro
 var configColumns = []string{
 	"name", "role", "mode", "region", "stt", "tts", "sts", "voice", "llm", "llm_fallbacks", "subagent",
 	"video_source", "video_max_frames", "search", "instructions", "greeting", "greeting_mode", "guardrail", "review_instructions",
-	"skills", "plugins", "connectors", "left_out_connectors", "plugin_events", "mcp_servers", "channels", "scheduling", "calls", "keyterms", "visible_tools", "knowledge_namespace", "sandbox", "sandbox_options", "harness", "tags",
-	"dispatch_incoming_call", "dispatch_text", "episode_cards", "progressive_tools", "tool_output_retention", "resume_history", "sync_hash", "updated_at",
+	"skills", "connectors", "left_out_connectors", "channels", "scheduling", "calls", "keyterms", "visible_tools", "knowledge_namespace", "sandbox", "sandbox_options", "harness", "tags",
+	"dispatch_incoming_call", "dispatch_text", "episode_cards", "episode_cards_record", "progressive_tools", "tool_output_retention", "resume_history", "floor_control", "sync_hash", "updated_at",
 }
 
 // UpdateAgentConfig replaces a config a customer holds. Every field is written, so an
@@ -84,24 +84,10 @@ var configColumns = []string{
 // that keeps it is not a new bind. A new bind of a channel connection another live config
 // binds is refused as CreateAgentConfig refuses it.
 func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) error {
-	return s.updateAgentConfig(ctx, config, false, nil)
+	return s.updateAgentConfig(ctx, config)
 }
 
-// UpdateAgentConfigButPlugins is UpdateAgentConfig for a writer that does not change the
-// plugins: they are written as they are stored when the write lands, read with the row locked
-// FOR UPDATE, so a plugin a login named since the config was read is kept. allow is asked
-// about the config as it is about to be written, as AddConfigPlugin asks it, since the
-// plugins it holds may not be the ones checked before; nothing is written when it fails, and
-// its error is returned as is. config is left holding the plugins written.
-func (s *Store) UpdateAgentConfigButPlugins(ctx context.Context, config *AgentConfig, allow ConfigCheck) error {
-	return s.updateAgentConfig(ctx, config, true, allow)
-}
-
-// ConfigCheck is asked about a config as a write is about to store it, with the config's row
-// locked. It reads definitions on the write's transaction.
-type ConfigCheck func(ctx context.Context, config AgentConfig, definitions Definitions) error
-
-func (s *Store) updateAgentConfig(ctx context.Context, config *AgentConfig, keepPlugins bool, allow ConfigCheck) error {
+func (s *Store) updateAgentConfig(ctx context.Context, config *AgentConfig) error {
 	if config.CustomerID == "" || config.ID == "" {
 		return stack.Wrap(errors.New("store: a customer and a config id are required"))
 	}
@@ -140,26 +126,6 @@ func (s *Store) updateAgentConfig(ctx context.Context, config *AgentConfig, keep
 		}
 		if err := refuseSecondChannelAgent(ctx, tx, config, stored.Connectors, stored.TestCopy()); err != nil {
 			return err
-		}
-		// The row's lock after the channel owner's.
-		if keepPlugins {
-			var locked AgentConfig
-			err := tx.NewSelect().Model(&locked).Column("plugins").
-				Where("id = ?", config.ID).
-				Where("customer_id = ?", config.CustomerID).
-				Where("deleted_at IS NULL").
-				For("UPDATE").
-				Scan(ctx)
-			if errors.Is(err, sql.ErrNoRows) {
-				return unknownAgentConfig(config.ID)
-			}
-			if err != nil {
-				return fmt.Errorf("store: update agent config: %w", err)
-			}
-			config.Plugins = locked.Plugins
-			if err := allow(ctx, *config, txDefinitions{tx}); err != nil {
-				return err
-			}
 		}
 		result, err := tx.NewUpdate().Model(config).
 			Column(configColumns...).
@@ -582,20 +548,11 @@ func normalizeConfig(config *AgentConfig) {
 	if config.Skills == nil {
 		config.Skills = []string{}
 	}
-	if config.Plugins == nil {
-		config.Plugins = []PluginEntry{}
-	}
 	if config.Connectors == nil {
 		config.Connectors = []ConnectorBinding{}
 	}
 	if config.LeftOutConnectors == nil {
 		config.LeftOutConnectors = []LeftOutConnector{}
-	}
-	if config.PluginEvents == nil {
-		config.PluginEvents = []PluginEvent{}
-	}
-	if config.MCPServers == nil {
-		config.MCPServers = []MCPServer{}
 	}
 	if config.Keyterms == nil {
 		config.Keyterms = []string{}

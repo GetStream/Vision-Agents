@@ -1,4 +1,10 @@
-import { Backend, type BackendOptions, type StreamUser, type TokenSource } from "./backend.js";
+import {
+  Backend,
+  type BackendOptions,
+  type StreamUser,
+  type TokenSource,
+  type UserTokenOptions,
+} from "./backend.js";
 import { ConfigurationError, errorOf, RouterError } from "./errors.js";
 import type { components, paths } from "./generated/api.js";
 import {
@@ -12,8 +18,12 @@ import {
 } from "./guests.js";
 import { AgentHandle } from "./handle.js";
 import { Memories } from "./memories.js";
+import { Router, type RouterOptions } from "./router.js";
+import { ScheduledTasks } from "./scheduled-tasks.js";
 import { Simulations } from "./simulations.js";
+import { SpendLimits } from "./spend-limits.js";
 import { StreamPeers, type StreamClients } from "./stream.js";
+import { Teams } from "./teams.js";
 
 /** The schemas from the spec, so callers can name a request or a response they build. */
 export type Schemas = components["schemas"];
@@ -115,6 +125,12 @@ export class Client {
   readonly memories: Memories;
   /** Conversations to test an agent with, and their runs. */
   readonly simulations: Simulations;
+  /** The reminders and later work agents hold for the user `setUser` named. */
+  readonly scheduledTasks: ScheduledTasks;
+  /** The customer's spend limits. Server side only. */
+  readonly spendLimits: SpendLimits;
+  /** The organization's teams and their spend limits. Server side only. */
+  readonly teams: Teams;
   /** @internal The chat and video clients this client's sessions share. */
   readonly peers: StreamPeers;
 
@@ -122,6 +138,9 @@ export class Client {
     this.backend = backend instanceof Backend ? backend : new Backend(backend);
     this.memories = new Memories(this);
     this.simulations = new Simulations(this);
+    this.scheduledTasks = new ScheduledTasks(this);
+    this.spendLimits = new SpendLimits(this);
+    this.teams = new Teams(this, this.spendLimits);
     this.peers = new StreamPeers(this.backend);
   }
 
@@ -138,8 +157,37 @@ export class Client {
    * the thing that authenticated them; nothing here mints it, because minting it needs the
    * secret and a secret in a page is a secret published.
    */
-  setUser(user: StreamUser | string, token: TokenSource): Promise<void> {
-    return this.backend.setUser(user, token);
+  setUser(user: StreamUser | string, token: TokenSource): Promise<void>;
+  /** Acts as a guest from `guestUser`, with the token it was minted with. */
+  setUser(guest: Guest): Promise<void>;
+  setUser(user: StreamUser | string | Guest, token?: TokenSource): Promise<void> {
+    if (isGuest(user)) {
+      // Only who they are goes on, never the token they carry, which would otherwise be sent to
+      // Stream Chat and Video as a field of the user.
+      return this.backend.setUser({ id: user.id, ...(user.name ? { name: user.name } : {}) }, token ?? user.token);
+    }
+    return this.backend.setUser(user, token as TokenSource);
+  }
+
+  /**
+   * The token a backend hands to one user's device, naming the user's team and usage
+   * categories, fixed when it is signed so the device cannot move its work to another team.
+   * Server side only: it is signed with the secret.
+   *
+   * ```ts
+   * const token = await api.createUserToken("user-42", { team: "finance" });
+   * ```
+   */
+  createUserToken(userId: string, options: UserTokenOptions = {}): Promise<string> {
+    return this.backend.createUserToken(userId, options);
+  }
+
+  /**
+   * Forgets the user, which is what signing out is. The Stream clients `session.chat()` and
+   * `session.video()` built stay connected as them until `disconnect`.
+   */
+  clearUser(): void {
+    this.backend.clearUser();
   }
 
   /**
@@ -161,6 +209,18 @@ export class Client {
    */
   disconnect(): Promise<void> {
     return this.peers.disconnect();
+  }
+
+  /**
+   * Search, the one routed modality a device may reach, under a stored router config and with
+   * cost labels when given. No request is made until a call.
+   *
+   * ```ts
+   * const answer = await api.router({ config: "healthcare" }).search("what changed in the pricing page");
+   * ```
+   */
+  router(options: RouterOptions = {}): Router {
+    return new Router(this, options);
   }
 
   /**
@@ -265,25 +325,39 @@ export class Client {
       }
     }
 
-    const request: RequestInit = {
-      method: method.toUpperCase(),
-      headers: { ...(await this.backend.headers(anonymously)), ...headers },
+    // The token the last attempt carried, so a 401 forgets that one and not a newer one.
+    let sent: string | undefined;
+    const attempt = async (): Promise<Response> => {
+      const credentials = await this.backend.headers(anonymously);
+      sent = credentials["Authorization"]?.replace(/^Bearer /, "");
+      const request: RequestInit = {
+        method: method.toUpperCase(),
+        headers: { ...credentials, ...headers },
+      };
+      if (body !== undefined) {
+        request.headers = { ...request.headers, "Content-Type": "application/json" };
+        request.body = JSON.stringify(body);
+      }
+      if (signal) {
+        request.signal = signal;
+      }
+      try {
+        return await this.backend.request(url.toString(), request);
+      } catch (cause) {
+        // A request that never arrived is reported as such rather than as a status, because
+        // a caller retrying on a network failure and one retrying on a 500 are different.
+        throw new RouterError(0, operation, `could not reach the router: ${String(cause)}`);
+      }
     };
-    if (body !== undefined) {
-      request.headers = { ...request.headers, "Content-Type": "application/json" };
-      request.body = JSON.stringify(body);
-    }
-    if (signal) {
-      request.signal = signal;
-    }
 
-    let response: Response;
-    try {
-      response = await this.backend.request(url.toString(), request);
-    } catch (cause) {
-      // A request that never arrived is reported as such rather than as a status, because
-      // a caller retrying on a network failure and one retrying on a 500 are different.
-      throw new RouterError(0, operation, `could not reach the router: ${String(cause)}`);
+    let response = await attempt();
+    // A 401 is the token having expired more often than anything else, so a token function
+    // is asked for a fresh one and the request sent once more. Once: a second refusal is the
+    // token being wrong rather than old, and asking again would only ask the app's backend
+    // the same question in a loop.
+    if (response.status === 401 && !anonymously && this.backend.expireToken(sent)) {
+      await response.body?.cancel();
+      response = await attempt();
     }
 
     if (anonymously && response.status === 401) {
@@ -308,4 +382,9 @@ function fill(template: string, path: Record<string, string | number> | undefine
     }
     return encodeURIComponent(String(value));
   });
+}
+
+/** Whether `setUser` was handed a guest, which carries the token it was minted with. */
+function isGuest(user: StreamUser | string | Guest): user is Guest {
+  return typeof user === "object" && typeof user["token"] === "string";
 }

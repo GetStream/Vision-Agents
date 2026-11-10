@@ -209,7 +209,7 @@ func (s *ChatLogSuite) TestALimitedAppIsNotAskedAgainOnEveryTick() {
 	writer.show()
 
 	sends := 0
-	for _, asked := range chat.Requests("test") {
+	for _, asked := range chat.Requests(chat.Key) {
 		if strings.HasSuffix(asked.Path, "/message") {
 			sends++
 		}
@@ -815,6 +815,33 @@ func (s *ChatLogSuite) TestATranscriptChannelIsStampedWithItsCustomer() {
 	s.Equal("customer-1", created["custom"].(map[string]any)[conversation.CustomerField])
 }
 
+func (s *ChatLogSuite) TestATranscriptChannelIsMadeInTheLogsTeam() {
+	created := s.madeIn("red")
+
+	s.Equal("red", created["team"])
+}
+
+func (s *ChatLogSuite) TestATranscriptChannelOfNoTeamIsMadeWithNone() {
+	created := s.madeIn("")
+
+	s.NotContains(created, "team", "Chat is sent no team field at all")
+}
+
+// madeIn is the channel a log in team creates as it starts.
+func (s *ChatLogSuite) madeIn(team string) map[string]any {
+	chat := chattest.NewServer(s.T())
+	log, err := New(Options{
+		AgentID: "agent-1", CustomerID: "customer-1", Team: team,
+		Agent: User{ID: "vision-agent"}, Client: chat.Client, Logger: slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(log.Start(context.Background()))
+	log.Close()
+	created, ok := chat.Channel("agent-1")
+	s.Require().True(ok)
+	return created
+}
+
 func (s *ChatLogSuite) TestACallDoesNotRestampAChannelAnotherCustomerOpenedFirst() {
 	// Agent ids are the customers' own words, so in a shared app another customer can open
 	// the channel first. The stamp it put there stays: a call naming the same agent id
@@ -1214,7 +1241,7 @@ func (s *ChatLogSuite) trail(chat *chattest.Server, turns ...string) []string {
 	}
 	events := chat.Events(s.log.channel)
 	var trail []string
-	for _, asked := range chat.Requests("test") {
+	for _, asked := range chat.Requests(chat.Key) {
 		switch {
 		case strings.HasSuffix(asked.Path, "/event"):
 			event := events[0]

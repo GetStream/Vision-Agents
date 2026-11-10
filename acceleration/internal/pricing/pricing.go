@@ -30,10 +30,12 @@ const (
 	OutputTextTokens       Meter = "output_text_tokens"
 	OutputAudioTokens      Meter = "output_audio_tokens"
 
-	Characters      Meter = "characters"
-	AudioMs         Meter = "audio_ms"
-	Images          Meter = "images"
-	Pixels          Meter = "pixels"
+	Characters Meter = "characters"
+	AudioMs    Meter = "audio_ms"
+	Images     Meter = "images"
+	Pixels     Meter = "pixels"
+	// Pages are the pages of a document a model read, which is how an OCR model bills.
+	Pages           Meter = "pages"
 	Requests        Meter = "requests"
 	Messages        Meter = "messages"
 	MessageSegments Meter = "message_segments"
@@ -60,7 +62,7 @@ var meters = []Meter{
 	InputTextTokens, InputAudioTokens, InputImageTokens,
 	CachedInputTextTokens, CachedInputAudioTokens, CachedInputImageTokens,
 	OutputTextTokens, OutputAudioTokens,
-	Characters, AudioMs, Images, Pixels, Requests, Messages, MessageSegments, MediaMessages, CallSeconds,
+	Characters, AudioMs, Images, Pixels, Pages, Requests, Messages, MessageSegments, MediaMessages, CallSeconds,
 	Seconds, SessionSeconds, VCPUSeconds, MemoryGBSeconds, DiskGBSeconds,
 	BytesWritten, BytesQueried, BytesReturned, Results, ByteHours, Clones,
 }
@@ -254,6 +256,9 @@ type Pricer interface {
 	Billable(item Item) bool
 	// Entry is the item's entry: its vendor cost and its price.
 	Entry(item Item) (Entry, bool)
+	// Covers reports whether the item's work is priced, or marked free or local, as Unpriced
+	// leaves it out.
+	Covers(item Item) bool
 }
 
 // priced reports whether the entry has a price above zero.
@@ -293,7 +298,7 @@ func (e Entry) quote(used Quantities) Quote {
 		billable := !e.Free && !e.Local
 		return Quote{SKU: e.SKU, Billable: billable, Unpriced: billable}
 	}
-	used = split(used)
+	used = split(used, e.Prices)
 	var prompt int64
 	for _, meter := range InputMeters {
 		prompt += used[meter]
@@ -345,7 +350,7 @@ func costAt(rates map[Meter]Rate, used Quantities) (micros, outputMicros float64
 
 // split drops the totals a modality split replaces, so no token is billed twice: a
 // speech-to-speech row carries both, the totals for reporting and the split for pricing.
-func split(used Quantities) Quantities {
+func split(used Quantities, rates map[Meter]Rate) Quantities {
 	has := func(meters []Meter) bool {
 		return slices.ContainsFunc(meters, func(meter Meter) bool { return used[meter] != 0 })
 	}
@@ -355,6 +360,7 @@ func split(used Quantities) Quantities {
 	}
 	kept := maps.Clone(used)
 	if splitInput {
+		shareCached(kept, rates)
 		delete(kept, InputTokens)
 		delete(kept, CachedInputTokens)
 	}
@@ -362,6 +368,42 @@ func split(used Quantities) Quantities {
 		delete(kept, OutputTokens)
 	}
 	return kept
+}
+
+// freshInputs and cachedInputs are the input modality meters, each beside its cached one.
+var (
+	freshInputs  = []Meter{InputTextTokens, InputAudioTokens, InputImageTokens}
+	cachedInputs = []Meter{CachedInputTextTokens, CachedInputAudioTokens, CachedInputImageTokens}
+)
+
+// shareCached moves a cached total the vendor split by no modality out of the modality
+// counts, in proportion to each, into the cached meter of every modality rates price cached
+// tokens for, so they are billed at the cached rate rather than the fresh one. A modality
+// with no cached rate keeps its share at its own rate: its cached token would otherwise fall
+// back to the input total's, which for a speech model is audio's, above text's.
+func shareCached(used Quantities, rates map[Meter]Rate) {
+	cached := used[CachedInputTokens]
+	if cached <= 0 || slices.ContainsFunc(cachedInputs, func(meter Meter) bool { return used[meter] != 0 }) {
+		return
+	}
+	var total int64
+	for _, meter := range freshInputs {
+		total += used[meter]
+	}
+	if total == 0 {
+		return
+	}
+	cached = min(cached, total)
+	_, anyModality := rates[CachedInputTokens]
+	for i, meter := range freshInputs {
+		if _, own := rates[cachedInputs[i]]; !own && !anyModality {
+			continue
+		}
+		if share := cached * used[meter] / total; share > 0 {
+			used[meter] -= share
+			used[cachedInputs[i]] = share
+		}
+	}
 }
 
 // RateOf is the rate a meter is priced at among rates: its own, or the one its fallback

@@ -14,6 +14,8 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 	"gopkg.in/yaml.v3"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/apispec"
 )
 
 const specDescription = `Routes speech-to-text and text-to-speech traffic across providers and reports what it cost. Every path is scoped by modality, so the same provider serving two modalities is reported on separately. Who the caller is depends on ROUTER_AUTH_MODE: ` + "`api_key`" + `, the default, wants an API key and a token signed with its secret; ` + "`proxy`" + ` believes the X-Stream- headers something in front of the router set; ` + "`noauth`" + ` reads a trusted X-Customer-Id header and takes every caller for that customer's own backend.
@@ -142,7 +144,7 @@ var answerHeaders = map[string]*huma.Header{
 	headerCostMicros: {
 		Description: "What the request cost, in millionths of a dollar: the sum of the usage it recorded. " +
 			"Sent on a success to a server-side caller when the request recorded any, and never to an end user's " +
-			"device. An operation that answers before its work runs, such as createResponse, sends none.",
+			"device. An operation that answers before its work runs, such as createResponse or respondSession, sends none.",
 		Schema: &huma.Schema{Type: huma.TypeInteger, Format: "int64"},
 	},
 	headerCostEstimated: {
@@ -339,7 +341,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 				Headers:         answerHeaders,
 				SecuritySchemes: securitySchemes,
 			},
-			OnAddOperation: []huma.AddOpFunc{shareErrorResponses},
+			OnAddOperation: []huma.AddOpFunc{shareErrorResponses, apispec.DeprecateParams},
 		},
 		Formats:       huma.DefaultFormats,
 		DefaultFormat: "application/json",
@@ -365,6 +367,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerSessionVoice(api)
 	s.registerSessionDelete(api)
 	s.registerMemories(api)
+	s.registerUserPhones(api)
 	s.registerSessionTools(api)
 	s.registerConfigs(api)
 	s.registerServer(api)
@@ -378,6 +381,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerPhone(api)
 	s.registerConversations(api)
 	s.registerCampaigns(api)
+	s.registerCampaignContacts(api)
 	s.registerSimulations(api)
 	s.registerCalls(api)
 	s.registerReviews(api)
@@ -391,8 +395,8 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerRecordings(api)
 	s.registerImages(api)
 	s.registerDetection(api)
+	s.registerOCR(api)
 	documentHandWritten(api)
-	s.registerPlugins(api)
 	s.registerConfigPatch(api)
 	s.registerSync(api)
 	s.registerAudit(api)

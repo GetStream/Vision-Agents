@@ -65,6 +65,8 @@ type Options struct {
 	// Judge is a decision model the flow controller asks in place of Controller, which it
 	// then ignores. The harness takes ownership of it.
 	Judge Judge
+	// Hearer is asked before Judge or Controller, which decide the turns it can't.
+	Hearer Hearer
 	// Skills are what the fast model may hand over. They mean nothing without a subagent.
 	Skills Skills
 	// Tools are what the fast model may do rather than say. The harness offers them and
@@ -128,9 +130,14 @@ type noted struct {
 	cutOff bool
 }
 
-// cutOffNote is added to a note whose reply was talked over before the caller heard it.
+// cutOffNote is added to a note whose reply was cut off before the caller heard it.
 const cutOffNote = "Your last reply passing this on was cut off before the caller heard " +
 	"it, so they still need to be told."
+
+// talkedOverNote is added instead to a note whose reply the caller talked over, taking the
+// floor before they heard it: they said something since, which may have moved on from it.
+const talkedOverNote = "The caller talked over your last reply passing this on, so they did " +
+	"not hear it. Tell them only if it still fits what they have said since."
 
 // writtenReply is a reply the model has finished writing that may still be playing.
 type writtenReply struct {
@@ -178,6 +185,10 @@ type Turn struct {
 	// Attributes go on the reply's usage row, asked for when it is written
 	// (llm.ResponseParams.Attributes). Nil adds none.
 	Attributes func() map[string]string
+	// Generation tells apart two replies asked for under one ID, such as a speculative
+	// reply thrown away and the answer asked for after it. A reply that may be forgotten
+	// (Forget) carries one that is not zero and unique to it; every other reply leaves it zero.
+	Generation uint64
 }
 
 // answerNow is the note a reply that Answers is given.
@@ -235,6 +246,11 @@ type Harness struct {
 	// toolless is the replies in flight that were offered no tools (Turn.Answers,
 	// Turn.NoTools, a colleague's question), until they are written (DropUnoffered).
 	toolless map[string]bool
+	// generations is the reply last asked for under an ID that a speculative reply was asked
+	// for under, so a Forget that lands after another reply took the ID leaves what that
+	// reply recorded alone. An ID is only there from the speculative reply until it is
+	// forgotten, written or cut off.
+	generations map[string]uint64
 	// shape is what the last request opened with besides the conversation: instructions,
 	// tools, tool choice and effort. cold reports that it changed, which costs the
 	// provider's cache of the conversation and so says nothing about whether it pays.
@@ -274,12 +290,13 @@ func New(options Options) (*Harness, error) {
 	}
 
 	h := &Harness{
-		options:  options,
-		logger:   options.Logger,
-		emitter:  NewEmitter(eventBuffer),
-		charged:  context.Background(),
-		carried:  make(map[string][]llm.Message),
-		toolless: make(map[string]bool),
+		options:     options,
+		logger:      options.Logger,
+		emitter:     NewEmitter(eventBuffer),
+		charged:     context.Background(),
+		carried:     make(map[string][]llm.Message),
+		toolless:    make(map[string]bool),
+		generations: make(map[string]uint64),
 	}
 
 	if options.Subagent != nil || options.OpenSubagent != nil {
@@ -299,6 +316,7 @@ func New(options Options) (*Harness, error) {
 	if options.Controller != nil || options.Judge != nil {
 		h.flow = newFlow(options.Controller, h.emitter, h.logger)
 		h.flow.judge = options.Judge
+		h.flow.hearer = options.Hearer
 		h.flow.onModelCall = options.OnModelCall
 	}
 	return h, nil
@@ -337,8 +355,9 @@ func (h *Harness) Remember(response llm.Response) []llm.Message {
 	carried := h.carried[response.ID]
 	delete(h.carried, response.ID)
 	delete(h.toolless, response.ID)
+	delete(h.generations, response.ID)
 	if response.Status == llm.StatusFailed || response.Status == llm.StatusCancelled {
-		h.release(response.ID)
+		h.release(response.ID, false)
 		carried = nil
 	} else {
 		handed := slices.DeleteFunc(slices.Clone(h.notes), func(written noted) bool { return written.turn != response.ID })
@@ -362,17 +381,25 @@ func (h *Harness) Remember(response llm.Response) []llm.Message {
 // this the next turn with the same words would send nothing new and continue from a reply
 // that never saw them; the next turn sends the whole conversation instead. The notes it
 // was handed were never read, so they are owed again.
-func (h *Harness) Forget(turnID string) {
+//
+// It runs when the reply has been read out, which can be after the turn was asked for again
+// under the same ID. generation is the Turn.Generation the reply was asked for with: when
+// another reply has since taken the ID, what was recorded is that reply's and is left alone.
+func (h *Harness) Forget(turnID string, generation uint64) {
 	h.mu.Lock()
+	defer h.mu.Unlock()
+	if current, taken := h.generations[turnID]; taken && current != generation {
+		return
+	}
 	h.stored = stored{}
 	delete(h.carried, turnID)
 	delete(h.toolless, turnID)
+	delete(h.generations, turnID)
 	for i := range h.notes {
 		if h.notes[i].turn == turnID {
 			h.notes[i].turn = ""
 		}
 	}
-	h.mu.Unlock()
 }
 
 // resume works out how much of the input still has to be sent, and what to continue from.
@@ -441,6 +468,9 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	if offersNone {
 		h.toolless[turn.ID] = true
 	}
+	if _, taken := h.generations[turn.ID]; taken || turn.Generation != 0 {
+		h.generations[turn.ID] = turn.Generation
+	}
 	if offersNone && len(tools) > 0 {
 		if len(model.ToolChoices) == 0 || slices.Contains(model.ToolChoices, "none") {
 			toolChoice = "none"
@@ -468,7 +498,7 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 
 	params := llm.ResponseParams{
 		ID:                 turn.ID,
-		Purpose:            "reply",
+		Purpose:            llm.PurposeReply,
 		Reasoning:          reasoning,
 		TurnID:             turn.ID,
 		OnTiming:           h.options.OnModelCall,
@@ -495,7 +525,13 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	stream, err := session.Create(ctx, params)
 	if err != nil {
 		// A reply that never started read nothing: what it took is owed to the next one.
-		h.Release(turn.ID)
+		// A speculation cancelled in Create can fail after the answer took its ID, and what
+		// is recorded under the ID is then the answer's, as in Forget.
+		h.mu.Lock()
+		if current, taken := h.generations[turn.ID]; !taken || current == turn.Generation {
+			h.release(turn.ID, false)
+		}
+		h.mu.Unlock()
 	}
 	return stream, err
 }
@@ -513,16 +549,28 @@ func shapeOf(params llm.ResponseParams) string {
 // cut off before it was heard.
 func (h *Harness) Release(turnID string) {
 	h.mu.Lock()
-	h.release(turnID)
+	h.release(turnID, false)
 	h.mu.Unlock()
 }
 
-func (h *Harness) release(turnID string) {
+// ReleaseTalkedOver is Release for a reply the caller cut off by taking the floor. What it
+// was handed is still theirs to hear, but it no longer earns a turn of its own: it rides
+// along with the reply to what they said (quiet), so the model passes it on there if it still
+// fits. Owed a turn of its own, it was said again over the caller as soon as the reply
+// stopped, every time they talked over it, and their words went unanswered.
+func (h *Harness) ReleaseTalkedOver(turnID string) {
+	h.mu.Lock()
+	h.release(turnID, true)
+	h.mu.Unlock()
+}
+
+func (h *Harness) release(turnID string, talkedOver bool) {
 	// A reply cut off before it was written keeps nothing of what it was sent: its notes are
 	// owed again, data and all, so carrying them into the conversation as well would send
 	// what came back twice.
 	delete(h.carried, turnID)
 	delete(h.toolless, turnID)
+	delete(h.generations, turnID)
 	if h.written.turn == turnID {
 		// The conversation keeps the reply as it was written, so the model would otherwise
 		// read itself as having already said this.
@@ -534,8 +582,9 @@ func (h *Harness) release(turnID string) {
 			// A correction of the harness's own is not something the caller was being told.
 			if !carried.cutOff && carried.skill != "" {
 				carried.cutOff = true
-				carried.text += " " + cutOffNote
+				carried.text += " " + cutOff(talkedOver)
 			}
+			carried.quiet = carried.quiet || talkedOver
 			h.notes = append(h.notes, carried)
 		}
 		h.written = writtenReply{}
@@ -543,8 +592,23 @@ func (h *Harness) release(turnID string) {
 	for i := range h.notes {
 		if h.notes[i].turn == turnID {
 			h.notes[i].turn = ""
+			if talkedOver {
+				if !h.notes[i].cutOff && h.notes[i].skill != "" {
+					h.notes[i].cutOff = true
+					h.notes[i].text += " " + cutOff(true)
+				}
+				h.notes[i].quiet = true
+			}
 		}
 	}
+}
+
+// cutOff is the line a released note is told again with.
+func cutOff(talkedOver bool) string {
+	if talkedOver {
+		return talkedOverNote
+	}
+	return cutOffNote
 }
 
 // SetModel moves the conversation, and the flow controller when one is given, onto other

@@ -57,6 +57,9 @@ type stubLLM struct {
 	failures int
 	// failure is what a failing request reports, errModelDown when unset.
 	failure error
+	// refuses, if set, is what Create returns in place of a stream: an endpoint that answers
+	// the request with an error status.
+	refuses error
 	// holdCreate, if set, is waited on after the request is recorded and before a stream
 	// is returned, so a test can Cancel while Create has not come back.
 	holdCreate <-chan struct{}
@@ -90,9 +93,12 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	})
 	s.scripts[params.ID] = script
 	s.order = append(s.order, params.ID)
-	hold := s.holdCreate
+	hold, refuses := s.holdCreate, s.refuses
 	s.mu.Unlock()
 
+	if refuses != nil {
+		return nil, refuses
+	}
 	if hold != nil {
 		select {
 		case <-hold:
@@ -225,6 +231,8 @@ type HarnessSuite struct {
 
 	harness *Harness
 	events  *collector
+	// logs is what the last harness built logged, as JSON, one record a line.
+	logs *logLines
 }
 
 func TestHarnessSuite(t *testing.T) {
@@ -294,11 +302,12 @@ func stubSession(s *suite.Suite, ctx context.Context, provider *stubLLM) *llmrou
 // tools is offered, which is nothing unless a test set it first.
 func (s *HarnessSuite) build(delegating bool) {
 	s.fast = newStubLLM()
+	s.logs = &logLines{}
 	options := Options{
 		Model:  s.session(s.fast),
 		Skills: s.skills,
 		Tools:  s.tools,
-		Logger: slog.New(slog.DiscardHandler),
+		Logger: slog.New(slog.NewJSONHandler(s.logs, nil)),
 	}
 	if delegating {
 		s.slow = newStubLLM()
@@ -985,13 +994,13 @@ func (s *HarnessSuite) TestAnAnswerCutOffBeforeItWasHeardIsStillOwed() {
 	s.respond("turn-2", "")
 	s.False(s.harness.Pending(), "the reply carrying it is on its way")
 	s.harness.Release("turn-2")
-	s.True(s.harness.Pending(), "the caller talked over it, so they never heard it")
+	s.True(s.harness.Pending(), "it was cut off, so they never heard it")
 
 	s.respond("turn-3", "sorry, go on")
 	s.Contains(shown(s.fast.requests()[2]), "12.63")
 }
 
-func (s *HarnessSuite) TestAnAnswerTalkedOverAfterItWasWrittenIsStillOwed() {
+func (s *HarnessSuite) TestAnAnswerCutOffAfterItWasWrittenIsStillOwed() {
 	s.build(true)
 	s.slow.automatic = "It is 12.63."
 	s.respond("turn-1", "what is 15% of 84.20")
@@ -1002,14 +1011,51 @@ func (s *HarnessSuite) TestAnAnswerTalkedOverAfterItWasWrittenIsStillOwed() {
 	s.harness.Remember(llm.Response{ID: "turn-2", Status: llm.StatusCompleted})
 	s.False(s.harness.Pending(), "the reply carrying it was written and is playing")
 	s.harness.Release("turn-2")
-	s.True(s.harness.Pending(), "the caller talked over it while it played")
+	s.True(s.harness.Pending(), "it was cut off while it played")
 
-	s.Contains(shown(s.fast.requests()[1]), "12.63", "the reply that was talked over carried it")
+	s.Contains(shown(s.fast.requests()[1]), "12.63", "the reply that was cut off carried it")
 	s.respond("turn-3", "sorry, what were the opening hours")
 	s.Contains(shown(s.fast.requests()[2]), cutOffNote,
 		"the conversation still holds the reply as written, so the model is told it went unheard")
 	s.NotContains(shown(s.fast.requests()[2]), "12.63",
 		"what came back is already in the conversation, ahead of the reply that was cut off")
+}
+
+func (s *HarnessSuite) TestAnAnswerTheCallerTalkedOverRidesAlongWithWhatTheySaidNext() {
+	// The caller taking the floor over the reply passing an answer on is no reason to say it
+	// again over them: it goes with the reply to what they said, told there if it still fits.
+	s.build(true)
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+	s.reply("turn-1", `<ask skill="think">15% of 84.20</ask>`)
+	s.awaitSettled(1)
+
+	s.respond("turn-2", "")
+	s.harness.Remember(llm.Response{ID: "turn-2", Status: llm.StatusCompleted})
+	s.harness.ReleaseTalkedOver("turn-2")
+	s.False(s.harness.Pending(), "it earns no turn of its own over the caller")
+
+	s.respond("turn-3", "no wait, I meant the other one")
+	s.Contains(shown(s.fast.requests()[2]), talkedOverNote, "the reply to what they said carries it")
+	s.NotContains(shown(s.fast.requests()[2]), cutOffNote)
+	s.harness.Remember(llm.Response{ID: "turn-3", Status: llm.StatusCompleted})
+	s.False(s.harness.Pending(), "the reply to what they said read it")
+}
+
+func (s *HarnessSuite) TestAnAnswerTheCallerTalkedOverBeforeItWasWrittenRidesAlongWithWhatTheySaidNext() {
+	s.build(true)
+	s.slow.automatic = "It is 12.63."
+	s.respond("turn-1", "what is 15% of 84.20")
+	s.reply("turn-1", `<ask skill="think">15% of 84.20</ask>`)
+	s.awaitSettled(1)
+
+	s.respond("turn-2", "")
+	s.harness.ReleaseTalkedOver("turn-2")
+	s.False(s.harness.Pending(), "it earns no turn of its own over the caller")
+
+	s.respond("turn-3", "no wait, I meant the other one")
+	s.Contains(shown(s.fast.requests()[2]), "12.63", "what came back was never written, so it is sent with the reply to them")
+	s.Contains(shown(s.fast.requests()[2]), talkedOverNote)
 }
 
 func (s *HarnessSuite) TestOnlyTheReplyTalkedOverOwesItsAnswerAgain() {
@@ -1281,7 +1327,7 @@ func (s *HarnessSuite) TestWhatAReplyWasOfferedIsNotCarriedToTheNextWithItsId() 
 	history := []llm.Message{{Role: llm.User, Content: "where is my order"}}
 
 	s.answer(Turn{ID: "turn-1", Instructions: "be brief", History: history, NoTools: true})
-	s.harness.Forget("turn-1")
+	s.harness.Forget("turn-1", 0)
 	s.answer(Turn{ID: "turn-1", Instructions: "be brief", History: history})
 	s.Equal(called, s.harness.DropUnoffered("turn-1", called), "a forgotten reply's offer was carried to the next")
 
@@ -1955,6 +2001,10 @@ func (s *HarnessSuite) TestWorkWhoseProviderFailsMidAnswerIsAskedAgain() {
 	s.Equal("It is 12.63.", settled.Text)
 	s.Require().Len(s.slow.requests(), 2)
 	s.Equal(s.slow.requests()[0].Input, s.slow.requests()[1].Input, "the same question is put again")
+	retried := s.logs.records("asking a subagent again after its provider failed mid-answer")
+	s.Require().Len(retried, 1)
+	s.Equal("stub", retried[0]["provider"], "a search for the provider finds its failure")
+	s.Equal("stub-model", retried[0]["model"])
 }
 
 func (s *HarnessSuite) TestWorkWhoseRequestTheProviderRefusesIsNotAskedAgain() {

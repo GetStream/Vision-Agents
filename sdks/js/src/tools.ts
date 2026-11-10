@@ -80,7 +80,8 @@ export interface Tool<In = Readonly<Record<string, unknown>>> {
    */
   timeoutMs?: number;
   /**
-   * Runs it. What it returns is rendered for the model; a string is used as it is.
+   * Runs it. What it returns is rendered for the model: a string is used as it is, a
+   * `ToolOutput` also shows the model its images, and anything else becomes JSON.
    *
    * `signal` aborts when the call is cancelled or times out. `toolCallContext` is the
    * call being answered, and how the function tells the conversation how it is going.
@@ -322,7 +323,7 @@ export class Tools {
     args: string,
     signal: AbortSignal,
     toolCallContext: ToolCall = new ToolCall(),
-  ): Promise<string> {
+  ): Promise<string | ToolOutputPart[]> {
     const registered = this.registered.get(name);
     if (!registered) {
       throw new ConfigurationError(`nothing is registered as ${name}`);
@@ -432,11 +433,47 @@ function approvalOf(approval: ToolApproval): Schemas["SessionToolApproval"] {
 }
 
 /**
- * Turns what a function returned into words the model can use.
+ * What a function says and shows: words, and pictures the model looks at with them.
  *
- * A string is already that; everything else becomes JSON.
+ * Return one from `run` when the answer is something to see, such as a photo the device
+ * took. Anything else a function returns is words only.
  */
-export function render(output: unknown): string {
+export class ToolOutput {
+  /** What the function says. */
+  readonly text: string;
+  /** What the function shows: an image URL, or a data URI. */
+  readonly images: readonly Schemas["ImageSource"][];
+
+  constructor(output: { text?: string; images?: readonly Schemas["ImageSource"][] } = {}) {
+    this.text = output.text ?? "";
+    this.images = output.images ?? [];
+  }
+}
+
+/** One part of a result that shows pictures, as the router takes it. */
+export type ToolOutputPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string; detail?: string } };
+
+/**
+ * Turns what a function returned into what the model is told.
+ *
+ * A string is already that; a `ToolOutput` with images is its words and then its pictures, as
+ * parts; everything else becomes JSON.
+ */
+export function render(output: unknown): string | ToolOutputPart[] {
+  if (output instanceof ToolOutput) {
+    if (output.images.length === 0) {
+      return output.text;
+    }
+    return [
+      ...(output.text ? [{ type: "text" as const, text: output.text }] : []),
+      ...output.images.map((image) => ({
+        type: "image_url" as const,
+        image_url: { url: image.url, ...(image.detail ? { detail: image.detail } : {}) },
+      })),
+    ];
+  }
   if (typeof output === "string") {
     return output;
   }

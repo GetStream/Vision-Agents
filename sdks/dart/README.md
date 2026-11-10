@@ -241,7 +241,9 @@ until `withGuest` or `withUser`. A router that admits no anonymous callers, Stre
 for now, throws a `StateError`, and your backend mints the guest instead.
 
 A guest is kept in the `GuestStore` you hand it (shared preferences, secure storage) and reused
-until it expires. Lists come a page at a time: ask again with the page's `nextCursor`, which is
+until it expires, then comes back as the same guest with the refresh secret kept beside it. It
+works once, so the store keeps what each answer hands back; one lost or already spent gets a new
+guest. Lists come a page at a time: ask again with the page's `nextCursor`, which is
 null on the last one.
 
 ## What is deliberately not here

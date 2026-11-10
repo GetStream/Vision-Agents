@@ -64,6 +64,34 @@ func (s *SIPTrunkSuite) SetupTest() {
 	s.Require().NoError(err)
 }
 
+// placed opens the outbound leg customerID placed through its own trunk, as vendorCallID.
+func (s *SIPTrunkSuite) placed(customerID, vendorCallID string) {
+	_, err := s.store.OpenCallLeg(s.ctx, &store.CallLeg{
+		CustomerID: customerID, CallType: "default", CallID: "session-" + vendorCallID,
+		Vendor: SIPTrunkVendor, VendorCallID: vendorCallID, Direction: store.Outbound,
+		LocalNumber: "+15125550100", RemoteNumber: "+15125550101",
+	})
+	s.Require().NoError(err)
+}
+
+func (s *SIPTrunkSuite) TestDigitsOnACallThroughATrunkReachTheTrunkProvider() {
+	s.placed("acme", "call-1")
+
+	err := s.service.SendDigits(s.ctx, "acme", SIPTrunkVendor, "call-1", "12")
+	s.EqualError(err, "phone: digits cannot be pressed on a call through a customer's own sip trunk")
+	s.Equal([]string{"call-1:12"}, s.trunks.digits)
+}
+
+func (s *SIPTrunkSuite) TestALineCannotPressDigitsOnACallAnotherCustomerPlaced() {
+	s.placed("acme", "call-2")
+	line := s.service.Line(LineOptions{
+		Owner: routing.Owner{CustomerID: "globex"}, Vendor: SIPTrunkVendor, VendorCallID: "call-2",
+	})
+
+	s.ErrorIs(line.SendDigits(s.ctx, "12"), ErrCallNotFound)
+	s.Empty(s.trunks.digits)
+}
+
 func (s *SIPTrunkSuite) create(customerID, password string) store.SIPTrunk {
 	trunk, err := s.service.CreateSIPTrunk(s.ctx, customerID, SIPTrunkSettings{
 		Name: "main", Host: "trunk.example.com", Username: "agent", Password: &password, LateOffer: true,
@@ -136,6 +164,7 @@ func (s *SIPTrunkSuite) TestADialRefusesATrunkWithoutAPassword() {
 
 	_, _, err = s.service.dialVendor(s.ctx, held)
 	s.EqualError(err, "phone: sip trunk "+trunk.ID+" has no password; set one before calling through it")
+	s.ErrorIs(err, ErrInvalid)
 }
 
 func (s *SIPTrunkSuite) TestADialRefusesAPasswordSealedAtNoKey() {
@@ -188,6 +217,17 @@ func (s *SIPTrunkSuite) TestReleasingATrunkNumberAsksNoVendor() {
 	// trunkProvider does not override ReleaseNumber, so reaching it would panic.
 	s.Require().NoError(s.service.Release(s.ctx, "acme", "+15550000207"))
 	s.NoError(s.service.DeleteSIPTrunk(s.ctx, "acme", trunk.ID), "a released number no longer holds its trunk")
+}
+
+// A deployment without Stream is ErrNoStream, which the router answers 400, not 500.
+func (s *SIPTrunkSuite) TestAttachingWithoutStreamSaysSo() {
+	number := store.PhoneNumber{E164: "+15550000212", Vendor: "telnyx", CustomerID: "acme"}
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &number))
+
+	_, err := s.service.Attach(s.ctx, Attachment{CustomerID: "acme", E164: number.E164})
+
+	s.EqualError(err, "phone: attaching a number needs stream credentials")
+	s.ErrorIs(err, ErrNoStream)
 }
 
 func (s *SIPTrunkSuite) TestAttachingATrunkNumberIsRefused() {

@@ -325,7 +325,7 @@ func (s *RecorderSuite) TestARowWithNothingBeyondItsColumnsStoresNoMeters() {
 func (s *RecorderSuite) TestACostTheVendorQuotedOutrightIsBillable() {
 	row := s.recorded(number, Stat{CostMicros: 1_150_000, Success: true})
 
-	s.EqualValues(1_380_000, row.CostMicros, "the vendor's 1,150,000 resold at the factor")
+	s.EqualValues(1_242_000, row.CostMicros, "the vendor's 1,150,000 resold at the factor")
 	s.EqualValues(1_150_000, row.BaseCostMicros)
 	s.True(row.Billable)
 }
@@ -338,7 +338,7 @@ func (s *RecorderSuite) TestACostTheVendorQuotedIsNotLoggedAsUnpriced() {
 
 	row := s.recordedAt(prices, unlisted, Stat{CostMicros: 1_000_000, Success: true})
 
-	s.EqualValues(1_200_000, row.CostMicros, "the vendor's 1,000,000 resold at the factor")
+	s.EqualValues(1_080_000, row.CostMicros, "the vendor's 1,000,000 resold at the factor")
 	s.True(row.Billable)
 	s.NotContains(logs.String(), "billable work has no price")
 
@@ -357,10 +357,10 @@ func (s *RecorderSuite) TestACostQuotedOutrightKeepsTheOutputShare() {
 	small := s.recorded(priced, Stat{Usage: Usage{InputTokens: 1_000, OutputTokens: 100}, CostMicros: 5_000, Success: true})
 	large := s.recorded(priced, Stat{Usage: Usage{InputTokens: 1_000, OutputTokens: 1_000}, CostMicros: 5_000, Success: true})
 
-	s.EqualValues(6_000, small.CostMicros, "the vendor's 5,000 resold at the factor")
+	s.EqualValues(5_400, small.CostMicros, "the vendor's 5,000 resold at the factor")
 	s.EqualValues(1_200, small.OutputCostMicros, "100 generated tokens at their rate")
-	s.EqualValues(6_000, large.CostMicros)
-	s.EqualValues(6_000, large.OutputCostMicros, "the output share is never more than the cost")
+	s.EqualValues(5_400, large.CostMicros)
+	s.EqualValues(5_400, large.OutputCostMicros, "the output share is never more than the cost")
 	s.True(small.Billable)
 }
 
@@ -406,11 +406,13 @@ func (s *RecorderSuite) TestARowOfABYOKInstanceCarriesTheBYOKSKUAndCostsTheOpera
 	plain := s.recordedAt(list, priced, Stat{Usage: Usage{InputTokens: 1_000, OutputTokens: 100}, Success: true})
 
 	s.Equal("llm-vendor-priced-us-byok", row.SKU)
+	s.True(row.BYOK)
+	s.False(plain.BYOK)
 	s.EqualValues(640, row.CostMicros, "a fifth of the 3,200 the vendor bills the customer")
 	s.Zero(row.BaseCostMicros)
 	s.True(row.Billable)
 	s.Equal("llm-vendor-priced-us", plain.SKU)
-	s.EqualValues(3_840, plain.CostMicros)
+	s.EqualValues(3_456, plain.CostMicros)
 	s.EqualValues(3_200, plain.BaseCostMicros)
 }
 
@@ -424,6 +426,7 @@ func (s *RecorderSuite) TestARowOfAnEUInstanceWithNoEUPriceIsUnpriced() {
 
 	s.Zero(row.CostMicros)
 	s.Empty(row.SKU)
+	s.Equal(pricing.RegionEU, row.Region, "unpriced work still says where it ran")
 	s.True(row.Billable)
 }
 
@@ -435,12 +438,13 @@ func (s *RecorderSuite) TestARowWithNoPriceNamesNone() {
 	s.Empty(row.PriceVersion)
 	s.Empty(row.SKU)
 	s.Zero(row.BaseCostMicros)
+	s.Equal(pricing.DefaultRegion, row.Region, "an instance naming no region runs in the default")
 }
 
 func (s *RecorderSuite) TestACostTheVendorQuotedOutrightIsResoldAtTheFactor() {
 	row := s.recordedAt(s.written(), number, Stat{CostMicros: 1_000_000, Success: true})
 
-	s.EqualValues(1_200_000, row.CostMicros)
+	s.EqualValues(1_080_000, row.CostMicros)
 	s.EqualValues(1_000_000, row.BaseCostMicros)
 	s.Equal(pricing.QuotedVersion, row.PriceVersion)
 	s.Equal("llm-vendor-number-us", row.SKU)

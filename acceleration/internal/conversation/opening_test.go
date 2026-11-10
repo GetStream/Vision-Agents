@@ -19,6 +19,8 @@ import (
 // open looks like from the service while it waits for an answer.
 type heldChat struct {
 	URL string
+	// Key is the api key of the chattest server behind it.
+	Key string
 	// entered is closed once the held conversation's first request has arrived.
 	entered chan struct{}
 	release chan struct{}
@@ -29,9 +31,10 @@ type heldChat struct {
 // lets it go.
 func holdingChat(t *testing.T, cid string) *heldChat {
 	t.Helper()
-	target, err := url.Parse(chattest.NewServer(t).URL)
+	behind := chattest.NewServer(t)
+	target, err := url.Parse(behind.URL)
 	require.NoError(t, err)
-	chat := &heldChat{entered: make(chan struct{}), release: make(chan struct{})}
+	chat := &heldChat{Key: behind.Key, entered: make(chan struct{}), release: make(chan struct{})}
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, cid) {
@@ -51,14 +54,14 @@ func holdingChat(t *testing.T, cid string) *heldChat {
 // every conversation opened anywhere queue behind every other.
 func TestOpeningOneConversationDoesNotWaitOnAnother(t *testing.T) {
 	chat := holdingChat(t, "held-conversation")
-	client, err := getstream.NewClient("test", "secret", getstream.WithBaseUrl(chat.URL))
+	client, err := getstream.NewClient(chat.Key, "secret", getstream.WithBaseUrl(chat.URL))
 	require.NoError(t, err)
 	service := NewForChat(client)
 	t.Cleanup(func() { close(chat.release) })
 
 	stuck := make(chan error, 1)
 	go func() {
-		_, _, _, err := service.CreateInApp(t.Context(), 0, "customer", "agent", "agent:held-conversation", "", "", nil)
+		_, _, _, err := service.CreateInApp(t.Context(), 0, "customer", "agent", "agent:held-conversation", "", "", nil, "")
 		stuck <- err
 	}()
 	select {
@@ -71,7 +74,7 @@ func TestOpeningOneConversationDoesNotWaitOnAnother(t *testing.T) {
 
 	opened := make(chan error, 1)
 	go func() {
-		_, _, _, err := service.CreateInApp(t.Context(), 0, "customer", "agent", "agent:other-conversation", "", "", nil)
+		_, _, _, err := service.CreateInApp(t.Context(), 0, "customer", "agent", "agent:other-conversation", "", "", nil, "")
 		opened <- err
 	}()
 	select {
@@ -94,7 +97,7 @@ func TestTwoOpensOfOneConversationAreTakenInTurn(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _, _, errs[i] = service.CreateInApp(t.Context(), 0, "customer", "agent", "agent:one-conversation", "", "", nil)
+			_, _, _, errs[i] = service.CreateInApp(t.Context(), 0, "customer", "agent", "agent:one-conversation", "", "", nil, "")
 		}()
 	}
 	wg.Wait()

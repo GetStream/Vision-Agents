@@ -165,11 +165,18 @@ final class Responses {
   /// [maxOutputTokens] caps this answer, reasoning included, and [reasoningEffort] is how long
   /// the model may think first, one of the efforts the session's model accepts. Both cover the
   /// replies that finish it after its tools; left null, the session's own apply.
+  ///
+  /// [uiAction] is what the person did in the UI an earlier reply showed, which [text] says in
+  /// their words, such as Stream Chat AI's `AIUIAction.toJson()`: the reply (`message_id`), the
+  /// UI's format and the action (`name`), with what it carries (`payload`), at most 8 KB as
+  /// JSON. Their message carries it, and the model is told it after the text. An empty one is
+  /// not sent.
   Future<AgentResponse> create(
     String text, {
     List<AgentImage> images = const [],
     int? maxOutputTokens,
     String? reasoningEffort,
+    Map<String, Object?>? uiAction,
   }) async {
     _asking?.call(text);
     return responseOf(
@@ -181,6 +188,7 @@ final class Responses {
           maxOutputTokens: maxOutputTokens,
           reasoningEffort: reasoningEffort,
           requestId: _requestId(),
+          uiAction: uiAction == null || uiAction.isEmpty ? null : uiAction,
         ),
       ),
     );

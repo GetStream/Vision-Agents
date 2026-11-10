@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -686,7 +688,7 @@ func (s *ScheduledTasksSuite) TestACallBusyBeforeItsSessionOpensIsNotAnswered() 
 	reported := make(chan error, 1)
 	s.sink.mu.Lock()
 	s.sink.dialled = func(statusURL string) {
-		_, err := s.router.phone.Outcomes().Reported(context.Background(), path.Base(statusURL), outcome.Busy, "busy")
+		_, err := s.router.phone.Outcomes().Reported(context.Background(), path.Base(statusURL), outcome.Report{Outcome: outcome.Busy, Word: "busy"})
 		reported <- err
 	}
 	s.sink.mu.Unlock()
@@ -709,6 +711,51 @@ func (s *ScheduledTasksSuite) TestACallBusyBeforeItsSessionOpensIsNotAnswered() 
 	failure := s.failure(err)
 	s.Equal(scheduling.ReasonNotAnswered, failure.Reason)
 	s.True(failure.Final, "the user was rung already")
+}
+
+// placesACall places a call from a number of the customer's through the API, asking for
+// answering machine detection when detect is set, and returns who was rung.
+func (s *ScheduledTasksSuite) placesACall(detect *bool) string {
+	s.placingCalls()
+	from, to := s.lineNumber(), s.lineNumber()
+	s.seedSMSLine(from)
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{
+		From: from, To: to, DetectVoicemail: detect,
+	})
+	s.Require().Equal(http.StatusAccepted, status, "%s", payload)
+	return to
+}
+
+// A call or a transfer that names none of the customer's numbers to dial from is the
+// caller's to fix: a 400 that says so, not the 500 of a failure of the router's own.
+func (s *ScheduledTasksSuite) TestACallOrATransferWithoutANumberToDialFromIsRefused() {
+	s.placingCalls()
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{
+		From: "", To: s.lineNumber(),
+	})
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("phone: a call needs one of your numbers to call from", failure)
+
+	status, failure = s.serverClient.failure(http.MethodPost, "/v1/phone/calls/transfer", TransferCallRequest{
+		From: "", To: s.lineNumber(), SessionId: s.data.storedSession(),
+	})
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("phone: a transfer needs one of your numbers to dial from", failure)
+}
+
+func (s *ScheduledTasksSuite) TestACallThatAsksToDetectVoicemailGivesTheVendorWhereToReport() {
+	to := s.placesACall(pointerTo(true))
+
+	s.True(strings.HasPrefix(s.sink.machineURL(to), "https://router.test/v1/phone/machine/"),
+		"the vendor was told no machine URL: %q", s.sink.machineURL(to))
+}
+
+func (s *ScheduledTasksSuite) TestACallThatDoesNotAskToDetectVoicemailGivesTheVendorNoReportURL() {
+	to := s.placesACall(nil)
+
+	s.Require().Len(s.sink.to(to), 1, "the call was not placed")
+	s.Empty(s.sink.machineURL(to))
 }
 
 // placingCalls has the router place calls for the test: Telnyx is the suite's

@@ -20,6 +20,8 @@ import (
 type hearing struct {
 	frames  atomic.Int64
 	audioUs atomic.Int64
+	// audible is set by the first frame with something to hear in it.
+	audible atomic.Bool
 	// partials and finals count transcripts with words in them.
 	partials atomic.Int64
 	finals   atomic.Int64
@@ -33,6 +35,10 @@ func (h *hearing) heardAudio(pcm audio.PcmData) {
 	inboundFrames.Inc()
 	h.frames.Add(1)
 	h.audioUs.Add(int64(pcm.DurationMs() * 1000))
+	// Silence is read to the end of the frame, so once a frame was audible none is read.
+	if !h.audible.Load() && audio.Audible(pcm.Samples) {
+		h.audible.Store(true)
+	}
 	h.lastFrame.Store(time.Now().UnixNano())
 }
 

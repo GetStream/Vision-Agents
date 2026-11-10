@@ -18,6 +18,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
@@ -31,7 +32,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -44,6 +44,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
 
 // EdgeFactory opens the transport a session's agent talks over.
@@ -102,6 +103,10 @@ type ManagerOptions struct {
 	// FlowJudge is the Classifier target every agent's flow controller asks in place of a
 	// language model. Empty keeps the language model.
 	FlowJudge string
+	// AudioFloor is optional, and is the chorus-asr model an agent's flow controller asks as
+	// its own floor control says (Spec.FloorControl). An agent that chose none asks it
+	// nothing about turns.
+	AudioFloor *audiofloor.Client
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
 	// SpeculativeReplies has every agent start its reply before the flow controller has
@@ -137,9 +142,6 @@ type ManagerOptions struct {
 	// other nodes can forward what only this one can answer. Nil keeps a session
 	// reachable on this node alone.
 	Directory *node.Directory
-	// PluginAuth signs an end user into the plugins an agent names per user, sending the
-	// provider back to this deployment's public URL. Nil sends it to localhost.
-	PluginAuth *plugins.Auth
 	// Connectors is what a session opens its agent config's connector bindings with. Zero,
 	// as on a deployment with connectors off, opens none: a required binding fails the
 	// session, and an optional one is reported unavailable.
@@ -174,7 +176,7 @@ type ManagerOptions struct {
 	Logger        *slog.Logger
 }
 
-// defaultDetachedGrace is long enough to finish a plugin login in another tab, or to leave
+// defaultDetachedGrace is long enough to finish a connector login in another tab, or to leave
 // the page a conversation is on and come back to it.
 const defaultDetachedGrace = 5 * time.Minute
 
@@ -229,6 +231,9 @@ type Manager struct {
 	// the recorders open for them (ended).
 	closing int
 	ended   sync.WaitGroup
+	// retiring holds the sessions retired (Retire) until they are closed (CloseRetired), or a
+	// look at them finds them ended.
+	retiring map[*Session]struct{}
 }
 
 // SetSchedulerKick hands the manager the scheduled-task worker's wake-up, so
@@ -277,7 +282,8 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		}
 		manager.logs = newLogRecorder(options.Store, options.Logger)
 		manager.calls = newCallRecorder(options.Store, options.Logger)
-		manager.outcomes = outcome.NewKeeper(options.Store, time.Now)
+		// Read only: the phone service's keeper is what counts calls, so this one names no vendors.
+		manager.outcomes = outcome.NewKeeper(options.Store, time.Now, nil, options.Logger)
 		written = newSessionRecorder(options.Store, options.Logger)
 		manager.records = written
 		manager.reviews = newReviewer(options.LLM, options.Store, options.Logger)
@@ -286,7 +292,7 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		}
 	}
 	manager.titles = newTitler(options.LLM, written, options.Logger)
-	manager.cards = newCallCards(options.Store, options.Stream, options.Logger)
+	manager.cards = newCallCards(options.Store, manager.outcomes, options.Stream, options.Logger)
 	switch {
 	case options.Writer != nil:
 		manager.runtime = routing.NewRecorderOn(routing.Runtime, options.Writer, options.Pricer, options.Logger)
@@ -322,7 +328,8 @@ func owner(spec Spec) routing.Owner {
 // vendor prices.
 const runtimeProvider = "stream"
 
-// startRuntime starts timing a session about to open, billed as what holds it: text or voice.
+// startRuntime starts timing a session about to open, billed as what holds it: text or voice,
+// in the session's region.
 func (m *Manager) startRuntime(spec Spec) *routing.Slices {
 	mode := store.ModalityVoice
 	if spec.Text {
@@ -330,7 +337,7 @@ func (m *Manager) startRuntime(spec Spec) *routing.Slices {
 	}
 	return routing.StartSlices(routing.SliceOptions{
 		Recorder: m.runtime,
-		Config:   routing.ProviderConfig{Provider: runtimeProvider, Model: mode},
+		Config:   routing.ProviderConfig{Provider: runtimeProvider, Model: mode, Region: spec.Region},
 		Owner:    owner(spec),
 		Kind:     string(routing.Runtime),
 		ID:       spec.ID,
@@ -349,6 +356,7 @@ func (m *Manager) newSession(spec Spec, conv *persistent.Conversation, skills ha
 		// Postgres keeps microseconds. The live session sorts by the same instant as its
 		// row, or a cursor taken from one would hand the other back on the next page.
 		created:       opening.Truncate(time.Microsecond),
+		began:         time.Now(),
 		logger:        m.logger,
 		watchers:      map[uint64]*watcher{},
 		detachedGrace: m.options.DetachedGrace,
@@ -366,18 +374,41 @@ func (m *Manager) newSession(spec Spec, conv *persistent.Conversation, skills ha
 	return created
 }
 
+// channelTeam is the Chat team a session's agent channels are made in. An app that keeps each
+// team's agent configs to its own users keeps their channels in the config's team too, so
+// that Chat shows them to that team's users alone. A config of no team asks nothing.
+func (m *Manager) channelTeam(ctx context.Context, spec Spec) (string, error) {
+	if spec.ConfigTeam == "" || m.options.Configs == nil {
+		return "", nil
+	}
+	settings, err := m.options.Configs.AppSettings(ctx, spec.CustomerID)
+	if err != nil {
+		return "", stack.Wrap(fmt.Errorf("%w: %w", ErrAppSettingsUnreadable, err))
+	}
+	if !settings.AgentTeamsChecked() {
+		return "", nil
+	}
+	return spec.ConfigTeam, nil
+}
+
 // Create joins a call and returns the session running it.
 //
 // The agent is joined before this returns, so a caller that gets a session back has one
 // that is already listening. A failure anywhere unwinds what was opened: a half-joined
 // session would hold a model session and a place in a call that nobody holds a handle to.
-func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
+func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure error) {
+	began := time.Now()
 	if err := spec.Normalize(); err != nil {
 		return nil, stack.Wrap(err)
 	}
 	if spec.Attribution.APIKey == "" {
 		spec.Attribution = routing.AttributionFrom(ctx)
 	}
+	categories, err := usage.WithTeam(spec.Attribution.UsageCategories, spec.Team)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("session: counting the session under team %q: %w", spec.Team, err))
+	}
+	spec.Attribution.UsageCategories = categories
 	spec.Attribution.SessionID = spec.ID
 	// Refuse unsupported voice modes before opening a call or persistent resource.
 	if spec.Native() && m.options.STS == nil {
@@ -446,10 +477,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	spec.StreamApp = stream.Identity.StreamApp
 	if err := m.keepable(ctx, spec, stream); err != nil {
-		return nil, err
+		return nil, refusedAtStart(spec, began, err)
 	}
 	if err := m.callable(ctx, spec, stream); err != nil {
-		return nil, stack.Wrap(err)
+		return nil, stack.Wrap(refusedAtStart(spec, began, err))
 	}
 	// In app mode a session with no Stream app at all is pinned to none, rather than left
 	// unpinned, which reads as the deployment's own app and would let that app's hooks and
@@ -463,7 +494,14 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		if m.options.Memory == nil {
 			return nil, stack.Wrap(ErrNoMemory)
 		}
+		if cmp.Or(spec.Region, pricing.DefaultRegion) != pricing.DefaultRegion {
+			return nil, stack.Wrap(ErrMemoryRegion)
+		}
 		remembering = m.options.Memory
+	}
+	// Set over whatever a forked spec was copied with: the app's setting is read now.
+	if spec.ChannelTeam, err = m.channelTeam(ctx, spec); err != nil {
+		return nil, err
 	}
 
 	opened := false
@@ -476,8 +514,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			spec.PersistConversation = false
 		}
 	}
-	if cid, handed := m.handedOut(ctx, spec, stream); handed {
-		spec.ConversationID, spec.Dispatched = cid, true
+	if cid, by, handed := m.handedOut(ctx, spec, stream); handed {
+		spec.ConversationID, spec.Dispatched, spec.HandedOutBy = cid, true, by
 		ctx = persistent.RouterOpensDispatched(ctx, cid)
 	}
 	var conv *persistent.Conversation
@@ -485,7 +523,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if m.options.ResumeHistories != nil {
 		spec.ResumeHistory = spec.ResumeHistory.Over(m.options.ResumeHistories.ResumeHistory(ctx, spec.CustomerID))
 	}
-	reading := m.restoring(ctx, spec)
+	reading, err := m.restoring(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
 	if spec.PersistConversation {
 		service, err := m.Conversations()
 		if err != nil {
@@ -494,6 +535,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		// A channel OpenInApp refuses, such as a thread channel a request named, takes over
 		// no session that holds it.
 		if spec.ConversationID != "" && persistent.Openable(spec.ConversationID) {
+			m.awaitRetiring(ctx, spec.CustomerID, spec.ConversationID)
 			m.takeOver(spec.CustomerID, spec.ConversationID, spec.Thread)
 		}
 		var truncated bool
@@ -503,7 +545,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		if cid == "" {
 			open, cid = service.CreateInApp, streamapp.AgentChannelType+":"+spec.ID
 		}
-		conv, previous, truncated, err = open(reading, spec.StreamApp, spec.CustomerID, spec.AgentID, cid, spec.Caller.UserID, spec.UserID, spec.Custom, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
+		conv, previous, truncated, err = open(reading, spec.StreamApp, spec.CustomerID, spec.AgentID, cid, spec.Caller.UserID, spec.UserID, spec.Custom, spec.ChannelTeam, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
 		if errors.Is(err, streamapp.ErrReadOnly) {
 			return nil, ErrConversationReadOnly
 		}
@@ -524,7 +566,6 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 		spec.ConversationID = conv.CID()
 		conv.ShowTools(spec.VisibleTools)
-		conv.AcceptLogins(Logins(spec))
 		// A resume was deliberately not given an agent id, because only the conversation
 		// knows the one its transcript was written under.
 		spec.AgentID = conv.Agent()
@@ -628,6 +669,17 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 	}()
 	created := m.newSession(spec, conv, skills, opening, runtime)
+	// A session held ends where it closes (Session.counted); one never held ends here,
+	// unless it was turned away for a router shutting down or for a session already held
+	// under its id (a redelivered hook): neither is a session that failed.
+	turnedAway := false
+	startup := newStartup(spec, began)
+	defer func() {
+		if !opened && !turnedAway {
+			endCounter(createFailure(failure)).Inc()
+			startup.Failed()
+		}
+	}()
 	fail := func() {
 		runtime.Cancel()
 		created.Close()
@@ -653,18 +705,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		tools = append(tools, spec.callTools(builtin.Tools)...)
 	}
 
-	mcp, pluginTools, unconnected := attachPlugins(ctx, spec, m.options.Store, m.options.PluginAuth, m.logger)
-	tools = append(tools, pluginTools...)
-	tools = append(tools, unconnectedTools(unconnected)...)
-	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp, connectors.said())
+	// A config's plugins and MCP servers are no longer opened, whatever its row still names:
+	// connectors replaced them, and a save refuses them.
+	spec.ServerInstructions = serverInstructions(connectors.said())
 	created.spec.ServerInstructions = spec.ServerInstructions
 	var runner agent.ToolRunner = &videoRunner{next: callers, session: created}
-	if mcp != nil || len(unconnected) > 0 {
-		runner = &pluginRunner{mcp: mcp, unconnected: unconnected, next: runner}
-	}
-	if mcp != nil {
-		created.closers = append(created.closers, mcp.Close)
-	}
 	// A session opened without a zone runs in its user's stored one, so the agent's
 	// clock line tells the day, and the scheduling tools read dates, in the zone its
 	// tasks will run in.
@@ -676,7 +721,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// A user with no zone of their own is in the config's default one, the zone a task they
 	// scheduled would take, so the agent's clock line and the scheduling tools agree.
 	zone := cmp.Or(spec.Timezone, spec.Scheduling.DefaultTimezone)
-	// The scheduling tools are offered beside the plugins, inside the connectors:
+	// The scheduling tools are offered inside the connectors:
 	// every layer in front passes their names through to here, and a caller that
 	// declared one of the names keeps its own.
 	if scheduling, offered := m.schedulingRunner(spec, created.id, tools); scheduling != nil {
@@ -684,13 +729,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		scheduling.next = runner
 		runner = scheduling
 	}
-	if own := m.userPlugins(spec, runner); own != nil {
-		tools = append(tools, plugins.UserTools(own.offered)...)
-		runner = own
-		created.closers = append(created.closers, own.Close)
-	}
 	// The dispatcher goes in front, so the names it opened are its own whatever else the
-	// session offers. The plugins stay beside it until they move onto connectors (T23).
+	// session offers.
 	if connectors != nil {
 		if err := connectorCollision(connectorTools, tools); err != nil {
 			return nil, err
@@ -705,7 +745,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	created.connectorsUnavailable = connectorsUnavailable
 	if spec.ProgressiveTools {
-		tools, runner = progressively(tools, slices.Concat(pluginTools, connectorTools), runner)
+		tools, runner = progressively(tools, connectorTools, runner)
 	}
 
 	var toolStarted func(agent.ToolStarted)
@@ -739,6 +779,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// treats a missing edge as the conversation having no call rather than as a failure.
 	created.supersede = m.supersede
 	created.end = func(reason EndReason) { m.end(created, reason) }
+	created.machine.unreported = func() {
+		m.Machine(OwnerOf(created.Spec()).CustomerID, created.id, phone.MachineUnknown)
+	}
 	created.think = m.think
 	created.build = func(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		var edge agent.Edge
@@ -758,6 +801,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 		return agent.New(agent.Options{
 			OnToolStarted: toolStarted,
+			OnHeard:       created.heardCaller,
 			ToolPolicy:    toolPolicy,
 			Edge:          edge,
 			Text:          spec.Text,
@@ -786,6 +830,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			ControllerTarget:   spec.ControllerTarget,
 			Judge:              m.options.Classifier,
 			JudgeTarget:        m.options.FlowJudge,
+			AudioFloor:         m.options.AudioFloor,
+			AudioFloorMode:     m.floorMode(created.id, spec),
+			EndOfTurn:          EndOfTurnOf(spec.FloorControl),
 			Skills:             skills,
 			Telephony:          line,
 			Destinations:       spec.destinations(),
@@ -877,8 +924,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	// The person's other episodes go first, as context before this conversation's own
 	// history, and only to the model: not to the title, the review or the reopened summary.
-	cards := m.cards.read(ctx, spec, stream)
+	cards, person := m.cards.read(ctx, spec, stream)
 	created.carded = len(cards) > 0
+	if created.carded {
+		created.cardsFor = person
+	}
 	built.RestoreHistory(append(cards, previous...))
 	// A reopened chat is reviewed again when it ends, and its summary is of all of it.
 	if !spec.Reopened.IsZero() {
@@ -916,7 +966,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// Join takes the background rather than the request's context: the conversation
 	// outlives the HTTP call that asked for it, and a session cancelled when the request
 	// returned would hang up on the caller immediately.
-	if err := built.Join(context.WithoutCancel(ctx)); err != nil {
+	if err := built.Join(agent.WithStartup(context.WithoutCancel(ctx), startup)); err != nil {
 		fail()
 		return nil, stack.Wrap(err)
 	}
@@ -951,7 +1001,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// The turns held until now, the greeting's among them, are written after it.
 	if created.records != nil {
 		created.closers = append(created.closers, func() {
-			m.records.Closed(created.id, time.Now().UTC(), created.endReason())
+			m.records.Closed(created.id, time.Now().UTC(), created.kept())
 		})
 		m.records.Opened(sessionRow(created), toolRows(created))
 		created.startRecording()
@@ -960,15 +1010,19 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
+		turnedAway = true
 		fail()
 		return nil, stack.Wrap(errors.New("session: the manager is shut down"))
 	}
 	if held, raced := m.sessions[created.id]; raced && !replaces(spec, held) {
 		m.mu.Unlock()
+		turnedAway = true
 		fail()
 		return nil, stack.Wrap(ErrSessionExists)
 	}
 	m.sessions[created.id] = created
+	sessionsActive.Inc()
+	created.active.Store(true)
 	m.mu.Unlock()
 
 	// Said after the session is here to be found, so a peer that forwards a request on
@@ -1076,6 +1130,75 @@ func (m *Manager) supersede(spec Spec) {
 		if err := found.Close(); err != nil {
 			m.logger.Warn("the session left behind did not end cleanly",
 				"session", found.id, "error", err)
+		}
+	}
+}
+
+// RetireWithin bounds how long a retiring session (Session.Retire) may take to write the
+// replies it owes before it is closed all the same: as long as a written message's answer may
+// take (api.askTimeout).
+const RetireWithin = 2 * time.Minute
+
+// retirePoll is how often a session being opened checks whether a retiring one holding its
+// conversation has ended. A choice: short against a reply of seconds.
+const retirePoll = 50 * time.Millisecond
+
+// Retire marks a session as closing once it has written the replies it owes, which its
+// caller closes it after (CloseRetired, from api.retire), and reports whether it was not retiring already. A
+// session opened on its conversation meanwhile waits for it to end (awaitRetiring), its close
+// included: Close takes it off the map before its conversation is let go.
+func (m *Manager) Retire(found *Session) bool {
+	if !found.retiring.CompareAndSwap(false, true) {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.retiring == nil {
+		m.retiring = map[*Session]struct{}{}
+	}
+	m.retiring[found] = struct{}{}
+	return true
+}
+
+// CloseRetired closes a session Retire retired and forgets it: Close is synchronous, so once it
+// returns no session opened on its conversation has it to wait for (awaitRetiring).
+func (m *Manager) CloseRetired(found *Session) (bool, error) {
+	defer func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		delete(m.retiring, found)
+	}()
+	return m.Close(found.ID(), OwnerOf(found.Spec()))
+}
+
+// awaitRetiring waits for each retiring session holding the persistent conversation cid to
+// end, so the session being opened on it neither takes it over, cutting the replies it owes
+// short (takeOver), nor is refused it as open already. Bounded by RetireWithin, and the
+// finishWithin its close may take, and by ctx; after that it is taken over as before. A
+// retired session found ended is forgotten.
+func (m *Manager) awaitRetiring(ctx context.Context, customer, cid string) {
+	m.mu.Lock()
+	var retiring []*Session
+	for found := range m.retiring {
+		switch {
+		case found.State() == Ended:
+			delete(m.retiring, found)
+		case found.spec.CustomerID == customer && found.holds(cid):
+			retiring = append(retiring, found)
+		}
+	}
+	m.mu.Unlock()
+	if len(retiring) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, RetireWithin+finishWithin)
+	defer cancel()
+	for _, found := range retiring {
+		for found.State() != Ended && ctx.Err() == nil {
+			select {
+			case <-ctx.Done():
+			case <-time.After(retirePoll):
+			}
 		}
 	}
 }
@@ -1521,19 +1644,19 @@ func (m *Manager) end(found *Session, reason EndReason) {
 	found.abandon()
 }
 
-// hangUp ends found for its agent hanging up. It closes as Close does, so the goodbye is not
-// cut short, and in the background: the agent hangs up from inside its own tool call, and
-// closing the session waits for the agent.
-func (m *Manager) hangUp(found *Session) {
+// hangUp ends found for its agent hanging up, or reason. It closes as Close does, so the
+// goodbye is not cut short, and in the background: the agent hangs up from inside its own
+// tool call, and closing the session waits for the agent.
+func (m *Manager) hangUp(found *Session, reason EndReason) {
 	done, held := m.take(found)
 	if !held {
 		return
 	}
-	found.noteEnd(EndAgentHangup)
+	found.noteEnd(reason)
 	go func() {
 		defer done()
 		m.release(found.id)
-		m.logger.Info("ending the session", "session", found.id, "reason", EndAgentHangup)
+		m.logger.Info("ending the session", "session", found.id, "reason", reason)
 		if err := found.Close(); err != nil {
 			m.logger.Warn("could not close the session its agent hung up", "session", found.id, "error", err)
 		}
@@ -1574,6 +1697,76 @@ func (m *Manager) EndUnanswered(customerID, id string) bool {
 	}
 	return true
 }
+
+// voicemailWithin bounds leaving a voicemail: a message of up to 1,000 characters takes
+// about a minute to say.
+const voicemailWithin = 2 * time.Minute
+
+// Machine acts on the vendor saying what picked up the customer's placed call id, reporting
+// whether this node holds its session. A session whose plan is to leave a voicemail leaves it,
+// or hangs up, once an answering machine's greeting has ended. It does the same when the
+// vendor could not tell while the caller has said nothing to the agent: a vendor calls some
+// mobile voicemail boxes unknown. A fax is hung up on. A person carries on.
+// The message is left in the background, as it takes a while to say.
+func (m *Manager) Machine(customerID, id string, machine phone.Machine) bool {
+	m.mu.Lock()
+	found, held := m.sessions[id]
+	m.mu.Unlock()
+	if !held {
+		return false
+	}
+	spec := found.Spec()
+	if OwnerOf(spec).CustomerID != customerID || spec.Phone == nil || spec.Voicemail == nil {
+		return true
+	}
+	if machine == phone.MachineHuman {
+		found.checked(true)
+		return true
+	}
+	// A hang-up the agent asked for meanwhile would cut the message off. A check already over
+	// heard the caller speak to the agent, so a report that could not tell is a person.
+	if !found.checked(false) && machine != phone.MachineGreetingEnded {
+		return true
+	}
+	message := spec.Voicemail.Message
+	if machine == phone.MachineFax {
+		message = ""
+	}
+	// Vendors retry a report: only the first one to reach a session still running leaves the message.
+	if found.endsFor(EndVoicemail) {
+		go m.leaveVoicemail(found, spec, message)
+	}
+	return true
+}
+
+// leaveVoicemail says message to the answering machine, waits for it to be heard out and
+// hangs up. A session that began closing meanwhile, its call hung up, is left to close.
+func (m *Manager) leaveVoicemail(found *Session, spec Spec, message string) {
+	if message != "" && !found.closingNow() {
+		ctx, cancel := context.WithTimeout(context.Background(), voicemailWithin)
+		// Whatever the agent was saying to the greeting is not for the recording.
+		found.Interrupt()
+		if err := found.Say(ctx, message); err != nil && !found.closingNow() {
+			m.logger.Warn("could not leave a voicemail", "session", found.id, "error", err)
+		} else if err := found.current().Finish(ctx); err != nil && !found.closingNow() {
+			m.logger.Warn("hung up on an answering machine before the voicemail was heard out",
+				"session", found.id, "error", err)
+		}
+		cancel()
+	}
+	// Leaving the call alone would leave the machine recording until it gives up.
+	if spec.Phone.Number != "" && !found.closingNow() {
+		ctx, cancel := context.WithTimeout(context.Background(), hangUpTimeout)
+		if err := m.options.Phone.EndCall(ctx, spec.CustomerID, spec.StreamApp, spec.CallType, spec.CallID); err != nil {
+			m.logger.Warn("could not end the call of a voicemail left", "session", found.id, "error", err)
+		}
+		cancel()
+	}
+	m.hangUp(found, EndVoicemail)
+}
+
+// hangUpTimeout bounds ending a call at Stream once the voicemail is left.
+const hangUpTimeout = 5 * time.Second
 
 // releaseTimeout bounds taking back this node's claim on a session. Short, because a
 // claim that is not taken back expires on its own.
@@ -1889,6 +2082,8 @@ type hookPinned struct {
 	// deployment is a hook the deployment signed, which pins no app: the session acts in
 	// whatever app its customer acts in by the time it starts.
 	deployment bool
+	// user is the Stream user who wrote the message handed out (HandOut).
+	user string
 }
 
 // PinHook remembers which app a hook for a customer's call or channel came from, for the
@@ -1897,19 +2092,20 @@ func (m *Manager) PinHook(customer, cid string, app int64) {
 	m.pin(customer, cid, hookPinned{app: app})
 }
 
-// HandOut remembers that a message written in a customer's channel cid was handed to one of
-// its workers, from a hook of app (deployment: the deployment signed it). The text session
-// the worker opens under the channel's id answers in that channel (handedOut). A hook of a
-// registered app pins the session's app too, as PinHook does.
+// HandOut remembers that a message user wrote in a customer's channel cid was handed to one
+// of its workers, from a hook of app (deployment: the deployment signed it). The text session
+// the worker opens under the channel's id answers in that channel (handedOut), and may read
+// user's episode cards (Spec.HandedOutBy). A hook of a registered app pins the session's app
+// too, as PinHook does.
 //
 // The worker opens its session with a request of its own, which any node may take, so the
 // Directory carries the hand-out to the others.
-func (m *Manager) HandOut(ctx context.Context, customer, cid string, app int64, deployment bool) {
-	m.pin(customer, cid, hookPinned{app: app, handedOut: true, deployment: deployment})
+func (m *Manager) HandOut(ctx context.Context, customer, cid string, app int64, deployment bool, user string) {
+	m.pin(customer, cid, hookPinned{app: app, handedOut: true, deployment: deployment, user: user})
 	if m.options.Directory == nil {
 		return
 	}
-	entry, err := json.Marshal(handOut{App: app, Deployment: deployment})
+	entry, err := json.Marshal(handOut{App: app, Deployment: deployment, User: user})
 	if err != nil {
 		m.logger.Warn("could not say a channel's message was handed to a worker", "channel", cid, "error", err)
 		return
@@ -1921,6 +2117,8 @@ func (m *Manager) HandOut(ctx context.Context, customer, cid string, app int64, 
 type handOut struct {
 	App        int64 `json:"app"`
 	Deployment bool  `json:"deployment"`
+	// User is empty in a hand-out a node from before it made, which names nobody.
+	User string `json:"user,omitempty"`
 }
 
 func (m *Manager) pin(customer, cid string, pinned hookPinned) {
@@ -1957,21 +2155,21 @@ func (m *Manager) hookPin(spec Spec) (int64, bool) {
 // persistent conversation it names no channel for, within hookPinFor of the hand-out. Any
 // other session keeps a channel of its own, as it always has: a device or a backend acting
 // for one of its users is not the worker, and a channel of another customer or app is not
-// the one handed out.
-func (m *Manager) handedOut(ctx context.Context, spec Spec, stream streamapp.Bound) (string, bool) {
+// the one handed out. by is who wrote the message handed out.
+func (m *Manager) handedOut(ctx context.Context, spec Spec, stream streamapp.Bound) (cid, by string, handed bool) {
 	if !spec.Text || !spec.PersistConversation || spec.Incognito || spec.ConversationID != "" || spec.Recall != nil ||
 		spec.CallerKind != auth.KindServer || spec.Caller.UserID != "" || stream.Client == nil {
-		return "", false
+		return "", "", false
 	}
-	cid := streamapp.AgentChannelType + ":" + spec.AgentID
+	cid = streamapp.AgentChannelType + ":" + spec.AgentID
 	pinned, ok := m.handOutOf(ctx, spec.CustomerID, cid)
 	if !ok {
-		return "", false
+		return "", "", false
 	}
 	if pinned.deployment == stream.Identity.Registered || (!pinned.deployment && stream.Identity.StreamApp != pinned.app) {
-		return "", false
+		return "", "", false
 	}
-	return cid, true
+	return cid, pinned.user, true
 }
 
 // handOutOf is the hand-out of a customer's channel within hookPinFor: this node's, else the
@@ -1995,7 +2193,7 @@ func (m *Manager) handOutOf(ctx context.Context, customer, cid string) (hookPinn
 	if entry == nil || json.Unmarshal(entry, &handed) != nil {
 		return hookPinned{}, false
 	}
-	return hookPinned{app: handed.App, deployment: handed.Deployment, handedOut: true}, true
+	return hookPinned{app: handed.App, deployment: handed.Deployment, handedOut: true, user: handed.User}, true
 }
 
 // ErrNoStreamApp is a conversation in writing asked to be kept by an app that has no Stream
@@ -2036,13 +2234,22 @@ func (m *Manager) keepable(ctx context.Context, spec Spec, stream streamapp.Boun
 	}
 	switch readiness.ChannelType {
 	case streamapp.TypeMissing:
-		return fmt.Errorf("session: this app's Stream app has no %s channel type to keep the conversation in", streamapp.AgentChannelType)
+		return ErrNoAgentChannelType
 	case streamapp.TypeUnsafe:
-		return fmt.Errorf("session: this app's Stream app lets clients make, change or join %s channels, "+
-			"so a conversation kept there could be rewritten by anybody: restrict the channel type's grants", streamapp.AgentChannelType)
+		return ErrUnsafeAgentChannelType
 	}
 	return nil
 }
+
+// ErrNoAgentChannelType is a conversation to keep in a Stream app of the customer's own that
+// has no agent channel type.
+var ErrNoAgentChannelType = fmt.Errorf("session: this app's Stream app has no %s channel type to keep the conversation in",
+	streamapp.AgentChannelType)
+
+// ErrUnsafeAgentChannelType is a conversation to keep in a Stream app of the customer's own
+// whose agent channel type lets clients make, change or join channels.
+var ErrUnsafeAgentChannelType = fmt.Errorf("session: this app's Stream app lets clients make, change or join %s channels, "+
+	"so a conversation kept there could be rewritten by anybody: restrict the channel type's grants", streamapp.AgentChannelType)
 
 // ErrNoAgentCallType is a session that would join an agent call in a Stream app of the
 // customer's own that has no agent call type, which Stream refuses the call for.
@@ -2131,8 +2338,16 @@ func (m *Manager) line(spec Spec) (agent.Telephony, error) {
 // ErrSessionExists is a session asked for by an id some session already has.
 var ErrSessionExists = errors.New("session: a session with that id already exists")
 
+// ErrAppSettingsUnreadable is an app's settings that could not be read. It is the router's
+// failure, not the caller's request.
+var ErrAppSettingsUnreadable = errors.New("session: the app's settings could not be read")
+
 // ErrNoMemory is memory asked of a deployment with no memory provider.
 var ErrNoMemory = errors.New("session: memory is unavailable; configure the backend memory provider")
+
+// ErrMemoryRegion is memory asked for an agent kept outside the default region. The memory
+// provider keeps everything in the US, and an agent's work is done in its own region only.
+var ErrMemoryRegion = errors.New("session: memory is kept in region us only, so a session in another region cannot remember")
 
 // ErrMemoryFailed is a memory store that failed to do what it was asked, such as a vendor
 // answering 429. Asking again later may succeed.
@@ -2176,39 +2391,6 @@ func (m *Manager) Conversations() (*persistent.Service, error) {
 		m.conversations = service
 	}
 	return m.conversations, nil
-}
-
-// LoginFinished marks the end user's login with this OAuth state as connected on the
-// conversation that asked for it, and has the session holding that conversation carry on
-// with what the login was asked for, so nobody has to ask again.
-func (m *Manager) LoginFinished(state string) {
-	conversations, err := m.Conversations()
-	if err != nil {
-		return
-	}
-	conv, pluginID, ok := conversations.Connected(state)
-	if !ok {
-		return
-	}
-	name := pluginID
-	if plugin, listed := plugins.Lookup(pluginID); listed {
-		name = plugin.Name
-	}
-	m.mu.Lock()
-	var held *Session
-	for _, s := range m.sessions {
-		if s.persisted == conv {
-			held = s
-		}
-	}
-	m.mu.Unlock()
-	if held == nil {
-		return
-	}
-	text := name + " is connected now. Carry on with what I asked for before you needed it."
-	if err := held.FollowUp(context.Background(), "login_"+store.NewID(), text, nil); err != nil {
-		m.logger.Warn("could not carry on after a plugin login", "plugin", pluginID, "error", err)
-	}
 }
 
 // publisher is where files the subagent's code hands back are shown: the conversation's

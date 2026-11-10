@@ -699,6 +699,10 @@ func (s *STS) SampleRate() int { return SampleRate }
 // Capabilities implements sts.STS.
 func (s *STS) Capabilities() sts.Capabilities { return CapabilitiesFor(s.options.Model) }
 
+// BackendModel is the Responses model this session hands its reasoning to, billed as that
+// model's own work.
+func (s *STS) BackendModel() string { return s.options.Backend }
+
 // handshake sends session.start and waits for session.started. Anything the server rejects
 // arrives as an error frame instead.
 func (s *STS) handshake(conn *websocket.Conn) error {
@@ -865,13 +869,13 @@ func (s *STS) handleMessage(event serverEvent) {
 	case eventDelegationCreated:
 		s.delegatedIn(event.Delegation)
 	case eventUsageUpdated:
-		s.billed(event.Usage)
+		s.billed(event.Usage, false)
 	case eventSessionClosed:
 		s.mu.Lock()
 		s.ended = true
 		s.mu.Unlock()
 		s.settleTurn(true)
-		s.billed(event.Usage)
+		s.billed(event.Usage, true)
 		s.emitter.Send(sts.Disconnected{
 			Provider: ProviderName,
 			Model:    s.options.Model,
@@ -958,12 +962,13 @@ func (s *STS) delegatedIn(raw json.RawMessage) {
 }
 
 // billed reports the seconds the session has been open, which the voice is billed by. The
-// running total is rounded, so the rows its growth bills add up to the last one rounded.
-func (s *STS) billed(usage *sessionUsage) {
+// running total is rounded, so the rows its growth bills add up to the last one rounded. The
+// one on session.closed is final.
+func (s *STS) billed(usage *sessionUsage, final bool) {
 	if usage == nil {
 		return
 	}
-	s.emitter.Send(sts.SessionUsage{Seconds: int64(math.Round(usage.Seconds))})
+	s.emitter.Send(sts.SessionUsage{Seconds: int64(math.Round(usage.Seconds)), Final: final})
 }
 
 // backendBilled reports a settled backend response, billed on top of the voice at the rates

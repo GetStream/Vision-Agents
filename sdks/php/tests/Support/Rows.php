@@ -79,6 +79,35 @@ final class Rows
     }
 
     /**
+     * @param array<string, mixed> $extra
+     * @return array<string, mixed>
+     */
+    public static function limit(int $id, string $subject, string $interval, int $micros, array $extra = []): array
+    {
+        return [
+            'id' => $id,
+            'subject' => $subject,
+            'level' => 'organization',
+            'interval' => $interval,
+            'limit_micros' => $micros,
+            'effective_limit_micros' => $micros,
+            'created_at' => self::AT,
+            'updated_at' => self::AT,
+            'updated_by' => 'api_key:key',
+            ...$extra,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $extra
+     * @return array<string, mixed>
+     */
+    public static function usage(string $subject, array $extra = []): array
+    {
+        return ['subject' => $subject, 'grants' => [], 'windows' => [], ...$extra];
+    }
+
+    /**
      * The envelope every failure is answered with. A code defaults to its type's name, as the
      * router's does.
      *

@@ -21,9 +21,9 @@ class AgentConnectorSelection:
         type_ (AgentConnectorSelectionType): fixed is the app's own connection named by connection_id, the same for
             every session. session is the connection the session's verified end user picks when the session is created,
             which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs
-            is connected. For a session the router opens itself, the end user is the user whose login subscribed the plugin
-            event (none for the app's own login), or for a WhatsApp or SMS message the sender (phone:+E164) or the user the
-            number is linked to. Such a session also uses that user's only connected connection when none is named.
+            is connected. For a session the router opens itself, the end user is nobody for an MCP event, which it opens as
+            the app, or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a
+            session also uses that user's only connected connection when none is named.
         connection_id (str | Unset): Required for fixed, and refused for session.
     """
 
@@ -51,7 +51,7 @@ class AgentConnectorSelection:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        type_ = AgentConnectorSelectionType(d.pop("type"))
+        type_ = AgentConnectorSelectionType._decode(d.pop("type"))
 
         connection_id = d.pop("connection_id", UNSET)
 

@@ -12,10 +12,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"strconv"
+	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/rueidis"
 	"github.com/redis/rueidis/rueidisotel"
 
@@ -72,6 +75,11 @@ type Options struct {
 	// MinRequests is how many requests the window must hold before its error rate can make a
 	// provider unavailable. Zero is DefaultMinRequests.
 	MinRequests int64
+	// Refresh is how often the health snapshot Healths answers from is read again. Zero is
+	// DefaultRefresh, and below zero it is never refreshed in the background.
+	Refresh time.Duration
+	// Logger is where a failing refresh warns. Nil is slog.Default.
+	Logger *slog.Logger
 }
 
 // DefaultMinRequests is the fewest requests in a window whose error rate is trusted to take a
@@ -97,7 +105,15 @@ type Client struct {
 	// shard's, since latency is regional.
 	redis   rueidis.Client
 	shard   rueidis.Client
+	metrics redisMetrics
 	options Options
+
+	snapshot snapshot
+	now      func() time.Time
+	// stop ends the refresh loop, which closes stopped once it has.
+	stop     chan struct{}
+	stopped  chan struct{}
+	stopOnce sync.Once
 }
 
 // New connects to Redis and applies defaults for any unset option.
@@ -114,19 +130,37 @@ func New(options Options) (*Client, error) {
 	if options.MinRequests == 0 {
 		options.MinRequests = DefaultMinRequests
 	}
+	if options.Refresh == 0 {
+		options.Refresh = DefaultRefresh
+	}
+	if options.Logger == nil {
+		options.Logger = slog.Default()
+	}
 
 	client, err := connect(options.Address, options.Username, options.Password)
 	if err != nil {
 		return nil, err
 	}
+	metrics := newRedisMetrics()
+	client = metrics.measure(client, "shared")
 	shard := client
 	if options.Shard.Address != "" && options.Shard.Address != options.Address {
 		if shard, err = connect(options.Shard.Address, options.Shard.Username, options.Shard.Password); err != nil {
 			client.Close()
 			return nil, fmt.Errorf("live: shard: %w", err)
 		}
+		shard = metrics.measure(shard, "shard")
 	}
-	return &Client{redis: client, shard: shard, options: options}, nil
+	c := &Client{redis: client, shard: shard, metrics: metrics, options: options, now: time.Now, stop: make(chan struct{}),
+		stopped: make(chan struct{})}
+	c.snapshot = snapshot{models: map[string]Model{}, counts: map[string]counts{}, refreshedAt: c.now()}
+	clients.Store(c, struct{}{})
+	if options.Refresh > 0 {
+		go c.refreshing()
+	} else {
+		close(c.stopped)
+	}
+	return c, nil
 }
 
 func connect(address, username, password string) (rueidis.Client, error) {
@@ -148,8 +182,18 @@ func (c *Client) Redis() rueidis.Client { return c.redis }
 // ShardRedis exposes this shard's client, for what only this shard's nodes need to hear.
 func (c *Client) ShardRedis() rueidis.Client { return c.shard }
 
-// Close releases the connections.
+// Collectors serve the latency and errors of the client's round trips to Redis.
+func (c *Client) Collectors() []prometheus.Collector {
+	return []prometheus.Collector{c.metrics.seconds, c.metrics.errors}
+}
+
+// Close stops the refresh and releases the connections.
 func (c *Client) Close() {
+	c.stopOnce.Do(func() {
+		close(c.stop)
+		<-c.stopped
+		clients.Delete(c)
+	})
 	if c.shard != c.redis {
 		c.shard.Close()
 	}
@@ -216,8 +260,10 @@ func (c *Client) RecordRequest(ctx context.Context, usage Usage) error {
 	return c.RecordRequests(ctx, usage)
 }
 
-// RecordRequests is RecordRequest for many requests, in one round trip.
+// RecordRequests is RecordRequest for many requests, in one round trip. This router's own
+// health snapshot counts them at once, whether or not Redis takes them.
 func (c *Client) RecordRequests(ctx context.Context, usages ...Usage) error {
+	c.observe(usages)
 	var commands []rueidis.Completed
 	for _, usage := range usages {
 		commands = append(commands, c.requestCommands(usage)...)
@@ -279,30 +325,15 @@ func (c *Client) requestCommands(usage Usage) []rueidis.Completed {
 	return commands
 }
 
-// Health returns the recent behaviour of one provider and model within a modality. An
-// unseen provider comes back available with no history rather than as an error.
+// Health reads the recent behaviour of one provider and model within a modality from Redis
+// now, leaving the snapshot alone; routing reads Healths. An unseen provider comes back
+// available with no history rather than as an error.
 func (c *Client) Health(ctx context.Context, modality, provider, model string) (Health, error) {
 	entries, err := c.shard.Do(ctx, c.shard.B().Hgetall().Key(healthKey(modality, provider, model)).Build()).AsStrMap()
 	if err != nil {
 		return Health{}, stack.Wrap(fmt.Errorf("live: read health: %w", err))
 	}
-
-	health := Health{Provider: provider, Model: model, Available: true}
-	health.Requests = parseInt(entries["requests"])
-	health.Errors = parseInt(entries["errors"])
-	if health.Requests > 0 {
-		health.LatencyMsAvg = parseFloat(entries["latency_ms_total"]) / float64(health.Requests)
-	}
-	// Too few requests are not a rate: until there are enough, an unseen provider and one that
-	// failed once look alike.
-	health.Available = health.Requests < c.options.MinRequests || health.ErrorRate() < c.options.MaxErrorRate
-	// A fatal failure is one every caller would get, so no number of successes outweighs it.
-	if fatalAt := parseInt(entries["fatal_at_ms"]); fatalAt > 0 &&
-		time.Since(time.UnixMilli(fatalAt)) < c.options.Window {
-		health.Available = false
-	}
-
-	return health, nil
+	return c.judge(Model{Modality: modality, Provider: provider, Model: model}, parseCounts(entries), c.now()), nil
 }
 
 // Usage returns what one customer has spent on a modality in the current window.

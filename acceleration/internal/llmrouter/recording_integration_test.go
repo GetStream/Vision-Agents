@@ -422,3 +422,31 @@ func (s *RecordingSuite) TestReasoningTokensAreAnAttribute() {
 	s.EqualValues(9_550, row.BaseCostMicros, "at the vendor's rates, what xAI said it charged")
 	s.Equal(before, s.counted("router_usage_mismatch_total", grok), "the tokens add up to xAI's total")
 }
+
+func (s *RecordingSuite) TestAStreamThatFailsMidAnswerStoresWhatItSaidAsItsTimingTellsIt() {
+	customer := uuid.NewString()
+	recorder := routing.NewRecorder(routing.LLM, s.store, nil, s.prices, slog.New(slog.NewTextHandler(s.logs, nil)))
+	owner := routing.Owner{CustomerID: customer, Attribution: routing.Attribution{APIKey: "key-a"}}
+	provider := &replayedLLM{stubLLM: newStubLLM(), events: []llm.Event{
+		llm.OutputTextDelta{Delta: "Paris"},
+		llm.ResponseFailed{Err: errors.New("stream reset by peer, Authorization: Bearer sk-test-" + uuid.NewString())},
+		llm.ResponseCompleted{Response: llm.Response{Status: llm.StatusFailed}},
+	}}
+	session := newSession(provider, s.builtIn("openai/gpt-6-luna"), owner, recorder, nil)
+	var timing llm.CallTiming
+	params := briefly()
+	params.ID = "r1"
+	params.OnTiming = func(called llm.CallTiming) { timing = called }
+
+	stream, err := session.Create(s.ctx, params)
+	s.Require().NoError(err)
+	drain(stream)
+	recorder.Close()
+
+	var rows []store.Request
+	s.Require().NoError(s.store.DB().NewSelect().Model(&rows).Where("customer_id = ?", customer).Scan(s.ctx))
+	s.Require().Len(rows, 1)
+	s.Equal("provider_error", rows[0].ErrorCode)
+	s.Equal("stream reset by peer, [redacted]", rows[0].ErrorMessage)
+	s.Equal(rows[0].ErrorMessage, timing.ErrorMessage, "the model_call a watcher is sent says what the row keeps")
+}

@@ -2,7 +2,7 @@
 //
 // Perplexity publishes no Go SDK, so this speaks its REST API directly. Which of the two
 // endpoints is used is the model: `search` is the ranked index, which returns pages and no
-// opinion about them, while a `sonar` model reads those pages and writes the sentence. The
+// opinion about them, while `sonar` searches through the Agent API and writes the sentence. The
 // second is what a caller on the phone actually wants and is also a language model in the
 // middle of a conversation, so which one is worth its latency is a routing decision rather
 // than something decided here.
@@ -16,11 +16,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
@@ -51,8 +53,8 @@ const errorBodyLimit = 2048
 type Options struct {
 	// APIKey defaults to PERPLEXITY_API_KEY.
 	APIKey string
-	// Model is `search` for the ranked index, or a sonar model to have one write the
-	// answer. Empty means search.
+	// Model is `search` for the ranked index, or `sonar` to have it write the answer.
+	// Empty means search.
 	Model string
 	// BaseURL replaces the default host, which is what a test or a proxy needs.
 	BaseURL string
@@ -84,6 +86,9 @@ func New(options Options) (*Provider, error) {
 	options.APIKey = keys.Peek()
 	if options.Model == "" {
 		options.Model = ModelSearch
+	}
+	if _, ok := agentModels[options.Model]; !ok && options.Model != ModelSearch {
+		return nil, stack.Wrap(fmt.Errorf("perplexity: %q is neither the search index nor sonar", options.Model))
 	}
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL
@@ -140,7 +145,7 @@ func (p *Provider) Search(ctx context.Context, query search.Query) (search.Resul
 	if p.model == ModelSearch {
 		return p.index(ctx, strings.TrimSpace(query.Text), limit)
 	}
-	return p.answer(ctx, strings.TrimSpace(query.Text))
+	return p.answer(ctx, strings.TrimSpace(query.Text), limit)
 }
 
 type indexRequest struct {
@@ -176,59 +181,120 @@ func (p *Provider) index(ctx context.Context, question string, limit int) (searc
 	return found, nil
 }
 
-type completionRequest struct {
-	Model    string    `json:"model"`
-	Messages []message `json:"messages"`
+// agentModels is the Agent API's name for each sonar model this adapter serves. Sonar
+// Chat Completions ended on 2026-09-27; the Agent API bills the model's tokens and each
+// web search apart (https://docs.perplexity.ai/docs/getting-started/pricing, read
+// 2026-11-04).
+var agentModels = map[string]string{"sonar": "perplexity/sonar"}
+
+// answerInstructions keeps the answer short enough to say: without them the model writes
+// for a page.
+const answerInstructions = "Answer in one to three plain sentences, with no markdown, headings or lists."
+
+type agentRequest struct {
+	Model        string `json:"model"`
+	Input        string `json:"input"`
+	Instructions string `json:"instructions"`
+	Tools        []tool `json:"tools"`
+	// ToolChoice makes the model search: offered the tool, it may answer from what it
+	// knows instead.
+	ToolChoice tool `json:"tool_choice"`
 }
 
-type message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+type tool struct {
+	Type string `json:"type"`
+	// MaxResults caps the results one search collects, 1 to 50.
+	MaxResults int `json:"max_results,omitempty"`
 }
 
-type completionResponse struct {
-	Choices []struct {
-		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
-	} `json:"choices"`
-	SearchResults []struct {
-		Title   string `json:"title"`
-		URL     string `json:"url"`
-		Snippet string `json:"snippet"`
-	} `json:"search_results"`
-	// Citations is the older shape, which is bare URLs. It is read when search_results is
-	// absent so an answer never comes back with nothing to attribute it to.
-	Citations []string `json:"citations"`
+type agentResponse struct {
+	// Output is one item per step: search_results for what a search found, message for
+	// the answer.
+	Output []struct {
+		Type    string `json:"type"`
+		Results []struct {
+			Title   string `json:"title"`
+			URL     string `json:"url"`
+			Snippet string `json:"snippet"`
+		} `json:"results"`
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	} `json:"output"`
+	Usage struct {
+		// InputTokens counts the cached ones too.
+		InputTokens        int64 `json:"input_tokens"`
+		InputTokensDetails struct {
+			CachedTokens int64 `json:"cached_tokens"`
+		} `json:"input_tokens_details"`
+		OutputTokens     int64 `json:"output_tokens"`
+		ToolCallsDetails map[string]struct {
+			Invocation int64 `json:"invocation"`
+		} `json:"tool_calls_details"`
+		// Cost is what Perplexity charged for the answer, in dollars.
+		Cost struct {
+			TotalCost float64 `json:"total_cost"`
+		} `json:"cost"`
+	} `json:"usage"`
 }
 
-// answer has a sonar model read the pages and write the sentence.
-func (p *Provider) answer(ctx context.Context, question string) (search.Result, error) {
-	var decoded completionResponse
-	err := p.call(ctx, "/chat/completions", completionRequest{
-		Model:    p.model,
-		Messages: []message{{Role: "user", Content: question}},
+// searches is how many web searches the answer ran. The tool is asked for as web_search
+// and reported as search_web.
+func (r agentResponse) searches() int64 {
+	return r.Usage.ToolCallsDetails["search_web"].Invocation + r.Usage.ToolCallsDetails["web_search"].Invocation
+}
+
+// maxAgentResults is the most results the Agent API's web search collects in one call.
+const maxAgentResults = 50
+
+// answer has a sonar model search the web and write the sentence, keeping at most limit of
+// the pages it read as the sources.
+func (p *Provider) answer(ctx context.Context, question string, limit int) (search.Result, error) {
+	var decoded agentResponse
+	err := p.call(ctx, "/v1/agent", agentRequest{
+		Model:        agentModels[p.model],
+		Input:        question,
+		Instructions: answerInstructions,
+		Tools:        []tool{{Type: "web_search", MaxResults: min(limit, maxAgentResults)}},
+		ToolChoice:   tool{Type: "web_search"},
 	}, &decoded)
 	if err != nil {
 		return search.Result{}, err
 	}
 
-	var found search.Result
-	if len(decoded.Choices) > 0 {
-		found.Answer = strings.TrimSpace(decoded.Choices[0].Message.Content)
+	cached := min(decoded.Usage.InputTokensDetails.CachedTokens, decoded.Usage.InputTokens)
+	found := search.Result{
+		VendorMicros: int64(math.Round(decoded.Usage.Cost.TotalCost * 1_000_000)),
+		Usage: pricing.Quantities{
+			pricing.InputTokens:       decoded.Usage.InputTokens - cached,
+			pricing.CachedInputTokens: cached,
+			pricing.OutputTokens:      decoded.Usage.OutputTokens,
+			pricing.Requests:          decoded.searches(),
+		},
 	}
-	for _, result := range decoded.SearchResults {
-		found.Documents = append(found.Documents, search.Document{
-			Title: result.Title,
-			URL:   result.URL,
-			Text:  result.Snippet,
-		})
-	}
-	if len(found.Documents) == 0 {
-		for _, citation := range decoded.Citations {
-			found.Documents = append(found.Documents, search.Document{URL: citation})
+	var answer []string
+	for _, item := range decoded.Output {
+		switch item.Type {
+		case "search_results":
+			for _, result := range item.Results {
+				found.Documents = append(found.Documents, search.Document{
+					Title: result.Title,
+					URL:   result.URL,
+					Text:  result.Snippet,
+				})
+			}
+		case "message":
+			for _, content := range item.Content {
+				if content.Type == "output_text" {
+					answer = append(answer, content.Text)
+				}
+			}
 		}
 	}
+	found.Answer = strings.TrimSpace(strings.Join(answer, ""))
+	// The cap is per search, and the model may search more than once.
+	found.Documents = found.Documents[:min(len(found.Documents), limit)]
 	return found, nil
 }
 

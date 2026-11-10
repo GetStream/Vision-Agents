@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -180,13 +181,13 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	session.screen = r.screen
 	session.hedgeAfter = r.replyHedge
 	session.flowHedgeAfter = r.flowHedge
-	session.hedge = func(ctx context.Context) (*Session, error) {
+	session.hedge = func(ctx context.Context, params llm.ResponseParams) (*Session, error) {
 		candidates, err := r.Candidates(ctx, core)
 		if err != nil {
 			return nil, err
 		}
 		var failures []error
-		for _, candidate := range hedgeCandidates(candidates, config) {
+		for _, candidate := range hedgeCandidates(calling(candidates, params), config) {
 			child, err := r.child(ctx, core, session, candidate.Config)
 			if err == nil {
 				return child, nil
@@ -201,7 +202,10 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 			return nil, err
 		}
 		var failures []error
-		for _, candidate := range candidates {
+		// failed are the candidates that failed this response, each beside its failure in
+		// failures: failovers once a later one answers.
+		var failed []routing.ProviderConfig
+		for _, candidate := range calling(candidates, params) {
 			if ctx.Err() != nil {
 				return nil, stack.Wrap(ctx.Err())
 			}
@@ -216,13 +220,18 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 			}
 			if err != nil {
 				failures = append(failures, err)
+				failed = append(failed, candidate.Config)
 				continue
 			}
 			stream, err := child.create(ctx, params)
 			if err != nil {
 				session.releaseChild(child)
 				failures = append(failures, err)
+				failed = append(failed, candidate.Config)
 				continue
+			}
+			for i, config := range failed {
+				routing.CountHandover(routing.LLM, config, failures[i])
 			}
 			return stream.Observe(func(event llm.Event) {
 				if _, done := event.(llm.ResponseCompleted); done {
@@ -233,6 +242,18 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 		return nil, stack.Wrap(errors.Join(append(failures, errors.New("llmrouter: no fallback provider available"))...))
 	}
 	return session, nil
+}
+
+// calling drops the candidates that would ignore the tools a response offers, so no failover
+// or hedge answers a turn that needed a tool without one. A response offering none keeps
+// them all.
+func calling(candidates []routing.Candidate, params llm.ResponseParams) []routing.Candidate {
+	if len(params.Tools) == 0 {
+		return candidates
+	}
+	return slices.DeleteFunc(slices.Clone(candidates), func(candidate routing.Candidate) bool {
+		return candidate.Config.IgnoresTools
+	})
 }
 
 // child opens a session on one candidate for a response its parent has already allowed.

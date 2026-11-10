@@ -7,7 +7,10 @@ import {
   ConfigurationError,
   Session,
   Socket,
+  ToolOutput,
   Tools,
+  connectorScopeRequiredOf,
+  type SessionEvent,
   type ToolCall,
 } from "../src/index.js";
 import { TestRouter, type Connection } from "./router.js";
@@ -421,6 +424,212 @@ describe("Session", () => {
     await session.close();
   });
 
+  it("declines a sign-in a connector's call waits for, with an answer naming the call alone", async () => {
+    const [session, connection] = await opened();
+
+    session.declineLogin("call_9");
+
+    assert.deepEqual(await connection.next(), { type: "tool_approval", tool_call_id: "call_9", allowed: false });
+    await session.close();
+  });
+
+  it("keeps a transcript of what was heard and written, and what went wrong", async () => {
+    const [session, connection] = await opened();
+
+    connection.send({ type: "heard", text: "What's on today?", participant: { id: "p1", user_id: "ana", name: "Ana" } });
+    connection.send({ type: "responding", turn_id: "t1" });
+    connection.send({ type: "response_delta", turn_id: "t1", text: "Two " });
+    connection.send({ type: "response_delta", turn_id: "t1", text: "meetings" });
+    connection.send({ type: "responded", turn_id: "t1", text: "Two meetings." });
+    connection.send({ type: "error", error: "speech recognition failed", context: "stt" });
+    connection.send({ type: "left" });
+    connection.socket.close();
+    await session.wait();
+
+    const { turns, failure, connected } = session.conversation.get();
+    assert.deepEqual(
+      turns.map((turn) => [turn.speaker, turn.text]),
+      [
+        ["participant", "What's on today?"],
+        ["agent", "Two meetings."],
+      ],
+    );
+    assert.equal(turns[0]?.participant?.name, "Ana");
+    assert.equal(turns[1]?.id, "t1");
+    assert.equal(failure, "speech recognition failed");
+    assert.equal(connected, false);
+    assert.equal(session.failure, undefined, "ended normally");
+  });
+
+  it("shows a typed question at once, and once, when the router hears it back", async () => {
+    const [session, connection] = await opened();
+    router.serve("POST", "/v1/agents/sessions/sess_1/responses", {
+      status: 202,
+      body: { id: "response-1", session_id: "sess_1", status: "running", created_at: new Date().toISOString() },
+    });
+
+    const asking = session.responses.create("Plan a weekend in Lisbon");
+    assert.deepEqual(
+      session.conversation.get().turns.map((turn) => turn.text),
+      ["Plan a weekend in Lisbon"],
+      "before the router has answered",
+    );
+    await asking;
+    connection.send({ type: "heard", text: "Plan a weekend in Lisbon" });
+    connection.send({ type: "responding", turn_id: "t1" });
+    for await (const event of session.events()) {
+      if (event.kind === "responding") {
+        break;
+      }
+    }
+
+    assert.deepEqual(
+      session.conversation.get().turns.map((turn) => [turn.speaker, turn.text]),
+      [
+        ["participant", "Plan a weekend in Lisbon"],
+        ["agent", ""],
+      ],
+    );
+    await session.close();
+  });
+
+  it("says why the socket stopped when the router dropped it, and nothing when it ended normally", async () => {
+    const [dropped, connection] = await opened();
+    connection.socket.close(1011, "router restarting");
+    await dropped.wait();
+
+    assert.match(dropped.failure?.message ?? "", /1011: router restarting/);
+    assert.equal(dropped.conversation.get().connected, false);
+
+    const [closed, second] = await opened();
+    second.socket.close(1000);
+    await closed.wait();
+    assert.equal(closed.failure, undefined);
+  });
+
+  it("tells every reader of the events everything from when it started reading", async () => {
+    const [session, connection] = await opened();
+    const captions = session.events();
+    const latency = session.events();
+    const first = captions.next();
+    const second = latency.next();
+
+    connection.send({ type: "heard", text: "What's on today?" });
+
+    assert.equal((await first).value?.text, "What's on today?");
+    assert.equal((await second).value?.text, "What's on today?");
+    await captions.return(undefined);
+    await latency.return(undefined);
+    await session.close();
+  });
+
+  it("ends a reader that falls too far behind rather than leave a hole in what it reads", async () => {
+    const [session, connection] = await opened();
+    const slow = session.events();
+    const started = slow.next();
+    connection.send({ type: "heard", text: "first" });
+    await started;
+    for (let index = 0; index < 300; index++) {
+      connection.send({ type: "heard", text: `line ${index}` });
+    }
+    connection.send({ type: "say", text: "marker" });
+    for await (const event of session.events()) {
+      if (event.kind === "say") break;
+    }
+
+    let read = 0;
+    for await (const event of slow) {
+      read++;
+      assert.notEqual(event.kind, "say", "nothing after the hole");
+    }
+    assert.equal(read, 256);
+    await session.close();
+  });
+
+  it("says why the socket stopped when the connection simply dropped", async () => {
+    const [session, connection] = await opened();
+    connection.socket.terminate();
+    await session.wait();
+
+    assert.match(session.failure?.message ?? "", /1006/, "the close code, not only that it failed");
+  });
+
+  it("keeps the part of the agent that failed, until the agent works again", async () => {
+    const [session, connection] = await opened();
+
+    connection.send({ type: "error", error: "speech recognition failed", context: "stt" });
+    connection.send({ type: "say", text: "marker" });
+    for await (const event of session.events()) {
+      if (event.kind === "say") break;
+    }
+    const failed = session.conversation.get();
+    assert.equal(failed.failure, "speech recognition failed");
+    assert.equal(failed.failureContext, "stt");
+    assert.ok(failed.failureAt > 0);
+
+    connection.send({ type: "heard", text: "Can you hear me now?" });
+    for await (const event of session.events()) {
+      if (event.kind === "heard") break;
+    }
+    const recovered = session.conversation.get();
+    assert.deepEqual([recovered.failure, recovered.failureContext, recovered.failureAt], ["", "", 0]);
+    await session.close();
+  });
+
+  it("answers a call with pictures as parts, words first", async () => {
+    const tools = new Tools().register({
+      name: "take_photo",
+      description: "Takes a photo.",
+      run: () => new ToolOutput({ text: "The desk.", images: [{ url: "data:image/jpeg;base64,AAAA" }] }),
+    });
+    const [session, connection] = await opened(tools);
+
+    connection.send({ type: "tool_call", id: "call_1", name: "take_photo", arguments: "{}" });
+
+    assert.deepEqual(await connection.next(), {
+      type: "tool_result",
+      tool_call_id: "call_1",
+      output: [
+        { type: "text", text: "The desk." },
+        { type: "image_url", image_url: { url: "data:image/jpeg;base64,AAAA" } },
+      ],
+    });
+    await session.close();
+  });
+
+  it("reads the step-up a connector's call needs off its event", () => {
+    const event: SessionEvent = {
+      kind: "connector_scope_required",
+      text: "",
+      interrupted: false,
+      pendingWork: false,
+      error: "",
+      frame: {
+        type: "connector_scope_required",
+        name: "linear",
+        connector_id: "linear",
+        connection_id: "conn_1",
+        scopes: ["write"],
+        authorization_id: "auth_1",
+        launch_url: "http://localhost:8080/v1/agents/connectors/oauth/launch/auth_1",
+        handoff_token: "hand",
+        expires_at: "2026-11-02T10:00:00Z",
+      },
+    };
+
+    assert.deepEqual(connectorScopeRequiredOf(event), {
+      name: "linear",
+      connectorId: "linear",
+      connectionId: "conn_1",
+      scopes: ["write"],
+      authorizationId: "auth_1",
+      launchUrl: "http://localhost:8080/v1/agents/connectors/oauth/launch/auth_1",
+      handoffToken: "hand",
+      expiresAt: new Date("2026-11-02T10:00:00Z"),
+    });
+    assert.equal(connectorScopeRequiredOf({ ...event, kind: "heard" }), undefined);
+  });
+
   describe("a function that asks first", () => {
     const refundCall = {
       type: "tool_call",
@@ -534,6 +743,22 @@ describe("Session", () => {
       });
       assert.deepEqual(session.approvals, []);
       assert.deepEqual(ran, ["A-1042"]);
+      await session.close();
+    });
+
+    it("tells a page following the conversation when a call starts and stops waiting", async () => {
+      const [session, connection] = await opened(refunds());
+      const seen: number[] = [];
+      session.conversation.subscribe(() => seen.push(session.conversation.get().approvals.length));
+
+      connection.send(refundCall);
+      await waiting(session);
+      assert.equal(session.conversation.get().approvals[0]?.id, "call_1");
+      assert.equal(session.approvals, session.conversation.get().approvals, "the same list, not a copy");
+
+      session.decide("call_1", { allowed: false });
+      assert.deepEqual(session.conversation.get().approvals, []);
+      assert.ok(seen.includes(1) && seen[seen.length - 1] === 0);
       await session.close();
     });
 
@@ -772,6 +997,42 @@ describe("Session", () => {
     page.use({
       chat: {
         userID: "jane",
+        channel: (type: string, id: string) => ({ type, id }),
+        connectUser: async () => undefined,
+        disconnectUser: async () => undefined,
+      },
+    });
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: {
+        id: "sess_1",
+        conversation_id: "agent:support-1",
+        user_id: "john",
+        agent_id: "john",
+        state: "live",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    });
+    const opening = Session.open(page, {});
+    await router.socket();
+    const session = await opening;
+
+    await assert.rejects(session.chat(), (error: Error) => {
+      assert.ok(error instanceof ConfigurationError);
+      assert.match(error.message, /connected as jane but setUser named john/);
+      return true;
+    });
+    await session.close();
+  });
+
+  // stream-chat 10 names the connected user `userId`, and keeps `userID` only as a deprecated
+  // alias of it.
+  it("refuses a chat client connected as somebody else when it names the user as userId", async () => {
+    const page = new Client({ url: router.url, customerId: "local", apiKey: "vak_live_x" });
+    await page.setUser({ id: "john" }, "token-for-john");
+    page.use({
+      chat: {
+        userId: "jane",
         channel: (type: string, id: string) => ({ type, id }),
         connectUser: async () => undefined,
         disconnectUser: async () => undefined,

@@ -1,0 +1,947 @@
+:root {
+  --bg: #ffffff;
+  --surface: #f4f5f7;
+  --text: #17181c;
+  --muted: #6b6f7a;
+  --border: #e3e5ea;
+  --accent: #005fff;
+  --danger: #d92f26;
+  --sidebar: #f7f8fa;
+  --sidebar-hover: #eaecf0;
+  /* One curve for everything that moves: quick to start, gentle to land. */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --duration: 260ms;
+  --duration-fast: 150ms;
+  /* How wide the conversation's column is, padding included, however wide the pane. */
+  --column: 820px;
+  color-scheme: light;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+/* The system's appearance, until the person picks one with the sidebar's switch. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101114;
+    --surface: #1c1e23;
+    --text: #eceef2;
+    --muted: #9aa0ab;
+    --border: #2c2f36;
+    --sidebar: #16171b;
+    --sidebar-hover: #24262c;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #101114;
+  --surface: #1c1e23;
+  --text: #eceef2;
+  --muted: #9aa0ab;
+  --border: #2c2f36;
+  --sidebar: #16171b;
+  --sidebar-hover: #24262c;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.app {
+  display: flex;
+  height: 100%;
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 56px;
+  padding: 8px 12px;
+}
+
+.top-bar h1 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* On a phone the title sits between the menu and new chat buttons, as the apps have it. */
+.narrow .top-bar {
+  border-bottom: 1px solid var(--border);
+}
+
+.narrow .top-bar h1 {
+  text-align: center;
+}
+
+.wide .top-bar {
+  padding: 8px 20px;
+}
+
+.wide .top-bar h1 {
+  font-size: 1.05rem;
+}
+
+.icon-button {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+}
+
+.icon-button,
+.new-chat,
+.sections li,
+.sections .delete,
+.control {
+  transition:
+    background-color var(--duration-fast) ease,
+    color var(--duration-fast) ease,
+    opacity var(--duration-fast) ease,
+    transform var(--duration-fast) ease;
+}
+
+.icon-button:hover {
+  background: var(--sidebar-hover);
+  color: var(--text);
+}
+
+.content {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* Beside the conversation on a wide window. Its width moves as it folds, and the list keeps
+   its own width meanwhile, so it slides under the edge rather than squeezing. */
+.sidebar {
+  width: 272px;
+  flex: none;
+  display: flex;
+  overflow: hidden;
+  background: var(--sidebar);
+  border-right: 1px solid var(--border);
+  transition: width var(--duration) var(--ease);
+}
+
+.sidebar.collapsed {
+  width: 56px;
+}
+
+.sidebar > .conversation-list {
+  width: 272px;
+  flex: none;
+  animation: fade-in var(--duration) var(--ease) backwards;
+}
+
+/* Folded on a wide window: enough to open it again or start a conversation. */
+.sidebar-rail {
+  width: 56px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 0 12px;
+  animation: fade-in var(--duration) var(--ease) backwards;
+}
+
+.rail-bottom {
+  margin-top: auto;
+}
+
+/* Over the conversation on a narrow one. */
+.drawer {
+  position: fixed;
+  inset: 0 auto 0 0;
+  width: min(300px, 85vw);
+  background: var(--sidebar);
+  border-right: 1px solid var(--border);
+  transform: translateX(-100%);
+  transition:
+    transform var(--duration) var(--ease),
+    box-shadow var(--duration) var(--ease);
+  z-index: 20;
+}
+
+.drawer.open {
+  transform: none;
+  box-shadow: 8px 0 32px rgb(0 0 0 / 0.12);
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0.3);
+  z-index: 10;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration) var(--ease);
+}
+
+.scrim.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.conversation-list {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 10px 8px 8px;
+  gap: 4px;
+}
+
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px 6px;
+}
+
+.brand {
+  font-weight: 600;
+}
+
+.new-chat {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  font-weight: 500;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.new-chat:hover {
+  background: var(--sidebar-hover);
+}
+
+.search {
+  margin: 2px 2px 6px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.sections {
+  overflow-y: auto;
+  flex: 1;
+  margin: 0 -8px;
+  padding: 0 8px;
+}
+
+.sections h3 {
+  margin: 14px 10px 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.sections ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sections li {
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+}
+
+.sections li:hover,
+.sections li.selected {
+  background: var(--sidebar-hover);
+}
+
+.sections .open {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  padding: 7px 10px;
+  border: none;
+  background: transparent;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sections .delete {
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  opacity: 0;
+  padding: 6px 8px;
+}
+
+.sections .delete:hover {
+  color: var(--danger);
+}
+
+.sections li:hover .delete,
+.sections li.selected .delete,
+.sections .delete:focus-visible {
+  opacity: 1;
+}
+
+/* There is no hover on a phone, so the delete button stays in sight. */
+@media (hover: none) {
+  .sections .delete {
+    opacity: 1;
+  }
+}
+
+.signed-in {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 8px 4px;
+  border-top: 1px solid var(--border);
+}
+
+.signed-in-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.signed-in-name {
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.signed-in-id {
+  color: var(--muted);
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.list-empty {
+  margin: 16px 10px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.list-failure,
+.failure-pill,
+.voice-failure {
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
+/* One conversation, with the composer floating over its bottom edge. */
+/* One conversation across the whole pane, so it scrolls from anywhere in it and its scrollbar
+   is on the pane's edge, with what it says in a column down the middle. */
+.chat {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  /* A picked conversation rises into place rather than appearing. */
+  animation: rise var(--duration) var(--ease) backwards;
+}
+
+/* A gutter the scrollbar's width on both sides, so the column is centred in the pane, as the
+   composer under it is, whether or not the scrollbar takes room. */
+.chat .str-chat__ai-conversation__scroller {
+  scrollbar-gutter: stable both-edges;
+}
+
+.chat .str-chat__ai-conversation__turns,
+.chat .str-chat__ai-conversation__empty {
+  width: 100%;
+  max-width: var(--column);
+  margin-inline: auto;
+}
+
+.chat > :first-child {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Across the pane like the conversation, with the composer in the column. Only the controls
+   take the pointer, so the scrollbar under the bar's edges still scrolls. */
+.composer-bar {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 24px max(12px, calc((100% - var(--column)) / 2 + 12px)) 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.composer-bar > * {
+  position: relative;
+  pointer-events: auto;
+}
+
+/* The conversation fades out under the composer, in the column it is in. */
+.composer-bar::before {
+  position: absolute;
+  inset: 0 max(0px, calc((100% - var(--column)) / 2));
+  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--bg) 85%, transparent) 30%, var(--bg));
+  content: "";
+}
+
+.failure-pill {
+  align-self: center;
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+/* The buttons stay on the last line as the text grows over several. */
+.composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.composer-row textarea,
+.composer-row input[type="text"] {
+  flex: 1;
+}
+
+/* One line as tall as the talk button, so its text is centred with the buttons, and more lines
+   grow up from there. */
+.composer-row .str-chat__ai-message-composer__text-input {
+  padding-block: 8px;
+}
+
+/* The 32px buttons, centred on that last 40px line rather than resting on its bottom. */
+.composer-row > .str-chat__ai-message-composer__round-button,
+.composer-row > .str-chat__ai-chat-options {
+  margin-bottom: 4px;
+}
+
+.round-button {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border: none;
+  border-radius: 50%;
+  background: var(--surface);
+  display: grid;
+  place-items: center;
+}
+
+.round-button.talk {
+  background: var(--accent);
+  color: white;
+}
+
+.welcome {
+  text-align: center;
+  padding: 32px;
+}
+
+.welcome-icon {
+  font-size: 44px;
+  color: var(--accent);
+}
+
+.welcome h2 {
+  margin: 8px 0;
+}
+
+.welcome p {
+  color: var(--muted);
+}
+
+/* A conversation opening. It waits a moment before showing, so one that opens quickly never
+   flashes it, then shimmers until the messages take its place. It sits at the top, where the
+   first question will, rather than in the middle as the greeting does. */
+.loading-conversation {
+  align-self: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding-top: 1rem;
+  animation: fade-in var(--duration) 200ms var(--ease) backwards;
+}
+
+.skeleton {
+  height: 14px;
+  border-radius: 7px;
+  background: linear-gradient(
+    90deg,
+    var(--surface) 0%,
+    color-mix(in srgb, var(--surface) 55%, var(--bg)) 50%,
+    var(--surface) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+.skeleton-question {
+  align-self: flex-end;
+  width: 46%;
+  height: 40px;
+  border-radius: 20px;
+  margin-bottom: 8px;
+}
+
+.skeleton-question.narrow {
+  width: 32%;
+  margin-top: 20px;
+}
+
+.skeleton-line {
+  width: 88%;
+}
+
+.skeleton-line.short {
+  width: 54%;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+.notice {
+  max-width: 480px;
+  margin: 20vh auto;
+  padding: 0 24px;
+  text-align: center;
+}
+
+.notice p {
+  color: var(--muted);
+}
+
+/* Voice mode: over everything on a narrow window, over the conversation's pane on a wide one,
+   with the sidebar and the title still beside and above it. */
+.voice-mode {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+}
+
+.voice-mode {
+  animation: voice-in 320ms var(--ease) backwards;
+}
+
+.wide .voice-mode {
+  position: absolute;
+  z-index: 1;
+}
+
+.voice-top {
+  align-self: stretch;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.camera-preview {
+  width: min(480px, 100%);
+  height: 260px;
+  object-fit: cover;
+  border-radius: 20px;
+  background: var(--surface);
+}
+
+.presence {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 0;
+}
+
+.glow {
+  width: min(320px, 70vw);
+  aspect-ratio: 1;
+}
+
+.voice-status {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* Two lines' room whether or not a caption is up, so the glow never moves. */
+.caption-band {
+  height: 72px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: min(640px, 100%);
+}
+
+.caption {
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: rgb(0 0 0 / 0.7);
+  color: white;
+  font-weight: 500;
+  text-align: center;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 0.35s ease-out;
+}
+
+.caption.visible {
+  opacity: 1;
+}
+
+.caption.person {
+  font-style: italic;
+}
+
+.voice-approval {
+  width: min(480px, 100%);
+}
+
+.voice-failure {
+  margin: 0;
+  text-align: center;
+  max-width: 480px;
+}
+
+.call-controls {
+  animation: rise 360ms 80ms var(--ease) backwards;
+  display: flex;
+  gap: 12px;
+  padding: 6px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.06);
+}
+
+.control {
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text);
+  display: grid;
+  place-items: center;
+}
+
+.control:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.control:hover:not(:disabled) {
+  background: var(--sidebar-hover);
+}
+
+.control:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.control:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* A muted microphone or a camera in use: what is different from an ordinary call stands out. */
+.control.on,
+.control.on:hover:not(:disabled) {
+  background: var(--text);
+  color: var(--bg);
+}
+
+.control.hang-up {
+  width: 56px;
+  border-radius: 22px;
+  background: var(--danger);
+  color: white;
+}
+
+.control.hang-up:hover {
+  background: color-mix(in srgb, var(--danger) 85%, black);
+}
+
+.theme-icon {
+  display: grid;
+  animation: turn-in 360ms var(--ease) backwards;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@keyframes voice-in {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+}
+
+@keyframes turn-in {
+  from {
+    opacity: 0;
+    transform: rotate(-90deg) scale(0.6);
+  }
+}
+
+/* The theme changes as a crossfade, where the browser offers view transitions. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 320ms;
+  animation-timing-function: var(--ease);
+}
+
+/* Somebody who asked their system for less motion gets the same page without it. */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .sidebar > .conversation-list,
+  .sidebar-rail,
+  .drawer,
+  .scrim,
+  .chat,
+  .voice-mode,
+  .call-controls,
+  .theme-icon,
+  .control,
+  .loading-conversation,
+  .skeleton {
+    animation: none;
+    transition: none;
+  }
+
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+  }
+}
+
+/* How Juno answers: a small panel under the top bar's gear. */
+.reply-format {
+  position: relative;
+}
+
+.reply-format-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: 280px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.14);
+}
+
+.reply-format-panel h3 {
+  margin: 0 0 10px;
+  font-size: 0.95rem;
+}
+
+.reply-format-option {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.reply-format-option:hover {
+  background: var(--surface);
+}
+
+.reply-format-option > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.9rem;
+}
+
+.reply-format-option > span > span,
+.reply-format-note {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.reply-format-note {
+  margin: 8px 0 0;
+}
+
+/* The trip components the agent places in a reply's UI. */
+.place-card {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 10px;
+  border: none;
+  border-radius: 16px;
+  background: var(--surface);
+  text-align: left;
+}
+
+.place-card:hover {
+  outline: 1px solid var(--border);
+}
+
+.place-card-photo {
+  flex-shrink: 0;
+  width: 88px;
+  height: 88px;
+  border-radius: 12px;
+  background: var(--border);
+  object-fit: cover;
+}
+
+.place-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.place-card-note {
+  color: var(--accent);
+  font-size: 0.85rem;
+}
+
+.place-card-extract {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.8rem;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.trip-map {
+  width: 100%;
+  height: 220px;
+  border-radius: 16px;
+  overflow: hidden;
+  z-index: 0;
+}
+
+.trip-map .trip-map-pin {
+  fill: var(--accent);
+  fill-opacity: 0.9;
+  stroke: #ffffff;
+  stroke-width: 2;
+}
+
+.calendar-check {
+  padding: 12px;
+  border-radius: 16px;
+  background: var(--surface);
+}
+
+.calendar-check h4 {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+}
+
+.calendar-check ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.85rem;
+}
+
+.calendar-check li {
+  display: flex;
+  gap: 12px;
+}
+
+.calendar-check-day {
+  flex-shrink: 0;
+  width: 96px;
+  font-weight: 500;
+}
+
+.calendar-check-free {
+  color: #1f9d55;
+}
+
+.calendar-check-private {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+}

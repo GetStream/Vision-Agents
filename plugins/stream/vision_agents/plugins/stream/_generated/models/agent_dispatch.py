@@ -54,14 +54,14 @@ class AgentDispatch:
         if isinstance(_incoming_call, Unset):
             incoming_call = UNSET
         else:
-            incoming_call = DispatchSetting(_incoming_call)
+            incoming_call = DispatchSetting._decode(_incoming_call)
 
         _text = d.pop("text", UNSET)
         text: DispatchSetting | Unset
         if isinstance(_text, Unset):
             text = UNSET
         else:
-            text = DispatchSetting(_text)
+            text = DispatchSetting._decode(_text)
 
         agent_dispatch = cls(
             incoming_call=incoming_call,

@@ -229,11 +229,74 @@ public sealed class FolderTests : IDisposable
     [InlineData("sandbox_options:\n  timeout: 2h\n")]
     [InlineData("sandbox_options:\n  cpu: two\n")]
     [InlineData("sandbox_options:\n  network: maybe\n")]
+    [InlineData("end_of_turn:\n  max_wait_ms: 900\n")]
+    [InlineData("end_of_turn: {}\n")]
     public void ADeclarationKeyNobodyKnowsIsRefused(string declaration)
     {
         Write("agent.yaml", declaration);
 
         Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+    }
+
+    /// <summary>end_of_turn is gone: its one knob is floor_control's max_wait_ms.</summary>
+    [Fact]
+    public void AnEndOfTurnIsRefusedByName()
+    {
+        Write("agent.yaml", "end_of_turn:\n  max_wait_ms: 900\n");
+
+        var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+
+        Assert.Contains("end_of_turn", refused.Message);
+    }
+
+    /// <summary>
+    /// floor_control is read as written, an empty one included; which models there are, and
+    /// whether a wait names one, is the router's to say.
+    /// </summary>
+    [Theory]
+    [InlineData("floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n", "stream/chorus-asr", 800L)]
+    [InlineData("floor_control: {model: stream/chorus-asr}\n", "stream/chorus-asr", null)]
+    [InlineData("floor_control:\n  model: \"stream/chorus-asr\"\n  max_wait_ms: ~\n", "stream/chorus-asr", null)]
+    [InlineData("floor_control: {max_wait_ms: 800}\n", null, 800L)]
+    [InlineData("floor_control: {}\n", null, null)]
+    public void AFloorControlIsReadAsWritten(string declaration, string? model, long? maxWaitMs)
+    {
+        Write("agent.yaml", declaration);
+
+        var chosen = Folder.Load(_root).Declaration.FloorControl!;
+
+        Assert.Equal((model, maxWaitMs), (chosen.Model, chosen.MaxWaitMs));
+    }
+
+    [Theory]
+    [InlineData("floor_control:\n")]
+    [InlineData("floor_control: ~\n")]
+    [InlineData("llm: openai/gpt-5.6\n")]
+    public void AFileNamingNoFloorControlHasNone(string declaration)
+    {
+        Write("agent.yaml", declaration);
+
+        Assert.Null(Folder.Load(_root).Declaration.FloorControl);
+    }
+
+    [Theory]
+    [InlineData("floor_control: stream/chorus-asr\n", "floor_control is a mapping of model and, optionally, max_wait_ms")]
+    [InlineData("floor_control: \"stream/chorus-asr\"\n", "floor_control is a mapping of model and, optionally, max_wait_ms")]
+    [InlineData("floor_control: [stream/chorus-asr]\n", "floor_control is a mapping of model and, optionally, max_wait_ms")]
+    [InlineData("floor_control: true\n", "floor_control is a mapping of model and, optionally, max_wait_ms")]
+    [InlineData("floor_control:\n  model: stream/chorus-asr\n  mode: act\n", "\"mode\" is not a floor_control setting; model and max_wait_ms are")]
+    [InlineData("floor_control:\n  model: {name: stream/chorus-asr}\n", "floor_control.model must be a string")]
+    [InlineData("floor_control:\n  model: 1\n", "floor_control.model must be a string")]
+    [InlineData("floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: soon\n", "floor_control.max_wait_ms must be an integer")]
+    [InlineData("floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800.5\n", "floor_control.max_wait_ms must be an integer")]
+    [InlineData("floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: \"800\"\n", "floor_control.max_wait_ms must be an integer")]
+    public void AFloorControlThatCannotBeReadIsRefusedNamingWhy(string declaration, string reason)
+    {
+        Write("agent.yaml", declaration);
+
+        var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+
+        Assert.Equal(Path.Combine(_root, "agent.yaml") + ": " + reason, refused.Message);
     }
 
     [Fact]

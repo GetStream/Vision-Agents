@@ -117,6 +117,46 @@ async fn an_agent_spelled_out_in_code_sends_its_pipeline_but_never_its_instructi
 }
 
 #[tokio::test]
+async fn a_session_is_opened_under_the_team_it_is_given_and_none_otherwise() {
+    let server = Server::start().await;
+    server.route(Method::POST, "/v1/agents/sessions", 201, session("s1"));
+    let jean = agent(&server, "jean").team("finance");
+    let docs = server.client().agent("docs");
+
+    let (_with_agent, _socket) = opened(&server, async move { jean.chat().await }).await;
+    let (_with_request, _socket) = opened(&server, async move {
+        docs.sessions
+            .create(
+                types::CreateSessionRequest {
+                    team: Some("finance".into()),
+                    ..Default::default()
+                },
+                vision_agents::Tools::new(),
+            )
+            .await
+    })
+    .await;
+    let plain = server.client().agent("docs");
+    let (_without, _socket) = opened(&server, async move {
+        plain
+            .sessions
+            .create(Default::default(), vision_agents::Tools::new())
+            .await
+    })
+    .await;
+
+    let teams: Vec<Option<Value>> = server
+        .requests(Method::POST, "/v1/agents/sessions")
+        .into_iter()
+        .map(|seen| seen.body.get("team").cloned())
+        .collect();
+    assert_eq!(
+        teams,
+        vec![Some(json!("finance")), Some(json!("finance")), None]
+    );
+}
+
+#[tokio::test]
 async fn a_conversation_is_resumed_by_the_id_of_its_session() {
     let server = Server::start().await;
     server.route(Method::GET, "/v1/agents/sessions/s1", 200, session("s1"));
@@ -161,6 +201,34 @@ async fn agent_yaml_names_the_harness_and_the_code_its_subagent_and_sandbox() {
         json!({"text": "Hello.", "mode": "variation"})
     );
     assert_ne!(body["hash"], agent.folder().unwrap().hash().as_str());
+}
+
+#[tokio::test]
+async fn a_config_naming_a_harness_this_sdk_does_not_list_still_reads() {
+    // Harness and Sandbox list one value each today; a second one is still a value the spec
+    // does not list yet.
+    let server = Server::start().await;
+    let mut stored = config("cfg-1", "docs");
+    stored["harness"] = json!("deep");
+    stored["sandbox"] = json!("firecracker");
+    server.route(Method::GET, "/v1/agents/configs", 200, json!([stored]));
+
+    let config = server
+        .client()
+        .agent("docs")
+        .config()
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        config.harness,
+        Some(types::Harness::Unlisted("deep".into()))
+    );
+    assert_eq!(
+        config.sandbox,
+        Some(types::Sandbox::Unlisted("firecracker".into()))
+    );
 }
 
 #[tokio::test]
@@ -551,6 +619,46 @@ async fn what_a_directory_leaves_to_dispatch_is_synced_as_written() {
     assert_eq!(body["dispatch"], json!({"text": "enabled"}));
     assert!(body.get("simulations").is_none());
     assert!(body.get("speed").is_none());
+}
+
+/// agent.yaml's floor_control goes as written, {} and a model the router does not know included,
+/// and a file that names none sends none, so the stored choice stays.
+#[tokio::test]
+async fn the_floor_control_a_directory_declares_is_synced_as_written() {
+    for (declared, want) in [
+        (
+            "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n",
+            Some(json!({"model": "stream/chorus-asr", "max_wait_ms": 800})),
+        ),
+        (
+            "floor_control: {model: stream/chorus-asr}\n",
+            Some(json!({"model": "stream/chorus-asr"})),
+        ),
+        ("floor_control: {}\n", Some(json!({}))),
+        (
+            "floor_control:\n  model: other\n",
+            Some(json!({"model": "other"})),
+        ),
+        ("floor_control:\n", None),
+        ("llm: openai/gpt-5.6\n", None),
+    ] {
+        let server = Server::start().await;
+        synced(&server);
+        let root = tempfile::tempdir().unwrap();
+        write(
+            root.path(),
+            "agent.yaml",
+            &format!("name: jean\n{declared}"),
+        );
+        let agent = Agent::from_folder(root.path())
+            .unwrap()
+            .client(server.client());
+
+        agent.sync().await.unwrap();
+
+        let body = server.request(Method::POST, "/v1/agents/sync").body;
+        assert_eq!(body.get("floor_control"), want.as_ref(), "{declared:?}");
+    }
 }
 
 #[tokio::test]

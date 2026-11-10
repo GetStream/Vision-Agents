@@ -1,4 +1,5 @@
-# Gmail's hosted MCP server, moved from the plugin catalog (internal/plugins/plugins.yaml,
+# Gmail's hosted MCP server, moved from the plugin catalog (deleted since; last at
+# https://github.com/GetStream/Vision-Agents/blob/ee92fe19f83c406e07ea792cb0bb4fe387c22dc5/acceleration/internal/plugins/plugins.yaml,
 # entry gmail, «[plugin]» below; T58 in acceleration/docs/connectors/subtasks.md on
 # connectors/planning). Vendor pages, opened October 7, 2026:
 #   [setup] https://developers.google.com/workspace/gmail/api/guides/configure-mcp-server
@@ -23,8 +24,8 @@ id: gmail
 # A new revision for any change to what this file says; see AGENTS.md. 2 stores rotating:
 # false, which revision 1 was stored without (refresh.rotating became a pointer). 3 asks for
 # gmail.compose and gives the REST API as api_base, so a backend can send mail through the
-# connection proxy, which the MCP server cannot ([mcp]).
-revision: 3
+# connection proxy, which the MCP server cannot ([mcp]). 4 lists the tools that only read.
+revision: 4
 # [plugin]
 name: Gmail
 category: Communication
@@ -87,3 +88,20 @@ rate_limit:
 sources:
   - kind: mcp
     endpoint: mcp
+    # The tools that only read, from the tool list at
+    # https://developers.google.com/workspace/gmail/api/reference/mcp (opened 2026-11-04, «Last
+    # updated 2026-07-21»): each tool's page under tools_list/ marks it «Read Only Hint».
+    # list_drafts reads the person's own drafts and sends nothing. create_draft, the label
+    # tools and create_label change the mailbox, so they are left out. The server also offers
+    # tools that page does not list (the trash, spam and sensitive-label tools); with no
+    # vendor page saying what they do, they are left out, as is a tool added later. get_draft
+    # is on none of those pages either; the server's tools/list, read 2026-11-04, describes it
+    # as retrieving one draft by id, in the format asked for, with a link to open it in Gmail,
+    # so it reads the same drafts list_drafts does and is listed.
+    read_only_tools:
+      - list_drafts
+      - get_draft
+      - get_thread
+      - get_message
+      - search_threads
+      - list_labels

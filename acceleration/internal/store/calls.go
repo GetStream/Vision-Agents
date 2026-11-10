@@ -40,6 +40,18 @@ func (s *Store) StartCall(ctx context.Context, call *Call) error {
 	if call.Direction == "" {
 		call.Direction = Inbound
 	}
+	// The client opening the session of a call the router placed may name neither number,
+	// so what the router dialled is what the row says.
+	if call.CallID != "" {
+		placed, err := s.PhoneCalls(ctx, call.CustomerID, []string{call.CallID})
+		if err != nil {
+			return err
+		}
+		if len(placed) > 0 {
+			call.Direction = Outbound
+			call.FromNumber, call.ToNumber = placed[0].LocalNumber, placed[0].RemoteNumber
+		}
+	}
 	if call.Tags == nil {
 		call.Tags = map[string]string{}
 	}
@@ -47,6 +59,7 @@ func (s *Store) StartCall(ctx context.Context, call *Call) error {
 	_, err := s.shard.NewInsert().Model(call).
 		On("CONFLICT (id) DO UPDATE").
 		Set("ended_at = NULL").
+		Set("conversation_id = COALESCE(c.conversation_id, EXCLUDED.conversation_id)").
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("store: start call: %w", err)

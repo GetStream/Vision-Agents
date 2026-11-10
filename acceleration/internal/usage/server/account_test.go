@@ -184,6 +184,7 @@ func (s *ServerSuite) TestTheCustomerViewOfUsageLeavesOutWhatTheOperatorReads() 
 		event.Attributes, event.Tags = map[string]string{"country": "nl"}, map[string]string{"project": "alpha"}
 		// 13 digits: longer than any digit run a usage id (12 at most) or a time can hold.
 		event.BaseCostMicros, event.CostMicros, event.SKU = 7_777_777_777_777, 1_234, "llm-openai-m"
+		event.Region, event.BYOK = "eu", true
 	})
 	bare := usagetest.Event(s.organization, func(event *usage.Event) { event.OccurredAt = event.OccurredAt.Add(-time.Second) })
 	s.ship(event, bare)
@@ -202,7 +203,10 @@ func (s *ServerSuite) TestTheCustomerViewOfUsageLeavesOutWhatTheOperatorReads() 
 	s.Equal(map[string]string{"project": "alpha"}, listed.Tags)
 	s.Equal("llm", listed.Meter)
 	s.Equal("llm-openai-m", listed.SKU, "the SKU the work was priced as is the customer's to read")
+	s.Equal("eu", listed.Region)
+	s.True(listed.BYOK)
 	s.Empty(page.Items[1].SKU)
+	s.Empty(page.Items[1].Region)
 	s.Equal([]string{}, page.Items[1].UsageCategories, "none is an empty list")
 	for _, hidden := range []string{"organization_tier", "organization_id", "base_cost_micros", "7777777777777", "price_version", "prices-v7", "source", "router/test/pod"} {
 		s.NotContains(string(answer), hidden)
@@ -235,9 +239,9 @@ func (s *ServerSuite) TestTheCustomerViewOfUsageFiltersAndPagesAsListUsageDoes()
 		[]uuid.UUID{first.Items[0].UsageID, first.Items[1].UsageID, second.Items[0].UsageID})
 
 	var keyed usage.CustomerUsagePage
-	s.customerView(usage.PathAccounts+"/"+s.organization+"/usage?api_key=hook:chat", &keyed)
+	s.customerView(usage.PathAccounts+"/"+s.organization+"/usage?origin=hook:chat", &keyed)
 	s.Require().Len(keyed.Items, 1)
-	s.Equal("hook:chat", keyed.Items[0].APIKey)
+	s.Equal("hook:chat", keyed.Items[0].Origin)
 
 	for _, refused := range []string{"?user_id=u1", "?team=finance&category=support", "?cursor=not-a-cursor"} {
 		status, answer := s.read(usage.PathAccounts+"/"+s.organization+"/usage"+refused, "Authorization", "Bearer "+s.service.Token)

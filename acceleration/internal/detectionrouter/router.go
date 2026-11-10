@@ -182,6 +182,11 @@ func (r *Router) Detect(ctx context.Context, request Request) (Found, error) {
 	return Found{}, detection.Fail(code, errors.Join(failures...))
 }
 
+// lookEstimate is what one look is held at before the vendor is asked: one image for a
+// vendor that bills by the image, and one call's tokens for one that bills by the token
+// (Moondream reads an image as about 736). An entry prices only the meters it rates.
+var lookEstimate = pricing.Quantities{pricing.Images: 1, pricing.InputTokens: 750, pricing.OutputTokens: 30}
+
 // look asks one provider for boxes and records what it cost.
 func (r *Router) look(
 	ctx context.Context,
@@ -195,7 +200,7 @@ func (r *Router) look(
 	result, err := routing.Call(ctx, routing.Meter{
 		Recorder: r.Recorder(), Config: config, Owner: owner,
 		Code:     func(err error) string { return string(detection.CodeOf(err)) },
-		Estimate: pricing.Quantities{pricing.Images: 1},
+		Estimate: lookEstimate,
 	}, func(ctx context.Context) (detection.Result, error) {
 		return provider.Detect(ctx, request)
 	})

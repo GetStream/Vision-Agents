@@ -47,6 +47,8 @@ type request struct {
 func TestTwilio(t *testing.T) { suite.Run(t, new(TwilioSuite)) }
 
 func (s *TwilioSuite) SetupTest() {
+	// A key exported in the shell would sign as the key, not the AC these tests expect.
+	s.T().Setenv("TWILIO_API_KEY_SID", "")
 	s.ctx = context.Background()
 	s.seen = request{}
 	s.seenPricing = request{}
@@ -119,6 +121,114 @@ func (s *TwilioSuite) TestSearchingAsksForTheCountryAndReturnsWhatIsOffered() {
 	s.Equal("+15125551234", offered[0].E164)
 	s.Equal("Austin", offered[0].Locality)
 	s.Equal([]phone.Capability{phone.Voice, phone.SMS}, offered[0].Capabilities)
+}
+
+func (s *TwilioSuite) TestAnAPIKeySignsRequestsWhileTheAccountStaysInThePath() {
+	provider, err := New(Options{
+		AccountSID: "AC123",
+		APIKeySID:  "SK456",
+		AuthToken:  "key-secret",
+		BaseURL:    s.server.URL,
+		PricingURL: s.server.URL,
+	})
+	s.Require().NoError(err)
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/PhoneNumbers/Countries/") {
+			_, _ = w.Write([]byte(usPrices))
+			return
+		}
+		_, _ = w.Write([]byte(oneNumber))
+	}
+
+	_, err = provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+	s.Require().NoError(err)
+
+	s.Equal("/2010-04-01/Accounts/AC123/AvailablePhoneNumbers/US/Local.json", s.seen.path)
+	s.Equal("SK456", s.seen.user)
+	s.Equal("key-secret", s.seen.pass)
+	s.Equal("SK456", s.seenPricing.user)
+	s.Equal("key-secret", s.seenPricing.pass)
+}
+
+func (s *TwilioSuite) TestTheAPIKeyIsReadFromTheEnvironment() {
+	s.T().Setenv("TWILIO_API_KEY_SID", "SK456")
+	provider, err := New(Options{
+		AccountSID: "AC123",
+		AuthToken:  "key-secret",
+		BaseURL:    s.server.URL,
+		PricingURL: s.server.URL,
+	})
+	s.Require().NoError(err)
+	s.answer(oneNumber)
+
+	_, err = provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+	s.Require().NoError(err)
+
+	s.Equal("/2010-04-01/Accounts/AC123/AvailablePhoneNumbers/US/Local.json", s.seen.path)
+	s.Equal("SK456", s.seen.user)
+	s.Equal("key-secret", s.seen.pass)
+}
+
+func (s *TwilioSuite) TestAnAPIKeyLeavesTheAccountInTheCallAndPurchasePaths() {
+	provider, err := New(Options{
+		AccountSID: "AC123",
+		APIKeySID:  "SK456",
+		AuthToken:  "key-secret",
+		BaseURL:    s.server.URL,
+		PricingURL: s.server.URL,
+	})
+	s.Require().NoError(err)
+
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+	_, err = provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125551234",
+		To:     "+15550001111",
+		Bridge: phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+	})
+	s.Require().NoError(err)
+	s.Equal(http.MethodPost, s.seen.method)
+	s.Equal("/2010-04-01/Accounts/AC123/Calls.json", s.seen.path)
+	s.Equal("SK456", s.seen.user)
+
+	s.answer(`{"sid":"PN9","phone_number":"+15125551234","iso_country":"US","monthly_price":"1.15"}`)
+	_, err = provider.BuyNumber(s.ctx, phone.Order{E164: "+15125551234"})
+	s.Require().NoError(err)
+	s.Equal(http.MethodPost, s.seen.method)
+	s.Equal("/2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json", s.seen.path)
+	s.Equal("SK456", s.seen.user)
+
+	var paths []string
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		_, _ = w.Write([]byte(`{"incoming_phone_numbers":[{"sid":"PN9","phone_number":"+15125551234"}]}`))
+	}
+	s.Require().NoError(provider.ReleaseNumber(s.ctx, "+15125551234"))
+	s.Equal([]string{
+		"GET /2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json",
+		"DELETE /2010-04-01/Accounts/AC123/IncomingPhoneNumbers/PN9.json",
+	}, paths)
+	s.Equal("SK456", s.seen.user)
+
+	paths = nil
+	s.Require().NoError(provider.ConfigureInbound(s.ctx, phone.Inbound{
+		E164:   "+15125551234",
+		Bridge: phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+	}))
+	s.Equal([]string{
+		"GET /2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json",
+		"POST /2010-04-01/Accounts/AC123/IncomingPhoneNumbers/PN9.json",
+	}, paths)
+	s.Equal("SK456", s.seen.user)
+	s.Equal("key-secret", s.seen.pass)
+
+	paths = nil
+	s.Require().NoError(provider.StopInbound(s.ctx, "+15125551234"))
+	s.Equal([]string{
+		"GET /2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json",
+		"POST /2010-04-01/Accounts/AC123/IncomingPhoneNumbers/PN9.json",
+	}, paths)
+	s.Equal("SK456", s.seen.user)
+	s.Equal("key-secret", s.seen.pass)
 }
 
 const usPrices = `{"iso_country":"US","price_unit":"USD","phone_number_prices":[
@@ -485,6 +595,68 @@ func (s *TwilioSuite) TestACallWithoutAStatusURLAsksForNoStatus() {
 	s.False(s.seen.form.Has("StatusCallbackMethod"))
 }
 
+func (s *TwilioSuite) TestACallWithAMachineURLAsksTwilioForAsyncMachineDetection() {
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+	machineURL := "https://router.example/v1/phone/machine/token-1"
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:       "+15125551234",
+		To:         "+15550001111",
+		Bridge:     phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+		MachineURL: machineURL,
+	})
+	s.Require().NoError(err)
+
+	s.Equal("DetectMessageEnd", s.seen.form.Get("MachineDetection"))
+	s.Equal("true", s.seen.form.Get("AsyncAmd"))
+	s.Equal(machineURL, s.seen.form.Get("AsyncAmdStatusCallback"))
+	s.Equal(http.MethodPost, s.seen.form.Get("AsyncAmdStatusCallbackMethod"))
+}
+
+func (s *TwilioSuite) TestACallWithoutAMachineURLAsksForNoDetection() {
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125551234",
+		To:     "+15550001111",
+		Bridge: phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+	})
+	s.Require().NoError(err)
+
+	for _, name := range []string{"MachineDetection", "AsyncAmd", "AsyncAmdStatusCallback", "AsyncAmdStatusCallbackMethod"} {
+		s.False(s.seen.form.Has(name), name)
+	}
+}
+
+func (s *TwilioSuite) TestEachAnsweredByIsWhoPickedUp() {
+	for answeredBy, machine := range map[string]phone.Machine{
+		"human":               phone.MachineHuman,
+		"machine_end_beep":    phone.MachineGreetingEnded,
+		"machine_end_silence": phone.MachineGreetingEnded,
+		"machine_end_other":   phone.MachineGreetingEnded,
+		"machine_start":       phone.MachineUnknown,
+		"fax":                 phone.MachineFax,
+		"unknown":             phone.MachineUnknown,
+		"something_new":       phone.MachineUnknown,
+	} {
+		got, err := s.provider.ReadMachine(formType, []byte("CallSid=CA1&AnsweredBy="+answeredBy))
+		s.Require().NoError(err)
+		s.Equal(phone.MachineReport{Machine: machine, Word: answeredBy}, got, answeredBy)
+	}
+}
+
+func (s *TwilioSuite) TestAMachineReportWithoutAnAnsweredByIsRefused() {
+	_, err := s.provider.ReadMachine(formType, []byte("CallSid=CA1"))
+
+	s.ErrorContains(err, "AnsweredBy")
+}
+
+func (s *TwilioSuite) TestAMachineReportThatIsNotAFormIsRefused() {
+	_, err := s.provider.ReadMachine("application/json", []byte(`{"AnsweredBy":"human"}`))
+
+	s.Error(err)
+}
+
 func (s *TwilioSuite) TestEachFinalStatusIsAnOutcome() {
 	for word, result := range map[string]phone.CallResult{
 		"completed": phone.CallCompleted,
@@ -504,6 +676,29 @@ func (s *TwilioSuite) TestARingingStatusDecidesNothing() {
 	s.Require().NoError(err)
 
 	s.Equal(phone.CallStatus{Word: "ringing"}, status)
+}
+
+// twilioNoAnswer is the StatusCallback of a call nobody answered before its Timeout, with the
+// parameters Twilio's call resource lists (https://www.twilio.com/docs/voice/api/call-resource)
+// and SipResponseCode as given.
+func twilioNoAnswer(sipResponseCode string) []byte {
+	return []byte("CallSid=CA1&AccountSid=AC1&Direction=outbound-api&ApiVersion=2010-04-01&CallStatus=no-answer" +
+		"&CallDuration=0&Timestamp=Sun%2C+01+Mar+2026+10%3A00%3A30+%2B0000&CallbackSource=call-progress-events" +
+		"&SequenceNumber=0&SipResponseCode=" + sipResponseCode)
+}
+
+func (s *TwilioSuite) TestAFinalStatusCarriesItsSIPCode() {
+	status, err := s.provider.ReadStatus(formType, twilioNoAnswer("487"))
+	s.Require().NoError(err)
+
+	s.Equal(phone.CallStatus{Result: phone.CallNoAnswer, Word: "no-answer", SIPCode: 487}, status)
+}
+
+func (s *TwilioSuite) TestASIPCodeThatIsNoNumberLeavesTheStatusAsItIs() {
+	status, err := s.provider.ReadStatus(formType, twilioNoAnswer("busy"))
+	s.Require().NoError(err)
+
+	s.Equal(phone.CallStatus{Result: phone.CallNoAnswer, Word: "no-answer"}, status)
 }
 
 func (s *TwilioSuite) TestAStatusWithoutACallStatusIsRefused() {
@@ -530,6 +725,7 @@ func (s *TwilioSuite) TestRingingForLongerThanTwilioAllowsIsRefusedBeforeItIsAsk
 	})
 
 	s.ErrorContains(err, "600s twilio will ring for")
+	s.ErrorIs(err, phone.ErrInvalid)
 	s.Empty(s.seen.path, "a call twilio would reject is not sent")
 }
 

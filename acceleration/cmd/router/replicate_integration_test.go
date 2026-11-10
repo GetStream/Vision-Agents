@@ -166,21 +166,59 @@ func (s *ReplicateResumeSuite) TestResumeRefusesToCatchUpFromTheSourceFirst() {
 	s.Equal(store.ScheduledTaskPaused, s.state("st-active"))
 }
 
-func (s *ReplicateResumeSuite) TestResumeNamesTheCampaignsToStartHere() {
+// importedCampaign is a campaign the copy brought in, as it was at the source with fields.
+func (s *ReplicateResumeSuite) importedCampaign(fields string) string {
 	campaign := &store.Campaign{CustomerID: "acme", Name: "Renewals", ConfigID: "config-1", FromNumber: "+15550100"}
 	s.Require().NoError(s.store.CreateCampaign(s.ctx, campaign))
 	var raw []byte
 	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
-		"SELECT to_jsonb(c) || '{\"state\": \"running\"}' FROM campaigns c WHERE id = ?", campaign.ID).Scan(&raw))
+		"SELECT to_jsonb(c) || "+fields+" FROM campaigns c WHERE id = ?", campaign.ID).Scan(&raw))
 	s.Require().NoError(s.store.ImportRow(s.ctx, "acme", "campaigns", raw))
+	return campaign.ID
+}
+
+// A campaign the source was still running at the last --once may have rung contacts the copy
+// still holds enrolled: the cut-over leaves it paused and says so.
+func (s *ReplicateResumeSuite) TestResumeLeavesACampaignStillRunningAtTheSourcePausedAndNamesIt() {
+	id := s.importedCampaign(`'{"state": "running"}'`)
 	s.imported("st-active", store.ScheduledTaskActive)
 
-	var out bytes.Buffer
-	s.Require().NoError(resumeMove(s.ctx, s.store, "acme", &out))
-
 	s.Equal("resumed 1 scheduled tasks\n"+
-		"campaign "+campaign.ID+" was running where it came from: start it here with POST /v1/agents/campaigns/"+campaign.ID+"/start\n",
-		out.String())
+		"campaign "+id+" was still running or scheduled where it came from at the last --once, so it stays paused here: "+
+		"contacts rung there since then are still enrolled here, and resuming it here rings them again. "+
+		"Read its contacts there (GET /v1/agents/campaigns/"+id+"/contacts) before you resume it here "+
+		"(POST /v1/agents/campaigns/"+id+"/resume). "+
+		"Do not run --once again after --resume: every run reads the source and makes it the truth again\n",
+		s.cutOver())
+	moved, err := s.store.Campaign(s.ctx, "acme", id)
+	s.Require().NoError(err)
+	s.Equal(store.Paused, moved.State)
+}
+
+// A campaign the user paused at the source before the last --once is the user's: the cut-over
+// leaves it paused and does not name it.
+func (s *ReplicateResumeSuite) TestResumeLeavesACampaignPausedAtTheSourceAlone() {
+	id := s.importedCampaign(`'{"state": "paused"}'`)
+
+	s.Equal("resumed 0 scheduled tasks\n", s.cutOver())
+	moved, err := s.store.Campaign(s.ctx, "acme", id)
+	s.Require().NoError(err)
+	s.Equal(store.Paused, moved.State)
+}
+
+func (s *ReplicateResumeSuite) TestACampaignScheduledThereIsNamedAndResumesToScheduled() {
+	id := s.importedCampaign(`jsonb_build_object('state', 'scheduled', 'start_at', now() + interval '2 days')`)
+
+	s.Contains(s.cutOver(), "campaign "+id+" was still running or scheduled where it came from")
+	moved, err := s.store.Campaign(s.ctx, "acme", id)
+	s.Require().NoError(err)
+	s.Require().Equal(store.Paused, moved.State)
+
+	s.Require().NoError(s.store.ResumeCampaign(s.ctx, "acme", id))
+	moved, err = s.store.Campaign(s.ctx, "acme", id)
+	s.Require().NoError(err)
+	s.Equal(store.Scheduled, moved.State, "it was not due to start yet")
+	s.Nil(moved.StartedAt)
 }
 
 func (s *ReplicateResumeSuite) TestResumeSaysHowManyTasksItLeftPausedForADeletedConfig() {

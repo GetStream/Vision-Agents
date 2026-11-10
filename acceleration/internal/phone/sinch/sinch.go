@@ -160,12 +160,12 @@ func New(options Options) (*Provider, error) {
 // asking for local numbers, which is what an agent wants.
 func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]phone.Available, error) {
 	if search.Country == "" {
-		return nil, stack.Wrap(errors.New("sinch: a country is required to search for numbers"))
+		return nil, stack.Wrap(phone.Invalid(errors.New("sinch: a country is required to search for numbers")))
 	}
 	// Sinch applies one pattern one way, so it cannot be asked for digits at the front and
 	// digits anywhere at the same time.
 	if search.Prefix != "" && search.Contains != "" {
-		return nil, stack.Wrap(errors.New("sinch: can match a prefix or a substring, not both"))
+		return nil, stack.Wrap(phone.Invalid(errors.New("sinch: can match a prefix or a substring, not both")))
 	}
 
 	kind := search.Type
@@ -174,7 +174,7 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 	}
 	named, ok := kinds[kind]
 	if !ok {
-		return nil, stack.Wrap(fmt.Errorf("sinch: does not sell %s numbers", kind))
+		return nil, stack.Wrap(phone.Invalid(fmt.Errorf("sinch: does not sell %s numbers", kind)))
 	}
 
 	query := url.Values{
@@ -272,9 +272,9 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		return phone.Dialed{}, stack.Wrap(fmt.Errorf("sinch: %w", err))
 	}
 	if p.applicationKey == "" || p.applicationSecret == "" {
-		return phone.Dialed{}, stack.Wrap(fmt.Errorf(
+		return phone.Dialed{}, stack.Wrap(phone.NotConfigured(fmt.Errorf(
 			"sinch: placing a call needs %s and %s, which buying a number does not",
-			applicationKeyEnvVar, applicationSecretEnvVar))
+			applicationKeyEnvVar, applicationSecretEnvVar)))
 	}
 
 	answered, err := json.Marshal(svaml{Action: connectSip{

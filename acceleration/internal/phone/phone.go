@@ -41,9 +41,20 @@ const maxInitialDigits = 32
 // think a number was bought when it was not.
 var ErrNotImplemented = errors.New("phone: not implemented for this vendor")
 
+// ErrCallNotFound is a call the customer did not place from here.
+var ErrCallNotFound = errors.New("phone: no such call")
+
 // ErrAddressRequired is a number the vendor sells only with a verified address, which is not
 // supported: numbers outside the US and Canada.
 var ErrAddressRequired = errors.New("phone: this number needs a verified address")
+
+// ErrNumberSettling is a release the vendor refused for a number bought moments ago, which it
+// is still setting up: the same release goes through once it has (Telnyx took 13 seconds).
+var ErrNumberSettling = errors.New("phone: the vendor is still setting up this number")
+
+// NumberSettles is how long after its purchase a vendor's refusal to release a number is taken
+// to be ErrNumberSettling.
+const NumberSettles = time.Minute
 
 // ErrDestinationRefused is a number no call from here may reach, whoever asks: one billed to
 // the caller at a premium rate.
@@ -51,6 +62,32 @@ var ErrDestinationRefused = errors.New("phone: calls to this number are refused"
 
 // ErrSuspended is an app Stream staff stopped from using the phone. Why stays with Stream.
 var ErrSuspended = errors.New("phone: this app's telephony is suspended; contact Stream support")
+
+// ErrNotDialable is a number no call may be placed to: not a full E.164 number, or one refused
+// as a destination. A caller that holds a list of numbers can tell it from a failed call.
+var ErrNotDialable = errors.New("phone: not dialable")
+
+// ErrInvalid is a request that cannot be carried out as it was asked, such as a search filter
+// a vendor cannot apply, a ring timeout it does not allow, or a vendor this deployment holds
+// no credentials for. Its message says what to change. A failure of the router's own, such as
+// a database that failed, is never one.
+var ErrInvalid = errors.New("phone: invalid request")
+
+// Invalid marks err as ErrInvalid without changing its message.
+func Invalid(err error) error { return marked{err, ErrInvalid} }
+
+// ErrNotConfigured is a vendor, or every vendor, this deployment has no credentials for, or a
+// setting a vendor needs that the deployment lacks: the operator's to fix, not the request's.
+var ErrNotConfigured = errors.New("phone: not configured")
+
+// NotConfigured marks err as ErrNotConfigured without changing its message.
+func NotConfigured(err error) error { return marked{err, ErrNotConfigured} }
+
+// marked is err that is also kind, with err's own message.
+type marked struct{ err, kind error }
+
+func (e marked) Error() string        { return e.err.Error() }
+func (e marked) Is(target error) bool { return target == e.kind }
 
 // premiumPrefixes are the North American codes billed to the caller at a premium rate, which
 // is how toll fraud turns a stolen account into money.
@@ -60,15 +97,22 @@ var premiumPrefixes = []string{"+1900", "+1976"}
 // which also keeps short codes such as 911, 112 or 988 from being dialled as they are.
 func Dialable(to string) error {
 	if !store.IsE164(to) {
-		return stack.Wrap(fmt.Errorf("phone: %q is not a full number in E.164 form, such as +15125550123", to))
+		return stack.Wrap(notDialable{fmt.Errorf("phone: %q is not a full number in E.164 form, such as +15125550123", to)})
 	}
 	for _, prefix := range premiumPrefixes {
 		if strings.HasPrefix(to, prefix) {
-			return stack.Wrap(fmt.Errorf("%w: %s is a premium-rate number", ErrDestinationRefused, to))
+			return stack.Wrap(notDialable{fmt.Errorf("%w: %s is a premium-rate number", ErrDestinationRefused, to)})
 		}
 	}
 	return nil
 }
+
+// notDialable marks a Dialable failure as ErrNotDialable without changing its message.
+type notDialable struct{ err error }
+
+func (e notDialable) Error() string        { return e.err.Error() }
+func (e notDialable) Unwrap() error        { return e.err }
+func (e notDialable) Is(target error) bool { return target == ErrNotDialable }
 
 // VendorError is a vendor's API refusing a request or not answering it. It carries what
 // debugging needs, so it is logged in full, and none of it is shown to a client: the path can
@@ -386,6 +430,9 @@ type Outbound struct {
 	// CallID is sent to Stream on the leg the vendor dials, so a number on a shared trunk
 	// finds its session. It is set only on the shared path; empty sends no header.
 	CallID string
+	// MachineURL is where the vendor posts whether a person or an answering machine
+	// picked up. Empty asks for no detection.
+	MachineURL string
 	// StatusURL is where the vendor posts the call's status. Empty sends none.
 	StatusURL string
 	// Ended is told how a call through a customer's own SIP trunk ended, which only the
@@ -448,15 +495,62 @@ const (
 )
 
 // CallStatus is one report a vendor sent on a placed call. Word is the vendor's own, kept for
-// debugging.
+// debugging. The rest is what the report says of the carrier, zero when it says nothing
+// (internal/phone/outcome/AGENTS.md lists what each vendor reports).
 type CallStatus struct {
 	Result CallResult
 	Word   string
+	// SIPCode is the final SIP response to the call's INVITE, from a final report.
+	SIPCode int
+	// Ringing is a report that the person's phone has started ringing.
+	Ringing bool
+	// PostDialDelay is how long the INVITE waited for its first response other than 100
+	// Trying or a challenge (RFC 6076 §4.3), as the router's own bridge measured it.
+	PostDialDelay time.Duration
 }
 
 // StatusReader is a provider whose vendor posts a placed call's status to the URL it was given.
 type StatusReader interface {
 	ReadStatus(contentType string, body []byte) (CallStatus, error)
+}
+
+// Machine is who a vendor says picked up an outbound call.
+type Machine string
+
+const (
+	MachineHuman Machine = "human"
+	// MachineGreetingEnded is an answering machine whose greeting has finished, so what is
+	// said next is recorded.
+	MachineGreetingEnded Machine = "greeting_ended"
+	// MachineFax is a fax machine, which nothing said reaches.
+	MachineFax Machine = "fax"
+	// MachineUnknown is whatever the vendor could not tell.
+	MachineUnknown Machine = "unknown"
+)
+
+// MachineReport is who a vendor says picked up. Word is the vendor's own, kept for debugging.
+type MachineReport struct {
+	Machine Machine
+	Word    string
+}
+
+// MachineDetector is a provider whose vendor can tell an answering machine from a person and
+// posts what it found to Outbound.MachineURL.
+type MachineDetector interface {
+	ReadMachine(contentType string, body []byte) (MachineReport, error)
+}
+
+// MachineOf is the Machine for the AnsweredBy word that Twilio and Telnyx TeXML both report.
+func MachineOf(answeredBy string) Machine {
+	switch answeredBy {
+	case "human":
+		return MachineHuman
+	case "machine_end_beep", "machine_end_silence", "machine_end_other":
+		return MachineGreetingEnded
+	case "fax":
+		return MachineFax
+	}
+	return MachineUnknown
 }
 
 // StreamLegOf is the provider's stream leg, per call for one that does not say.
@@ -486,7 +580,7 @@ func (o Outbound) Unsupported(provider Provider) []CallFeature {
 // Validate reports whether the call can be placed as described.
 func (o Outbound) Validate() error {
 	if o.From == "" || o.To == "" {
-		return stack.Wrap(errors.New("phone: a call needs a from and a to"))
+		return stack.Wrap(Invalid(errors.New("phone: a call needs a from and a to")))
 	}
 	if err := Dialable(o.To); err != nil {
 		return err
@@ -495,15 +589,15 @@ func (o Outbound) Validate() error {
 		return err
 	}
 	if o.RingTimeout < 0 {
-		return stack.Wrap(errors.New("phone: a call cannot ring for less than no time"))
+		return stack.Wrap(Invalid(errors.New("phone: a call cannot ring for less than no time")))
 	}
 	if o.InitialDigits != "" {
 		if err := ValidateDigits(o.InitialDigits); err != nil {
 			return err
 		}
 		if len(o.InitialDigits) > maxInitialDigits {
-			return stack.Wrap(fmt.Errorf("phone: %d digits is more than the %d every vendor takes on answer",
-				len(o.InitialDigits), maxInitialDigits))
+			return stack.Wrap(Invalid(fmt.Errorf("phone: %d digits is more than the %d every vendor takes on answer",
+				len(o.InitialDigits), maxInitialDigits)))
 		}
 	}
 	return nil
@@ -627,14 +721,14 @@ func (n *notImplemented) err() error {
 // silent no-op on the call.
 func ValidateDigits(digits string) error {
 	if digits == "" {
-		return stack.Wrap(errors.New("phone: pressing needs digits to press"))
+		return stack.Wrap(Invalid(errors.New("phone: pressing needs digits to press")))
 	}
 	for _, key := range digits {
 		switch {
 		case key >= '0' && key <= '9', key >= 'A' && key <= 'D',
 			key == '*', key == '#', key == 'w', key == 'W':
 		default:
-			return stack.Wrap(fmt.Errorf("phone: %q is not something a keypad can press", string(key)))
+			return stack.Wrap(Invalid(fmt.Errorf("phone: %q is not something a keypad can press", string(key))))
 		}
 	}
 	return nil

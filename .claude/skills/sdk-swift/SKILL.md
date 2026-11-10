@@ -1,6 +1,6 @@
 ---
 name: sdk-swift
-description: How to build and extend the Swift SDK in sdks/swift. Read this before changing VisionAgentsCore, the Swift demos' use of Stream's AI components, or before adding a Swift client for a new endpoint.
+description: How to build and extend the Swift SDK in sdks/swift. Read this before changing StreamAgents, the Swift demos' use of Stream's AI components, or before adding a Swift client for a new endpoint.
 ---
 
 # Swift SDK conventions
@@ -13,7 +13,7 @@ Assume Swift 6 language mode with complete strict concurrency, iOS 15, SPM only.
 
 ## The package
 
-One package, `core`, with one product, `VisionAgentsCore`: the generated client, the socket,
+One package, `core`, with one product, `StreamAgents`: the generated client, the socket,
 the conversation state, `session.chat()` (the Stream Chat channel a text session is kept in)
 and `VoiceSession` (joining the agent's call over Stream Video). It is the only thing published.
 It depends on `stream-chat-swift` (`StreamChat` only) and `stream-video-swift` (`StreamVideo`
@@ -163,6 +163,19 @@ generator ignores `nullable` and the null would fail to decode, and a model whos
 hand-written type has is renamed (`RENAMED`: `Session` is `SessionPayload`). A collision `RENAMED` misses fails the build.
 `DefaultEndpoints.swift` is discarded: it is Stream Chat's request path, written against its
 internals.
+Each run writes `sdks/swift/core/generated.json`: the sha256 of the spec copy it handed the
+generator, the options and the generator's `chat` commit. `--check` fails ("Swift client is
+stale") when the spec's client part (without `info` and `servers`) no longer hashes to it, or when
+the files under `Generated/` are not the ones the last run wrote, so commit that file with the
+client.
+
+**A spec change to the client part needs a regeneration by someone with access to the private
+`GetStream/chat` repository**, because the generator is in it and CI does not check it out: an
+outside contributor's PR cannot pass the `swift` job. Check out `chat` beside this repository
+at the commit in `generated.json`'s `generator` (`git -C ../chat checkout <sha>`), run
+`uv run sdks/swift/generate.py`, and commit the result. Move to another `chat` commit only on
+purpose: `chat`'s master changes generated enum files for every author. The rules of the check
+are tested in `sdks/swift/test_generate.py`; CI runs it before `--check`.
 
 **Generated code is `internal`.** Every type crossing the public API is hand-written in
 `Models.swift`. Leaking one generated type couples the SDK's semantic version to the schema and
@@ -214,14 +227,14 @@ hands over its body.
 
 ## Public API
 
-`VisionAgents(apiKey:)`, defaulting to Stream's hosted router, then `setUser` with a token
+`StreamAgents(apiKey:)`, defaulting to Stream's hosted router, then `setUser` with a token
 provider: the shape [sdk](../sdk/SKILL.md) gives every client SDK. `ID` and `URL` are
-capitalised as Swift does. The initialiser does no I/O. `VisionAgents(url:customerID:)` is
+capitalised as Swift does. The initialiser does no I/O. `StreamAgents(url:customerID:)` is
 only for a router running locally with nothing in front of it; an `apiKey:` beside it is
 Stream's alone, for chat and video, and the router is still reached by customer id.
 
 ```swift
-let agents = VisionAgents(apiKey: "your_api_key")
+let agents = StreamAgents(apiKey: "your_api_key")
 agents.setUser(User(id: "jlahey")) { try await yourBackend.agentToken() }
 let session = try await agents.agent("myagent").sessions.create()
 let turn = try await session.responses.create("Where is order 1042?")
@@ -260,9 +273,11 @@ kept across `setUser` and never disconnected here; one connected as another user
 closes nothing. A client is built only when a session first asks for one.
 
 **Guests.** `agents.guestUser(_:store:)` mints a guest (`createGuestUser`), or hands back the
-one a `GuestStore` remembers; one whose token has expired is asked for again by id, which the
-router answers with the same guest and a fresh token. `setUser(_ guest:)` acts as them, and
-`forgetGuest(store:)` clears the store and the user. `GuestStore` is three methods so an app
+one a `GuestStore` remembers; one whose token has expired is asked for again with its id and
+the `refresh_secret` the store keeps beside it, which the router answers with the same guest, a
+fresh token and the next secret. A secret works once, so whatever comes back replaces what was
+stored; one lost or spent gets a new guest. The secret stays in the store, never on `Guest`.
+`setUser(_ guest:)` acts as them, and `forgetGuest(store:)` clears the store and the user. `GuestStore` is three methods so an app
 keeps the guest wherever it keeps things, the keychain included; `FileGuestStore(url:)` is the
 one provided, and a store holding something unreadable means a new guest, not an error.
 `GuestOptions(fresh: true)` is a "not me" button. Claiming a guest's history for an account is
@@ -328,15 +343,15 @@ Three layers, in order of how much they cost to run:
    (`StreamCredentialsTests`).
 
 The package is iOS only, so the tests run on a simulator, from the root of the repository:
-`xcodebuild test -scheme vision-agents-core -destination 'platform=iOS Simulator,name=iPhone
+`xcodebuild test -scheme stream-agents -destination 'platform=iOS Simulator,name=iPhone
 18 Pro'`, with `TEST_RUNNER_VISION_AGENTS_URL` for the live tests and
 `TEST_RUNNER_INTEGRATION_ROUTER_KEY` and `_SECRET` for the keyed posture checks.
 
 CI is [`client-sdks.yml`](../../../.github/workflows/client-sdks.yml), on the `xcode-27` runner,
 on any change under `sdks/swift`, the demo's app or the spec. It runs `generate.py --check`
 (the generator is in the `chat` repository, which CI does not check out, so it cannot
-regenerate), runs the core tests on the first iPhone simulator the runner has, and builds
-`swift_demo`. Regenerate locally after a spec change.
+regenerate, and compares the spec against `generated.json` instead), runs the core tests on
+the first iPhone simulator the runner has, and builds `swift_demo`. Regenerate locally after a spec change.
 
 Wait on a condition with a deadline, never `Task.sleep` for a fixed guess:
 

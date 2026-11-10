@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -74,6 +75,26 @@ func (s *LimitsSuite) TestAOneTimeGrantForATeam() {
 	s.Equal(int64(0), listed[0].RemainingMicros)
 	s.Len(s.grants("?state=used"), 1)
 	s.Empty(s.grants("?state=live"))
+}
+
+// Stream's proxy forwards the app's key as api_key in every call's query, so the grants list
+// takes a key as api_key_id and lists every grant beside the caller's key (AI-2684).
+func (s *LimitsSuite) TestGrantsListWithTheCallersKeyInTheQuery() {
+	s.create(map[string]any{"subject": "organization", "interval": "daily", "limit_micros": 10_000_000})
+	s.create(map[string]any{"subject": "api_key", "app_id": s.customerID(), "api_key": "key_a", "interval": "daily", "limit_micros": 1_000_000})
+	organization := s.grant(map[string]any{"subject": "organization", "amount_micros": 1_000_000, "reason": "a support case"})
+	key := s.grant(map[string]any{"subject": "api_key", "app_id": s.customerID(), "api_key": "key_a", "amount_micros": 1_000_000, "reason": "a support case"})
+	ids := func(grants []LimitGrant) []int64 {
+		listed := make([]int64, 0, len(grants))
+		for _, grant := range grants {
+			listed = append(listed, grant.Id)
+		}
+		return listed
+	}
+	proxied := "?api_key=" + url.QueryEscape(s.app.key)
+
+	s.ElementsMatch([]int64{organization.Id, key.Id}, ids(s.grants(proxied)))
+	s.Equal([]int64{key.Id}, ids(s.grants(proxied+"&api_key_id=key_a")))
 }
 
 func (s *LimitsSuite) TestAGrantUntilMidnightLetsTheUserSpendAgainToday() {

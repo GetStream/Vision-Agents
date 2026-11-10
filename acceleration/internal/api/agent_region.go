@@ -77,7 +77,7 @@ func (s *Server) regionComplaint(ctx context.Context, config store.AgentConfig, 
 		if !ok {
 			continue
 		}
-		served, err := router.InRegion(ctx, model.target, region)
+		served, err := router.InRegion(ctx, model.target, region, nil)
 		if err != nil {
 			continue
 		}

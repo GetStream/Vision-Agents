@@ -145,7 +145,7 @@ dispatch
             return;
         }
         var agent = await dispatch.GetOrCreateAgentAsync(message, () => new Agent(new AgentOptions { ConfigId = message.ConfigId }));
-        await agent.Responses.CreateAsync(message.Text);
+        await agent.Responses.CreateAsync(message.Text, [.. message.Images.Select(image => new ImageSource { Url = image.Url })]);
     });
 
 await dispatch.RunAsync(stopping);
@@ -154,7 +154,8 @@ await dispatch.RunAsync(stopping);
 `GetOrCreateAgentAsync` keeps one agent per channel, so the second message on it goes to
 the agent that answered the first. An agent whose agent.yaml says `dispatch: {text: enabled}`
 hands what end users write to the worker with the running `SessionId` (and `RequestId`);
-`AnswerAsync` has the model answer it with the worker's credential acting for the writer, and
+`AnswerAsync` has the model answer it with the worker's credential acting for the writer,
+showing it the photos sent with it (`Images`, by URL), and
 `GetOrCreateAgentAsync` refuses such a message. The router is told each call and message is
 `done`, with the exception's message if the handler threw. `RunAsync` returns when the token
 is cancelled, after the work in hand has finished. A connection the router drops is opened
@@ -202,6 +203,20 @@ Python SDKs take, so `.agent_sync` written by any of them is read back by this o
 unchanged directory is only read back. A key `agent.yaml` does not know is refused. Joining
 syncs first. Each file in `simulations/` is a list of `{name, scenario, assertion, mode, ...}`;
 a directory with the folder replaces the agent's simulations, and no directory leaves them alone.
+
+`floor_control:` is the model that controls the agent's floor, and how long a caller may wait
+once they stop:
+
+```yaml
+floor_control:
+  model: stream/chorus-asr
+  max_wait_ms: 800      # optional; the server's default point otherwise
+```
+
+It is sent as written, and `{}` is the default flow controller again. Left out, the stored choice
+stays, and an agent that never chose has the default flow controller; the router refuses
+`stream/chorus-asr` without a chorus-asr server, and a `max_wait_ms` shorter than every point it
+measured.
 
 ## Simulations
 
@@ -263,6 +278,52 @@ await foreach (var delta in llm.ReadAllAsync()) { if (delta.Done) break; }
 `RealtimeAsync` opens the socket; `RecordingAsync` is the batch form, which is cheaper and
 more accurate. A router comes from the client and its models from its config; the options
 carry settings such as language, never the target.
+
+## Spend limits and teams
+
+A backend caps what the organization, its apps, keys, end users, teams and usage categories may
+spend in each day, week, two weeks or month. Amounts are `Usd`, exact: the router counts in
+millionths of a dollar, and so does `Usd`. There is no conversion from a `double`;
+`Usd.Parse("12.50")` reads one from a form or a config file.
+
+```csharp
+var limits = api.SpendLimits;
+await limits.CreateAsync(new LimitOptions { Subject = LimitSubject.Organization, Interval = LimitInterval.Monthly, Amount = Usd.Dollars(20_000) });
+
+// Every key of app 1234 may spend $50 a day, and the CI key $10.
+await limits.CreateAsync(new LimitOptions { Subject = LimitSubject.ApiKey, AppId = "1234", Interval = LimitInterval.Daily, Amount = Usd.Dollars(50) });
+await limits.CreateAsync(new LimitOptions { Subject = LimitSubject.ApiKey, AppId = "1234", ApiKey = "mz7kq2xa9b", Interval = LimitInterval.Daily, Amount = Usd.Dollars(10), Note = "CI key" });
+var ci = (await limits.ListAsync(new LimitQuery { Subject = LimitSubject.ApiKey, AppId = "1234", ApiKey = "mz7kq2xa9b" }))[0];
+await limits.SetAmountAsync(ci.Id, Usd.Dollars(25));
+await limits.DeleteAsync(ci.Id);
+
+// Every user of app 1234 may spend $20 a day, and user-42 $50.
+await limits.CreateAsync(new LimitOptions { Subject = LimitSubject.User, AppId = "1234", Interval = LimitInterval.Daily, Amount = Usd.Dollars(20) });
+await limits.CreateAsync(new LimitOptions { Subject = LimitSubject.User, AppId = "1234", UserId = "user-42", Interval = LimitInterval.Daily, Amount = Usd.Dollars(50) });
+
+// Created or changed, whichever the team needs.
+await api.Teams.SetLimitAsync(new TeamLimit { Team = "finance", Interval = LimitInterval.Monthly, Amount = Usd.Dollars(8_000) });
+
+var session = await api.Agent("docs").ChatAsync(new SessionOptions { Team = "finance" });
+using var finance = new VisionAgentsClient(new VisionAgentsOptions { ApiKey = key, ApiSecret = secret, Team = "finance" });
+
+await limits.ResetAsync(new LimitReset { Subject = LimitSubject.User, AppId = "1234", UserId = "user-42", Intervals = [LimitInterval.Weekly], Reason = "refunded a runaway session" });
+```
+
+Work counts under a team, and so against its limits, three ways. Whichever comes first wins,
+and a session is counted under one team at most:
+
+1. The team signed into the client's tokens, `VisionAgentsOptions.Team`, with any
+   `UsageCategories`. They are sent as `X-Stream-Usage-Categories` to a router with no proxy in
+   front of it, and cannot be set beside a `Token` handed in, which carries its own. A session
+   cannot be moved off it, so a `SessionOptions.Team` naming another is refused with a 400.
+2. `SessionOptions.Team`, from a backend. A device sending a team is refused with a 403.
+3. The agent's tag: `tags: team: finance` in its `agent.yaml` counts that agent's sessions under
+   the team. A tag that is no team name is refused when the agent is synced.
+
+What the router answers is in micros too: `Usd.FromMicros(limit.LimitMicros)` prints as
+`$20000.00`. Work a limit refuses is a `RouterException` of 402 `spend_limit_reached`, or 429
+`user_limit_reached` for one end user's. Spend limits and teams are server side only.
 
 ## Working on this package
 

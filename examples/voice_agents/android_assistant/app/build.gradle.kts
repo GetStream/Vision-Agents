@@ -16,7 +16,7 @@ fun setting(name: String, environment: String, default: String): String =
     local.getProperty(name) ?: providers.environmentVariable(environment).orNull ?: default
 
 android {
-    namespace = "io.getstream.visionagents.androidassistant"
+    namespace = "io.getstream.agents.androidassistant"
     compileSdk = 37
     defaultConfig {
         applicationId = "io.getstream.visionagents.androidassistant"
@@ -39,11 +39,16 @@ android {
         buildConfig = true
         compose = true
     }
+    testOptions {
+        unitTests.all { it.useJUnitPlatform() }
+    }
 }
 
 dependencies {
-    implementation(libs.vision.agents.core)
+    implementation(libs.stream.agents.android.core)
     implementation(libs.stream.chat.ai.compose)
+    implementation(libs.stream.chat.ai.openui)
+    implementation(libs.stream.chat.ai.a2ui)
     implementation(libs.okhttp)
     // The connector sign-in opens in an Auth Tab, or a Custom Tab where the browser has none.
     implementation(libs.browser)
@@ -57,4 +62,6 @@ dependencies {
     implementation(libs.lifecycle.viewmodel.compose)
     implementation(libs.lifecycle.runtime.compose)
     debugImplementation(libs.compose.ui.tooling)
+
+    testImplementation(libs.kotlin.test)
 }

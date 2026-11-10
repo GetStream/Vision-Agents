@@ -18,6 +18,9 @@ const (
 	ContactPhone = "phone"
 	// ContactSlack is a Slack user in one workspace, «<team id>:<user id>».
 	ContactSlack = "slack"
+	// ContactStreamUser is a Stream user of the app chat in one Stream app, by the user id
+	// Stream signed, «<app pk>:<user id>» (StreamUserAddress, 20261212090000_chat_episodes.sql).
+	ContactStreamUser = "stream_user"
 )
 
 // ContactMapEntry is one address a person is reached at, for one agent of a customer, and the
@@ -28,7 +31,9 @@ type ContactMapEntry struct {
 	ID            string `bun:"id,pk"`
 	CustomerID    string `bun:"customer_id,notnull"`
 	AgentConfigID string `bun:"agent_config_id,notnull"`
-	// Kind is ContactPhone or ContactSlack, and Address the number or the Slack user.
+	// Kind is ContactPhone, ContactSlack or ContactStreamUser, and Address the number, the Slack
+	// user or the Stream user in its app; retired:<id> for a number's row a link set aside
+	// (retireHistory).
 	Kind    string `bun:"kind,notnull"`
 	Address string `bun:"address,notnull"`
 	// ConversationID is the omni-channel's cid, agent:omni-<uuid>.
@@ -45,7 +50,9 @@ type ContactMapEntry struct {
 // MapContact returns the contact map row of the address entry names, making it with
 // entry.ConversationID and entry.StreamAppPK when the address has none yet. created is
 // whether it did. An existing row keeps its omni-channel and its pin. Two first sightings of
-// one address at once make one row: the unique index on the address decides which.
+// one address at once make one row: the unique index on the address decides which. A row made
+// for a linked Stream user or number takes the omni-channel and pin of its partner's row under
+// the same agent, the older (joinPartner).
 func (s *Store) MapContact(ctx context.Context, entry *ContactMapEntry) (created bool, err error) {
 	if entry.CustomerID == "" || entry.AgentConfigID == "" || entry.Kind == "" || entry.Address == "" || entry.ConversationID == "" {
 		return false, stack.Wrap(errors.New("store: a customer, an agent config, a kind, an address and a conversation are required"))
@@ -66,7 +73,30 @@ func (s *Store) MapContact(ctx context.Context, entry *ContactMapEntry) (created
 	if err != nil {
 		return false, stack.Wrap(fmt.Errorf("store: map contact: %w", err))
 	}
-	return entry.ConversationID == proposed, nil
+	created = entry.ConversationID == proposed
+	if !created {
+		return false, nil
+	}
+	return true, s.joinPartner(ctx, entry)
+}
+
+// joinPartner points a row just made at its linked partner's omni-channel of the same agent,
+// when the customer linked its Stream user or its number (LinkUserPhone), and reads the row
+// back. Read after the row is committed, so a link made at the same time is either seen here
+// or sees the row. Only a new row: a row that was there when the link was made was joined
+// then, so a message on a known row costs no extra query.
+func (s *Store) joinPartner(ctx context.Context, entry *ContactMapEntry) error {
+	link, linked, err := s.linkOf(ctx, entry)
+	if err != nil || !linked {
+		return err
+	}
+	if err := s.joinLinked(ctx, link); err != nil {
+		return err
+	}
+	if err := s.db.NewSelect().Model(entry).WherePK().Scan(ctx); err != nil {
+		return stack.Wrap(fmt.Errorf("store: read a joined contact: %w", err))
+	}
+	return nil
 }
 
 // ErrNoContact says the contact map holds no row for a person: the agent has had no episode
@@ -93,10 +123,12 @@ func (s *Store) Contact(ctx context.Context, customerID, agentConfigID, kind, ad
 // ThreadContact is the contact map row of the person a thread channel's episodes are with,
 // for one agent of a customer: the one who started the thread, since OpenEpisode keeps the
 // first message's episode for the later ones. The newest episode of the thread decides. A
-// thread with no episode, or only one of another customer or agent, has none.
+// thread with no episode, or only one of another customer or agent, has none. A row a link set
+// aside is answered with its number as its address (reachedAt): the thread still reaches it.
 func (s *Store) ThreadContact(ctx context.Context, customerID, agentConfigID, threadChannel string) (ContactMapEntry, error) {
 	var entry ContactMapEntry
 	err := s.db.NewSelect().Model(&entry).
+		ColumnExpr("cm.*").ColumnExpr(reachedAt+" AS address").
 		Join("JOIN episodes AS ep ON ep.contact_id = cm.id").
 		Where("ep.customer_id = ?", customerID).Where("ep.thread_channel = ?", threadChannel).
 		Where("ep.session_id IS NULL").

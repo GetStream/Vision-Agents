@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -20,7 +19,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/mock"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
@@ -28,6 +26,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
 
 // Recall names a conversation to read history out of. Both halves are needed because a
@@ -61,6 +60,10 @@ type Spec struct {
 	// was written in, which the worker's session answers (Manager.handedOut). The person writes
 	// there themselves, so the session writes only its replies. No request sets it.
 	Dispatched bool
+	// HandedOutBy is the Stream user who wrote the message handed out (Manager.HandOut) on a
+	// Dispatched session, the person whose episode cards it may read (callCards.read). Empty
+	// for a hand-out that names nobody. No request sets it.
+	HandedOutBy string
 	// ThreadPerson is the person a thread of one person answers (SMS, WhatsApp, a 1:1 iMessage chat): the
 	// Stream user the channel bridge writes their messages as. The scheduling tools are offered
 	// for them, and ThreadChannel is the thread channel their tasks keep.
@@ -147,6 +150,18 @@ type Spec struct {
 	// Tags are the caller's own cost labels, carried onto every request the session
 	// makes.
 	Tags routing.Tags
+	// Team is the team the session's work is counted under, its limits included, when the
+	// caller that opened it names none: a server-side caller's own choice, or else the agent
+	// config's TeamTag. A team the caller's token signed is never moved by it. Not read from
+	// Tags, which a device may send.
+	Team string
+	// ConfigTeam is the agent config's own TeamTag, the one an end user's teams are checked
+	// against. Unlike Team, no caller moves it.
+	ConfigTeam string
+	// ChannelTeam is the Chat team the agent channels the session makes are in: ConfigTeam
+	// in an app that keeps each team's configs to its own users (store.AppSettings.AgentTeams),
+	// else none. Manager.Create sets it.
+	ChannelTeam string
 
 	// Incognito holds the conversation and records nothing about it: no session row, no
 	// turns, no transcript. It is the one field that makes a session unfindable afterwards,
@@ -244,10 +259,13 @@ type Spec struct {
 	// DispatchText hands what an end user writes to the customer's dispatch worker rather
 	// than the model, from the agent's config. The model answers only the server.
 	DispatchText bool
-	// EpisodeCards has a phone call write its episode card into the caller's omni-channel,
-	// and a session on a thread channel or a phone call start with the person's other cards,
-	// from the agent's config. Off, the session does what it did before the cards existed.
-	EpisodeCards bool
+	// EpisodeCards has a session on a thread channel, an app chat or a phone call start with
+	// the person's other cards, and a phone call write its episode card into the caller's
+	// omni-channel, from the agent's config: the on mode. EpisodeCardsRecord has the call
+	// write its card while no session reads any: the record mode (WritesCards). Both off, the
+	// session does what it did before the cards existed.
+	EpisodeCards       bool
+	EpisodeCardsRecord bool
 	// ProgressiveTools offers plugin, MCP server and connector tools by a summary, and
 	// answers the first call to each with its full description instead of running it.
 	ProgressiveTools bool
@@ -259,6 +277,10 @@ type Spec struct {
 	// ResumeHistory is how a conversation the session carries on is handed back to the
 	// model: the session request's, else the agent config's. Zero is the router's default.
 	ResumeHistory store.ResumeHistory
+	// FloorControl is the model that controls the floor, and how long a caller may wait once
+	// they stop: the session request's, else the agent config's. Zero is the default flow
+	// controller.
+	FloorControl store.FloorControl
 	// Scheduling is the agent config's scheduled-task settings: whether the
 	// scheduling tools are offered, and the defaults a task takes.
 	Scheduling store.AgentScheduling
@@ -274,16 +296,8 @@ type Spec struct {
 	// config's own, or one of the built-in think, recall and explain. Empty means the
 	// built-in set, which is only loaded when there is a subagent to run them.
 	SkillNames []string
-	// Plugins are hosted MCP servers this session may reach, named from the catalog with how
-	// each is reached. Those marked User the caller reaches with their own account, and a
-	// session with no caller is offered none of them.
-	Plugins []store.PluginEntry
-	// MCPServers are MCP servers outside the catalog, opened by their URL with no login, the
-	// app's, or each caller's own.
-	MCPServers []store.MCPServer
 	// ConnectorBindings are the agent config's connector bindings: which connector's tools
-	// the session may call, through which connection, and exactly which tools. A binding
-	// wins over a plugin entry for the same provider (withoutBoundPlugins).
+	// the session may call, through which connection, and exactly which tools.
 	ConnectorBindings []store.ConnectorBinding
 	// ConnectorSelections are the connections the caller picked for the config's session
 	// bindings, one per alias. Only references: the session checks each against the
@@ -329,6 +343,9 @@ type Spec struct {
 	Memory MemorySpec
 	// Phone attaches the session to a number, which is what turns transferring on.
 	Phone *PhoneSpec
+	// Voicemail is what the session does when the vendor says an answering machine picked
+	// up its placed call. Nil carries on as with a person.
+	Voicemail *VoicemailPlan
 
 	// CampaignID and ContactID say which piece of outbound work this call is, so a
 	// campaign can be told how its contacts went. Both are empty for a call nobody
@@ -353,6 +370,11 @@ type MemorySpec struct {
 	AppID string
 	// Filter narrows recall with the caller's own labels.
 	Filter map[string]string
+}
+
+// VoicemailPlan is the message left on an answering machine. Empty hangs up instead.
+type VoicemailPlan struct {
+	Message string
 }
 
 // PhoneSpec is the number the session acts from.
@@ -397,8 +419,6 @@ func FromConfig(config store.AgentConfig) Spec {
 		Guardrail:          config.Guardrail,
 		ReviewInstructions: config.ReviewInstructions,
 		SkillNames:         config.Skills,
-		Plugins:            config.Plugins,
-		MCPServers:         namedByURL(config.MCPServers),
 		ConnectorBindings:  config.Connectors,
 		Keyterms:           config.Keyterms,
 		VisibleTools:       config.VisibleTools,
@@ -408,24 +428,29 @@ func FromConfig(config store.AgentConfig) Spec {
 		Harness:            config.Harness,
 		DispatchText:       config.DispatchText,
 		EpisodeCards:       config.EpisodeCards,
+		EpisodeCardsRecord: config.EpisodeCardsRecord,
 		ProgressiveTools:   config.ProgressiveTools,
 		ResumeHistory:      config.ResumeHistory,
+		FloorControl:       config.FloorControl,
 		Scheduling:         config.Scheduling,
 		Calls:              config.Calls,
 		Tags:               routing.Tags(config.Tags),
+		Team:               configTeam(config.Tags),
+		ConfigTeam:         strings.TrimSpace(config.Tags[TeamTag]),
 		// The config's alone until Manager.Create holds it to the policies.
 		ToolOutputRetention: config.ToolOutputRetention,
 	}
 }
 
-// namedByURL is servers less any named like a catalog plugin, which is never offered or
-// logged into: a login under a catalog id would be taken for that plugin's, client and all.
-// Saving a config refuses such a name, so only one stored before the check carries it.
-func namedByURL(servers []store.MCPServer) []store.MCPServer {
-	return slices.DeleteFunc(slices.Clone(servers), func(server store.MCPServer) bool {
-		_, listed := plugins.Lookup(server.Name)
-		return listed
-	})
+// configTeam is the team a config's tags name. One that is no team's name is left out rather
+// than failing every session of an agent saved before the tag was a team: config writes
+// refuse it now, and it stays a cost label.
+func configTeam(tags map[string]string) string {
+	team := strings.TrimSpace(tags[TeamTag])
+	if usage.CheckTeam(team) != nil {
+		return ""
+	}
+	return team
 }
 
 // Normalize fills in the defaults a caller left out and reports what cannot be defaulted.
@@ -501,6 +526,8 @@ func (s *Spec) Normalize() error {
 		return stack.Wrap(errors.New("session: a text session holds no call, so it cannot join one"))
 	case s.Text && s.Native():
 		return stack.Wrap(errors.New("session: a text session has no voice, so it cannot run a speech-to-speech model"))
+	case s.Native() && s.Voicemail != nil && s.Voicemail.Message != "":
+		return stack.Wrap(errors.New("session: a speech-to-speech agent cannot say a fixed voicemail message; use hang_up"))
 	}
 	if s.CustomerID == "" {
 		return stack.Wrap(errors.New("session: a customer id is required"))
@@ -550,10 +577,6 @@ func (s *Spec) Normalize() error {
 			s.TTSTarget = defaultTTSTarget
 		}
 	}
-
-	// A connector binding wins over a plugin entry for the same provider, so the session
-	// does not reach one account by two paths, the second with the plugin's own login.
-	s.Plugins = s.withoutBoundPlugins(s.Plugins)
 
 	s.Keyterms = stt.CleanKeyterms(s.Keyterms)
 	if len(s.Keyterms) > stt.MaxKeyterms {
@@ -617,6 +640,12 @@ func (s Spec) KeyedAgentID() string {
 		return s.AgentID
 	}
 	return joinedCallID(s.CallID)
+}
+
+// WritesCards is whether the session's agent config writes episode cards: on or record
+// (store.AgentConfig.WritesCards).
+func (s Spec) WritesCards() bool {
+	return s.EpisodeCards || s.EpisodeCardsRecord
 }
 
 // Call is a Stream call: its type and its id.
@@ -755,39 +784,6 @@ func (s Spec) Shared() bool {
 	return s.Thread
 }
 
-// boundProvider reports whether a connector binding names the provider id. A connector id
-// is the provider's id: the built-in connectors share theirs with the plugin catalog (slack
-// is in both internal/plugins/plugins.yaml and internal/connectors/providers/slack.yaml).
-func (s Spec) boundProvider(id string) bool {
-	for _, binding := range s.ConnectorBindings {
-		if binding.ConnectorID == id {
-			return true
-		}
-	}
-	return false
-}
-
-// withoutBoundPlugins is entries less those for a provider a connector binding names.
-func (s Spec) withoutBoundPlugins(entries []store.PluginEntry) []store.PluginEntry {
-	// Without a binding the entries are left exactly as they were, the same slice.
-	if len(s.ConnectorBindings) == 0 {
-		return entries
-	}
-	var kept []store.PluginEntry
-	for _, entry := range entries {
-		if !s.boundProvider(entry.Name) {
-			kept = append(kept, entry)
-		}
-	}
-	return kept
-}
-
-// UnboundPlugins is the config's plugin entries that no connector binding replaces: the ones a
-// session of the config still opens (Normalize drops the rest with withoutBoundPlugins).
-func UnboundPlugins(config store.AgentConfig) []store.PluginEntry {
-	return Spec{ConnectorBindings: config.Connectors}.withoutBoundPlugins(config.Plugins)
-}
-
 // Native reports whether this session is held by one speech-to-speech model rather than
 // the cascade of a transcriber, a conversation model and a voice.
 func (s Spec) Native() bool { return s.STSTarget != "" }
@@ -795,6 +791,10 @@ func (s Spec) Native() bool { return s.STSTarget != "" }
 // projectTag is the cost label a project is carried as, which is the one the stats rollups
 // already break spend down by.
 const projectTag = "project"
+
+// TeamTag is the agent config's cost label that is also the team its work is counted under
+// (Spec.Team).
+const TeamTag = "team"
 
 // applyOverwrites folds what the caller asked to change about the models into the targets.
 //

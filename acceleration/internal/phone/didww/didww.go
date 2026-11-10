@@ -99,7 +99,7 @@ func New(options Options) (*Provider, error) {
 // the only way it will filter on either.
 func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]phone.Available, error) {
 	if search.Country == "" {
-		return nil, stack.Wrap(errors.New("didww: a country is required to search for numbers"))
+		return nil, stack.Wrap(phone.Invalid(errors.New("didww: a country is required to search for numbers")))
 	}
 
 	countryID, err := p.countryID(ctx, search.Country)
@@ -262,7 +262,7 @@ func (p *Provider) countryID(ctx context.Context, country string) (string, error
 		return "", err
 	}
 	if len(response.Data) == 0 {
-		return "", stack.Wrap(fmt.Errorf("didww: does not sell numbers in %s", strings.ToUpper(country)))
+		return "", stack.Wrap(phone.Invalid(fmt.Errorf("didww: does not sell numbers in %s", strings.ToUpper(country))))
 	}
 	return response.Data[0].ID, nil
 }
@@ -271,7 +271,7 @@ func (p *Provider) countryID(ctx context.Context, country string) (string, error
 func (p *Provider) groupTypeID(ctx context.Context, kind phone.NumberType) (string, error) {
 	named, ok := kinds[kind]
 	if !ok {
-		return "", stack.Wrap(fmt.Errorf("didww: does not sell %s numbers", kind))
+		return "", stack.Wrap(phone.Invalid(fmt.Errorf("didww: does not sell %s numbers", kind)))
 	}
 	query := url.Values{"filter[name]": {named}}
 
@@ -284,7 +284,7 @@ func (p *Provider) groupTypeID(ctx context.Context, kind phone.NumberType) (stri
 			return group.ID, nil
 		}
 	}
-	return "", stack.Wrap(fmt.Errorf("didww: does not sell %s numbers", kind))
+	return "", stack.Wrap(phone.Invalid(fmt.Errorf("didww: does not sell %s numbers", kind)))
 }
 
 // offerFor finds which available DID a number is and which SKU sells it, which is what an
@@ -311,7 +311,7 @@ func (p *Provider) offerFor(ctx context.Context, e164 string) (string, string, e
 		}
 		return number.ID, sku, nil
 	}
-	return "", "", stack.Wrap(fmt.Errorf("didww: %s is not one of the numbers on offer", e164))
+	return "", "", stack.Wrap(phone.Invalid(fmt.Errorf("didww: %s is not one of the numbers on offer", e164)))
 }
 
 // didID finds DIDWW's identifier for a number this account holds, which is what cancelling
@@ -351,7 +351,7 @@ func (p *Provider) do(ctx context.Context, method, path string, query url.Values
 
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, payload)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("didww: %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "could not build the request", Cause: err})
 	}
 	request.Header.Set("Api-Key", p.apiKey)
 	request.Header.Set("Accept", contentType)
@@ -361,20 +361,22 @@ func (p *Provider) do(ctx context.Context, method, path string, query url.Values
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("didww: %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "no answer", Cause: err})
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return stack.Wrap(fmt.Errorf("didww: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Status: response.StatusCode,
+			Message: strings.TrimSpace(string(detail))})
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return stack.Wrap(fmt.Errorf("didww: decode %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Status: response.StatusCode,
+			Message: "could not read the answer", Cause: err})
 	}
 	return nil
 }

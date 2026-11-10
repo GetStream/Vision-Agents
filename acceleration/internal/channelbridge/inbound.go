@@ -240,7 +240,51 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 	inbound := message.Message()
 	log := b.logger.With("connector", message.ConnectorID, "customer", message.CustomerID, "channel", message.ChannelID,
 		"seq", message.Seq)
-	opened, err := b.episode(ctx, thread, config, inbound, message.CreatedAt)
+	// Before the episode opens: a message that is only files named by id, none of them a
+	// photo that downloaded or that an earlier attempt uploaded, has nothing to write or
+	// answer, so it opens no episode whose card nothing would ever write.
+	files, named, err := b.download(ctx, thread, inbound, log)
+	if err != nil {
+		return err
+	}
+	if nothingToWrite(inbound, len(files)+len(uploads(inbound.Media)), named) {
+		log.Warn("an inbound message that is only files none of which could be downloaded is not written or answered")
+		return nil
+	}
+	target, err := b.openThread(ctx, thread, config, inbound)
+	if err != nil {
+		return err
+	}
+	// The row's last attempt writes the message without a photo Stream Chat keeps failing.
+	media, err := b.upload(ctx, target, thread, inbound.Media, files, message.Attempts+1 > len(b.inboundRetries), log)
+	if err != nil {
+		return err
+	}
+	// The row keeps this attempt's uploads before the message is written, so a later attempt,
+	// such as one after a write Stream Chat failed or an answer that was lost, writes them
+	// again instead of downloading and uploading the photos, whose provider URLs may have
+	// expired by then. A lease taken over keeps nothing, and this worker holds the row no
+	// longer: it returns, and the worker that took the lease writes.
+	uploaded := uploads(media)
+	if len(uploaded) > len(uploads(inbound.Media)) {
+		changed, err := b.store.SaveChannelInboundMedia(ctx, message, media)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			log.Info("an inbound message's lease ran out before its photos were kept: the worker that took it writes it")
+			return nil
+		}
+	}
+	if nothingToWrite(inbound, len(uploaded), named) {
+		log.Warn("an inbound message that is only files none of which could be stored is not written or answered")
+		return nil
+	}
+	// A store that fails fails the attempt, so a later one records the chat's starter.
+	if err := b.recordStarter(ctx, thread, inbound); err != nil {
+		return err
+	}
+	opened, err := b.queuedEpisode(ctx, thread, message, inbound)
 	if err != nil {
 		log.Error("could not open the episode of an inbound message", "error", err)
 	}
@@ -254,11 +298,10 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 		opened.New = true
 	}
 	id := inboundMessageID(thread.ChannelID, inbound.ProviderMessageID)
-	written, err := b.writeInto(ctx, thread, config, inbound, id)
-	switch {
-	case alreadyWritten(err):
-		written = rewritten(thread, inbound, id)
-	case err != nil:
+	// Stream Chat refusing the write as already done answers no message, so writeInto
+	// rebuilds it.
+	written, err := b.writeInto(ctx, target, thread, inbound, id, uploaded)
+	if err != nil && !alreadyWritten(err) {
 		return err
 	}
 	log.Info("an inbound message is written into its thread channel", "message", id)

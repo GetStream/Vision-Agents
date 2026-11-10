@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,37 +45,325 @@ func (s *GuestsSuite) TestAnAppThatDoesNotAdmitGuestsRefusesToMintOne() {
 	s.Equal(http.StatusForbidden, status)
 }
 
-func (s *GuestsSuite) TestAnIdThatIsNotAGuestOfThisAppIsRefused() {
-	// A guest naming an id could otherwise be handed a real user's conversations, and
+func (s *GuestsSuite) TestAnIdThatIsNotAGuestOfThisAppIsRefusedToTheBackend() {
+	// The backend naming an id could otherwise be handed a token for a real user, and
 	// whether a name belongs to one is not something this can tell apart.
-	status, failure := s.data.createAnonymous().failure(http.MethodPost, "/v1/agents/guests",
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/guests",
 		GuestUserRequest{Id: pointerTo(s.utils.uuid())})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "not a guest of this app")
 }
 
-func (s *GuestsSuite) TestAGuestOnlySeenInTheAppsOwnTokenIsNotMintedAgain() {
+func (s *GuestsSuite) TestAnAnonymousCallerNamingAnIdThatIsNotAGuestIsMintedANewGuest() {
+	// Refusing would tell whoever is guessing which ids are guests and which are accounts.
+	named := s.utils.uuid()
+
+	minted := s.mint(s.data.createAnonymous(), GuestUserRequest{Id: pointerTo(named)})
+
+	s.NotEqual(named, minted.Id)
+	s.Contains(minted.Id, guestPrefix)
+}
+
+func (s *GuestsSuite) TestAGuestOnlySeenInTheAppsOwnTokenIsNotMintedAgainForTheBackend() {
 	// The app signs its guest tokens itself, for any id it likes, so a guest seen in one is
 	// no sign the id is nobody else's.
 	seen := s.guestSeenInAToken()
 
-	status, failure := s.data.createAnonymous().failure(http.MethodPost, "/v1/agents/guests",
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/guests",
 		GuestUserRequest{Id: pointerTo(seen)})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "not a guest of this app")
 }
 
-func (s *GuestsSuite) TestAGuestWhoHasSignedUpIsNotMintedAgain() {
+func (s *GuestsSuite) TestAnAnonymousCallerNamingAGuestOnlySeenInTheAppsOwnTokenIsMintedANewGuest() {
+	seen := s.guestSeenInAToken()
+
+	minted := s.mint(s.data.createAnonymous(), GuestUserRequest{Id: pointerTo(seen)})
+
+	s.NotEqual(seen, minted.Id)
+}
+
+func (s *GuestsSuite) TestAGuestWhoHasSignedUpIsNotMintedAgainForTheBackend() {
 	guest := s.recordGuest()
 	s.claim(guest, s.utils.uuid())
 
-	status, failure := s.data.createAnonymous().failure(http.MethodPost, "/v1/agents/guests",
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/guests",
 		GuestUserRequest{Id: pointerTo(guest)})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "has been claimed")
+}
+
+func (s *GuestsSuite) TestAGuestWhoHasSignedUpIsNotMintedAgainForTheirOwnToken() {
+	guest := s.recordGuest()
+	s.claim(guest, s.utils.uuid())
+
+	status, failure := s.data.signedInAs(guest).failure(http.MethodPost, "/v1/agents/guests",
+		GuestUserRequest{Id: pointerTo(guest)})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "has been claimed")
+}
+
+func (s *GuestsSuite) TestAnAnonymousCallerNamingAGuestWhoHasSignedUpIsMintedANewGuest() {
+	guest := s.recordGuest()
+	s.claim(guest, s.utils.uuid())
+
+	minted := s.mint(s.data.createAnonymous(), GuestUserRequest{Id: pointerTo(guest)})
+
+	s.NotEqual(guest, minted.Id)
+}
+
+func (s *GuestsSuite) TestAFirstGuestIsHandedARefreshSecret() {
+	minted := s.mint(s.data.createAnonymous(), GuestUserRequest{})
+
+	s.Require().NotNil(minted.RefreshSecret)
+	s.NotEmpty(*minted.RefreshSecret)
+	s.Equal(store.GuestSecretHash(*minted.RefreshSecret), s.storedGuest(minted.Id).RefreshSecretHash,
+		"only the hash is kept, and it is the hash of what was handed out")
+}
+
+func (s *GuestsSuite) TestAnAnonymousCallerNamingAnExistingGuestCannotTakeThemOver() {
+	// The takeover: a guest id is the author of their messages, so anybody who shared a
+	// channel with them knows it. Naming it is no proof of being them.
+	victim := s.mint(s.data.createAnonymous(), GuestUserRequest{
+		Name: pointerTo("Alice"), Custom: &map[string]any{"plan": "pro"},
+	})
+	before := s.storedGuest(victim.Id)
+
+	minted := s.mint(s.data.createAnonymous(), GuestUserRequest{
+		Id: pointerTo(victim.Id), Name: pointerTo("Mallory"), Custom: &map[string]any{"plan": "free"},
+	})
+
+	s.NotEqual(victim.Id, minted.Id, "the caller is somebody new")
+	s.Equal("Mallory", value(minted.Name), "and is called what it asked to be")
+	after := s.storedGuest(victim.Id)
+	s.Equal("Alice", after.Name)
+	s.Equal(map[string]any{"plan": "pro"}, after.Custom)
+	s.Equal(before.RefreshSecretHash, after.RefreshSecretHash, "the guest's secret still works")
+	s.assertStreamProfile(victim.Id, "Alice", map[string]any{"plan": "pro"})
+}
+
+func (s *GuestsSuite) TestAnAnonymousCallerNamingTheGuestInTheUserHeaderIsStillMintedANewGuest() {
+	// A header is something a caller writes about itself, so going by the guest's id there
+	// makes it anonymous all the same.
+	victim := s.mint(s.data.createAnonymous(), GuestUserRequest{Name: pointerTo("Alice")})
+
+	minted := s.mint(s.data.claiming(victim.Id), GuestUserRequest{Id: pointerTo(victim.Id)})
+
+	s.NotEqual(victim.Id, minted.Id)
+	s.Equal("Alice", s.storedGuest(victim.Id).Name)
+	s.assertStreamProfile(victim.Id, "Alice", nil)
+}
+
+func (s *GuestsSuite) TestAnotherSignedInUserNamingAGuestIsMintedANewGuest() {
+	victim := s.mint(s.data.createAnonymous(), GuestUserRequest{Name: pointerTo("Alice")})
+	before := s.storedGuest(victim.Id)
+
+	minted := s.mint(s.data.createUser(), GuestUserRequest{Id: pointerTo(victim.Id), Name: pointerTo("Mallory")})
+
+	s.NotEqual(victim.Id, minted.Id)
+	after := s.storedGuest(victim.Id)
+	s.Equal("Alice", after.Name)
+	s.Equal(before.RefreshSecretHash, after.RefreshSecretHash)
+	s.assertStreamProfile(victim.Id, "Alice", nil)
+}
+
+func (s *GuestsSuite) TestAGuestsOwnTokenRefreshesThemWithoutASecretAndWithoutTouchingTheirProfile() {
+	// The token the router mints carries no role, so it arrives as a signed-in user's.
+	first := s.mint(s.data.createAnonymous(), GuestUserRequest{
+		Name: pointerTo("Alice"), Custom: &map[string]any{"plan": "pro"},
+	})
+	writes := s.profileWrites()
+
+	again := s.mint(s.data.signedInAs(first.Id), GuestUserRequest{
+		Id: pointerTo(first.Id), Name: pointerTo("Mallory"), Custom: &map[string]any{"plan": "free"},
+	})
+
+	s.Equal(first.Id, again.Id)
+	s.NotEmpty(again.Token)
+	s.Equal("Alice", value(again.Name), "a guest's own token is no profile editor")
+	s.Require().NotNil(again.Custom)
+	s.Equal(map[string]any{"plan": "pro"}, *again.Custom)
+	s.Nil(again.RefreshSecret, "the guest already holds a secret, which keeps working")
+	s.Equal(store.GuestSecretHash(*first.RefreshSecret), s.storedGuest(first.Id).RefreshSecretHash)
+	s.Equal(writes, s.profileWrites(), "Stream is not asked to change who they are")
+	s.assertStreamProfile(first.Id, "Alice", map[string]any{"plan": "pro"})
+}
+
+func (s *GuestsSuite) TestAGuestWithNoSecretIsGivenOneByTheirOwnToken() {
+	// A guest minted before secrets existed holds none, and gets one the next time they refresh.
+	guest := s.recordGuest()
+
+	again := s.mint(s.data.signedInAs(guest), GuestUserRequest{Id: pointerTo(guest)})
+
+	s.Equal(guest, again.Id)
+	s.Require().NotNil(again.RefreshSecret)
+	s.Equal(store.GuestSecretHash(*again.RefreshSecret), s.storedGuest(guest).RefreshSecretHash)
+}
+
+func (s *GuestsSuite) TestAnAccountNamingItsOwnIdIsNotMadeAGuest() {
+	account := s.data.createUser()
+	writes := s.profileWrites()
+
+	status, failure := account.failure(http.MethodPost, "/v1/agents/guests",
+		GuestUserRequest{Id: pointerTo(account.userID)})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "not a guest of this app")
+	s.Equal(writes, s.profileWrites(), "Stream is not told the account is a guest")
+}
+
+func (s *GuestsSuite) TestOneGuestsSecretDoesNotBringBackAnother() {
+	alice := s.mint(s.data.createAnonymous(), GuestUserRequest{Name: pointerTo("Alice")})
+	bob := s.mint(s.data.createAnonymous(), GuestUserRequest{Name: pointerTo("Bob")})
+
+	answered := s.mint(s.data.createAnonymous(), GuestUserRequest{Id: pointerTo(bob.Id), RefreshSecret: alice.RefreshSecret})
+
+	s.NotEqual(bob.Id, answered.Id)
+	s.NotEqual(alice.Id, answered.Id)
+	s.Equal(store.GuestSecretHash(*bob.RefreshSecret), s.storedGuest(bob.Id).RefreshSecretHash)
+	s.Equal(store.GuestSecretHash(*alice.RefreshSecret), s.storedGuest(alice.Id).RefreshSecretHash)
+}
+
+func (s *GuestsSuite) TestTwoRequestsRedeemingOneSecretBringTheGuestBackOnce() {
+	first := s.mint(s.data.createAnonymous(), GuestUserRequest{})
+	request := GuestUserRequest{Id: pointerTo(first.Id), RefreshSecret: first.RefreshSecret}
+
+	answers := make(chan GuestUser, 2)
+	for range 2 {
+		go func() {
+			var minted GuestUser
+			s.data.createAnonymous().do(http.MethodPost, "/v1/agents/guests", request, &minted)
+			answers <- minted
+		}()
+	}
+	same := 0
+	for range 2 {
+		if (<-answers).Id == first.Id {
+			same++
+		}
+	}
+
+	s.Equal(1, same, "a secret is spent once")
+}
+
+func (s *GuestsSuite) TestTheBackendMintingAGuestAgainReplacesTheirSecret() {
+	// The app hands the new one to the device it decided is this guest.
+	first := s.mint(s.data.createAnonymous(), GuestUserRequest{})
+
+	again := s.mint(s.serverClient, GuestUserRequest{Id: pointerTo(first.Id)})
+	stale := s.mint(s.data.createAnonymous(), GuestUserRequest{Id: pointerTo(first.Id), RefreshSecret: first.RefreshSecret})
+
+	s.Require().NotNil(again.RefreshSecret)
+	s.Equal(store.GuestSecretHash(*again.RefreshSecret), s.storedGuest(first.Id).RefreshSecretHash)
+	s.NotEqual(first.Id, stale.Id, "the secret the backend replaced no longer works")
+}
+
+func (s *GuestsSuite) TestAGuestTokenWithTheGuestRoleRefreshesTheSameGuest() {
+	first := s.mint(s.data.createAnonymous(), GuestUserRequest{Name: pointerTo("Alice")})
+
+	again := s.mint(s.asGuest(first.Id), GuestUserRequest{Id: pointerTo(first.Id)})
+
+	s.Equal(first.Id, again.Id)
+	s.Nil(again.RefreshSecret, "the guest keeps the secret they hold")
+	s.Equal(store.GuestSecretHash(*first.RefreshSecret), s.storedGuest(first.Id).RefreshSecretHash)
+}
+
+func (s *GuestsSuite) TestARefreshSecretBringsTheSameGuestBackWithANewSecret() {
+	first := s.mint(s.data.createAnonymous(), GuestUserRequest{
+		Name: pointerTo("Alice"), Custom: &map[string]any{"plan": "pro"},
+	})
+
+	again := s.mint(s.data.createAnonymous(), GuestUserRequest{
+		Id: pointerTo(first.Id), RefreshSecret: first.RefreshSecret, Name: pointerTo("Mallory"),
+	})
+
+	s.Equal(first.Id, again.Id)
+	s.NotEmpty(again.Token)
+	s.Equal("Alice", value(again.Name), "a secret proves who they are, not what to call them")
+	s.Require().NotNil(again.Custom)
+	s.Equal(map[string]any{"plan": "pro"}, *again.Custom)
+	s.Require().NotNil(again.RefreshSecret)
+	s.NotEqual(*first.RefreshSecret, *again.RefreshSecret)
+	s.Equal(store.GuestSecretHash(*again.RefreshSecret), s.storedGuest(first.Id).RefreshSecretHash)
+}
+
+func (s *GuestsSuite) TestARefreshSecretWorksOnce() {
+	// Whoever copied a secret off a device must not be able to come back with it after the
+	// guest has.
+	first := s.mint(s.data.createAnonymous(), GuestUserRequest{Name: pointerTo("Alice")})
+	again := s.mint(s.data.createAnonymous(), GuestUserRequest{Id: pointerTo(first.Id), RefreshSecret: first.RefreshSecret})
+	s.Require().Equal(first.Id, again.Id)
+
+	replayed := s.mint(s.data.createAnonymous(), GuestUserRequest{Id: pointerTo(first.Id), RefreshSecret: first.RefreshSecret})
+
+	s.NotEqual(first.Id, replayed.Id)
+	s.Equal(store.GuestSecretHash(*again.RefreshSecret), s.storedGuest(first.Id).RefreshSecretHash,
+		"the guest's current secret still works")
+}
+
+func (s *GuestsSuite) TestAWrongRefreshSecretMintsANewGuest() {
+	first := s.mint(s.data.createAnonymous(), GuestUserRequest{Name: pointerTo("Alice")})
+	before := s.storedGuest(first.Id)
+
+	minted := s.mint(s.data.createAnonymous(), GuestUserRequest{
+		Id: pointerTo(first.Id), RefreshSecret: pointerTo("not-" + *first.RefreshSecret),
+	})
+
+	s.NotEqual(first.Id, minted.Id)
+	s.Equal(before.RefreshSecretHash, s.storedGuest(first.Id).RefreshSecretHash)
+}
+
+func (s *GuestsSuite) TestAClaimedGuestsRefreshSecretMintsANewGuest() {
+	// A guest who signed up has an account to sign in with; the secret they held is no way
+	// back into the guest.
+	first := s.mint(s.data.createAnonymous(), GuestUserRequest{Name: pointerTo("Alice")})
+	s.claim(first.Id, s.utils.uuid())
+
+	minted := s.mint(s.data.createAnonymous(), GuestUserRequest{Id: pointerTo(first.Id), RefreshSecret: first.RefreshSecret})
+
+	s.NotEqual(first.Id, minted.Id)
+}
+
+func (s *GuestsSuite) TestTheBackendMintingAGuestAgainWithoutANameKeepsTheirName() {
+	first := s.mint(s.data.createAnonymous(), GuestUserRequest{Name: pointerTo("Alice")})
+
+	again := s.mint(s.serverClient, GuestUserRequest{Id: pointerTo(first.Id)})
+
+	s.Equal(first.Id, again.Id)
+	s.Equal("Alice", value(again.Name), "not Guest")
+	s.Require().NotNil(again.RefreshSecret)
+	s.Equal(store.GuestSecretHash(*again.RefreshSecret), s.storedGuest(first.Id).RefreshSecretHash)
+	s.assertStreamProfile(first.Id, "Alice", nil)
+}
+
+func (s *GuestsSuite) TestABackendRenameIsKeptForTheGuestsNextToken() {
+	// Stream and the stored row must agree, or the next re-mint sends the old name back.
+	first := s.mint(s.data.createAnonymous(), GuestUserRequest{Name: pointerTo("Alice")})
+	s.mint(s.serverClient, GuestUserRequest{Id: pointerTo(first.Id), Name: pointerTo("Bob")})
+
+	again := s.mint(s.serverClient, GuestUserRequest{Id: pointerTo(first.Id)})
+	self := s.mint(s.data.signedInAs(first.Id), GuestUserRequest{Id: pointerTo(first.Id)})
+
+	s.Equal("Bob", value(again.Name), "the backend minting them again without a name")
+	s.Equal("Bob", value(self.Name), "the guest refreshing with their own token")
+	s.Equal("Bob", s.storedGuest(first.Id).Name)
+	s.assertStreamProfile(first.Id, "Bob", nil)
+}
+
+func (s *GuestsSuite) TestTheBackendMayRenameAGuestItMintsAgain() {
+	first := s.mint(s.data.createAnonymous(), GuestUserRequest{Name: pointerTo("Alice")})
+
+	again := s.mint(s.serverClient, GuestUserRequest{
+		Id: pointerTo(first.Id), Name: pointerTo("Alicia"), Custom: &map[string]any{"plan": "pro"},
+	})
+
+	s.Equal(first.Id, again.Id)
+	s.Equal("Alicia", value(again.Name))
+	s.assertStreamProfile(first.Id, "Alicia", map[string]any{"plan": "pro"})
 }
 
 func (s *GuestsSuite) TestClaimingAGuestMovesTheirConversationsOntoTheAccount() {
@@ -238,7 +527,8 @@ func (s *GuestsSuite) TestAClaimDoesNotLetTheAccountIntoAnotherAppsChannel() {
 	row["id"], row["user_id"], row["conversation_id"], row["agent_id"] = store.NewID(), guest, "", foreign
 	encoded, err := json.Marshal(row)
 	s.Require().NoError(err)
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/data/import",
+	// full: the app already holds the guest.
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/data/import?full=true",
 		ndjson([]dataLine{{Table: "agent_sessions", Row: encoded}}), nil))
 	honest := s.talked(guest)
 
@@ -271,12 +561,48 @@ func (s *GuestsSuite) TestAClaimStillJoinsAChannelWithNoCustomerStamp() {
 	row["id"], row["user_id"], row["conversation_id"], row["agent_id"] = store.NewID(), guest, "", channel
 	encoded, err := json.Marshal(row)
 	s.Require().NoError(err)
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/data/import",
+	// full: the app already holds the guest.
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/data/import?full=true",
 		ndjson([]dataLine{{Table: "agent_sessions", Row: encoded}}), nil))
 
 	s.claim(guest, account)
 
 	s.Contains(s.chat.Members(channel), account, "a channel with no stamp is the app's to join")
+}
+
+// mint asks for a guest as the caller and expects one.
+func (s *GuestsSuite) mint(as *testClient, request GuestUserRequest) GuestUser {
+	var minted GuestUser
+	s.Require().Equal(http.StatusCreated, as.do(http.MethodPost, "/v1/agents/guests", request, &minted))
+	return minted
+}
+
+// storedGuest is the guest's row as the store holds it.
+func (s *GuestsSuite) storedGuest(id string) store.User {
+	held, err := s.store.Guest(context.Background(), s.customerID(), id)
+	s.Require().NoError(err)
+	return held
+}
+
+// profileWrites is how many user upserts Stream has been sent for the suite's app.
+func (s *GuestsSuite) profileWrites() int {
+	written := 0
+	for _, request := range s.chat.Requests(suiteStreamKey) {
+		if request.Method == http.MethodPost && strings.HasSuffix(request.Path, "/users") {
+			written++
+		}
+	}
+	return written
+}
+
+// assertStreamProfile checks who Stream holds the user to be. A nil custom is not checked.
+func (s *GuestsSuite) assertStreamProfile(id, name string, custom map[string]any) {
+	user, ok := s.chat.User(id)
+	s.Require().True(ok, "Stream holds the guest")
+	s.Equal(name, user["name"])
+	if custom != nil {
+		s.Equal(custom, user["custom"])
+	}
 }
 
 // recordGuest is a guest of the suite's app, written the way minting one writes it. Minting

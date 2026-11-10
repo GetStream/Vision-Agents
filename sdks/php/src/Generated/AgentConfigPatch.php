@@ -21,7 +21,9 @@ final readonly class AgentConfigPatch
         /** @var list<AgentConnectorBinding>|null */
         public ?array $connectors = null,
         public ?AgentDispatch $dispatch = null,
-        public ?bool $episodeCards = null,
+        public EpisodeCardsMode|string|null $episodeCards = null,
+        // Replaces the choice whole. Left out or null, the stored choice stays; an empty object is the default flow c...
+        public ?FloorControl $floorControl = null,
         // Replaces the greeting whole. An empty text removes it.
         public ?Greeting $greeting = null,
         // A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string remove...
@@ -32,18 +34,16 @@ final readonly class AgentConfigPatch
         public ?array $keyterms = null,
         public ?string $knowledgeNamespace = null,
         public ?string $llm = null,
-        // Replaces the list whole. An empty list removes it.
-        /** @var list<string>|null */
-        public ?array $llmFallbacks = null,
-        /** @var list<McpServer>|null */
+        // No longer read: a server named by URL is now a custom connector, so create one for its URL and name it unde...
+        /** @var list<array<string, mixed>>|null */
         public ?array $mcpServers = null,
         public AgentMode|string|null $mode = null,
         // What the config is called, which is unique among the customer's own.
         public ?string $name = null,
-        // Deprecated: use the events of a fixed binding under connectors.
-        /** @var list<PluginEvent>|null */
+        // No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty lis...
+        /** @var list<array<string, mixed>>|null */
         public ?array $pluginEvents = null,
-        // Deprecated: use connectors, a binding to a connector.
+        // No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty lis...
         /** @var list<mixed>|null */
         public ?array $plugins = null,
         // Where the agent's work is done: us or eu for now. A change naming a model with no instance there, a knowled...
@@ -71,6 +71,9 @@ final readonly class AgentConfigPatch
         public ?array $visibleTools = null,
         // The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voic...
         public ?string $voice = null,
+        // Replaces the list whole. An empty list removes it.
+        /** @var list<string>|null */
+        public ?array $llmFallbacks = null,
     ) {
     }
 
@@ -84,7 +87,8 @@ final readonly class AgentConfigPatch
             channels: array_key_exists('channels', $data) && $data['channels'] !== null ? AgentChannels::fromArray(Json::object($data, 'channels')) : null,
             connectors: array_key_exists('connectors', $data) && $data['connectors'] !== null ? array_map(AgentConnectorBinding::fromArray(...), Json::objects($data, 'connectors')) : null,
             dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
-            episodeCards: array_key_exists('episode_cards', $data) && $data['episode_cards'] !== null ? Json::bool($data, 'episode_cards') : null,
+            episodeCards: array_key_exists('episode_cards', $data) && $data['episode_cards'] !== null ? Json::enum($data, 'episode_cards', EpisodeCardsMode::class) : null,
+            floorControl: array_key_exists('floor_control', $data) && $data['floor_control'] !== null ? FloorControl::fromArray(Json::object($data, 'floor_control')) : null,
             greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Greeting::fromArray(Json::object($data, 'greeting')) : null,
             guardrail: array_key_exists('guardrail', $data) && $data['guardrail'] !== null ? Json::string($data, 'guardrail') : null,
             harness: array_key_exists('harness', $data) && $data['harness'] !== null ? Json::enum($data, 'harness', Harness::class) : null,
@@ -92,11 +96,10 @@ final readonly class AgentConfigPatch
             keyterms: array_key_exists('keyterms', $data) && $data['keyterms'] !== null ? Json::strings($data, 'keyterms') : null,
             knowledgeNamespace: array_key_exists('knowledge_namespace', $data) && $data['knowledge_namespace'] !== null ? Json::string($data, 'knowledge_namespace') : null,
             llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
-            llmFallbacks: array_key_exists('llm_fallbacks', $data) && $data['llm_fallbacks'] !== null ? Json::strings($data, 'llm_fallbacks') : null,
-            mcpServers: array_key_exists('mcp_servers', $data) && $data['mcp_servers'] !== null ? array_map(McpServer::fromArray(...), Json::objects($data, 'mcp_servers')) : null,
+            mcpServers: array_key_exists('mcp_servers', $data) && $data['mcp_servers'] !== null ? Json::objects($data, 'mcp_servers') : null,
             mode: array_key_exists('mode', $data) && $data['mode'] !== null ? Json::enum($data, 'mode', AgentMode::class) : null,
             name: array_key_exists('name', $data) && $data['name'] !== null ? Json::string($data, 'name') : null,
-            pluginEvents: array_key_exists('plugin_events', $data) && $data['plugin_events'] !== null ? array_map(PluginEvent::fromArray(...), Json::objects($data, 'plugin_events')) : null,
+            pluginEvents: array_key_exists('plugin_events', $data) && $data['plugin_events'] !== null ? Json::objects($data, 'plugin_events') : null,
             plugins: array_key_exists('plugins', $data) && $data['plugins'] !== null ? Json::list($data, 'plugins') : null,
             region: array_key_exists('region', $data) && $data['region'] !== null ? Json::string($data, 'region') : null,
             resumeHistory: array_key_exists('resume_history', $data) && $data['resume_history'] !== null ? ResumeHistory::fromArray(Json::object($data, 'resume_history')) : null,
@@ -116,6 +119,7 @@ final readonly class AgentConfigPatch
             video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
             visibleTools: array_key_exists('visible_tools', $data) && $data['visible_tools'] !== null ? Json::strings($data, 'visible_tools') : null,
             voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
+            llmFallbacks: array_key_exists('llm_fallbacks', $data) && $data['llm_fallbacks'] !== null ? Json::strings($data, 'llm_fallbacks') : null,
         );
     }
 
@@ -140,7 +144,10 @@ final readonly class AgentConfigPatch
             $out['dispatch'] = $this->dispatch->toArray();
         }
         if ($this->episodeCards !== null) {
-            $out['episode_cards'] = $this->episodeCards;
+            $out['episode_cards'] = Json::enumValue($this->episodeCards);
+        }
+        if ($this->floorControl !== null) {
+            $out['floor_control'] = $this->floorControl->toArray();
         }
         if ($this->greeting !== null) {
             $out['greeting'] = $this->greeting->toArray();
@@ -163,11 +170,8 @@ final readonly class AgentConfigPatch
         if ($this->llm !== null) {
             $out['llm'] = $this->llm;
         }
-        if ($this->llmFallbacks !== null) {
-            $out['llm_fallbacks'] = $this->llmFallbacks;
-        }
         if ($this->mcpServers !== null) {
-            $out['mcp_servers'] = array_map(static fn (McpServer $each): array => $each->toArray(), $this->mcpServers);
+            $out['mcp_servers'] = $this->mcpServers;
         }
         if ($this->mode !== null) {
             $out['mode'] = Json::enumValue($this->mode);
@@ -176,7 +180,7 @@ final readonly class AgentConfigPatch
             $out['name'] = $this->name;
         }
         if ($this->pluginEvents !== null) {
-            $out['plugin_events'] = array_map(static fn (PluginEvent $each): array => $each->toArray(), $this->pluginEvents);
+            $out['plugin_events'] = $this->pluginEvents;
         }
         if ($this->plugins !== null) {
             $out['plugins'] = $this->plugins;
@@ -234,6 +238,9 @@ final readonly class AgentConfigPatch
         }
         if ($this->voice !== null) {
             $out['voice'] = $this->voice;
+        }
+        if ($this->llmFallbacks !== null) {
+            $out['llm_fallbacks'] = $this->llmFallbacks;
         }
         return $out;
     }

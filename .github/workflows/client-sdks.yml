@@ -107,7 +107,7 @@ jobs:
       - name: Generated models match the spec
         run: |
           uv run generate.py
-          changed=$(git status --porcelain -- core/src/main/kotlin/io/getstream/visionagents/android/core/generated)
+          changed=$(git status --porcelain -- core/src/main/kotlin/io/getstream/agents/android/core/generated)
           if [ -n "$changed" ]; then echo "$changed"; git diff; exit 1; fi
 
   dart:
@@ -155,11 +155,19 @@ jobs:
         with:
           version: "0.13.6"
 
-      # The client is generated with Stream's generator, which lives in the chat repository
-      # and is not checked out here, so this checks only that every operation it calls is
-      # still one a device may reach. PostureTests reads the committed client against the spec.
-      - name: Client operations are still client-side
+      # The client is generated with Stream's generator, which lives in the private chat
+      # repository and is not checked out here, so this does not regenerate. It checks that
+      # every operation the client calls is still one a device may reach, and that the
+      # committed client was generated from the spec's client part as it is now: generate.py
+      # records a hash of that part in sdks/swift/core/generated.json. A spec-only PR runs
+      # this job too (the swift filter lists openapi.yaml). PostureTests reads the committed
+      # client against the spec.
+      - name: Client operations are still client-side and the client is up to date
         run: uv run sdks/swift/generate.py --check
+
+      # generate.py's own rules: what makes the client stale and what does not.
+      - name: generate.py tests
+        run: uv run --no-project --with pytest --with pyyaml pytest -c /dev/null --rootdir=sdks/swift --confcutdir=sdks/swift sdks/swift/test_generate.py
 
       # Both builds resolve into one checkout directory and compile into one DerivedData, so
       # the Stream SDKs and WebRTC are fetched and built once a run rather than twice.
@@ -176,7 +184,7 @@ jobs:
         run: |
           device=$(xcrun simctl list devices available -j | python3 -c "import json, sys; devices = json.load(sys.stdin)['devices']; print(next(d['udid'] for runtime, found in devices.items() if 'iOS' in runtime for d in found if d['name'].startswith('iPhone')))")
           echo "SIMULATOR=$device" >> "$GITHUB_ENV"
-          xcodebuild build-for-testing -scheme vision-agents-core -destination "platform=iOS Simulator,id=$device" \
+          xcodebuild build-for-testing -scheme stream-agents -destination "platform=iOS Simulator,id=$device" \
             -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm" -derivedDataPath "$RUNNER_TEMP/DerivedData"
 
       # Booting takes this runner minutes and starves whatever runs beside it, and tests
@@ -191,7 +199,7 @@ jobs:
       - name: Test core
         timeout-minutes: 10
         run: |
-          xcodebuild test-without-building -scheme vision-agents-core -destination "platform=iOS Simulator,id=$SIMULATOR" \
+          xcodebuild test-without-building -scheme stream-agents -destination "platform=iOS Simulator,id=$SIMULATOR" \
             -clonedSourcePackagesDirPath "$RUNNER_TEMP/spm" -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             -parallel-testing-enabled NO -disable-concurrent-destination-testing -collect-test-diagnostics never
 

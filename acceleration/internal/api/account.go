@@ -29,11 +29,13 @@ const defaultCredits = 50
 var (
 	errBillingNotEnabled = APIError{Type: ErrorTypeNotFound, Code: codeBillingNotEnabled,
 		Message: "billing is not enabled here: this deployment has no usage service, or the app is in no organization it bills"}
-	errUsageUnavailable = unavailable("the usage service did not answer; try again shortly")
-	errPageCursor       = invalidRequest("cursor is not one this list answered")
-	errOtherApp         = invalidRequest("app_id names another app: with scope=app the app is the caller's; read another app of the organization with scope=organization")
-	errUserWithoutApp   = invalidRequest("user_id needs app_id with scope=organization: a user id is only unique within its app")
-	errTeamAndCategory  = invalidRequest("team is the category team:<name>: give team or category, not both")
+	errUsageUnavailable     = unavailable("the usage service did not answer; try again shortly")
+	errPageCursor           = invalidRequest("cursor is not one this list answered")
+	errOtherApp             = invalidRequest("app_id names another app: with scope=app the app is the caller's; read another app of the organization with scope=organization")
+	errUserWithoutApp       = invalidRequest("user_id needs app_id with scope=organization: a user id is only unique within its app")
+	errTeamAndCategory      = invalidRequest("team is the category team:<name>: give team or category, not both")
+	errOriginRenamed        = invalidRequest("api_key_id is now named origin: send the key or origin as origin")
+	errGroupByOriginRenamed = invalidRequest("group_by who:api_key is now named who:origin")
 )
 
 // Account is the calling organization's money, as its dashboard shows it.
@@ -80,7 +82,7 @@ type UsageEvent struct {
 	UsageId         string            `json:"usage_id" format:"uuid" doc:"The event's id: the unit of work is recorded once under it."`
 	OccurredAt      time.Time         `json:"occurred_at" doc:"When the work happened."`
 	AppId           string            `json:"app_id" doc:"The app the work was for."`
-	ApiKey          string            `json:"api_key" doc:"The public API key the work was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:<name>."`
+	Origin          string            `json:"origin" doc:"Who started the work: the public API key it was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:<name>."`
 	UserId          string            `json:"user_id,omitempty" doc:"The end user the work was for, by the id the app's tokens name them with; only unique within the app. Absent when there was none, or the caller was anonymous."`
 	Team            string            `json:"team,omitempty" doc:"The team the user's token named, the name of the team:<name> category among usage_categories. Absent with none."`
 	UsageCategories []string          `json:"usage_categories" nullable:"false" doc:"The usage categories the token named, its team among them as team:<name>."`
@@ -157,12 +159,16 @@ type listUsageEventsRequest struct {
 	From     optionalParam[time.Time]  `query:"from" doc:"Only events that happened at or after this, inclusive."`
 	To       optionalParam[time.Time]  `query:"to" doc:"Only events that happened before this, exclusive."`
 	Meter    string                    `query:"meter" maxLength:"255" doc:"Only this kind of work, such as llm or runtime."`
-	ApiKey   string                    `query:"api_key" maxLength:"255" doc:"Only work started with this public API key, or by this origin of work no key started, such as hook:chat."`
+	Origin   string                    `query:"origin" maxLength:"255" doc:"Only work started with this public API key, or by this origin of work no key started, such as hook:chat."`
 	UserId   string                    `query:"user_id" maxLength:"255" doc:"Only work for this end user of the app. With scope=organization it needs app_id, since a user id is only unique within its app."`
 	Team     string                    `query:"team" pattern:"^[A-Za-z0-9_.-]{1,59}$" doc:"Only work for this team: its users' tokens name it in their team claim. Not with category."`
 	Category string                    `query:"category" doc:"Only work carrying this usage category, as the tokens name it. Not with team."`
 	Limit    int                       `query:"limit" minimum:"1" maximum:"200" default:"50" doc:"The most events one page holds."`
 	Cursor   string                    `query:"cursor" doc:"The next_cursor of the previous page, sent with the same filters."`
+
+	// ApiKeyId is origin's old name, refused rather than ignored: a caller still sending it
+	// would otherwise read every key's events as if they were one key's.
+	ApiKeyId string `query:"api_key_id" hidden:"true"`
 }
 
 type usageEventPageResponse struct{ Body UsageEventPage }
@@ -207,7 +213,7 @@ func (s *Server) registerAccount(api huma.API) {
 		Description: "Every unit of work recorded for the calling app, or with scope=organization for every app of " +
 			"its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each " +
 			"names who it was for, what it was, how much of it there was and what the organization is charged. " +
-			"Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with " +
+			"Narrow it by from and to, meter, origin, user_id, and team or category; send the filters again with " +
 			"cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so " +
 			"the newest may take a moment to appear." + notEnabled + serverSide,
 		Errors: errs,
@@ -328,9 +334,12 @@ func (s *Server) listUsageEvents(ctx context.Context, request *listUsageEventsRe
 	if err != nil {
 		return nil, err
 	}
+	if request.ApiKeyId != "" {
+		return nil, errOriginRenamed
+	}
 	app, _ := CustomerFrom(ctx)
 	query := usage.UsageQuery{
-		AppID: app, Meter: request.Meter, APIKey: request.ApiKey, UserID: request.UserId, Team: request.Team,
+		AppID: app, Meter: request.Meter, Origin: request.Origin, UserID: request.UserId, Team: request.Team,
 		Category: request.Category, Limit: request.Limit, Cursor: request.Cursor,
 	}
 	if scope := request.Scope.ptr(); scope != nil && *scope == spendScopeOrganization {
@@ -380,7 +389,7 @@ func (s *Server) listUsageEvents(ctx context.Context, request *listUsageEventsRe
 // categories.
 func usageEventOf(event usage.CustomerUsageEvent) UsageEvent {
 	listed := UsageEvent{
-		UsageId: event.UsageID.String(), OccurredAt: event.OccurredAt, AppId: event.AppID, ApiKey: event.APIKey,
+		UsageId: event.UsageID.String(), OccurredAt: event.OccurredAt, AppId: event.AppID, Origin: event.Origin,
 		UserId: event.UserID, UsageCategories: event.UsageCategories, AgentId: event.AgentID, CallId: event.CallID,
 		SessionId: event.SessionID, Meter: event.Meter, Provider: event.Provider, Model: event.Model,
 		Purpose: event.Purpose, Quantities: event.Quantities, Attributes: event.Attributes, Sku: event.SKU,

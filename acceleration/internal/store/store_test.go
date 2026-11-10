@@ -129,10 +129,10 @@ func (s *StoreSuite) SetupTest() {
 				" agent_plugin_connections, agent_plugin_clients, data_changes, data_change_capture, connector_definitions, connector_broken_revisions,"+
 				" connector_connections, connector_authorization_attempts, connector_oauth_clients,"+
 				" connector_config_tokens, channel_threads, channel_thread_messages, channel_thread_waiting, channel_thread_inbound, chat_inbound,"+
-				" connector_event_destinations, connector_event_deliveries, contact_map, episodes,"+
+				" connector_event_destinations, connector_event_deliveries, contact_map, user_phones, episodes,"+
 				" connection_event_subscriptions, connection_event_deliveries,"+
 				" connector_invocations, connector_audit, simulations, simulation_runs, simulation_cases,"+
-				" scheduled_tasks, scheduled_task_runs, price_list_entries, price_changes,"+
+				" campaigns, campaign_contacts, campaign_attempts, scheduled_tasks, scheduled_task_runs, price_list_entries, price_changes,"+
 				" limits, usage_resets, limit_grants, limit_grant_reconciles, phone_calls CASCADE",
 		)
 		s.Require().NoError(err)
@@ -1436,6 +1436,24 @@ func (s *StoreSuite) TestMigrateRebuildsAGrantsIndexLeftInvalid() {
 	read := func() {
 		s.Require().NoError(s.store.ShardDB().QueryRowContext(s.ctx,
 			"SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass('requests_limit_grants_started_idx')").Scan(&valid))
+	}
+	read()
+	s.Require().False(valid)
+
+	s.Require().NoError(s.store.Migrate(s.ctx))
+
+	read()
+	s.True(valid, "dropped and built again")
+}
+
+func (s *StoreSuite) TestMigrateRebuildsTheContactIndexLeftInvalid() {
+	// As a CONCURRENTLY build that failed leaves it: the migration's IF NOT EXISTS skips it.
+	_, err := s.store.DB().ExecContext(s.ctx, "UPDATE pg_index SET indisvalid = false WHERE indexrelid = to_regclass('contact_map_conversation')")
+	s.Require().NoError(err)
+	var valid bool
+	read := func() {
+		s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
+			"SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass('contact_map_conversation')").Scan(&valid))
 	}
 	read()
 	s.Require().False(valid)

@@ -13,6 +13,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/socketedge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -134,7 +135,11 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 
 	config, failure := s.configFor(ctx, customerID, start.Session.ConfigId, start.Session.Agent)
 	if failure != nil {
-		refuse(failure.Error())
+		refuse(store.RedactLogText(failure.Error()))
+		return
+	}
+	if failure, refused := s.sessionFloorRefusal(ctx, start.Session); refused {
+		refuseWith(failure)
 		return
 	}
 	spec := specOf(start.Session, customerID, config)
@@ -150,8 +155,13 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 		refuseWith(answer)
 		return
 	}
+	if errors.Is(err, session.ErrAppSettingsUnreadable) {
+		s.logger.Error("could not open a socket session", "error", err)
+		refuseWith(internalError())
+		return
+	}
 	if errors.Is(err, session.ErrSessionExists) || err != nil {
-		refuse(err.Error())
+		refuse(store.RedactLogText(err.Error()))
 		return
 	}
 	s.rememberTimezone(ctx, customerID, spec)

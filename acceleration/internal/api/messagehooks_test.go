@@ -44,6 +44,8 @@ func (s *MessageHooksSuite) SetupSuite() {
 	s.imageHTTP = &http.Client{}
 	s.images = photoServer("/photo.png", "/other.png")
 	s.T().Cleanup(s.images.Close)
+	// A recording written to a speech-to-speech session is not heard.
+	s.speechToSpeech = true
 	s.RouterSuite.SetupSuite()
 }
 
@@ -190,7 +192,7 @@ func (s *MessageHooksSuite) TestAStoreFailureReadingTheDeclaredConfigIsAnError()
 	cancel()
 	before := len(s.logged.String())
 
-	_, _, found, err := s.router.ownerOf(ctx, hookOrigin{customer: s.customerID(), app: 77}, messageEvent{
+	_, _, _, found, err := s.router.ownerOf(ctx, hookOrigin{customer: s.customerID(), app: 77}, messageEvent{
 		ChannelID: s.channelID, ChannelCustom: map[string]any{ConfigField: "config-unread"},
 	})
 

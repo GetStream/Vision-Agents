@@ -713,6 +713,33 @@ func (s *RoutingSuite) TestUnknownTargetIsRejected() {
 	s.ErrorContains(err, `unknown target "quick/does-not-exist"`)
 }
 
+func (s *RoutingSuite) TestARetiredTargetSaysWhatToAskForInstead() {
+	// Probed on 3b7a53f97: `routing: unknown target "quick/old"`, which reads as a typo.
+	config := s.config()
+	config.Retired = map[string]string{"quick/old": "quick/en"}
+
+	_, err := s.newRouterWithConfig(config, func(spec Spec) (*stubProvider, error) {
+		return &stubProvider{model: spec.Model}, nil
+	}).Resolve(s.ctx, "quick/old", nil)
+
+	s.ErrorIs(err, ErrRequest)
+	s.EqualError(err, "routing: quick/old is retired; ask for quick/en instead")
+}
+
+func (s *RoutingSuite) TestConfigRejectsARetiredTargetThatIsStillDeclared() {
+	config := s.config()
+	config.Retired = map[string]string{"quick/en": "quick/multi"}
+
+	s.ErrorContains(config.Validate(), "quick/en is retired and still declared")
+}
+
+func (s *RoutingSuite) TestConfigRejectsARetiredTargetWhoseReplacementIsNotDeclared() {
+	config := s.config()
+	config.Retired = map[string]string{"quick/old": "quick/gone"}
+
+	s.ErrorContains(config.Validate(), "quick/old is retired for quick/gone, which is not declared")
+}
+
 func (s *RoutingSuite) TestEmptyTargetIsRejected() {
 	_, err := s.newRouter().Resolve(s.ctx, "", nil)
 	s.ErrorContains(err, "target is required")
@@ -1004,6 +1031,7 @@ func (s *RoutingSuite) TestSelectFailsWhenNoCandidateCanBeBuilt() {
 	_, _, err = router.Select(s.ctx, Request{CustomerID: "acme", Target: "en-high-accuracy"})
 	s.ErrorContains(err, "every candidate")
 	s.ErrorContains(err, "no factory registered")
+	s.NotErrorIs(err, ErrVendorsFailed, "no vendor was asked")
 }
 
 func (s *RoutingSuite) TestSelectClosesAProviderThatFailedToStart() {
@@ -1447,6 +1475,7 @@ func (s *RoutingSuite) TestSelectRefusesADataPolicyNoProviderMeets() {
 	})
 
 	s.ErrorContains(err, "no provider meets your data policy")
+	s.ErrorIs(err, ErrRequest, "the customer's to change, not a provider's failure")
 }
 
 func (s *RoutingSuite) TestADataPolicyAskingNothingRulesNothingOut() {
@@ -1594,6 +1623,7 @@ func (s *RoutingSuite) TestSeeingDropsModelsThatCannotTakeAnImage() {
 
 	_, err = seeing(candidates[:1], []string{"image"})
 	s.ErrorContains(err, "no provider accepts image input")
+	s.ErrorIs(err, ErrRequest, "the caller's to change, not a provider's failure")
 }
 
 func (s *RoutingSuite) TestDefaultConfigDeclaresVisionOnOpenAIGeminiAnthropicMetaXAIMoondreamAndNemotronVL() {
@@ -1607,6 +1637,29 @@ func (s *RoutingSuite) TestDefaultConfigDeclaresVisionOnOpenAIGeminiAnthropicMet
 		}
 		s.Emptyf(provider.InputModalities, "%s is text-only", provider.Name())
 	}
+}
+
+func (s *RoutingSuite) TestAShortcutThatRequiresToolsLeavesOutAModelThatIgnoresThem() {
+	requiring := Alias{RequireTools: true}
+	s.True(requiring.matches(ProviderConfig{Provider: "quick", Model: "talk"}))
+	s.False(requiring.matches(ProviderConfig{Provider: "quick", Model: "look", IgnoresTools: true}))
+	s.True(Alias{}.matches(ProviderConfig{Provider: "quick", Model: "look", IgnoresTools: true}),
+		"a shortcut that does not ask still takes it")
+}
+
+func (s *RoutingSuite) TestNoConversationShortcutReachesMoondream() {
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+	moondream, ok := config[LLM].Provider("moondream/moondream3-preview")
+	s.Require().True(ok)
+	s.True(moondream.IgnoresTools, "it accepts tools and never calls one")
+
+	for _, name := range []string{"llm-fast", "en-low-latency"} {
+		alias := config[LLM].Aliases[name]
+		s.Truef(alias.RequireTools, "%s is what an agent holds a conversation on", name)
+		s.Falsef(alias.matches(moondream), "%s would answer a turn that needed a tool without one", name)
+	}
+	s.True(config[LLM].Aliases["vlm"].matches(moondream), "a question about a picture may still go to it")
 }
 
 // failingUse is a Walk's use that fails for the models in failing, with their error, and

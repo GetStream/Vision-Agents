@@ -24,8 +24,10 @@ final readonly class AgentConfig
         /** @var list<AgentConnectorBinding>|null */
         public ?array $connectors = null,
         public ?AgentDispatch $dispatch = null,
-        // Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each se...
-        public ?bool $episodeCards = null,
+        // What this agent does with episode cards. record and on write a card into the person's omni-channel for each...
+        public EpisodeCardsMode|string|null $episodeCards = null,
+        // The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop....
+        public ?FloorControl $floorControl = null,
         public ?Greeting $greeting = null,
         public ?string $guardrail = null,
         public Harness|string|null $harness = null,
@@ -37,17 +39,6 @@ final readonly class AgentConfig
         /** @var list<LeftOutConnector>|null */
         public ?array $leftOutConnectors = null,
         public ?string $llm = null,
-        // Where a response goes, in order, when llm fails it. Absent when there are none.
-        /** @var list<string>|null */
-        public ?array $llmFallbacks = null,
-        /** @var list<McpServer>|null */
-        public ?array $mcpServers = null,
-        // Deprecated: use the events of a fixed binding under connectors.
-        /** @var list<PluginEvent>|null */
-        public ?array $pluginEvents = null,
-        // Deprecated: use connectors, a binding to a connector.
-        /** @var list<mixed>|null */
-        public ?array $plugins = null,
         public ?ResumeHistory $resumeHistory = null,
         // Absent when calls are reviewed by Stream's default guide.
         public ?AgentReview $review = null,
@@ -73,6 +64,9 @@ final readonly class AgentConfig
         public ?array $visibleTools = null,
         // The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voic...
         public ?string $voice = null,
+        // Where a response goes, in order, when llm fails it. Absent when there are none.
+        /** @var list<string>|null */
+        public ?array $llmFallbacks = null,
     ) {
     }
 
@@ -92,7 +86,8 @@ final readonly class AgentConfig
             channels: array_key_exists('channels', $data) && $data['channels'] !== null ? AgentChannels::fromArray(Json::object($data, 'channels')) : null,
             connectors: array_key_exists('connectors', $data) && $data['connectors'] !== null ? array_map(AgentConnectorBinding::fromArray(...), Json::objects($data, 'connectors')) : null,
             dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
-            episodeCards: array_key_exists('episode_cards', $data) && $data['episode_cards'] !== null ? Json::bool($data, 'episode_cards') : null,
+            episodeCards: array_key_exists('episode_cards', $data) && $data['episode_cards'] !== null ? Json::enum($data, 'episode_cards', EpisodeCardsMode::class) : null,
+            floorControl: array_key_exists('floor_control', $data) && $data['floor_control'] !== null ? FloorControl::fromArray(Json::object($data, 'floor_control')) : null,
             greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Greeting::fromArray(Json::object($data, 'greeting')) : null,
             guardrail: array_key_exists('guardrail', $data) && $data['guardrail'] !== null ? Json::string($data, 'guardrail') : null,
             harness: array_key_exists('harness', $data) && $data['harness'] !== null ? Json::enum($data, 'harness', Harness::class) : null,
@@ -101,10 +96,6 @@ final readonly class AgentConfig
             knowledgeNamespace: array_key_exists('knowledge_namespace', $data) && $data['knowledge_namespace'] !== null ? Json::string($data, 'knowledge_namespace') : null,
             leftOutConnectors: array_key_exists('left_out_connectors', $data) && $data['left_out_connectors'] !== null ? array_map(LeftOutConnector::fromArray(...), Json::objects($data, 'left_out_connectors')) : null,
             llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
-            llmFallbacks: array_key_exists('llm_fallbacks', $data) && $data['llm_fallbacks'] !== null ? Json::strings($data, 'llm_fallbacks') : null,
-            mcpServers: array_key_exists('mcp_servers', $data) && $data['mcp_servers'] !== null ? array_map(McpServer::fromArray(...), Json::objects($data, 'mcp_servers')) : null,
-            pluginEvents: array_key_exists('plugin_events', $data) && $data['plugin_events'] !== null ? array_map(PluginEvent::fromArray(...), Json::objects($data, 'plugin_events')) : null,
-            plugins: array_key_exists('plugins', $data) && $data['plugins'] !== null ? Json::list($data, 'plugins') : null,
             resumeHistory: array_key_exists('resume_history', $data) && $data['resume_history'] !== null ? ResumeHistory::fromArray(Json::object($data, 'resume_history')) : null,
             review: array_key_exists('review', $data) && $data['review'] !== null ? AgentReview::fromArray(Json::object($data, 'review')) : null,
             role: array_key_exists('role', $data) && $data['role'] !== null ? Json::enum($data, 'role', AgentRole::class) : null,
@@ -123,6 +114,7 @@ final readonly class AgentConfig
             video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
             visibleTools: array_key_exists('visible_tools', $data) && $data['visible_tools'] !== null ? Json::strings($data, 'visible_tools') : null,
             voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
+            llmFallbacks: array_key_exists('llm_fallbacks', $data) && $data['llm_fallbacks'] !== null ? Json::strings($data, 'llm_fallbacks') : null,
         );
     }
 
@@ -153,7 +145,10 @@ final readonly class AgentConfig
             $out['dispatch'] = $this->dispatch->toArray();
         }
         if ($this->episodeCards !== null) {
-            $out['episode_cards'] = $this->episodeCards;
+            $out['episode_cards'] = Json::enumValue($this->episodeCards);
+        }
+        if ($this->floorControl !== null) {
+            $out['floor_control'] = $this->floorControl->toArray();
         }
         if ($this->greeting !== null) {
             $out['greeting'] = $this->greeting->toArray();
@@ -178,18 +173,6 @@ final readonly class AgentConfig
         }
         if ($this->llm !== null) {
             $out['llm'] = $this->llm;
-        }
-        if ($this->llmFallbacks !== null) {
-            $out['llm_fallbacks'] = $this->llmFallbacks;
-        }
-        if ($this->mcpServers !== null) {
-            $out['mcp_servers'] = array_map(static fn (McpServer $each): array => $each->toArray(), $this->mcpServers);
-        }
-        if ($this->pluginEvents !== null) {
-            $out['plugin_events'] = array_map(static fn (PluginEvent $each): array => $each->toArray(), $this->pluginEvents);
-        }
-        if ($this->plugins !== null) {
-            $out['plugins'] = $this->plugins;
         }
         if ($this->resumeHistory !== null) {
             $out['resume_history'] = $this->resumeHistory->toArray();
@@ -244,6 +227,9 @@ final readonly class AgentConfig
         }
         if ($this->voice !== null) {
             $out['voice'] = $this->voice;
+        }
+        if ($this->llmFallbacks !== null) {
+            $out['llm_fallbacks'] = $this->llmFallbacks;
         }
         return $out;
     }

@@ -205,7 +205,9 @@ class Connection:
 
         definition_revision = d.pop("definition_revision")
 
-        definition_status = ConnectionDefinitionStatus(d.pop("definition_status"))
+        definition_status = ConnectionDefinitionStatus._decode(
+            d.pop("definition_status")
+        )
 
         def _parse_granted_scopes(data: object) -> list[str] | None:
             if data is None:
@@ -232,7 +234,7 @@ class Connection:
 
         revision = d.pop("revision")
 
-        status = ConnectionStatus(d.pop("status"))
+        status = ConnectionStatus._decode(d.pop("status"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 

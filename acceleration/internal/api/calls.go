@@ -551,6 +551,17 @@ const callElsewhere = "that call was made in a Stream app this customer no longe
 // may no longer act there: what was said can be read, and nothing more is minted.
 const callReadOnly = "that call was made in the router's shared Stream app, where this app no longer mints tokens"
 
+// CallTranscript is what was said on one of a customer's calls, as GET
+// /v1/agents/calls/{id}/transcript reads it. The campaign dialer reads an answered call's
+// outcome from it.
+func (s *Server) CallTranscript(ctx context.Context, customerID, callID string) ([]chatlog.Spoken, error) {
+	call, err := s.store.Call(ctx, customerID, callID)
+	if err != nil {
+		return nil, err
+	}
+	return s.transcriptOf(ctx, customerID, call)
+}
+
 // transcriptOf is what was said on a call, read in the app the call was made in. A call
 // made in an app the customer no longer acts in has nothing readable from here.
 func (s *Server) transcriptOf(ctx context.Context, customerID string, call store.Call) ([]chatlog.Spoken, error) {
@@ -598,10 +609,11 @@ const transcriptSlack = 2 * time.Second
 // call bound to a conversation wrote into that conversation's channel, beside what was
 // typed before and after it, so only the call's own window is read. A call whose session
 // row is gone, as a deleted session's is while its conversation stays in Stream Chat, wrote
-// into the channel a new conversation is named after its session (session.Manager.Create);
-// failing that it read its agent's channel, as a call from before there were session rows
-// still does. The session's row is written behind the call's, so a call that just ended is
-// read once its writer has caught up.
+// into the conversation its call row names (a call from before that column names none),
+// else into the channel a new conversation is named after its session
+// (session.Manager.Create); failing that it read its agent's channel, as a call from before
+// there were session rows still does. The session's row is written behind the call's, so a
+// call that just ended is read once its writer has caught up.
 func (s *Server) transcriptReads(ctx context.Context, customerID string, call store.Call) []chatlog.Read {
 	window := chatlog.Read{
 		Customer: customerID,
@@ -612,6 +624,9 @@ func (s *Server) transcriptReads(ctx context.Context, customerID string, call st
 		window.To = call.EndedAt.Add(transcriptSlack)
 	}
 	channels := []string{call.ID, call.AgentID}
+	if call.ConversationID != "" {
+		channels = slices.Compact([]string{conversationChannel(call.ConversationID), call.ID, call.AgentID})
+	}
 	if stored, err := s.storedSession(ctx, customerID, call.ID); err == nil {
 		channels = []string{transcriptChannel(stored)}
 	}
@@ -728,6 +743,7 @@ func timelineOf(turns []live.Turn, said []chatlog.Spoken, models []store.Request
 			OutputTokens: &request.OutputTokens,
 			Success:      request.Success,
 			ErrorCode:    optional(request.ErrorCode),
+			ErrorMessage: optional(request.ErrorMessage),
 		})
 	}
 	// A reply talked over is in the transcript as what it was going to say, which is not
@@ -1244,7 +1260,7 @@ func (*CallTokens) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.S
 // InputParts What prompts were made of, in tokens. Estimated from each request and scaled to what the provider counted, so the parts sum to the input tokens and only the split between them is a guess. Requests recorded before the split was kept read zero throughout.
 type InputParts struct {
 	Images          int64 `json:"images" doc:"Pictures, attached or returned by a tool."`
-	Instructions    int64 `json:"instructions" doc:"The system prompt: the agent's instructions, skills and plugin guidance."`
+	Instructions    int64 `json:"instructions" doc:"The system prompt: the agent's instructions, skills and connector guidance."`
 	Messages        int64 `json:"messages" doc:"The conversation's words, from either side."`
 	ToolDefinitions int64 `json:"tool_definitions" doc:"The tools the model was offered: their names, descriptions and schemas."`
 	ToolUse         int64 `json:"tool_use" doc:"The tools the model called, and what they returned."`
@@ -1365,6 +1381,7 @@ func (DecisionKind) Schema(registry huma.Registry) *huma.Schema {
 type ModelCallTiming struct {
 	DurationMs   *float64  `json:"duration_ms,omitempty" doc:"Request to completed response or failed create."`
 	ErrorCode    *string   `json:"error_code,omitempty" doc:"Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. key_refused is the vendor refusing the key the app keeps for it (BYOK), and the router's own instance of the model was asked next. refused is a response the prompt injection screen refused: the provider answered as asked, so it is no failure of the provider's either. Any other code, timeout included, is a failure and counts against the provider's health, unless it was on the app's own key."`
+	ErrorMessage *string   `json:"error_message,omitempty" doc:"What the failure said, absent when success is true: for a provider that answered with an error, the start of its body. Bearer tokens, API keys, authorization headers and URL credentials in it are redacted, and a long one is cut short. Absent for a failure that said nothing, and for a request recorded before the router kept it."`
 	InputTokens  *int64    `json:"input_tokens,omitempty"`
 	Model        string    `json:"model"`
 	OperationId  *string   `json:"operation_id,omitempty" doc:"Response ID for this operation; retries can share an ID."`

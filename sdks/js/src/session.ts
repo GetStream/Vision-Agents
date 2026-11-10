@@ -1,4 +1,5 @@
 import type { Client, Schemas } from "./client.js";
+import { Conversation } from "./conversation.js";
 import { ConfigurationError } from "./errors.js";
 import { CameraFrames } from "./frames.js";
 import { Responses } from "./responses.js";
@@ -10,13 +11,23 @@ import { Holds, socketLine, toolCallContextOf } from "./tool_line.js";
 import type { ToolApproval, Tools } from "./tools.js";
 
 /**
- * How many events are held for a caller that is not reading them yet.
+ * How many events are held for one reader of `events()` that has not taken them yet, and for
+ * the first reader while there is none.
  *
- * Past this the oldest is dropped rather than the socket stalled: a conversation that
- * nobody is watching should still be held, and a tool call is answered by the reader below
- * rather than by whoever is iterating, so dropping an event never drops a turn.
+ * Past this a reader is ended rather than the socket stalled or a hole left in what it reads,
+ * as Swift's are; while nobody reads, the oldest is dropped, since a conversation nobody is
+ * watching should still be held. A tool call is answered by the session's own loop rather than
+ * by whoever is iterating, so neither ever drops a turn.
  */
 const BUFFERED_EVENTS = 256;
+
+/** One caller's `events()`: what arrived for it, and how to tell it more has. */
+interface Reader {
+  queue: SessionEvent[];
+  wake: (() => void) | undefined;
+  /** Fallen too far behind: it ends once it has read what it holds. */
+  behind: boolean;
+}
 
 /** A call of one of the caller's functions, waiting for the person to allow it. */
 export interface ToolApprovalRequest {
@@ -151,6 +162,12 @@ export class Session {
    */
   readonly state = new ConversationState();
   /**
+   * The conversation as this device heard it: its turns, what the agent reported going wrong,
+   * the calls waiting in `approvals`, and whether the socket is still carrying it. Fed from the
+   * socket beside `events()`, like `state`.
+   */
+  readonly conversation: Conversation;
+  /**
    * @internal What this device's camera showed lately, set by a `VoiceSession` while its
    * camera is on. The router's `get_video_frames` is answered from it.
    */
@@ -167,8 +184,9 @@ export class Session {
   private videoPeer: Promise<SessionVideo> | undefined;
   private readonly client: Client;
   private readonly tools: Tools | undefined;
-  private readonly buffered: SessionEvent[] = [];
-  private readonly waiting: ((next: IteratorResult<SessionEvent>) => void)[] = [];
+  /** What arrived while nobody was reading, for the first reader to start with. */
+  private readonly backlog: SessionEvent[] = [];
+  private readonly readers = new Set<Reader>();
   private readonly running = new Map<string, AbortController>();
   private readonly holds = new Holds();
   /** Aborts when the socket ends, which stops even a call that asked to be held. */
@@ -187,7 +205,8 @@ export class Session {
     this.created = created;
     this.socket = socket;
     this.tools = tools;
-    this.responses = new Responses(client, created.id);
+    this.conversation = new Conversation(socket !== undefined);
+    this.responses = new Responses(client, created.id, (asked) => this.conversation.said(asked));
     this.voice = new Voice(client, created.id, Boolean(created.call_id), (on) =>
       this.speech.voiceChanged(on),
     );
@@ -239,13 +258,12 @@ export class Session {
       query["decisions"] = "false";
     }
 
-    const url = await client.backend.socketURL(
-      `/v1/agents/sessions/${encodeURIComponent(created.id)}/events`,
-      query,
-    );
-
     try {
-      const socket = await Socket.open(client.backend, url);
+      const socket = await Socket.dial(
+        client.backend,
+        `/v1/agents/sessions/${encodeURIComponent(created.id)}/events`,
+        query,
+      );
       return new Session(client, created, socket, options.tools);
     } catch (cause) {
       // The session is live in the backend even though nothing here can watch it, so it is
@@ -273,11 +291,19 @@ export class Session {
   }
 
   /**
+   * Why the socket stopped carrying the conversation, or undefined: while it is open, and once
+   * it has ended normally. `conversation` says the same, for a page to follow.
+   */
+  get failure(): Error | undefined {
+    return this.conversation.get().socketError;
+  }
+
+  /**
    * Calls of functions that ask first, waiting for the person to answer with `decide`,
    * oldest first. Each also arrives through `events` as a `tool_call`.
    */
   get approvals(): readonly ToolApprovalRequest[] {
-    return [...this.asking.values()].map(({ request }) => request);
+    return this.conversation.get().approvals;
   }
 
   /**
@@ -307,6 +333,7 @@ export class Session {
       ...ids,
     });
     this.asking.delete(id);
+    this.approvalsChanged();
     if (answer.allowed) {
       void this.runTool(waiting.frame);
     } else {
@@ -320,27 +347,46 @@ export class Session {
   }
 
   /**
+   * Declines the sign-in a call of one of the agent's connectors waits for, whose step in the
+   * conversation is `awaiting_authorization`: the person's Not now. The router answers the call
+   * itself, so it runs nothing and the agent is told the person did not connect. A call that
+   * is not waiting is left alone.
+   */
+  declineLogin(toolCallId: string): void {
+    this.held().send({ type: "tool_approval", tool_call_id: toolCallId, allowed: false });
+  }
+
+  /**
    * Yields what the backend did until the conversation ends.
    *
-   * There is one stream: two loops over it would take half the events each.
+   * Each loop over it is told everything from when it started reading, so a caption view and a
+   * latency panel can each have one. The first loop also gets what arrived while nobody was
+   * reading. A loop that falls 256 events behind is ended rather than left with a hole.
    */
   async *events(): AsyncGenerator<SessionEvent> {
-    while (true) {
-      const next = this.buffered.shift();
-      if (next !== undefined) {
-        yield next;
-        continue;
+    const reader: Reader = {
+      queue: this.readers.size === 0 ? this.backlog.splice(0) : [],
+      wake: undefined,
+      behind: false,
+    };
+    this.readers.add(reader);
+    try {
+      while (true) {
+        const next = reader.queue.shift();
+        if (next !== undefined) {
+          yield next;
+          continue;
+        }
+        if (this.ended || reader.behind) {
+          return;
+        }
+        await new Promise<void>((resolve) => {
+          reader.wake = resolve;
+        });
+        reader.wake = undefined;
       }
-      if (this.ended) {
-        return;
-      }
-      const waited = await new Promise<IteratorResult<SessionEvent>>((resolve) => {
-        this.waiting.push(resolve);
-      });
-      if (waited.done) {
-        return;
-      }
-      yield waited.value;
+    } finally {
+      this.readers.delete(reader);
     }
   }
 
@@ -480,6 +526,16 @@ export class Session {
   }
 
   /**
+   * @internal Stops watching the conversation without ending it, for a watcher of its own such
+   * as an attached `VoiceSession`'s: the socket closes, and the session goes on for whoever
+   * else holds it.
+   */
+  async stopWatching(): Promise<void> {
+    this.socket?.close();
+    await this.finished.catch(() => undefined);
+  }
+
+  /**
    * Stops the conversation. Safe to call after it has already ended. Everything it recorded
    * and remembered is kept; `delete` is what takes those away.
    */
@@ -503,14 +559,16 @@ export class Session {
    * cannot depend on the caller having started a loop.
    */
   private async watch(): Promise<void> {
+    let stoppedBy: Error | undefined;
     try {
       for await (const message of this.held().messages()) {
         if (message instanceof Uint8Array) {
           continue;
         }
-        // Read here rather than off events(), which is the caller's one stream.
+        // Read here rather than off events(), so a store needs no reader of its own.
         this.speech.observe(message);
         this.state.observe(message);
+        this.conversation.observe(message);
 
         if (message.type === "tool_call" && text(message, "name") === CameraFrames.toolName) {
           // Answered by the session rather than offered as a tool, and only by a device whose
@@ -543,7 +601,9 @@ export class Session {
           if (!this.holds.held(id)) {
             this.running.get(id)?.abort();
           }
-          this.asking.delete(id);
+          if (this.asking.delete(id)) {
+            this.approvalsChanged();
+          }
           continue;
         }
         if (message.type === "tool_held") {
@@ -551,17 +611,21 @@ export class Session {
         }
         this.deliver(eventOf(message));
       }
+    } catch (cause) {
+      stoppedBy = cause instanceof Error ? cause : new Error(String(cause));
+      throw cause;
     } finally {
       this.ended = true;
       this.speech.close();
       this.state.end();
       this.asking.clear();
+      this.conversation.disconnected(stoppedBy ?? this.socket?.closedBy);
       this.ending.abort();
       for (const cancel of this.running.values()) {
         cancel.abort();
       }
-      for (const resolve of this.waiting.splice(0)) {
-        resolve({ done: true, value: undefined });
+      for (const reader of this.readers) {
+        reader.wake?.();
       }
     }
   }
@@ -582,6 +646,12 @@ export class Session {
       request: { id, name: text(frame, "name"), arguments: text(frame, "arguments"), approval, reason },
       frame,
     });
+    this.approvalsChanged();
+  }
+
+  /** Tells `conversation` which calls are waiting now. */
+  private approvalsChanged(): void {
+    this.conversation.approvalsChanged([...this.asking.values()].map(({ request }) => request));
   }
 
   /**
@@ -695,14 +765,20 @@ export class Session {
   }
 
   private deliver(event: SessionEvent): void {
-    const resolve = this.waiting.shift();
-    if (resolve) {
-      resolve({ done: false, value: event });
+    if (this.readers.size === 0) {
+      this.backlog.push(event);
+      if (this.backlog.length > BUFFERED_EVENTS) {
+        this.backlog.shift();
+      }
       return;
     }
-    this.buffered.push(event);
-    if (this.buffered.length > BUFFERED_EVENTS) {
-      this.buffered.shift();
+    for (const reader of this.readers) {
+      if (reader.queue.length >= BUFFERED_EVENTS) {
+        reader.behind = true;
+      } else if (!reader.behind) {
+        reader.queue.push(event);
+      }
+      reader.wake?.();
     }
   }
 }
@@ -767,6 +843,50 @@ function argumentsOf(frame: Frame): Frame {
   } catch {
     return {};
   }
+}
+
+/**
+ * A connector tool call the provider refused because the person's own connection lacks access
+ * it asked for, and the step-up consent the router began for it. The old grant keeps working
+ * until the step-up succeeds, and the same call works afterwards in the same session.
+ *
+ * A page finishes it as it does any consent: it opens `launchUrl` in a popup from a page of the
+ * session's `return_url` origin and posts it `handoffToken`.
+ */
+export interface ConnectorScopeRequired {
+  /** The binding's alias. */
+  readonly name: string;
+  readonly connectorId: string;
+  readonly connectionId: string;
+  /** What the provider asked for, empty for a claims challenge. */
+  readonly scopes: readonly string[];
+  readonly authorizationId: string;
+  readonly launchUrl: string;
+  readonly handoffToken: string;
+  /** When the consent stops being offered, if the router said. */
+  readonly expiresAt?: Date;
+}
+
+/** The step-up a `connector_scope_required` event asks for, or undefined for any other event. */
+export function connectorScopeRequiredOf(event: SessionEvent): ConnectorScopeRequired | undefined {
+  if (event.kind !== "connector_scope_required") {
+    return undefined;
+  }
+  const { frame } = event;
+  const scopes = Array.isArray(frame["scopes"])
+    ? frame["scopes"].filter((scope): scope is string => typeof scope === "string")
+    : [];
+  const expires = Date.parse(text(frame, "expires_at"));
+  return {
+    name: text(frame, "name"),
+    connectorId: text(frame, "connector_id"),
+    connectionId: text(frame, "connection_id"),
+    scopes,
+    authorizationId: text(frame, "authorization_id"),
+    launchUrl: text(frame, "launch_url"),
+    handoffToken: text(frame, "handoff_token"),
+    ...(Number.isFinite(expires) ? { expiresAt: new Date(expires) } : {}),
+  };
 }
 
 /** Fills in the fields the frames that carry them have in common. */

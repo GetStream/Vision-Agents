@@ -61,6 +61,10 @@ const (
 	// is one unit of work, and the vendors differ in what they can find, what it costs and
 	// how long it takes.
 	Detection Modality = "detection"
+	// OCR is the text of a picture of a page. It is routed like detection: one page is one
+	// unit of work, and OCR models and vision language models will both read it, at
+	// different prices and speeds.
+	OCR Modality = "ocr"
 	// Memory, Knowledge and Phone are recorded but not routed: there is one memory store,
 	// one knowledge base and one vendor per number, so there is nothing to choose
 	// between. They are modalities so what they cost shows up in the same reporting as
@@ -264,6 +268,10 @@ type ProviderConfig struct {
 	// InputModalities are extra input kinds this model accepts, e.g. "image". Empty
 	// means text only, and a request carrying anything else is not routed here.
 	InputModalities []string `yaml:"input_modalities"`
+	// IgnoresTools is a model that takes the tools it is offered and never calls one. A
+	// shortcut that requires tools leaves it out, and a response offering tools is failed
+	// over and hedged around it.
+	IgnoresTools bool `yaml:"ignores_tools"`
 	// ContextWindow is how many tokens of prompt this host serves the model with, which
 	// can be less than its maker's. Compaction reads it; routing does not.
 	ContextWindow int64 `yaml:"context_window"`
@@ -377,6 +385,10 @@ type Alias struct {
 	// recording routes to the batch endpoint that is cheaper and more accurate than the
 	// same vendor's streaming one rather than being streamed at a socket.
 	RequireRecorded bool `yaml:"require_recorded"`
+	// RequireTools excludes models that ignore the tools they are offered, for a shortcut
+	// an agent holds a conversation on: its tools are how it ends, transfers or looks
+	// something up, and a turn answered by such a model does none of that.
+	RequireTools bool `yaml:"require_tools"`
 	// Tier restricts candidates to one tier. Empty accepts any.
 	Tier Tier `yaml:"tier"`
 	// Prefer is a "provider/model" that goes ahead of the ranking for as long as it is
@@ -396,6 +408,9 @@ func (a Alias) matches(provider ProviderConfig) bool {
 	if a.RequireRecorded && provider.Realtime {
 		return false
 	}
+	if a.RequireTools && provider.IgnoresTools {
+		return false
+	}
 	if a.Multilingual && !provider.Multilingual() {
 		return false
 	}
@@ -409,6 +424,9 @@ func (a Alias) matches(provider ProviderConfig) bool {
 type ModalityConfig struct {
 	Providers []ProviderConfig `yaml:"providers"`
 	Aliases   map[string]Alias `yaml:"aliases"`
+	// Retired names a model that is no longer offered and the target to ask for instead,
+	// so a caller still pinned to it is told where to go rather than that it never existed.
+	Retired map[string]string `yaml:"retired"`
 	// aliasOrder is the order the aliases were written in, which a map forgets.
 	aliasOrder []string
 }
@@ -701,7 +719,25 @@ func (c ModalityConfig) validate() error {
 			return fmt.Errorf("alias %s prefers %s, which does not meet its own requirements", name, alias.Prefer)
 		}
 	}
+
+	for _, name := range slices.Sorted(maps.Keys(c.Retired)) {
+		if c.declares(name) {
+			return fmt.Errorf("%s is retired and still declared", name)
+		}
+		if instead := c.Retired[name]; !c.declares(instead) {
+			return fmt.Errorf("%s is retired for %s, which is not declared", name, instead)
+		}
+	}
 	return nil
+}
+
+// declares reports whether target is a provider/model or a shortcut of this modality.
+func (c ModalityConfig) declares(target string) bool {
+	if _, ok := c.Provider(target); ok {
+		return true
+	}
+	_, ok := c.Aliases[target]
+	return ok
 }
 
 // Config is the whole capability configuration, one section per modality. A modality the

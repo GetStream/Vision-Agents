@@ -1,5 +1,5 @@
 import SwiftUI
-import VisionAgentsCore
+import StreamAgents
 
 /// The controls for a spoken conversation: mute and hang up.
 ///

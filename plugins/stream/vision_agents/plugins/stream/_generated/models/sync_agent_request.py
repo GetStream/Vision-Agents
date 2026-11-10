@@ -20,18 +20,25 @@ if TYPE_CHECKING:
     from ..models.agent_dispatch import AgentDispatch
     from ..models.agent_scheduling import AgentScheduling
     from ..models.agent_tools import AgentTools
+    from ..models.floor_control import FloorControl
     from ..models.greeting import Greeting
     from ..models.knowledge_document import KnowledgeDocument
     from ..models.knowledge_url_declaration import KnowledgeUrlDeclaration
     from ..models.left_out_connector import LeftOutConnector
-    from ..models.mcp_server import McpServer
-    from ..models.plugin_event import PluginEvent
-    from ..models.plugin_with_options import PluginWithOptions
     from ..models.resume_history import ResumeHistory
     from ..models.sandbox_options import SandboxOptions
     from ..models.session_video import SessionVideo
     from ..models.simulation_declaration import SimulationDeclaration
     from ..models.skill_request import SkillRequest
+    from ..models.sync_agent_request_mcp_servers_item import (
+        SyncAgentRequestMcpServersItem,
+    )
+    from ..models.sync_agent_request_plugin_events_item import (
+        SyncAgentRequestPluginEventsItem,
+    )
+    from ..models.sync_agent_request_plugins_item_type_1 import (
+        SyncAgentRequestPluginsItemType1,
+    )
     from ..models.sync_agent_request_tags import SyncAgentRequestTags
 
 
@@ -63,6 +70,9 @@ class SyncAgentRequest:
                 left alone.
             dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
                 /v1/dispatch. Omitted settings are disabled.
+            floor_control (FloorControl | Unset): The model that controls an agent's floor, and how long a caller may wait
+                once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again;
+                anything else replaces the stored choice whole.
             greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
             guardrail (str | Unset): The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the
                 policy in prose. Empty means every turn is answered.
@@ -80,17 +90,18 @@ class SyncAgentRequest:
                 sync that sends connectors replaces the stored ones with these, or with none when this is left out, and a sync
                 that sends neither leaves them alone. At most 64, as connectors.
             llm (str | Unset):
-            mcp_servers (list[McpServer] | Unset): MCP servers outside the plugin catalog, opened by their URL with no
-                login.
+            mcp_servers (list[SyncAgentRequestMcpServersItem] | Unset): No longer read: a server named by URL is now a
+                custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an
+                empty one names nothing.
             mode (AgentMode | Unset): Whether the agent is spoken to or written to. A voice agent joins a call, transcribes
                 what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither
                 speech target and a session created from it needs no call to join.
-            plugin_events (list[PluginEvent] | Unset): Deprecated: use the events of a fixed binding under connectors. MCP
-                events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
-            plugins (list[PluginWithOptions | str] | Unset): Deprecated: use connectors, a binding to a connector. Plugins
-                the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once,
-                unless its entry sets user: then each end user connects it with their own account, from the conversation, the
-                first time the agent needs it.
+            plugin_events (list[SyncAgentRequestPluginEventsItem] | Unset): No longer read: plugins were replaced by
+                connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names
+                nothing.
+            plugins (list[str | SyncAgentRequestPluginsItemType1] | Unset): No longer read: plugins were replaced by
+                connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names
+                nothing.
             region (str | Unset): agent.yaml's region: where the agent's work is done, us or eu for now. Every model its
                 sessions run is served there and nowhere else, its knowledge base is kept there, and its sandbox is made there.
                 A sync is refused (400), before anything is written, when a model the agent names has no instance there, naming
@@ -138,6 +149,7 @@ class SyncAgentRequest:
     check_changes: bool | Unset = UNSET
     connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
+    floor_control: FloorControl | Unset = UNSET
     greeting: Greeting | Unset = UNSET
     guardrail: str | Unset = UNSET
     harness: Harness | Unset = UNSET
@@ -147,10 +159,10 @@ class SyncAgentRequest:
     knowledge_urls: list[KnowledgeUrlDeclaration] | Unset = UNSET
     left_out_connectors: list[LeftOutConnector] | Unset = UNSET
     llm: str | Unset = UNSET
-    mcp_servers: list[McpServer] | Unset = UNSET
+    mcp_servers: list[SyncAgentRequestMcpServersItem] | Unset = UNSET
     mode: AgentMode | Unset = UNSET
-    plugin_events: list[PluginEvent] | Unset = UNSET
-    plugins: list[PluginWithOptions | str] | Unset = UNSET
+    plugin_events: list[SyncAgentRequestPluginEventsItem] | Unset = UNSET
+    plugins: list[str | SyncAgentRequestPluginsItemType1] | Unset = UNSET
     region: str | Unset = UNSET
     resume_history: ResumeHistory | Unset = UNSET
     role: AgentRole | Unset = UNSET
@@ -171,7 +183,9 @@ class SyncAgentRequest:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.plugin_with_options import PluginWithOptions
+        from ..models.sync_agent_request_plugins_item_type_1 import (
+            SyncAgentRequestPluginsItemType1,
+        )
 
         hash_ = self.hash_
 
@@ -199,6 +213,10 @@ class SyncAgentRequest:
         dispatch: dict[str, Any] | Unset = UNSET
         if not isinstance(self.dispatch, Unset):
             dispatch = self.dispatch.to_dict()
+
+        floor_control: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.floor_control, Unset):
+            floor_control = self.floor_control.to_dict()
 
         greeting: dict[str, Any] | Unset = UNSET
         if not isinstance(self.greeting, Unset):
@@ -262,7 +280,7 @@ class SyncAgentRequest:
             plugins = []
             for plugins_item_data in self.plugins:
                 plugins_item: dict[str, Any] | str
-                if isinstance(plugins_item_data, PluginWithOptions):
+                if isinstance(plugins_item_data, SyncAgentRequestPluginsItemType1):
                     plugins_item = plugins_item_data.to_dict()
                 else:
                     plugins_item = plugins_item_data
@@ -348,6 +366,8 @@ class SyncAgentRequest:
             field_dict["connectors"] = connectors
         if dispatch is not UNSET:
             field_dict["dispatch"] = dispatch
+        if floor_control is not UNSET:
+            field_dict["floor_control"] = floor_control
         if greeting is not UNSET:
             field_dict["greeting"] = greeting
         if guardrail is not UNSET:
@@ -419,18 +439,25 @@ class SyncAgentRequest:
         from ..models.agent_dispatch import AgentDispatch
         from ..models.agent_scheduling import AgentScheduling
         from ..models.agent_tools import AgentTools
+        from ..models.floor_control import FloorControl
         from ..models.greeting import Greeting
         from ..models.knowledge_document import KnowledgeDocument
         from ..models.knowledge_url_declaration import KnowledgeUrlDeclaration
         from ..models.left_out_connector import LeftOutConnector
-        from ..models.mcp_server import McpServer
-        from ..models.plugin_event import PluginEvent
-        from ..models.plugin_with_options import PluginWithOptions
         from ..models.resume_history import ResumeHistory
         from ..models.sandbox_options import SandboxOptions
         from ..models.session_video import SessionVideo
         from ..models.simulation_declaration import SimulationDeclaration
         from ..models.skill_request import SkillRequest
+        from ..models.sync_agent_request_mcp_servers_item import (
+            SyncAgentRequestMcpServersItem,
+        )
+        from ..models.sync_agent_request_plugin_events_item import (
+            SyncAgentRequestPluginEventsItem,
+        )
+        from ..models.sync_agent_request_plugins_item_type_1 import (
+            SyncAgentRequestPluginsItemType1,
+        )
         from ..models.sync_agent_request_tags import SyncAgentRequestTags
 
         d = dict(src_dict)
@@ -472,6 +499,13 @@ class SyncAgentRequest:
         else:
             dispatch = AgentDispatch.from_dict(_dispatch)
 
+        _floor_control = d.pop("floor_control", UNSET)
+        floor_control: FloorControl | Unset
+        if isinstance(_floor_control, Unset):
+            floor_control = UNSET
+        else:
+            floor_control = FloorControl.from_dict(_floor_control)
+
         _greeting = d.pop("greeting", UNSET)
         greeting: Greeting | Unset
         if isinstance(_greeting, Unset):
@@ -486,7 +520,7 @@ class SyncAgentRequest:
         if isinstance(_harness, Unset):
             harness = UNSET
         else:
-            harness = Harness(_harness)
+            harness = Harness._decode(_harness)
 
         instructions = d.pop("instructions", UNSET)
 
@@ -526,11 +560,13 @@ class SyncAgentRequest:
         llm = d.pop("llm", UNSET)
 
         _mcp_servers = d.pop("mcp_servers", UNSET)
-        mcp_servers: list[McpServer] | Unset = UNSET
+        mcp_servers: list[SyncAgentRequestMcpServersItem] | Unset = UNSET
         if _mcp_servers is not UNSET:
             mcp_servers = []
             for mcp_servers_item_data in _mcp_servers:
-                mcp_servers_item = McpServer.from_dict(mcp_servers_item_data)
+                mcp_servers_item = SyncAgentRequestMcpServersItem.from_dict(
+                    mcp_servers_item_data
+                )
 
                 mcp_servers.append(mcp_servers_item)
 
@@ -539,35 +575,39 @@ class SyncAgentRequest:
         if isinstance(_mode, Unset):
             mode = UNSET
         else:
-            mode = AgentMode(_mode)
+            mode = AgentMode._decode(_mode)
 
         _plugin_events = d.pop("plugin_events", UNSET)
-        plugin_events: list[PluginEvent] | Unset = UNSET
+        plugin_events: list[SyncAgentRequestPluginEventsItem] | Unset = UNSET
         if _plugin_events is not UNSET:
             plugin_events = []
             for plugin_events_item_data in _plugin_events:
-                plugin_events_item = PluginEvent.from_dict(plugin_events_item_data)
+                plugin_events_item = SyncAgentRequestPluginEventsItem.from_dict(
+                    plugin_events_item_data
+                )
 
                 plugin_events.append(plugin_events_item)
 
         _plugins = d.pop("plugins", UNSET)
-        plugins: list[PluginWithOptions | str] | Unset = UNSET
+        plugins: list[str | SyncAgentRequestPluginsItemType1] | Unset = UNSET
         if _plugins is not UNSET:
             plugins = []
             for plugins_item_data in _plugins:
 
-                def _parse_plugins_item(data: object) -> PluginWithOptions | str:
+                def _parse_plugins_item(
+                    data: object,
+                ) -> str | SyncAgentRequestPluginsItemType1:
                     try:
                         if not isinstance(data, dict):
                             raise TypeError()
-                        componentsschemas_plugin_entry_type_1 = (
-                            PluginWithOptions.from_dict(data)
+                        plugins_item_type_1 = (
+                            SyncAgentRequestPluginsItemType1.from_dict(data)
                         )
 
-                        return componentsschemas_plugin_entry_type_1
+                        return plugins_item_type_1
                     except (TypeError, ValueError, AttributeError, KeyError):
                         pass
-                    return cast(PluginWithOptions | str, data)
+                    return cast(str | SyncAgentRequestPluginsItemType1, data)
 
                 plugins_item = _parse_plugins_item(plugins_item_data)
 
@@ -587,14 +627,14 @@ class SyncAgentRequest:
         if isinstance(_role, Unset):
             role = UNSET
         else:
-            role = AgentRole(_role)
+            role = AgentRole._decode(_role)
 
         _sandbox = d.pop("sandbox", UNSET)
         sandbox: Sandbox | Unset
         if isinstance(_sandbox, Unset):
             sandbox = UNSET
         else:
-            sandbox = Sandbox(_sandbox)
+            sandbox = Sandbox._decode(_sandbox)
 
         _sandbox_options = d.pop("sandbox_options", UNSET)
         sandbox_options: SandboxOptions | Unset
@@ -672,6 +712,7 @@ class SyncAgentRequest:
             check_changes=check_changes,
             connectors=connectors,
             dispatch=dispatch,
+            floor_control=floor_control,
             greeting=greeting,
             guardrail=guardrail,
             harness=harness,

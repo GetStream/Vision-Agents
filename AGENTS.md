@@ -19,7 +19,7 @@ Work happens on the `accelerate` branch here, and the agents docs live in getstr
 | `sdks/kotlin/` | Client-side SDK for Android: one module, `core`; its views are Stream Chat's AI components |
 | `sdks/dart/` | Client-side SDK for Flutter: a core, ui and rtc package |
 | `sdks/dotnet/`, `sdks/ruby/`, `sdks/rust/`, `sdks/php/` | Server-side SDKs: agents, dispatch, folder sync and the router. Built and tested in Docker; each has an `sdk-<lang>` skill |
-| `sdks/go/` | The Go SDK. `go.work` ties the Go modules together |
+| `sdks/go/` | The Go SDK, released from `main` as `sdks/go/vX.Y.Z`. `go.work` ties the Go modules together. See the `sdk-go` skill |
 | `performance_benchmark/` | Load benchmark: ramps real WebRTC callers against the router's mock models until it breaks |
 
 ## SDK changes
@@ -45,7 +45,7 @@ build. Those two ports are also what the standalone `va-pg` and `va-redis` conta
 stop those first if they are running.
 
 `.env` must set `ROUTER_AUTH_KEK` (single-quoted: compose expands a `$` in it) and
-`ROUTER_PUBLIC_URL=http://localhost:8080`. Without the KEK no plugin client secret can be
+`ROUTER_PUBLIC_URL=http://localhost:8080`. Without the KEK no connector client secret can be
 saved, and changing it leaves the stored ones unreadable.
 
 Logs: `docker compose logs -f router`.
@@ -159,7 +159,8 @@ A win must be one a real user gets. For Voicebench, the load benchmark and any m
 
 To give an agent a provider's tools (GitHub, Linear, the Slack bot), read the `connectors`
 skill (`.claude/skills/connectors/SKILL.md`). To add a provider to the catalog, read
-`add-connector`. Plugins are deprecated.
+`add-connector`. Plugins were removed: a config naming `plugins`, `plugin_events` or
+`mcp_servers` is refused.
 
 To set up, test or debug an SMS line on a Telnyx number, staging's permanent line included,
 read the `telnyx` skill (`.claude/skills/telnyx/SKILL.md`).

@@ -23,7 +23,20 @@ const (
 	causeVoiceLost = "voice_lost"
 	// causeVoiceRefused is the voice refusing a line said as written.
 	causeVoiceRefused = "voice_refused"
+	// causeShortened is a reply cut at its tail once the controller ruled the caller had
+	// added an item to the request, or a line of the agent's own talked over that way.
+	causeShortened = "shortened"
 )
+
+// byCaller reports whether the caller taking the floor abandoned the reply, rather than the
+// voice failing or something outside the call stopping it.
+func (i interruption) byCaller() bool {
+	switch i.cause {
+	case causeSettled, causeTalking, causeUnheard, causeProvider, causeShortened:
+		return true
+	}
+	return false
+}
 
 // echo buckets: how much of the words that took the floor the reply had itself said.
 const (
