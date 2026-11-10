@@ -330,7 +330,7 @@ func (s *HTTPMetricsSuite) TestAStreamedAnswerIsCountedAndNotTimed() {
 		}
 		_, _ = io.WriteString(w, "second\n")
 	})
-	server := httptest.NewServer(withTrace(withMetrics(s.mux, withTiming((&Server{logger: slog.New(slog.DiscardHandler)}).withRequestLog(s.mux)))))
+	server := httptest.NewServer(withTrace(withMetrics(s.mux, withTiming((&Server{logger: slog.New(slog.DiscardHandler)}).withRequestLog(s.mux, s.mux)))))
 	s.T().Cleanup(server.Close)
 	classBefore := statusSamples(s.T(), "2xx")
 
@@ -365,7 +365,7 @@ func (s *HTTPMetricsSuite) TestASocketIsCountedAsAnUpgradeAndNotTimed() {
 		_ = connection.WriteMessage(websocket.TextMessage, []byte("hello"))
 		_ = connection.Close()
 	})
-	server := httptest.NewServer(withTrace(withMetrics(s.mux, withTiming((&Server{logger: slog.New(slog.DiscardHandler)}).withRequestLog(s.mux)))))
+	server := httptest.NewServer(withTrace(withMetrics(s.mux, withTiming((&Server{logger: slog.New(slog.DiscardHandler)}).withRequestLog(s.mux, s.mux)))))
 	s.T().Cleanup(server.Close)
 
 	connection, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+route, nil)
@@ -402,7 +402,7 @@ func (s *HTTPMetricsSuite) TestAPanicTheRequestLogAnsweredIsCountedAsItsAnswer()
 	s.mux.Get(route, func(http.ResponseWriter, *http.Request) { panic("synthetic handler failure") })
 	recovered := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() { _ = recover() }()
-		withTrace(withMetrics(s.mux, (&Server{logger: slog.New(slog.DiscardHandler)}).withRequestLog(s.mux))).ServeHTTP(w, r)
+		withTrace(withMetrics(s.mux, (&Server{logger: slog.New(slog.DiscardHandler)}).withRequestLog(s.mux, s.mux))).ServeHTTP(w, r)
 	})
 	response := httptest.NewRecorder()
 

@@ -42,6 +42,7 @@ import (
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/driver/pgdriver"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
@@ -106,6 +107,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
 	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
+
+// suiteActivityInterval is how often a suite's activity record is written: a router writes it
+// once a minute, which no test waits for.
+const suiteActivityInterval = 50 * time.Millisecond
 
 // suiteConnections caps each suite's pool, so ten suites at once stay well inside the
 // hundred connections Postgres allows.
@@ -206,6 +211,8 @@ type RouterSuite struct {
 	configs *appconfig.Store
 	live    *live.Client
 	sealer  *auth.Sealer
+	// activity is the activity record every node of the suite counts in.
+	activity *activity.Recorder
 	// manager runs the suite's sessions, for a test about what ends them from inside.
 	manager *session.Manager
 
@@ -720,6 +727,12 @@ func (s *RouterSuite) SetupSuite() {
 	if s.manageOff {
 		manageKey = ""
 	}
+	// Every suite keeps an activity record, as cmd/router does, written often enough for a test
+	// to wait for. Closed before the store and after the server, so it writes what it held.
+	s.activity, err = activity.New(activity.Options{Store: pgStore, Interval: suiteActivityInterval, Logger: logger})
+	s.Require().NoError(err)
+	s.activity.Start()
+	s.T().Cleanup(s.activity.Close)
 	knowledgeBase := s.knowledgeWriter(policies)
 	server := s.newNode(s.shard, logger, Options{
 		Routers:   s.modalities,
@@ -730,6 +743,7 @@ func (s *RouterSuite) SetupSuite() {
 		Sessions:  sessions,
 		Store:     pgStore,
 		Configs:   s.configs,
+		Activity:  s.activity,
 		Live:      liveClient,
 		Auth:      s.authenticator(),
 		AuthMode:  s.authMode(),
@@ -1801,6 +1815,7 @@ func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sea
 		Workers:           everyWorker,
 		Store:             s.store,
 		Configs:           s.configs,
+		Activity:          s.activity,
 		Live:              s.live,
 		Auth:              s.authenticator(),
 		AuthMode:          s.authMode(),

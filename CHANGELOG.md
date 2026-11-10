@@ -2,6 +2,26 @@
 
 ## Features
 
+### The operator hears when an organization's spend jumps
+
+With `ROUTER_LIMITS_SLACK_TOKEN` and `ROUTER_LIMITS_SLACK_CHANNEL` set, one router of the deployment checks every hour each organization's billable spend today (UTC) against its median day of the 7 before, read from `requests` on every shard. At 5x that median, and past a minimum spend, it posts once per organization and day to the channel the money limit notices go to, with today's spend, the median and a link to the staff page (`ROUTER_LIMITS_STAFF_URL`). An organization that spent on fewer than 4 of the 7 days is not checked. `cost_anomaly_notices` keeps each post, so another router or a restart does not post it again, and a post that failed is retried by a later check. No metric is added (AI-2835, #1899).
+
+### The router records which areas of the API each app uses
+
+Every request an app makes is counted in `customer_activity`, one row per app, area of the API (`dashboard_reads`, `agent_setup`, `conversations`, `workers`, `voice_video`, `model_api`, `phone_sms`, `connectors`, `scheduling`, `evals`, `data`, `other`), client (`X-Stream-Client`: `dashboard`, `cli`, `sdk`, else `api`) and UTC day: the requests, the refusals, the last refusal's error code and time, and the first and last request. The sums are written once a minute and when the router stops (AI-2374, #1897).
+
+### Stream staff read how far an organization got with Agents
+
+`GET /v1/ops/orgs/{org_id}/activity` (ops key only) answers whether an organization tried Agents, how far it got and how much it used. It returns its apps' `customer_activity` by area and client, their `requests` on every shard in `postgres.shards` by modality (requests, tokens, audio, characters, time, cost), with `shards` naming the shards it read, `first_seen` and `last_seen`, and `furthest_step` (`none`, `dashboard_reads`, `agent_setup`, `conversations`, `steady_use`). `since` is 30 days ago by default and at most 90 (AI-2379, #1900).
+
+### The router records each voice session's media quality
+
+Each voice session observes, once when the agent leaves, the media quality of the agent's own leg between the router and the SFU: `router_agent_media_packet_loss_ratio` and `router_agent_media_jitter_seconds` by `direction` (`inbound`, the participants' audio as it reached the agent; `outbound`, the agent's audio in the SFU's receiver reports), `router_agent_media_concealed_ratio`, the share of participants' audio the decoder made up for lost packets, and `router_agent_media_rtt_seconds`, the ICE round trip. No call or customer label; the same numbers go in one `media quality` log line per call. The caller's own leg to the SFU is not in them (AI-2829, #1895).
+
+### Model calls are traced under the OpenTelemetry GenAI names
+
+With tracing on, each LLM model call has a `chat <model>` span with `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.model`, the token counts the provider reported (`gen_ai.usage.*`) and `error.type`, after the GenAI conventions at commit `e6658f14c9d9`. The `router_*` metrics are unchanged; `acceleration/internal/llmrouter/AGENTS.md` maps them to the GenAI metric names (AI-2838, #1894).
+
 ### The Kotlin SDK is published to Stream's Maven repository
 
 `io.getstream:stream-agents-android-core` is published to `https://stream-io-repo.com` by `publish-sdk-kotlin.yml`, from `release-kotlin-*` branches only, with `version` in `sdks/kotlin/gradle.properties` matching the branch. Each push to `release-kotlin-X.Y.Z-SNAPSHOT` publishes a 7-day snapshot, `X.Y.Z-<yyyyMMddHHmm>-SNAPSHOT`. A pull request from `release-kotlin-X.Y.Z` fails unless the version is newer than the last release and not already published, and merging it publishes that release and tags the commit `sdk-kotlin-vX.Y.Z`. Other merges into `accelerate` publish nothing. No GitHub release is made, so the Python release does not start. The first release is 0.2.0.
