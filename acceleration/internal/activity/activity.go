@@ -201,20 +201,27 @@ func (r *Recorder) run() {
 	defer close(r.done)
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()
+	failed := false
 	for {
 		select {
 		case <-r.stop:
 			return
 		case <-ticker.C:
 		case <-r.full:
+			// A failed write put its rows back, so the record is still full: a database that
+			// did not answer is tried again at the next tick, not at the next request.
+			if failed {
+				continue
+			}
 		}
-		r.write()
+		failed = !r.write()
 	}
 }
 
-// write writes what is held. What a failed write held is kept for the next one, as far as
-// there is room: a database that did not answer this minute may next minute.
-func (r *Recorder) write() {
+// write writes what is held and reports whether it did. What a failed write held is kept for
+// the next one, as far as there is room: a database that did not answer this minute may next
+// minute.
+func (r *Recorder) write() bool {
 	r.mu.Lock()
 	pending, dropped := r.pending, r.dropped
 	r.pending, r.dropped = map[key]*store.ActivityDelta{}, 0
@@ -225,7 +232,7 @@ func (r *Recorder) write() {
 			"dropped", dropped, "capacity", r.capacity)
 	}
 	if len(pending) == 0 {
-		return
+		return true
 	}
 	deltas := make([]store.ActivityDelta, 0, len(pending))
 	for _, delta := range pending {
@@ -240,5 +247,7 @@ func (r *Recorder) write() {
 		for _, delta := range deltas {
 			r.keep(delta)
 		}
+		return false
 	}
+	return true
 }

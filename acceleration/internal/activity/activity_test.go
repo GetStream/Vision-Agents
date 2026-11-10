@@ -227,6 +227,48 @@ func (s *ActivitySuite) TestAFailedWriteIsWrittenByTheNextOne() {
 		settleFor, 10*time.Millisecond, "what the failed write held was not written again")
 }
 
+// errorCounter is a log handler that counts the errors logged to it.
+type errorCounter struct{ errors *atomic.Int64 }
+
+func (errorCounter) Enabled(context.Context, slog.Level) bool { return true }
+func (h errorCounter) Handle(_ context.Context, record slog.Record) error {
+	if record.Level == slog.LevelError {
+		h.errors.Add(1)
+	}
+	return nil
+}
+func (h errorCounter) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h errorCounter) WithGroup(string) slog.Handler      { return h }
+
+// Defect: a full record whose write fails writes again at the next request, not the next
+// tick: every request is then a failed statement and an error log while the database is down.
+func (s *ActivitySuite) TestAFailedWriteOfAFullRecordIsNotRetriedBeforeTheNextTick() {
+	stuck, other := s.app(), s.app()
+	s.Require().NoError(s.db.RecordActivity(s.ctx, []store.ActivityDelta{{
+		OrganizationID: "org", AppID: stuck, Area: AreaAgentSetup, Client: store.AuditSourceCLI,
+		Day: day, Requests: math.MaxInt64, FirstAt: day, LastAt: day,
+	}}))
+	var failed atomic.Int64
+	recorder, err := New(Options{Store: s.db, Interval: time.Hour, Capacity: 2, Logger: slog.New(errorCounter{&failed})})
+	s.Require().NoError(err)
+	recorder.Start()
+	recorder.Record(request(stuck))
+	recorder.Record(request(other))
+	s.Require().Eventually(func() bool { return failed.Load() >= 1 }, settleFor, time.Millisecond, "the full record was not written")
+
+	until := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(until) {
+		recorder.Record(request(stuck))
+		recorder.Record(request(other))
+	}
+	s.Equal(int64(1), failed.Load(), "writes failed in 300ms with an hour between ticks")
+
+	_, err = s.db.DB().ExecContext(s.ctx, "UPDATE customer_activity SET requests = 0 WHERE app_id = ?", stuck)
+	s.Require().NoError(err)
+	recorder.Close()
+	s.Positive(s.requests(other), "what the failed writes held was lost")
+}
+
 // Defect: a request recorded while the writer swaps out what it holds, lost or counted twice.
 // The callers record for a tenth of a second, over many writes. Run it with -race.
 func (s *ActivitySuite) TestRequestsRecordedWhileItWritesAreEachCountedOnce() {
