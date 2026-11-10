@@ -157,3 +157,23 @@ func (s *SessionSuite) TestASessionNobodyJoinedIsNotJudged() {
 	s.Equal(before, s.silences())
 	s.Equal(judged, s.judged())
 }
+
+func (s *SessionSuite) TestASessionInTwoCasesIsJudgedOnce() {
+	// Catches the judged count taken once per case: a call with no audio either way is in two,
+	// and counted twice the share of its cases would pass 1.
+	s.present = []stt.Participant{visitor}
+	s.manages()
+	before, judged := s.silences(), s.judged()
+	created := s.joins(Spec{})
+	s.settles(created)
+	created.carriedMu.Lock()
+	created.carried = agent.CallAudio{Published: true}
+	created.carriedMu.Unlock()
+
+	s.closes(created)
+
+	after := s.silences()
+	s.Equal(before["no_inbound_audio/web"]+1, after["no_inbound_audio/web"])
+	s.Equal(before["no_audible_outbound/web"]+1, after["no_audible_outbound/web"])
+	s.judgedOnce(judged, "web")
+}
