@@ -138,6 +138,17 @@ func (s *MediaQualitySuite) TestALatePacketIsNeitherLostNorDecoded() {
 	s.InDelta(0.1, s.value(summary.concealed), 1e-9, "one of ten buffers was made up for the late one")
 }
 
+func (s *MediaQualitySuite) TestALatePacketIsJitter() {
+	// Catches a packet that came after a newer one left out of the jitter: its arrival is as
+	// uneven as any (RFC 3550 A.8 takes every packet), and out-of-order delivery is what
+	// jitter measures.
+	packets := s.packets(0, 1, 2, 4, 3, 5, 6, 7, 8, 9)
+	arrivals := onTime(packets)
+	arrivals[4] = arrivals[3].Add(5 * time.Millisecond)
+	summary := s.heard(packets, arrivals)
+	s.Greater(s.value(summary.inboundJitter), 0.001, "packet 3 came 5 ms after packet 4")
+}
+
 func (s *MediaQualitySuite) TestADuplicateIsNoNegativeLossAndIsNotDecoded() {
 	// Catches the RFC 3550 count going below zero when more packets come than were sent, and a
 	// duplicate, which the decoder drops, counted as decoded, hiding a buffer made up elsewhere.
