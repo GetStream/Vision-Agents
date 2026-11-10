@@ -8,8 +8,9 @@ name: Publish Kotlin SDK
 #   raises the version.
 # - Any other push to accelerate that changes sdks/kotlin publishes snapshot
 #   X.Y.(Z+1)-<yyyyMMddHHmm>-SNAPSHOT, which expires after 7 days.
-# - A pull request to accelerate runs the same version check, so a version that is lower than the
-#   last release, or already published, fails before the merge.
+# - A release's pull request comes from a branch named release-kotlin-X.Y.Z, and runs the same
+#   version check: it fails before the merge unless version is X.Y.Z, newer than the last release
+#   and not already published. Other pull requests do not run this workflow's jobs.
 #
 # There is no GitHub release: publishing one starts the Python release (release.yml), and the
 # repository's releases are the Python packages'.
@@ -35,6 +36,8 @@ permissions:
 jobs:
   version:
     name: Check the version
+    # Of the pull requests, only a release's: one from a branch named release-kotlin-X.Y.Z.
+    if: github.event_name == 'push' || startsWith(github.head_ref, 'release-kotlin-')
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -48,14 +51,23 @@ jobs:
 
       - name: Work out the version
         id: version
+        env:
+          HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
           version=$(sed -n 's/^version=//p' sdks/kotlin/gradle.properties)
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error file=sdks/kotlin/gradle.properties::version=$version is not X.Y.Z"; exit 1
           fi
+          # A pull request from release-kotlin-X.Y.Z releases X.Y.Z, the version gradle.properties says.
+          if [[ "$HEAD_REF" =~ ^release-kotlin-(.*)$ ]] && [ "${BASH_REMATCH[1]}" != "$version" ]; then
+            echo "::error file=sdks/kotlin/gradle.properties::$HEAD_REF releases ${BASH_REMATCH[1]}, but version=$version"; exit 1
+          fi
           last=$(git tag -l 'sdk-kotlin-v*' | sed 's/^sdk-kotlin-v//' | sort -V | tail -1)
           if [ "$version" = "$last" ]; then
+            if [[ "$HEAD_REF" == release-kotlin-* ]]; then
+              echo "::error file=sdks/kotlin/gradle.properties::$version is already released"; exit 1
+            fi
             IFS=. read -r major minor patch <<< "$version"
             version="$major.$minor.$((patch + 1))-$(date -u +%Y%m%d%H%M)-SNAPSHOT"
             channel=snapshots

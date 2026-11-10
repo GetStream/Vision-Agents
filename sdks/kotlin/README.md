@@ -337,9 +337,10 @@ The unit tests are plain JVM tests, run by the Android Gradle plugin with no emu
 `.github/workflows/publish-sdk-kotlin.yml` publishes `io.getstream:stream-agents-android-core`
 to `https://stream-io-repo.com`. `version` in `gradle.properties` is the latest release.
 
-- **A release** is a pull request to `accelerate` that raises `version`. The pull request fails
-  if the version is lower than the last release or already published. Merging it publishes the
-  release and tags the commit `sdk-kotlin-vX.Y.Z`.
+- **A release** is a pull request to `accelerate` from a branch named `release-kotlin-X.Y.Z`
+  that sets `version=X.Y.Z`. The pull request fails unless the version matches the branch, is
+  newer than the last release and is not already published. Merging it publishes the release
+  and tags the commit `sdk-kotlin-vX.Y.Z`.
 - **A snapshot**, `X.Y.(Z+1)-<yyyyMMddHHmm>-SNAPSHOT`, is published on every other push to
   `accelerate` that changes `sdks/kotlin`. A snapshot expires after 7 days.
 
