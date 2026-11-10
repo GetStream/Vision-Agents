@@ -288,8 +288,17 @@ const (
 
 // takeThreadTurn waits for a thread channel's turn and leases it to holder for threadTurnLease.
 func (s *Server) takeThreadTurn(ctx context.Context, channelID, holder string) error {
+	return takeTurn(ctx, func(ctx context.Context, until time.Time) (bool, error) {
+		return s.store.TakeChannelThreadTurn(ctx, channelID, holder, until)
+	})
+}
+
+// takeTurn waits for a channel's turn, asking take for a lease until threadTurnLease from now
+// every threadTurnWait: a thread channel's (takeThreadTurn) or a chat channel's
+// (answerChatChannel).
+func takeTurn(ctx context.Context, take func(context.Context, time.Time) (bool, error)) error {
 	for {
-		taken, err := s.store.TakeChannelThreadTurn(ctx, channelID, holder, time.Now().Add(threadTurnLease))
+		taken, err := take(ctx, time.Now().Add(threadTurnLease))
 		if err != nil || taken {
 			return err
 		}

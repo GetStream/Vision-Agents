@@ -70,6 +70,29 @@ func (s *AppHooksSuite) TestAMessageWrittenWhileTheAgentAnswersIsAnsweredAfter()
 		"both messages answered")
 }
 
+// Another router holds the channel's turn, answering a message delivered there: this one
+// waits, and answers once it is let go, so two routers never answer one channel at once.
+func (s *AppHooksSuite) TestAChannelAnotherRouterIsAnsweringWaitsForItsTurn() {
+	s.holdsType("callouts", memberWrites)
+	s.answeringIn("callouts")
+	channel := s.groupChannel("callouts", nil)
+	cid := "callouts:" + channel
+	taken, err := s.store.TakeChatChannelTurn(context.Background(), s.appID(), cid, "another-router", time.Now().Add(time.Minute))
+	s.Require().NoError(err)
+	s.Require().True(taken)
+
+	s.Equal(http.StatusOK, s.fromApp(s.appPath("/v1/chat/hooks/stream"), s.groupMessage("callouts", channel, nil)))
+
+	s.Never(func() bool { return s.replies(cid) > 0 }, 500*time.Millisecond, 20*time.Millisecond,
+		"two routers never answer one channel at once")
+	s.Require().NoError(s.store.ReleaseChatChannelTurn(context.Background(), s.appID(), cid, "another-router"))
+	s.Eventually(func() bool { return s.replies(cid) == 1 }, settleFor, 20*time.Millisecond, "answered once let go")
+	s.Eventually(func() bool {
+		free, err := s.store.TakeChatChannelTurn(context.Background(), s.appID(), cid, "the-next-router", time.Now().Add(time.Minute))
+		return err == nil && free
+	}, settleFor, 20*time.Millisecond, "the turn that answered let go of the channel")
+}
+
 // replies counts the agent's finished replies in the channel cid.
 func (s *RouterSuite) replies(cid string) int {
 	count := 0

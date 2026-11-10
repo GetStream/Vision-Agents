@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"strings"
+	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
+	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
@@ -20,13 +22,14 @@ import (
 //	  addressedIn: the hook's app's own customer has a    a shared app, a type no config names,
 //	    config naming callouts (chatChannelConfig)          a failed read: nothing
 //	  answerChatChannel, off the request
+//	    lease the channel's turn in Postgres                another router's turn: wait
 //	    the session on the channel (ByConversationWhere), else
 //	      FromConfig(that config), Text, Dispatched,         opened on the Router's word
 //	      ConversationID callouts:team-1                     (RouterOpensDispatched), whatever
 //	                                                         the channel's custom data says
 //	    Session.FollowUp(text, photos)                     the person's message is already
 //	    wait until the turn is over; close the session      in the channel: only the reply is
-//	                                                         written, as the config's id
+//	    it opened; let go of the lease                       written, as the config's id
 
 // addressedIn is addressed for a channel of any type: one of a type other than agent is
 // written to an agent only when a config of the hook's app's own customer answers in channels
@@ -78,13 +81,36 @@ func (s *Server) answerChatChannel(ctx context.Context, origin hookOrigin, event
 		return settled
 	}
 	cid := event.ChannelType + ":" + event.ChannelID
-	origin.answer(func() {
-		s.answerHosted(origin, cid, config.CustomerID, event,
-			func(turn context.Context) (*session.Session, error) {
-				return s.chatChannelSession(turn, origin, config, cid, event)
-			})
-	})
+	origin.answer(func() { s.answerChatChannelTurn(origin, config, cid, event) })
 	return true
+}
+
+// answerChatChannelTurn is answerChatChannel off the request. One turn of a channel at a time
+// across every router, as a thread channel's: the turn's lease is a row in Postgres
+// (store.TakeChatChannelTurn), and a message that arrives while another router answers waits
+// for it, so the session opened for it reads that router's reply from the channel.
+func (s *Server) answerChatChannelTurn(origin hookOrigin, config store.AgentConfig, cid string, event messageEvent) {
+	ctx, cancel := context.WithTimeout(context.Background(), askTimeout)
+	defer cancel()
+	holder := uuid.NewString()
+	if err := takeTurn(ctx, func(ctx context.Context, until time.Time) (bool, error) {
+		return s.store.TakeChatChannelTurn(ctx, origin.app, cid, holder, until)
+	}); err != nil {
+		s.logger.Error("a message in a channel the Router answers in waited too long for the channel's turn", "channel", cid, "error", err)
+		return
+	}
+	// A context of its own: the lease is not let go of because the wait used the budget.
+	defer func() {
+		releasing, done := context.WithTimeout(context.WithoutCancel(ctx), threadTurnPoll*20)
+		defer done()
+		if err := s.store.ReleaseChatChannelTurn(releasing, origin.app, cid, holder); err != nil {
+			s.logger.Error("could not let go of a channel's turn; it runs out instead", "channel", cid, "error", err)
+		}
+	}()
+	s.answerHosted(origin, cid, config.CustomerID, event,
+		func(turn context.Context) (*session.Session, error) {
+			return s.chatChannelSession(turn, origin, config, cid, event)
+		})
 }
 
 // chatChannelSession opens the Router's own session on the channel cid, under the config that
