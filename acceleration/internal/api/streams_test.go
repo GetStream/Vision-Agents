@@ -234,6 +234,17 @@ func (s *StreamsSuite) TestAVendorThatFailsToStartEndsAsAnInternalError() {
 	s.Equal(websocket.CloseInternalServerErr, closed.Code)
 }
 
+func (s *StreamsSuite) TestATermTheNamedModelDoesNotTakeEndsAsAPolicyViolation() {
+	target := "down/" + downModel
+	read, ended := s.ending(s.start("/v1/stt/stream", frame{"target": target, "stt": frame{"diarize": true}}))
+
+	s.Require().NotEmpty(read)
+	s.Equal("routing: "+target+" does not take diarize", read[0]["error"])
+	var closed *websocket.CloseError
+	s.Require().ErrorAs(ended, &closed)
+	s.Equal(websocket.ClosePolicyViolation, closed.Code, "the caller's to change, not the router's failure")
+}
+
 func (s *StreamsSuite) TestAStartWithNoTargetEndsWithTheSameClose() {
 	s.refusedStartEndsWithItsMessage(frame{"tts": frame{"target": "en-low-latency"}})
 }

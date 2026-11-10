@@ -72,6 +72,24 @@ func (s *SearchSuite) TestATargetNothingAnswersToIsRefused() {
 	s.Equal(http.StatusBadRequest, status)
 }
 
+func (s *SearchSuite) TestATermTheNamedModelDoesNotTakeIsRefused() {
+	target := "down/" + failingSearchModels["down"]
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/search", SearchRequest{
+		Query: "how much does a call cost", Options: &SearchOptions{Target: &target, Category: pointerTo("news")}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "routing: "+target+" does not take category")
+}
+
+func (s *SearchSuite) TestATermNoListedProviderTakesIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/search", SearchRequest{
+		Query: "how much does a call cost", Options: &SearchOptions{Category: pointerTo("news"), Providers: &[]string{
+			"down/" + failingSearchModels["down"], "broke/" + failingSearchModels["broke"]}}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "routing: no provider can express category")
+}
+
 func (s *SearchSuite) TestAVendorThatFailsTheQuestionIsAServerError() {
 	status, payload := s.serverClient.call(http.MethodPost, "/v1/search", SearchRequest{
 		Query: "how much does a call cost", Options: &SearchOptions{Target: pointerTo("down/" + failingSearchModels["down"])}})
