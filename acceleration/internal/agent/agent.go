@@ -4116,7 +4116,7 @@ func (a *Agent) releaseUnheard(turnID string, at time.Time) {
 	}
 	a.releasing = time.AfterFunc(time.Until(at), func() {
 		a.mu.Lock()
-		voice, gone := a.tts, a.closed || a.held != held
+		voice, gone := a.tts, a.held != held
 		a.mu.Unlock()
 		if !gone {
 			a.sayAgain(voice, held)
