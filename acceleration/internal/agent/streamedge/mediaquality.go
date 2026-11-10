@@ -137,6 +137,9 @@ func (s *inboundStream) arrived(seq uint16, timestamp uint32, at time.Time) {
 	ahead := seq - uint16(s.highest)
 	switch {
 	case !s.started || (ahead >= rtpMaxDropout && ahead < rtpSeqHalf):
+		// RFC 3550 A.1 would wait for a second in-sequence packet (probation) before taking a
+		// far jump as a restart; a stray packet that far ahead restarts the window here. The SDK
+		// decoder drops the same packets, so the count matches what it decodes.
 		s.restart(seq)
 	case ahead == 0 || ahead >= rtpSeqHalf:
 		// A duplicate or a packet older than the newest: counted already as lost or as come,
