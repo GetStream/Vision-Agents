@@ -42,9 +42,9 @@ func (s *AppHooksSuite) TestAMessageInAChannelOfATypeTheConfigNamesIsAnsweredThe
 	s.Equal(config.Name, user["name"])
 }
 
-// Ben writes while the agent still answers Anya: the session answering her takes his message
-// once her reply is done, and both are answered, rather than the session closing under his
-// (answerHosted waits until the session is no longer busy before it closes it).
+// Ben writes while the agent still answers Anya: his message waits for the channel's turn her
+// answer holds (answerChatChannelTurn), which is let go of once her session is closed, and a
+// session of its own then answers him, reading her reply from the channel. Both are answered.
 func (s *AppHooksSuite) TestAMessageWrittenWhileTheAgentAnswersIsAnsweredAfter() {
 	s.holdsType("callouts", memberWrites)
 	s.answeringIn("callouts")
