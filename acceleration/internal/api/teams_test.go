@@ -173,6 +173,15 @@ func (s *AgentTeamsSuite) TestAnAppWhoseSettingsCannotBeReadOpensNothingToAUser(
 	s.Require().NoError(err)
 
 	s.Equal(http.StatusInternalServerError, dana.do(http.MethodPost, "/v1/agents/sessions", s.naming(config), nil))
+	s.Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/sessions", s.naming(config), nil),
+		"a backend is not limited by teams, so it needs no settings")
+}
+
+// Chat compares team names exactly.
+func (s *AgentTeamsSuite) TestATeamIsMatchedExactlyNotByCase() {
+	anya := s.inTeams("red")
+
+	s.Equal(http.StatusNotFound, anya.do(http.MethodPost, "/v1/agents/sessions", s.naming(s.configOf("Red")), nil))
 }
 
 func (s *AgentTeamsSuite) TestABackendOpensAConfigOfAnyTeamWithoutAskingStream() {
