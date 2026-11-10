@@ -19,7 +19,7 @@ import (
 // beforeItsLook is how long a delivery that waits scheduledPoll = an hour is watched for answering
 // early: past the 2 s a hardcoded default would wait. It only ever ends a wait that should have
 // held, so a loaded machine can make a broken wait pass this test, never a sound one fail.
-const beforeItsLook = 3 * time.Second
+const beforeItsLook = 10 * time.Second
 
 // looksEvery has the router's deliveries look at a holding session again after d, and puts the
 // look back when the test ends. It checks the look's default first.
@@ -99,7 +99,7 @@ func (s *ScheduledTasksSuite) TestADeliveryAPeerDidNotTakeGoesOnHereOnceTheSessi
 			case answered := <-done:
 				s.NoError(answered.err)
 				s.False(answered.handed, "the peer took nothing")
-			case <-time.After(deliveryWait):
+			case <-time.After(beforeItsLook):
 				s.FailNow("the delivery never saw the session leave the peer")
 			}
 		})
@@ -187,7 +187,7 @@ func (s *ScheduledTasksSuite) TestATaskWaitingOutACallGoesOnWhenTheCallEnds() {
 	select {
 	case err := <-done:
 		s.NoError(err)
-	case <-time.After(deliveryWait):
+	case <-time.After(beforeItsLook):
 		s.FailNow("the delivery never saw the call end")
 	}
 }
