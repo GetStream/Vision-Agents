@@ -2,6 +2,10 @@
 
 ## Features
 
+### A GitHub connection can act as a GitHub App installation
+
+The `github` connector takes a third scheme, `github_app` (revision 12): an app-owned connection created with `auth_scheme: github_app` and given the app's `app_id`, `private_key` and `installation_id` with `PUT /v1/agents/connections/{id}/credentials` acts as the app's installation (the bot) rather than a person. The router signs an app JWT, mints an hour-long installation token, renews it before it expires, and sends it to GitHub's MCP server and as the sandbox's `GITHUB_TOKEN`. Optional `permissions` and `repositories` narrow the token. A key or installation GitHub refuses is a 400 naming GitHub's answer; a 403 on validate for a permission the app lacks keeps the connection connected. A connection that names no scheme still connects by consent, and a router without the scheme no longer counts one it lacks when choosing that default.
+
 ### The Go SDK has a README that installs and an sdk-go skill
 
 `sdks/go/README.md` opens with `go get github.com/GetStream/Vision-Agents/sdks/go@latest`, the Go floor (1.25) and a quickstart against the hosted router, which `readme_test.go` holds to `examples/quickstart` word for word. It no longer names fields that do not exist (`Harness.UseSkills`, `ChatOptions`, a `ConversationID` option), its links outside the module are absolute, and it says how versions are tagged (`sdks/go/vX.Y.Z`, released from `main`), which generated types are the SDK's models, and what is and is not retried. The new `sdk-go` skill records the conventions and the release steps (AI-1892).
