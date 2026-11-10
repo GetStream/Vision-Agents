@@ -2,7 +2,7 @@ import type { BackendOptions } from "./backend.js";
 import { Client, type Schemas } from "./client.js";
 import { Dispatch } from "./dispatch.js";
 import { DEFAULT_CALL_TYPE, Edge } from "./edge.js";
-import { ConfigurationError, RouterError } from "./errors.js";
+import { ConfigurationError, RouterError, SocketClosedError } from "./errors.js";
 import { Session, type SessionOptions } from "./session.js";
 import { Tools } from "./tools.js";
 import type { InboundCall, InboundMessage } from "./inbound.js";
@@ -192,7 +192,7 @@ export interface SyncStamp {
   write(hash: string): Promise<void>;
 }
 
-/** An agent directory, as `loadFolder` from `@stream-io/calypso/node` reads one. */
+/** An agent directory, as `loadFolder` from `@stream-io/stream-agents/node` reads one. */
 export interface Folder {
   path: string;
   name: string;
@@ -307,7 +307,7 @@ export class Agent {
     // A directory's skills are folded in here, so everything downstream reads one harness.
     const declared = options.harness;
     const fromFolder = this.folder?.skills ?? [];
-    if (declared && (declared.skills?.length ?? 0) === 0 && fromFolder.length > 0) {
+    if (declared && declared.skills === undefined && fromFolder.length > 0) {
       this.harness = { ...declared, skills: fromFolder };
     } else if (!declared && fromFolder.length > 0) {
       this.harness = { skills: fromFolder };
@@ -487,7 +487,7 @@ export class Agent {
     });
     const running = dispatch.run();
     const stopped = running.then(() => {
-      throw new RouterError(0, "waitForCall", "stopped waiting before anybody rang");
+      throw new SocketClosedError("the router stopped handing over calls before anybody rang");
     });
     // Stopping after the call arrived ends `run` too, which is not a failure.
     stopped.catch(() => undefined);
@@ -506,7 +506,7 @@ export class Agent {
       }
     }
     await session.close();
-    throw new RouterError(0, "waitForCall", "the call ended before anybody rang");
+    throw new SocketClosedError("the call ended before the caller said anything");
   }
 
   /**
@@ -575,7 +575,7 @@ export class Agent {
         query: { name: this.name },
       });
       // A config deleted since the stamp was written is synced again rather than trusted.
-      if (stored?.name === this.name) {
+      if (stored?.name === this.name && stored.sync_hash === hash) {
         return { unchanged: true, config: stored };
       }
     }
@@ -691,7 +691,9 @@ export class Agent {
       ...(pipeline.maxTokens ? { max_tokens: pipeline.maxTokens } : {}),
       ...(pipeline.toolTimeoutMs ? { tool_timeout_ms: pipeline.toolTimeoutMs } : {}),
       ...(pipeline.video ? { video: pipeline.video } : {}),
-      ...(pipeline.config ? { config_id: await this.resolveConfig(pipeline.config) } : {}),
+      ...(pipeline.config
+        ? { config_id: await this.resolveConfig(pipeline.config) }
+        : { agent: this.name }),
     };
   }
 

@@ -46,6 +46,7 @@ func newPipeline(parent context.Context, native bool) *pipeline {
 // native; an empty one makes it a cascade on the other targets.
 type Settings struct {
 	LLMTarget        string
+	LLMFallbacks     []string
 	ControllerTarget string
 	STTTarget        string
 	TTSTarget        string
@@ -135,6 +136,7 @@ func (a *Agent) SetSettings(ctx context.Context, next Settings) error {
 
 	a.mu.Lock()
 	a.options.LLMTarget = next.LLMTarget
+	a.options.LLMFallbacks = next.LLMFallbacks
 	a.options.ControllerTarget = next.ControllerTarget
 	a.options.STTTarget = next.STTTarget
 	a.options.TTSTarget = next.TTSTarget
@@ -232,8 +234,8 @@ func (a *Agent) prepare(current, next Settings, native, restart bool) (*prepared
 			}
 		}
 	} else {
-		if next.LLMTarget != current.LLMTarget {
-			if prep.llm, err = a.startLLM(next.LLMTarget); err != nil {
+		if next.LLMTarget != current.LLMTarget || !slices.Equal(next.LLMFallbacks, current.LLMFallbacks) {
+			if prep.llm, err = a.startLLM(next.LLMTarget, next.LLMFallbacks); err != nil {
 				return fail(fmt.Errorf("agent: start llm: %w", err))
 			}
 			if err = answers(a.ctx, prep.llm); err != nil {
@@ -241,7 +243,7 @@ func (a *Agent) prepare(current, next Settings, native, restart bool) (*prepared
 			}
 		}
 		if next.controller() != current.controller() {
-			if prep.controller, err = a.startLLM(next.controller()); err != nil {
+			if prep.controller, err = a.startLLM(next.controller(), nil); err != nil {
 				return fail(fmt.Errorf("agent: start flow controller: %w", err))
 			}
 		}
@@ -519,7 +521,7 @@ func (a *Agent) openCascade(s Settings) (*prepared, error) {
 	}
 	prep := &prepared{}
 	var err error
-	if prep.llm, err = a.startLLM(s.LLMTarget); err != nil {
+	if prep.llm, err = a.startLLM(s.LLMTarget, s.LLMFallbacks); err != nil {
 		return nil, stack.Wrap(fmt.Errorf("agent: start llm: %w", err))
 	}
 	// Flow decisions use their own fast-model session so deciding whether speech is
@@ -539,7 +541,7 @@ func (a *Agent) openCascade(s Settings) (*prepared, error) {
 			prep.close()
 			return nil, stack.Wrap(fmt.Errorf("agent: start flow judge: %w", err))
 		}
-	} else if prep.controller, err = a.startLLM(s.controller()); err != nil {
+	} else if prep.controller, err = a.startLLM(s.controller(), nil); err != nil {
 		prep.close()
 		return nil, stack.Wrap(fmt.Errorf("agent: start flow controller: %w", err))
 	}
@@ -640,7 +642,13 @@ func (a *Agent) openSpeech(ctx context.Context, s Settings, delegating bool) (*s
 	return session, nil
 }
 
-func (a *Agent) startLLM(target string) (*llmrouter.Session, error) {
+// startLLM opens a session on target, or on target and then each of fallbacks in order: a
+// priority list, so a response target fails, or is late to start, is asked of the next.
+func (a *Agent) startLLM(target string, fallbacks []string) (*llmrouter.Session, error) {
+	var providers []string
+	if len(fallbacks) > 0 {
+		providers = append([]string{target}, fallbacks...)
+	}
 	return a.options.LLM.Start(a.ctx, llmrouter.Request{
 		CustomerID:    a.options.CustomerID,
 		Caller:        a.options.Caller,
@@ -649,6 +657,7 @@ func (a *Agent) startLLM(target string) (*llmrouter.Session, error) {
 		Region:        a.options.Region,
 		Tags:          a.options.Tags,
 		Target:        target,
+		Providers:     providers,
 		LanguageHints: a.options.LanguageHints,
 	})
 }
@@ -1001,6 +1010,7 @@ func (a *Agent) startListener(target string) (*sttrouter.Session, error) {
 func (a *Agent) settingsLocked() Settings {
 	return Settings{
 		LLMTarget:        a.options.LLMTarget,
+		LLMFallbacks:     a.options.LLMFallbacks,
 		ControllerTarget: a.options.ControllerTarget,
 		STTTarget:        a.options.STTTarget,
 		TTSTarget:        a.options.TTSTarget,

@@ -4534,6 +4534,8 @@ export type components = {
             /** @description The connectors agent.yaml names that the last sync left out, because the app has no connection by the id or label they name: an agent that runs without them until the connection exists and it syncs again. Only a sync writes them. Absent when there are none. */
             readonly left_out_connectors?: readonly components["schemas"]["LeftOutConnector"][];
             readonly llm?: string;
+            /** @description Where a response goes, in order, when llm fails it. Absent when there are none. */
+            readonly llm_fallbacks?: readonly string[];
             readonly mode: components["schemas"]["AgentMode"];
             readonly name: string;
             /**
@@ -4587,6 +4589,8 @@ export type components = {
             readonly keyterms?: readonly string[];
             readonly knowledge_namespace?: string;
             readonly llm?: string;
+            /** @description Replaces the list whole. An empty list removes it. */
+            readonly llm_fallbacks?: readonly string[];
             /**
              * @deprecated
              * @description No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
@@ -4660,6 +4664,8 @@ export type components = {
             readonly knowledge_namespace?: string;
             /** @description The model holding the conversation. */
             readonly llm?: string;
+            /** @description Where a response goes when llm fails it, in order: each a provider/model, a capability shortcut or one of your custom/ models, as llm takes. llm stays the first choice. A response it fails is asked of each next one in turn, and one it says nothing in for as long as a reply may is also asked of another, the first to start answering kept, so a model you serve yourself can be backed by one Stream serves. A response that has started is never moved, however slowly it goes on. Omitted or null on an update, the list stored stays as it is; an empty list removes it. A target this deployment does not route, or one with no instance in the agent's region, is refused. */
+            readonly llm_fallbacks?: readonly string[];
             /**
              * @deprecated
              * @description No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.

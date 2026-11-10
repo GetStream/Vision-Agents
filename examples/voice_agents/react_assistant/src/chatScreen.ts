@@ -1,5 +1,5 @@
-import type { Session, UIAction } from "@stream-io/calypso";
-import type { VoiceSession } from "@stream-io/calypso/video";
+import type { Session, UIAction } from "@stream-io/stream-agents";
+import type { VoiceSession } from "@stream-io/stream-agents/video";
 import type { LocalMessage } from "stream-chat";
 import type { AIPendingMessage } from "stream-chat-react/ai-components";
 

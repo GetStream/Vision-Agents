@@ -27,7 +27,7 @@ class Chat10 extends Chat9 {
   }
 }
 
-/** The user the chat client calypso builds is connected as, after `setUser(user)`. */
+/** The user the chat client the SDK builds is connected as, after `setUser(user)`. */
 async function connect(Chat: typeof Chat9, user: { id: string; [field: string]: unknown }): Promise<unknown> {
   registerChat(Chat);
   connectedAs.length = 0;

@@ -1,6 +1,6 @@
-# @stream-io/calypso
+# Stream Agents for JavaScript
 
-The JavaScript client for the Stream acceleration backend. One package for both ends: a
+`@stream-io/stream-agents` is the JavaScript client for the Stream acceleration backend. One package for both ends: a
 Node process that runs agents, and a browser that holds a conversation with one.
 
 Nothing here does inference or touches media. The backend joins the call, hears the caller,
@@ -8,7 +8,7 @@ answers and speaks. What arrives here are the events saying so, and what stays h
 function calling — because the functions are here.
 
 ```bash
-npm install @stream-io/calypso
+npm install @stream-io/stream-agents
 ```
 
 Node 22 or newer, or any browser. No runtime dependencies: `fetch`, `WebSocket` and Web
@@ -27,7 +27,7 @@ Which one a deployment uses is a property of the deployment rather than a choice
 | `apiKey` + `token` | A browser | the conversations that user owns |
 
 ```ts
-import { Client } from "@stream-io/calypso";
+import { Client } from "@stream-io/stream-agents";
 
 // On your own server, with STREAM_API_KEY and STREAM_API_SECRET in the environment.
 const api = new Client();
@@ -98,6 +98,21 @@ went wrong. Branch on `code` (`not_configured`, `validation_failed`, ...) or `ty
 message, and expect codes you do not know; quote `requestId` to support, since a 500 says only
 "something went wrong".
 
+A request that never got an answer is a `RouterError` with status 0, its network error as
+`cause`; one the caller aborted rejects with the signal's own `AbortError`, and a call missing a
+path parameter with a `ConfigurationError`, so neither looks like something worth retrying.
+A request that is safe to send twice (GET, PUT, DELETE, and `responses.create`, which the router
+answers once per request id) is sent again after a network failure or a 429, 502, 503 or 504,
+up to `maxRetries` times (2 unless the client says), waiting longer each time and as long as
+`Retry-After` asks. To ask again yourself after a failure that may have reached the router,
+pass the same `requestId` to `responses.create`. When the router took the question and only its
+answer was lost, it answers the retry with no id, and `responses.create` looks up the turn by
+what was asked, so the response it returns still names that turn.
+
+A connection lost while reading a response body follows the same retry policy. Invalid JSON
+is reported with the operation and request id and is not retried. Text responses remain
+strings; event-stream responses return a `ReadableStream<Uint8Array>` for the caller to read.
+
 ## Spend limits and teams
 
 A backend caps what the organization, its apps, keys, end users, teams and usage categories may
@@ -106,7 +121,7 @@ of a dollar the router counts in, and never built from a fractional number: `USD
 `USD.cents(1250)`, or `USD.parse("12.50")` (a string of dollars is taken anywhere an amount is).
 
 ```ts
-import { Client, USD } from "@stream-io/calypso";
+import { Client, USD } from "@stream-io/stream-agents";
 
 const api = new Client(); // STREAM_API_KEY and STREAM_API_SECRET: server side only
 await api.spendLimits.create({ subject: "organization", interval: "monthly", amount: USD.dollars(20_000) });
@@ -212,7 +227,7 @@ await api.scheduledTasks.delete(id);
 ## An agent
 
 ```ts
-import { Agent } from "@stream-io/calypso";
+import { Agent } from "@stream-io/stream-agents";
 
 const agent = new Agent({
   name: "John",
@@ -227,6 +242,7 @@ agent.tools.register<{ city: string }>({
   run: async ({ city }) => fetchWeather(city),
 });
 
+await agent.sync();
 const session = await agent.join();
 console.log(await agent.monitorURL(session));
 
@@ -240,7 +256,9 @@ for await (const event of session.events()) {
 instructions, the same skills, the same knowledge, with nothing transcribed and nothing
 spoken. `session.voice.stop()` carries a conversation on in writing and
 `session.voice.start()` puts the agent back on the call. Instructions reach the backend
-with `agent.sync()`: a session runs on the stored config's.
+with `agent.sync()`: a session runs on the stored config's. Without `pipeline.config`,
+`chat` and `join` select that config by the agent's name, so an agent that was never synced
+under its name is refused with a 404 `there is no agent called <name>`: sync it first.
 
 `new Agent({ timezone: "Europe/Lisbon" })` is the zone the agent's sessions are in, and `join`,
 `chat`, `answer`, `reply`, `startCall` and `waitForCall` each take a `timezone` for the person on
@@ -333,7 +351,7 @@ and waits, and the router pushes work down the connection as it arrives — noth
 has to be publicly reachable.
 
 ```ts
-import { Agent, Dispatch } from "@stream-io/calypso";
+import { Agent, Dispatch } from "@stream-io/stream-agents";
 
 const dispatch = new Dispatch({ capacity: 4 });
 
@@ -348,7 +366,9 @@ dispatch.onMessage(async (message) => {
     await dispatch.answer(message);
     return;
   }
-  const session = await dispatch.sessionFor(message, () => new Agent({ name: "John" }));
+  const session = await dispatch.sessionFor(message, () => new Agent({
+    name: "John", pipeline: { config: "support" },
+  }));
   const images = (message.images ?? []).map(({ url }) => ({ url }));
   await session.responses.create(message.text, { images });
 });
@@ -360,6 +380,12 @@ await dispatch.run();
 worker rather than queueing behind it. Several workers can wait at once, and the work is
 shared between them. Each call and message is reported `done` to the router when its handler
 returns, with the error when it throws, which is what frees the room it took.
+
+A connection that drops, as one does when the network blinks or the router is redeployed, is
+dialled again with a growing wait, while the calls already being handled carry on. After
+`maxReconnects` tries in a row (10 unless the worker says) `run` rejects with the error, so a
+supervisor can restart the process; a router closing the connection on purpose ends `run`
+normally.
 
 A message usually arrives here only when no agent is running on its channel — one written to
 an agent that is already running is answered by the router from that session, because that
@@ -384,6 +410,10 @@ tool takes the same `interruptible`, `timeoutMs` and `approval` (asked only on a
 call), is handed its `toolCallContext`, and is aborted when the router gives up on it. `run`
 works with only hosted tools and no handler, and throws `HostingRefusedError` if the router
 refuses them.
+
+Tool names must be unique across the agents hosted by one worker. Use separate workers when
+agents need different implementations of a tool with the same name. `stop` also cancels a
+socket upgrade still in progress; work already running is drained.
 
 Server side only. A worker is offered other people's callers, so anything that can open
 that socket could answer for the whole app.
@@ -416,8 +446,8 @@ agents/jean/
 ```
 
 ```ts
-import { Agent } from "@stream-io/calypso";
-import { loadFolder } from "@stream-io/calypso/node";
+import { Agent } from "@stream-io/stream-agents";
+import { loadFolder } from "@stream-io/stream-agents/node";
 
 const agent = new Agent({ folder: await loadFolder("agents/jean") });
 await agent.sync();
@@ -468,7 +498,7 @@ itself touches no filesystem.
 `/video` entry point, which is what brings `@stream-io/video-client` in:
 
 ```ts
-import { VoiceSession } from "@stream-io/calypso/video";
+import { VoiceSession } from "@stream-io/stream-agents/video";
 
 const voice = await VoiceSession.start(api.agent("my-agent"));
 await voice.join(); // the microphone on; { camera: true } for the back lens
@@ -606,7 +636,7 @@ events socket, the dispatch socket and the four modality sockets are written rat
 generated.
 
 ```ts
-import { Socket } from "@stream-io/calypso";
+import { Socket } from "@stream-io/stream-agents";
 
 const socket = await Socket.open(api.backend, await api.backend.socketURL("/v1/stt/stream"));
 socket.send({ type: "start", options: { language: "en" } });

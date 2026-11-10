@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
 import { Backend, Client, RouterError, Socket, SocketClosedError, signToken } from "../src/index.js";
-import { TestRouter } from "./router.js";
+import { TestRouter, claimsOf } from "./router.js";
 
 /** A token function that answers token-1, token-2, … and counts how often it was asked. */
 function counting(): { source: () => Promise<string>; asked: () => number } {
@@ -228,6 +228,48 @@ describe("a token function", () => {
     await backend.setUser("jlahey", "token-for-jim");
 
     await assert.rejects(() => Socket.dial(backend, "/v1/agents/sessions/x/events"), SocketClosedError);
+  });
+
+  it("leaves the credentials out of the error a refused socket raises, since errors end up in logs", async () => {
+    router.refuseSockets(() => true);
+    const backend = new Backend({ url: router.url, apiKey: "vak_live_x" });
+    await backend.setUser("jlahey", "token-for-jim");
+
+    await assert.rejects(() => Socket.dial(backend, "/v1/agents/sessions/x/events"), (raised: unknown) => {
+      assert.ok(raised instanceof SocketClosedError);
+      assert.match(raised.message, /\/v1\/agents\/sessions\/x\/events/, "still says where");
+      assert.doesNotMatch(raised.message, /token-for-jim/);
+      assert.doesNotMatch(raised.message, /vak_live_x|api_key|token=/);
+      return true;
+    });
+  });
+
+  it("signs the server's own token once and sends it until it is about to expire", async (t) => {
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+    const backend = new Backend({ url: router.url, apiKey: "vak_live_x", apiSecret: "secret" });
+
+    const first = (await backend.headers())["Authorization"];
+    // Long enough that a token signed again would carry another iat.
+    t.mock.timers.tick(5 * 60 * 1000);
+    const second = (await backend.headers())["Authorization"];
+    const socket = new URL(await backend.socketURL("/v1/dispatch")).searchParams.get("token");
+
+    assert.ok(first);
+    assert.equal(second, first);
+    assert.equal(`Bearer ${socket}`, first);
+  });
+
+  it("signs a new server token once the one it holds is about to expire", async (t) => {
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+    const backend = new Backend({ url: router.url, apiKey: "vak_live_x", apiSecret: "secret" });
+    const first = (await backend.headers())["Authorization"] ?? "";
+
+    t.mock.timers.tick(60 * 60 * 1000 - 30_000);
+    const later = (await backend.headers())["Authorization"] ?? "";
+
+    assert.notEqual(later, first);
+    const expiry = claimsOf(later.replace(/^Bearer /, ""))["exp"] as number;
+    assert.ok(expiry * 1000 - Date.now() > 60 * 60 * 1000 - 5_000, "the new one runs for a fresh hour");
   });
 
   it("is not shared with a copy acting for another user", async () => {

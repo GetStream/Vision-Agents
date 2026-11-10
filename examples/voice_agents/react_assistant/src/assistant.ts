@@ -1,6 +1,6 @@
-import { Client, type Sessions } from "@stream-io/calypso";
-import "@stream-io/calypso/chat";
-import "@stream-io/calypso/video";
+import { Client, type Sessions } from "@stream-io/stream-agents";
+import "@stream-io/stream-agents/chat";
+import "@stream-io/stream-agents/video";
 import { StreamChat } from "stream-chat";
 
 /**

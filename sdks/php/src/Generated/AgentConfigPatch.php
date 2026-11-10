@@ -71,6 +71,9 @@ final readonly class AgentConfigPatch
         public ?array $visibleTools = null,
         // The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voic...
         public ?string $voice = null,
+        // Replaces the list whole. An empty list removes it.
+        /** @var list<string>|null */
+        public ?array $llmFallbacks = null,
     ) {
     }
 
@@ -116,6 +119,7 @@ final readonly class AgentConfigPatch
             video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
             visibleTools: array_key_exists('visible_tools', $data) && $data['visible_tools'] !== null ? Json::strings($data, 'visible_tools') : null,
             voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
+            llmFallbacks: array_key_exists('llm_fallbacks', $data) && $data['llm_fallbacks'] !== null ? Json::strings($data, 'llm_fallbacks') : null,
         );
     }
 
@@ -234,6 +238,9 @@ final readonly class AgentConfigPatch
         }
         if ($this->voice !== null) {
             $out['voice'] = $this->voice;
+        }
+        if ($this->llmFallbacks !== null) {
+            $out['llm_fallbacks'] = $this->llmFallbacks;
         }
         return $out;
     }

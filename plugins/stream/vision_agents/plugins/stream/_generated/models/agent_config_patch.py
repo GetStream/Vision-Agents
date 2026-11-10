@@ -123,6 +123,7 @@ class AgentConfigPatch:
             voice (str | Unset): The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or
                 one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own
                 voice name instead.
+            llm_fallbacks (list[str] | Unset): Replaces the list whole. An empty list removes it.
     """
 
     calls: AgentCalls | Unset = UNSET
@@ -161,6 +162,7 @@ class AgentConfigPatch:
     video: SessionVideo | Unset = UNSET
     visible_tools: list[str] | Unset = UNSET
     voice: str | Unset = UNSET
+    llm_fallbacks: list[str] | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.agent_config_patch_plugins_item_type_1 import (
@@ -303,6 +305,10 @@ class AgentConfigPatch:
 
         voice = self.voice
 
+        llm_fallbacks: list[str] | Unset = UNSET
+        if not isinstance(self.llm_fallbacks, Unset):
+            llm_fallbacks = self.llm_fallbacks
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
@@ -378,6 +384,8 @@ class AgentConfigPatch:
             field_dict["visible_tools"] = visible_tools
         if voice is not UNSET:
             field_dict["voice"] = voice
+        if llm_fallbacks is not UNSET:
+            field_dict["llm_fallbacks"] = llm_fallbacks
 
         return field_dict
 
@@ -612,6 +620,8 @@ class AgentConfigPatch:
 
         voice = d.pop("voice", UNSET)
 
+        llm_fallbacks = cast(list[str], d.pop("llm_fallbacks", UNSET))
+
         agent_config_patch = cls(
             calls=calls,
             channels=channels,
@@ -649,6 +659,7 @@ class AgentConfigPatch:
             video=video,
             visible_tools=visible_tools,
             voice=voice,
+            llm_fallbacks=llm_fallbacks,
         )
 
         return agent_config_patch

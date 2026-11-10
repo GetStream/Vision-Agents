@@ -14,7 +14,7 @@
     "@openuidev/react-headless": "0.18.1",
     "@openuidev/react-lang": "1.0.2",
     "@openuidev/react-ui": "0.18.1",
-    "@stream-io/calypso": "^0.3.1",
+    "@stream-io/stream-agents": "^0.4.0",
     "@stream-io/video-client": "^1.64.0",
     "leaflet": "^1.9.4",
     "react": "19.3.1",

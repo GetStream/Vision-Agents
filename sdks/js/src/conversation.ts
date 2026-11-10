@@ -83,9 +83,19 @@ export class Conversation {
     };
   };
 
-  /** @internal What the caller typed, shown before the router has confirmed hearing it. */
-  said(said: string, now = Date.now()): void {
-    this.turns([...this.snapshot.turns, participantTurn(said, undefined, now)]);
+  /**
+   * @internal What the caller typed, shown before the router has confirmed hearing it. Returns
+   * what takes it back out, for a question that could not be asked.
+   */
+  said(said: string, now = Date.now()): () => void {
+    const turn = participantTurn(said, undefined, now);
+    this.turns([...this.snapshot.turns, turn]);
+    return () => {
+      const turns = this.snapshot.turns;
+      if (turns.includes(turn)) {
+        this.turns(turns.filter((each) => each !== turn));
+      }
+    };
   }
 
   /**
@@ -154,17 +164,41 @@ export class Conversation {
    * a turn this never saw begin.
    */
   private write(turnId: string, given: string, now: number, change: (was: string) => string): void {
-    const turns = [...this.snapshot.turns];
-    for (let index = turns.length - 1; index >= 0; index--) {
-      const turn = turns[index]!;
-      if (turn.speaker === "agent" && turn.id === turnId) {
-        turns[index] = Object.freeze({ ...turn, text: change(turn.text) });
-        this.turns(turns);
-        return;
+    const turns = this.snapshot.turns;
+    const index = this.agentTurnIndex(turnId);
+    if (index === -1) {
+      this.turns([...turns, Object.freeze({ id: turnId, speaker: "agent", text: given, at: now })]);
+      return;
+    }
+    const turn = turns[index]!;
+    const text = change(turn.text);
+    if (text === turn.text) {
+      // An empty delta, or a final text the deltas already spelled: nothing for a page to redraw.
+      return;
+    }
+    const next = turns.slice();
+    next[index] = Object.freeze({ ...turn, text });
+    this.turns(next);
+  }
+
+  /**
+   * Where the agent turn `turnId` is, or -1. The turn being written is almost always the last
+   * one, and a reply streams a delta per few words, so that one is looked at first rather than
+   * the transcript searched each time.
+   */
+  private agentTurnIndex(turnId: string): number {
+    const turns = this.snapshot.turns;
+    const last = turns.length - 1;
+    const matches = (turn: Turn | undefined) => turn?.speaker === "agent" && turn.id === turnId;
+    if (matches(turns[last])) {
+      return last;
+    }
+    for (let index = last - 1; index >= 0; index--) {
+      if (matches(turns[index])) {
+        return index;
       }
     }
-    turns.push(Object.freeze({ id: turnId, speaker: "agent", text: given, at: now }));
-    this.turns(turns);
+    return -1;
   }
 
   private turns(turns: Turn[]): void {
