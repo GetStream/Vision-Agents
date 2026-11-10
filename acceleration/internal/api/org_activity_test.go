@@ -256,3 +256,62 @@ func (s *OrganizationActivitySuite) TestAnAppLastSeenUnderThisOrganizationIsRead
 
 	s.Require().Len(s.read(s.app.organization.ID, time.Time{}).Meters, 1)
 }
+
+// readAt is the suite organization's activity read from since, in the offset since carries.
+func (s *OrganizationActivitySuite) readAt(since time.Time) OrganizationActivity {
+	return s.read(s.app.organization.ID, since)
+}
+
+// Defect: a named since ignored when areas are read, so an area before it is still told.
+func (s *OrganizationActivitySuite) TestANamedSinceLeavesOutAreasBeforeIt() {
+	old := time.Now().UTC().Add(-10 * 24 * time.Hour)
+	s.Require().NoError(s.store.RecordActivity(context.Background(), []store.ActivityDelta{
+		s.counted(activity.AreaAgentSetup, old, old),
+	}))
+	s.Equal(activityStepAgentSetup, s.readAt(time.Time{}).FurthestStep)
+
+	answer := s.readAt(time.Now().Add(-24 * time.Hour))
+	s.Empty(answer.Areas)
+	s.Equal(activityStepNone, answer.FurthestStep)
+}
+
+// Defect: a named since ignored when the days of use are counted, so days before it make an
+// organization a steady user.
+func (s *OrganizationActivitySuite) TestANamedSinceLeavesOutDaysBeforeIt() {
+	day := time.Now().UTC().Truncate(24 * time.Hour)
+	var deltas []store.ActivityDelta
+	for n := range 3 {
+		at := day.Add(-time.Duration(n+5) * 24 * time.Hour)
+		deltas = append(deltas, s.counted(activity.AreaModelAPI, at, at))
+	}
+	s.Require().NoError(s.store.RecordActivity(context.Background(), deltas))
+	s.Equal(activityStepSteadyUse, s.readAt(time.Time{}).FurthestStep)
+
+	s.Equal(activityStepNone, s.readAt(time.Now().Add(-2*24*time.Hour)).FurthestStep)
+}
+
+// Defect: a since written with a non-UTC offset read from the day of its own offset, not its
+// UTC day, so areas of the UTC day before it are told.
+func (s *OrganizationActivitySuite) TestASinceInAnotherOffsetReadsFromItsUTCDay() {
+	day := time.Now().UTC().Truncate(24 * time.Hour).Add(-3 * 24 * time.Hour)
+	before := day.Add(-2 * time.Hour)
+	s.Require().NoError(s.store.RecordActivity(context.Background(), []store.ActivityDelta{
+		s.counted(activity.AreaAgentSetup, before, before),
+	}))
+	// 01:00 UTC on day, which at -05:00 is still the evening of the day before.
+	since := day.Add(time.Hour).In(time.FixedZone("west", -5*3600))
+	s.Empty(s.readAt(since).Areas)
+}
+
+// Defect: the same offset mistake when the days of use are counted.
+func (s *OrganizationActivitySuite) TestASinceInAnotherOffsetCountsDaysFromItsUTCDay() {
+	day := time.Now().UTC().Truncate(24 * time.Hour).Add(-2 * 24 * time.Hour)
+	var deltas []store.ActivityDelta
+	for n := -1; n <= 1; n++ {
+		at := day.Add(time.Duration(n)*24*time.Hour + 2*time.Hour)
+		deltas = append(deltas, s.counted(activity.AreaModelAPI, at, at))
+	}
+	s.Require().NoError(s.store.RecordActivity(context.Background(), deltas))
+	since := day.Add(time.Hour).In(time.FixedZone("west", -5*3600))
+	s.Equal(activityStepNone, s.readAt(since).FurthestStep)
+}
