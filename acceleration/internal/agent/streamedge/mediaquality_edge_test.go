@@ -140,4 +140,12 @@ func (s *StreamEdgeSuite) TestACallsMediaQualityIsObservedOnceWhenTheAgentLeaves
 	s.Require().NotNil(rtt, "the connection's checks came back")
 	s.Greater(*rtt, 0.0)
 	s.Less(*rtt, 0.1, "a loopback round trip is well under 100 ms")
+
+	// The track ends with the connection, and its counts fold into the session's.
+	s.Require().NoError(agentPC.Close())
+	s.Eventually(func() bool {
+		edge.quality.mu.Lock()
+		defer edge.quality.mu.Unlock()
+		return len(edge.quality.live) == 0
+	}, connectionUp, 10*time.Millisecond, "a track that ended is no longer held")
 }

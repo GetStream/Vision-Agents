@@ -1,6 +1,7 @@
 package streamedge
 
 import (
+	"bytes"
 	"io"
 	"log/slog"
 	"testing"
@@ -18,9 +19,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
-// The SSRCs a test's reports are about: the agent's own audio, and another stream.
+// The SSRCs a test's reports are about: the agent's own audio, zero, which is a valid SSRC (RFC 3550
+// §8 picks them at random) and also what a struct starts with, and another stream.
 const (
-	agentSSRC = 1
+	agentSSRC = 0
 	otherSSRC = 2
 )
 
@@ -33,9 +35,6 @@ type MediaQualitySuite struct {
 func TestMediaQualitySuite(t *testing.T) {
 	suite.Run(t, new(MediaQualitySuite))
 }
-
-// discard is a logger for a test that reads the summary from the metrics.
-var discard = slog.New(slog.DiscardHandler)
 
 func (s *MediaQualitySuite) SetupSuite() {
 	frame, err := silentOpusFrame()
@@ -139,11 +138,30 @@ func (s *MediaQualitySuite) TestALatePacketIsNeitherLostNorDecoded() {
 	s.InDelta(0.1, s.value(summary.concealed), 1e-9, "one of ten buffers was made up for the late one")
 }
 
-func (s *MediaQualitySuite) TestADuplicateIsNoNegativeLoss() {
-	// Catches the RFC 3550 count going below zero when more packets come than were sent.
-	packets := s.packets(0, 1, 2, 3, 4, 5, 5, 6, 7, 8, 9)
+func (s *MediaQualitySuite) TestADuplicateIsNoNegativeLossAndIsNotDecoded() {
+	// Catches the RFC 3550 count going below zero when more packets come than were sent, and a
+	// duplicate, which the decoder drops, counted as decoded, hiding a buffer made up elsewhere.
+	packets := s.packets(append(run(0, 5), append(run(5, 9), run(12, 19)...)...)...)
 	summary := s.heard(packets, onTime(packets))
-	s.InDelta(0, s.value(summary.inboundLoss), 1e-9)
+	s.InDelta(0.05, s.value(summary.inboundLoss), 1e-9, "two of 20 never came, less the duplicate (RFC 3550 A.3)")
+	s.InDelta(0.1, s.value(summary.concealed), 1e-9, "two of twenty buffers were made up")
+
+	packets = s.packets(0, 1, 2, 3, 4, 5, 5, 6, 7, 8, 9)
+	s.InDelta(0, s.value(s.heard(packets, onTime(packets)).inboundLoss), 1e-9)
+}
+
+func (s *MediaQualitySuite) TestAPacketReadBeforeItsBufferIsTakenIsNoNegativeConcealment() {
+	// Catches a summary taken mid-session, between the decoder reading a packet and handing out
+	// its buffer, reading as less than nothing made up.
+	quality := newMediaQuality()
+	stream := quality.inbound(&recorded{packets: s.packets(0, 1)}, opusSampleRate)
+	quality.listening(stream)
+	for range 2 {
+		_, _, err := stream.ReadRTP()
+		s.Require().NoError(err)
+	}
+	stream.decoded()
+	s.InDelta(0, s.value(quality.summary(nil).concealed), 1e-9)
 }
 
 func (s *MediaQualitySuite) TestSequenceNumbersWrapAroundWithTheirLossKept() {
@@ -313,10 +331,13 @@ func (s *MediaQualitySuite) TestRTCPOtherThanAReceiverReportIsLeftOut() {
 }
 
 func (s *MediaQualitySuite) TestASessionWithNoMediaObservesNothing() {
-	// Catches an empty session observed as perfect media, or as NaN.
+	// Catches an empty session observed as perfect media, or as NaN, or logged as a line with
+	// nothing in it.
 	before := mediaSeries()
-	newMediaQuality().summary(nil).observe(discard)
+	var logged bytes.Buffer
+	newMediaQuality().summary(nil).observe(slog.New(slog.NewTextHandler(&logged, nil)))
 	s.Equal(before, mediaSeries())
+	s.Empty(logged.String())
 }
 
 func (s *MediaQualitySuite) TestASessionIsObservedOnceWithItsValues() {
@@ -326,8 +347,12 @@ func (s *MediaQualitySuite) TestASessionIsObservedOnceWithItsValues() {
 	summary := mediaSummary{inboundLoss: &inboundLoss, inboundJitter: &inboundJitter, concealed: &concealed,
 		outboundLoss: &outboundLoss, outboundJitter: &outboundJitter, rtt: &rtt}
 	before := mediaSeries()
-	summary.observe(discard)
+	var logged bytes.Buffer
+	summary.observe(slog.New(slog.NewTextHandler(&logged, nil)))
 	after := mediaSeries()
+	s.Contains(logged.String(), "msg=\"media quality\" inbound_loss=0.01 inbound_jitter_s=0.002 "+
+		"inbound_concealed=0.03 outbound_loss=0.04 outbound_jitter_s=0.005 rtt_s=0.06",
+		"one line a call can be looked up by")
 	for _, observed := range []struct {
 		series string
 		value  float64

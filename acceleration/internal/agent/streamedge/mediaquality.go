@@ -197,7 +197,7 @@ func (s *inboundStream) snapshot() inboundTotals {
 // outboundWindow is the run of receiver reports about one SSRC whose cumulative counts go on
 // from each other.
 type outboundWindow struct {
-	ssrc                   uint32
+	ssrc                    uint32
 	firstHighest, firstLost uint32
 	lastHighest, lastLost   uint32
 }
@@ -273,11 +273,9 @@ func (q *mediaQuality) reported(packet rtcp.Packet, ssrc uint32) {
 	}
 }
 
-// closeWindow adds the current window's counts to the session's.
+// closeWindow adds the current window's counts to the session's. Before the first report the
+// window is empty and counts nothing.
 func (q *mediaQuality) closeWindow() {
-	if !q.opened {
-		return
-	}
 	expected, lost := q.window.counts()
 	q.expected += expected
 	q.lost += lost
@@ -370,11 +368,11 @@ func iceRoundTrip(pc *webrtc.PeerConnection) *float64 {
 	if pc == nil {
 		return nil
 	}
-	// pion makes the DTLS and ICE transports with the connection, so neither is nil.
-	pair, ok := pc.SCTP().Transport().ICETransport().GetSelectedCandidatePairStats()
-	// The controlled side can select a pair on the remote's nomination before any check of its
-	// own came back.
-	if !ok || pair.ResponsesReceived == 0 {
+	// pion makes the DTLS and ICE transports with the connection, so neither is nil. No selected
+	// pair reads as one with no responses, and so does a pair the controlled side selected on the
+	// remote's nomination before any check of its own came back.
+	pair, _ := pc.SCTP().Transport().ICETransport().GetSelectedCandidatePairStats()
+	if pair.ResponsesReceived == 0 {
 		return nil
 	}
 	return ratio(pair.TotalRoundTripTime, float64(pair.ResponsesReceived))
