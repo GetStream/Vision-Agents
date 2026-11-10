@@ -30,6 +30,8 @@ const (
 	// anomalyMinSpendMicros is the least an organization must spend today, in millionths of a
 	// dollar, to be noticed, so a tiny organization going from cents to a few times that stays
 	// quiet: a jump that small is somebody trying the API, and nothing for an operator to do.
+	// No document gives the figure; it is set to 20 dollars, the least a day's jump is worth an
+	// operator's look, and is the one number here to move if the channel is too noisy or quiet.
 	anomalyMinSpendMicros = 20_000_000
 	// anomalyTimeout bounds one check, so a holder whose database stopped answering lets go of
 	// the lock rather than keep it while nobody checks.
@@ -127,8 +129,9 @@ func (a *Anomalies) run(ctx context.Context) {
 }
 
 // check notes and posts today's anomalies when this router holds the lock, then posts those
-// whose post failed before. A holder whose check fails lets the lock go, so that a router that
-// can check takes it at its next tick. A check that Close ends is not logged as failed.
+// whose post failed before. A holder whose note of the spend fails lets the lock go, so that a
+// router that can check takes it at its next tick; one that only fails to read the unposted
+// keeps it, its database answering. A check that Close ends is not logged as failed.
 func (a *Anomalies) check(ctx context.Context) {
 	now := a.now().UTC()
 	checking, cancel := context.WithTimeout(ctx, anomalyTimeout)
