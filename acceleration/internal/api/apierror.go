@@ -181,6 +181,9 @@ func (e APIError) Status() int {
 // GetStatus is Status, under the name Huma asks for it by.
 func (e APIError) GetStatus() int { return e.Status() }
 
+// apiError is the failure itself, which a type embedding it answers with too (noteRefusals).
+func (e APIError) apiError() APIError { return e }
+
 // DocURL is where the failure's code is explained.
 func (e APIError) DocURL() string { return errorDocs + e.Code }
 
@@ -311,6 +314,7 @@ func statusError(status int, message string) APIError {
 // writeError answers a request served by hand with failure, in the envelope every
 // operation answers with.
 func writeError(w http.ResponseWriter, failure APIError) {
+	noteRefusal(w, failure.Code)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(failure.Status())
 	_ = json.NewEncoder(w).Encode(failure)
@@ -319,6 +323,9 @@ func writeError(w http.ResponseWriter, failure APIError) {
 // writeOperationError answers an operation with failure from a middleware that stops the
 // request before the operation runs.
 func writeOperationError(ctx huma.Context, failure APIError) {
+	if w, ok := ctx.BodyWriter().(http.ResponseWriter); ok {
+		noteRefusal(w, failure.Code)
+	}
 	ctx.SetHeader("Content-Type", "application/json")
 	ctx.SetStatus(failure.Status())
 	_ = json.NewEncoder(ctx.BodyWriter()).Encode(failure)

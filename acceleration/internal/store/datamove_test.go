@@ -323,6 +323,24 @@ func (s *DataMoveSuite) TestImportWritesTheRowsUnderTheImportingCustomer() {
 	s.Equal("moved", configs[0]["customer_id"], "whose row it is comes from the credential, not the file")
 }
 
+// Defect: customer_activity left out of what a move carries, or carried under the app it came
+// from. The apps are new ones: SetupTest empties only the tables a move carries.
+func (s *DataMoveSuite) TestAMoveCarriesTheAppsActivityUnderTheImportingApp() {
+	from, to := uuid.NewString(), uuid.NewString()
+	at := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	s.Require().NoError(s.source.RecordActivity(s.ctx, []ActivityDelta{{
+		OrganizationID: "org", AppID: from, Area: "agent_setup", Client: AuditSourceCLI,
+		Day: at, Requests: 3, FirstAt: at, LastAt: at,
+	}}))
+
+	s.move(from, to)
+
+	var requests int64
+	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+		"SELECT requests FROM customer_activity WHERE app_id = ? AND area = 'agent_setup'", to).Scan(&requests))
+	s.Equal(int64(3), requests)
+}
+
 func (s *DataMoveSuite) TestImportingTwiceIsImportingOnce() {
 	s.seedAgentConfig(s.source, "acme", "acme-agent")
 

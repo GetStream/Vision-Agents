@@ -143,6 +143,9 @@ var dataTables = []dataTable{
 	{name: "stats_tags_daily", customer: "customer_id", shard: true},
 	{name: "turn_stats_hourly", customer: "customer_id", shard: true},
 	{name: "turn_latency_hourly", customer: "customer_id", shard: true},
+	// In the shared database: one row per app, area, client and day it made requests in. The
+	// organization is the app's in every deployment, since both are Stream's ids.
+	{name: "customer_activity", customer: "app_id"},
 	// Only what this app decided. The organization's policy covers apps whose rows are
 	// not this caller's to read.
 	{name: "policies", customer: "scope_id", filter: "scope = 'app'"},

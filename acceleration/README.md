@@ -1825,6 +1825,7 @@ offered custom voices and the router routes around it for calls that want one.
 | `stats_tags_hourly`, `stats_tags_daily`  | Bucket, modality, customer and one cost label       |
 | `turn_stats_hourly`                      | Hour, customer and agent: turns, interruptions, audio |
 | `turn_latency_hourly`                    | Hour, customer, agent, leg and latency bin           |
+| `customer_activity`                      | App, area of the API, client and UTC day: requests, refusals, first and last |
 | `phone_numbers`                          | Number held, kept after release because it was billed |
 | `call_legs`                              | Leg of a phone call, from when it connected to when the call ended |
 | `agent_configs`, `skills`                | Named agent, and a kind of work worth delegating    |
