@@ -73,8 +73,8 @@ func (s *Server) configOpenedWith(ctx context.Context, customerID, id string, te
 }
 
 // refuseOutsideTeam refuses a session opened with a config to an end user the gate checks
-// and who is not in that config's team now. A session opened with no config has no team to
-// check, and nobody else is limited, so for them the config is not read at all.
+// and who is not in that config's team now. The config is not read for a session opened with
+// no config, which has no team to check, nor for a caller the gate does not check.
 func (s *Server) refuseOutsideTeam(ctx context.Context, customerID, configID string) error {
 	if configID == "" || s.store == nil {
 		return nil
