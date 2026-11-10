@@ -3,6 +3,7 @@ package conversation_test
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,6 +93,16 @@ func (s *ChatChannelSuite) TestTheStampsOnAChannelOfAnotherTypeAreNotRead() {
 
 		s.Require().NoError(err)
 		s.Equal([]llm.Message{{Role: llm.User, Content: "I'm sick, I can't come at 6", Author: "anya"}, {Role: llm.Assistant, Content: "Feel better."}}, history, custom)
+	}
+}
+
+// A channel id a session's own channel could not have is refused under any type, the word or
+// none: a space, a colon, more than 64 characters.
+func (s *ChatChannelSuite) TestAChannelIDNoConversationCanHaveIsRefusedUnderAnyType() {
+	for _, id := range []string{"team 1", "team:1", strings.Repeat("t", 65)} {
+		for _, cid := range []string{"agent:" + id, "callouts:" + id} {
+			s.False(conversation.Openable(s.routerOpens(cid), cid), cid)
+		}
 	}
 }
 
