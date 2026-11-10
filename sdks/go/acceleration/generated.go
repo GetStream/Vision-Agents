@@ -5993,7 +5993,7 @@ type CustomConnectorRequest struct {
 	Id   string `json:"id"`
 	Name string `json:"name"`
 
-	// Schemes How a connection may authenticate. Each must be a scheme this deployment has.
+	// Schemes How a connection may authenticate. Each must be a scheme this deployment has, except oauth2_client_credentials, which a custom connector cannot use: it needs a token endpoint a custom connector cannot set.
 	Schemes *[]string `json:"schemes"`
 
 	// Scopes The scopes a consent asks for, each an RFC 6749 scope token.
