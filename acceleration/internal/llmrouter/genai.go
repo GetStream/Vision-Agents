@@ -62,8 +62,8 @@ func startInference(ctx context.Context, config routing.ProviderConfig) trace.Sp
 // endInference ends a model call's span with what its response used and, when it did not run
 // to its end, the router's error code for why: a bounded set, as error.type asks. A response
 // its caller closed is no failure, as tracing.Fail has it. Usage is set only as the provider
-// reported it, which is what the conventions count; a row billed on the router's estimate says
-// so in router_tokens_total instead.
+// reported it, which is what the conventions count: the router's own estimate, which a row is
+// billed on when the provider said nothing, is counted only in router_tokens_total.
 func endInference(span trace.Span, response *llm.Response, code string) {
 	defer span.End()
 	if response != nil && response.UsageReported {
