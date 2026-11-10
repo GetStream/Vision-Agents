@@ -8022,10 +8022,12 @@ export type components = {
              * @description When the last request of any area arrived, absent when none did.
              */
             readonly last_seen?: string;
-            /** @description What the organization's apps' work came to, by modality. */
+            /** @description What the organization's apps' work came to, by modality, from the shards listed in shards. */
             readonly meters: readonly components["schemas"]["ActivityMeter"][] | null;
             /** @description The organization. */
             readonly organization_id: string;
+            /** @description The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them. */
+            readonly shards: readonly string[] | null;
             /**
              * Format: date-time
              * @description The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on.

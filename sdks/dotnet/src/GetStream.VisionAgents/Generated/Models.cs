@@ -9487,7 +9487,7 @@ namespace GetStream.VisionAgents.Models
         public System.DateTimeOffset? LastSeen { get; set; } = default!;
 
         /// <summary>
-        /// What the organization's apps' work came to, by modality.
+        /// What the organization's apps' work came to, by modality, from the shards listed in shards.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("meters")]
         public System.Collections.Generic.List<ActivityMeter>? Meters { get; set; } = default!;
@@ -9497,6 +9497,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("organization_id")]
         public string OrganizationId { get; set; } = default!;
+
+        /// <summary>
+        /// The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("shards")]
+        public System.Collections.Generic.List<string>? Shards { get; set; } = default!;
 
         /// <summary>
         /// The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on.

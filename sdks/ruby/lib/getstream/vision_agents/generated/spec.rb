@@ -2606,8 +2606,8 @@ module GetStream
           required: %w[has_more items].freeze, open: false
         }.freeze,
         "OrganizationActivity" => {
-          properties: %w[areas first_seen furthest_step last_seen meters organization_id since].freeze,
-          required: %w[organization_id since furthest_step areas meters].freeze, open: false
+          properties: %w[areas first_seen furthest_step last_seen meters organization_id shards since].freeze,
+          required: %w[organization_id since furthest_step areas meters shards].freeze, open: false
         }.freeze,
         "PhoneNumber" => {
           properties: %w[agent_config_id capabilities country e164 monthly_cost_micros purchased_at released_at sip_trunk_id stream_trunk_id tags vendor].freeze,

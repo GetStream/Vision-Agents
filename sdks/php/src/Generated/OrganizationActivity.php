@@ -15,13 +15,16 @@ final readonly class OrganizationActivity
         /** @var list<ActivityArea> */
         public array $areas,
         public ActivityStep|string $furthestStep,
-        // What the organization's apps' work came to, by modality.
+        // What the organization's apps' work came to, by modality, from the shards listed in shards.
         /** @var list<ActivityMeter> */
         public array $meters,
         // The organization.
         public string $organizationId,
         // The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on.
         public \DateTimeImmutable $since,
+        // The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres...
+        /** @var list<string> */
+        public array $shards,
         // When the first request of any area arrived, absent when none did.
         public ?\DateTimeImmutable $firstSeen = null,
         // When the last request of any area arrived, absent when none did.
@@ -40,6 +43,7 @@ final readonly class OrganizationActivity
             meters: array_map(ActivityMeter::fromArray(...), Json::objects($data, 'meters')),
             organizationId: Json::string($data, 'organization_id'),
             since: Json::date($data, 'since'),
+            shards: Json::strings($data, 'shards'),
             firstSeen: array_key_exists('first_seen', $data) && $data['first_seen'] !== null ? Json::date($data, 'first_seen') : null,
             lastSeen: array_key_exists('last_seen', $data) && $data['last_seen'] !== null ? Json::date($data, 'last_seen') : null,
         );
@@ -58,6 +62,7 @@ final readonly class OrganizationActivity
         $out['meters'] = array_map(static fn (ActivityMeter $each): array => $each->toArray(), $this->meters);
         $out['organization_id'] = $this->organizationId;
         $out['since'] = Json::dateValue($this->since);
+        $out['shards'] = $this->shards;
         if ($this->firstSeen !== null) {
             $out['first_seen'] = Json::dateValue($this->firstSeen);
         }

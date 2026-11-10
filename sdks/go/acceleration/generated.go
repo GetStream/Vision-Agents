@@ -7391,11 +7391,14 @@ type OrganizationActivity struct {
 	// LastSeen When the last request of any area arrived, absent when none did.
 	LastSeen *time.Time `json:"last_seen,omitempty"`
 
-	// Meters What the organization's apps' work came to, by modality.
+	// Meters What the organization's apps' work came to, by modality, from the shards listed in shards.
 	Meters *[]ActivityMeter `json:"meters"`
 
 	// OrganizationId The organization.
 	OrganizationId string `json:"organization_id"`
+
+	// Shards The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them.
+	Shards *[]string `json:"shards"`
 
 	// Since The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on.
 	Since time.Time `json:"since"`

@@ -28,10 +28,14 @@ class OrganizationActivity:
         furthest_step (ActivityStep): The furthest an organization got: none, dashboard_reads, agent_setup,
             conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step
             counts only answered requests: an area whose every request was refused was tried, not reached.
-        meters (list[ActivityMeter] | None): What the organization's apps' work came to, by modality.
+        meters (list[ActivityMeter] | None): What the organization's apps' work came to, by modality, from the shards
+            listed in shards.
         organization_id (str): The organization.
         since (datetime.datetime): The start of what was read. Areas are kept by UTC day, so they count the whole day it
             falls on.
+        shards (list[str] | None): The names of the shards whose requests the meters sum, this one's first. A deployment
+            that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone.
+            Areas are read from the database every shard shares and cover all of them.
         first_seen (datetime.datetime | Unset): When the first request of any area arrived, absent when none did.
         last_seen (datetime.datetime | Unset): When the last request of any area arrived, absent when none did.
     """
@@ -41,6 +45,7 @@ class OrganizationActivity:
     meters: list[ActivityMeter] | None
     organization_id: str
     since: datetime.datetime
+    shards: list[str] | None
     first_seen: datetime.datetime | Unset = UNSET
     last_seen: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -72,6 +77,13 @@ class OrganizationActivity:
 
         since = self.since.isoformat()
 
+        shards: list[str] | None
+        if isinstance(self.shards, list):
+            shards = self.shards
+
+        else:
+            shards = self.shards
+
         first_seen: str | Unset = UNSET
         if not isinstance(self.first_seen, Unset):
             first_seen = self.first_seen.isoformat()
@@ -89,6 +101,7 @@ class OrganizationActivity:
                 "meters": meters,
                 "organization_id": organization_id,
                 "since": since,
+                "shards": shards,
             }
         )
         if first_seen is not UNSET:
@@ -153,6 +166,21 @@ class OrganizationActivity:
 
         since = datetime.datetime.fromisoformat(d.pop("since"))
 
+        def _parse_shards(data: object) -> list[str] | None:
+            if data is None:
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                shards_type_0 = cast(list[str], data)
+
+                return shards_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[str] | None, data)
+
+        shards = _parse_shards(d.pop("shards"))
+
         _first_seen = d.pop("first_seen", UNSET)
         first_seen: datetime.datetime | Unset
         if isinstance(_first_seen, Unset):
@@ -173,6 +201,7 @@ class OrganizationActivity:
             meters=meters,
             organization_id=organization_id,
             since=since,
+            shards=shards,
             first_seen=first_seen,
             last_seen=last_seen,
         )

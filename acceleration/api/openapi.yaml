@@ -6466,7 +6466,7 @@ components:
           format: date-time
           type: string
         meters:
-          description: What the organization's apps' work came to, by modality.
+          description: What the organization's apps' work came to, by modality, from the shards listed in shards.
           items:
             $ref: '#/components/schemas/ActivityMeter'
           nullable: true
@@ -6474,6 +6474,12 @@ components:
         organization_id:
           description: The organization.
           type: string
+        shards:
+          description: The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them.
+          items:
+            type: string
+          nullable: true
+          type: array
         since:
           description: The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on.
           format: date-time
@@ -6484,6 +6490,7 @@ components:
         - furthest_step
         - areas
         - meters
+        - shards
       type: object
     PhoneCapability:
       description: What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.
@@ -22129,7 +22136,7 @@ paths:
   /v1/ops/orgs/{org_id}/activity:
     get:
       description: |-
-        Whether an organization tried Agents, how far it got and how much it used: what its apps did in each area of the API, from each client, and what their work came to by modality, over every shard. An organization with nothing recorded is answered with empty lists and furthest_step none. Every area and client is one item, so the lists are short and have no cursor.
+        Whether an organization tried Agents, how far it got and how much it used: what its apps did in each area of the API, from each client, and what their work came to by modality, summed over every shard in postgres.shards, which the answer names. An organization with nothing recorded is answered with empty lists and furthest_step none. Every area and client is one item, so the lists are short and have no cursor. Areas, first_seen, last_seen and furthest_step come from counts kept since they were first recorded, while meters come from every request, so an organization whose use is older than the counts can read furthest_step none with meters that show use.
 
         Stream staff only: it needs the ops key.
       operationId: getOrganizationActivity

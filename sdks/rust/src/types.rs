@@ -8168,11 +8168,14 @@ pub struct OrganizationActivity {
     ///When the last request of any area arrived, absent when none did.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub last_seen: ::std::option::Option<::std::string::String>,
-    ///What the organization's apps' work came to, by modality.
+    ///What the organization's apps' work came to, by modality, from the shards listed in shards.
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub meters: ::std::option::Option<::std::vec::Vec<ActivityMeter>>,
     ///The organization.
     pub organization_id: ::std::string::String,
+    ///The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them.
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub shards: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     ///The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on.
     pub since: ::std::string::String,
 }
