@@ -341,13 +341,23 @@ func Barred(ctx context.Context, cid string) bool {
 	return barred != "" && barred == cid
 }
 
-// Openable is whether cid names an agent channel a conversation can be held on. A thread
-// channel is one too, but opens only for the Router's word (opensThread), which is read once
-// the channel is.
-func Openable(cid string) bool {
+// Openable is whether cid names a channel a conversation can be held on: an agent channel,
+// or a channel of another type ctx carries the Router's word for (RouterOpensDispatched), which
+// is how a channel of a type an agent config answers in opens. A thread channel is an agent
+// channel too, but opens only for the Router's word (opensThread), which is read once the
+// channel is.
+func Openable(ctx context.Context, cid string) bool {
 	channelType, id := channelOf(cid)
-	return channelType == streamapp.AgentChannelType && validID(id)
+	if !validID(id) {
+		return false
+	}
+	vouched, _ := ctx.Value(dispatchedOpen{}).(string)
+	return channelType == streamapp.AgentChannelType || validChannelType.MatchString(channelType) && vouched == cid
 }
+
+// validChannelType is the type part of a cid as Stream Chat checks it, [\w-]+ (GetStream/chat
+// monolith/internal/validator/registry.go, ValidChannelCIDRe).
+var validChannelType = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // channelOf is the channel type and id a cid names, which every request to Stream about the
 // channel is made with. Example: "agent:3f1c..." is type "agent", id "3f1c...". A cid with no
@@ -380,11 +390,15 @@ func RouterOpensDispatched(ctx context.Context, cid string) context.Context {
 // opensDispatched is whether ctx carries the Router's word for the channel cid
 // (RouterOpensDispatched), and the channel is one somebody wrote in that the router never
 // stamped: custom is the channel's, empty is a channel nothing was written in, which is not the
-// one the message came from.
+// one the message came from. The router stamps no channel of a type other than agent, so a stamp
+// there is whatever whoever made the channel wrote, and is not read.
 func opensDispatched(ctx context.Context, cid string, custom map[string]any, empty bool) bool {
 	vouched, _ := ctx.Value(dispatchedOpen{}).(string)
 	if vouched == "" || vouched != cid || empty {
 		return false
+	}
+	if channelType, _ := channelOf(cid); channelType != streamapp.AgentChannelType {
+		return true
 	}
 	for _, stamp := range []string{CustomerField, "support_agent_id", "support_owner_id", "support_access", TriggerField} {
 		if _, stamped := custom[stamp]; stamped {
@@ -575,7 +589,7 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 	if len(scopes) > 0 {
 		scope = scopes[0]
 	}
-	if !Openable(cid) {
+	if !Openable(ctx, cid) {
 		return nil, nil, false, stack.Wrap(errors.New("invalid conversation channel"))
 	}
 	// Everything from here is this conversation's turn: what it holds is read, Stream is
@@ -798,8 +812,9 @@ func channelCustom(custom map[string]any) map[string]any {
 func (s *Service) Describe(ctx context.Context, customer, cid, title, description string) error {
 	channelType, id := channelOf(cid)
 	// A thread channel is named too: Describe is told only the channel of a conversation a
-	// session holds (internal/session), which OpenInApp already let through.
-	if channelType != streamapp.AgentChannelType || !validID(id) {
+	// session holds (internal/session), which OpenInApp already let through. A channel of another
+	// type is the customer's own, and keeps its name: the session renaming it holds no word for it.
+	if !Openable(ctx, cid) {
 		return stack.Wrap(errors.New("invalid conversation channel"))
 	}
 	set := map[string]any{}
@@ -863,7 +878,7 @@ func ownedBy(custom map[string]any, customer, agentID, caller string) error {
 // session left to reach reconciles the same command id instead of reopening one to ask.
 func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, caller, commandID string) (CommandReceipt, error) {
 	channelType, id := channelOf(cid)
-	if channelType != streamapp.AgentChannelType || !validID(id) || !validCommandID.MatchString(commandID) {
+	if !Openable(ctx, cid) || !validCommandID.MatchString(commandID) {
 		return CommandReceipt{}, stack.Wrap(ErrCommandNotFound)
 	}
 	s.mu.Lock()
@@ -997,7 +1012,7 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	channelType, id := channelOf(cid)
-	if !Openable(cid) {
+	if !Openable(ctx, cid) {
 		return Page{}, stack.Wrap(errors.New("invalid conversation channel"))
 	}
 	limit := 100
@@ -1013,9 +1028,11 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 		return Page{}, stack.Wrap(err)
 	}
 	stored, _ := r.Data.Channel.Custom["support_agent_id"].(string)
-	dispatched := false
-	if err := ownedBy(r.Data.Channel.Custom, customer, agentID, caller); err != nil {
-		if dispatched = opensDispatched(ctx, cid, r.Data.Channel.Custom, len(r.Data.Messages) == 0); !dispatched {
+	// Asked first: a channel of a type other than agent opens on the word alone, whatever its
+	// custom data says it is (opensDispatched).
+	dispatched := opensDispatched(ctx, cid, r.Data.Channel.Custom, len(r.Data.Messages) == 0)
+	if !dispatched {
+		if err := ownedBy(r.Data.Channel.Custom, customer, agentID, caller); err != nil {
 			return Page{}, stack.Wrap(err)
 		}
 	}
