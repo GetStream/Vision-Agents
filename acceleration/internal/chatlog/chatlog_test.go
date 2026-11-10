@@ -826,7 +826,7 @@ func (s *ChatLogSuite) TestEveryWriteNamesTheChannelsType() {
 			&getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: &creator}})
 		s.Require().NoError(err)
 		log, err := New(Options{
-			AgentID: "agent-1", Channel: "standup", ChannelType: given,
+			AgentID: "agent-1", Channel: "standup", ChannelType: given, VisibleTools: []string{"save_*"},
 			Agent: User{ID: "vision-agent"}, Client: chat.Client, Logger: slog.New(slog.DiscardHandler),
 		})
 		s.Require().NoError(err)
@@ -834,6 +834,8 @@ func (s *ChatLogSuite) TestEveryWriteNamesTheChannelsType() {
 		s.Require().NoError(log.Start(context.Background()))
 		log.Record(agent.Heard{Participant: stt.Participant{ID: "session-9", UserID: "anya"}, Text: "I'm sick"})
 		log.Record(agent.Responding{TurnID: "turn-1"})
+		log.Record(agent.ToolRan{ID: "tool-1", TurnID: "turn-1", Tool: "save_canvas", Result: `{"schema_version":1,"status":"stored",` +
+			`"publication":"pending","attachment":{"type":"canvas","artifact_id":"canvas-1","revision":1,"title":"Rota","sha256":"saved"}}`})
 		log.Close()
 
 		var named []string
@@ -844,11 +846,13 @@ func (s *ChatLogSuite) TestEveryWriteNamesTheChannelsType() {
 		}
 		s.Equal([]string{
 			want + "/standup/query", want + "/standup/query", want + "/standup/message",
-			want + "/standup/event", want + "/standup/event",
+			want + "/standup/event", want + "/standup/message", want + "/standup/event",
 		}, named, given)
 		stored := chat.Stored("standup")
-		s.Require().Len(stored, 1, given)
-		s.Equal(want+":standup", stored[0]["cid"], given)
+		s.Require().Len(stored, 2, "what was said and the artifact's card: %s", given)
+		for _, message := range stored {
+			s.Equal(want+":standup", message["cid"], given)
+		}
 	}
 }
 

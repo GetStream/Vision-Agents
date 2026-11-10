@@ -257,6 +257,35 @@ func TestEveryRequestAboutAConversationNamesItsChannelType(t *testing.T) {
 	require.Equal(t, map[string]bool{"POST query": true, "POST message": true, "POST event": true, "POST image": true, "PATCH ": true}, asked)
 }
 
+// A conversation is held only on an agent channel: the same channel id under another type is
+// another channel, which nothing here may open, name, look a command up in or take for a
+// session's commands.
+func TestAConversationIsHeldOnlyOnAnAgentChannel(t *testing.T) {
+	_, client := newChat(t)
+	s := NewForChat(client)
+	defer s.Close()
+	c, _, _, err := s.Open(t.Context(), "customer", "artist", "")
+	require.NoError(t, err)
+	_, err = c.BeginCommand("teapot-command", "render a teapot", "")
+	require.NoError(t, err)
+	c.Observe(agent.Responded{Text: "Here it is."})
+	saved(t, c)
+	_, id, _ := strings.Cut(c.CID(), ":")
+	_, err = s.CommandForCaller(t.Context(), "customer", "artist", c.CID(), "", "teapot-command")
+	require.NoError(t, err, "the control: the command is found in its own channel")
+	require.True(t, Openable(c.CID()))
+	require.True(t, SessionCommandChannel("agent", id, map[string]any{TriggerField: SessionCommandTrigger}))
+
+	for _, cid := range []string{"messaging:" + id, "agentx:" + id, ":" + id, id} {
+		require.False(t, Openable(cid), cid)
+		require.Error(t, s.Describe(t.Context(), "customer", cid, "Teapots", ""), cid)
+		_, err = s.CommandForCaller(t.Context(), "customer", "artist", cid, "", "teapot-command")
+		require.ErrorIs(t, err, ErrCommandNotFound, cid)
+		channelType, _, _ := strings.Cut(cid, ":")
+		require.False(t, SessionCommandChannel(channelType, id, map[string]any{TriggerField: SessionCommandTrigger}), cid)
+	}
+}
+
 // TestAConversationIsResumedWithoutKnowingWhichAgentOpenedIt covers the resume a page does.
 //
 // A text session is given a fresh agent id on every open, so somebody coming back to a

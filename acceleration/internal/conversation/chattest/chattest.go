@@ -75,12 +75,12 @@ type store struct {
 	events map[string][]map[string]any
 }
 
-// Upload is one file stored on a channel: the channel's id, which endpoint took it ("image"
-// or "file"), its name, who it was uploaded as, as the JSON the client sent, and what was in
-// it.
+// Upload is one file stored on a channel: the channel's type and id, which endpoint took it
+// ("image" or "file"), its name, who it was uploaded as, as the JSON the client sent, and what
+// was in it.
 type Upload struct {
-	Channel, Endpoint, Name, User string
-	Data                          []byte
+	Type, Channel, Endpoint, Name, User string
+	Data                                []byte
 }
 
 // held is one request Hold keeps waiting: the path it ends in, a channel closed once it
@@ -665,7 +665,8 @@ func (db *store) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, _ := io.ReadAll(file)
-	stored := Upload{Channel: path.Base(path.Dir(r.URL.Path)), Endpoint: path.Base(r.URL.Path), Name: path.Base(header.Filename),
+	// The path is .../channels/<type>/<id>/<endpoint>.
+	stored := Upload{Type: path.Base(path.Dir(path.Dir(r.URL.Path))), Channel: path.Base(path.Dir(r.URL.Path)), Endpoint: path.Base(r.URL.Path), Name: path.Base(header.Filename),
 		User: r.FormValue("user"), Data: data}
 	db.uploads = append(db.uploads, stored)
 	_ = json.NewEncoder(w).Encode(map[string]any{"file": "https://cdn.fake/" + stored.Endpoint + "/" + stored.Name})
