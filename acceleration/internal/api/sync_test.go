@@ -90,6 +90,34 @@ func (s *SyncSuite) TestSyncingAnAgentStoresWhatItLeavesToDispatch() {
 	s.Equal(Enabled, value(value(result.Config.Dispatch).Text))
 }
 
+// agent.yaml's chat_channels are stored as the config API stores them, and a later directory
+// that says nothing about them leaves them.
+func (s *SyncSuite) TestSyncingAnAgentStoresTheChannelTypesItAnswersIn() {
+	result := s.sync(map[string]any{"name": "rota", "hash": "v1", "mode": "text",
+		"chat_channels": []map[string]string{{"type": "callouts"}, {"type": "shifts"}}})
+	s.Equal([]AgentChatChannel{{Type: "callouts"}, {Type: "shifts"}}, value(result.Config.ChatChannels))
+	s.Equal(result.Config.ChatChannels, s.configsNamed("rota")[0].ChatChannels)
+
+	again := s.sync(map[string]any{"name": "rota", "hash": "v2", "instructions": "Be brief."})
+	s.Equal([]AgentChatChannel{{Type: "callouts"}, {Type: "shifts"}}, value(again.Config.ChatChannels),
+		"a directory that says nothing leaves what is stored")
+
+	cleared := s.sync(map[string]any{"name": "rota", "hash": "v3", "chat_channels": []map[string]string{}})
+	s.Nil(cleared.Config.ChatChannels)
+	s.Nil(s.configsNamed("rota")[0].ChatChannels)
+}
+
+// A directory's chat_channels follow the config API's rules: agent channels are answered
+// already, and a type is named once. Nothing is stored.
+func (s *SyncSuite) TestASyncNamingTheAgentTypeOrATypeTwiceIsRefused() {
+	for _, named := range [][]map[string]string{{{"type": "agent"}}, {{"type": "callouts"}, {"type": "callouts"}}} {
+		status := s.serverClient.do(http.MethodPost, "/v1/agents/sync",
+			map[string]any{"name": "rota", "hash": "v1", "chat_channels": named}, nil)
+		s.Equal(http.StatusBadRequest, status, named)
+	}
+	s.Empty(s.configsNamed("rota"))
+}
+
 func (s *SyncSuite) TestSyncingAnAgentStoresWhetherItsToolsAreOfferedProgressively() {
 	result := s.sync(map[string]any{"name": "concierge", "hash": "v1", "tools": map[string]any{"progressive": true}})
 	s.True(value(result.Config.Tools.Progressive))

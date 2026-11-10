@@ -201,6 +201,11 @@ type Settings struct {
 	// WhatsApp number, a number to text, an iMessage line. Each names a number the app
 	// connected on the router, which is where the provider's credentials live.
 	Channels *ChannelsSettings `yaml:"channels"`
+	// ChatChannels are the Stream Chat channel types of the app's own Stream app the agent
+	// answers in besides agent channels, such as the type a team's group channels are made
+	// with. Nil when the declaration says nothing, which leaves the stored list; empty when the
+	// file lists none, which removes it.
+	ChatChannels *[]ChatChannelSettings `yaml:"chat_channels"`
 	// Scheduling is whether the agent may schedule tasks for its users: reminders
 	// and check-ins it creates in conversation and carries out when they come due.
 	Scheduling *SchedulingSettings `yaml:"scheduling"`
@@ -339,6 +344,12 @@ type ChannelsSettings struct {
 	// an end user of its own; link answers only a number somebody tied to an end user with
 	// a code.
 	Identity string `yaml:"identity"`
+}
+
+// ChatChannelSettings is one Stream Chat channel type an agent answers in.
+type ChatChannelSettings struct {
+	// Type is the channel type's name, as it comes before the colon in a channel's cid.
+	Type string `yaml:"type"`
 }
 
 // SchedulingSettings is an agent's scheduled tasks: whether its users may ask

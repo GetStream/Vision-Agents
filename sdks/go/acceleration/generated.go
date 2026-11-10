@@ -9695,6 +9695,9 @@ type SyncAgentRequest struct {
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
 
+	// ChatChannels agent.yaml's chat_channels: the Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels, as AgentConfigRequest's chat_channels names them, with the same rules. Sent, they replace the stored list whole, an empty list removing it. Left out, the stored list stays.
+	ChatChannels *[]AgentChatChannel `json:"chat_channels,omitempty"`
+
 	// CheckChanges Refuse the sync, with unsynced_changes, when somebody has changed one of the settings it would write since the last sync -- in the dashboard, say. A client that asks for this shows the person what changed (GET /v1/agents/configs/{id}/changes) and syncs again with base_change once they have decided. Omitted, the sync writes over whatever is there, which is what a process syncing on startup wants.
 	CheckChanges *bool `json:"check_changes,omitempty"`
 

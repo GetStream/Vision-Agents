@@ -586,6 +586,46 @@ func TestSyncSendsTheChannelsTheAgentAnswersOn(t *testing.T) {
 	}
 }
 
+// chat_channels go as the file lists them: nil when it names none, which leaves the stored
+// list, and an empty list when it lists none, which removes it.
+func TestSyncSendsTheChatChannelsTheAgentAnswersIn(t *testing.T) {
+	for _, c := range []struct {
+		declared string
+		want     *[]acceleration.AgentChatChannel
+	}{
+		{"chat_channels:\n  - type: callouts\n  - type: shifts\n", &[]acceleration.AgentChatChannel{{Type: "callouts"}, {Type: "shifts"}}},
+		{"chat_channels: []\n", &[]acceleration.AgentChatChannel{}},
+		{"chat_channels: ~\n", nil},
+		{"llm: llm-fast\n", nil},
+	} {
+		root := filepath.Join(t.TempDir(), "rota")
+		write(t, root, "agent.yaml", c.declared)
+		router := newBackend(t)
+		agent := agentOn(t, router, Options{Dir: root})
+
+		if _, err := agent.Sync(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+
+		router.mu.Lock()
+		sent := router.syncs[0].ChatChannels
+		router.mu.Unlock()
+		if !reflect.DeepEqual(sent, c.want) {
+			t.Errorf("%q: chat_channels went as %+v, not %+v", c.declared, sent, c.want)
+		}
+	}
+}
+
+// A chat channel entry with a key nobody knows is refused, as any declaration key is.
+func TestAChatChannelKeyNobodyKnowsIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "rota")
+	write(t, root, "agent.yaml", "chat_channels:\n  - type: callouts\n    mention: true\n")
+
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "mention") {
+		t.Errorf("loaded with an unknown chat channel key: %v", err)
+	}
+}
+
 func TestSyncSendsTheSchedulingTheAgentDeclared(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
 	write(t, root, "agent.yaml", `scheduling:

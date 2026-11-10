@@ -14642,6 +14642,12 @@ namespace GetStream.VisionAgents.Models
         public AgentChannels? Channels { get; set; } = default!;
 
         /// <summary>
+        /// agent.yaml's chat_channels: the Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels, as AgentConfigRequest's chat_channels names them, with the same rules. Sent, they replace the stored list whole, an empty list removing it. Left out, the stored list stays.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("chat_channels")]
+        public System.Collections.Generic.List<AgentChatChannel>? ChatChannels { get; set; } = default!;
+
+        /// <summary>
         /// Refuse the sync, with unsynced_changes, when somebody has changed one of the settings it would write since the last sync -- in the dashboard, say. A client that asks for this shows the person what changed (GET /v1/agents/configs/{id}/changes) and syncs again with base_change once they have decided. Omitted, the sync writes over whatever is there, which is what a process syncing on startup wants.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("check_changes")]

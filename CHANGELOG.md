@@ -4,7 +4,7 @@
 
 ### An agent answers in the channel types its config names
 
-An agent config's `chat_channels` names Stream Chat channel types of the app's own Stream app, such as `[{"type": "callouts"}]` for a team's group channels. A message in a channel of a named type is answered there by the router's own session under that config, written as the Stream user whose id is the config's id. Who answers comes from the config alone, never from the channel's custom data, and the router's shared app answers no named type. A type is answered only when its grants pass the check an `agent` channel type is held to: members may write, and no user, guest or member may make, change or join a channel of it. Left unset, an agent answers in `agent` channels alone, as before.
+An agent config's `chat_channels` names Stream Chat channel types of the app's own Stream app, such as `[{"type": "callouts"}]` for a team's group channels. A message in a channel of a named type is answered there by the router's own session under that config, written as the Stream user whose id is the config's id. Who answers comes from the config alone, never from the channel's custom data, and the router's shared app answers no named type. A type is answered only when its grants pass the check an `agent` channel type is held to: members may write, and no user, guest or member may make, change or join a channel of it. An agent directory declares it in `agent.yaml` as `chat_channels`, which the Go SDK's sync sends. Left unset, an agent answers in `agent` channels alone, as before.
 
 ### The router counts the voice sessions judged for silence
 
