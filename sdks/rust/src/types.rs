@@ -4911,7 +4911,7 @@ pub struct CustomConnectorRequest {
     ///Starts with custom_, which no built-in does, so a custom definition never stands in for one. Creating an id that exists stores the next revision, unless the newest already says the same.
     pub id: ::std::string::String,
     pub name: ::std::string::String,
-    ///How a connection may authenticate. Each must be a scheme this deployment has.
+    ///How a connection may authenticate. Each must be a scheme this deployment has, except oauth2_client_credentials, which a custom connector cannot use: it needs a token endpoint a custom connector cannot set.
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub schemes: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     ///The scopes a consent asks for, each an RFC 6749 scope token.

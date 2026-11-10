@@ -6357,7 +6357,7 @@ namespace GetStream.VisionAgents.Models
         public string Name { get; set; } = default!;
 
         /// <summary>
-        /// How a connection may authenticate. Each must be a scheme this deployment has.
+        /// How a connection may authenticate. Each must be a scheme this deployment has, except oauth2_client_credentials, which a custom connector cannot use: it needs a token endpoint a custom connector cannot set.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("schemes")]
         public System.Collections.Generic.List<string>? Schemes { get; set; } = default!;
