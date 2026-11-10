@@ -6,10 +6,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -187,4 +190,28 @@ func (s *ActivitySuite) TestARequestHandedToTheNodeRunningItsSessionIsCountedOnc
 	}, settleFor, 10*time.Millisecond, "the forwarded read was not counted")
 	s.Never(func() bool { return s.counted(activity.AreaConversations, store.AuditSourceSDK).requests > 2 },
 		10*suiteActivityInterval, suiteActivityInterval, "a forwarded read was counted twice")
+}
+
+// Defect: a request counted at the time its answer ended, so its first and last time are after
+// the work it asked for and a slow request lands on the next day at midnight.
+func (s *ActivitySuite) TestARequestIsCountedWhenItArrived() {
+	recorder, err := activity.New(activity.Options{Store: s.store, Interval: time.Hour, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	var began time.Time
+	routes := chi.NewRouter()
+	routes.Get("/v1/agents/skills", func(w http.ResponseWriter, _ *http.Request) {
+		began = time.Now()
+		for time.Since(began) < 5*time.Millisecond {
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	request := httptest.NewRequest(http.MethodGet, "/v1/agents/skills", nil)
+	request = request.WithContext(context.WithValue(request.Context(), customerContextKey{}, s.customerID()))
+	(&Server{logger: slog.New(slog.DiscardHandler), activity: recorder}).withRequestLog(routes, routes).ServeHTTP(httptest.NewRecorder(), request)
+	recorder.Close()
+
+	var first time.Time
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT first_at FROM customer_activity WHERE app_id = ?", s.customerID()).Scan(&first))
+	s.True(first.Before(began), "first_at %s, handler began %s", first, began)
 }

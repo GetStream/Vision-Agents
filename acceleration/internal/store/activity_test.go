@@ -71,6 +71,15 @@ func (s *StoreSuite) TestTwoWritesForOneRowAreSummed() {
 	s.Equal("moved", row.organizationID)
 }
 
+// Defect: an empty refusal code stored as an empty string rather than NULL, so a row never refused reads as
+// refused with a code of nothing.
+func (s *StoreSuite) TestARowNeverRefusedHoldsNoRefusalCode() {
+	s.Require().NoError(s.store.RecordActivity(s.ctx, []ActivityDelta{s.served("never-refused", 1, s.base)}))
+
+	row := s.activityOf("never-refused", "agent_setup", AuditSourceCLI)
+	s.False(row.code.Valid, "code %q", row.code.String)
+}
+
 // Defect: deltas for one row written as two rows of one statement, which Postgres refuses ("ON
 // CONFLICT DO UPDATE command cannot affect row a second time"), losing the whole write.
 func (s *StoreSuite) TestDeltasForOneRowInOneWriteAreSummed() {

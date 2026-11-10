@@ -227,6 +227,22 @@ func (s *ActivitySuite) TestAFailedWriteIsWrittenByTheNextOne() {
 		settleFor, 10*time.Millisecond, "what the failed write held was not written again")
 }
 
+// Defect: a day cut from the request's own zone, not UTC: 23:30 in UTC-8 on 1 March is counted
+// on 1 March, though it is 2 March everywhere the router stores a day.
+func (s *ActivitySuite) TestARequestIsCountedOnItsUTCDay() {
+	app := s.app()
+	recorder := s.recorder(time.Hour, 0)
+	asked := request(app)
+	asked.At = time.Date(2026, 3, 1, 23, 30, 0, 0, time.FixedZone("UTC-8", -8*60*60))
+	recorder.Record(asked)
+	recorder.Close()
+
+	var counted string
+	s.Require().NoError(s.db.DB().QueryRowContext(s.ctx,
+		"SELECT day::text FROM customer_activity WHERE app_id = ?", app).Scan(&counted))
+	s.Equal("2026-03-02", counted)
+}
+
 // errorCounter is a log handler that counts the errors logged to it.
 type errorCounter struct{ errors *atomic.Int64 }
 
