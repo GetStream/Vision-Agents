@@ -86,10 +86,12 @@ func (s *AgentTeamsSuite) TestASessionOfATeamsConfigIsRefusedWhenTheSettingsCann
 	request := s.recorded(config)
 	request.Id = &sessionID
 
+	logBefore := len(s.logged.String())
 	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/sessions", request)
 	s.Equal(http.StatusInternalServerError, status, string(payload))
 	s.NotContains(string(payload), "Scan", "the store's error text stays out of the answer")
 	s.NotContains(string(payload), "unreadable")
+	s.Contains(s.logged.String()[logBefore:], "the app's settings could not be read", "the 500 is logged with its error")
 	_, made := s.teamsChat.Channel(sessionID)
 	s.False(made, "no channel is made outside the config's team")
 }
@@ -173,4 +175,34 @@ func (s *AgentTeamsSuite) turnTeamsOff() {
 		settings, err := s.configs.AppSettings(s.T().Context(), s.customerID())
 		return err == nil && !settings.AgentTeamsChecked()
 	}, 10*time.Second, 20*time.Millisecond)
+}
+
+// A socket session refuses as the REST create does: nothing of the store's error in the frame.
+func (s *AgentTeamsSuite) TestASocketSessionIsRefusedWhenTheSettingsCannotBeRead() {
+	config := s.configOf("red")
+	s.makeSettingsUnreadable()
+	logBefore := len(s.logged.String())
+	connection := s.serverClient.opens("/v1/agents/socket")
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type": "start", "sample_rate": 24_000, "session": map[string]any{"config_id": config.Id},
+	}))
+
+	var refused map[string]any
+	s.Require().NoError(connection.ReadJSON(&refused))
+
+	s.Equal("error", refused["type"], "%v", refused)
+	s.Equal(somethingWentWrong, refused["error"])
+	s.Contains(s.logged.String()[logBefore:], "the app's settings could not be read", "the 500 is logged with its error")
+	s.Equal(string(ErrorTypeInternal), refused["error_type"])
+}
+
+// A chat that ended here is carried on by the next message, a create like any other.
+func (s *AgentTeamsSuite) TestAReopenIsRefusedWhenTheSettingsCannotBeRead() {
+	ended := s.serverClient.createSession(s.recorded(s.configOf("red")))
+	s.endHere(ended.Id)
+	s.makeSettingsUnreadable()
+
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+ended.Id+"/responses", s.asking())
+	s.Equal(http.StatusInternalServerError, status, string(payload))
+	s.NotContains(string(payload), "Scan", "the store's error text stays out of the answer")
 }

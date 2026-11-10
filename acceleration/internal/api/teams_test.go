@@ -23,6 +23,13 @@ type AgentTeamsSuite struct {
 	RouterSuite
 	// teamsChat is the customer's own Stream app, where its users and their teams live.
 	teamsChat *chattest.Server
+	logged    *lockedLog
+}
+
+func (s *AgentTeamsSuite) SetupSuite() {
+	s.logged = &lockedLog{}
+	s.logs = s.logged
+	s.RouterSuite.SetupSuite()
 }
 
 const teamsAppKey = "own-key"
