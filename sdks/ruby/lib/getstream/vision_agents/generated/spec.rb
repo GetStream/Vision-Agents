@@ -1758,8 +1758,8 @@ module GetStream
 
       SCHEMAS = {
         "Account" => {
-          properties: %w[balance_micros balance_state balance_warning_micros balance_warning_source granted_micros limits organization_id own_limits spend_hard_limit spent_micros status tier].freeze,
-          required: %w[organization_id status tier balance_micros granted_micros spent_micros balance_warning_micros balance_warning_source balance_state limits].freeze, open: false
+          properties: %w[balance_micros balance_state balance_warning_micros balance_warning_source funded granted_micros limits organization_id own_limits spend_hard_limit spent_micros status tier trial_micros].freeze,
+          required: %w[organization_id status tier balance_micros granted_micros trial_micros funded spent_micros balance_warning_micros balance_warning_source balance_state limits].freeze, open: false
         }.freeze,
         "ActivityArea" => {
           properties: %w[area client first_at last_at last_refusal_code refused requests].freeze,
