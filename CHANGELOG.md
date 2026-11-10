@@ -4,7 +4,7 @@
 
 ### The Kotlin SDK is published to Stream's Maven repository
 
-`io.getstream:stream-agents-android-core` is published to `https://stream-io-repo.com` by `publish-sdk-kotlin.yml`: a release for each `sdk-kotlin-vX.Y.Z` tag on `accelerate`, and a 7-day snapshot, `X.Y.Z-<yyyyMMddHHmm>-SNAPSHOT`, for each push to `accelerate` that changes `sdks/kotlin`. No GitHub release is made, so the Python release does not start.
+`io.getstream:stream-agents-android-core` is published to `https://stream-io-repo.com` by `publish-sdk-kotlin.yml`. A pull request to `accelerate` that raises `version` in `sdks/kotlin/gradle.properties` is a release: merging it publishes that version and tags the commit `sdk-kotlin-vX.Y.Z`, and the pull request fails if the version is lower than the last release or already published. Every other push to `accelerate` that changes `sdks/kotlin` publishes a 7-day snapshot, `X.Y.(Z+1)-<yyyyMMddHHmm>-SNAPSHOT`. No GitHub release is made, so the Python release does not start. The first release is 0.2.0.
 
 ### An agent config names the models its llm falls back to
 

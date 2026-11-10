@@ -335,17 +335,12 @@ The unit tests are plain JVM tests, run by the Android Gradle plugin with no emu
 ## Releasing
 
 `.github/workflows/publish-sdk-kotlin.yml` publishes `io.getstream:stream-agents-android-core`
-to `https://stream-io-repo.com`:
+to `https://stream-io-repo.com`. `version` in `gradle.properties` is the latest release.
 
-- **A release** is a tag on a commit of `accelerate`:
-
-  ```bash
-  git tag sdk-kotlin-v0.1.0 origin/accelerate
-  git push origin sdk-kotlin-v0.1.0
-  ```
-
-- **A snapshot**, `X.Y.Z-<yyyyMMddHHmm>-SNAPSHOT`, is published on every push to `accelerate`
-  that changes `sdks/kotlin`, with `X.Y.Z` from `gradle.properties`. A snapshot expires after
-  7 days.
+- **A release** is a pull request to `accelerate` that raises `version`. The pull request fails
+  if the version is lower than the last release or already published. Merging it publishes the
+  release and tags the commit `sdk-kotlin-vX.Y.Z`.
+- **A snapshot**, `X.Y.(Z+1)-<yyyyMMddHHmm>-SNAPSHOT`, is published on every other push to
+  `accelerate` that changes `sdks/kotlin`. A snapshot expires after 7 days.
 
 There is no GitHub release: publishing one starts the Python release, `release.yml`.

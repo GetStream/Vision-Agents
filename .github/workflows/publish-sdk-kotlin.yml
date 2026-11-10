@@ -2,20 +2,28 @@ name: Publish Kotlin SDK
 
 # Publishes io.getstream:stream-agents-android-core to the Stream repository (stream-io-repo.com).
 #
-# - A tag `sdk-kotlin-vX.Y.Z` on a commit of accelerate publishes release X.Y.Z.
-# - A push to accelerate that changes sdks/kotlin publishes snapshot X.Y.Z-<yyyyMMddHHmm>-SNAPSHOT,
-#   where X.Y.Z is the version in sdks/kotlin/gradle.properties. Snapshots expire after 7 days.
+# sdks/kotlin/gradle.properties' `version` is the latest release, or the one a pull request makes:
+# - A push to accelerate whose version is newer than the last `sdk-kotlin-v*` tag publishes that
+#   release, then tags the commit `sdk-kotlin-vX.Y.Z`. A release is a merged pull request that
+#   raises the version.
+# - Any other push to accelerate that changes sdks/kotlin publishes snapshot
+#   X.Y.(Z+1)-<yyyyMMddHHmm>-SNAPSHOT, which expires after 7 days.
+# - A pull request to accelerate runs the same version check, so a version that is lower than the
+#   last release, or already published, fails before the merge.
 #
-# A tag is the trigger, not a GitHub release: publishing a release starts the Python release
-# (release.yml), and the repository's releases are the Python packages'. A tag push also runs this
-# file from the tagged commit, so it needs nothing on main.
+# There is no GitHub release: publishing one starts the Python release (release.yml), and the
+# repository's releases are the Python packages'.
 on:
   push:
     branches: [ "accelerate" ]
     paths:
       - 'sdks/kotlin/**'
       - '.github/workflows/publish-sdk-kotlin.yml'
-    tags: [ "sdk-kotlin-v*" ]
+  pull_request:
+    branches: [ "accelerate" ]
+    paths:
+      - 'sdks/kotlin/**'
+      - '.github/workflows/publish-sdk-kotlin.yml'
 
 concurrency:
   group: publish-sdk-kotlin-${{ github.ref }}
@@ -25,44 +33,60 @@ permissions:
   contents: read
 
 jobs:
-  publish:
-    name: Build, sign and stage
+  version:
+    name: Check the version
     runs-on: ubuntu-latest
     outputs:
+      version: ${{ steps.version.outputs.version }}
       channel: ${{ steps.version.outputs.channel }}
       coordinate: ${{ steps.version.outputs.coordinate }}
-    defaults:
-      run:
-        working-directory: sdks/kotlin
     steps:
       - uses: actions/checkout@v4
         with:
-          # The tag check below needs accelerate's history.
+          # The last release is the highest sdk-kotlin-v* tag.
           fetch-depth: 0
 
       - name: Work out the version
         id: version
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            version="${GITHUB_REF_NAME#sdk-kotlin-v}"
-            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || [[ "$version" == *SNAPSHOT* ]]; then
-              echo "::error::$GITHUB_REF_NAME is not sdk-kotlin-vX.Y.Z"; exit 1
-            fi
-            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/accelerate; then
-              echo "::error::$GITHUB_REF_NAME is not on accelerate"; exit 1
+          version=$(sed -n 's/^version=//p' sdks/kotlin/gradle.properties)
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error file=sdks/kotlin/gradle.properties::version=$version is not X.Y.Z"; exit 1
+          fi
+          last=$(git tag -l 'sdk-kotlin-v*' | sed 's/^sdk-kotlin-v//' | sort -V | tail -1)
+          if [ "$version" = "$last" ]; then
+            IFS=. read -r major minor patch <<< "$version"
+            version="$major.$minor.$((patch + 1))-$(date -u +%Y%m%d%H%M)-SNAPSHOT"
+            channel=snapshots
+          elif [ "$(printf '%s\n%s\n' "$last" "$version" | sort -V | tail -1)" = "$version" ]; then
+            pom="https://stream-io-repo.com/io/getstream/stream-agents-android-core/$version/stream-agents-android-core-$version.pom"
+            if curl -sfI "$pom" >/dev/null; then
+              echo "::error file=sdks/kotlin/gradle.properties::$version is already published"; exit 1
             fi
             channel=releases
           else
-            base=$(sed -n 's/^version=//p' gradle.properties)
-            version="${base%-SNAPSHOT}-$(date -u +%Y%m%d%H%M)-SNAPSHOT"
-            channel=snapshots
+            echo "::error file=sdks/kotlin/gradle.properties::$version is lower than the last release, $last"; exit 1
           fi
           {
             echo "version=$version"
             echo "channel=$channel"
             echo "coordinate=io.getstream:stream-agents-android-core:$version"
           } >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$channel" = releases ]; then
+            echo "Merging this releases \`io.getstream:stream-agents-android-core:$version\`." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  publish:
+    name: Build, sign and stage
+    needs: version
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/kotlin
+    steps:
+      - uses: actions/checkout@v4
 
       - uses: actions/setup-java@v4
         with:
@@ -83,7 +107,7 @@ jobs:
 
       - name: Sign and stage
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
           SIGNING_KEY_ID: ${{ secrets.SIGNING_KEY_ID }}
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
           SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
@@ -109,8 +133,10 @@ jobs:
   # Secrets are per job: this one holds the repository credential and never the signing key.
   upload:
     name: Upload to the Stream repository
-    needs: publish
+    needs: [ version, publish ]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # the sdk-kotlin-v* tag of a release
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -120,13 +146,21 @@ jobs:
       - uses: GetStream/stream-build-conventions-android/.github/actions/publish-to-stream-repo@5821f7fdb8d656443b89fb0e28e219ba977cfe6a # v1.1.3
         with:
           staged-directory: build/staged-repo
-          channel: ${{ needs.publish.outputs.channel }}
+          channel: ${{ needs.version.outputs.channel }}
           endpoint: ${{ secrets.STREAM_REPO_ENDPOINT }}
           bucket: ${{ secrets.STREAM_REPO_BUCKET }}
           access-key-id: ${{ secrets.STREAM_REPO_ACCESS_KEY_ID }}
           secret-access-key: ${{ secrets.STREAM_REPO_SECRET_ACCESS_KEY }}
 
+      # Tagged only once the release is in the repository, so a failed release leaves no tag.
+      - name: Tag the release
+        if: needs.version.outputs.channel == 'releases'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: sdk-kotlin-v${{ needs.version.outputs.version }}
+        run: gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA" >/dev/null
+
       - name: Summary
         env:
-          COORDINATE: ${{ needs.publish.outputs.coordinate }}
+          COORDINATE: ${{ needs.version.outputs.coordinate }}
         run: echo "Published \`$COORDINATE\` to https://stream-io-repo.com" >> "$GITHUB_STEP_SUMMARY"
