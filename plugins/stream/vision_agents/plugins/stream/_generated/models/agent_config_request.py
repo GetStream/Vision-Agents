@@ -17,6 +17,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.agent_calls import AgentCalls
     from ..models.agent_channels import AgentChannels
+    from ..models.agent_chat_channel import AgentChatChannel
     from ..models.agent_config_request_mcp_servers_item import (
         AgentConfigRequestMcpServersItem,
     )
@@ -149,6 +150,16 @@ class AgentConfigRequest:
             response that has started is never moved, however slowly it goes on. Omitted or null on an update, the list
             stored stays as it is; an empty list removes it. A target this deployment does not route, or one with no
             instance in the agent's region, is refused.
+        chat_channels (list[AgentChatChannel] | Unset): Stream Chat channel types of the app's own Stream app this agent
+            answers in besides agent channels, such as the type the app's group channels are made with. A message in a
+            channel of a type named here is answered by the router's own session in that channel, under this agent, and the
+            reply is written there as the Stream user whose id is this config's id. Who answers comes from this list alone,
+            never from the channel's custom data, and the oldest config naming a type answers in it. Only a message in the
+            app's own Stream app is answered: the router's shared app answers no type named here. The type's grants must not
+            let a user, guest or member make, change or join a channel of it, or let a user or guest read one they are not a
+            member of; members writing in it is expected. A type whose grants do, or that the app does not have, is not
+            answered. agent is answered already and cannot be named, and each type is named once. Left out on an update, the
+            stored list stays; an empty list removes it.
     """
 
     name: str
@@ -188,6 +199,7 @@ class AgentConfigRequest:
     visible_tools: list[str] | Unset = UNSET
     voice: str | Unset = UNSET
     llm_fallbacks: list[str] | Unset = UNSET
+    chat_channels: list[AgentChatChannel] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -335,6 +347,13 @@ class AgentConfigRequest:
         if not isinstance(self.llm_fallbacks, Unset):
             llm_fallbacks = self.llm_fallbacks
 
+        chat_channels: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.chat_channels, Unset):
+            chat_channels = []
+            for chat_channels_item_data in self.chat_channels:
+                chat_channels_item = chat_channels_item_data.to_dict()
+                chat_channels.append(chat_channels_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -414,6 +433,8 @@ class AgentConfigRequest:
             field_dict["voice"] = voice
         if llm_fallbacks is not UNSET:
             field_dict["llm_fallbacks"] = llm_fallbacks
+        if chat_channels is not UNSET:
+            field_dict["chat_channels"] = chat_channels
 
         return field_dict
 
@@ -421,6 +442,7 @@ class AgentConfigRequest:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.agent_calls import AgentCalls
         from ..models.agent_channels import AgentChannels
+        from ..models.agent_chat_channel import AgentChatChannel
         from ..models.agent_config_request_mcp_servers_item import (
             AgentConfigRequestMcpServersItem,
         )
@@ -650,6 +672,15 @@ class AgentConfigRequest:
 
         llm_fallbacks = cast(list[str], d.pop("llm_fallbacks", UNSET))
 
+        _chat_channels = d.pop("chat_channels", UNSET)
+        chat_channels: list[AgentChatChannel] | Unset = UNSET
+        if _chat_channels is not UNSET:
+            chat_channels = []
+            for chat_channels_item_data in _chat_channels:
+                chat_channels_item = AgentChatChannel.from_dict(chat_channels_item_data)
+
+                chat_channels.append(chat_channels_item)
+
         agent_config_request = cls(
             name=name,
             calls=calls,
@@ -688,6 +719,7 @@ class AgentConfigRequest:
             visible_tools=visible_tools,
             voice=voice,
             llm_fallbacks=llm_fallbacks,
+            chat_channels=chat_channels,
         )
 
         agent_config_request.additional_properties = d

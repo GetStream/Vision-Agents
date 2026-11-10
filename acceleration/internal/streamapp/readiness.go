@@ -51,7 +51,8 @@ func (r Readiness) standing() string {
 type Readiness struct {
 	// App is the app's id as Stream reports it.
 	App int64
-	// ChannelType is the agent channel type's state.
+	// ChannelType is the state of the channel type asked about: the agent channel type, or the
+	// one ReadinessOf names.
 	ChannelType TypeState
 	// CallType is the agent call type's state.
 	CallType TypeState
@@ -64,9 +65,17 @@ type Readiness struct {
 	AuthChecksOff bool
 }
 
-// ReadReadiness asks Stream what the app a client acts in holds. Nothing it reads leaves
-// here but the app's id and the two states: an app's settings carry secrets of its own.
+// ReadReadiness asks Stream what the app a client acts in holds, of the agent channel type.
+// Nothing it reads leaves here but the app's id and the two states: an app's settings carry
+// secrets of its own.
 func ReadReadiness(ctx context.Context, client *getstream.Stream, now time.Time) (Readiness, error) {
+	return readReadiness(ctx, client, now, AgentChannelType)
+}
+
+// readReadiness is ReadReadiness of the channel type named: the same grants are checked on a
+// channel type an agent config answers in as on the agent channel type, since a conversation is
+// held on a channel of it too.
+func readReadiness(ctx context.Context, client *getstream.Stream, now time.Time, name string) (Readiness, error) {
 	app, err := client.GetApp(ctx, &getstream.GetAppRequest{})
 	if err != nil {
 		return Readiness{}, fmt.Errorf("streamapp: reading the app: %w", err)
@@ -81,12 +90,12 @@ func ReadReadiness(ctx context.Context, client *getstream.Stream, now time.Time)
 	if app.Data.App.CallTypes[AgentCallType] != nil {
 		readiness.CallType = TypePresent
 	}
-	if app.Data.App.ChannelConfigs[AgentChannelType] == nil {
+	if app.Data.App.ChannelConfigs[name] == nil {
 		return readiness, nil
 	}
-	channelType, err := client.Chat().GetChannelType(ctx, AgentChannelType, &getstream.GetChannelTypeRequest{})
+	channelType, err := client.Chat().GetChannelType(ctx, name, &getstream.GetChannelTypeRequest{})
 	if err != nil {
-		return Readiness{}, fmt.Errorf("streamapp: reading the %s channel type: %w", AgentChannelType, err)
+		return Readiness{}, fmt.Errorf("streamapp: reading the %s channel type: %w", name, err)
 	}
 	readiness.ChannelType = TypePresent
 	if forgeable(channelType.Data.Grants) {
@@ -152,7 +161,16 @@ type checked struct {
 // failure because the caller's request ended says nothing about the app and is not kept,
 // or every session would skip the checks this answers until it expired.
 func (c *Clients) Readiness(ctx context.Context, bound Bound) (Readiness, error) {
+	return c.ReadinessOf(ctx, bound, AgentChannelType)
+}
+
+// ReadinessOf is Readiness with the state of the channel type named, kept for the minute apart
+// from every other type's.
+func (c *Clients) ReadinessOf(ctx context.Context, bound Bound, channelType string) (Readiness, error) {
 	key := bound.Identity.Fingerprint()
+	if channelType != AgentChannelType {
+		key += "\x00" + channelType
+	}
 	c.mu.Lock()
 	if answer, ok := c.checks[key]; ok && c.now().Sub(answer.at) < readinessTTL {
 		c.mu.Unlock()
@@ -160,7 +178,7 @@ func (c *Clients) Readiness(ctx context.Context, bound Bound) (Readiness, error)
 	}
 	c.mu.Unlock()
 
-	readiness, err := ReadReadiness(ctx, bound.Client, c.now())
+	readiness, err := readReadiness(ctx, bound.Client, c.now(), channelType)
 
 	if err != nil && ctx.Err() != nil {
 		return readiness, err

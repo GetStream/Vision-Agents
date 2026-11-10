@@ -4512,9 +4512,18 @@ export type components = {
             readonly sms?: components["schemas"]["ChannelLineRequest"];
             readonly whatsapp?: components["schemas"]["ChannelLineRequest"];
         };
+        readonly AgentChatChannel: {
+            /**
+             * @description The channel type's name, as it comes before the colon in a channel's cid.
+             * @example callouts
+             */
+            readonly type: string;
+        };
         readonly AgentConfig: {
             readonly calls?: components["schemas"]["AgentCalls"];
             readonly channels?: components["schemas"]["AgentChannels"];
+            /** @description The Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels. Absent when there are none. */
+            readonly chat_channels?: readonly components["schemas"]["AgentChatChannel"][];
             /** @description The bindings exactly as they were written. Absent when there are none. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             /** Format: date-time */
@@ -4574,6 +4583,8 @@ export type components = {
         readonly AgentConfigPatch: {
             readonly calls?: components["schemas"]["AgentCalls"];
             readonly channels?: components["schemas"]["AgentChannels"];
+            /** @description Replaces the list whole. An empty list removes it. */
+            readonly chat_channels?: readonly components["schemas"]["AgentChatChannel"][];
             /** @description The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
@@ -4646,6 +4657,8 @@ export type components = {
             readonly calls?: components["schemas"]["AgentCalls"];
             /** @description Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels. */
             readonly channels?: components["schemas"]["AgentChannels"];
+            /** @description Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels, such as the type the app's group channels are made with. A message in a channel of a type named here is answered by the router's own session in that channel, under this agent, and the reply is written there as the Stream user whose id is this config's id. Who answers comes from this list alone, never from the channel's custom data, and the oldest config naming a type answers in it. Only a message in the app's own Stream app is answered: the router's shared app answers no type named here. The type's grants must not let a user, guest or member make, change or join a channel of it, or let a user or guest read one they are not a member of; members writing in it is expected. A type whose grants do, or that the app does not have, is not answered. agent is answered already and cannot be named, and each type is named once. Left out on an update, the stored list stays; an empty list removes it. */
+            readonly chat_channels?: readonly components["schemas"]["AgentChatChannel"][];
             /** @description The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
@@ -10051,6 +10064,8 @@ export type components = {
             readonly calls?: components["schemas"]["AgentCalls"];
             /** @description Lines this agent answers on besides Stream Chat, each a number the app connected. */
             readonly channels?: components["schemas"]["AgentChannels"];
+            /** @description agent.yaml's chat_channels: the Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels, as AgentConfigRequest's chat_channels names them, with the same rules. Sent, they replace the stored list whole, an empty list removing it. Left out, the stored list stays. */
+            readonly chat_channels?: readonly components["schemas"]["AgentChatChannel"][];
             /** @description Refuse the sync, with unsynced_changes, when somebody has changed one of the settings it would write since the last sync -- in the dashboard, say. A client that asks for this shows the person what changed (GET /v1/agents/configs/{id}/changes) and syncs again with base_change once they have decided. Omitted, the sync writes over whatever is there, which is what a process syncing on startup wants. */
             readonly check_changes?: boolean;
             /** @description The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone. */

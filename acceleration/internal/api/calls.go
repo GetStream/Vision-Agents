@@ -630,6 +630,8 @@ func (s *Server) transcriptReads(ctx context.Context, customerID string, call st
 	if stored, err := s.storedSession(ctx, customerID, call.ID); err == nil {
 		channels = []string{transcriptChannel(stored)}
 	}
+	// A conversation on a channel that is not an agent channel names none to read.
+	channels = slices.DeleteFunc(channels, func(channel string) bool { return channel == "" })
 	reads := make([]chatlog.Read, 0, len(channels))
 	for _, channel := range channels {
 		read := window

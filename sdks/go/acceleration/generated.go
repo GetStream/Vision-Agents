@@ -3439,6 +3439,14 @@ type AgentChannels struct {
 	Whatsapp *ChannelLineRequest `json:"whatsapp,omitempty"`
 }
 
+// AgentChatChannel defines model for AgentChatChannel.
+type AgentChatChannel struct {
+	// Type The channel type's name, as it comes before the colon in a channel's cid.
+	//
+	// Example: callouts
+	Type string `json:"type"`
+}
+
 // AgentConfig defines model for AgentConfig.
 type AgentConfig struct {
 	// Calls The tools an agent on a phone call is offered: end the call, press keys, transfer.
@@ -3446,6 +3454,9 @@ type AgentConfig struct {
 
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
+
+	// ChatChannels The Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels. Absent when there are none.
+	ChatChannels *[]AgentChatChannel `json:"chat_channels,omitempty"`
 
 	// Connectors The bindings exactly as they were written. Absent when there are none.
 	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
@@ -3534,6 +3545,9 @@ type AgentConfigPatch struct {
 
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
+
+	// ChatChannels Replaces the list whole. An empty list removes it.
+	ChatChannels *[]AgentChatChannel `json:"chat_channels,omitempty"`
 
 	// Connectors The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out.
 	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
@@ -3642,6 +3656,9 @@ type AgentConfigRequest struct {
 
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
+
+	// ChatChannels Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels, such as the type the app's group channels are made with. A message in a channel of a type named here is answered by the router's own session in that channel, under this agent, and the reply is written there as the Stream user whose id is this config's id. Who answers comes from this list alone, never from the channel's custom data, and the oldest config naming a type answers in it. Only a message in the app's own Stream app is answered: the router's shared app answers no type named here. The type's grants must not let a user, guest or member make, change or join a channel of it, or let a user or guest read one they are not a member of; members writing in it is expected. A type whose grants do, or that the app does not have, is not answered. agent is answered already and cannot be named, and each type is named once. Left out on an update, the stored list stays; an empty list removes it.
+	ChatChannels *[]AgentChatChannel `json:"chat_channels,omitempty"`
 
 	// Connectors The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
 	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
@@ -9677,6 +9694,9 @@ type SyncAgentRequest struct {
 
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
+
+	// ChatChannels agent.yaml's chat_channels: the Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels, as AgentConfigRequest's chat_channels names them, with the same rules. Sent, they replace the stored list whole, an empty list removing it. Left out, the stored list stays.
+	ChatChannels *[]AgentChatChannel `json:"chat_channels,omitempty"`
 
 	// CheckChanges Refuse the sync, with unsynced_changes, when somebody has changed one of the settings it would write since the last sync -- in the dashboard, say. A client that asks for this shows the person what changed (GET /v1/agents/configs/{id}/changes) and syncs again with base_change once they have decided. Omitted, the sync writes over whatever is there, which is what a process syncing on startup wants.
 	CheckChanges *bool `json:"check_changes,omitempty"`

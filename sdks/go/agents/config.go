@@ -261,6 +261,13 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 		}
 		body.Channels = &declared
 	}
+	if settings.ChatChannels != nil {
+		named := make([]acceleration.AgentChatChannel, 0, len(*settings.ChatChannels))
+		for _, channel := range *settings.ChatChannels {
+			named = append(named, acceleration.AgentChatChannel{Type: channel.Type})
+		}
+		body.ChatChannels = &named
+	}
 	if settings.Scheduling != nil {
 		declared := acceleration.AgentScheduling{
 			Enabled:         settings.Scheduling.Enabled,
