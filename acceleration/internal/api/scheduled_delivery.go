@@ -754,7 +754,7 @@ func (s *Server) handDeliveryToPeer(ctx context.Context, delivery scheduledDeliv
 		s.logger.Warn("the node holding a scheduled task's session did not take it",
 			"task", delivery.TaskID, "node", address, "status", answer.GetStatus())
 	}
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(s.scheduledPeerWait)
 	for time.Now().Before(deadline) {
 		if err := waitFor(ctx, s.scheduledPoll); err != nil {
 			return none, false, err
