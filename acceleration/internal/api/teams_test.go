@@ -12,6 +12,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -284,6 +285,214 @@ func (s *AgentTeamsSuite) TestAChatCarriedOnFromItsRowIsCheckedAgainstTheUsersTe
 	s.teamsChat.PutUser(map[string]any{"id": anya.userID, "teams": []any{"blue"}})
 	_, failure = other.reopenedFromRow(ctx, opened.Id)
 	s.Equal(errUnknownConfig, failure)
+}
+
+// A fork that names no config goes on with its parent's, which is checked as if it had been
+// named: Anya moved to team blue since she opened her red session, live or ended.
+func (s *AgentTeamsSuite) TestAForkOfASessionWhoseConfigIsOfAnotherTeamNowIsRefused() {
+	for _, ended := range []bool{false, true} {
+		anya := s.inTeams("red")
+		parent := anya.createSession(s.recorded(s.configOf("red")))
+		s.Equal(http.StatusCreated, anya.do(http.MethodPost, s.forking(parent.Id), s.offRecord(), nil),
+			"ended %v: still in its team", ended)
+		if ended {
+			anya.stopSession(parent.Id)
+		}
+		s.teamsChat.PutUser(map[string]any{"id": anya.userID, "teams": []any{"blue"}})
+
+		status, message := anya.failure(http.MethodPost, s.forking(parent.Id), s.offRecord())
+
+		s.Equal(http.StatusNotFound, status, "ended %v: %s", ended, message)
+		s.Equal(errUnknownConfig.Message, message, "ended %v", ended)
+	}
+}
+
+// A config deleted since leaves no team to check the fork against.
+func (s *AgentTeamsSuite) TestAForkOfASessionWhoseConfigWasDeletedIsRefused() {
+	for _, ended := range []bool{false, true} {
+		anya := s.inTeams("red")
+		parent := anya.createSession(s.recorded(s.configOf("red")))
+		if ended {
+			anya.stopSession(parent.Id)
+		}
+		s.deleteConfig(value(parent.ConfigId))
+
+		status, message := anya.failure(http.MethodPost, s.forking(parent.Id), s.offRecord())
+
+		s.Equal(http.StatusNotFound, status, "ended %v: %s", ended, message)
+		s.Equal(errUnknownConfig.Message, message, "ended %v", ended)
+	}
+}
+
+// What Stream failing tells must not say whether the parent's config is still there.
+func (s *AgentTeamsSuite) TestAFailedTeamsReadAnswersAForkAlikeWhetherItsConfigExistsOrNot() {
+	anya := s.inTeams("red")
+	kept := anya.createSession(s.recorded(s.configOf("red")))
+	deleted := anya.createSession(s.recorded(s.configOf("red")))
+	s.deleteConfig(value(deleted.ConfigId))
+	s.teamsChat.Fail(http.MethodGet, "/users")
+	s.T().Cleanup(func() { s.teamsChat.Heal(http.MethodGet, "/users") })
+
+	keptStatus, keptMessage := anya.failure(http.MethodPost, s.forking(kept.Id), s.offRecord())
+	deletedStatus, deletedMessage := anya.failure(http.MethodPost, s.forking(deleted.Id), s.offRecord())
+
+	s.Equal(http.StatusServiceUnavailable, keptStatus, keptMessage)
+	s.Equal(errTeamsUnreadable.Message, keptMessage)
+	s.Equal(keptStatus, deletedStatus)
+	s.Equal(keptMessage, deletedMessage)
+}
+
+func (s *AgentTeamsSuite) TestAForkOfASessionOpenedWithNoConfigIsNotChecked() {
+	anya := s.inTeams("red")
+	parent := anya.createSession(textSession(nil))
+	asked := s.teamReads()
+
+	s.Equal(http.StatusCreated, anya.do(http.MethodPost, s.forking(parent.Id), s.offRecord(), nil))
+	s.Equal(asked, s.teamReads())
+}
+
+// A chat whose session ended in this node is carried on with the spec it ran on, which is
+// checked against the config it was opened with as it is now, on every way of writing to it.
+func (s *AgentTeamsSuite) TestAChatThatEndedHereIsCarriedOnOnlyForAUserStillInItsConfigsTeam() {
+	for path, body := range map[string]any{"/responses": s.asking(), "/voice": nil} {
+		anya := s.inTeams("red")
+		opened := anya.createSession(s.recorded(s.configOf("red")))
+		s.endHere(opened.Id)
+		s.Equal(http.StatusAccepted, s.status(anya.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses", s.asking())),
+			"%s: still in its team", path)
+		s.endHere(opened.Id)
+		s.teamsChat.PutUser(map[string]any{"id": anya.userID, "teams": []any{"blue"}})
+
+		status, message := anya.failure(http.MethodPost, "/v1/agents/sessions/"+opened.Id+path, body)
+
+		s.Equal(http.StatusNotFound, status, "%s: %s", path, message)
+		s.Equal(errUnknownConfig.Message, message, path)
+	}
+}
+
+func (s *AgentTeamsSuite) TestAChatThatEndedHereWhoseConfigWasDeletedIsNotCarriedOn() {
+	anya := s.inTeams("red")
+	opened := anya.createSession(s.recorded(s.configOf("red")))
+	s.endHere(opened.Id)
+	s.deleteConfig(value(opened.ConfigId))
+
+	status, message := anya.failure(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses", s.asking())
+
+	s.Equal(http.StatusNotFound, status, message)
+	s.Equal(errUnknownConfig.Message, message)
+}
+
+func (s *AgentTeamsSuite) TestAFailedTeamsReadAnswersAReopenAlikeWhetherItsConfigExistsOrNot() {
+	anya := s.inTeams("red")
+	kept := anya.createSession(s.recorded(s.configOf("red")))
+	deleted := anya.createSession(s.recorded(s.configOf("red")))
+	s.endHere(kept.Id)
+	s.endHere(deleted.Id)
+	s.deleteConfig(value(deleted.ConfigId))
+	s.teamsChat.Fail(http.MethodGet, "/users")
+	s.T().Cleanup(func() { s.teamsChat.Heal(http.MethodGet, "/users") })
+
+	keptStatus, keptMessage := anya.failure(http.MethodPost, "/v1/agents/sessions/"+kept.Id+"/responses", s.asking())
+	deletedStatus, deletedMessage := anya.failure(http.MethodPost, "/v1/agents/sessions/"+deleted.Id+"/responses", s.asking())
+
+	s.Equal(http.StatusServiceUnavailable, keptStatus, keptMessage)
+	s.Equal(errTeamsUnreadable.Message, keptMessage)
+	s.Equal(keptStatus, deletedStatus)
+	s.Equal(keptMessage, deletedMessage)
+}
+
+func (s *AgentTeamsSuite) TestAChatThatEndedHereOpenedWithNoConfigIsNotChecked() {
+	anya := s.inTeams("red")
+	opened := anya.createSession(textSession(nil))
+	s.endHere(opened.Id)
+	asked := s.teamReads()
+
+	s.Equal(http.StatusAccepted, s.status(anya.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses", s.asking())))
+	s.Equal(asked, s.teamReads())
+}
+
+// A backend forks and carries on any session of another team or a deleted config, without
+// asking Stream, as it opens any config.
+func (s *AgentTeamsSuite) TestABackendForksAndCarriesOnASessionOfAnyTeamWithoutAskingStream() {
+	backend := s.serverClient.actingFor(s.inTeams("blue"))
+	opened := backend.createSession(s.recorded(s.configOf("red")))
+	other := backend.createSession(s.recorded(s.configOf("red")))
+	s.deleteConfig(value(other.ConfigId))
+	asked := s.teamReads()
+
+	for _, parent := range []Session{opened, other} {
+		status, payload := backend.call(http.MethodPost, s.forking(parent.Id), s.offRecord())
+		s.Equal(http.StatusCreated, status, string(payload))
+		s.endHere(parent.Id)
+		status, payload = backend.call(http.MethodPost, "/v1/agents/sessions/"+parent.Id+"/responses", s.asking())
+		s.Equal(http.StatusAccepted, status, string(payload))
+	}
+	s.Equal(asked, s.teamReads())
+}
+
+// With the setting off, forks and reopens of another team's or a deleted config's session go
+// on as on base b4d31ea60, which answered these requests 201 and 204 asking Stream nothing.
+func (s *AgentTeamsSuite) TestWithTheSettingOffForksAndReopensAreNotCheckedAndStreamIsNotAsked() {
+	for _, settings := range []store.AppSettings{{}, {AgentTeams: new(false)}} {
+		s.useTeamsApp(settings)
+		anya := s.inTeams("blue")
+		live := anya.createSession(s.recorded(s.configOf("red")))
+		stopped := anya.createSession(s.recorded(s.configOf("red")))
+		anya.stopSession(stopped.Id)
+		deleted := anya.createSession(s.recorded(s.configOf("red")))
+		s.deleteConfig(value(deleted.ConfigId))
+		ended := anya.createSession(s.recorded(s.configOf("red")))
+		s.endHere(ended.Id)
+		gone := anya.createSession(s.recorded(s.configOf("red")))
+		s.endHere(gone.Id)
+		s.deleteConfig(value(gone.ConfigId))
+		asked := s.teamReads()
+
+		for _, parent := range []Session{live, stopped, deleted} {
+			s.Equal(http.StatusCreated, anya.do(http.MethodPost, s.forking(parent.Id), s.offRecord(), nil), "settings %+v", settings)
+		}
+		for _, opened := range []Session{ended, gone} {
+			s.Equal(http.StatusAccepted, s.status(anya.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses", s.asking())),
+				"settings %+v", settings)
+		}
+		s.Equal(asked, s.teamReads(), "settings %+v", settings)
+	}
+}
+
+// endHere ends a session in this node the way one nobody watches ends, which leaves it held
+// under its id, ended, with the spec it ran on.
+func (s *AgentTeamsSuite) endHere(id string) {
+	held, ok := s.manager.Get(id, session.Owner{CustomerID: s.customerID(), Kind: auth.KindServer})
+	s.Require().True(ok, "session %s is held here", id)
+	s.Require().NoError(held.Close())
+	s.Require().Equal(session.Ended, held.State())
+}
+
+// deleteConfig deletes an agent config of the app, as its backend does.
+func (s *AgentTeamsSuite) deleteConfig(id string) {
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/configs/"+id, nil, nil))
+}
+
+// offRecord is a fork kept off the record and started from nothing, which opens no Stream
+// channel and so asks Stream nothing about its users: the only user query it makes is the
+// teams read.
+func (s *AgentTeamsSuite) offRecord() ForkSessionRequest {
+	return ForkSessionRequest{Incognito: pointerTo(true), Messages: pointerTo(false)}
+}
+
+// asking is a question from an end user's device, which names its request.
+func (s *AgentTeamsSuite) asking() CreateResponseRequest {
+	return CreateResponseRequest{Text: "Still there?", RequestId: pointerTo(s.utils.uuid())}
+}
+
+// forking is the path that forks the session id.
+func (s *AgentTeamsSuite) forking(id string) string {
+	return "/v1/agents/sessions/" + id + "/fork"
+}
+
+// status is the status of a call, for an assertion that reads only that.
+func (s *AgentTeamsSuite) status(status int, _ []byte) int {
+	return status
 }
 
 // inTeams is a new end user of the app whose Stream user is in teams, none for no teams.
