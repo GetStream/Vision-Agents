@@ -335,12 +335,16 @@ func (s *StoreSuite) TestMeterUsesSumTheAppsAskedForByModality() {
 
 // Defect: the requests of another shard left out, or a shard's answer replacing another's.
 func (s *ShardedStoreSuite) TestMeterUsesSumEveryShard() {
-	s.usedBy("one", "llm", s.base, func(r *Request) { r.InputTokens, r.CostMicros = 10, 5 })
+	took := 1000.0
+	s.usedBy("one", "llm", s.base, func(r *Request) {
+		r.InputTokens, r.OutputTokens, r.AudioMs, r.Characters, r.DurationMs, r.CostMicros = 10, 20, 30, 40, &took, 5
+	})
 	request := &Request{Modality: "llm", CustomerID: "two", Provider: "stub", Model: "stub", StartedAt: s.base,
-		InputTokens: 1, CostMicros: 1, Success: true}
+		InputTokens: 1, OutputTokens: 2, AudioMs: 3, Characters: 4, DurationMs: &took, CostMicros: 1, Success: true}
 	s.Require().NoError(s.other.RecordRequest(s.ctx, request))
 
 	uses, err := s.store.MeterUses(s.ctx, []string{"one", "two"}, s.base)
 	s.Require().NoError(err)
-	s.Equal([]MeterUse{{Modality: "llm", Requests: 2, InputTokens: 11, CostMicros: 6}}, uses)
+	s.Equal([]MeterUse{{Modality: "llm", Requests: 2, InputTokens: 11, OutputTokens: 22, AudioMs: 33, Characters: 44,
+		DurationMs: 2000, CostMicros: 6}}, uses)
 }

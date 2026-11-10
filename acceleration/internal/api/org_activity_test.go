@@ -79,6 +79,12 @@ func (s *OrganizationActivitySuite) TestAnAgentSetUpAndTalkedToIsAConversationWi
 	s.serverClient.with(clientHeader, store.AuditSourceSDK).
 		createSession(CreateSessionRequest{Incognito: pointerTo(true), Llm: pointerTo("llm-flow")})
 	s.spent(s.customerID(), s.app.organization.ID, 7)
+	took := 800.0
+	s.Require().NoError(s.store.RecordRequest(context.Background(), &store.Request{
+		Modality: "tts", CustomerID: s.customerID(), OrganizationID: s.app.organization.ID, Provider: "stub",
+		Model: "stub-tts", StartedAt: time.Now(), AudioMs: 1500, Characters: 42, DurationMs: &took, CostMicros: 3,
+		Billable: true, Success: true,
+	}))
 
 	var answer OrganizationActivity
 	s.Require().Eventually(func() bool {
@@ -100,8 +106,10 @@ func (s *OrganizationActivitySuite) TestAnAgentSetUpAndTalkedToIsAConversationWi
 	s.Require().NotNil(answer.FirstSeen)
 	s.Require().NotNil(answer.LastSeen)
 	s.False(answer.LastSeen.Before(*answer.FirstSeen))
-	s.Require().Len(answer.Meters, 1, "%+v", answer.Meters)
-	s.Equal(ActivityMeter{Meter: "llm", Requests: 1, InputTokens: 10, OutputTokens: 5, CostMicros: 7}, answer.Meters[0])
+	s.Equal([]ActivityMeter{
+		{Meter: "llm", Requests: 1, InputTokens: 10, OutputTokens: 5, CostMicros: 7},
+		{Meter: "tts", Requests: 1, AudioMs: 1500, Characters: 42, DurationMs: 800, CostMicros: 3},
+	}, answer.Meters)
 }
 
 // Defect: the organization's other apps left out, or another organization's apps let in.
@@ -183,4 +191,44 @@ func (s *OrganizationActivitySuite) TestARequestBeforeSinceIsNotCounted() {
 	answer := s.read(s.app.organization.ID, time.Now().Add(time.Hour))
 
 	s.Empty(answer.Meters)
+}
+
+// counted is a day of requests of the suite's app in area, its first and last at first and last.
+func (s *OrganizationActivitySuite) counted(area string, first, last time.Time) store.ActivityDelta {
+	return store.ActivityDelta{
+		OrganizationID: s.app.organization.ID, AppID: s.customerID(), Area: area, Client: store.AuditSourceSDK,
+		Day: first, Requests: 1, FirstAt: first, LastAt: last,
+	}
+}
+
+// Defect: first_seen and last_seen read off the first or last area in the list, which is by
+// name, rather than the earliest and latest of every area.
+func (s *OrganizationActivitySuite) TestFirstAndLastSeenAreTheEarliestAndLatestOfAnyArea() {
+	day := time.Now().UTC().Truncate(24 * time.Hour)
+	s.Require().NoError(s.store.RecordActivity(context.Background(), []store.ActivityDelta{
+		s.counted(activity.AreaAgentSetup, day.Add(2*time.Hour), day.Add(9*time.Hour)),
+		s.counted(activity.AreaConversations, day.Add(time.Hour), day.Add(3*time.Hour)),
+		s.counted(activity.AreaWorkers, day.Add(4*time.Hour), day.Add(5*time.Hour)),
+	}))
+
+	answer := s.read(s.app.organization.ID, time.Time{})
+
+	s.Require().NotNil(answer.FirstSeen)
+	s.Require().NotNil(answer.LastSeen)
+	s.True(day.Add(time.Hour).Equal(*answer.FirstSeen), "first seen %s", answer.FirstSeen)
+	s.True(day.Add(9*time.Hour).Equal(*answer.LastSeen), "last seen %s", answer.LastSeen)
+}
+
+// Defect: steady use read from conversations alone, so an organization calling the models on
+// three days reads as one that never got anywhere.
+func (s *OrganizationActivitySuite) TestModelCallsOnThreeDaysAreSteadyUse() {
+	day := time.Now().UTC().Truncate(24 * time.Hour)
+	var deltas []store.ActivityDelta
+	for n := range 3 {
+		at := day.Add(-time.Duration(n) * 24 * time.Hour)
+		deltas = append(deltas, s.counted(activity.AreaModelAPI, at, at))
+	}
+	s.Require().NoError(s.store.RecordActivity(context.Background(), deltas))
+
+	s.Equal(activityStepSteadyUse, s.read(s.app.organization.ID, time.Time{}).FurthestStep)
 }
