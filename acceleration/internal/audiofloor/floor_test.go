@@ -237,6 +237,31 @@ func (s *FloorSuite) TestWordsOfALaterRunAreTheNextUtterances() {
 	s.Equal(int64(2), end.Utterance)
 }
 
+// A ruling to stop over the agent comes before the other transcriber has written a word of it as
+// often as not (a bare "stop" is short, and its words lag the audio): it is handed over without
+// them, the model having ruled on the audio, and a ruling to keep talking is not.
+func (s *FloorSuite) TestOverTheAgentAStopIsHandedOverBeforeAnyWords() {
+	s.agent.speaks(true)
+	s.server.mu.Lock()
+	s.server.unfinishedDecision = `{"answer":"continue","answer_probability":0.9,"options":[],"decide_ms":1,"ruling":{"disposition":"wait","floor":"continue"}}`
+	s.server.mu.Unlock()
+	s.say(200, true)
+	s.say(300, true)
+	s.Eventually(func() bool { decisions, _, _ := s.counts(); return decisions >= 1 }, 5*time.Second, time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
+	s.Empty(s.agent.overheardSoFar(), "a ruling to keep talking on no words is handed nothing")
+
+	s.server.mu.Lock()
+	s.server.unfinishedDecision = `{"answer":"stop","answer_probability":0.9,"options":[],"decide_ms":1,"ruling":{"disposition":"wait","floor":"stop"}}`
+	s.server.mu.Unlock()
+	s.say(600, true)
+	s.Eventually(func() bool { return len(s.agent.overheardSoFar()) >= 1 }, 5*time.Second, time.Millisecond, "a stop on no words yet was not handed over")
+	ruled := s.agent.overheardSoFar()[0]
+	s.True(ruled.Overheard)
+	s.Equal(harness.Stop, ruled.Ruling.Floor)
+	s.Empty(ruled.Words)
+}
+
 // Over the agent the caller is asked about without a pause, the decision alone, and a ruling to
 // stop is handed over with the other transcriber's words so far, which the agent tells its own
 // echo by.
