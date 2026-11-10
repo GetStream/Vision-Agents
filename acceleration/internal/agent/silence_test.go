@@ -289,3 +289,12 @@ func (s *AgentSuite) TestTheRunsOfOneCallAreJudgedTogether() {
 	s.Equal([]Silence{SilenceNoInbound, SilenceNoAudibleOutbound},
 		attended.Merge(CallAudio{Published: true}).Silences(), "no audio either way is in both cases")
 }
+
+func (s *AgentSuite) TestACallIsJudgedWhenSomebodyBesidesTheAgentWasInIt() {
+	// Catches a call nobody joined judged, or one a caller's audio or the roster shows was
+	// attended left unjudged: the count of judged sessions is the silent share's denominator.
+	s.False(CallAudio{}.Judged())
+	s.False(CallAudio{Published: true, Words: 1, Native: true, Audible: true}.Judged(), "no roster and no frames")
+	s.True(CallAudio{Attended: true}.Judged())
+	s.True(CallAudio{Frames: 1}.Judged(), "audio from somebody says they arrived")
+}
