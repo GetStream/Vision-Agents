@@ -150,6 +150,66 @@ func (s *TwilioSuite) TestAnAPIKeySignsRequestsWhileTheAccountStaysInThePath() {
 	s.Equal("key-secret", s.seenPricing.pass)
 }
 
+func (s *TwilioSuite) TestTheAPIKeyIsReadFromTheEnvironment() {
+	s.T().Setenv("TWILIO_API_KEY_SID", "SK456")
+	provider, err := New(Options{
+		AccountSID: "AC123",
+		AuthToken:  "key-secret",
+		BaseURL:    s.server.URL,
+		PricingURL: s.server.URL,
+	})
+	s.Require().NoError(err)
+	s.answer(oneNumber)
+
+	_, err = provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+	s.Require().NoError(err)
+
+	s.Equal("/2010-04-01/Accounts/AC123/AvailablePhoneNumbers/US/Local.json", s.seen.path)
+	s.Equal("SK456", s.seen.user)
+	s.Equal("key-secret", s.seen.pass)
+}
+
+func (s *TwilioSuite) TestAnAPIKeyLeavesTheAccountInTheCallAndPurchasePaths() {
+	provider, err := New(Options{
+		AccountSID: "AC123",
+		APIKeySID:  "SK456",
+		AuthToken:  "key-secret",
+		BaseURL:    s.server.URL,
+		PricingURL: s.server.URL,
+	})
+	s.Require().NoError(err)
+
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+	_, err = provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125551234",
+		To:     "+15550001111",
+		Bridge: phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+	})
+	s.Require().NoError(err)
+	s.Equal(http.MethodPost, s.seen.method)
+	s.Equal("/2010-04-01/Accounts/AC123/Calls.json", s.seen.path)
+	s.Equal("SK456", s.seen.user)
+
+	s.answer(`{"sid":"PN9","phone_number":"+15125551234","iso_country":"US","monthly_price":"1.15"}`)
+	_, err = provider.BuyNumber(s.ctx, phone.Order{E164: "+15125551234"})
+	s.Require().NoError(err)
+	s.Equal(http.MethodPost, s.seen.method)
+	s.Equal("/2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json", s.seen.path)
+	s.Equal("SK456", s.seen.user)
+
+	var paths []string
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		_, _ = w.Write([]byte(`{"incoming_phone_numbers":[{"sid":"PN9","phone_number":"+15125551234"}]}`))
+	}
+	s.Require().NoError(provider.ReleaseNumber(s.ctx, "+15125551234"))
+	s.Equal([]string{
+		"GET /2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json",
+		"DELETE /2010-04-01/Accounts/AC123/IncomingPhoneNumbers/PN9.json",
+	}, paths)
+	s.Equal("SK456", s.seen.user)
+}
+
 const usPrices = `{"iso_country":"US","price_unit":"USD","phone_number_prices":[
 	{"number_type":"local","base_price":"1.15","current_price":"1.00"},
 	{"number_type":"toll free","base_price":"2.15","current_price":"2.00"}]}`
