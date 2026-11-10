@@ -127,28 +127,13 @@ func (s *LedgerSuite) TestPlanTierSyncWritesNothing() {
 	s.Require().NoError(err)
 	s.setTier(usage.Tier{Name: "tier-a", FailMode: usage.FailClosed})
 
-	planned, migrated, err := s.ledger.PlanTierSync(s.ctx, file)
+	planned, err := s.ledger.PlanTierSync(s.ctx, file)
 
 	s.Require().NoError(err)
-	s.True(migrated)
 	s.Equal([]string{"default"}, planned)
 	tiers, err := s.ledger.Tiers(s.ctx)
 	s.Require().NoError(err)
 	s.Len(tiers, 1)
-}
-
-func (s *LedgerSuite) TestPlanTierSyncOnADatabaseNotMigratedYetPlansEveryTier() {
-	opened, err := ledger.Open(ledger.Options{DSN: usagetest.EmptyDatabase(s.T(), "usage_unmigrated")})
-	s.Require().NoError(err)
-	defer opened.Close() //nolint:errcheck // a pool the test is done with
-	file, err := ledger.ReadTierFile(devTiers)
-	s.Require().NoError(err)
-
-	planned, migrated, err := opened.PlanTierSync(s.ctx, file)
-
-	s.Require().NoError(err)
-	s.False(migrated)
-	s.Equal([]string{"default", "tier-a"}, planned)
 }
 
 func (s *LedgerSuite) TestABadTierFileStopsTheStart() {
