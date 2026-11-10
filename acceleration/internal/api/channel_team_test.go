@@ -97,6 +97,34 @@ func (s *AgentTeamsSuite) TestASessionOfATeamsConfigIsRefusedWhenTheSettingsCann
 // A fork reads the app's settings again, and a read that fails is answered as the create is.
 func (s *AgentTeamsSuite) TestAForkIsRefusedWhenTheSettingsCannotBeRead() {
 	parent := s.serverClient.createSession(s.withCustom(s.recorded(s.configOf("red"))))
+	s.makeSettingsUnreadable()
+
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+parent.Id+"/fork", ForkSessionRequest{})
+	s.Equal(http.StatusInternalServerError, status, string(payload))
+	s.NotContains(string(payload), "Scan", "the store's error text stays out of the answer")
+}
+
+// A run opens its session the same way, and its refusal reads the same.
+func (s *AgentTeamsSuite) TestARunIsRefusedWhenTheSettingsCannotBeRead() {
+	config := s.configOf("red")
+	s.makeSettingsUnreadable()
+
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/runs", CreateRunRequest{ConfigId: config.Id, Input: "hello"})
+	s.Equal(http.StatusInternalServerError, status, string(payload))
+	s.NotContains(string(payload), "Scan", "the store's error text stays out of the answer")
+}
+
+// A backend may name a team of its own on the request; the channel is still the config's.
+func (s *AgentTeamsSuite) TestABackendsOwnTeamDoesNotMoveTheChannel() {
+	request := s.recorded(s.configOf("red"))
+	request.Team = pointerTo("blue")
+
+	s.Equal("red", s.channelOf(s.serverClient.createSession(request))["team"])
+}
+
+// makeSettingsUnreadable breaks the suite's app settings row and waits until the router's
+// settings cache no longer holds the readable ones.
+func (s *AgentTeamsSuite) makeSettingsUnreadable() {
 	_, err := s.store.DB().NewRaw(`UPDATE apps SET settings = '{"agent_teams": "unreadable"}'::jsonb WHERE id = ?`,
 		s.customerID()).Exec(s.T().Context())
 	s.Require().NoError(err)
@@ -108,18 +136,6 @@ func (s *AgentTeamsSuite) TestAForkIsRefusedWhenTheSettingsCannotBeRead() {
 		_, err := s.configs.AppSettings(s.T().Context(), s.customerID())
 		return err != nil
 	}, 10*time.Second, 20*time.Millisecond)
-
-	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+parent.Id+"/fork", ForkSessionRequest{})
-	s.Equal(http.StatusInternalServerError, status, string(payload))
-	s.NotContains(string(payload), "Scan", "the store's error text stays out of the answer")
-}
-
-// A backend may name a team of its own on the request; the channel is still the config's.
-func (s *AgentTeamsSuite) TestABackendsOwnTeamDoesNotMoveTheChannel() {
-	request := s.recorded(s.configOf("red"))
-	request.Team = pointerTo("blue")
-
-	s.Equal("red", s.channelOf(s.serverClient.createSession(request))["team"])
 }
 
 // channelOf is what the channel a kept session holds its conversation in was made with.
