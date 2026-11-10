@@ -255,7 +255,8 @@ instructions, the same skills, the same knowledge, with nothing transcribed and 
 spoken. `session.voice.stop()` carries a conversation on in writing and
 `session.voice.start()` puts the agent back on the call. Instructions reach the backend
 with `agent.sync()`: a session runs on the stored config's. Without `pipeline.config`,
-`chat` and `join` select that config by the agent's name.
+`chat` and `join` select that config by the agent's name, so an agent that was never synced
+under its name is refused with a 404 `there is no agent called <name>`: sync it first.
 
 `new Agent({ timezone: "Europe/Lisbon" })` is the zone the agent's sessions are in, and `join`,
 `chat`, `answer`, `reply`, `startCall` and `waitForCall` each take a `timezone` for the person on
