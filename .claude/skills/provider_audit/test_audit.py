@@ -670,6 +670,7 @@ class TestChecks:
         self, vendor: Vendor, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("TWILIO_ACCOUNT_SID", raising=False)
+        monkeypatch.delenv("TWILIO_API_KEY_SID", raising=False)
         with pytest.raises(audit.AuditError, match="TWILIO_ACCOUNT_SID"):
             audit.twilio(KEY, vendor.url)
         monkeypatch.setenv("TWILIO_ACCOUNT_SID", "AC1")
@@ -679,6 +680,19 @@ class TestChecks:
         )
         assert audit.twilio(KEY, vendor.url) == [(6.5, "USD", "")]
         basic = base64.b64encode(f"AC1:{KEY}".encode()).decode()
+        assert vendor.requests[-1].headers["authorization"] == f"Basic {basic}"
+
+    def test_twilio_signs_with_the_api_key_when_set(
+        self, vendor: Vendor, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TWILIO_ACCOUNT_SID", "AC1")
+        monkeypatch.setenv("TWILIO_API_KEY_SID", "SK2")
+        vendor.answer(
+            "/2010-04-01/Accounts/AC1/Balance.json",
+            {"balance": "6.5", "currency": "USD"},
+        )
+        assert audit.twilio(KEY, vendor.url) == [(6.5, "USD", "")]
+        basic = base64.b64encode(f"SK2:{KEY}".encode()).decode()
         assert vendor.requests[-1].headers["authorization"] == f"Basic {basic}"
 
     def test_xai_reads_the_team_of_the_api_key(
