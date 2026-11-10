@@ -130,6 +130,7 @@ func (a *Anomalies) run(ctx context.Context) {
 // whose post failed before. A holder whose check fails lets the lock go, so that a router that
 // can check takes it at its next tick.
 func (a *Anomalies) check(ctx context.Context) {
+	now := a.now().UTC()
 	ctx, cancel := context.WithTimeout(ctx, anomalyTimeout)
 	defer cancel()
 	held, err := a.lock.Hold(ctx)
@@ -140,7 +141,7 @@ func (a *Anomalies) check(ctx context.Context) {
 	if !held {
 		return
 	}
-	if err := a.note(ctx); err != nil {
+	if err := a.note(ctx, now); err != nil {
 		a.lock.Release()
 		a.logger.Error("could not check the organizations' spend for anomalies, trying again", "in", a.every, "error", err)
 		return
@@ -155,9 +156,9 @@ func (a *Anomalies) check(ctx context.Context) {
 	}
 }
 
-// note writes today's anomaly of each organization that has one and posts those it wrote.
-func (a *Anomalies) note(ctx context.Context) error {
-	now := a.now().UTC()
+// note writes the anomaly of each organization that has one on now's UTC day, and posts those
+// it wrote.
+func (a *Anomalies) note(ctx context.Context, now time.Time) error {
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	if !a.baselineDay.Equal(today) {
 		baselines, err := a.baselinesBefore(ctx, today)
