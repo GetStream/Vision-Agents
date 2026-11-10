@@ -538,6 +538,9 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### A custom connector cannot list oauth2_client_credentials
 
 `POST /v1/agents/connectors` answers 400 when `schemes` of a custom connector contains `oauth2_client_credentials`. That scheme reads its token URL from `endpoints.token`, which a custom connector has no way to set, so such a definition could be saved and never connected. Built-in connectors (Salesforce) are unchanged; a custom connector already stored keeps what it has (AI-3155).
+### A scheduled task refused for money is not retried, wherever it is refused
+
+A scheduled task whose session cannot open or be carried on, whose call the gate refuses, whose text is refused at its reservation, or whose turn the model refuses, in the session of a text channel, of the thread it was made in, or of the task, because the organization may not pay, is tried once and its run records the refusal's code, such as `insufficient_credits`. Before, only a text the gate refused was; the rest were retried and recorded `delivery_failed` or `reply_failed`. A refusal because the money could not be checked (`spend_check_unavailable`) is still tried again (AI-2941, AI-2942).
 
 ### JavaScript: reliable configuration, shutdown and transport failures
 
