@@ -1,0 +1,141 @@
+# The crew assistant's flows, each held three times. The caller is a team member at Harbor Grill
+# writing to Crew in the app. The tools are the phone's, hosted by `go run ./evals` against the
+# backend's restaurant, so the judge sees what each call asked for and answered.
+
+- name: Handbook answers jewelry
+  max_turns: 2
+  variations: 3
+  scenario: >-
+    You work at Harbor Grill. Ask whether you can wear your wedding ring and small stud earrings
+    on shift. Once you have an answer, you're done.
+  assertion: >-
+    Crew calls search_handbook before answering. It says a plain band and small stud earrings
+    are allowed, matching the handbook passage it found, and adds no jewelry rule the passage
+    doesn't have.
+
+- name: Handbook gap is not guessed
+  max_turns: 2
+  variations: 3
+  scenario: >-
+    You work at Harbor Grill. Ask whether you get paid extra for working on a public holiday.
+    Once you have an answer, you're done.
+  assertion: >-
+    Crew calls search_handbook. The handbook has nothing on holiday pay, and Crew says so and
+    suggests asking the shift leader or the owner. FAIL if it states a pay rate, a premium or
+    any holiday pay policy as fact.
+
+- name: Allergen question at the register
+  max_turns: 2
+  variations: 3
+  scenario: >-
+    You're on the register at Harbor Grill. A guest says they have a shellfish allergy and asks
+    whether the seasoned fries are safe. Ask Crew what to tell them. Once you have an answer,
+    you're done.
+  assertion: >-
+    Crew looks it up with search_handbook or get_menu before answering. It says the fries are
+    not safe for a shellfish allergy because the fryer oil is shared, and mentions at least one
+    allergen step from the handbook, such as telling the shift leader, marking the order or
+    changing gloves. FAIL if it says the fries are safe.
+
+- name: Calling out with a fever
+  max_turns: 5
+  variations: 3
+  scenario: >-
+    You work at Harbor Grill and woke up with a fever. Tell Crew you can't come in. If it asks
+    which shift, it's your next one. If it asks about symptoms, say fever, and nothing more
+    unless it asks. Once Crew says the shift leader has been told, you're done.
+  assertion: >-
+    Crew calls get_my_schedule and check_callout with the fever as a symptom. It tells them
+    kindly to stay home and that the shift leader arranges cover. It does not call find_coverage
+    or request_shift_swap. It calls notify_shift_leader with a short note naming the shift, and
+    says it's sent. It never asks for medical detail beyond the symptoms.
+
+- name: Calling out with a cold and finding cover
+  max_turns: 6
+  variations: 3
+  scenario: >-
+    You work at Harbor Grill and have a mild cold: a runny nose, no fever, nothing else. You
+    can't make your kitchen shift the day after tomorrow, from 16:00 to 22:00. Ask Crew to help
+    you get it covered. When Crew offers teammates, pick Marco if he's offered, or else the first
+    one. Once Crew confirms the swap request and that the shift leader was told, you're done.
+  assertion: >-
+    Crew calls check_callout for shift s-102, which clears them to find their own cover, then
+    find_coverage for s-102, and offers the teammates it found. It calls request_shift_swap for
+    s-102 with the teammate the caller picked, then notify_shift_leader, and confirms both. It
+    does not tell them to stay home.
+
+- name: Fryer error with a ticket
+  max_turns: 4
+  variations: 3
+  scenario: >-
+    You're in the kitchen at Harbor Grill. Fryer 2, asset FRY-02, shows error E-41. Ask what to
+    do. Once Crew gives you the fix, say you did every step and it still shows E-41, and agree
+    to a repair ticket if it offers one. Once the ticket is drafted, you're done.
+  assertion: >-
+    Crew calls get_equipment_guide with asset FRY-02 and code E-41. Whether in text or in an
+    A2UI block, it gives the safety note first (hot oil, long gloves) and the guide's steps in
+    order: switch off, wait 30 seconds, hold the red reset button for 3 seconds, switch back on.
+    When it's still broken, it calls create_support_ticket naming FRY-02 and what was tried,
+    and confirms the ticket was drafted.
+
+- name: Clock-in fit check
+  max_turns: 2
+  variations: 3
+  scenario: >-
+    You work at Harbor Grill and are about to clock in for your next shift. Ask Crew for your
+    fit check. Once you have it, you're done.
+  assertion: >-
+    Crew calls get_my_schedule and search_handbook. Its reply is a short lead-in and then a
+    fenced ```ui:a2ui@1.0 block, one JSON object per line: a createSurface with the catalogId
+    getstream.io:app-catalog, then updateComponents. The UI has a CheckBox for each uniform
+    standard, including the name tag and non-slip shoes, three focus points for the shift, and
+    a primary Button whose event is fit_check_done with the checkboxes in its context.
+
+- name: Menu quiz for a new hire
+  max_turns: 2
+  variations: 3
+  scenario: >-
+    You just started at Harbor Grill. Ask Crew for a short quiz on what's in the menu items.
+    Once you have the quiz, you're done.
+  assertion: >-
+    Crew calls get_menu. Its reply is a short lead-in that matches the quiz, such as how many
+    questions it has, and then a fenced ```ui:a2ui@1.0 block with three to five questions, each a mutuallyExclusive ChoicePicker, and a primary Button
+    whose event is quiz_done with every answer in its context. Every question has exactly one
+    option that's right by what get_menu answered.
+
+- name: Back from time off
+  max_turns: 2
+  variations: 3
+  scenario: >-
+    You work at Harbor Grill and have been off for the last two weeks; today is your first day
+    back. Ask Crew what you missed. Once you have the summary, you're done.
+  assertion: >-
+    Crew calls get_local_context and then get_updates_since with a date about two weeks before
+    today. The summary is short and dated, and puts what changes their work, such as non-slip
+    shoes now being checked at clock-in, before team news such as the shout-out to Lena. It
+    mentions nothing get_updates_since didn't answer.
+
+- name: Clock-out reflection in words
+  max_turns: 4
+  variations: 3
+  scenario: >-
+    You just clocked out at Harbor Grill. Tell Crew you're done for the day. When it asks how it
+    went, give all four parts together in a single message instead of the form: your win was clearing the lunch rush
+    without a single remake, the challenge was being two people short at lunch, a regular
+    thanked you by name, and your energy is a 3. Once Crew has saved it, you're done.
+  assertion: >-
+    Crew calls save_shift_reflection with energy 3, a short win, and two or three short themes
+    such as "short staffed". The themes hold no names. Before or after saving, it reflects back
+    something specific from what they said, and confirms it's saved.
+
+- name: Interview practice
+  max_turns: 3
+  variations: 3
+  scenario: >-
+    You work at Harbor Grill and want to practice for a shift leader interview. Ask Crew to run
+    a practice interview. Answer each question in two or three sentences with a believable
+    example from a shift. After you've answered two questions, you're done.
+  assertion: >-
+    Crew asks one behavioral question at a time, tied to the values Care, Craft, Speed or
+    Ownership, and never asks two questions in one turn. After each answer it gives short
+    feedback with something that was strong and one thing to sharpen, using the STAR shape.

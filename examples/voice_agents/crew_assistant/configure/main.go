@@ -5,11 +5,11 @@
 // the Go SDK syncs both, then this adds what teaches it to answer with interactive UI in A2UI,
 // the tools whose steps a reply shows and the skills it has.
 //
-// Run it once, and again whenever the directory changes:
+// Run it once, and again whenever the directory changes, from configure/:
 //
 //	STREAM_ACCELERATION_URL=http://localhost:8080 \
 //	STREAM_ACCELERATION_CUSTOMER_ID=examples \
-//	GOWORK=off go run ./configure
+//	GOWORK=off go run . -dir ..
 package main
 
 import (
@@ -96,7 +96,7 @@ func run(ctx context.Context, dir string) error {
 	fmt.Printf("ui         A2UI\n")
 	fmt.Printf("visible    %v\n", visibleTools)
 	fmt.Printf("skills     %v\n", skills)
-	fmt.Printf("\nnext       STREAM_API_SECRET=<the router's> GOWORK=off go run ./backend\n")
+	fmt.Printf("\nnext       cd ../backend && STREAM_API_SECRET=<the router's> GOWORK=off go run .\n")
 	return nil
 }
 
