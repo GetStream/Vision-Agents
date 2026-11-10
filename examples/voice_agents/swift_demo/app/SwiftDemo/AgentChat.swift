@@ -2,7 +2,7 @@ import Combine
 import Observation
 import StreamChat
 import StreamChatAI
-import VisionAgentsCore
+import StreamAgents
 
 /// A written conversation as Stream's AI components want it: the channel it is kept in, the
 /// whole of each reply's thinking, and what the agent is doing before it writes.

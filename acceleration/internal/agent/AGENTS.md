@@ -7,6 +7,8 @@ Builds each reply's `harness.Turn` and keeps the conversation. Keep the reply's 
 
 Guarded by `TestEachRequestOpensWithTheOneBeforeItAcrossADeliveredAnswer` (`appendonly_test.go`).
 
-What a silent or one-way call is: `Silence` in `silence.go`. A session counts it in `router_silent_sessions_total` at its end (`internal/session/silence.go`).
+What a silent or one-way call is: `Silence` in `silence.go`. A session counts it in `router_silent_sessions_total` at its end (`internal/session/silence.go`), and counts itself once in `router_voice_sessions_judged_total` if `CallAudio.Judged` holds, the one test `Silences` judges by.
 
 `Startup` (`startup.go`) times a voice session's start-up in `router_agent_startup_seconds` and `router_agent_startup_failures_total`. Only a session on a call the session manager's `EdgeFactory` opens has one: in the router that is a Stream call (`cmd/router/sessions.go` `edgeFor`). `session.newStartup` gives none to a text session or to a session on an edge its caller hands in as `Spec.Edge`: an audio socket (`internal/api/socketws.go`) or a simulation's loopback (`internal/simulation/audio.go`). Those edges never report a connection coming up, so their stages would not be a call's. Guarded by `TestASessionOnAnEdgeItsCallerHandsInHasNoStartUp` (`internal/session/startup_test.go`).
+
+The media quality of a voice session on a Stream call is in `streamedge/mediaquality.go`: `router_agent_media_packet_loss_ratio` and `router_agent_media_jitter_seconds` (label `direction`: inbound or outbound), `router_agent_media_rtt_seconds` and `router_agent_media_concealed_ratio`. Each gets one value per session, observed in `Leave` (`streamedge.go`). It describes the agent's leg to the SFU only.

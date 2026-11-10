@@ -1,6 +1,6 @@
 ---
 name: sdk-swift
-description: How to build and extend the Swift SDK in sdks/swift. Read this before changing VisionAgentsCore, the Swift demos' use of Stream's AI components, or before adding a Swift client for a new endpoint.
+description: How to build and extend the Swift SDK in sdks/swift. Read this before changing StreamAgents, the Swift demos' use of Stream's AI components, or before adding a Swift client for a new endpoint.
 ---
 
 # Swift SDK conventions
@@ -13,7 +13,7 @@ Assume Swift 6 language mode with complete strict concurrency, iOS 15, SPM only.
 
 ## The package
 
-One package, `core`, with one product, `VisionAgentsCore`: the generated client, the socket,
+One package, `core`, with one product, `StreamAgents`: the generated client, the socket,
 the conversation state, `session.chat()` (the Stream Chat channel a text session is kept in)
 and `VoiceSession` (joining the agent's call over Stream Video). It is the only thing published.
 It depends on `stream-chat-swift` (`StreamChat` only) and `stream-video-swift` (`StreamVideo`
@@ -227,14 +227,14 @@ hands over its body.
 
 ## Public API
 
-`VisionAgents(apiKey:)`, defaulting to Stream's hosted router, then `setUser` with a token
+`StreamAgents(apiKey:)`, defaulting to Stream's hosted router, then `setUser` with a token
 provider: the shape [sdk](../sdk/SKILL.md) gives every client SDK. `ID` and `URL` are
-capitalised as Swift does. The initialiser does no I/O. `VisionAgents(url:customerID:)` is
+capitalised as Swift does. The initialiser does no I/O. `StreamAgents(url:customerID:)` is
 only for a router running locally with nothing in front of it; an `apiKey:` beside it is
 Stream's alone, for chat and video, and the router is still reached by customer id.
 
 ```swift
-let agents = VisionAgents(apiKey: "your_api_key")
+let agents = StreamAgents(apiKey: "your_api_key")
 agents.setUser(User(id: "jlahey")) { try await yourBackend.agentToken() }
 let session = try await agents.agent("myagent").sessions.create()
 let turn = try await session.responses.create("Where is order 1042?")
@@ -343,7 +343,7 @@ Three layers, in order of how much they cost to run:
    (`StreamCredentialsTests`).
 
 The package is iOS only, so the tests run on a simulator, from the root of the repository:
-`xcodebuild test -scheme vision-agents-core -destination 'platform=iOS Simulator,name=iPhone
+`xcodebuild test -scheme stream-agents -destination 'platform=iOS Simulator,name=iPhone
 18 Pro'`, with `TEST_RUNNER_VISION_AGENTS_URL` for the live tests and
 `TEST_RUNNER_INTEGRATION_ROUTER_KEY` and `_SECRET` for the keyed posture checks.
 

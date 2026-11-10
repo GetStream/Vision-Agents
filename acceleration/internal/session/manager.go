@@ -374,6 +374,23 @@ func (m *Manager) newSession(spec Spec, conv *persistent.Conversation, skills ha
 	return created
 }
 
+// channelTeam is the Chat team a session's agent channels are made in. An app that keeps each
+// team's agent configs to its own users keeps their channels in the config's team too, so
+// that Chat shows them to that team's users alone. A config of no team asks nothing.
+func (m *Manager) channelTeam(ctx context.Context, spec Spec) (string, error) {
+	if spec.ConfigTeam == "" || m.options.Configs == nil {
+		return "", nil
+	}
+	settings, err := m.options.Configs.AppSettings(ctx, spec.CustomerID)
+	if err != nil {
+		return "", stack.Wrap(fmt.Errorf("%w: %w", ErrAppSettingsUnreadable, err))
+	}
+	if !settings.AgentTeamsChecked() {
+		return "", nil
+	}
+	return spec.ConfigTeam, nil
+}
+
 // Create joins a call and returns the session running it.
 //
 // The agent is joined before this returns, so a caller that gets a session back has one
@@ -482,6 +499,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		}
 		remembering = m.options.Memory
 	}
+	// Set over whatever a forked spec was copied with: the app's setting is read now.
+	if spec.ChannelTeam, err = m.channelTeam(ctx, spec); err != nil {
+		return nil, err
+	}
 
 	opened := false
 	// A new conversation is kept in Stream Chat by default, but a deployment without Chat
@@ -524,7 +545,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		if cid == "" {
 			open, cid = service.CreateInApp, streamapp.AgentChannelType+":"+spec.ID
 		}
-		conv, previous, truncated, err = open(reading, spec.StreamApp, spec.CustomerID, spec.AgentID, cid, spec.Caller.UserID, spec.UserID, spec.Custom, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
+		conv, previous, truncated, err = open(reading, spec.StreamApp, spec.CustomerID, spec.AgentID, cid, spec.Caller.UserID, spec.UserID, spec.Custom, spec.ChannelTeam, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
 		if errors.Is(err, streamapp.ErrReadOnly) {
 			return nil, ErrConversationReadOnly
 		}
@@ -673,8 +694,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	// after the caller's so a caller cannot quietly replace a transfer, and the agent
 	// drops whichever of them nothing on this call can carry out.
 	tools := append([]harness.Tool(nil), spec.Tools...)
+	sources := map[string]ToolSource{}
+	markTools(sources, tools, ToolFromSession)
 	var callers agent.ToolRunner = created.tools
 	tools, callers = m.hostedTools(spec, created.id, hostedProgress{created}, tools, callers)
+	markTools(sources, tools[len(spec.Tools):], ToolFromWorker)
 	tools, callers = moderationTools(spec, stream, tools, callers)
 	if line != nil || m.reading(spec) || m.searching(spec) || spec.endsCalls() {
 		builtin, err := harness.DefaultTools()
@@ -715,6 +739,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 			return nil, err
 		}
 		tools = append(tools, connectorTools...)
+		markTools(sources, connectorTools, ToolFromConnector)
 		connectors.next = runner
 		runner = connectors
 		connectors.askIn(conv, created.chose)
@@ -723,6 +748,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		created.closers = append(created.closers, connectors.Close, connectors.closeLogins)
 	}
 	created.connectorsUnavailable = connectorsUnavailable
+	created.toolSources = sources
 	if spec.ProgressiveTools {
 		tools, runner = progressively(tools, connectorTools, runner)
 	}
@@ -796,6 +822,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 			Tags:          spec.Tags,
 			LLM:           m.options.LLM,
 			LLMTarget:     spec.LLMTarget,
+			LLMFallbacks:  spec.LLMFallbacks,
 			STT:           m.options.STT,
 			STTTarget:     spec.STTTarget,
 			TTS:           m.options.TTS,
@@ -2315,6 +2342,10 @@ func (m *Manager) line(spec Spec) (agent.Telephony, error) {
 
 // ErrSessionExists is a session asked for by an id some session already has.
 var ErrSessionExists = errors.New("session: a session with that id already exists")
+
+// ErrAppSettingsUnreadable is an app's settings that could not be read. It is the router's
+// failure, not the caller's request.
+var ErrAppSettingsUnreadable = errors.New("session: the app's settings could not be read")
 
 // ErrNoMemory is memory asked of a deployment with no memory provider.
 var ErrNoMemory = errors.New("session: memory is unavailable; configure the backend memory provider")

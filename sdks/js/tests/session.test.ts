@@ -1106,9 +1106,131 @@ describe("Session", () => {
 
     await assert.rejects(session.chat(), (error: Error) => {
       assert.ok(error instanceof ConfigurationError);
-      assert.match(error.message, /import "@stream-io\/calypso\/chat"/);
+      assert.match(error.message, /import "@stream-io\/stream-agents\/chat"/);
       return true;
     });
+    await session.close();
+  });
+
+  it("tries chat again after it failed, rather than failing the same way for good", async () => {
+    const page = new Client({ url: router.url, customerId: "local", apiKey: "vak_live_x" });
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: {
+        id: "sess_1",
+        conversation_id: "agent:support-1",
+        user_id: "john",
+        agent_id: "john",
+        state: "live",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    });
+    const opening = Session.open(page, {});
+    await router.socket();
+    const session = await opening;
+
+    // Asked before the page knows who is looking at it.
+    await assert.rejects(session.chat(), ConfigurationError);
+    const client = {
+      channel: (type: string, id: string) => ({ type, id }),
+      connectUser: async () => undefined,
+      disconnectUser: async () => undefined,
+    };
+    page.use({ chat: client });
+    const chat = await session.chat();
+
+    assert.equal(chat.client, client);
+    await session.close();
+  });
+
+  it("tries the call again after opening it failed, so a failed join can be retried", async () => {
+    const page = new Client({ url: router.url, customerId: "local", apiKey: "vak_live_x" });
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: {
+        id: "sess_1",
+        call_id: "sess_1",
+        user_id: "john",
+        agent_id: "john",
+        state: "live",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    });
+    const opening = Session.open(page, { start_voice: true });
+    await router.socket();
+    const session = await opening;
+
+    await assert.rejects(session.video(), ConfigurationError);
+    const client = {
+      streamClient: {},
+      call: (type: string, id: string) => ({ type, id }),
+      disconnectUser: async () => undefined,
+    };
+    page.use({ video: client });
+    const video = await session.video();
+
+    assert.deepEqual(video.call, { type: "agent", id: "sess_1" });
+    await session.close();
+  });
+
+  it("takes a typed question back out of the transcript when it could not be asked", async () => {
+    const [session] = await opened();
+    router.serve("POST", "/v1/agents/sessions/sess_1/responses", {
+      status: 400,
+      body: { error: { message: "text is required", type: "invalid_request", code: "validation_failed" } },
+    });
+
+    await assert.rejects(session.responses.create("Plan a weekend in Lisbon"));
+
+    assert.deepEqual(session.conversation.get().turns, [], "a question that never reached the agent");
+    await session.close();
+  });
+
+  it("asks again under the same request id, so a retry is answered once", async () => {
+    const [session] = await opened();
+    router.serve("POST", "/v1/agents/sessions/sess_1/responses", (_, calls) =>
+      calls === 0
+        ? { status: 503 }
+        : {
+            status: 202,
+            body: { id: "response-1", session_id: "sess_1", status: "running", created_at: new Date().toISOString() },
+          },
+    );
+
+    const answered = await session.responses.create("Plan a weekend in Lisbon", { requestId: "req_7" });
+
+    assert.equal(answered.id, "response-1");
+    const sent = router.requestsTo("POST", "/v1/agents/sessions/sess_1/responses");
+    assert.deepEqual(
+      sent.map((one) => (one.body as Record<string, unknown>)["request_id"]),
+      ["req_7", "req_7"],
+    );
+    await session.close();
+  });
+
+  it("does not tell a page about a delta that changed nothing", async () => {
+    const [session, connection] = await opened();
+    connection.send({ type: "responding", turn_id: "t1" });
+    connection.send({ type: "response_delta", turn_id: "t1", text: "Hi" });
+    for await (const event of session.events()) {
+      if (event.kind === "response_delta") {
+        break;
+      }
+    }
+    let told = 0;
+    session.conversation.subscribe(() => told++);
+
+    connection.send({ type: "response_delta", turn_id: "t1", text: "" });
+    connection.send({ type: "responded", turn_id: "t1", text: "Hi" });
+    connection.send({ type: "response_delta", turn_id: "t1", text: "!" });
+    for await (const event of session.events()) {
+      if (event.kind === "response_delta" && event.text === "!") {
+        break;
+      }
+    }
+
+    assert.equal(told, 1, "only the delta that added something");
+    assert.equal(session.conversation.get().turns.at(-1)?.text, "Hi!");
     await session.close();
   });
 

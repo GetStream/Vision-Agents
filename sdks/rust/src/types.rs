@@ -177,6 +177,24 @@ impl ::std::convert::TryFrom<::std::string::String> for AccountStatus {
         value.parse()
     }
 }
+///`ActivityArea`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ActivityArea {
+    ///The area of the API, such as agent_setup or conversations.
+    pub area: ::std::string::String,
+    ///The client the requests named themselves as: dashboard, cli, sdk or api.
+    pub client: ::std::string::String,
+    ///When the first request arrived.
+    pub first_at: ::std::string::String,
+    ///When the last request arrived.
+    pub last_at: ::std::string::String,
+    ///The error code of the latest refusal, empty when there was none.
+    pub last_refusal_code: ::std::string::String,
+    ///How many were answered with a status of 400 or more.
+    pub refused: i64,
+    ///How many requests arrived, refused ones included.
+    pub requests: i64,
+}
 ///`ActivityBucket`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct ActivityBucket {
@@ -232,6 +250,84 @@ impl ::std::convert::TryFrom<&str> for ActivityGranularity {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for ActivityGranularity {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ActivityMeter`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ActivityMeter {
+    ///Billable audio, transcribed or produced, in milliseconds.
+    pub audio_ms: i64,
+    ///Billable text, in characters.
+    pub characters: i64,
+    ///What it is charged, in millionths of a dollar.
+    pub cost_micros: i64,
+    ///How long the work took, in milliseconds: for runtime and sandbox, the time held.
+    pub duration_ms: i64,
+    ///Tokens read, cached ones included.
+    pub input_tokens: i64,
+    ///The modality, such as llm, tts, runtime or sandbox.
+    pub meter: ::std::string::String,
+    ///Tokens generated.
+    pub output_tokens: i64,
+    ///How many requests. Runtime and sandbox are time, not requests, and read 0.
+    pub requests: i64,
+}
+///The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum ActivityStep {
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "dashboard_reads")]
+    DashboardReads,
+    #[serde(rename = "agent_setup")]
+    AgentSetup,
+    #[serde(rename = "conversations")]
+    Conversations,
+    #[serde(rename = "steady_use")]
+    SteadyUse,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for ActivityStep {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::None => f.write_str("none"),
+            Self::DashboardReads => f.write_str("dashboard_reads"),
+            Self::AgentSetup => f.write_str("agent_setup"),
+            Self::Conversations => f.write_str("conversations"),
+            Self::SteadyUse => f.write_str("steady_use"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for ActivityStep {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "none" => Ok(Self::None),
+            "dashboard_reads" => Ok(Self::DashboardReads),
+            "agent_setup" => Ok(Self::AgentSetup),
+            "conversations" => Ok(Self::Conversations),
+            "steady_use" => Ok(Self::SteadyUse),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ActivityStep {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ActivityStep {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -345,6 +441,9 @@ pub struct AgentConfig {
     pub left_out_connectors: ::std::option::Option<::std::vec::Vec<LeftOutConnector>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub llm: ::std::option::Option<::std::string::String>,
+    ///Where a response goes, in order, when llm fails it. Absent when there are none.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub llm_fallbacks: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     pub mode: AgentMode,
     pub name: ::std::string::String,
     ///Where the agent's work is done: every model its sessions run, its knowledge base and its sandbox are in it. us unless the agent's agent.yaml or config names another.
@@ -428,6 +527,9 @@ pub struct AgentConfigPatch {
     pub knowledge_namespace: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub llm: ::std::option::Option<::std::string::String>,
+    ///Replaces the list whole. An empty list removes it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub llm_fallbacks: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     ///No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub mcp_servers: ::std::option::Option<
@@ -542,6 +644,9 @@ pub struct AgentConfigRequest {
     ///The model holding the conversation.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub llm: ::std::option::Option<::std::string::String>,
+    ///Where a response goes when llm fails it, in order: each a provider/model, a capability shortcut or one of your custom/ models, as llm takes. llm stays the first choice. A response it fails is asked of each next one in turn, and one it says nothing in for as long as a reply may is also asked of another, the first to start answering kept, so a model you serve yourself can be backed by one Stream serves. A response that has started is never moved, however slowly it goes on. Omitted or null on an update, the list stored stays as it is; an empty list removes it. A target this deployment does not route, or one with no instance in the agent's region, is refused.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub llm_fallbacks: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     ///No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub mcp_servers: ::std::option::Option<
@@ -7969,8 +8074,65 @@ pub struct OfferedTool {
     ///The JSON Schema of its arguments.
     #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
     pub parameters: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    ///Where the tool came from: session, declared by whoever opened the session; worker, hosted by a worker connected when the session opened; connector, opened by one of the agent's connector bindings; builtin, the router's own. A session's tools are fixed when it opens, so a worker that was not connected then leaves none of its tools here. Absent for a session kept before sources were recorded.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub source: ::std::option::Option<OfferedToolSource>,
     ///Roughly what offering it costs on every request, in tokens: its name, description and schema at four characters a token.
     pub tokens: i64,
+}
+///Where the tool came from: session, declared by whoever opened the session; worker, hosted by a worker connected when the session opened; connector, opened by one of the agent's connector bindings; builtin, the router's own. A session's tools are fixed when it opens, so a worker that was not connected then leaves none of its tools here. Absent for a session kept before sources were recorded.
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum OfferedToolSource {
+    #[serde(rename = "session")]
+    Session,
+    #[serde(rename = "worker")]
+    Worker,
+    #[serde(rename = "connector")]
+    Connector,
+    #[serde(rename = "builtin")]
+    Builtin,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for OfferedToolSource {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Session => f.write_str("session"),
+            Self::Worker => f.write_str("worker"),
+            Self::Connector => f.write_str("connector"),
+            Self::Builtin => f.write_str("builtin"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for OfferedToolSource {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "session" => Ok(Self::Session),
+            "worker" => Ok(Self::Worker),
+            "connector" => Ok(Self::Connector),
+            "builtin" => Ok(Self::Builtin),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for OfferedToolSource {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for OfferedToolSource {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///The tools a session's conversation model is offered, as they are sent to it.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -8058,6 +8220,30 @@ pub struct OptOutPage {
     ///Pass as `cursor` for the next page. Absent on the last one.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub next_cursor: ::std::option::Option<::std::string::String>,
+}
+///`OrganizationActivity`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct OrganizationActivity {
+    ///Every area and client the organization's apps made requests in, by area then client.
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub areas: ::std::option::Option<::std::vec::Vec<ActivityArea>>,
+    ///When the first request of any area arrived, absent when none did.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub first_seen: ::std::option::Option<::std::string::String>,
+    pub furthest_step: ActivityStep,
+    ///When the last request of any area arrived, absent when none did.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub last_seen: ::std::option::Option<::std::string::String>,
+    ///What the organization's apps' work came to, by modality, from the shards listed in shards.
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub meters: ::std::option::Option<::std::vec::Vec<ActivityMeter>>,
+    ///The organization.
+    pub organization_id: ::std::string::String,
+    ///The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them.
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub shards: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    ///The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on.
+    pub since: ::std::string::String,
 }
 ///What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.
 #[derive(

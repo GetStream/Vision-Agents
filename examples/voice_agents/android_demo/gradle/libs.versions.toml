@@ -9,7 +9,7 @@ okhttp = "5.5.0"
 stream-chat-ai-compose = "7.18.0"
 
 [libraries]
-vision-agents-core = { module = "io.getstream:vision-agents-core", version = "0.1.0-SNAPSHOT" }
+stream-agents-android-core = { module = "io.getstream:stream-agents-android-core", version = "0.2.0" }
 stream-chat-ai-compose = { module = "io.getstream:stream-chat-android-ai-compose", version.ref = "stream-chat-ai-compose" }
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
 compose-material3 = { module = "androidx.compose.material3:material3" }

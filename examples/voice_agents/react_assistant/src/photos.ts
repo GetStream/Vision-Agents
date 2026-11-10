@@ -1,4 +1,4 @@
-import type { ImageSource } from "@stream-io/calypso";
+import type { ImageSource } from "@stream-io/stream-agents";
 
 /**
  * Photos from the composer, as the router takes them.

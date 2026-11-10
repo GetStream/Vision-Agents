@@ -1,0 +1,113 @@
+name: Release .NET SDK
+
+# Run by hand from the Actions tab, with "Use workflow from" set to accelerate. It raises the last sdk-dotnet-v* version by the chosen part, or takes the exact version typed in, tests and packs that copy, pushes it to nuget.org through trusted publishing, then tags the commit sdk-dotnet-v<version>.
+# The same file is on main only because GitHub offers "Run workflow" for workflows on the default branch; a run from main does nothing.
+# No GitHub Release: publishing one runs release.yml, which uploads the Python packages to PyPI.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Part of the last version to raise
+        type: choice
+        options: [ patch, minor, major ]
+        default: patch
+      version:
+        description: Exact version to release instead, such as 0.2.0 or 0.2.0-beta.1
+        type: string
+        default: ''
+      dry_run:
+        description: Work out the version, test and pack, without publishing or tagging
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-sdk-dotnet
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/accelerate'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # push the release tag
+      id-token: write   # NuGet trusted publishing (OIDC)
+    defaults:
+      run:
+        working-directory: sdks/dotnet
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Every sdk-dotnet-v* tag, for the last version.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Work out the version
+        env:
+          BUMP: ${{ inputs.bump }}
+          OVERRIDE: ${{ inputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          last=$(git tag -l 'sdk-dotnet-v*' | sed 's/^sdk-dotnet-v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)
+          if [ -n "$OVERRIDE" ]; then
+            version=$OVERRIDE
+            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+              echo "::error::$version is not X.Y.Z or X.Y.Z-suffix"; exit 1
+            fi
+          else
+            IFS=. read -r major minor patch <<< "${last:-0.0.0}"
+            case "$BUMP" in
+              major) version="$((major + 1)).0.0" ;;
+              minor) version="$major.$((minor + 1)).0" ;;
+              patch) version="$major.$minor.$((patch + 1))" ;;
+            esac
+          fi
+          if git rev-parse -q --verify "refs/tags/sdk-dotnet-v$version" >/dev/null; then
+            echo "::error::sdk-dotnet-v$version already exists"; exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          {
+            echo "### getstream-calypso $version$([ "$DRY_RUN" = true ] && echo ' (dry run)')"
+            echo "Last release: ${last:-none}. Changes under sdks/dotnet since then:"
+            echo '```'
+            git log --oneline --no-merges "${last:+sdk-dotnet-v$last..}HEAD" -- .
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: sdks/dotnet/global.json
+
+      - name: Check the generated models are in step with the spec
+        run: dotnet run --project tools/Generate -- --check
+
+      - name: Test
+        run: dotnet test
+
+      - name: Pack
+        run: dotnet pack src/GetStream.VisionAgents -c Release -p:Version="$VERSION" -o "$RUNNER_TEMP/nupkg"
+
+      - name: NuGet login
+        if: ${{ !inputs.dry_run }}
+        id: login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: yunwang_stream
+
+      # The .snupkg next to the .nupkg is pushed with it.
+      - name: Push
+        if: ${{ !inputs.dry_run }}
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: dotnet nuget push "$RUNNER_TEMP/nupkg/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json
+
+      # After the push, so a failed push leaves no tag behind for the next bump to skip past.
+      - name: Tag
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git tag "sdk-dotnet-v$VERSION" "$GITHUB_SHA"
+          git push "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" "sdk-dotnet-v$VERSION"

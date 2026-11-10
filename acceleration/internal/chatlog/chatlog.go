@@ -41,7 +41,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
-// ChannelType is the Stream Chat channel type transcripts are written to.
+// ChannelType is the Stream Chat channel type transcripts are written to unless
+// Options.ChannelType names another.
 const ChannelType = streamapp.AgentChannelType
 
 // queueSize bounds how far the writer may fall behind before messages are dropped.
@@ -155,6 +156,8 @@ type Options struct {
 	// AgentID. A bound Athena conversation passes the id from its CID so voice does not
 	// open a second channel.
 	Channel string
+	// ChannelType is Channel's type, from the same CID. Empty means ChannelType.
+	ChannelType string
 	// Opened says the caller has just made or read Channel, so Start does not ask Stream for
 	// it again.
 	Opened bool
@@ -166,6 +169,9 @@ type Options struct {
 	// CustomerID is stamped on a channel this log creates, so reading it back can tell
 	// whose it is. A bound conversation's channel already carries the stamp.
 	CustomerID string
+	// Team is the Chat team a channel this log creates is in, none for "". A bound
+	// conversation's channel was made in its team already.
+	Team string
 	// Timings writes how long each stage of a turn took after the reply to it, and on the
 	// message as the timings field, for a developer talking to the agent. Off by default:
 	// it is not something a caller should read.
@@ -191,16 +197,19 @@ type User struct {
 
 // Log writes a conversation into one Stream Chat channel.
 type Log struct {
-	client   *getstream.Stream
-	agentID  string
-	channel  string
-	existing bool
-	opened   bool
-	customer string
-	agent    User
-	visible  []string
-	timings  bool
-	logger   *slog.Logger
+	client  *getstream.Stream
+	agentID string
+	channel string
+	// channelType is the type every request about channel names.
+	channelType string
+	existing    bool
+	opened      bool
+	customer    string
+	team        string
+	agent       User
+	visible     []string
+	timings     bool
+	logger      *slog.Logger
 
 	queue chan message
 	done  chan struct{}
@@ -265,20 +274,26 @@ func New(options Options) (*Log, error) {
 	if channel == "" {
 		channel = options.AgentID
 	}
+	channelType := options.ChannelType
+	if channelType == "" {
+		channelType = ChannelType
+	}
 
 	return &Log{
-		client:   client,
-		agentID:  options.AgentID,
-		channel:  channel,
-		existing: options.Channel != "",
-		opened:   options.Channel != "" && options.Opened,
-		customer: options.CustomerID,
-		agent:    options.Agent,
-		visible:  options.VisibleTools,
-		timings:  options.Timings,
-		logger:   options.Logger.With("agent", options.AgentID, "channel", channel),
-		queue:    make(chan message, queueSize),
-		done:     make(chan struct{}),
+		client:      client,
+		agentID:     options.AgentID,
+		channel:     channel,
+		channelType: channelType,
+		existing:    options.Channel != "",
+		opened:      options.Channel != "" && options.Opened,
+		customer:    options.CustomerID,
+		team:        options.Team,
+		agent:       options.Agent,
+		visible:     options.VisibleTools,
+		timings:     options.Timings,
+		logger:      options.Logger.With("agent", options.AgentID, "channel", channel),
+		queue:       make(chan message, queueSize),
+		done:        make(chan struct{}),
 	}, nil
 }
 
@@ -301,8 +316,11 @@ func (l *Log) Start(ctx context.Context) error {
 			if l.customer != "" {
 				request.Data.Custom = map[string]any{conversation.CustomerField: l.customer}
 			}
+			if l.team != "" {
+				request.Data.Team = &l.team
+			}
 		}
-		if _, err := l.client.Chat().GetOrCreateChannel(ctx, ChannelType, l.channel, request); err != nil {
+		if _, err := l.client.Chat().GetOrCreateChannel(ctx, l.channelType, l.channel, request); err != nil {
 			return stack.Wrap(err)
 		}
 	}
@@ -686,7 +704,7 @@ func (w *writer) storeArtifacts(queued message) {
 	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
 	defer cancel()
 	id := fmt.Sprintf("voice-artifact-%x", sha256.Sum256([]byte(w.log.channel+"\x00"+queued.turnID+"\x00"+queued.receiptID)))
-	_, err := w.log.client.Chat().SendMessage(ctx, ChannelType, w.log.channel, &getstream.SendMessageRequest{
+	_, err := w.log.client.Chat().SendMessage(ctx, w.log.channelType, w.log.channel, &getstream.SendMessageRequest{
 		Message: getstream.MessageRequest{ID: &id, UserID: &queued.author.ID, Attachments: conversation.ChatAttachments(queued.artifacts),
 			Custom: map[string]any{generatingField: false, SourceField: SourceAgent, aiGeneratedField: true}},
 	})
@@ -1004,7 +1022,7 @@ func (w *writer) sendIndicator(messageID, state string) {
 	ctx, cancel := context.WithTimeout(context.Background(), indicatorTimeout)
 	defer cancel()
 	event := conversation.IndicatorEvent(w.log.agent.ID, messageID, state)
-	if _, err := w.log.client.Chat().SendEvent(ctx, ChannelType, w.log.channel,
+	if _, err := w.log.client.Chat().SendEvent(ctx, w.log.channelType, w.log.channel,
 		&getstream.SendEventRequest{Event: event}); err != nil {
 		w.log.logger.Warn("could not send the agent's AI indicator", "type", event.Type, "error", err)
 	}
@@ -1150,7 +1168,7 @@ func (w *writer) send(ctx context.Context, author User, text string, generating,
 	if id != "" {
 		request.ID = &id
 	}
-	response, err := w.log.client.Chat().SendMessage(ctx, ChannelType, w.log.channel,
+	response, err := w.log.client.Chat().SendMessage(ctx, w.log.channelType, w.log.channel,
 		&getstream.SendMessageRequest{Message: request})
 	if err != nil {
 		if id == "" || !w.rewrite(ctx, author, id, text, custom) {

@@ -503,6 +503,32 @@ func (s *RouterStartSuite) start(settings config.Config) (stop func() error) {
 	return stop
 }
 
+// Defect: the router built without its activity record (the server counts nothing), or without
+// closing it (what the last minute counted is lost when it stops). The interval is a minute, so
+// the row can only be there because the stop wrote it.
+func (s *RouterStartSuite) TestARunningRouterCountsAnAppsRequestAndWritesItWhenItStops() {
+	settings := s.settings
+	settings.Addr = freeAddress(s.T())
+	customer := "customer-" + uuid.NewString()
+	stop := s.start(settings)
+
+	request, err := http.NewRequest(http.MethodGet, "http://"+settings.Addr+"/v1/agents/skills", nil)
+	s.Require().NoError(err)
+	request.Header.Set("X-Customer-Id", customer)
+	request.Header.Set("X-Stream-Client", store.AuditSourceCLI)
+	response, err := http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	s.Require().NoError(response.Body.Close())
+	s.Require().Less(response.StatusCode, http.StatusInternalServerError)
+	s.Require().NoError(stop())
+
+	var requests int64
+	s.Require().NoError(s.db.DB().QueryRowContext(s.ctx,
+		"SELECT COALESCE(sum(requests), 0) FROM customer_activity WHERE app_id = ? AND area = 'agent_setup' AND client = ?",
+		customer, store.AuditSourceCLI).Scan(&requests))
+	s.Equal(int64(1), requests)
+}
+
 // goroutines is every goroutine's stack, as the pprof endpoint prints it.
 func goroutines() string {
 	var out strings.Builder
@@ -527,3 +553,24 @@ func (l *listenLog) Handle(_ context.Context, record slog.Record) error {
 
 func (l *listenLog) WithAttrs([]slog.Attr) slog.Handler { return l }
 func (l *listenLog) WithGroup(string) slog.Handler      { return l }
+
+// Defect: the router builds the cost anomaly check but never starts it, or builds it with no
+// store, or stops without giving its lock back. A started check holds the lock until it stops.
+func (s *RouterStartSuite) TestARouterWithASlackChannelChecksCostAnomaliesUntilItStops() {
+	settings := s.settings
+	settings.Addr = freeAddress(s.T())
+	settings.Limits.SlackToken, settings.Limits.SlackChannel = "xoxb-test", "C0TEST"
+	stop := s.start(settings)
+	other := s.db.CostAnomalyLock()
+	defer other.Release()
+	// The lock is taken by the check's first pass; 10 s is far above the under-a-second start.
+	s.Require().Eventually(func() bool {
+		held, err := other.Hold(s.ctx)
+		s.Require().NoError(err)
+		return !held
+	}, 10*time.Second, 20*time.Millisecond, "the router does not hold the cost anomaly lock")
+	s.Require().NoError(stop())
+	held, err := other.Hold(s.ctx)
+	s.Require().NoError(err)
+	s.True(held, "the router kept the lock after it stopped")
+}

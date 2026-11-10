@@ -155,6 +155,13 @@ type Spec struct {
 	// config's TeamTag. A team the caller's token signed is never moved by it. Not read from
 	// Tags, which a device may send.
 	Team string
+	// ConfigTeam is the agent config's own TeamTag, the one an end user's teams are checked
+	// against. Unlike Team, no caller moves it.
+	ConfigTeam string
+	// ChannelTeam is the Chat team the agent channels the session makes are in: ConfigTeam
+	// in an app that keeps each team's configs to its own users (store.AppSettings.AgentTeams),
+	// else none. Manager.Create sets it.
+	ChannelTeam string
 
 	// Incognito holds the conversation and records nothing about it: no session row, no
 	// turns, no transcript. It is the one field that makes a session unfindable afterwards,
@@ -217,8 +224,11 @@ type Spec struct {
 	Navigating bool
 
 	LLMTarget string
-	STTTarget string
-	TTSTarget string
+	// LLMFallbacks are tried in order when LLMTarget fails a turn, from the config's
+	// llm_fallbacks.
+	LLMFallbacks []string
+	STTTarget    string
+	TTSTarget    string
 	// STSTarget routes one native audio model that hears and speaks for itself. Naming
 	// one makes this a native session: the agent opens that model and no transcriber,
 	// conversation model or voice, so the three targets above are left as they are.
@@ -399,6 +409,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		STSTarget:      config.STS,
 		Voice:          config.Voice,
 		LLMTarget:      config.LLM,
+		LLMFallbacks:   config.LLMFallbacks,
 		SubagentTarget: config.Subagent,
 		VideoSource:    config.VideoSource, VideoMaxFrames: config.VideoMaxFrames,
 		SearchTarget:       config.Search,
@@ -425,6 +436,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		Calls:              config.Calls,
 		Tags:               routing.Tags(config.Tags),
 		Team:               configTeam(config.Tags),
+		ConfigTeam:         strings.TrimSpace(config.Tags[TeamTag]),
 		// The config's alone until Manager.Create holds it to the policies.
 		ToolOutputRetention: config.ToolOutputRetention,
 	}
@@ -741,15 +753,16 @@ func joinedCallID(id string) string {
 	return strings.TrimSpace(id)
 }
 
-// ConversationChannel is the id, without its type, of the agent channel ConversationID names:
-// the channel a call's transcript is written into (chatlog.Options.Channel). Empty for a
-// ConversationID that names no agent channel, whose transcript goes into the agent id's.
-func (s Spec) ConversationChannel() string {
-	channel := strings.TrimPrefix(s.ConversationID, streamapp.AgentChannelType+":")
-	if channel == s.ConversationID {
-		return ""
+// ConversationChannel is the type and id of the agent channel ConversationID names: the
+// channel a call's transcript is written into (chatlog.Options.ChannelType and Channel). Both
+// are empty for a ConversationID that names no agent channel, whose transcript goes into the
+// agent id's.
+func (s Spec) ConversationChannel() (channelType, channel string) {
+	channelType, channel, _ = strings.Cut(s.ConversationID, ":")
+	if channelType != streamapp.AgentChannelType || channel == "" {
+		return "", ""
 	}
-	return channel
+	return channelType, channel
 }
 
 // TranscriptChannel is the cid of the channel a call's transcript is written into: the
@@ -757,11 +770,11 @@ func (s Spec) ConversationChannel() string {
 // ConversationChannel. Example: conversation_id "messaging:X" under agent id "front-desk" is
 // written into agent:front-desk.
 func (s Spec) TranscriptChannel() string {
-	channel := s.ConversationChannel()
-	if channel == "" {
-		channel = s.AgentID
+	channelType, channel := s.ConversationChannel()
+	if channelType == "" {
+		channelType, channel = streamapp.AgentChannelType, s.AgentID
 	}
-	return streamapp.AgentChannelType + ":" + channel
+	return channelType + ":" + channel
 }
 
 // Shared reports whether more than one verified person writes in the conversation: a thread

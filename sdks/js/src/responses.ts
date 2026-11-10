@@ -1,8 +1,11 @@
-import type { Client, Schemas } from "./client.js";
+import { onRetry, type Client, type Schemas } from "./client.js";
 import { ConfigurationError } from "./errors.js";
 
 /** How many items are read per request while unwinding. */
 const ITEM_PAGE = 200;
+
+/** How many turns are read per request while looking for the one a repeated question started. */
+const RESPONSE_PAGE = 100;
 
 /** An image handed to the model alongside the question. */
 export type ImageSource = Schemas["ImageSource"];
@@ -20,6 +23,12 @@ export interface CreateResponseOptions {
    * `custom.ai_ui_action`, and the model is told it after the text. An empty one is not sent.
    */
   uiAction?: UIAction;
+  /**
+   * The id the router answers this question once under. Left out, a fresh one is made. Pass
+   * the same one to ask again after a failure that may have reached the router, such as one
+   * with status 0, so the agent does not answer the same question twice.
+   */
+  requestId?: string;
 }
 
 /** What the person did in a reply's generated UI, as the router takes it. */
@@ -128,10 +137,13 @@ export class Responses {
 
   private readonly client: Client;
   private readonly sessionId: string;
-  private readonly asked: ((text: string) => void) | undefined;
+  private readonly asked: ((text: string) => () => void) | undefined;
 
-  /** `asked` hears each question as it goes, for a transcript that shows it before the router does. */
-  constructor(client: Client, sessionId: string, asked?: (text: string) => void) {
+  /**
+   * `asked` hears each question as it goes, for a transcript that shows it before the router
+   * does, and returns what takes it back when the question could not be asked.
+   */
+  constructor(client: Client, sessionId: string, asked?: (text: string) => () => void) {
     this.client = client;
     this.sessionId = sessionId;
     this.asked = asked;
@@ -141,13 +153,23 @@ export class Responses {
   /**
    * Asks the agent something and names the turn it answers as.
    *
-   * Every question goes with a fresh request id, so a retry of it is answered once. A
-   * personal conversation kept in Stream Chat needs one, and with it the images, as data URIs,
-   * are uploaded to the channel and shown on the person's message.
+   * Every question goes with a request id, a fresh one unless `requestId` names it, so a retry
+   * of it is answered once; a failure that may not have reached the router is retried with the
+   * same one. A personal conversation kept in Stream Chat needs one, and with it the images, as
+   * data URIs, are uploaded to the channel and shown on the person's message.
+   *
+   * A question that could not be asked is taken back out of `session.conversation`. When the
+   * router took the question but its answer was lost, the retry is answered with no id; the turn
+   * is then looked up by what was asked, so the handle still names it.
    */
-  create(text: string, options: CreateResponseOptions = {}): Promise<AgentResponse> {
-    this.asked?.(text);
-    return createResponse(this.client, this.sessionId, text, options);
+  async create(text: string, options: CreateResponseOptions = {}): Promise<AgentResponse> {
+    const takeBack = this.asked?.(text);
+    try {
+      return await createResponse(this.client, this.sessionId, text, options);
+    } catch (cause) {
+      takeBack?.();
+      throw cause;
+    }
   }
 
   /**
@@ -182,29 +204,70 @@ export class Responses {
 }
 
 /**
- * Creates a response under `requestId`, or under a fresh one.
+ * Creates a response under `options.requestId`, or under a fresh one.
  *
- * Not exported from the package: naming the request is only for a dispatch worker answering an
- * inbound message, which passes back that message's own request id so the answer lands on it.
+ * Not exported from the package: a dispatch worker answering an inbound message calls it with
+ * that message's own request id, so the answer lands on it.
  */
 export async function createResponse(
   client: Client,
   sessionId: string,
   text: string,
   options: CreateResponseOptions = {},
-  requestId = "",
 ): Promise<AgentResponse> {
-  const id = requestId || crypto.randomUUID();
+  const id = options.requestId || crypto.randomUUID();
+  let resent = false;
   const created = await client.post("/v1/agents/sessions/{id}/responses", {
     path: { id: sessionId },
+    // The request id is what the router answers once by, so sending it again is safe.
+    idempotent: true,
+    ...onRetry(() => {
+      resent = true;
+    }),
     body: {
       text,
       ...(options.images?.length ? { images: options.images } : {}),
       ...(options.maxOutputTokens !== undefined ? { max_output_tokens: options.maxOutputTokens } : {}),
       ...(options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {}),
       ...(options.uiAction && Object.keys(options.uiAction).length ? { ui_action: options.uiAction } : {}),
-      ...(id ? { request_id: id } : {}),
+      request_id: id,
     },
   });
-  return new AgentResponse(client, created);
+  if (created.id || !resent) {
+    return new AgentResponse(client, created);
+  }
+  // The router answers a question it already took with no id: the first send reached it and
+  // only its answer was lost. The turn that send started is the latest one asking this.
+  return new AgentResponse(client, (await startedBy(client, sessionId, text)) ?? created);
+}
+
+/**
+ * The latest turn on the session that asked `text`, or nothing when there is none or the
+ * turns could not be read: the question was asked either way, so failing to name its turn
+ * does not fail the asking.
+ */
+async function startedBy(
+  client: Client,
+  sessionId: string,
+  text: string,
+): Promise<Schemas["AgentResponse"] | undefined> {
+  let latest: Schemas["AgentResponse"] | undefined;
+  let cursor: string | undefined;
+  try {
+    do {
+      const page = await client.get("/v1/agents/sessions/{id}/responses", {
+        path: { id: sessionId },
+        query: { limit: RESPONSE_PAGE, cursor },
+      });
+      for (const turn of page.items) {
+        if (turn.said === text) {
+          latest = turn;
+        }
+      }
+      cursor = page.has_more ? page.next_cursor : undefined;
+    } while (cursor);
+  } catch {
+    return undefined;
+  }
+  return latest;
 }

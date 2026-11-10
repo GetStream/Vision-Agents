@@ -43,9 +43,16 @@ func (s *Server) configFor(ctx context.Context, customerID string, configID, nam
 		return nil, errNoConfigs
 	}
 
+	teams, err := s.teamsGateFor(ctx, customerID)
+	if err != nil {
+		return nil, err
+	}
 	if id != "" {
 		found, err := s.configs.AgentConfig(ctx, customerID, id)
 		if err != nil {
+			return nil, errUnknownConfig
+		}
+		if teams.refuses(found) {
 			return nil, errUnknownConfig
 		}
 		return &found, nil
@@ -59,6 +66,9 @@ func (s *Server) configFor(ctx context.Context, customerID string, configID, nam
 		// Refused rather than started unconfigured. A typo in a name would otherwise get a
 		// working session with default instructions, which is far harder to notice than an
 		// error: the agent answers, just not as the agent that was asked for.
+		return nil, notFound("there is no agent called " + named)
+	}
+	if teams.refuses(found) {
 		return nil, notFound("there is no agent called " + named)
 	}
 	return &found, nil
@@ -97,20 +107,19 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	}
 	// A fork naming no config goes on with its parent's, as the config is now rather than as
 	// the parent was opened with. A config deleted since leaves the fork what its parent had;
-	// a config that cannot be read fails the fork rather than dropping what it decides.
+	// a config that cannot be read fails the fork rather than dropping what it decides. An end
+	// user is checked against its team as if they had named it, and a deleted one is refused.
 	var current *store.AgentConfig
 	currentConfig := func() error {
 		if config != nil || s.store == nil || parent.ConfigID() == "" {
 			return nil
 		}
-		read, err := s.store.AgentConfig(ctx, customerID, parent.ConfigID())
-		switch {
-		case err == nil:
-			current = &read
-		case !errors.Is(err, store.ErrNoAgentConfig):
+		teams, err := s.teamsGateFor(ctx, customerID)
+		if err != nil {
 			return err
 		}
-		return nil
+		current, err = s.configOpenedWith(ctx, customerID, parent.ConfigID(), teams)
+		return err
 	}
 	// An ended parent's fork is built from it, so it is read first. A live parent's fork, an
 	// incognito one or one on a thread is refused by forkSpec before any config is needed.
@@ -533,6 +542,10 @@ func (s *Server) sessionToAnswer(ctx context.Context, id string) (*session.Sessi
 		// Ended here, so the spec it ran on is still at hand, tools and instructions included.
 		// It is carried on in writing, whether or not it ended on a call.
 		spec = found.Spec().Written()
+		// Only for an end user still in its config's team, as one carried on from its row is.
+		if failure = s.refuseOutsideTeam(ctx, spec.CustomerID, spec.ConfigID); failure != nil {
+			return nil, nil, failure
+		}
 		spec.Phone, spec.Edge = nil, nil
 		spec.Reopened = found.CreatedAt()
 	case errors.Is(failure, errUnknownSession):

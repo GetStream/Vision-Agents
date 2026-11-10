@@ -213,7 +213,7 @@ export class Sessions {
       path: { id },
       body: { ...rest, ...(modelOverwrites ? { model_overwrites: modelOverwrites } : {}) },
     });
-    return Session.watching(this.client, forked, watching({ tools, interim, decisions, watch }));
+    return Session.startWatching(this.client, forked, watching({ tools, interim, decisions, watch }));
   }
 
   /**

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -93,6 +94,78 @@ func (s *HTTPMetricsSuite) TestA5xxIsCountedAsAServerErrorAndA2xxIsNot() {
 	s.Equal(2.0, s.count(route, "2xx"))
 	s.EqualValues(1, s.timed(route, "5xx").GetSampleCount())
 	s.EqualValues(2, s.timed(route, "2xx").GetSampleCount())
+}
+
+// statusSum is the sum of the seconds router_api_latency_seconds holds for a status class.
+func statusSum(t *testing.T, class string) float64 {
+	t.Helper()
+	total := 0.0
+	for _, metric := range seriesOf(t, "router_api_latency_seconds", func(labels map[string]string) bool {
+		return labels["status"] == class
+	}) {
+		total += metric.GetHistogram().GetSampleSum()
+	}
+	return total
+}
+
+// statusSamples is the sample count of router_api_latency_seconds for a status class.
+func statusSamples(t *testing.T, class string) uint64 {
+	t.Helper()
+	var total uint64
+	for _, metric := range seriesOf(t, "router_api_latency_seconds", func(labels map[string]string) bool {
+		return labels["status"] == class
+	}) {
+		total += metric.GetHistogram().GetSampleCount()
+	}
+	return total
+}
+
+// Defect: the status-class histogram missing, observing under the wrong class, or keeping the
+// route or the method as a label, so the series count grows with the routes again. The series
+// are the process's, so each class is read as a delta of at least the requests sent.
+func (s *HTTPMetricsSuite) TestEveryStatusClassIsTimedUnderItsClassAlone() {
+	route := s.prefix + "/{code}"
+	s.mux.Handle(route, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		code, err := strconv.Atoi(chi.URLParam(r, "code"))
+		s.Require().NoError(err)
+		w.WriteHeader(code)
+	}))
+	for code, class := range map[string]string{"200": "2xx", "204": "2xx", "302": "3xx", "404": "4xx", "503": "5xx"} {
+		before := statusSamples(s.T(), class)
+		s.serve(http.MethodGet, s.prefix+"/"+code)
+		s.GreaterOrEqual(statusSamples(s.T(), class), before+1, "a %s was not timed under %s", code, class)
+	}
+
+	classes := []string{"1xx", "2xx", "3xx", "4xx", "5xx"}
+	series := seriesOf(s.T(), "router_api_latency_seconds", func(map[string]string) bool { return true })
+	s.NotEmpty(series)
+	for _, metric := range series {
+		labels := labelsOf(metric)
+		s.Len(labels, 1, "a label besides status: %v", labels)
+		s.Contains(classes, labels["status"])
+	}
+	s.LessOrEqual(len(series), len(classes))
+}
+
+// Defect: the status-class histogram on other buckets than the route-keyed one, so the two
+// disagree on how slow is slow.
+func (s *HTTPMetricsSuite) TestTheStatusClassHistogramHasTheRouteKeyedBuckets() {
+	route := s.prefix + "/buckets"
+	s.mux.Get(route, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	s.serve(http.MethodGet, route)
+
+	bounds := func(histogram *dto.Histogram) []float64 {
+		var upper []float64
+		for _, bucket := range histogram.GetBucket() {
+			upper = append(upper, bucket.GetUpperBound())
+		}
+		return upper
+	}
+	byStatus := seriesOf(s.T(), "router_api_latency_seconds", func(labels map[string]string) bool {
+		return labels["status"] == "2xx"
+	})
+	s.Require().Len(byStatus, 1)
+	s.Equal(bounds(s.timed(route, "2xx")), bounds(byStatus[0].GetHistogram()))
 }
 
 // Defect: the raw path in the route label, a series per session id.
@@ -195,11 +268,16 @@ func (s *HTTPMetricsSuite) TestTheTimeIsHowLongTheAnswerTookToBegin() {
 		_, _ = io.WriteString(w, "done")
 	})
 
+	classBefore := statusSum(s.T(), "2xx")
 	s.serve(http.MethodGet, route)
 
 	spent := s.timed(route, "2xx")
 	s.Require().NotNil(spent)
 	s.GreaterOrEqual(spent.GetSampleSum(), 0.05)
+	// The class histogram times the same beginning, not the end and not zero.
+	classSpent := statusSum(s.T(), "2xx") - classBefore
+	s.GreaterOrEqual(classSpent, 0.05)
+	s.Less(classSpent, 0.3, "the body's time is counted by status class")
 	s.Less(spent.GetSampleSum(), 0.3, "the body's time is counted")
 	// The buckets tell an answer in 50 ms from one in 300 ms, the range a slow API moves in.
 	s.True(slices.ContainsFunc(spent.GetBucket(), func(bucket *dto.Bucket) bool {
@@ -252,8 +330,9 @@ func (s *HTTPMetricsSuite) TestAStreamedAnswerIsCountedAndNotTimed() {
 		}
 		_, _ = io.WriteString(w, "second\n")
 	})
-	server := httptest.NewServer(withTrace(withMetrics(s.mux, withTiming((&Server{logger: slog.New(slog.DiscardHandler)}).withRequestLog(s.mux)))))
+	server := httptest.NewServer(withTrace(withMetrics(s.mux, withTiming((&Server{logger: slog.New(slog.DiscardHandler)}).withRequestLog(s.mux, s.mux)))))
 	s.T().Cleanup(server.Close)
+	classBefore := statusSamples(s.T(), "2xx")
 
 	// A flush that never reaches the caller would leave the request waiting for its headers.
 	client := &http.Client{Timeout: 5 * time.Second}
@@ -270,6 +349,8 @@ func (s *HTTPMetricsSuite) TestAStreamedAnswerIsCountedAndNotTimed() {
 
 	s.Require().Eventually(func() bool { return s.count(route, "2xx") == 1 }, 5*time.Second, 10*time.Millisecond)
 	s.Empty(s.series("router_http_request_seconds", route))
+	// The series is the process's: this holds while no other test answers a 2xx at the same time.
+	s.Equal(classBefore, statusSamples(s.T(), "2xx"), "a streamed answer was timed by status class")
 }
 
 // Defect: a socket timed as a response, so the latency holds the length of sessions.
@@ -284,7 +365,7 @@ func (s *HTTPMetricsSuite) TestASocketIsCountedAsAnUpgradeAndNotTimed() {
 		_ = connection.WriteMessage(websocket.TextMessage, []byte("hello"))
 		_ = connection.Close()
 	})
-	server := httptest.NewServer(withTrace(withMetrics(s.mux, withTiming((&Server{logger: slog.New(slog.DiscardHandler)}).withRequestLog(s.mux)))))
+	server := httptest.NewServer(withTrace(withMetrics(s.mux, withTiming((&Server{logger: slog.New(slog.DiscardHandler)}).withRequestLog(s.mux, s.mux)))))
 	s.T().Cleanup(server.Close)
 
 	connection, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+route, nil)
@@ -296,6 +377,7 @@ func (s *HTTPMetricsSuite) TestASocketIsCountedAsAnUpgradeAndNotTimed() {
 
 	s.Require().Eventually(func() bool { return s.count(route, "1xx") == 1 }, 5*time.Second, 10*time.Millisecond)
 	s.Empty(s.series("router_http_request_seconds", route))
+	s.Zero(statusSamples(s.T(), "1xx"), "a socket was timed by status class")
 }
 
 // Defect: a panic is not counted (the deferred count is skipped), or counted as the empty
@@ -320,7 +402,7 @@ func (s *HTTPMetricsSuite) TestAPanicTheRequestLogAnsweredIsCountedAsItsAnswer()
 	s.mux.Get(route, func(http.ResponseWriter, *http.Request) { panic("synthetic handler failure") })
 	recovered := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() { _ = recover() }()
-		withTrace(withMetrics(s.mux, (&Server{logger: slog.New(slog.DiscardHandler)}).withRequestLog(s.mux))).ServeHTTP(w, r)
+		withTrace(withMetrics(s.mux, (&Server{logger: slog.New(slog.DiscardHandler)}).withRequestLog(s.mux, s.mux))).ServeHTTP(w, r)
 	})
 	response := httptest.NewRecorder()
 

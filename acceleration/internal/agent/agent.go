@@ -128,6 +128,11 @@ type Options struct {
 	STS       *stsrouter.Router
 	STSTarget string
 
+	// LLMFallbacks are the targets a conversation turn falls back to, in order, when
+	// LLMTarget fails it or is late to say anything. Empty leaves LLMTarget to its own
+	// candidates.
+	LLMFallbacks []string
+
 	// SubagentTarget routes the slower, more capable model that runs the work the voice
 	// model hands over. It is a target on the same router as LLMTarget, because the
 	// difference between them is which model, not which service. Empty means the agent
@@ -1883,10 +1888,12 @@ func (a *Agent) transcribed(typed stt.Transcript, count func(stt.Transcript)) {
 // consumeFloor feeds the utterances a floor of chorus-asr's own ended (audioFloor.rules) to
 // the cadence controller, as chorus-asr's transcriber's are fed it: the words so far as
 // interims, and each utterance's final once its words are settled, with the ruling that
-// ended it. A floor that steps aside, its server down for the call, leaves the turns to the
-// transcriber that writes the words, and the contract with them (actsOnChorusASR).
+// ended it. A floor that steps aside, its server down, leaves the turns to the transcriber
+// that writes the words, and the contract with them (actsOnChorusASR), until it says it rules
+// again (stt.Connected after it stepped aside).
 func (a *Agent) consumeFloor(participantID string, floor *audiofloor.Transcriber) {
 	defer a.running.Done()
+	var asideSince time.Time
 	for event := range floor.Events() {
 		switch typed := event.(type) {
 		case stt.Transcript:
@@ -1898,9 +1905,19 @@ func (a *Agent) consumeFloor(participantID string, floor *audiofloor.Transcriber
 			if typed.Clean {
 				continue
 			}
+			asideSince = typed.At
 			a.pausesAsked.Store(false)
 			a.logger.Warn("chorus-asr no longer rules on a participant's floor, the transcriber writing the words ends their turns",
 				"participant", participantID, "reason", typed.Reason)
+		case stt.Connected:
+			// The floor's first Connected is its start: only one after it stepped aside is news.
+			if asideSince.IsZero() {
+				continue
+			}
+			a.pausesAsked.Store(true)
+			a.logger.Info("chorus-asr rules on a participant's floor again",
+				"participant", participantID, "out_ms", typed.At.Sub(asideSince).Milliseconds())
+			asideSince = time.Time{}
 		}
 	}
 }
@@ -4107,12 +4124,19 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 	a.dropSpeech()
 
 	a.finishGenerate(turnID)
+	// What the reply was passing on is owed again, and a caller who took the floor over it is
+	// owed it with the reply to what they said: given a turn of its own, it was said again over
+	// them the moment the reply stopped, and what they said went unanswered.
+	release := func(turnID string) { current.Release(turnID) }
+	if why.byCaller() {
+		release = func(turnID string) { current.ReleaseTalkedOver(turnID) }
+	}
 	if current != nil && outstanding {
-		current.Release(turnID)
+		release(turnID)
 	}
 	for _, playing := range behind {
 		if current != nil {
-			current.Release(playing.turnID)
+			release(playing.turnID)
 		}
 	}
 	a.logger.Debug("stopping mid-reply, the caller took the floor",

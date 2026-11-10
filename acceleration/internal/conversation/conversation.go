@@ -24,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/google/uuid"
 )
@@ -344,8 +345,16 @@ func Barred(ctx context.Context, cid string) bool {
 // channel is one too, but opens only for the Router's word (opensThread), which is read once
 // the channel is.
 func Openable(cid string) bool {
-	id := strings.TrimPrefix(cid, "agent:")
-	return cid == "agent:"+id && validID(id)
+	channelType, id := channelOf(cid)
+	return channelType == streamapp.AgentChannelType && validID(id)
+}
+
+// channelOf is the channel type and id a cid names, which every request to Stream about the
+// channel is made with. Example: "agent:3f1c..." is type "agent", id "3f1c...". A cid with no
+// colon names no id, which no gate lets through.
+func channelOf(cid string) (channelType, id string) {
+	channelType, id, _ = strings.Cut(cid, ":")
+	return channelType, id
 }
 
 // opensThread is whether ctx carries the Router's word that it opens the thread channel cid
@@ -419,7 +428,7 @@ func (s *Service) OnFinishedReply(fn func(FinishedReply)) {
 // call's transcript under a session id, so it is told apart by the trigger it was created
 // with (custom is the channel's).
 func SessionCommandChannel(channelType, id string, custom map[string]any) bool {
-	if channelType != "agent" {
+	if channelType != streamapp.AgentChannelType {
 		return false
 	}
 	return legacyID.MatchString(id) || custom[TriggerField] == SessionCommandTrigger
@@ -536,27 +545,27 @@ func (s *Service) OpenForCallerWithCustom(ctx context.Context, customer, agentID
 	if err != nil {
 		return nil, nil, false, err
 	}
-	return s.OpenInApp(ctx, own, customer, agentID, cid, caller, voiceAgent, custom, scopes...)
+	return s.OpenInApp(ctx, own, customer, agentID, cid, caller, voiceAgent, custom, "", scopes...)
 }
 
 // OpenInApp opens a conversation for a session pinned to app. A new conversation is kept
-// in that app. One that already exists is kept wherever it was written, which the
-// conversation says: a session resuming it acts there too.
-func (s *Service) OpenInApp(ctx context.Context, app int64, customer, agentID, cid, caller, voiceAgent string, custom map[string]any, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
+// in that app, in the Chat team team names, none for "". One that already exists is kept
+// wherever it was written, which the conversation says: a session resuming it acts there too.
+func (s *Service) OpenInApp(ctx context.Context, app int64, customer, agentID, cid, caller, voiceAgent string, custom map[string]any, team string, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
 	fresh := cid == ""
 	if fresh {
 		cid = "agent:support-" + uuid.NewString()
 	}
-	return s.open(ctx, app, customer, agentID, cid, fresh, caller, voiceAgent, custom, scopes...)
+	return s.open(ctx, app, customer, agentID, cid, fresh, caller, voiceAgent, custom, team, scopes...)
 }
 
 // CreateInApp opens a new conversation on the channel cid, as OpenInApp opens one it names no
 // channel for: a session's own conversation, named after the session.
-func (s *Service) CreateInApp(ctx context.Context, app int64, customer, agentID, cid, caller, voiceAgent string, custom map[string]any, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
-	return s.open(ctx, app, customer, agentID, cid, true, caller, voiceAgent, custom, scopes...)
+func (s *Service) CreateInApp(ctx context.Context, app int64, customer, agentID, cid, caller, voiceAgent string, custom map[string]any, team string, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
+	return s.open(ctx, app, customer, agentID, cid, true, caller, voiceAgent, custom, team, scopes...)
 }
 
-func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid string, fresh bool, caller, voiceAgent string, custom map[string]any, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
+func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid string, fresh bool, caller, voiceAgent string, custom map[string]any, team string, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
 	if voiceAgent != "" && !validAuthorID.MatchString(voiceAgent) {
 		return nil, nil, false, stack.Wrap(errors.New("invalid voice transcript author"))
 	}
@@ -648,6 +657,9 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 		stamped := channelCustom(custom)
 		maps.Copy(stamped, map[string]any{CustomerField: customer, "support_agent_id": agentID, "support_memory_scope": scope, "support_owner_id": caller, TriggerField: SessionCommandTrigger})
 		data = &getstream.ChannelInput{CreatedByID: &agentID, Members: []getstream.ChannelMemberRequest{{UserID: agentID}, {UserID: userID}}, Custom: stamped}
+		if team != "" {
+			data.Team = &team
+		}
 	}
 	page, err := s.readPage(ctx, client, customer, agentID, cid, "", caller, nil, data, voiceAgent)
 	if err != nil {
@@ -784,10 +796,10 @@ func channelCustom(custom map[string]any) map[string]any {
 // Describe names the conversation's channel, which is what a list of conversations reads.
 // An empty field is left as it was rather than cleared.
 func (s *Service) Describe(ctx context.Context, customer, cid, title, description string) error {
-	id := strings.TrimPrefix(cid, "agent:")
+	channelType, id := channelOf(cid)
 	// A thread channel is named too: Describe is told only the channel of a conversation a
 	// session holds (internal/session), which OpenInApp already let through.
-	if cid != "agent:"+id || !validID(id) {
+	if channelType != streamapp.AgentChannelType || !validID(id) {
 		return stack.Wrap(errors.New("invalid conversation channel"))
 	}
 	set := map[string]any{}
@@ -806,7 +818,7 @@ func (s *Service) Describe(ctx context.Context, customer, cid, title, descriptio
 	if err != nil {
 		return stack.Wrap(err)
 	}
-	_, err = client.Chat().UpdateChannelPartial(ctx, "agent", id, &getstream.UpdateChannelPartialRequest{Set: set, Unset: []string{}})
+	_, err = client.Chat().UpdateChannelPartial(ctx, channelType, id, &getstream.UpdateChannelPartialRequest{Set: set, Unset: []string{}})
 	return stack.Wrap(err)
 }
 
@@ -850,8 +862,8 @@ func ownedBy(custom map[string]any, customer, agentID, caller string) error {
 // starting a session or running anything. It is how a stop whose conversation has no
 // session left to reach reconciles the same command id instead of reopening one to ask.
 func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, caller, commandID string) (CommandReceipt, error) {
-	id := strings.TrimPrefix(cid, "agent:")
-	if cid != "agent:"+id || !validID(id) || !validCommandID.MatchString(commandID) {
+	channelType, id := channelOf(cid)
+	if channelType != streamapp.AgentChannelType || !validID(id) || !validCommandID.MatchString(commandID) {
 		return CommandReceipt{}, stack.Wrap(ErrCommandNotFound)
 	}
 	s.mu.Lock()
@@ -870,7 +882,7 @@ func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, 
 	limit, state := 100, true
 	// Query without Data, so asking about a command can neither create a channel nor
 	// overwrite the ownership recorded on one.
-	r, err := client.Chat().GetOrCreateChannel(lookup, "agent", id, &getstream.GetOrCreateChannelRequest{
+	r, err := client.Chat().GetOrCreateChannel(lookup, channelType, id, &getstream.GetOrCreateChannelRequest{
 		State: &state, Messages: &getstream.MessagePaginationParams{Limit: &limit}})
 	if err != nil {
 		return CommandReceipt{}, stack.Wrap(err)
@@ -984,7 +996,7 @@ func (s *Service) historyIn(ctx context.Context, client *getstream.Stream, custo
 func (s *Service) readPage(ctx context.Context, client *getstream.Stream, customer, agentID, cid, before, caller string, pending []operation, data *getstream.ChannelInput, voiceAgent ...string) (Page, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	id := strings.TrimPrefix(cid, "agent:")
+	channelType, id := channelOf(cid)
 	if !Openable(cid) {
 		return Page{}, stack.Wrap(errors.New("invalid conversation channel"))
 	}
@@ -996,7 +1008,7 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 	}
 	// Only a new conversation sends Data: a resume must never create or overwrite a
 	// channel's ownership.
-	r, err := client.Chat().GetOrCreateChannel(ctx, "agent", id, &getstream.GetOrCreateChannelRequest{Data: data, State: &state, Messages: params})
+	r, err := client.Chat().GetOrCreateChannel(ctx, channelType, id, &getstream.GetOrCreateChannelRequest{Data: data, State: &state, Messages: params})
 	if err != nil {
 		return Page{}, stack.Wrap(err)
 	}
@@ -2041,7 +2053,8 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 			custom["ai_generated"] = true
 		}
 		fitUI(custom)
-		_, err := client.Chat().SendMessage(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendMessageRequest{Message: getstream.MessageRequest{
+		channelType, id := channelOf(c.data.CID)
+		_, err := client.Chat().SendMessage(ctx, channelType, id, &getstream.SendMessageRequest{Message: getstream.MessageRequest{
 			ID: &m.ID, UserID: &user, Text: &text, Custom: custom, Attachments: chatFileAttachments(m.Files, m.Role == "user"),
 		}})
 		if err != nil && ctx.Err() == nil {
@@ -2340,7 +2353,8 @@ func (c *Conversation) sendIndicator(messageID, state string) {
 	// The live loop sends it, so a slow one holds back the reply's live updates until it is
 	// answered: say so, rather than have it look like the model paused.
 	started := time.Now()
-	_, err = client.Chat().SendEvent(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendEventRequest{Event: event})
+	channelType, id := channelOf(c.data.CID)
+	_, err = client.Chat().SendEvent(ctx, channelType, id, &getstream.SendEventRequest{Event: event})
 	if took := time.Since(started); err != nil || took > time.Second {
 		c.service.logger.Warn("an AI indicator was refused or slow; watchers see the reply stop until it was answered",
 			"cid", c.data.CID, "message", messageID, "type", event.Type, "took", took.Round(time.Millisecond), "error", err)

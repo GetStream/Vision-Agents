@@ -274,6 +274,9 @@ type Session struct {
 	// connectorsUnavailable are the optional connector bindings the session opened without,
 	// fixed when it was created.
 	connectorsUnavailable []ConnectorUnavailable
+	// toolSources is where each tool the session opened with came from, by name. Set before
+	// the session is served and only read after.
+	toolSources map[string]ToolSource
 	// connectors is the session's connector dispatcher, nil when its config binds none. A
 	// consent finished for one of its logins is handed back to it (ConnectorConsentFinished).
 	connectors *dispatcher
@@ -1335,6 +1338,7 @@ func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
 
 	if err := s.current().SetSettings(ctx, agent.Settings{
 		LLMTarget:        next.LLMTarget,
+		LLMFallbacks:     next.LLMFallbacks,
 		ControllerTarget: next.ControllerTarget,
 		STTTarget:        next.STTTarget,
 		TTSTarget:        next.TTSTarget,

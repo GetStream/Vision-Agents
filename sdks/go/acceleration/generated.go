@@ -97,6 +97,33 @@ func (e ActivityGranularity) Valid() bool {
 	}
 }
 
+// Defines values for ActivityStep.
+const (
+	ActivityStepAgentSetup     ActivityStep = "agent_setup"
+	ActivityStepConversations  ActivityStep = "conversations"
+	ActivityStepDashboardReads ActivityStep = "dashboard_reads"
+	ActivityStepNone           ActivityStep = "none"
+	ActivityStepSteadyUse      ActivityStep = "steady_use"
+)
+
+// Valid indicates whether the value is a known member of the ActivityStep enum.
+func (e ActivityStep) Valid() bool {
+	switch e {
+	case ActivityStepAgentSetup:
+		return true
+	case ActivityStepConversations:
+		return true
+	case ActivityStepDashboardReads:
+		return true
+	case ActivityStepNone:
+		return true
+	case ActivityStepSteadyUse:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AgentConnectorSelectionType.
 const (
 	AgentConnectorSelectionTypeFixed   AgentConnectorSelectionType = "fixed"
@@ -1891,6 +1918,30 @@ func (e OcrStatus) Valid() bool {
 	}
 }
 
+// Defines values for OfferedToolSource.
+const (
+	OfferedToolSourceBuiltin   OfferedToolSource = "builtin"
+	OfferedToolSourceConnector OfferedToolSource = "connector"
+	OfferedToolSourceSession   OfferedToolSource = "session"
+	OfferedToolSourceWorker    OfferedToolSource = "worker"
+)
+
+// Valid indicates whether the value is a known member of the OfferedToolSource enum.
+func (e OfferedToolSource) Valid() bool {
+	switch e {
+	case OfferedToolSourceBuiltin:
+		return true
+	case OfferedToolSourceConnector:
+		return true
+	case OfferedToolSourceSession:
+		return true
+	case OfferedToolSourceWorker:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for OptOutChannel.
 const (
 	OptOutChannelAll      OptOutChannel = "all"
@@ -3255,6 +3306,30 @@ type AccountBalanceWarningSource string
 // AccountStatus suspended: Stream refuses every request of the organization, free work included, until it restores it.
 type AccountStatus string
 
+// ActivityArea defines model for ActivityArea.
+type ActivityArea struct {
+	// Area The area of the API, such as agent_setup or conversations.
+	Area string `json:"area"`
+
+	// Client The client the requests named themselves as: dashboard, cli, sdk or api.
+	Client string `json:"client"`
+
+	// FirstAt When the first request arrived.
+	FirstAt time.Time `json:"first_at"`
+
+	// LastAt When the last request arrived.
+	LastAt time.Time `json:"last_at"`
+
+	// LastRefusalCode The error code of the latest refusal, empty when there was none.
+	LastRefusalCode string `json:"last_refusal_code"`
+
+	// Refused How many were answered with a status of 400 or more.
+	Refused int64 `json:"refused"`
+
+	// Requests How many requests arrived, refused ones included.
+	Requests int64 `json:"requests"`
+}
+
 // ActivityBucket defines model for ActivityBucket.
 type ActivityBucket struct {
 	// ActiveUsers Distinct end users who opened a session or asked something of an agent in the bucket. A guest who later turned out to be a known user counts as that user.
@@ -3276,6 +3351,36 @@ type ActivityBucket struct {
 
 // ActivityGranularity Separate from Granularity, and coarser, because distinct users cannot be summed: a month of them is who came back rather than the sum of its days.
 type ActivityGranularity string
+
+// ActivityMeter defines model for ActivityMeter.
+type ActivityMeter struct {
+	// AudioMs Billable audio, transcribed or produced, in milliseconds.
+	AudioMs int64 `json:"audio_ms"`
+
+	// Characters Billable text, in characters.
+	Characters int64 `json:"characters"`
+
+	// CostMicros What it is charged, in millionths of a dollar.
+	CostMicros int64 `json:"cost_micros"`
+
+	// DurationMs How long the work took, in milliseconds: for runtime and sandbox, the time held.
+	DurationMs int64 `json:"duration_ms"`
+
+	// InputTokens Tokens read, cached ones included.
+	InputTokens int64 `json:"input_tokens"`
+
+	// Meter The modality, such as llm, tts, runtime or sandbox.
+	Meter string `json:"meter"`
+
+	// OutputTokens Tokens generated.
+	OutputTokens int64 `json:"output_tokens"`
+
+	// Requests How many requests. Runtime and sandbox are time, not requests, and read 0.
+	Requests int64 `json:"requests"`
+}
+
+// ActivityStep The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
+type ActivityStep string
 
 // AddContactsRequest defines model for AddContactsRequest.
 type AddContactsRequest struct {
@@ -3370,6 +3475,9 @@ type AgentConfig struct {
 	LeftOutConnectors *[]LeftOutConnector `json:"left_out_connectors,omitempty"`
 	Llm               *string             `json:"llm,omitempty"`
 
+	// LlmFallbacks Where a response goes, in order, when llm fails it. Absent when there are none.
+	LlmFallbacks *[]string `json:"llm_fallbacks,omitempty"`
+
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode AgentMode `json:"mode"`
 	Name string    `json:"name"`
@@ -3451,6 +3559,9 @@ type AgentConfigPatch struct {
 	Keyterms           *[]string `json:"keyterms,omitempty"`
 	KnowledgeNamespace *string   `json:"knowledge_namespace,omitempty"`
 	Llm                *string   `json:"llm,omitempty"`
+
+	// LlmFallbacks Replaces the list whole. An empty list removes it.
+	LlmFallbacks *[]string `json:"llm_fallbacks,omitempty"`
 
 	// McpServers No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
@@ -3562,6 +3673,9 @@ type AgentConfigRequest struct {
 
 	// Llm The model holding the conversation.
 	Llm *string `json:"llm,omitempty"`
+
+	// LlmFallbacks Where a response goes when llm fails it, in order: each a provider/model, a capability shortcut or one of your custom/ models, as llm takes. llm stays the first choice. A response it fails is asked of each next one in turn, and one it says nothing in for as long as a reply may is also asked of another, the first to start answering kept, so a model you serve yourself can be backed by one Stream serves. A response that has started is never moved, however slowly it goes on. Omitted or null on an update, the list stored stays as it is; an empty list removes it. A target this deployment does not route, or one with no instance in the agent's region, is refused.
+	LlmFallbacks *[]string `json:"llm_fallbacks,omitempty"`
 
 	// McpServers No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
@@ -7257,9 +7371,15 @@ type OfferedTool struct {
 	// Parameters The JSON Schema of its arguments.
 	Parameters *map[string]interface{} `json:"parameters,omitempty"`
 
+	// Source Where the tool came from: session, declared by whoever opened the session; worker, hosted by a worker connected when the session opened; connector, opened by one of the agent's connector bindings; builtin, the router's own. A session's tools are fixed when it opens, so a worker that was not connected then leaves none of its tools here. Absent for a session kept before sources were recorded.
+	Source *OfferedToolSource `json:"source,omitempty"`
+
 	// Tokens Roughly what offering it costs on every request, in tokens: its name, description and schema at four characters a token.
 	Tokens int64 `json:"tokens"`
 }
+
+// OfferedToolSource Where the tool came from: session, declared by whoever opened the session; worker, hosted by a worker connected when the session opened; connector, opened by one of the agent's connector bindings; builtin, the router's own. A session's tools are fixed when it opens, so a worker that was not connected then leaves none of its tools here. Absent for a session kept before sources were recorded.
+type OfferedToolSource string
 
 // OfferedTools The tools a session's conversation model is offered, as they are sent to it.
 type OfferedTools struct {
@@ -7294,6 +7414,33 @@ type OptOutPage struct {
 
 	// NextCursor Pass as `cursor` for the next page. Absent on the last one.
 	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// OrganizationActivity defines model for OrganizationActivity.
+type OrganizationActivity struct {
+	// Areas Every area and client the organization's apps made requests in, by area then client.
+	Areas *[]ActivityArea `json:"areas"`
+
+	// FirstSeen When the first request of any area arrived, absent when none did.
+	FirstSeen *time.Time `json:"first_seen,omitempty"`
+
+	// FurthestStep The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
+	FurthestStep ActivityStep `json:"furthest_step"`
+
+	// LastSeen When the last request of any area arrived, absent when none did.
+	LastSeen *time.Time `json:"last_seen,omitempty"`
+
+	// Meters What the organization's apps' work came to, by modality, from the shards listed in shards.
+	Meters *[]ActivityMeter `json:"meters"`
+
+	// OrganizationId The organization.
+	OrganizationId string `json:"organization_id"`
+
+	// Shards The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them.
+	Shards *[]string `json:"shards"`
+
+	// Since The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on.
+	Since time.Time `json:"since"`
 }
 
 // PhoneCapability What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.
@@ -13664,7 +13811,7 @@ type ClientInterface interface {
 
 	// ListSessionTools List the tools a session's model is offered
 	//
-	// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+	// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out, each with where it came from. A worker's tools are here only if a worker hosting them was connected when the session opened, so a session missing them was opened while none was. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
 	ListSessionTools(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -18518,7 +18665,7 @@ func (c *Client) StopSession(ctx context.Context, id string, reqEditors ...Reque
 
 // ListSessionTools List the tools a session's model is offered
 //
-// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out, each with where it came from. A worker's tools are here only if a worker hosting them was connected when the session opened, so a session missing them was opened while none was. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
 //
 // Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
 func (c *Client) ListSessionTools(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -35816,7 +35963,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListSessionToolsWithResponse List the tools a session's model is offered
 	//
-	// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+	// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out, each with where it came from. A worker's tools are here only if a worker hosting them was connected when the session opened, so a session missing them was opened while none was. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -66684,7 +66831,7 @@ func (c *ClientWithResponses) StopSessionWithResponse(ctx context.Context, id st
 
 // ListSessionToolsWithResponse List the tools a session's model is offered
 //
-// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out, each with where it came from. A worker's tools are here only if a worker hosting them was connected when the session opened, so a session missing them was opened while none was. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
 //
 // Returns a wrapper object for the known response body format(s).
 //

@@ -1,5 +1,5 @@
-import type { ToolApprovalRequest, Turn } from "@stream-io/calypso";
-import type { VoiceSnapshot } from "@stream-io/calypso/video";
+import type { ToolApprovalRequest, Turn } from "@stream-io/stream-agents";
+import type { VoiceSnapshot } from "@stream-io/stream-agents/video";
 import type { Call, StreamVideoParticipant } from "@stream-io/video-client";
 import { useEffect, useRef, useState } from "react";
 import {

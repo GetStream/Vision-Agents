@@ -63,12 +63,15 @@ func transcriptFor(timings bool) session.TranscriptFactory {
 		if stream.Client == nil {
 			return nil, errNoStreamApp
 		}
+		// The same reading the session's episode card names (Spec.TranscriptChannel).
+		channelType, channel := spec.ConversationChannel()
 		return chatlog.New(chatlog.Options{
-			AgentID: spec.AgentID,
-			// The same reading the session's episode card names (Spec.TranscriptChannel).
-			Channel:      spec.ConversationChannel(),
+			AgentID:      spec.AgentID,
+			Channel:      channel,
+			ChannelType:  channelType,
 			Opened:       spec.PersistConversation,
 			CustomerID:   spec.CustomerID,
+			Team:         spec.ChannelTeam,
 			Agent:        chatlog.User{ID: spec.UserID, Name: spec.UserName},
 			VisibleTools: spec.VisibleTools,
 			Timings:      timings,

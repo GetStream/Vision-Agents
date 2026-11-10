@@ -1,6 +1,6 @@
 ---
 name: accelerate-sales-engineer
-description: "Build a short Stream sales-engineering demo for a customer call: one Accelerate agent, their branding, a streaming web chat UI, and a tunnel link to review. Use this whenever someone asks for a customer demo, a POC, a call demo, a sales-engineering build, a tailored agent for a prospect, or to make something to show a company from a name and URL. Also use it when they mention the Stream CLI, calypso, A2UI, or a review tunnel for a prospect, even if they never say demo or skill."
+description: "Build a short Stream sales-engineering demo for a customer call: one Accelerate agent, their branding, a streaming web chat UI, and a tunnel link to review. Use this whenever someone asks for a customer demo, a POC, a call demo, a sales-engineering build, a tailored agent for a prospect, or to make something to show a company from a name and URL. Also use it when they mention the Stream CLI, Stream Agents, @stream-io/stream-agents, A2UI, or a review tunnel for a prospect, even if they never say demo or skill."
 compatibility: Stream CLI beta (getstream), Slack, Node 22, cloudflared or ngrok
 ---
 
@@ -54,7 +54,7 @@ That means `getstream init`, then `getstream agents init` with a template that m
 
 The head of the SDK live on this Github branch: https://github.com/GetStream/Vision-Agents/tree/accelerate. Always pull the latest code and check the API and SDKs before starting to code. The API spec can be found here: https://github.com/GetStream/Vision-Agents/blob/accelerate/acceleration/api/openapi.yaml
 
-The page is web. The agent client is `@stream-io/calypso`. Chat UI is `stream-chat-react`, with `stream-chat-react/ai-components` for the streaming reply. Voice and video go through calypso, not a second client stack.
+The page is web. The agent client is `@stream-io/stream-agents`. Chat UI is `stream-chat-react`, with `stream-chat-react/ai-components` for the streaming reply. Voice and video go through `@stream-io/stream-agents`, not a second client stack.
 
 - **Text and voice** (default): one conversation they can type or talk in.
 - **Text only**: chat, no call.
@@ -65,7 +65,7 @@ The thinking state belongs inside the agent's reply bubble, not as a status line
 
 A2UI is one interactive surface on that path: a card the user acts on, which the agent treats as the next turn. Render it after the reply text, not under the dots. Mock auth and any system the agent calls. A demo user with a locally minted token is enough. Label mocked data as mock so a caller is not surprised.
 
-Tools the agent calls run in your own worker process (`Dispatch` in calypso). The page still loads without it, but the reply hangs on the tool call, so keep it running and restart it if it exits.
+Tools the agent calls run in your own worker process (`Dispatch` in `@stream-io/stream-agents`). The page still loads without it, but the reply hangs on the tool call, so keep it running and restart it if it exits.
 
 ## While it runs
 
@@ -82,6 +82,6 @@ Do not send "it's ready" until this list matches `BRIEF.md`.
 - Five competitors are in the brief, and the use case comes from them or from the customer's real product.
 - Slack was searched. The SDK and product match the channel, or the brief says net-new and the use case is inferred.
 - The critical path works through the tunnel link: the agent answers, its reply bubble shows the typing dots and thinking state before the text streams in, the A2UI surface does one real action, auth is mocked.
-- The page is web, on calypso, with the React Chat UI for a chat customer.
+- The page is web, on `@stream-io/stream-agents`, with the React Chat UI for a chat customer.
 
 Then run `/simplify` on the demo and apply the small fixes. If that command is not available, do the same pass yourself: drop comments that restate the code, one-off helpers, and anything the call does not exercise. Re-check the list after edits. Then send the tunnel link and the script.

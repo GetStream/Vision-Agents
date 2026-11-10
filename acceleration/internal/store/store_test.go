@@ -122,7 +122,7 @@ func (s *StoreSuite) SetupTest() {
 	for _, db := range append([]bun.IDB{s.store.db}, s.store.shards()...) {
 		_, err := db.ExecContext(
 			s.ctx,
-			"TRUNCATE requests, stats_hourly, stats_daily, stats_tags_hourly, stats_tags_daily,"+
+			"TRUNCATE requests, stats_hourly, stats_daily, stats_tags_hourly, stats_tags_daily, customer_activity,"+
 				" turn_stats_hourly, turn_latency_hourly, calls, phone_numbers, sip_trunks,"+
 				" voices, agent_sessions, agent_responses, agent_response_items, users,"+
 				" policies, app_organizations, call_resources, stream_trunks, organizations, agent_configs,"+
@@ -133,7 +133,7 @@ func (s *StoreSuite) SetupTest() {
 				" connection_event_subscriptions, connection_event_deliveries,"+
 				" connector_invocations, connector_audit, simulations, simulation_runs, simulation_cases,"+
 				" campaigns, campaign_contacts, campaign_attempts, scheduled_tasks, scheduled_task_runs, price_list_entries, price_changes,"+
-				" limits, usage_resets, limit_grants, limit_grant_reconciles, phone_calls CASCADE",
+				" limits, usage_resets, limit_grants, limit_grant_reconciles, phone_calls, cost_anomaly_notices CASCADE",
 		)
 		s.Require().NoError(err)
 	}
@@ -645,8 +645,7 @@ func (s *StoreSuite) TestACallAddsUpWhatEveryOneOfItsRequestsSpent() {
 }
 
 func (s *StoreSuite) TestACallsRuntimeIsItsOwnSessionsAndNoRequest() {
-	// Two sessions of one agent at once: the call's models are keyed by agent and window, but
-	// its time is its own session's.
+	// Two sessions of one agent at once: the call's time is its own session's.
 	for _, row := range []Request{
 		{Modality: "llm", SessionID: "session-1", Provider: "openai", Model: "gpt-5.6-sol", InputTokens: 100, CostMicros: 50},
 		{Modality: RuntimeModality, SessionID: "session-1", Provider: "stream", Model: "voice", CostMicros: 600},
@@ -670,6 +669,31 @@ func (s *StoreSuite) TestACallsRuntimeIsItsOwnSessionsAndNoRequest() {
 	}
 	s.EqualValues(650, cost)
 	s.EqualValues(1, requests)
+}
+
+func (s *StoreSuite) TestACallDoesNotCountAnotherSessionOfItsAgent() {
+	// A held session resumed days later: everything the agent's other sessions spent since it
+	// began is in its window, and none of it is its own.
+	for _, row := range []Request{
+		{Modality: "llm", SessionID: "session-1", Provider: "anthropic", Model: "claude-opus-5-5", InputTokens: 100, CostMicros: 50},
+		{Modality: "llm", SessionID: "session-2", Provider: "anthropic", Model: "claude-opus-5-5", InputTokens: 90000, CostMicros: 200000},
+		// From before requests named their session: only agent and window can match it.
+		{Modality: "llm", Provider: "anthropic", Model: "claude-opus-5-5", InputTokens: 7, CostMicros: 3},
+	} {
+		row.CustomerID, row.AgentID, row.StartedAt, row.Success = "acme", "agent-1", s.base.Add(time.Second), true
+		s.Require().NoError(s.store.RecordRequest(s.ctx, &row))
+	}
+
+	spent, err := s.store.CallUsage(s.ctx, "acme", "agent-1", "session-1", s.base, nil)
+	s.Require().NoError(err)
+	s.Equal(CallUsage{InputTokens: 107, CostMicros: 53, Requests: 2}, spent)
+
+	used, err := s.store.CallTokens(s.ctx, "acme", "agent-1", "session-1", s.base, nil)
+	s.Require().NoError(err)
+	s.Require().Len(used, 1)
+	s.EqualValues(107, used[0].InputTokens)
+	s.EqualValues(53, used[0].CostMicros)
+	s.EqualValues(2, used[0].Requests)
 }
 
 func (s *StoreSuite) TestACallThatMadeNoRequestsSpentNothing() {

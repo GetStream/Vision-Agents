@@ -34,6 +34,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
@@ -136,7 +137,10 @@ type Options struct {
 	// Users writes down the end users each app is seen acting for. Built over Store when
 	// it is not given, in which case it caches in this process alone.
 	Users *users.Recorder
-	Live  *live.Client
+	// Activity counts every request an app makes, by area and client. A deployment without
+	// one keeps no activity record.
+	Activity *activity.Recorder
+	Live     *live.Client
 	// Phone serves the telephony paths. Absent when the deployment has no vendors, in
 	// which case those paths say so rather than pretending numbers can be bought.
 	Phone *phone.Service
@@ -339,6 +343,7 @@ type Server struct {
 	store              *store.Store
 	configs            *appconfig.Store
 	users              *users.Recorder
+	activity           *activity.Recorder
 	live               *live.Client
 	phone              *phone.Service
 	sessions           *session.Manager
@@ -433,6 +438,9 @@ type Server struct {
 	// ending, a peer's directory entry lapsing (a Redis round trip). A reply finishing, or a
 	// person's reply a follow-up waits out, is looked for every replyPoll.
 	scheduledPoll time.Duration
+	// scheduledPeerWait is how long a delivery keeps looking at the directory for a node that did
+	// not take it to let go of the session, before it fails as the node unreachable.
+	scheduledPeerWait time.Duration
 	// replyPoll is how often a delivery reading back a follow-up's reply looks at it again. A
 	// look reads the conversation held in memory (conversation.Conversation.FollowUpReply,
 	// Session.FollowUp: a lock and a map), so it costs next to nothing; at scheduledPoll a reply
@@ -545,6 +553,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		store:              options.Store,
 		configs:            configs,
 		users:              recorder,
+		activity:           options.Activity,
 		live:               options.Live,
 		phone:              options.Phone,
 		sessions:           options.Sessions,
@@ -576,6 +585,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		dataRetention:      retention,
 		exportWritesWait:   exportWritesWait,
 		scheduledPoll:      2 * time.Second,
+		scheduledPeerWait:  30 * time.Second,
 		replyPoll:          100 * time.Millisecond,
 		quota:              options.Quota,
 		policies:           options.Policies,
@@ -775,7 +785,7 @@ func (s *Server) Handler() http.Handler {
 	// lived socket; blocking the handler's return on event delivery would hold
 	// the connection open past its use. The flush in cmd/router covers shutdown.
 	served := withSentry(withRequestID(withTrace(withMetrics(mux, withTiming(withCORS(s.authMode,
-		s.onOwningNode(s.withCustomer(s.withCost(s.withRequestLog(s.withQuota(s.withServerSide(handler))))))))))))
+		s.onOwningNode(s.withCustomer(s.withCost(s.withRequestLog(mux, s.withQuota(s.withServerSide(handler))))))))))))
 	if s.directory == nil {
 		return served
 	}
@@ -947,7 +957,11 @@ func withTrace(next http.Handler) http.Handler {
 // A panic is logged with its stack and answered with a 500 here, then panicked again so
 // Sentry still reports it. Sentry recovers without writing a status, which net/http sends
 // as an empty 200, and a request that panicked would otherwise leave no line at all.
-func (s *Server) withRequestLog(next http.Handler) http.Handler {
+//
+// A request an app made is counted in the activity record here too (recordActivity), for the
+// same reasons: it has a customer, a refusal is one, and a request handed to the node
+// running its session is counted once, by that node. routes is what finds its area.
+func (s *Server) withRequestLog(routes *chi.Mux, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		recorder := &loggedResponse{ResponseWriter: w}
@@ -972,6 +986,7 @@ func (s *Server) withRequestLog(next http.Handler) http.Handler {
 			panic(recovered)
 		}()
 		next.ServeHTTP(recorder, r)
+		s.recordActivity(routes, r, recorder, started)
 
 		customer, _ := CustomerFrom(r.Context())
 		// A socket reports the life of the connection rather than a time to respond,
@@ -1007,6 +1022,8 @@ type loggedResponse struct {
 	code     int
 	written  int64
 	hijacked bool
+	// refusal is the error code the request was answered with (noteRefusal).
+	refusal string
 }
 
 // status reports what the caller was told, filling in the two codes a handler can answer

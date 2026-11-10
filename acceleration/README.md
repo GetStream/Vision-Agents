@@ -131,7 +131,7 @@ the other commands that read them there.
 | `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` | The proxy as a sandbox reaches it, `http://<public IPv4 address>:port`, for `ROUTER_CODE_SANDBOX_BROKER=proxy`. The router refuses to start with that broker and this, the CA certificate, the proxy address or the CA key missing, or with a host name or an IPv6 address here: the sandbox reaches that address alone and has no DNS. `https://` has the proxy serve TLS on `ROUTER_CODE_SANDBOX_PROXY_ADDR` with a certificate for that address the CA signs; the proxy broker refuses it until the sandbox has a local forwarder for TLS |
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
 | `ROUTER_LIMITS_MODE` | `enforce` (default), `shadow` or `off`: how much of credit, the spend hard limit and the customer's spend limits the router enforces. `shadow` works every refusal out, logs it as `would refuse` and admits the request; `off` refuses nothing for money, and work is still priced, recorded and shipped. Both log a warning at start. With limits on, the router refuses to start without `ROUTER_POSTGRES_DSN`, and in `proxy` mode without `ROUTER_USAGE_URL`. See [Admission](#admission) |
-| `ROUTER_LIMITS_SLACK_TOKEN`, `ROUTER_LIMITS_SLACK_CHANNEL` | A Slack bot token holding `chat:write`, and the id of a channel the bot is a member of, where the operator is told the first time each organization is refused at its credit, Stream's spend hard limit or one of its own spend limits, or would have been in `shadow`. Once per organization and kind of limit, across every router: the first to write its `limit_notices` row posts it, and a post that failed is retried by the next sweep. Either unset, or `ROUTER_LIMITS_MODE=off`: nobody is told |
+| `ROUTER_LIMITS_SLACK_TOKEN`, `ROUTER_LIMITS_SLACK_CHANNEL` | A Slack bot token holding `chat:write`, and the id of a channel the bot is a member of, where the operator is told the first time each organization is refused at its credit, Stream's spend hard limit or one of its own spend limits, or would have been in `shadow`. Once per organization and kind of limit, across every router: the first to write its `limit_notices` row posts it, and a post that failed is retried by the next sweep. Either unset, or `ROUTER_LIMITS_MODE=off`: nobody is told. The same channel is told, once per organization and UTC day, when an organization's billable spend today reaches 5x its median day of the 7 before and a minimum spend (`anomalyMinSpendMicros` in `internal/limitnotice/anomaly.go`): one router of the deployment checks every hour under a Postgres advisory lock, and `cost_anomaly_notices` keeps what was posted. An organization that spent on fewer than 4 of the 7 days has no baseline and is not checked. This check runs in every limits mode |
 | `ROUTER_LIMITS_APP_URL`, `ROUTER_LIMITS_STAFF_URL` | The pages each of those Slack notices links to: the app's own, and the operator's for the organization or app. `{organization}` and `{app}` in either stand for the notice's ids, such as `https://dashboard.example/{organization}/{app}`. A URL naming `{app}` is left out of a notice with no app. Unset: no link |
 | `ROUTER_USAGE_REDIS_URL` | The Redis the usage service mirrors every subject's spend to (its `USAGE_REDIS_URL`), which the customer's spend limits are read from every second. Needs `ROUTER_USAGE_URL`. Unset, they are read from the usage service itself every 5 s. See [Spend limits](#spend-limits) |
 | `ROUTER_USAGE_MANAGE_KEY` | The usage service's manage key (its `USAGE_MANAGE_KEY`), for `router usage forget-user` alone; the router never sends it. Unset, that command refuses to run. See [The usage service](#the-usage-service) |
@@ -156,7 +156,8 @@ the other commands that read them there.
 | `PERPLEXITY_API_KEY`    | Perplexity credentials, for the ranked index and for Sonar |
 | `DAYTONA_API_KEY`       | Daytona credentials. Without it a session cannot ask for a sandbox |
 | `TWILIO_ACCOUNT_SID`    | Twilio credentials, for buying and operating numbers       |
-| `TWILIO_AUTH_TOKEN`     | Twilio credentials                                         |
+| `TWILIO_AUTH_TOKEN`     | Twilio credentials. With `TWILIO_API_KEY_SID` set, that key's secret |
+| `TWILIO_API_KEY_SID`    | Optional Twilio API key (SK...). Requests are signed with it instead of the account SID |
 | `TELNYX_API_KEY`        | Telnyx credentials                                         |
 | `TELNYX_CONNECTION_ID`  | The Telnyx TeXML application numbers and calls are on. Calls to the webhook from any other application are hung up |
 | `TELNYX_PUBLIC_KEY`     | Telnyx's public key (base64), to check the calls it sends to `/v1/phone/hooks/telnyx`. Without it Telnyx numbers are not answered. Telnyx numbers also need `ROUTER_AUTH_KEK`: without a keyring they cannot be attached |
@@ -1824,6 +1825,7 @@ offered custom voices and the router routes around it for calls that want one.
 | `stats_tags_hourly`, `stats_tags_daily`  | Bucket, modality, customer and one cost label       |
 | `turn_stats_hourly`                      | Hour, customer and agent: turns, interruptions, audio |
 | `turn_latency_hourly`                    | Hour, customer, agent, leg and latency bin           |
+| `customer_activity`                      | App, area of the API, client and UTC day: requests, refusals, first and last |
 | `phone_numbers`                          | Number held, kept after release because it was billed |
 | `call_legs`                              | Leg of a phone call, from when it connected to when the call ended |
 | `agent_configs`, `skills`                | Named agent, and a kind of work worth delegating    |
@@ -1992,6 +1994,48 @@ rather than a time to respond and its status is the `101` of the upgrade. A `5xx
 at error instead, because an access log at a busy deployment is the one stream nobody reads
 all of. A preflight is not logged, and the query string is never logged: a socket names its
 customer there and a telephony vendor names a token.
+
+### Stream staff's operations (`/v1/ops`)
+
+The routes under `/v1/ops` are Stream staff's: they take the ops key (`ROUTER_AUTH_OPS_KEY`) in
+`X-Ops-Key` and no app's credentials. An app's key, even its backend's, is answered 401, and so
+is every call on a deployment with no ops key. They are tagged `Staff` in the spec.
+
+| Route | What it is for |
+| ----- | -------------- |
+| `GET /v1/ops/orgs/{org_id}/activity` | Whether an organization tried Agents, how far it got and how much it used |
+| `GET`, `PUT`, `DELETE /v1/ops/customers/{customer_id}/telephony-suspension` | Stop an app using the phone, and lift it |
+| `GET /v1/ops/use-cases`, `GET /v1/ops/use-cases/{id}`, `POST /v1/ops/use-cases/{id}/review` | Review 10DLC use cases |
+| `PUT`, `DELETE /v1/ops/customers/{customer_id}/connectors/{id}/provider-app` | Make Stream's own app a customer's provider app, and stop it |
+| `POST /v1/ops/stats/rollup` | Aggregate request rows into a rollup table |
+
+An organization's activity reads `customer_activity` for every app of the organization and
+`requests` on every shard in `postgres.shards`, from `since` (RFC 3339, at most 90 days ago, 30 days ago when left
+out):
+
+```bash
+curl -H "X-Ops-Key: $ROUTER_AUTH_OPS_KEY" "localhost:8080/v1/ops/orgs/$ORG_ID/activity?since=2026-11-01T00:00:00Z"
+```
+
+`areas` is one item per area and client, `meters` one per modality (requests, tokens, audio,
+characters, time and cost), and `first_seen` and `last_seen` the first and last request of any
+area. `furthest_step` is the furthest of `dashboard_reads`, `agent_setup` and `conversations`
+with a request answered rather than refused, or `steady_use` once conversations or model calls
+were answered on three UTC days, else `none`. Areas, `first_seen`, `last_seen` and
+`furthest_step` come from `customer_activity`, which counts only since it was first deployed,
+and `meters` from every request in the window: for an organization whose use is older, up to 90
+days back, `furthest_step` can read `none` while `meters` show use. An organization with nothing recorded is a 200
+with empty lists. `shards` names the shards whose `requests` the meters sum, this one's
+first. A deployment that leaves `postgres.shards` unset reads its own shard's `requests` alone
+and lists only that shard, named by a digest of its DSN, so its meters are not the organization's
+whole use; areas are kept in the database every shard shares and are complete (see Shards).
+
+The endpoint sums the rows of the organization's current apps, including rows the sweeper has
+not processed yet, while the cost-anomaly check sums `requests.organization_id` over swept
+billable rows, so the two can disagree for two reasons. One is an app that moved organization
+within the window. The other is rows the sweeper has not yet given an organization: `MeterUses`
+reads an org's apps with no organization filter, while the cost-anomaly check skips rows with an
+empty `organization_id`.
 
 ### The usage service
 

@@ -2319,7 +2319,7 @@ export type paths = {
         };
         /**
          * List the tools a session's model is offered
-         * @description The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+         * @description The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out, each with where it came from. A worker's tools are here only if a worker hosting them was connected when the session opened, so a session missing them was opened while none was. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
          */
         readonly get: operations["listSessionTools"];
         readonly put?: never;
@@ -4356,6 +4356,34 @@ export type components = {
             /** @description The tier the organization is billed on. */
             readonly tier: string;
         };
+        readonly ActivityArea: {
+            /** @description The area of the API, such as agent_setup or conversations. */
+            readonly area: string;
+            /** @description The client the requests named themselves as: dashboard, cli, sdk or api. */
+            readonly client: string;
+            /**
+             * Format: date-time
+             * @description When the first request arrived.
+             */
+            readonly first_at: string;
+            /**
+             * Format: date-time
+             * @description When the last request arrived.
+             */
+            readonly last_at: string;
+            /** @description The error code of the latest refusal, empty when there was none. */
+            readonly last_refusal_code: string;
+            /**
+             * Format: int64
+             * @description How many were answered with a status of 400 or more.
+             */
+            readonly refused: number;
+            /**
+             * Format: int64
+             * @description How many requests arrived, refused ones included.
+             */
+            readonly requests: number;
+        };
         readonly ActivityBucket: {
             /**
              * Format: int64
@@ -4391,6 +4419,50 @@ export type components = {
          * @enum {string}
          */
         readonly ActivityGranularity: "daily" | "monthly";
+        readonly ActivityMeter: {
+            /**
+             * Format: int64
+             * @description Billable audio, transcribed or produced, in milliseconds.
+             */
+            readonly audio_ms: number;
+            /**
+             * Format: int64
+             * @description Billable text, in characters.
+             */
+            readonly characters: number;
+            /**
+             * Format: int64
+             * @description What it is charged, in millionths of a dollar.
+             */
+            readonly cost_micros: number;
+            /**
+             * Format: int64
+             * @description How long the work took, in milliseconds: for runtime and sandbox, the time held.
+             */
+            readonly duration_ms: number;
+            /**
+             * Format: int64
+             * @description Tokens read, cached ones included.
+             */
+            readonly input_tokens: number;
+            /** @description The modality, such as llm, tts, runtime or sandbox. */
+            readonly meter: string;
+            /**
+             * Format: int64
+             * @description Tokens generated.
+             */
+            readonly output_tokens: number;
+            /**
+             * Format: int64
+             * @description How many requests. Runtime and sandbox are time, not requests, and read 0.
+             */
+            readonly requests: number;
+        };
+        /**
+         * @description The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
+         * @enum {string}
+         */
+        readonly ActivityStep: "none" | "dashboard_reads" | "agent_setup" | "conversations" | "steady_use";
         readonly AddContactsRequest: {
             /** @description Up to 1,000. */
             readonly contacts: readonly components["schemas"]["ContactInput"][];
@@ -4462,6 +4534,8 @@ export type components = {
             /** @description The connectors agent.yaml names that the last sync left out, because the app has no connection by the id or label they name: an agent that runs without them until the connection exists and it syncs again. Only a sync writes them. Absent when there are none. */
             readonly left_out_connectors?: readonly components["schemas"]["LeftOutConnector"][];
             readonly llm?: string;
+            /** @description Where a response goes, in order, when llm fails it. Absent when there are none. */
+            readonly llm_fallbacks?: readonly string[];
             readonly mode: components["schemas"]["AgentMode"];
             readonly name: string;
             /**
@@ -4515,6 +4589,8 @@ export type components = {
             readonly keyterms?: readonly string[];
             readonly knowledge_namespace?: string;
             readonly llm?: string;
+            /** @description Replaces the list whole. An empty list removes it. */
+            readonly llm_fallbacks?: readonly string[];
             /**
              * @deprecated
              * @description No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
@@ -4588,6 +4664,8 @@ export type components = {
             readonly knowledge_namespace?: string;
             /** @description The model holding the conversation. */
             readonly llm?: string;
+            /** @description Where a response goes when llm fails it, in order: each a provider/model, a capability shortcut or one of your custom/ models, as llm takes. llm stays the first choice. A response it fails is asked of each next one in turn, and one it says nothing in for as long as a reply may is also asked of another, the first to start answering kept, so a model you serve yourself can be backed by one Stream serves. A response that has started is never moved, however slowly it goes on. Omitted or null on an update, the list stored stays as it is; an empty list removes it. A target this deployment does not route, or one with no instance in the agent's region, is refused. */
+            readonly llm_fallbacks?: readonly string[];
             /**
              * @deprecated
              * @description No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
@@ -7899,6 +7977,11 @@ export type components = {
                 readonly [key: string]: unknown;
             };
             /**
+             * @description Where the tool came from: session, declared by whoever opened the session; worker, hosted by a worker connected when the session opened; connector, opened by one of the agent's connector bindings; builtin, the router's own. A session's tools are fixed when it opens, so a worker that was not connected then leaves none of its tools here. Absent for a session kept before sources were recorded.
+             * @enum {string}
+             */
+            readonly source?: "session" | "worker" | "connector" | "builtin";
+            /**
              * Format: int64
              * @description Roughly what offering it costs on every request, in tokens: its name, description and schema at four characters a token.
              */
@@ -7935,6 +8018,32 @@ export type components = {
             readonly items: readonly components["schemas"]["OptOut"][];
             /** @description Pass as `cursor` for the next page. Absent on the last one. */
             readonly next_cursor?: string;
+        };
+        readonly OrganizationActivity: {
+            /** @description Every area and client the organization's apps made requests in, by area then client. */
+            readonly areas: readonly components["schemas"]["ActivityArea"][] | null;
+            /**
+             * Format: date-time
+             * @description When the first request of any area arrived, absent when none did.
+             */
+            readonly first_seen?: string;
+            readonly furthest_step: components["schemas"]["ActivityStep"];
+            /**
+             * Format: date-time
+             * @description When the last request of any area arrived, absent when none did.
+             */
+            readonly last_seen?: string;
+            /** @description What the organization's apps' work came to, by modality, from the shards listed in shards. */
+            readonly meters: readonly components["schemas"]["ActivityMeter"][] | null;
+            /** @description The organization. */
+            readonly organization_id: string;
+            /** @description The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them. */
+            readonly shards: readonly string[] | null;
+            /**
+             * Format: date-time
+             * @description The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on.
+             */
+            readonly since: string;
         };
         /**
          * @description What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.
