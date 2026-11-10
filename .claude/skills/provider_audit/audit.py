@@ -199,7 +199,9 @@ def twilio(key: str, base: str = "https://api.twilio.com") -> list[Reading]:
     sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
     if not sid:
         raise AuditError("TWILIO_ACCOUNT_SID is not set")
-    auth = base64.b64encode(f"{sid}:{key}".encode()).decode()
+    # As the router signs (internal/phone/twilio/twilio.go): an API key's SID when set, else the account SID.
+    user = os.environ.get("TWILIO_API_KEY_SID") or sid
+    auth = base64.b64encode(f"{user}:{key}".encode()).decode()
     url = f"{base}/2010-04-01/Accounts/{sid}/Balance.json"
     data = get(url, {"Authorization": f"Basic {auth}"}, key)
     return [(num(data, "balance"), str(field(data, "currency")), "")]

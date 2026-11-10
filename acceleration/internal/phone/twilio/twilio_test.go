@@ -47,6 +47,8 @@ type request struct {
 func TestTwilio(t *testing.T) { suite.Run(t, new(TwilioSuite)) }
 
 func (s *TwilioSuite) SetupTest() {
+	// A key exported in the shell would sign as the key, not the AC these tests expect.
+	s.T().Setenv("TWILIO_API_KEY_SID", "")
 	s.ctx = context.Background()
 	s.seen = request{}
 	s.seenPricing = request{}
@@ -119,6 +121,114 @@ func (s *TwilioSuite) TestSearchingAsksForTheCountryAndReturnsWhatIsOffered() {
 	s.Equal("+15125551234", offered[0].E164)
 	s.Equal("Austin", offered[0].Locality)
 	s.Equal([]phone.Capability{phone.Voice, phone.SMS}, offered[0].Capabilities)
+}
+
+func (s *TwilioSuite) TestAnAPIKeySignsRequestsWhileTheAccountStaysInThePath() {
+	provider, err := New(Options{
+		AccountSID: "AC123",
+		APIKeySID:  "SK456",
+		AuthToken:  "key-secret",
+		BaseURL:    s.server.URL,
+		PricingURL: s.server.URL,
+	})
+	s.Require().NoError(err)
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/PhoneNumbers/Countries/") {
+			_, _ = w.Write([]byte(usPrices))
+			return
+		}
+		_, _ = w.Write([]byte(oneNumber))
+	}
+
+	_, err = provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+	s.Require().NoError(err)
+
+	s.Equal("/2010-04-01/Accounts/AC123/AvailablePhoneNumbers/US/Local.json", s.seen.path)
+	s.Equal("SK456", s.seen.user)
+	s.Equal("key-secret", s.seen.pass)
+	s.Equal("SK456", s.seenPricing.user)
+	s.Equal("key-secret", s.seenPricing.pass)
+}
+
+func (s *TwilioSuite) TestTheAPIKeyIsReadFromTheEnvironment() {
+	s.T().Setenv("TWILIO_API_KEY_SID", "SK456")
+	provider, err := New(Options{
+		AccountSID: "AC123",
+		AuthToken:  "key-secret",
+		BaseURL:    s.server.URL,
+		PricingURL: s.server.URL,
+	})
+	s.Require().NoError(err)
+	s.answer(oneNumber)
+
+	_, err = provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
+	s.Require().NoError(err)
+
+	s.Equal("/2010-04-01/Accounts/AC123/AvailablePhoneNumbers/US/Local.json", s.seen.path)
+	s.Equal("SK456", s.seen.user)
+	s.Equal("key-secret", s.seen.pass)
+}
+
+func (s *TwilioSuite) TestAnAPIKeyLeavesTheAccountInTheCallAndPurchasePaths() {
+	provider, err := New(Options{
+		AccountSID: "AC123",
+		APIKeySID:  "SK456",
+		AuthToken:  "key-secret",
+		BaseURL:    s.server.URL,
+		PricingURL: s.server.URL,
+	})
+	s.Require().NoError(err)
+
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+	_, err = provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125551234",
+		To:     "+15550001111",
+		Bridge: phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+	})
+	s.Require().NoError(err)
+	s.Equal(http.MethodPost, s.seen.method)
+	s.Equal("/2010-04-01/Accounts/AC123/Calls.json", s.seen.path)
+	s.Equal("SK456", s.seen.user)
+
+	s.answer(`{"sid":"PN9","phone_number":"+15125551234","iso_country":"US","monthly_price":"1.15"}`)
+	_, err = provider.BuyNumber(s.ctx, phone.Order{E164: "+15125551234"})
+	s.Require().NoError(err)
+	s.Equal(http.MethodPost, s.seen.method)
+	s.Equal("/2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json", s.seen.path)
+	s.Equal("SK456", s.seen.user)
+
+	var paths []string
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		_, _ = w.Write([]byte(`{"incoming_phone_numbers":[{"sid":"PN9","phone_number":"+15125551234"}]}`))
+	}
+	s.Require().NoError(provider.ReleaseNumber(s.ctx, "+15125551234"))
+	s.Equal([]string{
+		"GET /2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json",
+		"DELETE /2010-04-01/Accounts/AC123/IncomingPhoneNumbers/PN9.json",
+	}, paths)
+	s.Equal("SK456", s.seen.user)
+
+	paths = nil
+	s.Require().NoError(provider.ConfigureInbound(s.ctx, phone.Inbound{
+		E164:   "+15125551234",
+		Bridge: phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+	}))
+	s.Equal([]string{
+		"GET /2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json",
+		"POST /2010-04-01/Accounts/AC123/IncomingPhoneNumbers/PN9.json",
+	}, paths)
+	s.Equal("SK456", s.seen.user)
+	s.Equal("key-secret", s.seen.pass)
+
+	paths = nil
+	s.Require().NoError(provider.StopInbound(s.ctx, "+15125551234"))
+	s.Equal([]string{
+		"GET /2010-04-01/Accounts/AC123/IncomingPhoneNumbers.json",
+		"POST /2010-04-01/Accounts/AC123/IncomingPhoneNumbers/PN9.json",
+	}, paths)
+	s.Equal("SK456", s.seen.user)
+	s.Equal("key-secret", s.seen.pass)
 }
 
 const usPrices = `{"iso_country":"US","price_unit":"USD","phone_number_prices":[
