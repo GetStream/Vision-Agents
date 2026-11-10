@@ -1,7 +1,6 @@
 package api
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,7 +17,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/moderator"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -151,90 +149,41 @@ func (s *Server) createRun(ctx context.Context, request *createRunRequest) (*cre
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	created, err := s.sessions.Create(ctx, spec)
+	run, err := s.sessions.Run(ctx, spec, runInput(body.Input), images)
 	if errors.Is(err, session.ErrAppSettingsUnreadable) {
 		return nil, err
 	}
-	if err != nil {
+	if notStarted := (session.NotStarted{}); errors.As(err, &notStarted) {
 		return nil, runFailed(ctx, err, APIError{Type: ErrorTypeInvalidRequest, Code: codeInvalidConfig, Message: err.Error()})
 	}
-	// The images are counted here because nothing else a run logs says whether it had any,
-	// and an answer that says it saw no image is otherwise impossible to place.
-	s.logger.Info("a run started", "customer", customerID, "session", created.ID(), "config", body.ConfigId,
-		"images", len(images))
-	events, detach := created.Watch()
-	defer detach()
-	defer func() {
-		// A run given up on still has a reply in flight, which closing would wait out.
-		if ctx.Err() != nil {
-			created.Interrupt()
-		}
-		if _, err := s.sessions.Close(created.ID(), session.OwnerOf(created.Spec())); err != nil {
-			s.logger.Error("could not end a run's session", "session", created.ID(), "error", err)
-		}
-	}()
-
-	if _, err := created.Respond(ctx, runInput(body.Input), images, options.LLM{}); err != nil {
+	if err != nil {
 		if errors.Is(err, agent.ErrCannotSeeImages) {
 			return nil, errRunCannotSee
 		}
 		return nil, runFailed(ctx, err, modelFailed(err))
 	}
-	var run runOutcome
-	created.Settle(ctx, events, run.see)
 	if ctx.Err() != nil {
 		return nil, errRunTimedOut
 	}
-	if run.failed != nil {
-		return nil, runFailed(ctx, run.failed, modelFailed(run.failed))
+	if run.Failed != nil {
+		return nil, runFailed(ctx, run.Failed, modelFailed(run.Failed))
 	}
-	if run.finalText == "" {
+	if run.FinalText == "" {
 		return nil, errNoAnswer
 	}
-	_, model, _, _ := created.Resolved()
-	return &createRunResponse{Body: Run{
-		FinalText:  run.finalText,
-		SessionId:  created.ID(),
-		ModelRoute: cmp.Or(run.answeredBy, model),
-		Usage:      run.usage,
-	}}, nil
-}
-
-// runOutcome is what a run's events add up to while it settles.
-type runOutcome struct {
-	finalText string
-	// failed is a model failure no later reply made up for.
-	failed error
-	usage  CallUsage
-	// answeredBy is the provider/model of the last reply that was served, which is not the
-	// session's first choice when that one failed and the reply fell back.
-	answeredBy string
-}
-
-// see adds event to the outcome, and says whether it ends the run: an answer the agent
-// gave with nothing left to do after it.
-func (r *runOutcome) see(event session.Event) bool {
-	switch typed := event.(type) {
-	case agent.Responded:
-		if typed.Text != "" {
-			r.finalText, r.failed = typed.Text, nil
-		}
-		return typed.Text != "" && !typed.PendingWork && typed.Purpose == ""
-	case agent.Error:
-		if typed.Context == "llm" || typed.Context == "flow" {
-			r.failed = typed.Err
-		}
-	case agent.ModelCall:
-		r.usage.InputTokens += typed.InputTokens
-		r.usage.CachedInputTokens += typed.CachedInputTokens
-		r.usage.OutputTokens += typed.OutputTokens
-		r.usage.CostMicros += typed.CostMicros
-		r.usage.Requests++
-		if typed.Success && typed.Purpose == "reply" {
-			r.answeredBy = typed.Provider + "/" + typed.Model
-		}
+	answered := Run{
+		FinalText:  run.FinalText,
+		SessionId:  run.SessionID,
+		ModelRoute: run.AnsweredBy,
+		Usage:      CallUsage(run.Usage),
 	}
-	return false
+	for tool, spent := range run.Children {
+		if answered.Children == nil {
+			answered.Children = map[string]CallUsage{}
+		}
+		answered.Children[tool] = CallUsage(spent)
+	}
+	return &createRunResponse{Body: answered}, nil
 }
 
 // runFailed is err as the caller is told it: a refusal about money, a refused input and a run
@@ -354,6 +303,11 @@ func (s *Server) registerRuns(api huma.API) {
 			"A config whose role is agent_moderator is then told the answer format the chat review " +
 			"worker parses, after both, so no edit to the agent can change it.\n" +
 			"The input is handed to the agent as JSON data, never as instructions.\n" +
+			"The agents a text config names are tools of the run: each call runs that agent on its input as an " +
+			"incognito run of its own, given its own timeout or what is left of this run, whichever is less, " +
+			"and several called in one reply run at once, at most 8 at a time. A call that fails or runs out " +
+			"of time is a failed tool call the agent answers around, not a failed run. What they spend is in " +
+			"usage, and by tool in children. They take none of the app's run slots: this run's covers them.\n" +
 			"Images, at most 8, go with the input in the order sent, so the input can refer to them " +
 			"by their place in the list. The agent's vision skill looks at them, or its conversation " +
 			"model when that can see; an image that is no HTTP(S) URL or image data URI, or more than " +
@@ -400,8 +354,9 @@ type CreateRunRequest struct {
 
 // Run is the Run schema.
 type Run struct {
-	FinalText  string    `json:"final_text" doc:"The last thing the agent said."`
-	ModelRoute string    `json:"model_route" doc:"The provider/model routing picked to answer."`
-	SessionId  string    `json:"session_id" doc:"The session the run held. It ended with the run, and being incognito, it cannot be read back."`
-	Usage      CallUsage `json:"usage" doc:"What the run's model calls spent."`
+	FinalText  string               `json:"final_text" doc:"The last thing the agent said."`
+	ModelRoute string               `json:"model_route" doc:"The provider/model routing picked to answer."`
+	SessionId  string               `json:"session_id" doc:"The session the run held. It ended with the run, and being incognito, it cannot be read back."`
+	Usage      CallUsage            `json:"usage" doc:"What the run's model calls spent, the runs of the child agents it called included."`
+	Children   map[string]CallUsage `json:"children,omitempty" doc:"What the runs of the child agents it called spent, by the tool each was called by. Absent when it called none."`
 }

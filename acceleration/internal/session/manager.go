@@ -700,6 +700,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	tools, callers = m.hostedTools(spec, created.id, hostedProgress{created}, tools, callers)
 	markTools(sources, tools[len(spec.Tools):], ToolFromWorker)
 	tools, callers = moderationTools(spec, stream, tools, callers)
+	tools, callers = m.childAgents(spec, created, tools, callers)
 	if line != nil || m.reading(spec) || m.searching(spec) || spec.endsCalls() {
 		builtin, err := harness.DefaultTools()
 		if err != nil {

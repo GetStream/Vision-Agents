@@ -56,6 +56,7 @@ type SyncAgentRequest struct {
 	// SandboxOptions is how the sandbox is built. Left out keeps what is stored.
 	SandboxOptions *SandboxOptions    `json:"sandbox_options,omitempty"`
 	Tags           *map[string]string `json:"tags,omitempty"`
+	Agents         *[]ChildAgent      `json:"agents,omitempty" maxItems:"16" doc:"agent.yaml's agents: the app's other text agents this one may hand work to, each as a tool, by name. Sent, they replace the stored list whole, an empty list removing it; left out, the stored list stays. An agent named must already exist, so a directory is synced after the agents it names."`
 	Tools          *AgentTools        `json:"tools,omitempty" doc:"How connector tools are offered. A setting left out keeps what is stored."`
 	Calls          *AgentCalls        `json:"calls,omitempty" doc:"The tools an agent on a phone call is offered: end the call, press keys, transfer. A tool left out keeps what is stored; a tool sent replaces its settings whole."`
 	Scheduling     *AgentScheduling   `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. A setting left out keeps what is stored."`
@@ -292,6 +293,15 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok := s.liveSTTComplaint(config, existing.STT); !ok {
 		return nil, invalidRequest(message)
 	}
+	var prior *store.AgentConfig
+	if found {
+		prior = &existing
+	}
+	if message, ok, err := s.childAgentsComplaint(ctx, customerID, &config, prior); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, stored); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -302,10 +312,6 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	regional.KnowledgeNamespace = ""
 	if knows {
 		regional.KnowledgeNamespace = name
-	}
-	var prior *store.AgentConfig
-	if found {
-		prior = &existing
 	}
 	if message, ok, err := s.regionComplaint(ctx, regional, prior); err != nil {
 		return nil, err
@@ -615,6 +621,9 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	}
 	if body.Tags != nil {
 		config.Tags = *body.Tags
+	}
+	if body.Agents != nil {
+		config.Agents = childAgentsOf(body.Agents)
 	}
 }
 

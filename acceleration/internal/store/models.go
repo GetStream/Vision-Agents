@@ -561,6 +561,10 @@ type AgentConfig struct {
 	// is still the first choice; nil falls back only among LLM's own candidates.
 	LLMFallbacks []string `bun:"llm_fallbacks,type:jsonb"`
 
+	// Agents are the app's other text agents this one may hand work to, each offered to its
+	// model as a tool. Only a text agent has them, and none of them has any of its own.
+	Agents []ChildAgent `bun:"agents,type:jsonb"`
+
 	// GreetingMode is GreetingExact, said word for word, or GreetingVariation, which the
 	// model rewords on every call.
 	GreetingMode string `bun:"greeting_mode,notnull"`
@@ -656,6 +660,19 @@ type AgentConfig struct {
 // cards and their summaries: on (EpisodeCards) or record (EpisodeCardsRecord).
 func (c AgentConfig) WritesCards() bool {
 	return c.EpisodeCards || c.EpisodeCardsRecord
+}
+
+// ChildAgent is another of the app's text agents a text agent may hand work to, as it is
+// stored in agent_configs.agents.
+type ChildAgent struct {
+	// Config is the name of the agent config the child runs from, in the same app.
+	Config string `json:"config"`
+	// Tool is the name the parent's model calls the child by.
+	Tool string `json:"tool"`
+	// Description is what the parent's model is told the child does.
+	Description string `json:"description,omitempty"`
+	// TimeoutMs is how long one call to the child may take. Zero is the default.
+	TimeoutMs int `json:"timeout_ms,omitempty"`
 }
 
 // ConnectorBinding is one connector an agent config may call tools of, as it is stored in
