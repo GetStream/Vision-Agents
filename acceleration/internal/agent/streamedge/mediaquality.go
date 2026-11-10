@@ -241,9 +241,6 @@ func (q *mediaQuality) stopped(stream *inboundStream) {
 	totals := stream.snapshot()
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if _, ok := q.live[stream]; !ok {
-		return
-	}
 	delete(q.live, stream)
 	q.ended.add(totals)
 }
@@ -373,15 +370,10 @@ func iceRoundTrip(pc *webrtc.PeerConnection) *float64 {
 	if pc == nil {
 		return nil
 	}
-	dtls := pc.SCTP().Transport()
-	if dtls == nil {
-		return nil
-	}
-	ice := dtls.ICETransport()
-	if ice == nil {
-		return nil
-	}
-	pair, ok := ice.GetSelectedCandidatePairStats()
+	// pion makes the DTLS and ICE transports with the connection, so neither is nil.
+	pair, ok := pc.SCTP().Transport().ICETransport().GetSelectedCandidatePairStats()
+	// The controlled side can select a pair on the remote's nomination before any check of its
+	// own came back.
 	if !ok || pair.ResponsesReceived == 0 {
 		return nil
 	}

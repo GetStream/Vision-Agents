@@ -438,6 +438,18 @@ func (e *Edge) publish() error {
 		TrackId:   uuid.NewString(),
 		TrackType: sfu_models.TrackType_TRACK_TYPE_AUDIO,
 	}
+	voice, err := e.voiceTrack(info)
+	if err != nil {
+		return err
+	}
+	if _, err := e.call.AddTrack(info, voice); err != nil {
+		return stack.Wrap(fmt.Errorf("streamedge: publish audio track: %w", err))
+	}
+	return nil
+}
+
+// voiceTrack is the agent's Opus track, with the SFU's reports on it counted.
+func (e *Edge) voiceTrack(info *sfu_models.TrackInfo) (*track.Local, error) {
 	var voice *track.Local
 	// Replaces the SDK's default handler, which asks a video provider for key frames: the
 	// speaker publishes audio, which has none.
@@ -451,12 +463,9 @@ func (e *Edge) publish() error {
 		Channels:  opusNegotiatedChannels,
 	}, reports)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("streamedge: build audio track: %w", err))
+		return nil, stack.Wrap(fmt.Errorf("streamedge: build audio track: %w", err))
 	}
-	if _, err := e.call.AddTrack(info, voice); err != nil {
-		return stack.Wrap(fmt.Errorf("streamedge: publish audio track: %w", err))
-	}
-	return nil
+	return voice, nil
 }
 
 // listen decodes one participant's track into the audio the agent listens to. Reading the
