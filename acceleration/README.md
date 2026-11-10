@@ -2030,6 +2030,10 @@ first. A deployment that leaves `postgres.shards` unset reads its own shard's `r
 and lists only that shard, named by a digest of its DSN, so its meters are not the organization's
 whole use; areas are kept in the database every shard shares and are complete (see Shards).
 
+The endpoint sums the rows of the organization's current apps, including rows the sweeper has
+not processed yet, while the cost-anomaly check sums `requests.organization_id` over swept
+billable rows, so the two can disagree for an app that moved organization within the window.
+
 ### The usage service
 
 `cmd/usage` is a second binary in the same image, with a database of its own. Producers ship

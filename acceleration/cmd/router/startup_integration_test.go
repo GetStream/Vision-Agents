@@ -553,3 +553,24 @@ func (l *listenLog) Handle(_ context.Context, record slog.Record) error {
 
 func (l *listenLog) WithAttrs([]slog.Attr) slog.Handler { return l }
 func (l *listenLog) WithGroup(string) slog.Handler      { return l }
+
+// Defect: the router builds the cost anomaly check but never starts it, or builds it with no
+// store, or stops without giving its lock back. A started check holds the lock until it stops.
+func (s *RouterStartSuite) TestARouterWithASlackChannelChecksCostAnomaliesUntilItStops() {
+	settings := s.settings
+	settings.Addr = freeAddress(s.T())
+	settings.Limits.SlackToken, settings.Limits.SlackChannel = "xoxb-test", "C0TEST"
+	stop := s.start(settings)
+	other := s.db.CostAnomalyLock()
+	defer other.Release()
+	// The lock is taken by the check's first pass; 10 s is far above the under-a-second start.
+	s.Require().Eventually(func() bool {
+		held, err := other.Hold(s.ctx)
+		s.Require().NoError(err)
+		return !held
+	}, 10*time.Second, 20*time.Millisecond, "the router does not hold the cost anomaly lock")
+	s.Require().NoError(stop())
+	held, err := other.Hold(s.ctx)
+	s.Require().NoError(err)
+	s.True(held, "the router kept the lock after it stopped")
+}
