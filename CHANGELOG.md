@@ -4,7 +4,7 @@
 
 ### The Kotlin SDK is published to Stream's Maven repository
 
-`io.getstream:stream-agents-android-core` is published to `https://stream-io-repo.com` by `publish-sdk-kotlin.yml`. A release is a pull request to `accelerate` from a branch named `release-kotlin-X.Y.Z` that sets `version=X.Y.Z` in `sdks/kotlin/gradle.properties`: the pull request fails unless the version matches the branch, is newer than the last release and is not already published, and merging it publishes that version and tags the commit `sdk-kotlin-vX.Y.Z`. Every other push to `accelerate` that changes `sdks/kotlin` publishes a 7-day snapshot, `X.Y.(Z+1)-<yyyyMMddHHmm>-SNAPSHOT`. No GitHub release is made, so the Python release does not start. The first release is 0.2.0.
+`io.getstream:stream-agents-android-core` is published to `https://stream-io-repo.com` by `publish-sdk-kotlin.yml` on each push to `accelerate` that changes `sdks/kotlin`, as `version` in `sdks/kotlin/gradle.properties` says: `X.Y.Z-SNAPSHOT` publishes a 7-day snapshot, `X.Y.Z-<yyyyMMddHHmm>-SNAPSHOT`, and `X.Y.Z` newer than the last release publishes that release and tags the commit `sdk-kotlin-vX.Y.Z`. A release is a pull request from a branch named `release-kotlin-X.Y.Z` (or `release-kotlin-X.Y.Z-SNAPSHOT`), which fails unless the version matches the branch, is newer than the last release and is not already published. No GitHub release is made, so the Python release does not start.
 
 ### Juno on Flutter
 

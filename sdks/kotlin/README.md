@@ -335,13 +335,16 @@ The unit tests are plain JVM tests, run by the Android Gradle plugin with no emu
 ## Releasing
 
 `.github/workflows/publish-sdk-kotlin.yml` publishes `io.getstream:stream-agents-android-core`
-to `https://stream-io-repo.com`. `version` in `gradle.properties` is the latest release.
+to `https://stream-io-repo.com` on every push to `accelerate` that changes `sdks/kotlin`, as
+`version` in `gradle.properties` says:
 
-- **A release** is a pull request to `accelerate` from a branch named `release-kotlin-X.Y.Z`
-  that sets `version=X.Y.Z`. The pull request fails unless the version matches the branch, is
-  newer than the last release and is not already published. Merging it publishes the release
-  and tags the commit `sdk-kotlin-vX.Y.Z`.
-- **A snapshot**, `X.Y.(Z+1)-<yyyyMMddHHmm>-SNAPSHOT`, is published on every other push to
-  `accelerate` that changes `sdks/kotlin`. A snapshot expires after 7 days.
+- **`X.Y.Z-SNAPSHOT`** publishes snapshot `X.Y.Z-<yyyyMMddHHmm>-SNAPSHOT`, which expires after 7
+  days. `X.Y.Z` must be newer than the last release.
+- **`X.Y.Z`**, newer than the last release, publishes release `X.Y.Z` and tags the commit
+  `sdk-kotlin-vX.Y.Z`. Once released, later pushes publish `X.Y.(Z+1)` snapshots.
+
+To release, open a pull request to `accelerate` from a branch named `release-kotlin-X.Y.Z` that
+sets `version=X.Y.Z`, or `release-kotlin-X.Y.Z-SNAPSHOT` for a snapshot. Its check fails unless
+the version matches the branch, is newer than the last release and is not already published.
 
 There is no GitHub release: publishing one starts the Python release, `release.yml`.
