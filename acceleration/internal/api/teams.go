@@ -22,7 +22,7 @@ func (s *Server) refuseOtherTeam(ctx context.Context, customerID string, config 
 	if ServerSideFrom(ctx) {
 		return nil
 	}
-	settings, err := s.store.AppSettingsFor(ctx, customerID)
+	settings, err := s.configs.AppSettings(ctx, customerID)
 	if err != nil {
 		return err
 	}
