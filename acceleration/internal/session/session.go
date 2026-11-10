@@ -1335,6 +1335,7 @@ func (s *Session) SetSettings(ctx context.Context, settings Settings) error {
 
 	if err := s.current().SetSettings(ctx, agent.Settings{
 		LLMTarget:        next.LLMTarget,
+		LLMFallbacks:     next.LLMFallbacks,
 		ControllerTarget: next.ControllerTarget,
 		STTTarget:        next.STTTarget,
 		TTSTarget:        next.TTSTarget,

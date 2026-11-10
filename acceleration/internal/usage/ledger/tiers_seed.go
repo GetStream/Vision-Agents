@@ -11,7 +11,6 @@ import (
 	"slices"
 
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/driver/pgdriver"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
@@ -108,15 +107,11 @@ func (l *Ledger) SyncTiers(ctx context.Context, file *TierFile, release string) 
 }
 
 // PlanTierSync is what SyncTiers would add now, writing nothing: the file's tiers with no
-// row, and the built-in default when neither the file nor the database has one; and whether
-// the database has its tiers table yet. One that has not been migrated to it has no tier,
-// which is when an operator checks a release before its first start.
-func (l *Ledger) PlanTierSync(ctx context.Context, file *TierFile) ([]string, bool, error) {
+// row, and the built-in default when neither the file nor the database has one.
+func (l *Ledger) PlanTierSync(ctx context.Context, file *TierFile) ([]string, error) {
 	existing, err := l.Tiers(ctx)
-	var refused pgdriver.Error
-	migrated := !(errors.As(err, &refused) && refused.Field('C') == undefinedTable)
-	if err != nil && migrated {
-		return nil, false, err
+	if err != nil {
+		return nil, err
 	}
 	have := make(map[string]bool, len(existing))
 	for _, tier := range existing {
@@ -133,8 +128,5 @@ func (l *Ledger) PlanTierSync(ctx context.Context, file *TierFile) ([]string, bo
 			added = append(added, tier.Name)
 		}
 	}
-	return added, migrated, nil
+	return added, nil
 }
-
-// undefinedTable is Postgres's SQLSTATE for a relation that does not exist.
-const undefinedTable = "42P01"

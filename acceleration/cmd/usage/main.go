@@ -246,12 +246,8 @@ func tiers(ctx context.Context, args []string, environ func() []string, out io.W
 			return err
 		}
 		defer opened.Close() //nolint:errcheck // the process is ending
-		added, migrated, err := opened.PlanTierSync(ctx, file)
+		added, err := opened.PlanTierSync(ctx, file)
 		if err != nil {
-			return err
-		}
-		if !migrated {
-			_, err = fmt.Fprintf(out, "the database has no tiers table yet: the next start migrates it, then adds: %s\n", strings.Join(added, ", "))
 			return err
 		}
 		if len(added) == 0 {
