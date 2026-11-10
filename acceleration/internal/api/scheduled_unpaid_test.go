@@ -508,3 +508,47 @@ func (s *TelnyxUnpaidSuite) TestAThreadTaskWhoseSessionCannotOpenForATeamLimitIs
 	s.Equal(codeSpendLimitReached, *run.Error)
 	s.Equal(int32(1), attempts, "a spent limit outlasts every retry of the run")
 }
+
+// A turn on which the session reports a failure that is not about money, such as a tool's error,
+// still carries the reply the agent then gives: only a refusal for money ends the capture.
+func (s *TelnyxUnpaidSuite) TestATurnThatReportsAFailureNotAboutMoneyStillCarriesItsReply() {
+	s.config.LLM = "holding/holding-model"
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	user := s.data.createUser()
+	s.usage.Credit(s.T(), s.RouterSuite.app.organization.ID, 10_000_000)
+	s.Require().Eventually(func() bool {
+		return s.gate.Allow(context.Background(), s.customerID(), dlc.SMS, "+13125550009") == nil
+	}, 10*time.Second, 50*time.Millisecond, "the credit is read")
+	opened := user.createSession(CreateSessionRequest{ConfigId: &s.config.ID})
+	found, running := s.router.sessions.Get(opened.Id, session.Owner{CustomerID: s.customerID(), UserID: user.userID, Kind: auth.KindAuthenticated})
+	s.Require().True(running)
+	delivery := scheduledDelivery{CustomerID: s.customerID(), ConfigID: s.config.ID, UserID: user.userID,
+		CallerKind: "authenticated", TaskID: "task", RunID: "run", CommandID: "st_run", Text: "stretch"}
+
+	model := s.holding
+	model.mu.Lock()
+	before := model.turns
+	model.mu.Unlock()
+	model.holds()
+	defer model.answers()
+	type result struct {
+		text string
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		text, _, err := s.router.captureReply(scheduledOwnerContext(context.Background(), delivery), found, delivery)
+		done <- result{text, err}
+	}()
+	s.Require().Eventually(func() bool {
+		model.mu.Lock()
+		defer model.mu.Unlock()
+		return model.turns > before
+	}, deliveryWait, 10*time.Millisecond, "the turn never began")
+	found.Report(errors.New("the weather tool timed out"), "tool")
+	model.answers()
+
+	got := <-done
+	s.Require().NoError(got.err)
+	s.Equal("Held.", got.text)
+}
