@@ -464,6 +464,13 @@ func (s *Server) captureReply(ctx context.Context, found *session.Session, deliv
 				return captured(said, files)
 			}
 			active, last = true, time.Now()
+			// A turn the organization may not pay for ends with the model's refusal, which no
+			// reply follows: the run records the money, not an agent that said nothing.
+			if failed, erred := event.(agent.Error); erred {
+				if _, refused := moneyError(failed.Err); refused {
+					return "", nil, unpaid(failed.Err)
+				}
+			}
 			if text := spokenOf(event); text != "" && (len(said) == 0 || said[len(said)-1] != text) {
 				said = append(said, text)
 			}

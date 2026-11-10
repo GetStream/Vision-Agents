@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
@@ -19,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
@@ -408,6 +410,53 @@ func (s *TelnyxUnpaidSuite) TestATextRefusedAtItsReservationWhileMoneyCannotBeCh
 
 	var failure *scheduling.Failure
 	s.Require().ErrorAs(unpaid(s.reservationRefused()), &failure)
+	s.Equal(codeSpendCheckUnavailable, failure.Reason)
+	s.False(failure.Final, "the check passes again on its own")
+}
+
+// refusedTurn is the follow-up of a task due in the session opened before the credit ran out,
+// captured as a text channel captures it once the gate let the send through: the money changed
+// after it did, so the turn is what the organization's money refuses.
+func (s *TelnyxUnpaidSuite) refusedTurn(user *testClient, opened Session) error {
+	task := s.userTask(user, opened.Id, "sms")
+	found, running := s.router.sessions.Get(opened.Id, session.Owner{CustomerID: s.customerID(), UserID: user.userID, Kind: auth.KindAuthenticated})
+	s.Require().True(running)
+	delivery := scheduledDelivery{CustomerID: s.customerID(), ConfigID: s.config.ID, UserID: user.userID,
+		CallerKind: "authenticated", TaskID: task.ID, RunID: "run", CommandID: "st_run", Text: "stretch"}
+	_, _, err := s.router.captureReply(scheduledOwnerContext(context.Background(), delivery), found, delivery)
+	return err
+}
+
+// A turn refused for money inside a session that is open is not tried again: the run records the
+// money, not an agent that said nothing.
+func (s *TelnyxUnpaidSuite) TestATurnRefusedForMoneyInAnOpenSessionIsFinal() {
+	var failure *scheduling.Failure
+	user, opened := s.spentAfterOpening()
+	s.Require().ErrorAs(s.refusedTurn(user, opened), &failure)
+	s.Equal(codeInsufficientCredits, failure.Reason)
+	s.True(failure.Final, "spent credit outlasts every retry of the run")
+}
+
+// A turn refused because the organization's money cannot be checked is tried again.
+func (s *TelnyxUnpaidSuite) TestATurnRefusedWhileMoneyCannotBeCheckedIsRetried() {
+	number, writer := "+1555"+digits(s.utils.uuid()), "+1347"+digits(s.utils.uuid())
+	s.seedSMSLine(number)
+	s.config.Channels = store.AgentChannels{SMS: &store.ChannelLine{Number: number}}
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	user := s.data.createUser()
+	s.usage.Credit(s.T(), s.RouterSuite.app.organization.ID, 10_000_000)
+	s.Require().Eventually(func() bool {
+		return s.gate.Allow(context.Background(), s.customerID(), dlc.SMS, writer) == nil
+	}, 10*time.Second, 50*time.Millisecond, "the credit is read")
+	opened := user.createSession(CreateSessionRequest{ConfigId: &s.config.ID})
+	s.sharing.stop()
+	s.Require().Eventually(func() bool {
+		s.serverClient.call(http.MethodPost, "/v1/search", SearchRequest{Query: "again"})
+		return policy.Transient(s.gate.Allow(context.Background(), s.customerID(), dlc.SMS, writer))
+	}, 10*time.Second, 20*time.Millisecond, "refused once a hold waited unshared")
+
+	var failure *scheduling.Failure
+	s.Require().ErrorAs(s.refusedTurn(user, opened), &failure)
 	s.Equal(codeSpendCheckUnavailable, failure.Reason)
 	s.False(failure.Final, "the check passes again on its own")
 }
