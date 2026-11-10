@@ -149,8 +149,8 @@ func (s *ScheduledTasksSuite) waitingOutACall(ctx context.Context, window time.D
 	return found, done
 }
 
-// A task that comes due mid-call goes on once the call has ended, and looks for that every
-// scheduledPoll: the call ends while the delivery waits, and it is let go of a look later.
+// A task that comes due mid-call goes on once the call has ended: the delivery is waiting on a
+// call when it ends, and sees that at its next look, one scheduledPoll later.
 func (s *ScheduledTasksSuite) TestATaskWaitingOutACallGoesOnWhenTheCallEnds() {
 	s.looksEvery(10 * time.Millisecond)
 	found, done := s.waitingOutACall(context.Background(), time.Hour)
