@@ -74,12 +74,10 @@ func UserTeams(ctx context.Context, client *getstream.Stream, userID string) ([]
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("conversation: user teams: %w", err))
 	}
-	for _, user := range found.Data.Users {
-		if user.ID == userID {
-			return user.Teams, nil
-		}
+	if len(found.Data.Users) == 0 {
+		return nil, nil
 	}
-	return nil, nil
+	return found.Data.Users[0].Teams, nil
 }
 
 // unknownUsers is the part of users not known to be in Chat already.

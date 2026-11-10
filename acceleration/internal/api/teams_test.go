@@ -128,6 +128,17 @@ func (s *AgentTeamsSuite) TestAFailedTeamsReadOpensNothing() {
 	s.Contains(string(payload), errTeamsUnreadable.Message)
 }
 
+func (s *AgentTeamsSuite) TestAnAppWithNoStreamToReadTeamsFromOpensNothingToAUser() {
+	dana := s.inTeams()
+	config := s.configOf("")
+	s.setApps(s.customerID(), func(apps *suiteApps) { apps.nowhere[s.customerID()] = true })
+
+	status, message := dana.failure(http.MethodPost, "/v1/agents/sessions", s.naming(config))
+
+	s.Equal(http.StatusServiceUnavailable, status, message)
+	s.Equal(errTeamsUnreadable.Message, message)
+}
+
 func (s *AgentTeamsSuite) TestABackendOpensAConfigOfAnyTeamWithoutAskingStream() {
 	anya := s.inTeams("red")
 	asked := s.teamReads()
