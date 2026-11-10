@@ -4,8 +4,12 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 	"go.opentelemetry.io/otel"
@@ -16,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
@@ -190,6 +195,53 @@ func (s *GenAISuite) TestAResponseThatFailedPartWayCarriesItsErrorAndWhatItUsed(
 	traced := attributes(span)
 	s.Equal(attribute.StringValue("provider_error"), traced["error.type"])
 	s.Equal(attribute.Int64Value(4), traced["gen_ai.usage.output_tokens"])
+	s.Equal(codes.Error, span.Status().Code)
+}
+
+// Catches an original that lost its hedge being traced without the timeout its row carries.
+func (s *GenAISuite) TestAStalledAttemptThatLostItsHedgeIsATimeoutOnItsSpan() {
+	synctest.Test(s.T(), func(t *testing.T) {
+		r := newRig(t, lateAfter, "alpha", "beta")
+		asked := r.ask(context.Background(), r.params())
+		pass(lateAfter)
+		pass(300 * time.Millisecond)
+		r.script("beta").Usage(llm.Usage{InputTokens: 7, OutputTokens: 2})
+		r.say("beta", "Hello")
+		s.Require().True(asked.answered())
+		r.finish("beta", asked)
+		s.Require().Equal(map[string]string{"alpha": routing.ErrorTimeout, "beta": "served"}, r.called())
+	})
+
+	stalled, served := s.inference("quick"), s.inference("steady")
+	s.Equal(attribute.StringValue(routing.ErrorTimeout), attributes(stalled)["error.type"])
+	s.Equal(codes.Error, stalled.Status().Code)
+	s.NotContains(attributes(stalled), attribute.Key("gen_ai.usage.input_tokens"), "the winner's tokens are not the loser's")
+	s.NotContains(attributes(served), attribute.Key("error.type"))
+	s.Equal(attribute.Int64Value(7), attributes(served)["gen_ai.usage.input_tokens"])
+}
+
+// Catches a refused customer key being traced as create_failed, not as the key_refused its row carries.
+func (s *GenAISuite) TestAKeyTheProviderRefusedIsKeyRefusedOnItsSpan() {
+	refusing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("invalid api key"))
+	}))
+	s.T().Cleanup(refusing.Close)
+	model := "model-" + rand.Text()
+	provider, err := Started(openaicompat.New(openaicompat.Options{
+		Provider: "gemma", Model: model, APIKey: "k", BaseURL: refusing.URL,
+	}))
+	s.Require().NoError(err)
+	session := newSession(provider, routing.ProviderConfig{Provider: "gemma", Model: model, BYOK: true},
+		routing.Owner{CustomerID: "acme"}, nil, nil)
+	session.recorder = &statSink{}
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	_, err = session.Create(context.Background(), llm.ResponseParams{ID: "r1", Input: prompt()})
+	s.Require().Error(err)
+
+	span := s.inference(model)
+	s.Equal(attribute.StringValue(routing.ErrorKeyRefused), attributes(span)["error.type"])
 	s.Equal(codes.Error, span.Status().Code)
 }
 
