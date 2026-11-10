@@ -8,7 +8,7 @@ Every request an app makes is counted in `customer_activity`, one row per app, a
 
 ### Stream staff read how far an organization got with Agents
 
-`GET /v1/ops/orgs/{org_id}/activity` (ops key only) answers whether an organization tried Agents, how far it got and how much it used. It returns its apps' `customer_activity` by area and client, their `requests` on every shard by modality (requests, tokens, audio, characters, time, cost), `first_seen` and `last_seen`, and `furthest_step` (`none`, `dashboard_reads`, `agent_setup`, `conversations`, `steady_use`). `since` is 30 days ago by default and at most 90 (AI-2379, #1900).
+`GET /v1/ops/orgs/{org_id}/activity` (ops key only) answers whether an organization tried Agents, how far it got and how much it used. It returns its apps' `customer_activity` by area and client, their `requests` on every shard in `postgres.shards` by modality (requests, tokens, audio, characters, time, cost), with `shards` naming the shards it read, `first_seen` and `last_seen`, and `furthest_step` (`none`, `dashboard_reads`, `agent_setup`, `conversations`, `steady_use`). `since` is 30 days ago by default and at most 90 (AI-2379, #1900).
 
 ### The router records each voice session's media quality
 

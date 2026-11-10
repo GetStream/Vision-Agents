@@ -85,7 +85,8 @@ type OrganizationActivity struct {
 	FirstSeen      *time.Time      `json:"first_seen,omitempty" doc:"When the first request of any area arrived, absent when none did."`
 	LastSeen       *time.Time      `json:"last_seen,omitempty" doc:"When the last request of any area arrived, absent when none did."`
 	Areas          []ActivityArea  `json:"areas" doc:"Every area and client the organization's apps made requests in, by area then client."`
-	Meters         []ActivityMeter `json:"meters" doc:"What the organization's apps' work came to, by modality."`
+	Meters         []ActivityMeter `json:"meters" doc:"What the organization's apps' work came to, by modality, from the shards listed in shards."`
+	Shards         []string        `json:"shards" doc:"The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them."`
 }
 
 type organizationActivityRequest struct {
@@ -134,6 +135,7 @@ func (s *Server) getOrganizationActivity(ctx context.Context, request *organizat
 		FurthestStep:   furthestStep(areas, days),
 		Areas:          make([]ActivityArea, 0, len(areas)),
 		Meters:         make([]ActivityMeter, 0, len(uses)),
+		Shards:         s.store.MeterShards(),
 	}
 	for _, area := range areas {
 		answer.Areas = append(answer.Areas, ActivityArea(area))
@@ -182,9 +184,9 @@ func (s *Server) registerOrganizationActivity(api huma.API) {
 		Summary:     "Get an organization's Agents activity",
 		Description: "Whether an organization tried Agents, how far it got and how much it used: what " +
 			"its apps did in each area of the API, from each client, and what their work came to by " +
-			"modality, over every shard. An organization with nothing recorded is answered with empty " +
-			"lists and furthest_step none. Every area and client is one item, so the lists are short " +
-			"and have no cursor.\n\nStream staff only: it needs the ops key.",
+			"modality, summed over every shard in postgres.shards, which the answer names. An " +
+			"organization with nothing recorded is answered with empty lists and furthest_step none. " +
+			"Every area and client is one item, so the lists are short and have no cursor.\n\nStream staff only: it needs the ops key.",
 		Tags:      []string{staffTag},
 		Security:  opsSecurity,
 		Responses: map[string]*huma.Response{"200": {Description: "The organization's activity"}},

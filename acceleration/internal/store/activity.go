@@ -200,6 +200,10 @@ type MeterUse struct {
 	CostMicros   int64  `bun:"cost_micros"`
 }
 
+// MeterShards names the shards MeterUses reads, this one's first: those in Options.Shards, or
+// this shard alone, named by a digest of its DSN, when that is unset.
+func (s *Store) MeterShards() []string { return slices.Clone(s.shardNames) }
+
 // MeterUses sums the requests apps, at least one, made from since on by modality, over every
 // shard, in the order of their modality.
 func (s *Store) MeterUses(ctx context.Context, apps []string, since time.Time) ([]MeterUse, error) {

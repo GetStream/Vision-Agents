@@ -315,3 +315,13 @@ func (s *OrganizationActivitySuite) TestASinceInAnotherOffsetCountsDaysFromItsUT
 	since := day.Add(time.Hour).In(time.FixedZone("west", -5*3600))
 	s.Equal(activityStepNone, s.readAt(since).FurthestStep)
 }
+
+// Defect: the answer silent on which shards its meters were read from, so a deployment that
+// reads only its own shard looks complete. Without postgres.shards the one shard is named by a
+// digest of its DSN, never by the DSN.
+func (s *OrganizationActivitySuite) TestTheAnswerNamesTheShardsItsMetersWereReadFrom() {
+	answer := s.read(s.app.organization.ID, time.Time{})
+
+	s.Require().Len(answer.Shards, 1)
+	s.Regexp(`^dsn:[0-9a-f]{16}$`, answer.Shards[0])
+}

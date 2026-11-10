@@ -350,3 +350,10 @@ func (s *ShardedStoreSuite) TestMeterUsesSumEveryShard() {
 	s.Equal([]MeterUse{{Modality: "llm", Requests: 2, InputTokens: 11, OutputTokens: 22, AudioMs: 33, Characters: 44,
 		DurationMs: 2000, CostMicros: 6}, {Modality: "tts", Requests: 1, Characters: 9, CostMicros: 1}}, uses)
 }
+
+// Defect: the shards the meters were read from not named, or named in another order than the
+// reads take them, this shard's first.
+func (s *ShardedStoreSuite) TestMeterShardsNameEveryShardThisOneFirst() {
+	s.Equal([]string{"here", "there"}, s.store.MeterShards())
+	s.Equal([]string{"there", "here"}, s.other.MeterShards())
+}

@@ -2010,7 +2010,7 @@ is every call on a deployment with no ops key. They are tagged `Staff` in the sp
 | `POST /v1/ops/stats/rollup` | Aggregate request rows into a rollup table |
 
 An organization's activity reads `customer_activity` for every app of the organization and
-`requests` on every shard, from `since` (RFC 3339, at most 90 days ago, 30 days ago when left
+`requests` on every shard in `postgres.shards`, from `since` (RFC 3339, at most 90 days ago, 30 days ago when left
 out):
 
 ```bash
@@ -2022,8 +2022,10 @@ characters, time and cost), and `first_seen` and `last_seen` the first and last 
 area. `furthest_step` is the furthest of `dashboard_reads`, `agent_setup` and `conversations`
 with a request answered rather than refused, or `steady_use` once conversations or model calls
 were answered on three UTC days, else `none`. An organization with nothing recorded is a 200
-with empty lists. A deployment that leaves `postgres.shards` unset reads its own shard's
-`requests` alone (see Shards).
+with empty lists. `shards` names the shards whose `requests` the meters sum, this one's
+first. A deployment that leaves `postgres.shards` unset reads its own shard's `requests` alone
+and lists only that shard, named by a digest of its DSN, so its meters are not the organization's
+whole use; areas are kept in the database every shard shares and are complete (see Shards).
 
 ### The usage service
 
