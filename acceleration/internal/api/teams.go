@@ -19,28 +19,38 @@ var errTeamsUnreadable = unavailable("could not read the user's teams from Strea
 // errSharedStream is a customer acting in the deployment's shared Stream app.
 var errSharedStream = errors.New("api: the customer has no Stream app of its own to read teams from")
 
-// refuseOtherTeam answers unknown, what the caller is told of a config that does not exist,
-// when config is of a team the end user asking is not in. Only an app with AgentTeams on is
-// checked, and never its backend, which Chat does not limit by teams either.
-func (s *Server) refuseOtherTeam(ctx context.Context, customerID string, config store.AgentConfig, unknown error) error {
+// teamsGate is what keeps an app's configs of one team to its users: the teams of the end
+// user asking, when the app has AgentTeams on and the caller is not its backend, which Chat
+// does not limit by teams either. The zero gate refuses nothing.
+type teamsGate struct {
+	checked bool
+	teams   []string
+}
+
+// teamsGateFor reads the settings and the caller's teams before any config is looked up, so
+// that a failed read answers alike for a config that exists and one that does not.
+func (s *Server) teamsGateFor(ctx context.Context, customerID string) (teamsGate, error) {
 	if ServerSideFrom(ctx) {
-		return nil
+		return teamsGate{}, nil
 	}
 	settings, err := s.configs.AppSettings(ctx, customerID)
 	if err != nil {
-		return err
+		return teamsGate{}, err
 	}
 	if !settings.AgentTeamsChecked() {
-		return nil
+		return teamsGate{}, nil
 	}
 	teams, err := s.callerTeams(ctx, customerID)
 	if err != nil {
-		return err
+		return teamsGate{}, err
 	}
-	if !hasCommonTeam(teams, strings.TrimSpace(config.Tags[session.TeamTag])) {
-		return unknown
-	}
-	return nil
+	return teamsGate{checked: true, teams: teams}, nil
+}
+
+// refuses reports whether config is of a team the end user asking is not in, which the caller
+// is told as it is of a config that does not exist.
+func (g teamsGate) refuses(config store.AgentConfig) bool {
+	return g.checked && !hasCommonTeam(g.teams, strings.TrimSpace(config.Tags[session.TeamTag]))
 }
 
 // callerTeams is the teams of the end user asking, as their user in the customer's own

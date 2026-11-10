@@ -43,13 +43,17 @@ func (s *Server) configFor(ctx context.Context, customerID string, configID, nam
 		return nil, errNoConfigs
 	}
 
+	teams, err := s.teamsGateFor(ctx, customerID)
+	if err != nil {
+		return nil, err
+	}
 	if id != "" {
 		found, err := s.configs.AgentConfig(ctx, customerID, id)
 		if err != nil {
 			return nil, errUnknownConfig
 		}
-		if failure := s.refuseOtherTeam(ctx, customerID, found, errUnknownConfig); failure != nil {
-			return nil, failure
+		if teams.refuses(found) {
+			return nil, errUnknownConfig
 		}
 		return &found, nil
 	}
@@ -64,8 +68,8 @@ func (s *Server) configFor(ctx context.Context, customerID string, configID, nam
 		// error: the agent answers, just not as the agent that was asked for.
 		return nil, notFound("there is no agent called " + named)
 	}
-	if failure := s.refuseOtherTeam(ctx, customerID, found, notFound("there is no agent called "+named)); failure != nil {
-		return nil, failure
+	if teams.refuses(found) {
+		return nil, notFound("there is no agent called " + named)
 	}
 	return &found, nil
 }

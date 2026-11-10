@@ -140,6 +140,42 @@ func (s *AgentTeamsSuite) TestAFailedTeamsReadOpensNothing() {
 	s.Contains(string(payload), errTeamsUnreadable.Message)
 }
 
+// What Stream failing tells must not depend on whether the name or id exists, or the failure
+// would let anybody list the configs of the app.
+func (s *AgentTeamsSuite) TestAFailedReadAnswersAlikeForAConfigThatExistsAndOneThatDoesNot() {
+	dana := s.inTeams()
+	config := s.configOf("")
+	missing := AgentConfig{Id: s.utils.uuid(), Name: "nope-" + s.utils.uuid()}
+	s.teamsChat.Fail(http.MethodGet, "/users")
+	s.T().Cleanup(func() { s.teamsChat.Heal(http.MethodGet, "/users") })
+
+	for name, pair := range map[string][2]CreateSessionRequest{
+		"by id":   {s.naming(config), s.naming(missing)},
+		"by name": {{Agent: &config.Name}, {Agent: &missing.Name}},
+	} {
+		existsStatus, exists := dana.failure(http.MethodPost, "/v1/agents/sessions", pair[0])
+		missingStatus, absent := dana.failure(http.MethodPost, "/v1/agents/sessions", pair[1])
+		s.Equal(http.StatusServiceUnavailable, existsStatus, name)
+		s.Equal(existsStatus, missingStatus, name)
+		s.Equal(exists, absent, name)
+	}
+}
+
+func (s *AgentTeamsSuite) TestAnAppWhoseSettingsCannotBeReadAnswersAlikeForAnUnknownConfig() {
+	dana := s.inTeams()
+	config := s.configOf("")
+	_, err := s.store.DB().NewRaw(`UPDATE apps SET settings = '{"agent_teams": "unreadable"}'::jsonb WHERE id = ?`,
+		s.customerID()).Exec(s.T().Context())
+	s.Require().NoError(err)
+
+	existsStatus, exists := dana.failure(http.MethodPost, "/v1/agents/sessions", s.naming(config))
+	missingStatus, absent := dana.failure(http.MethodPost, "/v1/agents/sessions", s.naming(AgentConfig{Id: s.utils.uuid()}))
+
+	s.Equal(http.StatusInternalServerError, existsStatus)
+	s.Equal(existsStatus, missingStatus)
+	s.Equal(exists, absent)
+}
+
 func (s *AgentTeamsSuite) TestAnAppWithNoStreamToReadTeamsFromOpensNothingToAUser() {
 	dana := s.inTeams()
 	config := s.configOf("")
