@@ -4,7 +4,7 @@
 
 ### The operator hears when an organization's spend jumps
 
-With `ROUTER_LIMITS_SLACK_TOKEN` and `ROUTER_LIMITS_SLACK_CHANNEL` set, one router of the deployment checks every hour each organization's billable spend today (UTC) against its median day of the 7 before, read from `requests` on every shard. At 5x that median, and past a minimum spend, it posts once per organization and day to the channel the money limit notices go to, with today's spend, the median and a link to the staff page (`ROUTER_LIMITS_STAFF_URL`). An organization that spent on fewer than 4 of the 7 days is not checked. `cost_anomaly_notices` keeps each post, so another router or a restart does not post it again, and a post that failed is retried by a later check. No metric is added (AI-2835, #PR).
+With `ROUTER_LIMITS_SLACK_TOKEN` and `ROUTER_LIMITS_SLACK_CHANNEL` set, one router of the deployment checks every hour each organization's billable spend today (UTC) against its median day of the 7 before, read from `requests` on every shard. At 5x that median, and past a minimum spend, it posts once per organization and day to the channel the money limit notices go to, with today's spend, the median and a link to the staff page (`ROUTER_LIMITS_STAFF_URL`). An organization that spent on fewer than 4 of the 7 days is not checked. `cost_anomaly_notices` keeps each post, so another router or a restart does not post it again, and a post that failed is retried by a later check. No metric is added (AI-2835, #1899).
 
 ### The router records which areas of the API each app uses
 
