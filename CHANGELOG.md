@@ -2,6 +2,10 @@
 
 ## Features
 
+### The router records which areas of the API each app uses
+
+Every request an app makes is counted in `customer_activity`, one row per app, area of the API (`dashboard_reads`, `agent_setup`, `conversations`, `workers`, `voice_video`, `model_api`, `phone_sms`, `connectors`, `scheduling`, `evals`, `data`, `hooks_in`, `other`), client (`X-Stream-Client`: `dashboard`, `cli`, `sdk`, else `api`) and UTC day: the requests, the refusals, the last refusal's error code and time, and the first and last request. The sums are written once a minute and when the router stops (AI-2374, #1897).
+
 ### Model calls are traced under the OpenTelemetry GenAI names
 
 With tracing on, each LLM model call has a `chat <model>` span with `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.model`, the token counts the provider reported (`gen_ai.usage.*`) and `error.type`, after the GenAI conventions at commit `e6658f14c9d9`. The `router_*` metrics are unchanged; `acceleration/internal/llmrouter/AGENTS.md` maps them to the GenAI metric names (AI-2838, #1894).
