@@ -637,11 +637,13 @@ func numberTimes(hook json.RawMessage) json.RawMessage {
 	return append(out, '}')
 }
 
-// messagesIn returns a channel's messages in the order they were written.
+// messagesIn returns a channel's messages in the order they were written. Channels are held
+// by id alone, so a message of any channel type is its id's.
 func (db *store) messagesIn(id string) []map[string]any {
 	messages := []map[string]any{}
 	for _, mid := range db.order {
-		if db.messages[mid]["cid"] == "agent:"+id {
+		cid, _ := db.messages[mid]["cid"].(string)
+		if _, channel, _ := strings.Cut(cid, ":"); channel == id {
 			messages = append(messages, db.messages[mid])
 		}
 	}
@@ -1027,7 +1029,8 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		db.order = append(db.order, id)
-		message["cid"] = "agent:" + parts[len(parts)-2]
+		// The path is .../channels/<type>/<id>/message.
+		message["cid"] = parts[len(parts)-3] + ":" + parts[len(parts)-2]
 		message["created_at"] = db.now().UnixNano()
 		// Chat answers with the author it resolved the id to, which is how a reader
 		// learns who spoke: a stored message carries a user, not a user id. A user

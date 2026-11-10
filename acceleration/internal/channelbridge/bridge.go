@@ -935,7 +935,7 @@ func (b *Bridge) upload(ctx context.Context, target streamThread, thread store.C
 	media = slices.Clone(media)
 	for i, photo := range files {
 		// As the person, as a photo they send in an app chat is (conversation.PublishPhotos).
-		uploaded, err := conversation.Upload(ctx, target.client, thread.ChannelID, photo.file, target.author)
+		uploaded, err := conversation.Upload(ctx, target.client, chatlog.ChannelType, thread.ChannelID, photo.file, target.author)
 		if err != nil {
 			if !last && !refusedForGood(err) {
 				return nil, stack.Wrap(err)

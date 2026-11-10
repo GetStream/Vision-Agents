@@ -815,6 +815,43 @@ func (s *ChatLogSuite) TestATranscriptChannelIsStampedWithItsCustomer() {
 	s.Equal("customer-1", created["custom"].(map[string]any)[conversation.CustomerField])
 }
 
+// Every request about the channel names the type the log was given, else the agent type: a
+// channel id is unique only within its type, so a write under the wrong one lands in another
+// channel or none.
+func (s *ChatLogSuite) TestEveryWriteNamesTheChannelsType() {
+	for given, want := range map[string]string{"": "agent", "callouts": "callouts"} {
+		chat := chattest.NewServer(s.T())
+		creator := "vision-agent"
+		_, err := chat.Client.Chat().GetOrCreateChannel(context.Background(), want, "standup",
+			&getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: &creator}})
+		s.Require().NoError(err)
+		log, err := New(Options{
+			AgentID: "agent-1", Channel: "standup", ChannelType: given,
+			Agent: User{ID: "vision-agent"}, Client: chat.Client, Logger: slog.New(slog.DiscardHandler),
+		})
+		s.Require().NoError(err)
+
+		s.Require().NoError(log.Start(context.Background()))
+		log.Record(agent.Heard{Participant: stt.Participant{ID: "session-9", UserID: "anya"}, Text: "I'm sick"})
+		log.Record(agent.Responding{TurnID: "turn-1"})
+		log.Close()
+
+		var named []string
+		for _, asked := range chat.Requests(chat.Key) {
+			if _, channel, ok := strings.Cut(asked.Path, "/chat/channels/"); ok {
+				named = append(named, channel)
+			}
+		}
+		s.Equal([]string{
+			want + "/standup/query", want + "/standup/query", want + "/standup/message",
+			want + "/standup/event", want + "/standup/event",
+		}, named, given)
+		stored := chat.Stored("standup")
+		s.Require().Len(stored, 1, given)
+		s.Equal(want+":standup", stored[0]["cid"], given)
+	}
+}
+
 func (s *ChatLogSuite) TestATranscriptChannelIsMadeInTheLogsTeam() {
 	created := s.madeIn("red")
 
