@@ -1,0 +1,67 @@
+name: Release .NET SDK
+
+# Pushing a sdk-dotnet-vX.Y.Z tag on accelerate is the release: this tests the tagged copy, packs it at that version and pushes it to nuget.org through trusted publishing, so no API key is stored.
+# A tag trigger, because a workflow_dispatch workflow has to live on main to be dispatched.
+# No GitHub Release: publishing one runs release.yml, which uploads the Python packages to PyPI.
+on:
+  push:
+    tags: [ 'sdk-dotnet-v*' ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-sdk-dotnet
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # NuGet trusted publishing (OIDC)
+    defaults:
+      run:
+        working-directory: sdks/dotnet
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The tag check needs origin/accelerate.
+          fetch-depth: 0
+
+      - name: Check the tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG" =~ ^sdk-dotnet-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::$TAG is not sdk-dotnet-vX.Y.Z"; exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/accelerate; then
+            echo "::error::$TAG is not on accelerate"; exit 1
+          fi
+          echo "VERSION=${TAG#sdk-dotnet-v}" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: sdks/dotnet/global.json
+
+      - name: Check the generated models are in step with the spec
+        run: dotnet run --project tools/Generate -- --check
+
+      - name: Test
+        run: dotnet test
+
+      - name: Pack
+        run: dotnet pack src/GetStream.VisionAgents -c Release -p:Version="$VERSION" -o "$RUNNER_TEMP/nupkg"
+
+      - name: NuGet login
+        id: login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: yunwang_stream
+
+      # The .snupkg next to the .nupkg is pushed with it.
+      - name: Push
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: dotnet nuget push "$RUNNER_TEMP/nupkg/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json
