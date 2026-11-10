@@ -8562,44 +8562,6 @@ func (s *AgentSuite) TestACheckOverTheAgentStopsItAtOnce() {
 	s.Len(s.model.requests(), 1, "nothing answered: the caller's turn has not ended")
 }
 
-// A stop the model ruled over the agent before the transcriber writing a floor's words had
-// written any stands, as one over an echo alone does: with Grok writing them, 21 stops the model
-// ruled found no words yet and were dropped as a murmur. A shorten on no words stops nothing.
-func (s *AgentSuite) TestAStopRuledBeforeAnyWordsStopsIt() {
-	s.join(true)
-	participant := stt.Participant{ID: "alice"}
-	s.model.reply = nil
-	s.speak(participant)
-	s.says(participant, "what's the weather like in Lisbon tomorrow")
-	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
-	s.heardSomeOf(s.model.requests()[0].ID)
-	s.replyWentOut()
-	asker := pauseAsker{s.agent}
-	stop := audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Stop}},
-		Speaking: true, Overheard: true, AudioMs: 500, WordsMs: 100, Utterance: 2}
-
-	shorten := stop
-	shorten.Ruling.Floor = harness.Shorten
-	asker.Overheard(participant, shorten)
-	time.Sleep(50 * time.Millisecond)
-	s.Zero(countOf[Interrupted](s.reported()), "a shorten on no words stops nothing")
-
-	asker.Overheard(participant, stop)
-	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "a stop ruled before any words was not acted on")
-	s.eventually(func() bool { return s.voice.interrupted() == 1 }, "the voice kept talking")
-
-	s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Utterance: 2, Text: "Stop.",
-		Provider: audiofloor.ProviderName, Language: "en", Confidence: 1})
-	s.eventually(func() bool {
-		return slices.ContainsFunc(s.reported(), func(event Event) bool {
-			d, ok := event.(Decided)
-			return ok && d.Text == "Stop." && d.Kind == string(ActIgnore)
-		})
-	}, "the stop's words were not set aside")
-	time.Sleep(3 * defaultCadenceGap)
-	s.Len(s.model.requests(), 1, "a stop alone was answered after the agent stopped")
-}
-
 // A stop the model ruled over the agent on words that were all the agent's own voice heard
 // back stands: on a line that carries the agent back, the model writes its louder voice and not
 // the caller's "stop" under it, but rules on the audio. In the gate's stop probe a bare "stop"

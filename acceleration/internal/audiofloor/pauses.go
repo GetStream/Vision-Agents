@@ -495,24 +495,19 @@ func (t *Transcriber) checkOver(asker Asker, c overCheck) {
 		return
 	}
 	text := strings.TrimSpace(words.Text)
-	// With the server writing the words, none is nothing to act on: it wrote nothing of the
-	// caller's, or blanked words in another language. For a floor that rules alone, none is the
-	// other transcriber not having written any yet, and a stop the model ruled on the audio is
-	// handed over without them, which the agent acts on (Overheard): with Grok writing them, the
-	// model ruled a stop on some 120 such checks in the gate's stop probe, and none reached the agent.
-	if text == "" && (t.words == nil || checked.Ruling.Floor != harness.Stop) {
+	if text == "" {
 		return
 	}
 	audioMs, wordsMs := float64(c.audio.Duration.Microseconds())/1000, float64(time.Since(c.asked).Microseconds())/1000
 	spoken := t.sent.establish(c.utterance, words.Language)
-	if text != "" && (words.Language == "" || words.Language == spoken) {
+	if words.Language == "" || words.Language == spoken {
 		t.mu.Lock()
 		if t.over.utterance == c.utterance {
 			t.over.words = text
 		}
 		t.mu.Unlock()
 	}
-	if text != "" && c.whole && t.interims && (words.Language == "" || words.Language == spoken) && t.sent.over(c.utterance-1) {
+	if c.whole && t.interims && (words.Language == "" || words.Language == spoken) && t.sent.over(c.utterance-1) {
 		t.send(stt.Transcript{
 			Participant:      c.participant,
 			Mode:             stt.ModeReplacement,
