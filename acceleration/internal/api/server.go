@@ -438,6 +438,9 @@ type Server struct {
 	// ending, a peer's directory entry lapsing (a Redis round trip). A reply finishing, or a
 	// person's reply a follow-up waits out, is looked for every replyPoll.
 	scheduledPoll time.Duration
+	// scheduledPeerWait is how long a delivery keeps looking at the directory for a node that did
+	// not take it to let go of the session, before it fails as the node unreachable.
+	scheduledPeerWait time.Duration
 	// replyPoll is how often a delivery reading back a follow-up's reply looks at it again. A
 	// look reads the conversation held in memory (conversation.Conversation.FollowUpReply,
 	// Session.FollowUp: a lock and a map), so it costs next to nothing; at scheduledPoll a reply
@@ -582,6 +585,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		dataRetention:      retention,
 		exportWritesWait:   exportWritesWait,
 		scheduledPoll:      2 * time.Second,
+		scheduledPeerWait:  30 * time.Second,
 		replyPoll:          100 * time.Millisecond,
 		quota:              options.Quota,
 		policies:           options.Policies,
