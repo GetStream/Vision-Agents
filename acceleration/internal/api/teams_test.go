@@ -452,7 +452,7 @@ func (s *AgentTeamsSuite) TestABackendForksAndCarriesOnASessionOfAnyTeamWithoutA
 }
 
 // With the setting off, forks and reopens of another team's or a deleted config's session go
-// on as on base b4d31ea60, which answered these requests 201 and 204 asking Stream nothing.
+// on as on base b4d31ea60, which answered these requests 201 and 202 asking Stream nothing.
 func (s *AgentTeamsSuite) TestWithTheSettingOffForksAndReopensAreNotCheckedAndStreamIsNotAsked() {
 	for _, settings := range []store.AppSettings{{}, {AgentTeams: new(false)}} {
 		s.useTeamsApp(settings)
