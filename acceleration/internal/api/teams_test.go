@@ -14,6 +14,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 // AgentTeamsSuite covers an app that keeps each team's agent configs to its own users
@@ -47,6 +48,32 @@ func (s *AgentTeamsSuite) SetupTest() {
 func (s *AgentTeamsSuite) useTeamsApp(settings store.AppSettings) {
 	s.useApp(s.data.createAppAdmitting(settings))
 	s.teamsChat = s.giveApp(s.customerID(), 4242, teamsAppKey)
+}
+
+// useDeploymentApp is an app with settings that is the deployment's own Stream app, where its
+// users and their teams live. Its customer acts there as app mode has it (Stored.For): with the
+// deployment's key, pinned to the app's id, holding no token of its own.
+func (s *AgentTeamsSuite) useDeploymentApp(settings store.AppSettings) {
+	id := streamAppID()
+	organization := store.Organization{Name: "organization-" + s.utils.uuid()}
+	s.Require().NoError(s.store.CreateOrganization(context.Background(), &organization))
+	app := store.App{
+		ID: streamapp.CustomerOf(id), OrganizationID: organization.ID, Name: "app-" + s.utils.uuid(), Settings: settings,
+	}
+	s.Require().NoError(s.store.CreateApp(context.Background(), &app))
+	s.useApp(s.data.keyed(organization, app))
+	s.teamsChat = chattest.NewServer(s.T())
+	s.setApps(s.customerID(), func(apps *suiteApps) {
+		apps.own[s.customerID()] = s.inDeploymentApp(id, teamsAppKey, teamsAppKey+"-secret", s.teamsChat.URL)
+	})
+}
+
+// inDeploymentApp is the identity app mode acts in the deployment's app with, pinned to app: the
+// deployment's key and secret, and no token, whether the customer is the app's or not.
+func (s *AgentTeamsSuite) inDeploymentApp(app int64, key, secret, url string) streamapp.Identity {
+	return streamapp.Identity{
+		CustomerID: s.customerID(), StreamApp: app, APIKey: key, Secret: streamapp.NewSecret(secret), BaseURL: url,
+	}
 }
 
 func (s *AgentTeamsSuite) TestAUserOpensAConfigOfTheirTeamAskingStreamEachTime() {
@@ -196,17 +223,73 @@ func (s *AgentTeamsSuite) TestAnAppWithNoStreamToReadTeamsFromOpensNothingToAUse
 }
 
 // In the deployment's shared app the user ids are nobody's own and its teams are written by
-// whoever holds that app, so a customer acting there cannot tell its users' teams from it.
+// whoever holds that app, so a customer acting there cannot tell its users' teams from it:
+// in deployment mode, which pins nothing, nor in app mode, which pins the deployment's app.
 func (s *AgentTeamsSuite) TestACustomerInTheDeploymentsSharedAppOpensNothingToAUser() {
+	for name, pin := range map[string]int64{"deployment mode": 0, "app mode": suiteStreamApp} {
+		s.useTeamsApp(store.AppSettings{AgentTeams: new(true)})
+		anya := s.inTeams("red")
+		config := s.configOf("red")
+		s.chat.PutUser(map[string]any{"id": anya.userID, "teams": []any{"red"}})
+		s.setApps(s.customerID(), func(apps *suiteApps) {
+			delete(apps.own, s.customerID())
+			if pin != 0 {
+				apps.own[s.customerID()] = s.inDeploymentApp(pin, suiteStreamKey, suiteStreamSecret, s.chat.URL)
+			}
+		})
+
+		status, message := anya.failure(http.MethodPost, "/v1/agents/sessions", s.naming(config))
+
+		s.Equal(http.StatusServiceUnavailable, status, name+": "+message)
+		s.Equal(errTeamsUnreadable.Message, message, name)
+	}
+}
+
+// The deployment's own Stream app is its customer's own, so that customer reads its users'
+// teams there as any customer does in an app it holds a token for.
+func (s *AgentTeamsSuite) TestTheDeploymentAppsOwnCustomerReadsItsUsersTeamsThere() {
+	s.useDeploymentApp(store.AppSettings{AgentTeams: new(true)})
+	anya, dana := s.inTeams("red"), s.inTeams()
+	asked := s.teamReads()
+
+	s.Equal(http.StatusCreated, anya.do(http.MethodPost, "/v1/agents/sessions", s.naming(s.configOf("red")), nil))
+	status, payload := anya.call(http.MethodPost, "/v1/agents/sessions", s.naming(s.configOf("blue")))
+	_, unknown := anya.call(http.MethodPost, "/v1/agents/sessions", s.naming(AgentConfig{Id: s.utils.uuid()}))
+	s.Equal(http.StatusNotFound, status, string(payload))
+	var refused, missing ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &refused))
+	s.Require().NoError(json.Unmarshal(unknown, &missing))
+	s.Equal(missing, refused, "the same answer as a config that does not exist")
+	s.Equal(http.StatusCreated, dana.do(http.MethodPost, "/v1/agents/sessions", s.naming(s.configOf("")), nil))
+	s.Equal(http.StatusNotFound, dana.do(http.MethodPost, "/v1/agents/sessions", s.naming(s.configOf("red")), nil))
+	s.Equal(asked+5, s.teamReads(), "each session asks the deployment's app")
+}
+
+func (s *AgentTeamsSuite) TestTheDeploymentAppsOwnCustomersForkIsCheckedAgainstItsUsersTeams() {
+	s.useDeploymentApp(store.AppSettings{AgentTeams: new(true)})
 	anya := s.inTeams("red")
-	config := s.configOf("red")
-	s.chat.PutUser(map[string]any{"id": anya.userID, "teams": []any{"red"}})
-	s.setApps(s.customerID(), func(apps *suiteApps) { delete(apps.own, s.customerID()) })
+	parent := anya.createSession(s.recorded(s.configOf("red")))
+	blue := s.configOf("blue")
 
-	status, message := anya.failure(http.MethodPost, "/v1/agents/sessions", s.naming(config))
+	status, message := anya.failure(http.MethodPost, "/v1/agents/sessions/"+parent.Id+"/fork", ForkSessionRequest{ConfigId: &blue.Id})
 
-	s.Equal(http.StatusServiceUnavailable, status, message)
-	s.Equal(errTeamsUnreadable.Message, message)
+	s.Equal(http.StatusNotFound, status, message)
+	s.Equal(errUnknownConfig.Message, message)
+	s.Equal(http.StatusCreated, anya.do(http.MethodPost, s.forking(parent.Id), s.offRecord(), nil))
+}
+
+// With the setting off, the deployment app's own customer opens another team's config asking
+// Stream nothing, as on base b95e971ec, which answered it 201.
+func (s *AgentTeamsSuite) TestWithTheSettingOffTheDeploymentAppsOwnCustomerIsNotChecked() {
+	for _, settings := range []store.AppSettings{{}, {AgentTeams: new(false)}} {
+		s.useDeploymentApp(settings)
+		anya := s.inTeams("red")
+		config := s.configOf("blue")
+		asked := s.teamReads()
+
+		s.Equal(http.StatusCreated, anya.do(http.MethodPost, "/v1/agents/sessions", s.naming(config), nil), "settings %+v", settings)
+		s.Equal(asked, s.teamReads(), "settings %+v", settings)
+	}
 }
 
 func (s *AgentTeamsSuite) TestAnAppWhoseSettingsCannotBeReadOpensNothingToAUser() {
