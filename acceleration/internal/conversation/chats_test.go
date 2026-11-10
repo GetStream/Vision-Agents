@@ -84,7 +84,7 @@ func (a *twoApps) DeploymentApp() int64 { return a.pk }
 // be stored.
 func replied(t *testing.T, service *Service, app int64, customer, text string) *Conversation {
 	t.Helper()
-	c, _, _, err := service.OpenInApp(t.Context(), app, customer, "agent", "", "employee", "", nil)
+	c, _, _, err := service.OpenInApp(t.Context(), app, customer, "agent", "", "employee", "", nil, "")
 	require.NoError(t, err)
 	require.NoError(t, c.Begin(text))
 	c.Observe(agent.ResponseDelta{Text: "Noted."})
@@ -191,7 +191,7 @@ func TestAReleasedConversationIsLetGoAndReadBackWhenReopened(t *testing.T) {
 		return len(service.all) == 0
 	}, 5*time.Second, 10*time.Millisecond)
 
-	reopened, history, _, err := service.OpenInApp(t.Context(), 0, "acme", "agent", c.CID(), "employee", "", nil)
+	reopened, history, _, err := service.OpenInApp(t.Context(), 0, "acme", "agent", c.CID(), "employee", "", nil, "")
 	require.NoError(t, err)
 	t.Cleanup(reopened.Release)
 	var said []string
@@ -239,7 +239,7 @@ func TestAConversationInTheSharedAppIsOnlyReadOnceItCannotBeWrittenThere(t *test
 	}
 	require.Contains(t, texts, "said in the shared app")
 
-	_, _, _, err = service.OpenInApp(t.Context(), 77, "acme", "agent", c.CID(), "employee", "", nil)
+	_, _, _, err = service.OpenInApp(t.Context(), 77, "acme", "agent", c.CID(), "employee", "", nil, "")
 	require.ErrorIs(t, err, streamapp.ErrReadOnly, "resuming it would write there")
 	require.Error(t, service.Describe(t.Context(), "acme", c.CID(), "renamed", ""))
 }
@@ -295,7 +295,7 @@ func (s *AppsSuite) SetupTest() {
 // parkedReply opens a conversation in globex's app, takes the app out of reach and begins a
 // reply, waiting until its writes have been refused once.
 func (s *AppsSuite) parkedReply() *Conversation {
-	c, _, _, err := s.service.OpenInApp(s.T().Context(), 99, "globex", "agent", "", "employee", "", nil)
+	c, _, _, err := s.service.OpenInApp(s.T().Context(), 99, "globex", "agent", "", "employee", "", nil, "")
 	s.Require().NoError(err)
 	s.apps.mu.Lock()
 	s.apps.down[99] = true
@@ -321,14 +321,14 @@ func (s *AppsSuite) TestTwoCustomersEachKeepTheirOwnConversationUnderTheSameChan
 				TriggerField: SessionCommandTrigger}}})
 	s.Require().NoError(err)
 
-	globex, _, _, err := s.service.OpenInApp(s.T().Context(), 99, "globex", "agent", acme.CID(), "employee", "", nil)
+	globex, _, _, err := s.service.OpenInApp(s.T().Context(), 99, "globex", "agent", acme.CID(), "employee", "", nil, "")
 	s.Require().NoError(err, "acme holding the id first does not shut globex out of its own")
 	s.Require().NoError(globex.Begin("globex's question"))
 	globex.Observe(agent.ResponseDelta{Text: "Noted."})
 	globex.Observe(agent.Responded{})
 	saved(s.T(), globex)
 	acme.Release()
-	reopened, _, _, err := s.service.OpenInApp(s.T().Context(), 77, "acme", "agent", acme.CID(), "employee", "", nil)
+	reopened, _, _, err := s.service.OpenInApp(s.T().Context(), 77, "acme", "agent", acme.CID(), "employee", "", nil, "")
 	s.Require().NoError(err)
 
 	s.Same(acme, reopened, "acme reopens its own conversation")

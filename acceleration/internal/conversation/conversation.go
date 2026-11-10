@@ -536,27 +536,27 @@ func (s *Service) OpenForCallerWithCustom(ctx context.Context, customer, agentID
 	if err != nil {
 		return nil, nil, false, err
 	}
-	return s.OpenInApp(ctx, own, customer, agentID, cid, caller, voiceAgent, custom, scopes...)
+	return s.OpenInApp(ctx, own, customer, agentID, cid, caller, voiceAgent, custom, "", scopes...)
 }
 
 // OpenInApp opens a conversation for a session pinned to app. A new conversation is kept
-// in that app. One that already exists is kept wherever it was written, which the
-// conversation says: a session resuming it acts there too.
-func (s *Service) OpenInApp(ctx context.Context, app int64, customer, agentID, cid, caller, voiceAgent string, custom map[string]any, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
+// in that app, in the Chat team team names, none for "". One that already exists is kept
+// wherever it was written, which the conversation says: a session resuming it acts there too.
+func (s *Service) OpenInApp(ctx context.Context, app int64, customer, agentID, cid, caller, voiceAgent string, custom map[string]any, team string, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
 	fresh := cid == ""
 	if fresh {
 		cid = "agent:support-" + uuid.NewString()
 	}
-	return s.open(ctx, app, customer, agentID, cid, fresh, caller, voiceAgent, custom, scopes...)
+	return s.open(ctx, app, customer, agentID, cid, fresh, caller, voiceAgent, custom, team, scopes...)
 }
 
 // CreateInApp opens a new conversation on the channel cid, as OpenInApp opens one it names no
 // channel for: a session's own conversation, named after the session.
-func (s *Service) CreateInApp(ctx context.Context, app int64, customer, agentID, cid, caller, voiceAgent string, custom map[string]any, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
-	return s.open(ctx, app, customer, agentID, cid, true, caller, voiceAgent, custom, scopes...)
+func (s *Service) CreateInApp(ctx context.Context, app int64, customer, agentID, cid, caller, voiceAgent string, custom map[string]any, team string, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
+	return s.open(ctx, app, customer, agentID, cid, true, caller, voiceAgent, custom, team, scopes...)
 }
 
-func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid string, fresh bool, caller, voiceAgent string, custom map[string]any, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
+func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid string, fresh bool, caller, voiceAgent string, custom map[string]any, team string, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
 	if voiceAgent != "" && !validAuthorID.MatchString(voiceAgent) {
 		return nil, nil, false, stack.Wrap(errors.New("invalid voice transcript author"))
 	}
@@ -648,6 +648,9 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 		stamped := channelCustom(custom)
 		maps.Copy(stamped, map[string]any{CustomerField: customer, "support_agent_id": agentID, "support_memory_scope": scope, "support_owner_id": caller, TriggerField: SessionCommandTrigger})
 		data = &getstream.ChannelInput{CreatedByID: &agentID, Members: []getstream.ChannelMemberRequest{{UserID: agentID}, {UserID: userID}}, Custom: stamped}
+		if team != "" {
+			data.Team = &team
+		}
 	}
 	page, err := s.readPage(ctx, client, customer, agentID, cid, "", caller, nil, data, voiceAgent)
 	if err != nil {

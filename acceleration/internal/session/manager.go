@@ -176,6 +176,23 @@ type ManagerOptions struct {
 	Logger        *slog.Logger
 }
 
+// channelTeam is the Chat team a session's agent channels are made in. An app that keeps each
+// team's agent configs to its own users keeps their channels in the config's team too, so
+// that Chat shows them to that team's users alone. A config of no team asks nothing.
+func (m *Manager) channelTeam(ctx context.Context, spec Spec) (string, error) {
+	if spec.ConfigTeam == "" || m.options.Configs == nil {
+		return "", nil
+	}
+	settings, err := m.options.Configs.AppSettings(ctx, spec.CustomerID)
+	if err != nil {
+		return "", stack.Wrap(err)
+	}
+	if !settings.AgentTeamsChecked() {
+		return "", nil
+	}
+	return spec.ConfigTeam, nil
+}
+
 // defaultDetachedGrace is long enough to finish a connector login in another tab, or to leave
 // the page a conversation is on and come back to it.
 const defaultDetachedGrace = 5 * time.Minute
@@ -482,6 +499,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		}
 		remembering = m.options.Memory
 	}
+	// Set over whatever a forked spec was copied with: the app's setting is read now.
+	if spec.ChannelTeam, err = m.channelTeam(ctx, spec); err != nil {
+		return nil, err
+	}
 
 	opened := false
 	// A new conversation is kept in Stream Chat by default, but a deployment without Chat
@@ -524,7 +545,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		if cid == "" {
 			open, cid = service.CreateInApp, streamapp.AgentChannelType+":"+spec.ID
 		}
-		conv, previous, truncated, err = open(reading, spec.StreamApp, spec.CustomerID, spec.AgentID, cid, spec.Caller.UserID, spec.UserID, spec.Custom, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
+		conv, previous, truncated, err = open(reading, spec.StreamApp, spec.CustomerID, spec.AgentID, cid, spec.Caller.UserID, spec.UserID, spec.Custom, spec.ChannelTeam, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
 		if errors.Is(err, streamapp.ErrReadOnly) {
 			return nil, ErrConversationReadOnly
 		}
