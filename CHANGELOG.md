@@ -2,6 +2,10 @@
 
 ## Features
 
+### The router records each voice session's media quality
+
+Each voice session observes, once when the agent leaves, the media quality of the agent's own leg between the router and the SFU: `router_agent_media_packet_loss_ratio` and `router_agent_media_jitter_seconds` by `direction` (`inbound`, the participants' audio as it reached the agent; `outbound`, the agent's audio in the SFU's receiver reports), `router_agent_media_concealed_ratio`, the share of participants' audio the decoder made up for lost packets, and `router_agent_media_rtt_seconds`, the ICE round trip. No call or customer label; the same numbers go in one `media quality` log line per call. The caller's own leg to the SFU is not in them (#1895).
+
 ### The Go SDK has a README that installs and an sdk-go skill
 
 `sdks/go/README.md` opens with `go get github.com/GetStream/Vision-Agents/sdks/go@latest`, the Go floor (1.25) and a quickstart against the hosted router, which `readme_test.go` holds to `examples/quickstart` word for word. It no longer names fields that do not exist (`Harness.UseSkills`, `ChatOptions`, a `ConversationID` option), its links outside the module are absolute, and it says how versions are tagged (`sdks/go/vX.Y.Z`, released from `main`), which generated types are the SDK's models, and what is and is not retried. The new `sdk-go` skill records the conventions and the release steps (AI-1892).
