@@ -753,15 +753,16 @@ func joinedCallID(id string) string {
 	return strings.TrimSpace(id)
 }
 
-// ConversationChannel is the id, without its type, of the agent channel ConversationID names:
-// the channel a call's transcript is written into (chatlog.Options.Channel). Empty for a
-// ConversationID that names no agent channel, whose transcript goes into the agent id's.
-func (s Spec) ConversationChannel() string {
-	channel := strings.TrimPrefix(s.ConversationID, streamapp.AgentChannelType+":")
-	if channel == s.ConversationID {
-		return ""
+// ConversationChannel is the type and id of the agent channel ConversationID names: the
+// channel a call's transcript is written into (chatlog.Options.ChannelType and Channel). Both
+// are empty for a ConversationID that names no agent channel, whose transcript goes into the
+// agent id's.
+func (s Spec) ConversationChannel() (channelType, channel string) {
+	channelType, channel, _ = strings.Cut(s.ConversationID, ":")
+	if channelType != streamapp.AgentChannelType || channel == "" {
+		return "", ""
 	}
-	return channel
+	return channelType, channel
 }
 
 // TranscriptChannel is the cid of the channel a call's transcript is written into: the
@@ -769,11 +770,11 @@ func (s Spec) ConversationChannel() string {
 // ConversationChannel. Example: conversation_id "messaging:X" under agent id "front-desk" is
 // written into agent:front-desk.
 func (s Spec) TranscriptChannel() string {
-	channel := s.ConversationChannel()
-	if channel == "" {
-		channel = s.AgentID
+	channelType, channel := s.ConversationChannel()
+	if channelType == "" {
+		channelType, channel = streamapp.AgentChannelType, s.AgentID
 	}
-	return streamapp.AgentChannelType + ":" + channel
+	return channelType + ":" + channel
 }
 
 // Shared reports whether more than one verified person writes in the conversation: a thread

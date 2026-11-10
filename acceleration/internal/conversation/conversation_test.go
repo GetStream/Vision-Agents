@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/stretchr/testify/require"
 )
@@ -41,6 +42,8 @@ type chatStore struct {
 	liveAttempts int
 	// uploads are the files stored on a channel, by the endpoint that took them.
 	uploads []upload
+	// asked are the methods and paths of every request, in the order they came.
+	asked []string
 }
 
 // upload is one file a channel was sent.
@@ -61,6 +64,7 @@ func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		db.mu.Lock()
 		defer db.mu.Unlock()
+		db.asked = append(db.asked, r.Method+" "+r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		if db.fail {
 			w.WriteHeader(503)
@@ -208,6 +212,78 @@ func current(c *Conversation) Message {
 func saved(t *testing.T, c *Conversation) {
 	t.Helper()
 	require.Eventually(t, func() bool { return current(c).Saved }, 8*time.Second, 20*time.Millisecond)
+}
+
+// Every request about a conversation's channel names the type its cid does: a channel id is
+// unique only within its type, so one asked under another type reads or writes another channel.
+func TestEveryRequestAboutAConversationNamesItsChannelType(t *testing.T) {
+	db, client := newChat(t)
+	s := NewForChat(client)
+	defer s.Close()
+	c, _, _, err := s.Open(t.Context(), "customer", "artist", "")
+	require.NoError(t, err)
+	channelType, id, _ := strings.Cut(c.CID(), ":")
+	require.Equal(t, "agent", channelType)
+	require.NoError(t, c.Begin("render a teapot"))
+	// The live loop sends the AI indicator on its own.
+	require.Eventually(t, func() bool {
+		db.mu.Lock()
+		defer db.mu.Unlock()
+		return len(db.events) > 0
+	}, 3*time.Second, 20*time.Millisecond)
+	c.Observe(agent.Responded{Text: "Here it is."})
+	saved(t, c)
+	_, err = c.Publish(t.Context(), sandbox.File{Name: "teapot.png", MIME: "image/png", Data: []byte("png")})
+	require.NoError(t, err)
+	require.NoError(t, s.Describe(t.Context(), "customer", c.CID(), "Teapots", ""))
+	db.mu.Lock()
+	before := len(db.asked)
+	db.mu.Unlock()
+	_, err = s.CommandForCaller(t.Context(), "customer", "artist", c.CID(), "", "no-such-command")
+	require.ErrorIs(t, err, ErrCommandNotFound)
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	require.Greater(t, len(db.asked), before, "a command is looked up in its channel")
+	asked := map[string]bool{}
+	for _, request := range db.asked {
+		method, path, _ := strings.Cut(request, " ")
+		if _, channel, ok := strings.Cut(path, "/chat/channels/"); ok {
+			named, step, _ := strings.Cut(strings.TrimPrefix(channel, "agent/"+id), "/")
+			require.Empty(t, named, request)
+			asked[method+" "+step] = true
+		}
+	}
+	require.Equal(t, map[string]bool{"POST query": true, "POST message": true, "POST event": true, "POST image": true, "PATCH ": true}, asked)
+}
+
+// A conversation is held only on an agent channel: the same channel id under another type is
+// another channel, which nothing here may open, name, look a command up in or take for a
+// session's commands.
+func TestAConversationIsHeldOnlyOnAnAgentChannel(t *testing.T) {
+	_, client := newChat(t)
+	s := NewForChat(client)
+	defer s.Close()
+	c, _, _, err := s.Open(t.Context(), "customer", "artist", "")
+	require.NoError(t, err)
+	_, err = c.BeginCommand("teapot-command", "render a teapot", "")
+	require.NoError(t, err)
+	c.Observe(agent.Responded{Text: "Here it is."})
+	saved(t, c)
+	_, id, _ := strings.Cut(c.CID(), ":")
+	_, err = s.CommandForCaller(t.Context(), "customer", "artist", c.CID(), "", "teapot-command")
+	require.NoError(t, err, "the control: the command is found in its own channel")
+	require.True(t, Openable(c.CID()))
+	require.True(t, SessionCommandChannel("agent", id, map[string]any{TriggerField: SessionCommandTrigger}))
+
+	for _, cid := range []string{"messaging:" + id, "agentx:" + id, ":" + id, id} {
+		require.False(t, Openable(cid), cid)
+		require.Error(t, s.Describe(t.Context(), "customer", cid, "Teapots", ""), cid)
+		_, err = s.CommandForCaller(t.Context(), "customer", "artist", cid, "", "teapot-command")
+		require.ErrorIs(t, err, ErrCommandNotFound, cid)
+		channelType, _, _ := strings.Cut(cid, ":")
+		require.False(t, SessionCommandChannel(channelType, id, map[string]any{TriggerField: SessionCommandTrigger}), cid)
+	}
 }
 
 // TestAConversationIsResumedWithoutKnowingWhichAgentOpenedIt covers the resume a page does.
