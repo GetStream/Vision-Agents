@@ -32,7 +32,11 @@ func TestConnectorsSuite(t *testing.T) {
 // SetupSuite registers the scheme the built-ins name, and seeds the built-ins as a router
 // start does. Seeding is idempotent, so suites running beside this one see the same rows.
 func (s *ConnectorsSuite) SetupSuite() {
-	s.connectors = core.Registry{Schemes: map[string]core.Scheme{"oauth2_code": namedScheme("oauth2_code")}}
+	s.connectors = core.Registry{Schemes: map[string]core.Scheme{
+		"oauth2_code":               namedScheme("oauth2_code"),
+		"oauth2_client_credentials": namedScheme("oauth2_client_credentials"),
+		"api_key":                   namedScheme("api_key"),
+	}}
 	s.RouterSuite.SetupSuite()
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
@@ -326,6 +330,24 @@ func (s *ConnectorsSuite) TestAnOAuthConnectorWithoutClientRegistrationsIsRefuse
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "client.registration")
+}
+
+func (s *ConnectorsSuite) TestClientCredentialsIsRefusedForACustomConnectorAndAnotherSchemeIsNot() {
+	refused := s.customConnector(s.customID())
+	refused["schemes"] = []string{"oauth2_client_credentials"}
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/connectors", refused)
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("oauth2_client_credentials is not available for a custom connector: it needs a token endpoint a custom connector cannot set", failure)
+
+	beside := s.customConnector(s.customID())
+	beside["schemes"] = []string{"api_key", "oauth2_client_credentials"}
+	status, _ = s.serverClient.failure(http.MethodPost, "/v1/agents/connectors", beside)
+	s.Equal(http.StatusBadRequest, status, "listed beside another scheme")
+
+	allowed := s.customConnector(s.customID())
+	allowed["schemes"] = []string{"api_key"}
+	delete(allowed, "client")
+	s.Equal([]string{"api_key"}, s.create(allowed).Schemes)
 }
 
 func (s *ConnectorsSuite) TestARepeatedScopeOrClientRegistrationIsRefused() {

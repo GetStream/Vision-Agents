@@ -446,6 +446,12 @@ func (s *Server) customManifest(ctx context.Context, sent CustomConnectorRequest
 	if slices.Contains(sent.Schemes, "oauth2_code") && len(client.Registration) == 0 {
 		return core.Manifest{}, stack.Wrap(errors.New("client.registration is required with oauth2_code: name how the OAuth client is registered (customer, cimd or dcr)"))
 	}
+	// oauth2_client_credentials gets its token URL from endpoints.token (tokenEndpoint in
+	// internal/connectors/schemes/oauth2cc/scheme.go), and a custom request sets only the MCP endpoint, so
+	// such a definition could be stored and never connected.
+	if slices.Contains(sent.Schemes, "oauth2_client_credentials") {
+		return core.Manifest{}, stack.Wrap(errors.New("oauth2_client_credentials is not available for a custom connector: it needs a token endpoint a custom connector cannot set"))
+	}
 	manifest := core.Manifest{
 		ID: sent.ID,
 		// Validated at the first revision; the store numbers the one it is stored as.
