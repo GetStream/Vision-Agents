@@ -26,6 +26,7 @@ type Person struct {
 	CrewRole string   `json:"-"`
 	Stations []string `json:"stations,omitempty"`
 	Note     string   `json:"note,omitempty"`
+	Email    string   `json:"email,omitempty"`
 }
 
 // Shift is one shift on the schedule.
@@ -106,6 +107,7 @@ type restaurant struct {
 
 const (
 	owner       = "crew-taylor"
+	supervisor  = "crew-supervisor"
 	trainer     = "crew-priya"
 	buddy       = "crew-dev"
 	handbookURL = "https://handbook.example.com/"
@@ -121,6 +123,7 @@ func newRestaurant(now time.Time) *restaurant {
 		{ID: "crew-maya", Name: "Maya Chen", Title: "Shift leader, front of house", CrewRole: roleLeader, Note: "Runs most morning shifts"},
 		{ID: "crew-sam", Name: "Sam Ortiz", Title: "Shift leader, kitchen", CrewRole: roleLeader, Note: "Runs most evening shifts"},
 		{ID: owner, Name: "Taylor Morgan", Title: "Owner", CrewRole: roleLeader, Note: "Approves repair tickets and schedules"},
+		{ID: supervisor, Name: "Alex Rivera", Title: "Restaurant manager", CrewRole: roleLeader, Note: "Direct supervisor of every team member, for 1-on-1s about their role and growth"},
 		{ID: trainer, Name: "Priya Patel", Title: "Trainer", CrewRole: roleTrainer, Note: "Trains new team members in their first 30 days"},
 		{ID: buddy, Name: "Dev Harris", Title: "Team member", CrewRole: roleTeamMember, Stations: []string{"Drive-thru", "Register"}, Note: "Onboarding buddy for new team members"},
 		{ID: "crew-jordan", Name: "Jordan Lee", Title: "Team member", CrewRole: roleTeamMember, Stations: []string{"Drive-thru", "Kitchen", "Register"}},
@@ -128,6 +131,8 @@ func newRestaurant(now time.Time) *restaurant {
 		{ID: "crew-marco", Name: "Marco Ruiz", Title: "Team member", CrewRole: roleTeamMember, Stations: []string{"Kitchen"}},
 		{ID: "crew-ava", Name: "Ava Kim", Title: "Team member", CrewRole: roleTeamMember, Stations: []string{"Register", "Drive-thru"}},
 	} {
+		first, _, _ := strings.Cut(strings.ToLower(p.Name), " ")
+		p.Email = first + "@example.com"
 		r.people[p.ID] = p
 	}
 	r.shifts = []Shift{
@@ -353,22 +358,38 @@ func (r *restaurant) swap(userID, shiftID, teammateID, note string) (any, error)
 	return map[string]any{"request_id": item.ID, "status": "sent to " + teammate.Name + "; the shift leader sees it too"}, nil
 }
 
-func (r *restaurant) leaderNote(userID, message, shiftID string) (any, error) {
+// absenceReasons are the reasons a leader's note gives for someone being out, so nothing they
+// said about their health reaches it.
+var absenceReasons = map[string]string{
+	"sick":      "is out sick",
+	"family":    "is out for a family matter",
+	"transport": "can't make it in",
+	"other":     "is out",
+}
+
+func (r *restaurant) leaderNote(userID, reason, shiftID string, coverAsked bool) (any, error) {
 	from, err := r.member(userID)
 	if err != nil {
 		return nil, err
 	}
-	if message == "" {
-		return nil, refuse(400, "a message is required")
+	out, ok := absenceReasons[reason]
+	if !ok {
+		return nil, refuse(400, "reason must be sick, family, transport or other")
 	}
-	to := "the shift leader"
+	to, which := "the shift leader", ""
 	if shift, err := r.ownShift(userID, shiftID); err == nil {
 		r.mu.Lock()
 		to = r.people[shift.Leader].Name
 		r.mu.Unlock()
+		which = " for " + shift.Station + " " + shift.Start.Format("Mon 15:04")
 	}
+	cover := "No cover asked for yet."
+	if coverAsked {
+		cover = "They asked a teammate to cover."
+	}
+	message := from.Name + " " + out + which + ". " + cover
 	item := r.add(from, "alert", "Note for "+to, message, "Sent")
-	return map[string]any{"id": item.ID, "sent_to": to}, nil
+	return map[string]any{"id": item.ID, "sent_to": to, "note": message}, nil
 }
 
 // searchHandbook answers with the passages that match best, as citations, which is the result
@@ -460,6 +481,21 @@ func (r *restaurant) ticket(userID, asset, summary, details, priority string) (a
 }
 
 // leadership is who leads and trains the team, and the buddy who helps new team members.
+// setSupervisor names the direct supervisor in place of the made-up one, with the email their
+// invites go to. Either left empty keeps the made-up one's.
+func (r *restaurant) setSupervisor(name, email string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p := r.people[supervisor]
+	if name != "" {
+		p.Name = name
+	}
+	if email != "" {
+		p.Email = email
+	}
+	r.people[supervisor] = p
+}
+
 func (r *restaurant) leadership(userID string) (any, error) {
 	if _, err := r.member(userID); err != nil {
 		return nil, err
@@ -467,7 +503,7 @@ func (r *restaurant) leadership(userID string) (any, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	team := []Person{}
-	for _, id := range []string{owner, "crew-maya", "crew-sam", trainer, buddy} {
+	for _, id := range []string{owner, supervisor, "crew-maya", "crew-sam", trainer, buddy} {
 		if id != userID {
 			team = append(team, r.people[id])
 		}
@@ -483,12 +519,12 @@ func (r *restaurant) checkIn(userID, with, when, topic string) (any, error) {
 	if with == "" || when == "" {
 		return nil, refuse(400, "with and when are required")
 	}
-	name := with
+	name, email := with, ""
 	if p, ok := r.find(with); ok {
-		name = p.Name
+		name, email = p.Name, p.Email
 	}
 	item := r.add(from, "check_in", "1-on-1 with "+name, strings.TrimSpace(when+". "+topic), "Booked")
-	return map[string]any{"id": item.ID, "booked_with": name, "when": when}, nil
+	return map[string]any{"id": item.ID, "booked_with": name, "email": email, "when": when}, nil
 }
 
 // find is the person named by id, by id without its crew- prefix, or by first or full name.
@@ -513,8 +549,8 @@ func (r *restaurant) reflection(userID string, reflection Reflection) (any, erro
 	if _, err := r.member(userID); err != nil {
 		return nil, err
 	}
-	if reflection.Energy < 1 || reflection.Energy > 5 || len(reflection.Themes) == 0 {
-		return nil, refuse(400, "energy from 1 to 5 and at least one theme are required")
+	if reflection.Energy < 1 || reflection.Energy > 5 {
+		return nil, refuse(400, "energy from 1 to 5 is required")
 	}
 	reflection.At = time.Now()
 	r.mu.Lock()

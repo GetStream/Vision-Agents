@@ -16,11 +16,12 @@
 // scheduled task for the person's conversation and runs it at once, so the agent's message is
 // the first thing in it.
 //
-//	STREAM_API_KEY=<the key of the Stream app the router runs in> \
+//	STREAM_API_KEY=<the key of the Stream app the agent runs in> \
 //	STREAM_API_SECRET=<its secret> \
-//	STREAM_ACCELERATION_URL=http://localhost:8080 \
-//	STREAM_ACCELERATION_CUSTOMER_ID=examples \
 //	GOWORK=off go run .
+//
+// It reaches Stream's hosted router. STREAM_ACCELERATION_URL, with
+// STREAM_ACCELERATION_CUSTOMER_ID for one without keys, points it at a router of your own.
 package main
 
 import (
@@ -66,10 +67,11 @@ func run(ctx context.Context, addr, simulationUser string) error {
 		return err
 	}
 	crew := newRestaurant(time.Now())
+	crew.setSupervisor(os.Getenv("CREW_SUPERVISOR_NAME"), os.Getenv("CREW_SUPERVISOR_EMAIL"))
 	if err := roles.publish(ctx, crew.team()); err != nil {
 		return fmt.Errorf("keeping the crew roles on the Stream users: %w", err)
 	}
-	s := &server{secret: []byte(secret), crew: crew, roles: roles, speak: agentSpeaksFirst}
+	s := &server{secret: []byte(secret), mint: roles.mint, crew: crew, roles: roles, speak: agentSpeaksFirst}
 
 	hosted, err := s.hostedTools(simulationUser)
 	if err != nil {

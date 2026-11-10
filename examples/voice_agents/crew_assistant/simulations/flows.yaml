@@ -47,8 +47,8 @@
   assertion: >-
     Crew calls get_my_schedule and check_callout with the fever as a symptom. It tells them
     kindly to stay home and that the shift leader arranges cover. It does not call find_coverage
-    or request_shift_swap. It calls notify_shift_leader with a short note naming the shift, and
-    says it's sent. It never asks for medical detail beyond the symptoms.
+    or request_shift_swap. It calls notify_shift_leader with the shift and the reason
+    "sick", and says it's sent. It never asks for medical detail beyond the symptoms.
 
 - name: Calling out with a cold and finding cover
   max_turns: 6
@@ -61,7 +61,7 @@
   assertion: >-
     Crew calls check_callout for shift s-102, which clears them to find their own cover, then
     find_coverage for s-102, and offers the teammates it found. It calls request_shift_swap for
-    s-102 with the teammate the caller picked, then notify_shift_leader, and confirms both. It
+    s-102 with the teammate the caller picked, then notify_shift_leader with cover_asked true, and confirms both. It
     does not tell them to stay home.
 
 - name: Fryer error with a ticket
@@ -125,7 +125,7 @@
     thanked you by name, and your energy is a 3. Once Crew has saved it, you're done.
   assertion: >-
     Crew calls save_shift_reflection with energy 3, a short win, and two or three short themes
-    such as "short staffed". The themes hold no names. Before or after saving, it reflects back
+    such as "short staffed". A tool call written out as JSON in its reply is not a call. The themes hold no names. Before or after saving, it reflects back
     something specific from what they said, and confirms it's saved.
 
 - name: Interview practice

@@ -48,8 +48,12 @@ func newTestServer(t *testing.T) (*server, *fakeRoles, http.Handler) {
 	if err := roles.publish(context.Background(), crew.team()); err != nil {
 		t.Fatal(err)
 	}
+	minter, err := newStreamRoles("test-key", testSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
 	s := &server{
-		secret: []byte(testSecret), crew: crew, roles: roles,
+		secret: []byte(testSecret), mint: minter.mint, crew: crew, roles: roles,
 		speak: func(context.Context, string, string, string, string) (string, error) { return "task-1", nil },
 	}
 	mux := http.NewServeMux()
@@ -96,7 +100,7 @@ func TestEveryRouteButTheTokenNeedsAValidToken(t *testing.T) {
 	} {
 		for _, route := range []struct{ method, path string }{
 			{"POST", "/events"}, {"POST", "/crew/swaps"}, {"POST", "/crew/tickets"},
-			{"POST", "/crew/check-ins"}, {"GET", "/crew/leader"},
+			{"POST", "/crew/check-ins"}, {"POST", "/crew/reflections"}, {"GET", "/crew/leader"},
 		} {
 			got := request(t, handler, route.method, route.path, token, map[string]string{})
 			if got.Code != http.StatusUnauthorized {
@@ -218,5 +222,84 @@ func TestASimulationsCallsActForTheSimulationUser(t *testing.T) {
 	}
 	if !strings.Contains(got.Text, "s-101") {
 		t.Errorf("the simulation's schedule isn't Jordan's: %s", got.Text)
+	}
+}
+
+func TestTheAskedFirstToolsAreHostedOnlyForSimulations(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	live, err := s.hostedTools("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live.Holds("request_shift_swap") || live.Holds("create_support_ticket") || live.Holds("book_check_in") {
+		t.Error("a backend serving people hosts a tool the phone asks about first")
+	}
+	simulated, err := s.hostedTools("crew-jordan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := simulated.Call(context.Background(), "request_shift_swap", `{"shift_id":"s-101","teammate_id":"crew-ava"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got.Text, "Ava Kim") {
+		t.Errorf("the simulation's swap: %s", got.Text)
+	}
+}
+
+func TestTheLeadersNoteCarriesNoHealthDetails(t *testing.T) {
+	s, _, _ := newTestServer(t)
+	registry, err := s.hostedTools("crew-jordan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := registry.Call(context.Background(), "notify_shift_leader",
+		`{"reason":"sick","shift_id":"s-101","cover_asked":true,"message":"Jordan has a fever and is vomiting"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got.Text, "fever") || strings.Contains(got.Text, "vomiting") {
+		t.Errorf("the note passed on their symptoms: %s", got.Text)
+	}
+	if !strings.Contains(got.Text, "Jordan Lee is out sick") || !strings.Contains(got.Text, "asked a teammate to cover") {
+		t.Errorf("the note: %s", got.Text)
+	}
+	if _, err := registry.Call(context.Background(), "notify_shift_leader", `{"reason":"a bad fever"}`); err == nil {
+		t.Error("a note took a reason of its own")
+	}
+}
+
+func TestTheFormSavesAReflectionWithoutTheAgent(t *testing.T) {
+	_, _, handler := newTestServer(t)
+	hour := time.Now().Add(time.Hour)
+	jordan := tokenFor(t, "crew-jordan", testSecret, hour)
+	got := request(t, handler, "POST", "/crew/reflections", jordan, map[string]any{"energy": 2, "themes": []string{"short staffed"}, "win": "Kept the line moving"})
+	if got.Code != http.StatusOK {
+		t.Fatalf("the reflection wasn't saved: %d %s", got.Code, got.Body)
+	}
+	if got := request(t, handler, "POST", "/crew/reflections", jordan, map[string]any{"energy": 0}); got.Code != http.StatusBadRequest {
+		t.Errorf("a reflection without an energy was saved: %d %s", got.Code, got.Body)
+	}
+	leader := request(t, handler, "GET", "/crew/leader", tokenFor(t, "crew-maya", testSecret, hour), nil).Body.String()
+	if !strings.Contains(leader, "short staffed") || !strings.Contains(leader, "Kept the line moving") {
+		t.Errorf("the leaders don't see the reflection: %s", leader)
+	}
+}
+
+func TestACheckInAnswersWhoToInvite(t *testing.T) {
+	_, _, handler := newTestServer(t)
+	got := request(t, handler, "POST", "/crew/check-ins", tokenFor(t, "crew-jordan", testSecret, time.Now().Add(time.Hour)),
+		map[string]string{"with": "Priya", "when": "Thursday 14:00"})
+	if got.Code != http.StatusOK || !strings.Contains(got.Body.String(), `"email":"priya@example.com"`) {
+		t.Errorf("the check-in doesn't say who to invite: %d %s", got.Code, got.Body)
+	}
+}
+
+func TestTheSupervisorCanBeNamed(t *testing.T) {
+	crew := newRestaurant(time.Now())
+	crew.setSupervisor("Sam Doe", "sam.doe@example.org")
+	got, _ := crew.checkIn("crew-jordan", "Sam Doe", "Friday 10:00", "")
+	if !strings.Contains(fmt.Sprint(got), "sam.doe@example.org") {
+		t.Errorf("the check-in doesn't invite the named supervisor: %v", got)
 	}
 }

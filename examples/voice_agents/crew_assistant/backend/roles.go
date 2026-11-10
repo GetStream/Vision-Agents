@@ -22,6 +22,11 @@ type streamRoles struct {
 	client *getstream.Stream
 }
 
+// mint signs a Stream token for userID that lasts tokenValidity.
+func (s *streamRoles) mint(userID string) (string, error) {
+	return s.client.CreateToken(userID, getstream.WithExpiration(tokenValidity))
+}
+
 func newStreamRoles(apiKey, apiSecret string) (*streamRoles, error) {
 	client, err := getstream.NewClient(apiKey, apiSecret)
 	if err != nil {

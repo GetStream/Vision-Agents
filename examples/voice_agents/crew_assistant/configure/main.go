@@ -1,14 +1,12 @@
-// Command configure stores the crew assistant this directory describes on the router.
+// Command configure finishes what `getstream agents sync` leaves out of the crew assistant.
 //
-// Writing an agent config is server-side only, so the app never does it: it only names the
-// agent this leaves behind. agent.yaml says what runs it and instructions.md what it is told;
-// the Go SDK syncs both, then this adds what teaches it to answer with interactive UI in A2UI,
-// the tools whose steps a reply shows and the skills it has.
+// The CLI syncs the folder: agent.yaml, instructions.md, the Markdown in knowledge/ and the
+// simulations. This uploads the documents in knowledge/ it skips, such as PDFs, which the
+// router reads into Markdown itself, and sets the tools whose steps a reply shows and the skills
+// the agent has, which no file in the folder holds. Run it after the first sync, and again
+// whenever a document changes, from configure/:
 //
-// Run it once, and again whenever the directory changes, from configure/:
-//
-//	STREAM_ACCELERATION_URL=http://localhost:8080 \
-//	STREAM_ACCELERATION_CUSTOMER_ID=examples \
+//	getstream agents sync ..
 //	GOWORK=off go run . -dir ..
 package main
 
@@ -28,7 +26,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
-	"github.com/GetStream/Vision-Agents/sdks/go/agents"
+	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
 // visibleTools are the tools whose steps the person sees on a reply. search_handbook's result
@@ -42,48 +40,38 @@ var visibleTools = []string{
 
 func main() {
 	dir := flag.String("dir", ".", "the agent directory to read")
+	name := flag.String("agent", "crew_assistant", "the agent the CLI synced")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	if err := run(ctx, *dir); err != nil {
+	if err := run(ctx, *dir, *name); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(ctx context.Context, dir string) error {
-	agent, err := agents.New(agents.Options{Dir: dir})
+func run(ctx context.Context, dir, name string) error {
+	client, err := stream.Backend{}.Client()
 	if err != nil {
 		return err
 	}
-	config, err := agent.Sync(ctx)
+	configs, err := client.ListAgentConfigsWithResponse(ctx, &acceleration.ListAgentConfigsParams{Name: &name})
 	if err != nil {
 		return err
 	}
+	if configs.JSON200 == nil {
+		return fmt.Errorf("finding %s: %s %s", name, configs.Status(), configs.Body)
+	}
+	if len(*configs.JSON200) == 0 {
+		return fmt.Errorf("there is no agent %s yet: run getstream agents sync first", name)
+	}
+	config := (*configs.JSON200)[0]
 	fmt.Printf("agent      %s (config %s)\n", config.Name, config.Id)
 
-	told, err := os.ReadFile(filepath.Join(dir, "instructions.md"))
-	if err != nil {
-		return err
-	}
-	ui, err := os.ReadFile(filepath.Join(dir, "a2ui", "instructions.md"))
-	if err != nil {
-		return err
-	}
-	instructions := string(told) + "\n\n## Interactive UI in A2UI\n\n" + string(ui)
-
-	client, err := agent.Client()
-	if err != nil {
-		return err
-	}
 	skills := []string{"think", "recall", "explain", "vision"}
 	patched, err := client.PatchAgentConfigWithResponse(ctx, config.Id,
-		acceleration.PatchAgentConfigJSONRequestBody{
-			Instructions: &instructions,
-			Skills:       &skills,
-			VisibleTools: &visibleTools,
-		})
+		acceleration.PatchAgentConfigJSONRequestBody{Skills: &skills, VisibleTools: &visibleTools})
 	if err != nil {
 		return err
 	}
@@ -93,10 +81,8 @@ func run(ctx context.Context, dir string) error {
 	if err := uploadDocuments(ctx, client, config.Name, filepath.Join(dir, "knowledge")); err != nil {
 		return err
 	}
-	fmt.Printf("ui         A2UI\n")
 	fmt.Printf("visible    %v\n", visibleTools)
 	fmt.Printf("skills     %v\n", skills)
-	fmt.Printf("\nnext       cd ../backend && STREAM_API_SECRET=<the router's> GOWORK=off go run .\n")
 	return nil
 }
 

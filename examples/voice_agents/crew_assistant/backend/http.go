@@ -20,8 +20,10 @@ const tokenValidity = time.Hour
 // route but the token answers only to a Stream token this backend signed, and acts for its user.
 type server struct {
 	secret []byte
-	crew   *restaurant
-	roles  roles
+	// mint signs a Stream token for a user.
+	mint  func(userID string) (string, error)
+	crew  *restaurant
+	roles roles
 	// speak has the agent open the user's conversation about an event, and answers the task id.
 	speak func(ctx context.Context, userID, sessionID, kind, timezone string) (string, error)
 }
@@ -32,6 +34,7 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /crew/swaps", s.signedIn(s.swap))
 	mux.HandleFunc("POST /crew/tickets", s.signedIn(s.ticket))
 	mux.HandleFunc("POST /crew/check-ins", s.signedIn(s.checkIn))
+	mux.HandleFunc("POST /crew/reflections", s.signedIn(s.reflection))
 	mux.HandleFunc("GET /crew/leader", s.signedIn(s.leaderView))
 }
 
@@ -50,12 +53,7 @@ func (s *server) streamToken(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	now := time.Now()
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"user_id": asked.UserID,
-		"iat":     jwt.NewNumericDate(now),
-		"exp":     jwt.NewNumericDate(now.Add(tokenValidity)),
-	}).SignedString(s.secret)
+	token, err := s.mint(asked.UserID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -172,6 +170,19 @@ func (s *server) checkIn(w http.ResponseWriter, r *http.Request, userID string) 
 		return
 	}
 	respond(w)(s.crew.checkIn(userID, asked.With, asked.When, asked.Topic))
+}
+
+// reflection saves the end-of-shift reflection the person sent from the agent's form.
+func (s *server) reflection(w http.ResponseWriter, r *http.Request, userID string) {
+	var asked struct {
+		Energy int      `json:"energy"`
+		Themes []string `json:"themes"`
+		Win    string   `json:"win"`
+	}
+	if !decode(w, r, &asked) {
+		return
+	}
+	respond(w)(s.crew.reflection(userID, Reflection{Energy: asked.Energy, Themes: asked.Themes, Win: asked.Win}))
 }
 
 // leaderView is the leaders' inbox, for a user whose Stream user says they lead.

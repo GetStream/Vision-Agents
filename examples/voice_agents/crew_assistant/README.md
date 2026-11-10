@@ -7,18 +7,20 @@ React Native app `examples/ExpoCrewAssistant` in stream-chat-react-native.
 ```
 agent.yaml           what runs the agent
 knowledge/           the team handbook: Markdown, and documents such as PDFs
-instructions.md      what the agent is told: the restaurant, its ground rules and each flow
-a2ui/instructions.md how it writes checklists, quizzes and forms in A2UI
+instructions.md      what the agent is told: the restaurant, its ground rules, each flow, and
+                     how it writes checklists, quizzes and forms in A2UI
 simulations/         the conversations each flow is judged on
-configure/main.go    stores the agent on the router, with A2UI, its visible tools and skills
+configure/main.go    what the CLI's sync leaves out: PDFs and the like, visible tools, skills
 backend/main.go      runs the backend, and the agent speaking first about an event
 backend/crew.go      the restaurant: team, schedule, equipment, tickets, the leaders' inbox
 backend/hosted.go    the restaurant's tools, hosted on the router
 backend/http.go      what the phone calls: its token, events, the asked-first tools, the inbox
 backend/roles.go     each person's crew role, kept in their Stream user's custom data
 backend/handbook.go  the handbook's passages, read from the router's knowledge base
-evals/main.go        runs the simulations, standing in for the phone's asked-first tools
 ```
+
+It runs on Stream's hosted Agents, and is synced and tested with the beta Stream CLI
+(`getstream agents`).
 
 ## What it does
 
@@ -40,12 +42,10 @@ evals/main.go        runs the simulations, standing in for the phone's asked-fir
   `trainer` or `team_member`) is kept in their Stream user's custom data as `crew_role`.
 - **Cal.com.** `agent.yaml` binds `calcom` as each person's own, with only tools that read. The
   first time the agent looks at their calendar, the call waits for them to connect it, shown on
-  its step in the chat, as swift_assistant does with Linear. Cal.com registers the router as its
-  OAuth client by itself, so it needs nothing besides the router's `ROUTER_CONNECTORS_ENABLED=true`,
-  `ROUTER_AUTH_KEK` and `ROUTER_PUBLIC_URL`. Google Calendar would need an OAuth client of your
-  own on the router first.
+  its step in the chat, as swift_assistant does with Linear. Cal.com registers Stream as its OAuth
+  client at each sign-in, so it needs no setup.
 - **The handbook.** It is the agent's knowledge base on the router. `knowledge/` holds its
-  documents: the Markdown files the sync pushes, and PDF, Word or Excel files `configure` uploads,
+  documents: the Markdown files the CLI syncs, and PDF, Word or Excel files `configure` uploads,
   which the router reads into Markdown itself, page by page. `search_handbook` searches the passages
   the router cut them into, by heading, and answers `{"status": "answered", "citations": [...]}`,
   so the passages it found show as the reply's sources. Add or replace a document and run
@@ -64,38 +64,41 @@ Everything lives in memory and starts from the same restaurant each time the bac
 
 ## Run it
 
-Run the router as in the [Swift demo](../swift_demo/README.md#run-it). Then:
+With the beta Stream CLI (`curl -fsSL https://getstream.io/cli/beta/install.sh | bash`), and the
+key and secret of the Stream app the app runs in, from the repo root:
 
 ```bash
-cd examples/voice_agents/crew_assistant/configure
-STREAM_ACCELERATION_URL=http://localhost:8080 \
-STREAM_ACCELERATION_CUSTOMER_ID=examples \
-GOWORK=off go run . -dir ..
+export STREAM_API_KEY=<your Stream app's key> STREAM_API_SECRET=<its secret>
 
-cd ../backend
-STREAM_API_KEY=<the router's STREAM_API_KEY> \
-STREAM_API_SECRET=<the router's STREAM_API_SECRET> \
-STREAM_ACCELERATION_URL=http://localhost:8080 \
-STREAM_ACCELERATION_CUSTOMER_ID=examples \
-GOWORK=off go run .
+getstream agents sync ./examples/voice_agents/crew_assistant
+(cd examples/voice_agents/crew_assistant/configure && GOWORK=off go run . -dir ..)
+(cd examples/voice_agents/crew_assistant/backend && GOWORK=off go run .)
 ```
 
-It listens on `:8097`, beside the Swift assistant's on `:8098`, and connects to the router to host
-the tools. Run one backend per router: the router shares an agent's tool calls between every
-process hosting them. `GOWORK=off go test ./...` in `backend/` checks the tokens, the leaders'
-inbox, enrolment and that each person only acts on their own shifts.
+`configure` runs after the sync, every time: it uploads the documents in `knowledge/` the CLI
+skips, and sets the visible tools and the skills (`think`, `recall`, `explain`, `vision`), which
+no file in the folder holds. A sync over them, which the CLI asks for once `configure` has run
+(`--overwrite`), drops all three, so `configure` puts them back.
 
-Uploading a PDF, Word or Excel file needs somewhere for it to wait until the router reads it:
-`ROUTER_KNOWLEDGE_BUCKET_URL` in the repo-root `.env`, such as `file:///tmp` for a local router
-(restart the router after setting it). Without it `configure` stops at the first such file, and
-the Markdown documents still work.
+The backend listens on `:8097` and connects out to the router to host the tools, so it needs no
+public address for them. The phone reaches it for its token, events, the asked-first tools and the
+leaders' inbox, so a deployed app needs it somewhere public. Run one backend per agent: the router
+shares an agent's tool calls between every process hosting them. `GOWORK=off go test ./...` in
+`backend/` checks the tokens, the leaders' inbox, enrolment and that each person only acts on their
+own shifts.
 
-The backend, `configure` and `evals` each point at the SDK next door with a `replace`, so
-`GOWORK=off` runs them without adding them to `go.work`.
+The team is made up, invites to `@example.com` addresses included. `CREW_SUPERVISOR_NAME` and
+`CREW_SUPERVISOR_EMAIL` name a real direct supervisor instead, so a check-in booked with them
+reaches their inbox through Cal.com.
+
+The backend and `configure` reach Stream's hosted router. `STREAM_ACCELERATION_URL`, with
+`STREAM_ACCELERATION_CUSTOMER_ID` for one without keys, points them at a router of your own, as
+in the [Swift demo](../swift_demo/README.md#run-it); the CLI only reaches the hosted one. Both
+point at the SDK next door with a `replace`, so `GOWORK=off` runs them without adding them to
+`go.work`.
 
 The agent runs on `xai/grok-4.7`, which reads photos and thinks before it answers, so replies
-show reasoning steps. The router needs `XAI_API_KEY`, and `DEEPGRAM_API_KEY` and
-`INWORLD_API_KEY` for voice mode.
+show reasoning steps.
 
 ## Evals
 
@@ -104,29 +107,19 @@ mustn't fill, an allergen), calling out with and without cover, a fryer error an
 fit check, the menu quiz, coming back from time off, the clock-out reflection and interview
 practice. The router holds each three times, worded differently, with a model playing the team
 member, and another model judges each conversation against the assertion, tool calls included.
-`configure` syncs them.
+The CLI syncs and runs them.
 
-A simulation's conversation has no user and no phone. The backend acts for the user its
-`-simulation-user` names, and refuses a call that names no user without it. `evals` stands in for
-the phone's three asked-first tools while it runs the simulations, calling the backend as that
-user, with every call allowed; a phone declares its own, which win. What the simulations write
-lands in that user's requests and the leaders' inbox.
+A simulation's conversation has no user and no phone. Started with `-simulation-user`, the backend
+acts for that user when a call names none, and hosts the phone's three asked-first tools too, run
+without asking; a phone declares its own, which win, so they only run where there is no phone.
+What the simulations write lands in that user's requests and the leaders' inbox.
 
 ```bash
-cd examples/voice_agents/crew_assistant/backend
-STREAM_API_KEY=<the router's STREAM_API_KEY> \
-STREAM_API_SECRET=<the router's STREAM_API_SECRET> \
-STREAM_ACCELERATION_URL=http://localhost:8080 \
-STREAM_ACCELERATION_CUSTOMER_ID=examples \
-GOWORK=off go run . -simulation-user crew-jordan
-
-cd ../evals
-STREAM_ACCELERATION_URL=http://localhost:8080 \
-STREAM_ACCELERATION_CUSTOMER_ID=examples \
-GOWORK=off go run .
+(cd examples/voice_agents/crew_assistant/backend && GOWORK=off go run . -simulation-user crew-jordan)
+getstream agents simulate ./examples/voice_agents/crew_assistant --force
 ```
 
-It prints each simulation's score and the judge's reason for every conversation that failed, and
-exits non-zero unless all of them passed. `-only <name>` runs the matching simulations alone, and
-`-transcripts` prints what was said in the failed ones. The three stand-ins mirror
+`--force` because `configure`'s settings make the CLI count the agent as changed since its sync.
+Name a simulation, such as `"Clock-in fit check"`, to run it alone. The CLI prints each transcript
+and the judge's ruling, and fails on any failed conversation. The three asked-first tools mirror
 `agent/crewTools.ts` in the app: change both together.

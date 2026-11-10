@@ -28,8 +28,9 @@ type (
 		ShiftID string `json:"shift_id" schema:"The shift to cover"`
 	}
 	leaderNote struct {
-		Message string `json:"message" schema:"The note, one or two sentences"`
-		ShiftID string `json:"shift_id,omitempty" schema:"The shift"`
+		Reason     string `json:"reason" enum:"sick,family,transport,other" schema:"Why they're out"`
+		ShiftID    string `json:"shift_id,omitempty" schema:"The shift"`
+		CoverAsked bool   `json:"cover_asked" schema:"Whether a teammate was asked to cover"`
 	}
 	handbookQuery struct {
 		Query string `json:"query" schema:"What to look for, in a few words"`
@@ -40,6 +41,22 @@ type (
 	equipment struct {
 		Asset string `json:"asset" schema:"The asset id"`
 		Code  string `json:"code,omitempty" schema:"The error code it shows, such as E-41"`
+	}
+	swap struct {
+		Note       string `json:"note,omitempty" schema:"A short note to the teammate"`
+		ShiftID    string `json:"shift_id" schema:"The shift to give away"`
+		TeammateID string `json:"teammate_id" schema:"The teammate, from find_coverage"`
+	}
+	ticket struct {
+		Asset    string `json:"asset,omitempty" schema:"The asset id"`
+		Details  string `json:"details" schema:"What they saw and already tried"`
+		Priority string `json:"priority,omitempty" schema:"low, normal or urgent"`
+		Summary  string `json:"summary" schema:"The problem, in a short line"`
+	}
+	checkIn struct {
+		Topic string `json:"topic,omitempty" schema:"What it is about"`
+		When  string `json:"when" schema:"When, such as \"Thursday 14:00\""`
+		With  string `json:"with" schema:"Who, by id or name, from get_team"`
 	}
 	reflection struct {
 		Energy int      `json:"energy" schema:"From 1 to 5"`
@@ -55,6 +72,10 @@ type (
 //
 // get_local_context is the phone's: a phone that declares it answers it. This one answers only
 // in a session with no phone, with the server's clock.
+//
+// With a simulationUser, this also hosts the phone's three tools that ask the person first, which
+// a simulation has no phone to run, and runs them without asking. A phone declares its own, which
+// win, so they only ever run in a session with no phone.
 func (s *server) hostedTools(simulationUser string) (*tools.Registry, error) {
 	registry := tools.NewRegistry()
 	whose := func(ctx context.Context) (string, error) {
@@ -79,7 +100,7 @@ func (s *server) hostedTools(simulationUser string) (*tools.Registry, error) {
 			return run(userID)
 		}
 	}
-	return registry, errors.Join(
+	registered := errors.Join(
 		tools.Register(registry, "get_local_context",
 			"The person's current date, local time, timezone and language. Call it before answering anything that depends on today or the time.",
 			func(context.Context, none) (any, error) {
@@ -106,9 +127,11 @@ func (s *server) hostedTools(simulationUser string) (*tools.Registry, error) {
 				return forUser(func(userID string) (any, error) { return s.crew.coverage(userID, in.ShiftID) })(ctx)
 			}),
 		tools.Register(registry, "notify_shift_leader",
-			"Sends the shift's leader a short status note, such as who is out and whether cover was asked for.",
+			"Tells the shift's leader the person is out: why, from a fixed list, and whether cover was asked for. It never carries health details.",
 			func(ctx context.Context, in leaderNote) (any, error) {
-				return forUser(func(userID string) (any, error) { return s.crew.leaderNote(userID, in.Message, in.ShiftID) })(ctx)
+				return forUser(func(userID string) (any, error) {
+					return s.crew.leaderNote(userID, in.Reason, in.ShiftID, in.CoverAsked)
+				})(ctx)
 			}),
 		tools.Register(registry, "search_handbook",
 			"Searches the team handbook: policies, uniform, food safety, allergens, breaks, swaps, time off, meals and values. The passages it finds are the only source for answers about them, and show as the reply's sources.",
@@ -135,6 +158,28 @@ func (s *server) hostedTools(simulationUser string) (*tools.Registry, error) {
 				return forUser(func(userID string) (any, error) {
 					return s.crew.reflection(userID, Reflection{Energy: in.Energy, Themes: in.Themes, Win: in.Win})
 				})(ctx)
+			}),
+	)
+	if registered != nil || simulationUser == "" {
+		return registry, registered
+	}
+	return registry, errors.Join(
+		tools.Register(registry, "request_shift_swap",
+			"Asks a teammate to take one of the person’s shifts. The phone asks the person first.",
+			func(ctx context.Context, in swap) (any, error) {
+				return forUser(func(userID string) (any, error) { return s.crew.swap(userID, in.ShiftID, in.TeammateID, in.Note) })(ctx)
+			}),
+		tools.Register(registry, "create_support_ticket",
+			"Drafts a repair ticket for the owner to review and submit. The phone asks the person first.",
+			func(ctx context.Context, in ticket) (any, error) {
+				return forUser(func(userID string) (any, error) {
+					return s.crew.ticket(userID, in.Asset, in.Summary, in.Details, in.Priority)
+				})(ctx)
+			}),
+		tools.Register(registry, "book_check_in",
+			"Books a 1-on-1 check-in with a leader or trainer. The phone asks the person first.",
+			func(ctx context.Context, in checkIn) (any, error) {
+				return forUser(func(userID string) (any, error) { return s.crew.checkIn(userID, in.With, in.When, in.Topic) })(ctx)
 			}),
 	)
 }
