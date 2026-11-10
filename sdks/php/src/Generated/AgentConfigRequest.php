@@ -81,6 +81,9 @@ final readonly class AgentConfigRequest
         public ?array $visibleTools = null,
         // The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by the name you ga...
         public ?string $voice = null,
+        // Where a response goes when llm fails it, in order: each a provider/model, a capability shortcut or one of y...
+        /** @var list<string>|null */
+        public ?array $llmFallbacks = null,
     ) {
     }
 
@@ -126,6 +129,7 @@ final readonly class AgentConfigRequest
             video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
             visibleTools: array_key_exists('visible_tools', $data) && $data['visible_tools'] !== null ? Json::strings($data, 'visible_tools') : null,
             voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
+            llmFallbacks: array_key_exists('llm_fallbacks', $data) && $data['llm_fallbacks'] !== null ? Json::strings($data, 'llm_fallbacks') : null,
         );
     }
 
@@ -242,6 +246,9 @@ final readonly class AgentConfigRequest
         }
         if ($this->voice !== null) {
             $out['voice'] = $this->voice;
+        }
+        if ($this->llmFallbacks !== null) {
+            $out['llm_fallbacks'] = $this->llmFallbacks;
         }
         return $out;
     }

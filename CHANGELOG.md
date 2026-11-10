@@ -2,6 +2,9 @@
 
 ## Features
 
+### An agent config names the models its llm falls back to
+
+`llm_fallbacks` on an agent config (`POST`, `PUT` and `PATCH /v1/agents/configs`) is an ordered list of up to five targets, each a provider/model, a capability shortcut or one of the customer's `custom/` models, that a conversation turn falls back to when `llm` fails it. `llm` stays the first choice. A response `llm` cannot start, a 5xx, a timeout, a 401, 402, 403, 404, 408 or 429 included, is asked of each next entry in turn; one `llm` says nothing in for as long as a reply may (`ROUTER_REPLY_HEDGE`, 1.2 s by default) is also asked of another entry, the first to start answering kept. A response that has started is never moved, however slowly it streams, and a run that outlasts its timeout still ends as a 504. A shortcut can never include a customer's own model, so this is how a `custom/` model is backed by one Stream serves, such as `xai/grok-4.7`. A target the deployment does not route, or one with no instance in the agent's region, is refused when the config is saved. Left out on a `PUT`, the stored list is kept; an empty list removes it. The flow controller and the subagent do not fall back along it. `POST /v1/agents/runs` now reports in `model_route` the model that answered, the fallback included, rather than `llm`. `agent.yaml` does not take it yet.
 ### Agent teams: Chat's team isolation for agent configs and channels
 
 An app with the `agent_teams` setting on (set by Stream, off by default) keeps each team's agent configs to its own users, as Chat multi-tenancy does: an end user opens a config only if their Stream user shares its `team` tag (a config of no team is open only to users in no team), and is answered as for an unknown config otherwise. Backends are not limited. The agent channel and voice transcript channel a session makes are in its config's team. With the setting off nothing changes (AI-3059, #1885, #1887).

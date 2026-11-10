@@ -817,6 +817,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 			Tags:          spec.Tags,
 			LLM:           m.options.LLM,
 			LLMTarget:     spec.LLMTarget,
+			LLMFallbacks:  spec.LLMFallbacks,
 			STT:           m.options.STT,
 			STTTarget:     spec.STTTarget,
 			TTS:           m.options.TTS,

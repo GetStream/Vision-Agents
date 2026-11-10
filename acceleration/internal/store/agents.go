@@ -71,7 +71,7 @@ func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) erro
 // A field added to AgentConfig and forgotten here is stored on create and silently
 // dropped on every update after, which reads as a setting that will not save.
 var configColumns = []string{
-	"name", "role", "mode", "region", "stt", "tts", "sts", "voice", "llm", "subagent",
+	"name", "role", "mode", "region", "stt", "tts", "sts", "voice", "llm", "llm_fallbacks", "subagent",
 	"video_source", "video_max_frames", "search", "instructions", "greeting", "greeting_mode", "guardrail", "review_instructions",
 	"skills", "connectors", "left_out_connectors", "channels", "scheduling", "calls", "keyterms", "visible_tools", "knowledge_namespace", "sandbox", "sandbox_options", "harness", "tags",
 	"dispatch_incoming_call", "dispatch_text", "episode_cards", "episode_cards_record", "progressive_tools", "tool_output_retention", "resume_history", "floor_control", "sync_hash", "updated_at",
