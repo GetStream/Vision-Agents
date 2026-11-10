@@ -309,6 +309,21 @@ func (s *TelnyxUnpaidSuite) TestATaskWhoseEndedSessionCannotReopenForMoneyIsNotR
 	s.Equal(int32(1), attempts, "spent credit outlasts every retry of the run")
 }
 
+// A message to an ended session that cannot be carried on, the credit being spent, is refused for
+// money as any request is: the scheduled delivery's own answer to the refusal is its alone.
+func (s *TelnyxUnpaidSuite) TestAMessageToAnEndedSessionOfAnOrganizationWithNoCreditIsRefusedForMoney() {
+	user, opened := s.spentAfterOpening()
+	status, body := user.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/stop", nil)
+	s.Require().Equal(http.StatusNoContent, status, string(body))
+	request := s.utils.uuid()
+
+	status, body = s.serverClient.actingFor(user).call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/respond",
+		RespondRequest{Text: "still there?", RequestId: &request})
+
+	s.Equal(http.StatusPaymentRequired, status, string(body))
+	s.Contains(string(body), `"code":"insufficient_credits"`)
+}
+
 // A phone task whose call the gate refuses, the credit being spent, rings nobody and is not tried
 // again: the run says the credit is spent.
 func (s *TelnyxUnpaidSuite) TestAPhoneTaskOfAnOrganizationWithNoCreditIsNotRetried() {
