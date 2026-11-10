@@ -357,3 +357,203 @@ func (s *ShardedStoreSuite) TestMeterShardsNameEveryShardThisOneFirst() {
 	s.Equal([]string{"here", "there"}, s.store.MeterShards())
 	s.Equal([]string{"there", "here"}, s.other.MeterShards())
 }
+
+// began saves a session of app's opened at at, on the shard of into, and closes it at
+// closed for reason when closed is not zero.
+func (s *StoreSuite) began(into *Store, id, appID string, at, closed time.Time, reason string) {
+	s.Require().NoError(into.SaveSession(s.ctx, &AgentSession{
+		ID: id, CustomerID: appID, AgentName: "agent-" + id, CallID: "call-" + id, CreatedAt: at,
+	}))
+	if !closed.IsZero() {
+		s.Require().NoError(into.CloseSession(s.ctx, id, closed, reason))
+	}
+}
+
+// Defect: endings counted for one app of the organization or for every app, a session opened
+// before since counted, a running session told as ended with no reason, or one reason listed
+// twice.
+func (s *StoreSuite) TestSessionEndingsCountTheAppsAskedForByHowTheyEnded() {
+	later := s.base.Add(time.Hour)
+	s.began(s.store, "hung-up-one", "one", s.base, later, "hangup")
+	s.began(s.store, "hung-up-two", "two", s.base.Add(time.Minute), later, "hangup")
+	s.began(s.store, "agent-hung-up", "one", s.base, later, "agent_hangup")
+	s.began(s.store, "no-reason", "two", s.base, later, "")
+	s.began(s.store, "running", "one", s.base, time.Time{}, "")
+	s.began(s.store, "stranger", "stranger", s.base, later, "transferred")
+	s.began(s.store, "before-since", "one", s.base.Add(-time.Second), later, "unanswered")
+
+	endings, err := s.store.SessionEndings(s.ctx, []string{"one", "two"}, s.base)
+	s.Require().NoError(err)
+
+	s.Equal([]SessionEnding{
+		{Running: true, Sessions: 1},
+		{EndReason: "", Sessions: 1},
+		{EndReason: "agent_hangup", Sessions: 1},
+		{EndReason: "hangup", Sessions: 2},
+	}, endings)
+}
+
+// Defect: the latest sessions of one app only, another organization's let in, one opened
+// before since let in, a list longer than the limit, or in another order than newest first.
+func (s *StoreSuite) TestLatestSessionsAreTheNewestOfTheAppsAskedFor() {
+	s.began(s.store, "one-oldest", "one", s.base, time.Time{}, "")
+	s.began(s.store, "one-newest", "one", s.base.Add(3*time.Minute), s.base.Add(time.Hour), "hangup")
+	s.began(s.store, "two-middle", "two", s.base.Add(2*time.Minute), time.Time{}, "")
+	s.began(s.store, "one-middle", "one", s.base.Add(time.Minute), time.Time{}, "")
+	s.began(s.store, "two-oldest", "two", s.base, time.Time{}, "")
+	s.began(s.store, "stranger", "stranger", s.base.Add(time.Hour), time.Time{}, "")
+	s.began(s.store, "before-since", "one", s.base.Add(-time.Second), time.Time{}, "")
+
+	latest, err := s.store.LatestSessions(s.ctx, []string{"one", "two"}, s.base, 3)
+	s.Require().NoError(err)
+
+	ids := make([]string, 0, len(latest))
+	for _, row := range latest {
+		ids = append(ids, row.ID)
+	}
+	s.Equal([]string{"one-newest", "two-middle", "one-middle"}, ids)
+	newest := latest[0]
+	s.Equal("one", newest.CustomerID)
+	s.Equal("agent-one-newest", newest.AgentName)
+	s.Equal(ModalityVoice, newest.Modality)
+	s.True(s.base.Add(3*time.Minute).Equal(newest.CreatedAt), "created at %s", newest.CreatedAt)
+	s.Require().NotNil(newest.ClosedAt)
+	s.True(s.base.Add(time.Hour).Equal(*newest.ClosedAt), "closed at %s", newest.ClosedAt)
+	s.Equal("hangup", newest.EndReason)
+	s.Nil(latest[1].ClosedAt)
+}
+
+// Defect: two sessions opened at the same time listed in an order that changes between reads.
+func (s *StoreSuite) TestLatestSessionsOpenedAtOnceAreListedByIdDescending() {
+	s.began(s.store, "a", "one", s.base, time.Time{}, "")
+	s.began(s.store, "c", "two", s.base, time.Time{}, "")
+	s.began(s.store, "b", "one", s.base, time.Time{}, "")
+
+	latest, err := s.store.LatestSessions(s.ctx, []string{"one", "two"}, s.base, 2)
+	s.Require().NoError(err)
+	s.Require().Len(latest, 2)
+	s.Equal("c", latest[0].ID)
+	s.Equal("b", latest[1].ID)
+}
+
+// Defect: an organization with no apps read as a failed query.
+func (s *StoreSuite) TestSessionsOfNoAppsAreNone() {
+	s.began(s.store, "one", "one", s.base, time.Time{}, "")
+
+	endings, err := s.store.SessionEndings(s.ctx, nil, s.base)
+	s.Require().NoError(err)
+	s.Empty(endings)
+	latest, err := s.store.LatestSessions(s.ctx, nil, s.base, 20)
+	s.Require().NoError(err)
+	s.Empty(latest)
+	legs, err := s.store.TurnLatency(s.ctx, nil, s.base)
+	s.Require().NoError(err)
+	s.Len(legs, 4)
+	for _, leg := range legs {
+		s.Zero(leg.Turns, leg.Leg)
+	}
+}
+
+// Defect: the sessions of another shard left out, one ending listed once per shard, or the
+// latest of one shard listed before newer ones of another.
+func (s *ShardedStoreSuite) TestSessionsAreReadFromEveryShard() {
+	later := s.base.Add(time.Hour)
+	s.began(s.store, "here-old", "one", s.base, later, "hangup")
+	s.began(s.other, "there-new", "two", s.base.Add(2*time.Minute), later, "hangup")
+	s.began(s.store, "here-new", "one", s.base.Add(time.Minute), time.Time{}, "")
+
+	endings, err := s.store.SessionEndings(s.ctx, []string{"one", "two"}, s.base)
+	s.Require().NoError(err)
+	s.Equal([]SessionEnding{{Running: true, Sessions: 1}, {EndReason: "hangup", Sessions: 2}}, endings)
+
+	latest, err := s.store.LatestSessions(s.ctx, []string{"one", "two"}, s.base, 2)
+	s.Require().NoError(err)
+	s.Require().Len(latest, 2)
+	s.Equal("there-new", latest[0].ID)
+	s.Equal("here-new", latest[1].ID)
+}
+
+// timed is a turn of app's at at whose legs took the milliseconds given, nil for a leg it
+// did not have.
+func timed(appID string, at time.Time, stt, llm, tts, roundtrip *float64) TurnSample {
+	return TurnSample{CustomerID: appID, AgentID: "agent-" + appID, StartedAt: at,
+		STTLatencyMs: stt, LLMTTFTMs: llm, TTSTTFBMs: tts, RoundtripMs: roundtrip}
+}
+
+// lasted is v milliseconds, as a turn holds a leg it had.
+func lasted(v float64) *float64 { return &v }
+
+// Defect: the latency of one app of the organization only, another organization's turns or
+// turns before the hour of since counted, a turn in the hour since falls in left out, a leg
+// read off another leg's bins, or a leg no turn had left out of the list.
+func (s *StoreSuite) TestTurnLatencyReadsEveryLegOfTheAppsAskedFor() {
+	since := s.base.Add(30 * time.Minute)
+	for n := 1; n <= 10; n++ {
+		app := []string{"one", "two"}[n%2]
+		s.Require().NoError(s.store.RecordTurnStats(s.ctx,
+			timed(app, s.base.Add(time.Duration(n)*time.Minute), nil, nil, nil, lasted(float64(n*100)))))
+	}
+	s.Require().NoError(s.store.RecordTurnStats(s.ctx, timed("one", s.base.Add(time.Hour), lasted(40), nil, lasted(300), nil)))
+	s.Require().NoError(s.store.RecordTurnStats(s.ctx, timed("two", s.base.Add(time.Hour), lasted(40), nil, nil, nil)))
+	s.Require().NoError(s.store.RecordTurnStats(s.ctx, timed("stranger", s.base, lasted(60_000), lasted(60_000), lasted(60_000), lasted(60_000))))
+	s.Require().NoError(s.store.RecordTurnStats(s.ctx,
+		timed("one", s.base.Add(-time.Minute), lasted(60_000), lasted(60_000), lasted(60_000), lasted(60_000))))
+
+	legs, err := s.store.TurnLatency(s.ctx, []string{"one", "two"}, since)
+	s.Require().NoError(err)
+
+	s.Require().Equal([]string{"stt_latency", "llm_ttft", "tts_ttfb", "roundtrip"},
+		[]string{legs[0].Leg, legs[1].Leg, legs[2].Leg, legs[3].Leg})
+	s.Equal(int64(2), legs[0].Turns)
+	s.Equal(LegLatency{Leg: "llm_ttft"}, legs[1])
+	s.Equal(int64(1), legs[2].Turns)
+	s.Equal(int64(10), legs[3].Turns)
+	// Bins are 5% wide, so each percentile is within 5% of the turn it falls on.
+	within := func(want float64, got *float64, name string) {
+		s.Require().NotNil(got, name)
+		s.InEpsilon(want, *got, 0.05, name)
+	}
+	within(40, legs[0].P50Ms, "stt p50")
+	within(40, legs[0].P99Ms, "stt p99")
+	within(300, legs[2].P95Ms, "tts p95")
+	within(500, legs[3].P50Ms, "roundtrip p50")
+	within(1000, legs[3].P95Ms, "roundtrip p95")
+	within(1000, legs[3].P99Ms, "roundtrip p99")
+}
+
+// Defect: a percentile picked from the 95th or 50th where the 99th was asked, which turns
+// enough apart tell from each other.
+func (s *StoreSuite) TestTurnLatencyTellsEachPercentileApart() {
+	for n := 1; n <= 100; n++ {
+		s.Require().NoError(s.store.RecordTurnStats(s.ctx, timed("one", s.base, nil, nil, nil, lasted(float64(n*10)))))
+	}
+
+	legs, err := s.store.TurnLatency(s.ctx, []string{"one"}, s.base)
+	s.Require().NoError(err)
+
+	roundtrip := legs[3]
+	s.Require().NotNil(roundtrip.P50Ms)
+	s.Require().NotNil(roundtrip.P95Ms)
+	s.Require().NotNil(roundtrip.P99Ms)
+	s.InEpsilon(500, *roundtrip.P50Ms, 0.05)
+	s.InEpsilon(950, *roundtrip.P95Ms, 0.05)
+	s.InEpsilon(990, *roundtrip.P99Ms, 0.05)
+}
+
+// Defect: the turns of another shard left out, or the bins of two shards read in the order
+// the shards answered rather than by latency, which moves the percentiles.
+func (s *ShardedStoreSuite) TestTurnLatencySumsEveryShard() {
+	s.Require().NoError(s.store.RecordTurnStats(s.ctx, timed("one", s.base, nil, nil, nil, lasted(100))))
+	s.Require().NoError(s.other.RecordTurnStats(s.ctx, timed("two", s.base, nil, nil, nil, lasted(1000))))
+	s.Require().NoError(s.other.RecordTurnStats(s.ctx, timed("two", s.base, nil, nil, nil, lasted(100))))
+
+	legs, err := s.store.TurnLatency(s.ctx, []string{"one", "two"}, s.base)
+	s.Require().NoError(err)
+
+	roundtrip := legs[3]
+	s.Equal(int64(3), roundtrip.Turns)
+	s.Require().NotNil(roundtrip.P50Ms)
+	s.Require().NotNil(roundtrip.P95Ms)
+	s.InEpsilon(100, *roundtrip.P50Ms, 0.05)
+	s.InEpsilon(1000, *roundtrip.P95Ms, 0.05)
+}
