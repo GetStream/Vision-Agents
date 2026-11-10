@@ -354,6 +354,7 @@ from .ocr_result import OcrResult
 from .ocr_status import OcrStatus
 from .offered_tool import OfferedTool
 from .offered_tool_parameters import OfferedToolParameters
+from .offered_tool_source import OfferedToolSource
 from .offered_tools import OfferedTools
 from .opt_out import OptOut
 from .opt_out_channel import OptOutChannel
@@ -977,6 +978,7 @@ __all__ = (
     "OcrStatus",
     "OfferedTool",
     "OfferedToolParameters",
+    "OfferedToolSource",
     "OfferedTools",
     "OptOut",
     "OptOutChannel",

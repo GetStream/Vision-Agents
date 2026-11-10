@@ -303,6 +303,7 @@ func (s *DispatchSuite) TestTwoWorkersOnOneCustomerShareTheCalls() {
 }
 
 func (s *DispatchSuite) TestHostedToolsAreKeptForTheAgentTheWorkerNames() {
+	s.serverClient.agentNamed("stream-support")
 	worker := s.worker()
 
 	s.Require().NoError(worker.WriteJSON(frame{
@@ -311,7 +312,7 @@ func (s *DispatchSuite) TestHostedToolsAreKeptForTheAgentTheWorkerNames() {
 	}))
 
 	hosting := s.next(worker)
-	s.Equal("hosting", hosting["type"], "an agent id needs nothing stored to host for")
+	s.Equal("hosting", hosting["type"])
 	s.Equal("stream-support", hosting["agent_id"])
 
 	tools, timeout := s.dispatch.HostedTools(s.customerID(), "stream-support")
@@ -321,6 +322,7 @@ func (s *DispatchSuite) TestHostedToolsAreKeptForTheAgentTheWorkerNames() {
 }
 
 func (s *DispatchSuite) TestAHostedToolsOwnTimeoutReplacesTheWorkers() {
+	s.serverClient.agentNamed("stream-support")
 	worker := s.worker()
 	s.Require().NoError(worker.WriteJSON(frame{
 		"type": "host_tools", "agent_id": "stream-support", "timeout_ms": 60_000,
@@ -353,6 +355,23 @@ func (s *DispatchSuite) TestANegativeHostedToolTimeoutIsRefused() {
 	}))
 
 	s.Equal("hosting_refused", s.next(worker)["type"])
+}
+
+func (s *DispatchSuite) TestHostedToolsForAnAgentTheAppDoesNotHaveAreRefused() {
+	s.serverClient.agentNamed("stream-support")
+	worker := s.worker()
+
+	s.Require().NoError(worker.WriteJSON(frame{
+		"type": "host_tools", "agent_id": "stream-suport",
+		"tools": []frame{{"name": "investigate_sdk", "description": "Read SDK source"}},
+	}))
+
+	refused := s.next(worker)
+	s.Equal("hosting_refused", refused["type"])
+	s.Equal("stream-suport", refused["agent_id"])
+	s.Contains(refused["reason"], "there is no agent called stream-suport")
+	tools, _ := s.dispatch.HostedTools(s.customerID(), "stream-suport")
+	s.Empty(tools, "a misspelled agent hosts nothing")
 }
 
 func (s *DispatchSuite) TestHostedToolsNeedAnAgentToBeFor() {
@@ -561,6 +580,14 @@ func (s *DispatchSuite) TestAWorkerThatPingsAsTheRouterClosesHasItsAnswerRead() 
 
 // worker opens the dispatch socket as a backend and waits until it is in the rotation, so a
 // test that assigns a call straight afterwards does not race the registration.
+// agentNamed is an agent config the client's app holds under name, which a worker needs
+// before it can host tools for the agent. One the app holds already is kept.
+func (c *testClient) agentNamed(name string) {
+	status := c.do(http.MethodPost, "/v1/agents/configs",
+		AgentConfigRequest{Name: name, Instructions: pointerTo("be brief")}, nil)
+	c.suite.Require().Contains([]int{http.StatusCreated, http.StatusConflict}, status, "creating agent %s", name)
+}
+
 func (s *DispatchSuite) worker() *websocket.Conn {
 	return s.opensWith("/v1/dispatch")
 }

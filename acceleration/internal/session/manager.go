@@ -694,8 +694,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	// after the caller's so a caller cannot quietly replace a transfer, and the agent
 	// drops whichever of them nothing on this call can carry out.
 	tools := append([]harness.Tool(nil), spec.Tools...)
+	sources := map[string]ToolSource{}
+	markTools(sources, tools, ToolFromSession)
 	var callers agent.ToolRunner = created.tools
 	tools, callers = m.hostedTools(spec, created.id, hostedProgress{created}, tools, callers)
+	markTools(sources, tools[len(spec.Tools):], ToolFromWorker)
 	tools, callers = moderationTools(spec, stream, tools, callers)
 	if line != nil || m.reading(spec) || m.searching(spec) || spec.endsCalls() {
 		builtin, err := harness.DefaultTools()
@@ -736,6 +739,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 			return nil, err
 		}
 		tools = append(tools, connectorTools...)
+		markTools(sources, connectorTools, ToolFromConnector)
 		connectors.next = runner
 		runner = connectors
 		connectors.askIn(conv, created.chose)
@@ -744,6 +748,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		created.closers = append(created.closers, connectors.Close, connectors.closeLogins)
 	}
 	created.connectorsUnavailable = connectorsUnavailable
+	created.toolSources = sources
 	if spec.ProgressiveTools {
 		tools, runner = progressively(tools, connectorTools, runner)
 	}

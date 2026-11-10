@@ -2,6 +2,9 @@
 
 ## Features
 
+### A session's tools say where they came from
+
+`GET /v1/agents/sessions/{id}/tools` gives each tool `source`: `session` (declared by whoever opened the session), `worker` (hosted by a worker connected when the session opened), `connector` or `builtin`. It is kept with the session, so an ended session and each simulation conversation (by its `call_id`) answer it too; a session kept before this names none. A session's tools are fixed when it opens, so one opened while its worker was down simply has no `worker` tools, and this is how a test or a simulation shows it rather than leaving the model to say the tool is unavailable (AI-3131).
 ### The operator hears when an organization's spend jumps
 
 With `ROUTER_LIMITS_SLACK_TOKEN` and `ROUTER_LIMITS_SLACK_CHANNEL` set, one router of the deployment checks every hour each organization's billable spend today (UTC) against its median day of the 7 before, read from `requests` on every shard. At 5x that median, and past a minimum spend, it posts once per organization and day to the channel the money limit notices go to, with today's spend, the median and a link to the staff page (`ROUTER_LIMITS_STAFF_URL`). An organization that spent on fewer than 4 of the 7 days is not checked. `cost_anomaly_notices` keeps each post, so another router or a restart does not post it again, and a post that failed is retried by a later check. No metric is added (AI-2835, #1899).
@@ -449,6 +452,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### A worker cannot host tools for an agent the app does not have
+
+`host_tools` on `/v1/dispatch` is answered `hosting_refused` with `there is no agent called <name>` when the app has no agent config of that name. Sessions are only opened by a config's name, so such tools were never offered to anything while the worker looked healthy. The Go, Python and JavaScript SDKs already stop the worker on a refusal, so a misspelled `api.Agent("<name>")` now fails at start naming the agent; sync the agent before starting its worker. A router with no config store, or one that cannot read it at that moment, still takes the offer (AI-3132).
 ### JavaScript: the SDK is @stream-io/stream-agents
 
 The JavaScript SDK is published as `@stream-io/stream-agents` from 0.4.0. Install it and import from `@stream-io/stream-agents`, `@stream-io/stream-agents/chat`, `/video` and `/node`. Nothing else in the API changed.

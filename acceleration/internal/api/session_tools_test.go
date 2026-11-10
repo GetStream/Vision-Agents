@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -37,6 +38,12 @@ type SessionToolsSuite struct {
 
 func TestSessionToolsSuite(t *testing.T) {
 	runSuite(t, new(SessionToolsSuite))
+}
+
+// SetupSuite has sessions offer what the suite's workers host, as cmd/router does.
+func (s *SessionToolsSuite) SetupSuite() {
+	s.RouterSuite.SetupSuite()
+	s.manager.HostTools(s.dispatch)
 }
 
 func (s *SessionToolsSuite) SetupTest() {
@@ -88,6 +95,65 @@ func (s *SessionToolsSuite) TestASessionSaysWhatItsModelIsOffered() {
 		total += tool.Tokens
 	}
 	s.Equal(total, offered.Tokens)
+}
+
+func (s *SessionToolsSuite) TestASessionSaysWhereEachToolItIsOfferedCameFrom() {
+	agent := "agent-" + s.utils.uuid()
+	s.await(s.serverClient.opens("/v1/dispatch"), "ready")
+	s.Require().NoError(s.dispatch.Host(s.dispatch.Workers(s.customerID())[0], agent,
+		[]dispatch.Tool{{Name: "investigate_sdk", Description: "Read SDK source"}}, time.Minute))
+
+	request := textSession(nil)
+	request.AgentId = &agent
+	request.Tools = &[]SessionTool{{Name: "lookup_order", Description: "find an order by its number"}}
+	opened := s.serverClient.createSession(request)
+
+	sources := s.toolSources(opened.Id)
+	s.Equal("session", sources["lookup_order"])
+	s.Equal("worker", sources["investigate_sdk"])
+	for name, source := range sources {
+		if name != "lookup_order" && name != "investigate_sdk" {
+			s.Equal("builtin", source, name)
+		}
+	}
+}
+
+func (s *SessionToolsSuite) TestASessionOpenedWithNoWorkerHostingItsAgentHasNoWorkerTools() {
+	agent := "agent-" + s.utils.uuid()
+	request := textSession(nil)
+	request.AgentId = &agent
+	opened := s.serverClient.createSession(request)
+
+	for name, source := range s.toolSources(opened.Id) {
+		s.NotEqual("worker", source, name)
+	}
+}
+
+func (s *SessionToolsSuite) TestASessionTheRouterLetGoOfSaysWhereItsToolsCameFrom() {
+	id := s.utils.uuid()
+	s.Require().NoError(s.store.SaveSession(context.Background(), &store.AgentSession{
+		ID: id, CustomerID: s.customerID(), AgentName: "support", AgentID: "support", State: store.SessionClosed,
+	}))
+	s.Require().NoError(s.store.SaveSessionTools(context.Background(), id, []store.ToolDefinition{
+		{Name: "investigate_sdk", Description: "Read SDK source", Source: "worker"},
+		{Name: "lookup_order", Description: "find an order by its number"},
+	}))
+
+	sources := s.toolSources(id)
+	s.Equal("worker", sources["investigate_sdk"])
+	s.Empty(sources["lookup_order"], "a tool kept before sources were recorded names none")
+}
+
+// toolSources is where each tool a session is offered came from, by name.
+func (s *SessionToolsSuite) toolSources(sessionID string) map[string]string {
+	var offered OfferedTools
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodGet, "/v1/agents/sessions/"+sessionID+"/tools", nil, &offered))
+	sources := map[string]string{}
+	for _, tool := range offered.Tools {
+		sources[tool.Name] = tool.Source
+	}
+	return sources
 }
 
 func (s *SessionToolsSuite) TestASessionTheRouterLetGoOfListsWhatItWasOffered() {

@@ -7,6 +7,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
+from ..models.offered_tool_source import OfferedToolSource
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -26,12 +27,17 @@ class OfferedTool:
         tokens (int): Roughly what offering it costs on every request, in tokens: its name, description and schema at
             four characters a token.
         parameters (OfferedToolParameters | Unset): The JSON Schema of its arguments.
+        source (OfferedToolSource | Unset): Where the tool came from: session, declared by whoever opened the session;
+            worker, hosted by a worker connected when the session opened; connector, opened by one of the agent's connector
+            bindings; builtin, the router's own. A session's tools are fixed when it opens, so a worker that was not
+            connected then leaves none of its tools here. Absent for a session kept before sources were recorded.
     """
 
     description: str
     name: str
     tokens: int
     parameters: OfferedToolParameters | Unset = UNSET
+    source: OfferedToolSource | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,6 +51,10 @@ class OfferedTool:
         if not isinstance(self.parameters, Unset):
             parameters = self.parameters.to_dict()
 
+        source: str | Unset = UNSET
+        if not isinstance(self.source, Unset):
+            source = self.source.value
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -56,6 +66,8 @@ class OfferedTool:
         )
         if parameters is not UNSET:
             field_dict["parameters"] = parameters
+        if source is not UNSET:
+            field_dict["source"] = source
 
         return field_dict
 
@@ -77,11 +89,19 @@ class OfferedTool:
         else:
             parameters = OfferedToolParameters.from_dict(_parameters)
 
+        _source = d.pop("source", UNSET)
+        source: OfferedToolSource | Unset
+        if isinstance(_source, Unset):
+            source = UNSET
+        else:
+            source = OfferedToolSource._decode(_source)
+
         offered_tool = cls(
             description=description,
             name=name,
             tokens=tokens,
             parameters=parameters,
+            source=source,
         )
 
         offered_tool.additional_properties = d

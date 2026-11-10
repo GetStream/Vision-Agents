@@ -2319,7 +2319,7 @@ export type paths = {
         };
         /**
          * List the tools a session's model is offered
-         * @description The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+         * @description The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out, each with where it came from. A worker's tools are here only if a worker hosting them was connected when the session opened, so a session missing them was opened while none was. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
          */
         readonly get: operations["listSessionTools"];
         readonly put?: never;
@@ -7976,6 +7976,11 @@ export type components = {
             readonly parameters?: {
                 readonly [key: string]: unknown;
             };
+            /**
+             * @description Where the tool came from: session, declared by whoever opened the session; worker, hosted by a worker connected when the session opened; connector, opened by one of the agent's connector bindings; builtin, the router's own. A session's tools are fixed when it opens, so a worker that was not connected then leaves none of its tools here. Absent for a session kept before sources were recorded.
+             * @enum {string}
+             */
+            readonly source?: "session" | "worker" | "connector" | "builtin";
             /**
              * Format: int64
              * @description Roughly what offering it costs on every request, in tokens: its name, description and schema at four characters a token.

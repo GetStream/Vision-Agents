@@ -229,8 +229,9 @@ func (s *ForwardedDispatchSuite) TestAToolIsNoLongerOfferedOnceTheWorkerHostingI
 
 func (s *ForwardedDispatchSuite) TestAToolHostedForAnotherCustomerIsNotOffered() {
 	agent := "agent-" + s.utils.uuid()
-	worker := s.waitsOnTheOtherNodeAs(s.data.backendOfAnotherApp())
-	s.host(worker, agent)
+	another := s.data.backendOfAnotherApp()
+	worker := s.waitsOnTheOtherNodeAs(another)
+	s.host(worker, another, agent)
 
 	offered, _ := s.elsewhere.HostedTools(s.customerID(), agent)
 	s.Empty(offered)
@@ -376,11 +377,13 @@ func (s *ForwardedDispatchSuite) waitsOnTheOtherNodeAs(client *testClient) *webs
 // tool for an agent.
 func (s *ForwardedDispatchSuite) hostsOnTheOtherNode(agent string) *websocket.Conn {
 	worker := s.waitsOnTheOtherNode()
-	s.host(worker, agent)
+	s.host(worker, s.serverClient, agent)
 	return worker
 }
 
-func (s *ForwardedDispatchSuite) host(worker *websocket.Conn, agent string) {
+// host has a worker for the app client acts for host one tool for an agent of that app.
+func (s *ForwardedDispatchSuite) host(worker *websocket.Conn, client *testClient, agent string) {
+	client.agentNamed(agent)
 	s.Require().NoError(worker.WriteJSON(frame{
 		"type": "host_tools", "agent_id": agent,
 		"tools": []frame{{"name": "investigate_sdk", "description": "Read SDK source"}},
