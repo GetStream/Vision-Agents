@@ -1475,6 +1475,7 @@ func (s *RoutingSuite) TestSelectRefusesADataPolicyNoProviderMeets() {
 	})
 
 	s.ErrorContains(err, "no provider meets your data policy")
+	s.ErrorIs(err, ErrRequest, "the customer's to change, not a provider's failure")
 }
 
 func (s *RoutingSuite) TestADataPolicyAskingNothingRulesNothingOut() {
@@ -1622,6 +1623,7 @@ func (s *RoutingSuite) TestSeeingDropsModelsThatCannotTakeAnImage() {
 
 	_, err = seeing(candidates[:1], []string{"image"})
 	s.ErrorContains(err, "no provider accepts image input")
+	s.ErrorIs(err, ErrRequest, "the caller's to change, not a provider's failure")
 }
 
 func (s *RoutingSuite) TestDefaultConfigDeclaresVisionOnOpenAIGeminiAnthropicMetaXAIMoondreamAndNemotronVL() {
