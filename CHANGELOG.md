@@ -5,6 +5,25 @@
 ### A session's tools say where they came from
 
 `GET /v1/agents/sessions/{id}/tools` gives each tool `source`: `session` (declared by whoever opened the session), `worker` (hosted by a worker connected when the session opened), `connector` or `builtin`. It is kept with the session, so an ended session and each simulation conversation (by its `call_id`) answer it too; a session kept before this names none. A session's tools are fixed when it opens, so one opened while its worker was down simply has no `worker` tools, and this is how a test or a simulation shows it rather than leaving the model to say the tool is unavailable (AI-3131).
+### The operator hears when an organization's spend jumps
+
+With `ROUTER_LIMITS_SLACK_TOKEN` and `ROUTER_LIMITS_SLACK_CHANNEL` set, one router of the deployment checks every hour each organization's billable spend today (UTC) against its median day of the 7 before, read from `requests` on every shard. At 5x that median, and past a minimum spend, it posts once per organization and day to the channel the money limit notices go to, with today's spend, the median and a link to the staff page (`ROUTER_LIMITS_STAFF_URL`). An organization that spent on fewer than 4 of the 7 days is not checked. `cost_anomaly_notices` keeps each post, so another router or a restart does not post it again, and a post that failed is retried by a later check. No metric is added (AI-2835, #1899).
+
+### The router records which areas of the API each app uses
+
+Every request an app makes is counted in `customer_activity`, one row per app, area of the API (`dashboard_reads`, `agent_setup`, `conversations`, `workers`, `voice_video`, `model_api`, `phone_sms`, `connectors`, `scheduling`, `evals`, `data`, `other`), client (`X-Stream-Client`: `dashboard`, `cli`, `sdk`, else `api`) and UTC day: the requests, the refusals, the last refusal's error code and time, and the first and last request. The sums are written once a minute and when the router stops (AI-2374, #1897).
+
+### Stream staff read how far an organization got with Agents
+
+`GET /v1/ops/orgs/{org_id}/activity` (ops key only) answers whether an organization tried Agents, how far it got and how much it used. It returns its apps' `customer_activity` by area and client, their `requests` on every shard in `postgres.shards` by modality (requests, tokens, audio, characters, time, cost), with `shards` naming the shards it read, `first_seen` and `last_seen`, and `furthest_step` (`none`, `dashboard_reads`, `agent_setup`, `conversations`, `steady_use`). `since` is 30 days ago by default and at most 90 (AI-2379, #1900).
+
+### The router records each voice session's media quality
+
+Each voice session observes, once when the agent leaves, the media quality of the agent's own leg between the router and the SFU: `router_agent_media_packet_loss_ratio` and `router_agent_media_jitter_seconds` by `direction` (`inbound`, the participants' audio as it reached the agent; `outbound`, the agent's audio in the SFU's receiver reports), `router_agent_media_concealed_ratio`, the share of participants' audio the decoder made up for lost packets, and `router_agent_media_rtt_seconds`, the ICE round trip. No call or customer label; the same numbers go in one `media quality` log line per call. The caller's own leg to the SFU is not in them (AI-2829, #1895).
+
+### Model calls are traced under the OpenTelemetry GenAI names
+
+With tracing on, each LLM model call has a `chat <model>` span with `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.model`, the token counts the provider reported (`gen_ai.usage.*`) and `error.type`, after the GenAI conventions at commit `e6658f14c9d9`. The `router_*` metrics are unchanged; `acceleration/internal/llmrouter/AGENTS.md` maps them to the GenAI metric names (AI-2838, #1894).
 
 ### The Kotlin SDK is published to Stream's Maven repository
 
@@ -213,7 +232,7 @@ A page that reaches a router by `customerId` and names its user with `setUser` i
 
 ### The JavaScript SDK works with stream-chat 9 and 10
 
-`@stream-io/calypso` takes `stream-chat` `^9.0.0 || ^10.0.0-0` as its optional peer, release candidates of 10 included, where `>=9.0.0` refused them with `ERESOLVE`. One build reads a Chat message by its shape, never by version: `LiveReasoning`, `session.speech.heard` and the check for a reply still being written read `reasoning`, `turn_id`, `generating`, `source` and `ai_generated` at the top level as 9 has them or under `custom` as 10 does, so on 10 a reply's thinking is whole again rather than its opening alone. `client.use({ chat })` takes 10's `StreamChat`, which names its user `userId`, and a client the SDK connects itself on 10 carries the user's own fields from `setUser` under `custom`, as 10 takes them.
+`@stream-io/stream-agents` takes `stream-chat` `^9.0.0 || ^10.0.0-0` as its optional peer, release candidates of 10 included, where `>=9.0.0` refused them with `ERESOLVE`. One build reads a Chat message by its shape, never by version: `LiveReasoning`, `session.speech.heard` and the check for a reply still being written read `reasoning`, `turn_id`, `generating`, `source` and `ai_generated` at the top level as 9 has them or under `custom` as 10 does, so on 10 a reply's thinking is whole again rather than its opening alone. `client.use({ chat })` takes 10's `StreamChat`, which names its user `userId`, and a client the SDK connects itself on 10 carries the user's own fields from `setUser` under `custom`, as 10 takes them.
 
 ### A session sets how many tool rounds a reply may chain
 
@@ -436,6 +455,9 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 ### A worker cannot host tools for an agent the app does not have
 
 `host_tools` on `/v1/dispatch` is answered `hosting_refused` with `there is no agent called <name>` when the app has no agent config of that name. Sessions are only opened by a config's name, so such tools were never offered to anything while the worker looked healthy. The Go, Python and JavaScript SDKs already stop the worker on a refusal, so a misspelled `api.Agent("<name>")` now fails at start naming the agent; sync the agent before starting its worker. A router with no config store, or one that cannot read it at that moment, still takes the offer (AI-3132).
+### JavaScript: the SDK is @stream-io/stream-agents
+
+The JavaScript SDK is published as `@stream-io/stream-agents` from 0.4.0. Install it and import from `@stream-io/stream-agents`, `@stream-io/stream-agents/chat`, `/video` and `/node`. Nothing else in the API changed.
 
 ### JavaScript: an Agent opens its sessions on its synced config
 
@@ -477,7 +499,7 @@ Creating, replacing, patching or syncing an agent config with a non-empty `plugi
 
 ### The JavaScript SDK refuses `plugins` and `mcp_servers` in agent.yaml
 
-`loadFolder` and `parseDeclaration` in `@stream-io/calypso` fail on a non-empty `plugins:` or `mcp_servers:` in `agent.yaml`: `<path>/agent.yaml: plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors`, or `<path>/agent.yaml: mcp_servers is no longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors`, as the Go SDK does. `Agent.sync` no longer sends either key, and `Declaration` loses `plugins` and `mcpServers`, so code that reads them no longer compiles. An empty key (`plugins: []`, `mcp_servers: ~`, or the key with nothing after it) names nothing and loads, and the sync body is the same as before (AI-2533).
+`loadFolder` and `parseDeclaration` in `@stream-io/stream-agents` fail on a non-empty `plugins:` or `mcp_servers:` in `agent.yaml`: `<path>/agent.yaml: plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors`, or `<path>/agent.yaml: mcp_servers is no longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors`, as the Go SDK does. `Agent.sync` no longer sends either key, and `Declaration` loses `plugins` and `mcpServers`, so code that reads them no longer compiles. An empty key (`plugins: []`, `mcp_servers: ~`, or the key with nothing after it) names nothing and loads, and the sync body is the same as before (AI-2533).
 
 ### The Python SDK refuses `mcp_servers` in agent.yaml
 

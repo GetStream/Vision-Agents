@@ -141,6 +141,42 @@ components:
         - balance_state
         - limits
       type: object
+    ActivityArea:
+      properties:
+        area:
+          description: The area of the API, such as agent_setup or conversations.
+          type: string
+        client:
+          description: 'The client the requests named themselves as: dashboard, cli, sdk or api.'
+          type: string
+        first_at:
+          description: When the first request arrived.
+          format: date-time
+          type: string
+        last_at:
+          description: When the last request arrived.
+          format: date-time
+          type: string
+        last_refusal_code:
+          description: The error code of the latest refusal, empty when there was none.
+          type: string
+        refused:
+          description: How many were answered with a status of 400 or more.
+          format: int64
+          type: integer
+        requests:
+          description: How many requests arrived, refused ones included.
+          format: int64
+          type: integer
+      required:
+        - area
+        - client
+        - first_at
+        - last_at
+        - requests
+        - refused
+        - last_refusal_code
+      type: object
     ActivityBucket:
       properties:
         active_users:
@@ -185,6 +221,58 @@ components:
       enum:
         - daily
         - monthly
+      type: string
+    ActivityMeter:
+      properties:
+        audio_ms:
+          description: Billable audio, transcribed or produced, in milliseconds.
+          format: int64
+          type: integer
+        characters:
+          description: Billable text, in characters.
+          format: int64
+          type: integer
+        cost_micros:
+          description: What it is charged, in millionths of a dollar.
+          format: int64
+          type: integer
+        duration_ms:
+          description: 'How long the work took, in milliseconds: for runtime and sandbox, the time held.'
+          format: int64
+          type: integer
+        input_tokens:
+          description: Tokens read, cached ones included.
+          format: int64
+          type: integer
+        meter:
+          description: The modality, such as llm, tts, runtime or sandbox.
+          type: string
+        output_tokens:
+          description: Tokens generated.
+          format: int64
+          type: integer
+        requests:
+          description: How many requests. Runtime and sandbox are time, not requests, and read 0.
+          format: int64
+          type: integer
+      required:
+        - meter
+        - requests
+        - input_tokens
+        - output_tokens
+        - audio_ms
+        - characters
+        - duration_ms
+        - cost_micros
+      type: object
+    ActivityStep:
+      description: 'The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.'
+      enum:
+        - none
+        - dashboard_reads
+        - agent_setup
+        - conversations
+        - steady_use
       type: string
     AddContactsRequest:
       properties:
@@ -6383,6 +6471,51 @@ components:
       required:
         - has_more
         - items
+      type: object
+    OrganizationActivity:
+      properties:
+        areas:
+          description: Every area and client the organization's apps made requests in, by area then client.
+          items:
+            $ref: '#/components/schemas/ActivityArea'
+          nullable: true
+          type: array
+        first_seen:
+          description: When the first request of any area arrived, absent when none did.
+          format: date-time
+          type: string
+        furthest_step:
+          $ref: '#/components/schemas/ActivityStep'
+        last_seen:
+          description: When the last request of any area arrived, absent when none did.
+          format: date-time
+          type: string
+        meters:
+          description: What the organization's apps' work came to, by modality, from the shards listed in shards.
+          items:
+            $ref: '#/components/schemas/ActivityMeter'
+          nullable: true
+          type: array
+        organization_id:
+          description: The organization.
+          type: string
+        shards:
+          description: The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them.
+          items:
+            type: string
+          nullable: true
+          type: array
+        since:
+          description: The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on.
+          format: date-time
+          type: string
+      required:
+        - organization_id
+        - since
+        - furthest_step
+        - areas
+        - meters
+        - shards
       type: object
     PhoneCapability:
       description: What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.
@@ -22023,6 +22156,48 @@ paths:
       security:
         - OpsKey: []
       summary: Suspend an app's telephony
+      tags:
+        - Staff
+  /v1/ops/orgs/{org_id}/activity:
+    get:
+      description: |-
+        Whether an organization tried Agents, how far it got and how much it used: what its apps did in each area of the API, from each client, and what their work came to by modality, summed over every shard in postgres.shards, which the answer names. An organization with nothing recorded is answered with empty lists and furthest_step none. Every area and client is one item, so the lists are short and have no cursor. Areas, first_seen, last_seen and furthest_step come from counts kept since they were first recorded, while meters come from every request, so an organization whose use is older than the counts can read furthest_step none with meters that show use.
+
+        Stream staff only: it needs the ops key.
+      operationId: getOrganizationActivity
+      parameters:
+        - description: The organization.
+          in: path
+          name: org_id
+          required: true
+          schema:
+            description: The organization.
+            maxLength: 255
+            type: string
+        - description: Read from this on, at most 90 days ago. Omitted is 30 days ago.
+          explode: false
+          in: query
+          name: since
+          schema:
+            description: Read from this on, at most 90 days ago. Omitted is 30 days ago.
+            format: date-time
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationActivity'
+          description: The organization's activity
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - OpsKey: []
+      summary: Get an organization's Agents activity
       tags:
         - Staff
   /v1/ops/stats/rollup:

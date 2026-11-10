@@ -122,7 +122,7 @@ func (s *StoreSuite) SetupTest() {
 	for _, db := range append([]bun.IDB{s.store.db}, s.store.shards()...) {
 		_, err := db.ExecContext(
 			s.ctx,
-			"TRUNCATE requests, stats_hourly, stats_daily, stats_tags_hourly, stats_tags_daily,"+
+			"TRUNCATE requests, stats_hourly, stats_daily, stats_tags_hourly, stats_tags_daily, customer_activity,"+
 				" turn_stats_hourly, turn_latency_hourly, calls, phone_numbers, sip_trunks,"+
 				" voices, agent_sessions, agent_responses, agent_response_items, users,"+
 				" policies, app_organizations, call_resources, stream_trunks, organizations, agent_configs,"+
@@ -133,7 +133,7 @@ func (s *StoreSuite) SetupTest() {
 				" connection_event_subscriptions, connection_event_deliveries,"+
 				" connector_invocations, connector_audit, simulations, simulation_runs, simulation_cases,"+
 				" campaigns, campaign_contacts, campaign_attempts, scheduled_tasks, scheduled_task_runs, price_list_entries, price_changes,"+
-				" limits, usage_resets, limit_grants, limit_grant_reconciles, phone_calls CASCADE",
+				" limits, usage_resets, limit_grants, limit_grant_reconciles, phone_calls, cost_anomaly_notices CASCADE",
 		)
 		s.Require().NoError(err)
 	}

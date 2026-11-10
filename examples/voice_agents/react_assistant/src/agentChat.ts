@@ -1,4 +1,4 @@
-import { LiveReasoning, type Session, type UIAction } from "@stream-io/calypso";
+import { LiveReasoning, type Session, type UIAction } from "@stream-io/stream-agents";
 import type { Channel, LocalMessage } from "stream-chat";
 import type { AIMessageRating } from "stream-chat-react/ai-components";
 

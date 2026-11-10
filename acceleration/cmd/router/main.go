@@ -29,6 +29,7 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/redis/rueidis"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
@@ -731,6 +732,19 @@ func run(settings config.Config, logger *slog.Logger) error {
 		defer endUsers.Close()
 	}
 
+	// The activity record counts every request an app makes, by area and client, and writes
+	// the sums once a minute. It closes after the listeners do, so the last requests are
+	// written too.
+	var activityRecord *activity.Recorder
+	if pgStore != nil {
+		activityRecord, err = activity.New(activity.Options{Store: pgStore, Logger: logger})
+		if err != nil {
+			return err
+		}
+		activityRecord.Start()
+		defer activityRecord.Close()
+	}
+
 	// Spend limits, data policies and prompt injection screening are stored per organization
 	// and app, so a deployment without a database enforces none of them, and may run only
 	// with limits off. Money is read from the usage service, and from Postgres without one.
@@ -784,6 +798,12 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if usageClient != nil {
 		stopSweeper := startUsageSweeper(ctx, routing.SweeperOptions{Store: pgStore, Usage: usageClient, Source: source, Logger: logger, Shipped: shipped})
 		defer stopSweeper()
+	}
+
+	// One router of the deployment checks every organization's spend for a jump each hour.
+	if anomalies := costAnomalies(settings, pgStore, logger); anomalies != nil {
+		anomalies.Start()
+		defer anomalies.Close()
 	}
 
 	limiter, err := newDailyLimiter(liveClient, quota.Limits{
@@ -1376,6 +1396,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		Store:                 pgStore,
 		Configs:               configs,
 		Users:                 endUsers,
+		Activity:              activityRecord,
 		Live:                  liveClient,
 		Phone:                 telephony,
 		Sessions:              sessions,

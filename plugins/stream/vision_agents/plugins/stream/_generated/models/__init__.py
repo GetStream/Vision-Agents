@@ -4,8 +4,11 @@ from .account import Account
 from .account_balance_state import AccountBalanceState
 from .account_balance_warning_source import AccountBalanceWarningSource
 from .account_status import AccountStatus
+from .activity_area import ActivityArea
 from .activity_bucket import ActivityBucket
 from .activity_granularity import ActivityGranularity
+from .activity_meter import ActivityMeter
+from .activity_step import ActivityStep
 from .add_contacts_request import AddContactsRequest
 from .add_contacts_response import AddContactsResponse
 from .add_trunk_number_request import AddTrunkNumberRequest
@@ -356,6 +359,7 @@ from .offered_tools import OfferedTools
 from .opt_out import OptOut
 from .opt_out_channel import OptOutChannel
 from .opt_out_page import OptOutPage
+from .organization_activity import OrganizationActivity
 from .phone_capability import PhoneCapability
 from .phone_number import PhoneNumber
 from .phone_number_tags import PhoneNumberTags
@@ -630,8 +634,11 @@ __all__ = (
     "AccountBalanceState",
     "AccountBalanceWarningSource",
     "AccountStatus",
+    "ActivityArea",
     "ActivityBucket",
     "ActivityGranularity",
+    "ActivityMeter",
+    "ActivityStep",
     "AddContactsRequest",
     "AddContactsResponse",
     "AddTrunkNumberRequest",
@@ -976,6 +983,7 @@ __all__ = (
     "OptOut",
     "OptOutChannel",
     "OptOutPage",
+    "OrganizationActivity",
     "PhoneCapability",
     "PhoneNumber",
     "PhoneNumberTags",

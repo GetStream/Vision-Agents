@@ -177,6 +177,24 @@ impl ::std::convert::TryFrom<::std::string::String> for AccountStatus {
         value.parse()
     }
 }
+///`ActivityArea`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ActivityArea {
+    ///The area of the API, such as agent_setup or conversations.
+    pub area: ::std::string::String,
+    ///The client the requests named themselves as: dashboard, cli, sdk or api.
+    pub client: ::std::string::String,
+    ///When the first request arrived.
+    pub first_at: ::std::string::String,
+    ///When the last request arrived.
+    pub last_at: ::std::string::String,
+    ///The error code of the latest refusal, empty when there was none.
+    pub last_refusal_code: ::std::string::String,
+    ///How many were answered with a status of 400 or more.
+    pub refused: i64,
+    ///How many requests arrived, refused ones included.
+    pub requests: i64,
+}
 ///`ActivityBucket`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct ActivityBucket {
@@ -232,6 +250,84 @@ impl ::std::convert::TryFrom<&str> for ActivityGranularity {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for ActivityGranularity {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ActivityMeter`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ActivityMeter {
+    ///Billable audio, transcribed or produced, in milliseconds.
+    pub audio_ms: i64,
+    ///Billable text, in characters.
+    pub characters: i64,
+    ///What it is charged, in millionths of a dollar.
+    pub cost_micros: i64,
+    ///How long the work took, in milliseconds: for runtime and sandbox, the time held.
+    pub duration_ms: i64,
+    ///Tokens read, cached ones included.
+    pub input_tokens: i64,
+    ///The modality, such as llm, tts, runtime or sandbox.
+    pub meter: ::std::string::String,
+    ///Tokens generated.
+    pub output_tokens: i64,
+    ///How many requests. Runtime and sandbox are time, not requests, and read 0.
+    pub requests: i64,
+}
+///The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum ActivityStep {
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "dashboard_reads")]
+    DashboardReads,
+    #[serde(rename = "agent_setup")]
+    AgentSetup,
+    #[serde(rename = "conversations")]
+    Conversations,
+    #[serde(rename = "steady_use")]
+    SteadyUse,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for ActivityStep {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::None => f.write_str("none"),
+            Self::DashboardReads => f.write_str("dashboard_reads"),
+            Self::AgentSetup => f.write_str("agent_setup"),
+            Self::Conversations => f.write_str("conversations"),
+            Self::SteadyUse => f.write_str("steady_use"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for ActivityStep {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "none" => Ok(Self::None),
+            "dashboard_reads" => Ok(Self::DashboardReads),
+            "agent_setup" => Ok(Self::AgentSetup),
+            "conversations" => Ok(Self::Conversations),
+            "steady_use" => Ok(Self::SteadyUse),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ActivityStep {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ActivityStep {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -8124,6 +8220,30 @@ pub struct OptOutPage {
     ///Pass as `cursor` for the next page. Absent on the last one.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub next_cursor: ::std::option::Option<::std::string::String>,
+}
+///`OrganizationActivity`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct OrganizationActivity {
+    ///Every area and client the organization's apps made requests in, by area then client.
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub areas: ::std::option::Option<::std::vec::Vec<ActivityArea>>,
+    ///When the first request of any area arrived, absent when none did.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub first_seen: ::std::option::Option<::std::string::String>,
+    pub furthest_step: ActivityStep,
+    ///When the last request of any area arrived, absent when none did.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub last_seen: ::std::option::Option<::std::string::String>,
+    ///What the organization's apps' work came to, by modality, from the shards listed in shards.
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub meters: ::std::option::Option<::std::vec::Vec<ActivityMeter>>,
+    ///The organization.
+    pub organization_id: ::std::string::String,
+    ///The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them.
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub shards: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    ///The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on.
+    pub since: ::std::string::String,
 }
 ///What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.
 #[derive(

@@ -288,7 +288,7 @@ describe("production hardening", () => {
 
 describe("folder validation", () => {
   it("refuses an unreadable guardrail instead of replacing its policy with empty text", async () => {
-    const root = await mkdtemp("/tmp/calypso-guardrail-");
+    const root = await mkdtemp("/tmp/stream-agents-guardrail-");
     try {
       await writeFile(`${root}/agent.yaml`, "name: support\n");
       await mkdir(`${root}/guardrail.md`);

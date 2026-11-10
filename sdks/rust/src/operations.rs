@@ -3050,6 +3050,23 @@ impl Client {
         )
         .await
     }
+    /// Get an organization's Agents activity
+    ///
+    /// `GET /v1/ops/orgs/{org_id}/activity` (`getOrganizationActivity`).
+    pub async fn get_organization_activity(
+        &self,
+        org_id: &str,
+        query: &GetOrganizationActivityQuery,
+    ) -> Result<types::OrganizationActivity> {
+        self.send(
+            Method::GET,
+            &format!("/v1/ops/orgs/{org_id}/activity", org_id = segment(org_id)),
+            Some(query),
+            None::<&()>,
+            "getOrganizationActivity",
+        )
+        .await
+    }
     /// Aggregate request rows into a rollup table
     ///
     /// `POST /v1/ops/stats/rollup` (`runRollup`).
@@ -4725,6 +4742,13 @@ pub struct ManageListTeamsQuery {
     pub app_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub organization_id: Option<String>,
+}
+/// The query string `getOrganizationActivity` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct GetOrganizationActivityQuery {
+    /// Read from this on, at most 90 days ago. Omitted is 30 days ago.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub since: Option<String>,
 }
 /// The query string `listUseCasesForReview` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]

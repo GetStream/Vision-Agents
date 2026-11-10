@@ -178,9 +178,9 @@ type Limits struct {
 	// Mode is enforce, shadow or off. Empty is enforce.
 	Mode LimitsMode `koanf:"mode"`
 	// SlackToken and SlackChannel are where the operator is told the first time each
-	// organization is refused at its credit, the spend hard limit or its own spend limits: a
-	// bot token holding chat:write, and the id of a channel the bot is a member of. Either
-	// empty tells nobody.
+	// organization is refused at its credit, the spend hard limit or its own spend limits, and
+	// of each day an organization's spend jumps past its own baseline: a bot token holding
+	// chat:write, and the id of a channel the bot is a member of. Either empty tells nobody.
 	SlackToken   string `koanf:"slack_token"`
 	SlackChannel string `koanf:"slack_channel"`
 	// AppURL and StaffURL are the pages each Slack notice links to, as URLs in which

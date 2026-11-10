@@ -1,4 +1,4 @@
-import type { Session } from "@stream-io/calypso";
+import type { Session } from "@stream-io/stream-agents";
 import type { LocalMessage } from "stream-chat";
 import { describe, expect, it } from "vitest";
 
@@ -98,7 +98,7 @@ class FakeChannel {
   }
 }
 
-/** The calypso session the chat is opened on: what the agent is doing, failures, and closing. */
+/** The Stream Agents session the chat is opened on: what the agent is doing, failures, and closing. */
 function session(channel: FakeChannel) {
   const fake = {
     closed: false,

@@ -33,9 +33,10 @@ else.
 ## Naming
 
 Stream's .NET packages are `getstream-net` (the current generated server SDK, namespace
-`GetStream`), `stream-chat-net` and `stream-feed-net`. So the package id is
-**`getstream-vision-agents-net`** and the namespace **`GetStream.VisionAgents`**, with the
-generated DTOs under `GetStream.VisionAgents.Models`. Do not rename to `StreamIO.*`; nothing
+`GetStream`), `stream-chat-net` and `stream-feed-net`. The package id is the placeholder
+**`getstream-calypso`**, like the JS `@stream-io/calypso`, until the public name is chosen; the
+namespace stays **`GetStream.VisionAgents`**, with the generated DTOs under
+`GetStream.VisionAgents.Models`. Do not rename to `StreamIO.*`; nothing
 Stream ships to NuGet is called that.
 
 Public types are named after what they are to a caller (`Agent`, `Session`, `Dispatch`,
