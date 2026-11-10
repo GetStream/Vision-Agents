@@ -753,13 +753,14 @@ func joinedCallID(id string) string {
 	return strings.TrimSpace(id)
 }
 
-// ConversationChannel is the type and id of the agent channel ConversationID names: the
-// channel a call's transcript is written into (chatlog.Options.ChannelType and Channel). Both
-// are empty for a ConversationID that names no agent channel, whose transcript goes into the
-// agent id's.
+// ConversationChannel is the type and id of the channel ConversationID names: the channel a
+// call's transcript is written into (chatlog.Options.ChannelType and Channel). That is an agent
+// channel, or for a Dispatched session, which only the Router opens, a channel of whichever type
+// it opened, such as one an agent config answers in (store.AgentConfig.ChatChannels). Both are
+// empty for a ConversationID that names neither, whose transcript goes into the agent id's.
 func (s Spec) ConversationChannel() (channelType, channel string) {
 	channelType, channel, _ = strings.Cut(s.ConversationID, ":")
-	if channelType != streamapp.AgentChannelType || channel == "" {
+	if channel == "" || channelType != streamapp.AgentChannelType && !s.Dispatched {
 		return "", ""
 	}
 	return channelType, channel

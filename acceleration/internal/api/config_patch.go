@@ -34,6 +34,7 @@ type AgentConfigPatch struct {
 	McpServers         *[]map[string]any        `json:"mcp_servers,omitempty" deprecated:"true" doc:"No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing."`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" maxItems:"64" doc:"The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out."`
 	Channels           *AgentChannels           `json:"channels,omitempty"`
+	ChatChannels       *[]AgentChatChannel      `json:"chat_channels,omitempty" maxItems:"16" doc:"Replaces the list whole. An empty list removes it."`
 	Keyterms           *[]string                `json:"keyterms,omitempty"`
 	VisibleTools       *[]string                `json:"visible_tools,omitempty" maxItems:"64" doc:"Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {\"status\":\"answered\",\"citations\":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search."`
 	KnowledgeNamespace *string                  `json:"knowledge_namespace,omitempty"`
@@ -162,6 +163,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		VisibleTools:   patch.VisibleTools,
 		Connectors:     patch.Connectors,
 		Dispatch:       patch.Dispatch,
+		ChatChannels:   patch.ChatChannels,
 	}); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -201,6 +203,9 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	}
 	if patch.Channels != nil {
 		config.Channels = channelsOf(patch.Channels)
+	}
+	if patch.ChatChannels != nil {
+		config.ChatChannels = chatChannelsOf(patch.ChatChannels)
 	}
 	if patch.Keyterms != nil {
 		config.Keyterms = keytermsOf(patch.Keyterms)

@@ -106,7 +106,7 @@ func (s *Server) receiveChatInbound(w http.ResponseWriter, r *http.Request) {
 		writeError(w, invalidRequest("could not read that delivery: its message has no id"))
 		return
 	}
-	if !addressed(delivery.messageEvent) || s.stale(delivery.Type, delivery.stamp()) {
+	if !s.addressedIn(r.Context(), origin, delivery.messageEvent) || s.stale(delivery.Type, delivery.stamp()) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
