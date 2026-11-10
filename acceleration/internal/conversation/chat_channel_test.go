@@ -73,19 +73,34 @@ func (s *ChatChannelSuite) TestTheRoutersWordForAnotherChannelOfTheTypeDoesNotOp
 }
 
 // Whoever made the channel wrote its custom data: stamps naming another customer, a session's
-// own channel or an owner are not read, and the person's message is read back as theirs.
+// own channel or an owner, or this customer and agent, are not read, and the person's message
+// is read back as theirs.
 func (s *ChatChannelSuite) TestTheStampsOnAChannelOfAnotherTypeAreNotRead() {
-	s.created(map[string]any{
-		conversation.CustomerField: "somebody-else", "support_agent_id": "another-agent", "support_owner_id": "ben",
-		conversation.TriggerField: conversation.SessionCommandTrigger,
-	})
-	s.wrote()
-	s.answered(s.routerOpens(s.cid))
+	for _, custom := range []map[string]any{
+		{conversation.CustomerField: "somebody-else", "support_agent_id": "another-agent", "support_owner_id": "ben",
+			conversation.TriggerField: conversation.SessionCommandTrigger},
+		{conversation.CustomerField: "customer", "support_agent_id": "config-1"},
+	} {
+		s.SetupTest()
+		s.created(custom)
+		s.wrote()
+		s.answered(s.routerOpens(s.cid))
+		later := conversation.NewForChat(s.chat.Client)
+		s.T().Cleanup(later.Close)
 
-	_, history, _, err := s.service.Open(s.routerOpens(s.cid), "customer", "config-1", s.cid)
+		_, history, _, err := later.Open(s.routerOpens(s.cid), "customer", "config-1", s.cid)
 
-	s.Require().NoError(err)
-	s.Equal([]llm.Message{{Role: llm.User, Content: "I'm sick, I can't come at 6", Author: "anya"}, {Role: llm.Assistant, Content: "Feel better."}}, history)
+		s.Require().NoError(err)
+		s.Equal([]llm.Message{{Role: llm.User, Content: "I'm sick, I can't come at 6", Author: "anya"}, {Role: llm.Assistant, Content: "Feel better."}}, history, custom)
+	}
+}
+
+// The word names a cid, and one with no type before its colon is no channel at all.
+func (s *ChatChannelSuite) TestTheRoutersWordForACIDWithNoTypeOpensNothing() {
+	_, _, _, err := s.service.Open(s.routerOpens(":"+s.channel), "customer", "config-1", ":"+s.channel)
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "invalid conversation channel")
 }
 
 // The reply is written into the channel, and its typing indicator sent there while it runs.

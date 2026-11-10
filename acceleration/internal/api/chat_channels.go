@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"strings"
 
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -92,9 +91,7 @@ func (s *Server) answerChatChannel(ctx context.Context, origin hookOrigin, event
 // answers in its type. It writes as the Stream user whose id is the config's, named after it,
 // made when the app has none: one user per agent, whichever channel of the type it is in.
 func (s *Server) chatChannelSession(ctx context.Context, origin hookOrigin, config store.AgentConfig, cid string, event messageEvent) (*session.Session, error) {
-	if !s.mayWrite(ctx, origin, config.CustomerID) {
-		return nil, stack.Wrap(errors.New("the customer no longer writes in the app the hook came from"))
-	}
+	// Refused for a customer whose work in the app is only to be read any more (ErrReadOnly).
 	bound, err := s.streamForApp(ctx, config.CustomerID, origin.app, false)
 	if err != nil {
 		return nil, err

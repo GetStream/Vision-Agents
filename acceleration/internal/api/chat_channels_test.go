@@ -242,6 +242,23 @@ func (s *ChatInboundQueueSuite) TestADeliveryInAChannelOfATypeAConfigNamesIsQueu
 	s.Zero(s.chatInbounds.queued(&s.RouterSuite), "a type nobody names was queued")
 }
 
+// A customer whose work in the deployment's app is only to be read any more has no channel
+// there answered, as no thread there is (mayWrite).
+func (s *ChatInboundQueueSuite) TestADeliveryInAChannelOfATypeForACustomerNoLongerWritingThereIsNotAnswered() {
+	customer := s.inAppMode()
+	named := "callouts-" + strings.ToLower(rand.Text())
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &store.AgentConfig{CustomerID: customer, Name: "rota-" + s.utils.uuid(),
+		Mode: store.AgentModeText, LLM: "noted/noted-model", ChatChannels: []store.ChatChannel{{Type: named}}}))
+	s.setApps(customer, func(apps *suiteApps) { apps.readOnly[customer] = true })
+	s.channelID = "team-" + s.utils.uuid()
+	s.writesInType(named, s.channelID, nil)
+
+	s.Equal(http.StatusOK, s.chatInbounds.delivers(&s.RouterSuite, s.ofType(named), s.current))
+	s.answering()
+
+	s.nobodyAnswered(named + ":" + s.channelID)
+}
+
 // ofType is a delivery of a message in the suite's channel under the channel type named.
 func (s *ChatInboundQueueSuite) ofType(channelType string) string {
 	body := strings.Replace(s.message(suiteStreamApp, "", ""), `"channel_type": "agent"`, fmt.Sprintf(`"channel_type": %q`, channelType), 1)
