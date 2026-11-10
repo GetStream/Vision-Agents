@@ -108,7 +108,11 @@ func (s *Server) deliverOnThread(ctx context.Context, delivery scheduledDelivery
 		// conversation does not keep: the run records the money, as a text channel's does.
 		for {
 			select {
-			case event := <-events:
+			case event, open := <-events:
+				// A session that ended closes its watchers: nothing more comes.
+				if !open {
+					return "", "", err
+				}
 				if refusal := turnRefusal(event); refusal != nil {
 					return "", "", refusal
 				}

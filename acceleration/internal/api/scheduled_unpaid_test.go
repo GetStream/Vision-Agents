@@ -604,3 +604,62 @@ func (s *TelnyxUnpaidSuite) TestATurnRefusedForATeamLimitIsFinalOnEveryTextChann
 	s.Equal(codeSpendLimitReached, *run.Error)
 	s.Equal(int32(1), attempts, "a spent limit outlasts every retry of the run")
 }
+
+// A task made in a thread, carried in the session the backend keeps on it, whose session ends
+// while its turn runs: the delivery stops reading the ended session's events and the run
+// settles, here delivered by the retry, which opens a session of its own.
+func (s *TelnyxUnpaidSuite) TestAThreadTaskWhoseSessionEndsMidTurnSettles() {
+	person := "+1347" + digits(s.utils.uuid())
+	channel := s.creditedThread(person)
+	s.config.LLM = "holding/holding-model"
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	kept := s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel})
+	found, running := s.router.sessions.ByConversationWhere(chatlog.ChannelType+":"+channel, func(string, int64) bool { return true })
+	s.Require().True(running)
+	s.Require().Equal(kept.Id, found.ID(), "the delivery takes the session kept on the thread")
+	task := s.threadTask(channel)
+	model := s.holding
+	model.mu.Lock()
+	before := model.turns
+	model.mu.Unlock()
+	model.holds()
+	defer model.answers()
+
+	s.retryAtOnce()
+	worker := scheduling.NewScheduler(s.store, s.router.DeliverScheduledTask, slog.New(slog.NewTextHandler(s.logged, nil)))
+	worker.Start(context.Background())
+	defer func() {
+		// A delivery that never returns would hold Close: the test fails on its own deadline.
+		closed := make(chan struct{})
+		go func() { worker.Close(); close(closed) }()
+		select {
+		case <-closed:
+		case <-time.After(deliveryWait):
+			s.Fail("the worker's delivery never returned")
+		}
+	}()
+	past := time.Now().Add(-time.Minute)
+	task.NextRunAt = &past
+	s.Require().NoError(s.store.SaveScheduledTask(context.Background(), &task))
+	worker.Kick()
+	s.Require().Eventually(func() bool {
+		model.mu.Lock()
+		defer model.mu.Unlock()
+		return model.turns > before
+	}, deliveryWait, 10*time.Millisecond, "the turn never began")
+	_, err := s.router.sessions.Close(found.ID(), session.OwnerOf(found.Spec()))
+	s.Require().NoError(err)
+	model.answers()
+
+	var settled store.ScheduledTaskRun
+	s.Require().Eventually(func() bool {
+		runs, err := s.store.ScheduledTaskRuns(context.Background(), task.CustomerID, task.ID, 25, nil)
+		s.Require().NoError(err)
+		if len(runs) == 0 || runs[0].State == store.ScheduledTaskRunRunning {
+			return false
+		}
+		settled = runs[0]
+		return true
+	}, deliveryWait, 20*time.Millisecond, "the task's run never settled")
+	s.Equal(store.ScheduledTaskRunDelivered, settled.State)
+}
