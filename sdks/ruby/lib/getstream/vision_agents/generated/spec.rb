@@ -2576,7 +2576,7 @@ module GetStream
           required: %w[cost_micros id markdown status].freeze, open: false
         }.freeze,
         "OfferedTool" => {
-          properties: %w[description name parameters tokens].freeze,
+          properties: %w[description name parameters source tokens].freeze,
           required: %w[name description tokens].freeze, open: false
         }.freeze,
         "OfferedTools" => {

@@ -116,6 +116,9 @@ type ToolDefinition struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	Parameters  map[string]any `json:"parameters,omitempty"`
+	// Source is where the tool came from, as session.ToolSource names it. Empty in a row
+	// kept before it was recorded.
+	Source string `json:"source,omitempty"`
 }
 
 // agentSessionTools is the tools a session was offered, kept apart from its row.

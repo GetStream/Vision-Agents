@@ -1891,6 +1891,30 @@ func (e OcrStatus) Valid() bool {
 	}
 }
 
+// Defines values for OfferedToolSource.
+const (
+	OfferedToolSourceBuiltin   OfferedToolSource = "builtin"
+	OfferedToolSourceConnector OfferedToolSource = "connector"
+	OfferedToolSourceSession   OfferedToolSource = "session"
+	OfferedToolSourceWorker    OfferedToolSource = "worker"
+)
+
+// Valid indicates whether the value is a known member of the OfferedToolSource enum.
+func (e OfferedToolSource) Valid() bool {
+	switch e {
+	case OfferedToolSourceBuiltin:
+		return true
+	case OfferedToolSourceConnector:
+		return true
+	case OfferedToolSourceSession:
+		return true
+	case OfferedToolSourceWorker:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for OptOutChannel.
 const (
 	OptOutChannelAll      OptOutChannel = "all"
@@ -7266,9 +7290,15 @@ type OfferedTool struct {
 	// Parameters The JSON Schema of its arguments.
 	Parameters *map[string]interface{} `json:"parameters,omitempty"`
 
+	// Source Where the tool came from: session, declared by whoever opened the session; worker, hosted by a worker connected when the session opened; connector, opened by one of the agent's connector bindings; builtin, the router's own. A session's tools are fixed when it opens, so a worker that was not connected then leaves none of its tools here. Absent for a session kept before sources were recorded.
+	Source *OfferedToolSource `json:"source,omitempty"`
+
 	// Tokens Roughly what offering it costs on every request, in tokens: its name, description and schema at four characters a token.
 	Tokens int64 `json:"tokens"`
 }
+
+// OfferedToolSource Where the tool came from: session, declared by whoever opened the session; worker, hosted by a worker connected when the session opened; connector, opened by one of the agent's connector bindings; builtin, the router's own. A session's tools are fixed when it opens, so a worker that was not connected then leaves none of its tools here. Absent for a session kept before sources were recorded.
+type OfferedToolSource string
 
 // OfferedTools The tools a session's conversation model is offered, as they are sent to it.
 type OfferedTools struct {
@@ -13673,7 +13703,7 @@ type ClientInterface interface {
 
 	// ListSessionTools List the tools a session's model is offered
 	//
-	// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+	// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out, each with where it came from. A worker's tools are here only if a worker hosting them was connected when the session opened, so a session missing them was opened while none was. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
 	ListSessionTools(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -18527,7 +18557,7 @@ func (c *Client) StopSession(ctx context.Context, id string, reqEditors ...Reque
 
 // ListSessionTools List the tools a session's model is offered
 //
-// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out, each with where it came from. A worker's tools are here only if a worker hosting them was connected when the session opened, so a session missing them was opened while none was. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
 //
 // Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
 func (c *Client) ListSessionTools(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -35825,7 +35855,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListSessionToolsWithResponse List the tools a session's model is offered
 	//
-	// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+	// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out, each with where it came from. A worker's tools are here only if a worker hosting them was connected when the session opened, so a session missing them was opened while none was. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -66693,7 +66723,7 @@ func (c *ClientWithResponses) StopSessionWithResponse(ctx context.Context, id st
 
 // ListSessionToolsWithResponse List the tools a session's model is offered
 //
-// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out, each with where it came from. A worker's tools are here only if a worker hosting them was connected when the session opened, so a session missing them was opened while none was. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
 //
 // Returns a wrapper object for the known response body format(s).
 //

@@ -462,7 +462,10 @@ func toolRows(created *Session) []store.ToolDefinition {
 	offered := created.ToolDefinitions()
 	rows := make([]store.ToolDefinition, 0, len(offered))
 	for _, tool := range offered {
-		rows = append(rows, store.ToolDefinition{Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters})
+		rows = append(rows, store.ToolDefinition{
+			Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters,
+			Source: string(created.ToolSource(tool.Name)),
+		})
 	}
 	return rows
 }

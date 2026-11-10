@@ -23,6 +23,8 @@ final readonly class OfferedTool
         // The JSON Schema of its arguments.
         /** @var array<string, mixed>|null */
         public ?array $parameters = null,
+        // Where the tool came from: session, declared by whoever opened the session; worker, hosted by a worker conne...
+        public ?string $source = null,
     ) {
     }
 
@@ -36,6 +38,7 @@ final readonly class OfferedTool
             name: Json::string($data, 'name'),
             tokens: Json::int($data, 'tokens'),
             parameters: array_key_exists('parameters', $data) && $data['parameters'] !== null ? Json::object($data, 'parameters') : null,
+            source: array_key_exists('source', $data) && $data['source'] !== null ? Json::string($data, 'source') : null,
         );
     }
 
@@ -52,6 +55,9 @@ final readonly class OfferedTool
         $out['tokens'] = $this->tokens;
         if ($this->parameters !== null) {
             $out['parameters'] = Json::objectValue($this->parameters);
+        }
+        if ($this->source !== null) {
+            $out['source'] = $this->source;
         }
         return $out;
     }

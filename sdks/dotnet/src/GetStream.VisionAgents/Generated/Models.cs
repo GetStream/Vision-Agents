@@ -9247,6 +9247,14 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.Dictionary<string, object>? Parameters { get; set; } = default!;
 
         /// <summary>
+        /// Where the tool came from: session, declared by whoever opened the session; worker, hosted by a worker connected when the session opened; connector, opened by one of the agent's connector bindings; builtin, the router's own. A session's tools are fixed when it opens, so a worker that was not connected then leaves none of its tools here. Absent for a session kept before sources were recorded.
+        /// <br/>
+        /// <br/>One of `session`, `worker`, `connector`, `builtin`.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("source")]
+        public string? Source { get; set; } = default!;
+
+        /// <summary>
         /// Roughly what offering it costs on every request, in tokens: its name, description and schema at four characters a token.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tokens")]
