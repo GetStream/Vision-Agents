@@ -461,7 +461,7 @@ export class Client {
   }
 }
 
-const ON_RETRY = Symbol("calypso.onRetry");
+const ON_RETRY = Symbol("stream-agents.onRetry");
 
 /**
  * @internal Request options that call `heard` each time the request is sent again, for a caller

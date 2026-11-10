@@ -209,7 +209,7 @@ A page that reaches a router by `customerId` and names its user with `setUser` i
 
 ### The JavaScript SDK works with stream-chat 9 and 10
 
-`@stream-io/calypso` takes `stream-chat` `^9.0.0 || ^10.0.0-0` as its optional peer, release candidates of 10 included, where `>=9.0.0` refused them with `ERESOLVE`. One build reads a Chat message by its shape, never by version: `LiveReasoning`, `session.speech.heard` and the check for a reply still being written read `reasoning`, `turn_id`, `generating`, `source` and `ai_generated` at the top level as 9 has them or under `custom` as 10 does, so on 10 a reply's thinking is whole again rather than its opening alone. `client.use({ chat })` takes 10's `StreamChat`, which names its user `userId`, and a client the SDK connects itself on 10 carries the user's own fields from `setUser` under `custom`, as 10 takes them.
+`@stream-io/stream-agents` takes `stream-chat` `^9.0.0 || ^10.0.0-0` as its optional peer, release candidates of 10 included, where `>=9.0.0` refused them with `ERESOLVE`. One build reads a Chat message by its shape, never by version: `LiveReasoning`, `session.speech.heard` and the check for a reply still being written read `reasoning`, `turn_id`, `generating`, `source` and `ai_generated` at the top level as 9 has them or under `custom` as 10 does, so on 10 a reply's thinking is whole again rather than its opening alone. `client.use({ chat })` takes 10's `StreamChat`, which names its user `userId`, and a client the SDK connects itself on 10 carries the user's own fields from `setUser` under `custom`, as 10 takes them.
 
 ### A session sets how many tool rounds a reply may chain
 
@@ -429,6 +429,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### JavaScript: the SDK is @stream-io/stream-agents
+
+The JavaScript SDK is published as `@stream-io/stream-agents` from 0.4.0. Install it and import from `@stream-io/stream-agents`, `@stream-io/stream-agents/chat`, `/video` and `/node`. Nothing else in the API changed.
+
 ### JavaScript: an Agent opens its sessions on its synced config
 
 An `Agent` without `pipeline.config` now names its stored config by `name` when it opens a session (`join`, `chat`, `answer`, `reply`, `startCall`, `waitForCall`), so the session runs on the instructions, skills and knowledge `agent.sync()` stored. It used to name no config, so such a session ran on the router's defaults and the agent's instructions never reached it. An agent that was never synced under its name is now refused with a 404, `there is no agent called <name>`, where it used to open a session: call `await agent.sync()` before opening one, or pass `pipeline.config` to name a stored config yourself.
@@ -469,7 +473,7 @@ Creating, replacing, patching or syncing an agent config with a non-empty `plugi
 
 ### The JavaScript SDK refuses `plugins` and `mcp_servers` in agent.yaml
 
-`loadFolder` and `parseDeclaration` in `@stream-io/calypso` fail on a non-empty `plugins:` or `mcp_servers:` in `agent.yaml`: `<path>/agent.yaml: plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors`, or `<path>/agent.yaml: mcp_servers is no longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors`, as the Go SDK does. `Agent.sync` no longer sends either key, and `Declaration` loses `plugins` and `mcpServers`, so code that reads them no longer compiles. An empty key (`plugins: []`, `mcp_servers: ~`, or the key with nothing after it) names nothing and loads, and the sync body is the same as before (AI-2533).
+`loadFolder` and `parseDeclaration` in `@stream-io/stream-agents` fail on a non-empty `plugins:` or `mcp_servers:` in `agent.yaml`: `<path>/agent.yaml: plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors`, or `<path>/agent.yaml: mcp_servers is no longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors`, as the Go SDK does. `Agent.sync` no longer sends either key, and `Declaration` loses `plugins` and `mcpServers`, so code that reads them no longer compiles. An empty key (`plugins: []`, `mcp_servers: ~`, or the key with nothing after it) names nothing and loads, and the sync body is the same as before (AI-2533).
 
 ### The Python SDK refuses `mcp_servers` in agent.yaml
 

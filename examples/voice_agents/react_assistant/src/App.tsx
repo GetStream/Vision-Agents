@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { formatMessage } from "stream-chat";
 import { Chat } from "stream-chat-react";
 
-import { Session, type Tools } from "@stream-io/calypso";
-import { VoiceSession } from "@stream-io/calypso/video";
+import { Session, type Tools } from "@stream-io/stream-agents";
+import { VoiceSession } from "@stream-io/stream-agents/video";
 
 import { AgentChat, PAGE_SIZE } from "./agentChat";
 import { agents, Assistant, chatClient, sessions, signIn } from "./assistant";

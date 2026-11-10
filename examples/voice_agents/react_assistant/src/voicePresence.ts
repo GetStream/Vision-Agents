@@ -1,4 +1,4 @@
-import type { AgentState, Turn } from "@stream-io/calypso";
+import type { AgentState, Turn } from "@stream-io/stream-agents";
 
 /** What the glow shows during a call. */
 export type Phase =

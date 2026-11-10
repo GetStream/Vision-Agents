@@ -36,7 +36,7 @@ export type VideoConstructor = new (options: {
 }) => VideoClient;
 
 /**
- * The Stream classes `@stream-io/calypso/chat` and `/video` registered on import.
+ * The Stream classes `@stream-io/stream-agents/chat` and `/video` registered on import.
  *
  * Those entry points are what import the optional peers, statically, so a bundler resolves
  * them for an app that asked and never sees them in one that did not. This package imports
@@ -44,12 +44,12 @@ export type VideoConstructor = new (options: {
  */
 const registered: { chat?: ChatConstructor; video?: VideoConstructor } = {};
 
-/** Called by `@stream-io/calypso/chat`. */
+/** Called by `@stream-io/stream-agents/chat`. */
 export function registerChat(StreamChat: ChatConstructor): void {
   registered.chat = StreamChat;
 }
 
-/** Called by `@stream-io/calypso/video`. */
+/** Called by `@stream-io/stream-agents/video`. */
 export function registerVideo(StreamVideoClient: VideoConstructor): void {
   registered.video = StreamVideoClient;
 }
@@ -187,7 +187,7 @@ function installed<T>(registered: T | undefined, what: string, peer: string): T 
   if (!registered) {
     throw new ConfigurationError(
       `${what} needs ${peer}: install it with npm install ${peer}, then import ` +
-        `"@stream-io/calypso/${what}" once, beside the import of this package`,
+        `"@stream-io/stream-agents/${what}" once, beside the import of this package`,
     );
   }
   return registered;

@@ -6,7 +6,7 @@ Stream token are all swift_assistant's, as they are for the [Android app](../and
 Only the page is here.
 
 ```
-package.json     React and Vite over @stream-io/calypso (0.3.1 from npm, the first to take
+package.json     React and Vite over @stream-io/stream-agents (0.4.0 from npm, with
                  stream-chat 10) and stream-chat-react's AI components
 connected.html   where a connector's sign-in comes back to
 src/             the page
