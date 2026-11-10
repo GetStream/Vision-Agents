@@ -353,6 +353,25 @@ func (s *ChatInboundQueueSuite) TestADeliveryInAChannelOfATypeForACustomerNoLong
 	s.nobodyAnswered(named + ":" + s.channelID)
 }
 
+// A queued delivery whose answer another try already started, here or on another router, is
+// not answered again (answerOnce): two tries of one message in the channel give one reply.
+func (s *ChatInboundQueueSuite) TestAQueuedDeliveryInAChannelOfANamedTypeWhoseAnswerStartedIsNotAnswered() {
+	customer := s.inAppMode()
+	named := "callouts-" + strings.ToLower(rand.Text())
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &store.AgentConfig{CustomerID: customer, Name: "rota-" + s.utils.uuid(),
+		Mode: store.AgentModeText, LLM: "noted/noted-model", ChatChannels: []store.ChatChannel{{Type: named}}}))
+	s.channelID = "team-" + s.utils.uuid()
+	s.writesInType(named, s.channelID, nil)
+	queued := s.queue(s.ofType(named))
+	started, err := s.store.StartChatInboundAnswer(context.Background(), suiteStreamApp, queued, time.Now())
+	s.Require().NoError(err)
+	s.Require().True(started)
+
+	s.Require().NoError(s.router.AnswerChatInbound(context.Background(), s.row(queued)))
+
+	s.nobodyAnswered(named + ":" + s.channelID)
+}
+
 // ofType is a delivery of a message in the suite's channel under the channel type named.
 func (s *ChatInboundQueueSuite) ofType(channelType string) string {
 	body := strings.Replace(s.message(suiteStreamApp, "", ""), `"channel_type": "agent"`, fmt.Sprintf(`"channel_type": %q`, channelType), 1)
