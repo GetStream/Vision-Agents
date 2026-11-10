@@ -58,6 +58,7 @@ jobs:
           - internal/eventforward
           - internal/harness
           - internal/knowledge/urls
+          - internal/limitnotice
           - internal/live
           - internal/llmrouter
           - internal/memory/mem0
