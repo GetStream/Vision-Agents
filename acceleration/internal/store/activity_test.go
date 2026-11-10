@@ -404,6 +404,10 @@ func (s *StoreSuite) TestLatestSessionsAreTheNewestOfTheAppsAskedFor() {
 	s.began(s.store, "two-oldest", "two", s.base, time.Time{}, "")
 	s.began(s.store, "stranger", "stranger", s.base.Add(time.Hour), time.Time{}, "")
 	s.began(s.store, "before-since", "one", s.base.Add(-time.Second), time.Time{}, "")
+	s.Require().NoError(s.store.SaveSession(s.ctx, &AgentSession{
+		ID: "one-text", CustomerID: "one", AgentName: "agent-one-text", CallID: "call-one-text",
+		Modality: ModalityText, CreatedAt: s.base.Add(10 * time.Second),
+	}))
 
 	latest, err := s.store.LatestSessions(s.ctx, []string{"one", "two"}, s.base, 3)
 	s.Require().NoError(err)
@@ -425,10 +429,14 @@ func (s *StoreSuite) TestLatestSessionsAreTheNewestOfTheAppsAskedFor() {
 
 	every, err := s.store.LatestSessions(s.ctx, []string{"one", "two"}, s.base, 20)
 	s.Require().NoError(err)
-	s.Len(every, 6)
+	s.Len(every, 7)
+	modalities := map[string]string{}
 	for _, row := range every {
 		s.NotContains([]string{"stranger", "before-since"}, row.ID)
+		modalities[row.ID] = row.Modality
 	}
+	s.Equal(ModalityText, modalities["one-text"])
+	s.Equal(ModalityVoice, modalities["one-older"])
 }
 
 // Defect: two sessions opened at the same time listed in an order that changes between reads.

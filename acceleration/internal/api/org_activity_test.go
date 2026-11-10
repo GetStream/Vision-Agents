@@ -401,9 +401,14 @@ func (s *OrganizationActivitySuite) TestTheFieldsTheAnswerHadBeforeSessionsAndLa
 
 // opened saves a session of app's opened at at, closed for reason when it is not running.
 func (s *OrganizationActivitySuite) opened(appID string, at time.Time, running bool, reason string) string {
+	return s.openedAs("support", appID, at, running, reason)
+}
+
+// openedAs is opened for the agent named agent.
+func (s *OrganizationActivitySuite) openedAs(agent, appID string, at time.Time, running bool, reason string) string {
 	id := "session-" + s.utils.uuid()
 	s.Require().NoError(s.store.SaveSession(context.Background(), &store.AgentSession{
-		ID: id, CustomerID: appID, AgentName: "support", CallID: "call-" + id, CreatedAt: at,
+		ID: id, CustomerID: appID, AgentName: agent, CallID: "call-" + id, CreatedAt: at,
 	}))
 	if !running {
 		s.Require().NoError(s.store.CloseSession(context.Background(), id, at.Add(time.Minute), reason))
@@ -433,7 +438,7 @@ func (s *OrganizationActivitySuite) TestSessionsAndLatencyAreTheOrganizationsOwn
 	stranger := s.data.createApp()
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	first := s.opened(s.customerID(), now.Add(-3*time.Hour), false, "hangup")
-	other := s.opened(second, now.Add(-2*time.Hour), false, "hangup")
+	other := s.openedAs("sales", second, now.Add(-2*time.Hour), false, "hangup")
 	running := s.opened(s.customerID(), now.Add(-time.Hour), true, "")
 	theirs := s.opened(stranger.app.ID, now.Add(-time.Minute), false, "transferred")
 	s.turned(s.customerID(), 200)
@@ -449,7 +454,8 @@ func (s *OrganizationActivitySuite) TestSessionsAndLatencyAreTheOrganizationsOwn
 	s.Equal([]string{running, other, first}, sessionIDs(ours))
 	listed := ours.Sessions.Latest[1]
 	s.Equal(second, listed.AppID)
-	s.Equal("support", listed.AgentName)
+	s.Equal("sales", listed.AgentName)
+	s.Equal("support", ours.Sessions.Latest[0].AgentName)
 	s.Equal(store.ModalityVoice, listed.Modality)
 	s.True(now.Add(-2*time.Hour).Equal(listed.CreatedAt), "created at %s", listed.CreatedAt)
 	s.Require().NotNil(listed.ClosedAt)
