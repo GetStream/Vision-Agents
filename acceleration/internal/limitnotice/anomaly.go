@@ -128,31 +128,37 @@ func (a *Anomalies) run(ctx context.Context) {
 
 // check notes and posts today's anomalies when this router holds the lock, then posts those
 // whose post failed before. A holder whose check fails lets the lock go, so that a router that
-// can check takes it at its next tick.
+// can check takes it at its next tick. A check that Close ends is not logged as failed.
 func (a *Anomalies) check(ctx context.Context) {
 	now := a.now().UTC()
-	ctx, cancel := context.WithTimeout(ctx, anomalyTimeout)
+	checking, cancel := context.WithTimeout(ctx, anomalyTimeout)
 	defer cancel()
-	held, err := a.lock.Hold(ctx)
+	held, err := a.lock.Hold(checking)
 	if err != nil {
-		a.logger.Error("could not take the cost anomaly lock, trying again", "in", a.every, "error", err)
+		if ctx.Err() == nil {
+			a.logger.Error("could not take the cost anomaly lock, trying again", "in", a.every, "error", err)
+		}
 		return
 	}
 	if !held {
 		return
 	}
-	if err := a.note(ctx, now); err != nil {
+	if err := a.note(checking, now); err != nil {
 		a.lock.Release()
-		a.logger.Error("could not check the organizations' spend for anomalies, trying again", "in", a.every, "error", err)
+		if ctx.Err() == nil {
+			a.logger.Error("could not check the organizations' spend for anomalies, trying again", "in", a.every, "error", err)
+		}
 		return
 	}
-	anomalies, err := a.store.ClaimUnpostedCostAnomalies(ctx, stale, sweepBatch)
+	anomalies, err := a.store.ClaimUnpostedCostAnomalies(checking, stale, sweepBatch)
 	if err != nil {
-		a.logger.Error("could not read the cost anomalies never posted", "error", err)
+		if ctx.Err() == nil {
+			a.logger.Error("could not read the cost anomalies never posted", "error", err)
+		}
 		return
 	}
 	for _, anomaly := range anomalies {
-		a.post(ctx, anomaly)
+		a.post(checking, anomaly)
 	}
 }
 

@@ -22,7 +22,7 @@ func (s *StoreSuite) orgSpend(store *Store, organization string, at time.Time, c
 
 func (s *StoreSuite) TestDailySpendIsEachOrganizationsBillableSpendPerUTCDay() {
 	day := time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC)
-	s.orgSpend(s.store, "org-a", day.Add(time.Hour), 300)
+	s.orgSpend(s.store, "org-a", day, 300)
 	s.orgSpend(s.store, "org-a", day.Add(23*time.Hour+59*time.Minute), 200)
 	s.orgSpend(s.store, "org-a", day.Add(24*time.Hour), 7)
 	s.orgSpend(s.store, "org-a", day.Add(2*time.Hour), 1000, func(r *Request) { r.Billable = false })
@@ -38,8 +38,8 @@ func (s *StoreSuite) TestDailySpendIsEachOrganizationsBillableSpendPerUTCDay() {
 		{OrganizationID: "org-a", Day: day, CostMicros: 500},
 		{OrganizationID: "org-a", Day: day.AddDate(0, 0, 1), CostMicros: 7},
 		{OrganizationID: "org-b", Day: day, CostMicros: 40},
-	}, spent, "free work, a row with no organization and rows outside the range are left out; the last second "+
-		"of a day is that day's")
+	}, spent, "free work, a row with no organization and rows outside the range are left out; the first and "+
+		"last minutes of a day are that day's")
 }
 
 func (s *ShardedStoreSuite) TestDailySpendSumsEveryShard() {
@@ -108,9 +108,14 @@ func (s *StoreSuite) TestAnUnpostedCostAnomalyIsClaimedOnceItsClaimIsStale() {
 	s.Contains(claimedOrganizations(), organization)
 	s.NotContains(claimedOrganizations(), organization, "claimed again just now")
 
+	_, err = s.store.NoteCostAnomaly(s.ctx, s.costAnomaly(organization, day.AddDate(0, 0, -1)))
+	s.Require().NoError(err)
 	s.Require().NoError(s.store.MarkCostAnomalyPosted(s.ctx, organization, day))
 	backdate()
-	s.NotContains(claimedOrganizations(), organization, "posted")
+	claimed, err := s.store.ClaimUnpostedCostAnomalies(s.ctx, time.Hour, 100)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1, "posted, and the day before is not")
+	s.Equal(day.AddDate(0, 0, -1), claimed[0].Day.UTC())
 }
 
 func (s *StoreSuite) TestOneRouterHoldsTheCostAnomalyLock() {
@@ -133,4 +138,17 @@ func (s *StoreSuite) TestOneRouterHoldsTheCostAnomalyLock() {
 	held, err = other.Hold(s.ctx)
 	s.Require().NoError(err)
 	s.True(held, "given back")
+}
+
+func (s *ShardedStoreSuite) TestOneRouterOfEveryShardHoldsTheCostAnomalyLock() {
+	here, there := s.store.CostAnomalyLock(), s.other.CostAnomalyLock()
+	defer here.Release()
+	defer there.Release()
+
+	held, err := here.Hold(s.ctx)
+	s.Require().NoError(err)
+	s.True(held)
+	held, err = there.Hold(s.ctx)
+	s.Require().NoError(err)
+	s.False(held, "a router of another shard checks the same organizations")
 }

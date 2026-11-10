@@ -304,7 +304,13 @@ func (s *AnomalySuite) TestAPostThatFailedIsPostedByALaterCheck() {
 	s.Len(s.noticed(spike), 1, "posted once it went through")
 }
 
+func (s *AnomalySuite) TestTheCheckRunsHourlyUnlessToldOtherwise() {
+	s.Equal(time.Hour, NewAnomalies(AnomalyOptions{Store: s.db, Poster: NewSlack("xoxb-test", "C123")}).every)
+}
+
 func (s *AnomalySuite) TestCloseStopsTheCheckAndGivesTheLockBack() {
+	NewAnomalies(AnomalyOptions{Store: s.db, Poster: NewSlack("xoxb-test", "C123")}).Close()
+
 	anomalies := s.anomalies()
 	anomalies.Start()
 	s.checked(0)

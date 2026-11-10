@@ -81,3 +81,18 @@ func (s *LimitsSuite) TestOffAndShadowAreWarnedOf() {
 		s.Contains(logs.String(), "ROUTER_LIMITS_MODE", mode)
 	}
 }
+
+func (s *LimitsSuite) TestTheCostAnomalyCheckRunsWhereThereIsAChannelAndPostgres() {
+	logger := slog.New(slog.DiscardHandler)
+	db := &store.Store{}
+	s.settings.Limits.SlackToken, s.settings.Limits.SlackChannel = "xoxb-test", "C123"
+	s.NotNil(costAnomalies(s.settings, db, logger))
+	s.settings.Limits.Mode = config.LimitsOff
+	s.NotNil(costAnomalies(s.settings, db, logger), "spend is priced and recorded with limits off too")
+
+	s.Nil(costAnomalies(s.settings, nil, logger), "no Postgres to read the spend from")
+	s.settings.Limits.SlackToken = " "
+	s.Nil(costAnomalies(s.settings, db, logger), "no token")
+	s.settings.Limits.SlackToken, s.settings.Limits.SlackChannel = "xoxb-test", ""
+	s.Nil(costAnomalies(s.settings, db, logger), "no channel")
+}
