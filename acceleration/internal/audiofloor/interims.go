@@ -238,7 +238,7 @@ func (t *Transcriber) interim(participant stt.Participant, heard int64) {
 		return
 	}
 	t.spoken = 0
-	if t.client.backingOff() {
+	if t.client.backingOff(kindInterim) {
 		// The server asked for time: the words of the pauses and the utterance's end, which
 		// end turns, are asked for meanwhile, and the words so far are not.
 		backedOff.WithLabelValues(kindInterim).Inc()

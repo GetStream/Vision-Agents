@@ -2,6 +2,7 @@ package audiofloor
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -9,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"mime/multipart"
 	"net"
@@ -44,6 +46,8 @@ type replica struct {
 	registered []string
 	missed     int
 	told       [][]byte
+	// keyed counts the requests that came with an Idempotency-Key on the wire.
+	keyed int
 }
 
 func newReplica(inline bool) *replica { return &replica{inline: inline, known: map[string]bool{}} }
@@ -57,6 +61,9 @@ func contentName(spec []byte) string {
 func (r *replica) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if _, ok := req.Header["Idempotency-Key"]; ok {
+		r.keyed++
+	}
 	switch req.URL.Path {
 	case "/v1/info":
 		info := testInfo
@@ -117,9 +124,10 @@ func everyPart(req *http.Request) ([]string, [][]byte, bool) {
 	}
 }
 
-// replicas are servers behind one address, as a Service is: each request goes to the replica
-// route names for it, in the order the requests come, and to the first once route has run out.
-// went is where each went.
+// replicas are servers behind one address, as a Service is: each registration and decision goes
+// to the replica route names for it, in the order they come, and to the first once route has run
+// out; went is where each went. The policy, read again in the background after a miss whenever
+// that runs, is read from the first and takes no turn in route.
 type replicas struct {
 	mu    sync.Mutex
 	all   []*replica
@@ -128,6 +136,10 @@ type replicas struct {
 }
 
 func (rs *replicas) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.URL.Path == "/v1/info" {
+		rs.all[0].ServeHTTP(w, req)
+		return
+	}
 	rs.mu.Lock()
 	to := 0
 	if len(rs.route) > 0 {
@@ -222,6 +234,33 @@ func TestAServerThatTakesAgentsInlineIsToldTheAgentWithEachDecision(t *testing.T
 	_, spec, err := agentKey(booking)
 	require.NoError(t, err)
 	require.Equal(t, [][]byte{spec}, b.told, "what a registration sends")
+	require.Zero(t, pool.all[0].keyed+b.keyed, "the Idempotency-Key that marks a request safe to send again is not sent")
+}
+
+// An agent too large to go with every decision (maxInlineAgent) goes inline only with the
+// decision asked again after a replica did not know it, the agent told again as well, so that
+// a large one costs a miss a replica rather than its size on every decision.
+func TestALargeAgentGoesInlineOnlyAfterAMiss(t *testing.T) {
+	client, pool := twoReplicas(t, true)
+	_, err := client.PolicyNow(context.Background())
+	require.NoError(t, err)
+	large := Agent{Instructions: strings.Repeat("Say the forecast for the city asked about. ", maxInlineAgent/40)}
+	_, spec, err := agentKey(large)
+	require.NoError(t, err)
+	require.Greater(t, len(spec), maxInlineAgent)
+
+	pool.routed(0, 1, 0, 1)
+	_, err = client.Decide(context.Background(), large, Turn{Speaker: caller}, some)
+	require.NoError(t, err)
+	require.Equal(t, []string{"/v1/agents A", "/v1/decide B", "/v1/agents A", "/v1/decide B"}, pool.wentTo())
+	b := pool.all[1]
+	require.Equal(t, 1, b.missed, "the first decision went without it")
+	require.Equal(t, [][]byte{spec}, b.told, "the one asked again carried it")
+
+	pool.routed(1)
+	_, err = client.Decide(context.Background(), large, Turn{Speaker: caller}, some)
+	require.NoError(t, err)
+	require.Len(t, b.told, 1, "B knows it now, and the next decision goes without it")
 }
 
 // A server that does not take agents inline is not sent them: a decision is its turn and its
@@ -278,9 +317,9 @@ func (s *FloorSuite) TestAFloorCountsNoCheckHeldBackWhileTheServerAsksForTime() 
 	s.server.mu.Lock()
 	s.server.failDecide = true
 	s.server.mu.Unlock()
-	s.client.backOff("30")
 	for i := range failoverAfter {
 		if i == failoverAfter-1 {
+			s.client.backOff("2", http.StatusServiceUnavailable)
 			held := testutil.ToFloat64(backedOff.WithLabelValues(kindOverAgent))
 			s.agent.speaks(true)
 			s.say(1000, true)
@@ -288,6 +327,49 @@ func (s *FloorSuite) TestAFloorCountsNoCheckHeldBackWhileTheServerAsksForTime() 
 				"a check over the agent held back")
 			s.agent.speaks(false)
 		}
+		s.say(600, true)
+		s.say(220, false)
+		s.answered()
+		if i < failoverAfter-1 {
+			s.say(2600, false)
+		}
+		mu.Lock()
+		clock = clock.Add(failoverWindow / 2)
+		mu.Unlock()
+	}
+	gone := next[stt.Disconnected](&s.transcribing)
+	s.False(gone.Clean)
+}
+
+// A check a replica answered without knowing the agent, though it was told again
+// (ErrAgentUnknown), counts neither way either: the server is up but did not rule, so the
+// checks it did not answer before it are still in a row with those after it. Counted as
+// answered, a replica missing the agent between checks a server down did not answer kept the
+// floor from ever stepping aside.
+func (s *FloorSuite) TestAFloorCountsNoCheckAReplicaMissedTheAgentOn() {
+	clock := time.Now()
+	var mu sync.Mutex
+	s.transcriber.now = func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return clock
+	}
+	failing := func(down, unknown bool) {
+		s.server.mu.Lock()
+		s.server.failDecide, s.server.unknown = down, unknown
+		s.server.mu.Unlock()
+	}
+	for i := range failoverAfter {
+		if i == failoverAfter-1 {
+			failing(false, true)
+			s.say(600, true)
+			s.say(220, false)
+			s.answered()
+			s.say(2600, false)
+			s.True(s.writes(int64(i+1), stt.ModeFinal, "hello"), "still the floor's")
+			s.False(s.transcriber.stepped.Load(), "a miss is no sign of a server down")
+		}
+		failing(true, false)
 		s.say(600, true)
 		s.say(220, false)
 		s.answered()
@@ -361,9 +443,9 @@ func TestARequestOnAConnectionTheServerClosedIsSentAgain(t *testing.T) {
 }
 
 // A decision or a transcription tells the server how long the router will wait for its
-// answer (TimeoutHeader), in milliseconds from when it was sent: a decision with its words
-// the decision's deadline, past which nobody waits for the words either. A request with no
-// deadline says none.
+// answer (TimeoutHeader), in milliseconds from when it was sent: a decision with its words the
+// decision's own deadline, not the request's, which waits wordsTimeout and the audio's length
+// more for the words. A request with no deadline says none.
 func (s *ClientSuite) TestARequestSaysHowLongItIsWaitedFor() {
 	within := func(timeout time.Duration, ask func(context.Context)) {
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -377,7 +459,7 @@ func (s *ClientSuite) TestARequestSaysHowLongItIsWaitedFor() {
 	within(400*time.Millisecond, func(ctx context.Context) {
 		_, said, err := s.client.DecideWords(ctx, booking, Turn{Speaker: caller}, some)
 		s.Require().NoError(err)
-		s.Require().NoError((<-said).Err)
+		s.Require().NoError((<-said).Err, "the words came, past nothing the server was told")
 	})
 	within(3*time.Second, func(ctx context.Context) {
 		_, err := s.client.Transcribe(ctx, some, nil)
@@ -427,6 +509,8 @@ func (s *ClientSuite) TestARetryAfterHoldsTheChecksOverTheAgentButNotThePauses()
 	s.Require().NoError(err, "a pause's check is sent")
 	_, err = s.client.Decide(context.Background(), booking, Turn{Speaker: caller, Speaking: true}, some)
 	s.Require().NoError(err, "and one at a pause over the agent")
+	_, err = s.client.Transcribe(context.Background(), some, nil)
+	s.Require().NoError(err, "and the words alone, a pause's or an utterance's end")
 
 	skew.Store(int64(2 * time.Second))
 	_, err = s.client.Decide(context.Background(), booking, over, some)
@@ -440,12 +524,13 @@ func (s *ClientSuite) decisionsAsked() int {
 	return len(s.server.decidesAt)
 }
 
-// A Retry-After is seconds or an HTTP date, heeded up to maxBackOff; one that has passed, is
-// zero or is neither changes nothing, and a shorter one does not cut a longer one short.
+// A Retry-After is seconds or an HTTP date, heeded up to maxBackOff for interims and up to
+// maxOverAgentBackOff for checks over the agent; one that has passed, is zero or is neither
+// changes nothing, and a shorter one does not cut a longer one short.
 func TestARetryAfterIsSecondsOrADateAndBounded(t *testing.T) {
 	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	for retryAfter, want := range map[string]time.Duration{
-		"2":    2 * time.Second,
+		"1":    time.Second,
 		" 5 ":  5 * time.Second,
 		"3600": maxBackOff,
 		"0":    0,
@@ -458,18 +543,82 @@ func TestARetryAfterIsSecondsOrADateAndBounded(t *testing.T) {
 	} {
 		client := New("http://floor:8080", PCM, nil)
 		client.now = func() time.Time { return now }
-		client.backOff(retryAfter)
-		got := time.Duration(0)
-		if !client.backOffUntil.IsZero() {
-			got = client.backOffUntil.Sub(now)
+		client.backOff(retryAfter, http.StatusServiceUnavailable)
+		held := func(until time.Time) time.Duration {
+			if until.IsZero() {
+				return 0
+			}
+			return until.Sub(now)
 		}
-		require.Equal(t, want, got, "%q", retryAfter)
+		require.Equal(t, want, held(client.interimsUntil), "interims, %q", retryAfter)
+		require.Equal(t, min(want, maxOverAgentBackOff), held(client.overUntil), "over the agent, %q", retryAfter)
 	}
 	client := New("http://floor:8080", PCM, nil)
 	client.now = func() time.Time { return now }
-	client.backOff("10")
-	client.backOff("1")
-	require.Equal(t, now.Add(10*time.Second), client.backOffUntil)
+	client.backOff("10", http.StatusServiceUnavailable)
+	client.backOff("1", http.StatusServiceUnavailable)
+	require.Equal(t, now.Add(10*time.Second), client.interimsUntil)
+	require.Equal(t, now.Add(maxOverAgentBackOff), client.overUntil)
+}
+
+// However long a Retry-After asks for, checks over the agent are held back for no more than
+// maxOverAgentBackOff of it, as the flow controller rules on them meanwhile and, on a deployment
+// whose flow controller fails, they are stops missed; interims are held back for all of it, up
+// to maxBackOff. When it begins and when it is over is said once each.
+func (s *ClientSuite) TestAChecksOverTheAgentAreHeldBackBrieflyAndInterimsLonger() {
+	var skew atomic.Int64
+	s.client.now = skewed(&skew)
+	var logged bytes.Buffer
+	s.client.logger = slog.New(slog.NewTextHandler(&logged, nil))
+	s.server.mu.Lock()
+	s.server.failing, s.server.failWith, s.server.retryAfter = 1, http.StatusServiceUnavailable, "30"
+	s.server.mu.Unlock()
+	_, err := s.client.Transcribe(context.Background(), some, nil)
+	s.Require().Error(err)
+	over := Turn{Speaker: caller, Speaking: true, Unfinished: true}
+	_, err = s.client.Decide(context.Background(), booking, over, some)
+	s.Require().ErrorIs(err, ErrBackingOff)
+	s.True(s.client.backingOff(kindInterim))
+
+	skew.Store(int64(maxOverAgentBackOff))
+	_, err = s.client.Decide(context.Background(), booking, over, some)
+	s.Require().NoError(err, "sent again once maxOverAgentBackOff has passed")
+	s.True(s.client.backingOff(kindInterim), "interims held back still")
+
+	skew.Store(int64(30 * time.Second))
+	s.False(s.client.backingOff(kindInterim))
+	s.False(s.client.backingOff(kindInterim))
+	s.Equal(1, strings.Count(logged.String(), "asked for time"), logged.String())
+	s.Equal(1, strings.Count(logged.String(), "Retry-After has passed"), logged.String())
+}
+
+// A 503 read once the router has given its request up is no sign of a server shedding load:
+// the server answers 503 to a request whose X-Timeout-Ms ran out before a lane was free. It
+// holds nothing back.
+func TestABusyAnswerReadPastTheDeadlineHoldsNothingBack(t *testing.T) {
+	client := New("http://floor:8080", PCM, nil)
+	busy := func() *http.Response {
+		w := httptest.NewRecorder()
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.WriteString(`{"error":"every deciding lane is busy: none was free within X-Timeout-Ms"}`)
+		return w.Result()
+	}
+	req := httptest.NewRequest(http.MethodPost, "http://floor:8080/v1/decide?agent=a", nil)
+	passed, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Millisecond))
+	defer cancel()
+	err := client.statusError(passed, req, busy())
+	var status *StatusError
+	require.ErrorAs(t, err, &status)
+	require.Equal(t, http.StatusServiceUnavailable, status.Code)
+	require.False(t, Unreachable(err), "busy, as any 503")
+	require.False(t, client.backingOff(kindOverAgent))
+	require.False(t, client.backingOff(kindInterim))
+
+	waiting, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	_ = client.statusError(waiting, req, busy())
+	require.True(t, client.backingOff(kindOverAgent), "one read while the router waits is heeded")
 }
 
 // While the server's Retry-After lasts, a transcriber asks no interims and no checks over the
@@ -549,6 +698,33 @@ func TestAFailureIsWhatTheServerAnswered(t *testing.T) {
 	} {
 		require.Equal(t, want, failure(err), "%v", err)
 	}
+}
+
+// An agent the server refused stands refused for refusalTTL, and is then offered again: a server
+// restarted on a model with answers for more tools, or fixed, takes it. Refused for good, it was
+// asked about again only once some other agent's decision had a 404 clear every agent.
+func (s *ClientSuite) TestARefusedAgentIsOfferedAgainOnceItsRefusalIsOld() {
+	var skew atomic.Int64
+	s.client.now = skewed(&skew)
+	s.server.mu.Lock()
+	s.server.refuse = http.StatusUnprocessableEntity
+	s.server.mu.Unlock()
+	for range 2 {
+		_, err := s.client.Decide(context.Background(), booking, Turn{Speaker: caller}, some)
+		s.Require().ErrorIs(err, ErrRefused)
+	}
+	s.Len(s.server.registered, 1, "refused once, and not offered on every turn")
+
+	// The server restarts on a model that takes it.
+	s.server.mu.Lock()
+	s.server.refuse, s.server.known = 0, map[string]bool{}
+	s.server.mu.Unlock()
+	skew.Store(int64(refusalTTL))
+	_, err := s.client.Decide(context.Background(), booking, Turn{Speaker: caller}, some)
+	s.Require().NoError(err)
+	s.server.mu.Lock()
+	defer s.server.mu.Unlock()
+	s.Len(s.server.registered, 2)
 }
 
 // requestErrorsOf is how many requests of kind failed with code.

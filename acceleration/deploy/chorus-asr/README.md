@@ -587,13 +587,18 @@ decision as well: a third part, `agent` (`application/json`), after the audio, t
 that agent from the part, once it hashes to `ID`, and decides, so any replica answers for any
 agent. The part goes last because a server that does not take it reads the turn and the audio
 and stops there, so a fleet halfway through a rollout to one that does answers all the same.
-A server that doesn't say so is sent the turn and the audio alone.
+An agent of more than 32 KiB of that JSON goes inline only with a decision asked again after a
+404, so that a large one costs a miss a replica rather than its size on every decision. A
+server that doesn't say so is sent the turn and the audio alone.
 
 Every decision and transcription says in `X-Timeout-Ms` how many milliseconds the router will
-go on waiting for its answer, counted from when it sent the request, so that a server can drop
-work nobody waits for: a decision's own deadline (with `?transcript=true`, for its first line;
-the words have 8 s and the audio's length more), and a transcription's. A server that ignores
-it answers as before.
+go on waiting for its answer, a whole number rounded up, counted from when it sent the request,
+so that a server can drop work nobody waits for. For a transcription it is the request's
+deadline. For a decision it is the decision's own, with `?transcript=true` too: it bounds the
+first line, and the router waits for the words on a clock of their own, 8 s and the audio's
+length more, which the header does not say. A server that ignores it answers as before. A 503
+the router reads once its own deadline has passed, as the server answers a request whose
+`X-Timeout-Ms` ran out before a lane was free, is no sign of load and holds nothing back.
 
 `POST /v1/transcribe?languages=en`: a `multipart/form-data` body of one `audio` part, as a
 decision's, and the languages the callers speak, the session's language hints. A server that
@@ -803,22 +808,29 @@ untouched. Acting, a decision's `Ruler` is `heard`.
   register that agent again, and it alone, and ask once more; every other agent's ID stands,
   as it is its content's. A second 404 is a replica that has not been told, as happens behind
   one address with a server that takes no agent inline: the server is up, so it falls to the
-  flow controller and the words alone like a busy answer, and never counts towards a floor
-  that rules alone stepping aside. The policy read from `/v1/info` is read again in the
+  flow controller and the words alone like a busy answer, and counts neither way for a floor
+  that rules alone stepping aside, the checks around it that went unanswered still in a row. An
+  agent the server refused (422) stands refused for 5 minutes, and is then offered again, so a
+  server restarted on another model, or fixed, is asked. The policy read from `/v1/info` is read again in the
   background, every 5 minutes and after a 404 or a 422 refusing an agent, with the last one
   read standing until then: no decision waits on it, and a read that fails is tried again
   after 30 s. An agent written meanwhile has its `floor_control.max_wait_ms` checked against
   `/v1/info` as it answers then.
-- **A server shedding load.** A 503 or 429 with `Retry-After` (seconds or an HTTP date, heeded
-  up to 30 s) has the router send only what decides turns until it has passed: the pauses'
-  checks and their words, and each utterance's end. Checks over the agent are not sent and
-  fall to the flow controller (`router_chorus_asr_checks_total{outcome="backed_off"}`), and
-  interims are not asked for; both are counted in `router_chorus_asr_backed_off_total` by
-  `kind` (`over_agent`, `interim`). One without `Retry-After` changes nothing.
+- **A server shedding load.** A 503 or 429 with `Retry-After` (seconds or an HTTP date) has the
+  router send only what decides turns while it lasts: the pauses' checks and their words, and
+  each utterance's end. Checks over the agent are held back for at most 2 s of it, and fall to
+  the flow controller meanwhile (`router_chorus_asr_checks_total{outcome="backed_off"}`): on a
+  deployment whose flow controller fails, they are stops missed, so no longer than a shedding
+  server asks (gophonic's `-retry-after`, 1 s by default). Interims are held back for all of
+  it, up to 30 s. Both are counted in `router_chorus_asr_backed_off_total` by `kind`
+  (`over_agent`, `interim`), and the router logs at info when a run of them begins and when it
+  is over. One router pod has one client, which sees only the Service, so one replica's
+  `Retry-After` holds back every call's on that pod. One without `Retry-After` changes nothing.
 - **Connections.** The router keeps up to 256 idle connections to the server and closes one
-  after 50 s unused, under the server's 60 s, so that the server is not the one closing it as
-  a request goes out. Every request is idempotent and marked so, and is sent again on a new
-  connection if the one it went out on turns out closed.
+  after 50 s unused, under the server's own idle timeout (60 s at gophonic `02af4b0`, 120 s
+  from gophonic#133), so that the server is not the one closing it as a request goes out. Every
+  request is idempotent (registration is by content hash) and marked so, and is sent again on
+  a new connection if the one it went out on turns out closed.
 
 ## Measured
 
