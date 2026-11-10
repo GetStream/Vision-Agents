@@ -2,6 +2,10 @@
 
 ## Features
 
+### The Kotlin SDK is published to Stream's Maven repository
+
+`io.getstream:stream-agents-android-core` is published to `https://stream-io-repo.com` by `publish-sdk-kotlin.yml`: a release for each `sdk-kotlin-vX.Y.Z` tag on `accelerate`, and a 7-day snapshot, `X.Y.Z-<yyyyMMddHHmm>-SNAPSHOT`, for each push to `accelerate` that changes `sdks/kotlin`. No GitHub release is made, so the Python release does not start.
+
 ### Agent teams: Chat's team isolation for agent configs and channels
 
 An app with the `agent_teams` setting on (set by Stream, off by default) keeps each team's agent configs to its own users, as Chat multi-tenancy does: an end user opens a config only if their Stream user shares its `team` tag (a config of no team is open only to users in no team), and is answered as for an unknown config otherwise. Backends are not limited. The agent channel and voice transcript channel a session makes are in its config's team. With the setting off nothing changes (AI-3059, #1885, #1887).

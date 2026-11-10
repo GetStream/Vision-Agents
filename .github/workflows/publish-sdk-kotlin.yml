@@ -1,0 +1,132 @@
+name: Publish Kotlin SDK
+
+# Publishes io.getstream:stream-agents-android-core to the Stream repository (stream-io-repo.com).
+#
+# - A tag `sdk-kotlin-vX.Y.Z` on a commit of accelerate publishes release X.Y.Z.
+# - A push to accelerate that changes sdks/kotlin publishes snapshot X.Y.Z-<yyyyMMddHHmm>-SNAPSHOT,
+#   where X.Y.Z is the version in sdks/kotlin/gradle.properties. Snapshots expire after 7 days.
+#
+# A tag is the trigger, not a GitHub release: publishing a release starts the Python release
+# (release.yml), and the repository's releases are the Python packages'. A tag push also runs this
+# file from the tagged commit, so it needs nothing on main.
+on:
+  push:
+    branches: [ "accelerate" ]
+    paths:
+      - 'sdks/kotlin/**'
+      - '.github/workflows/publish-sdk-kotlin.yml'
+    tags: [ "sdk-kotlin-v*" ]
+
+concurrency:
+  group: publish-sdk-kotlin-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build, sign and stage
+    runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.version.outputs.channel }}
+      coordinate: ${{ steps.version.outputs.coordinate }}
+    defaults:
+      run:
+        working-directory: sdks/kotlin
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The tag check below needs accelerate's history.
+          fetch-depth: 0
+
+      - name: Work out the version
+        id: version
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            version="${GITHUB_REF_NAME#sdk-kotlin-v}"
+            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || [[ "$version" == *SNAPSHOT* ]]; then
+              echo "::error::$GITHUB_REF_NAME is not sdk-kotlin-vX.Y.Z"; exit 1
+            fi
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/accelerate; then
+              echo "::error::$GITHUB_REF_NAME is not on accelerate"; exit 1
+            fi
+            channel=releases
+          else
+            base=$(sed -n 's/^version=//p' gradle.properties)
+            version="${base%-SNAPSHOT}-$(date -u +%Y%m%d%H%M)-SNAPSHOT"
+            channel=snapshots
+          fi
+          {
+            echo "version=$version"
+            echo "channel=$channel"
+            echo "coordinate=io.getstream:stream-agents-android-core:$version"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
+        with:
+          # A job that holds the signing key reads the cache but never writes it.
+          cache-read-only: true
+
+      # The runner carries an Android SDK, but not necessarily compileSdk 37.
+      - name: Android platform 37
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" >/dev/null
+
+      - name: Test
+        run: ./gradlew :core:testDebugUnitTest
+
+      - name: Sign and stage
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SIGNING_KEY_ID: ${{ secrets.SIGNING_KEY_ID }}
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+        run: ./gradlew :core:publishReleasePublicationToStreamRepoStagingRepository -Pversion="$VERSION"
+
+      # The repository rejects an unsigned file, so fail here rather than after the upload.
+      - name: Check every file is signed
+        run: |
+          set -euo pipefail
+          files=$(find build/staged-repo -type f \( -name '*.aar' -o -name '*.jar' -o -name '*.pom' -o -name '*.module' \))
+          [ -n "$files" ] || { echo "::error::nothing was staged"; exit 1; }
+          for f in $files; do
+            [ -f "$f.asc" ] || { echo "::error::$f is not signed"; exit 1; }
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stream-repo-staged
+          path: sdks/kotlin/build/staged-repo
+          retention-days: 1
+          if-no-files-found: error
+
+  # Secrets are per job: this one holds the repository credential and never the signing key.
+  upload:
+    name: Upload to the Stream repository
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: stream-repo-staged
+          path: build/staged-repo
+
+      - uses: GetStream/stream-build-conventions-android/.github/actions/publish-to-stream-repo@5821f7fdb8d656443b89fb0e28e219ba977cfe6a # v1.1.3
+        with:
+          staged-directory: build/staged-repo
+          channel: ${{ needs.publish.outputs.channel }}
+          endpoint: ${{ secrets.STREAM_REPO_ENDPOINT }}
+          bucket: ${{ secrets.STREAM_REPO_BUCKET }}
+          access-key-id: ${{ secrets.STREAM_REPO_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.STREAM_REPO_SECRET_ACCESS_KEY }}
+
+      - name: Summary
+        env:
+          COORDINATE: ${{ needs.publish.outputs.coordinate }}
+        run: echo "Published \`$COORDINATE\` to https://stream-io-repo.com" >> "$GITHUB_STEP_SUMMARY"

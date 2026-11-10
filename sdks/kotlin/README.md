@@ -10,7 +10,8 @@ It ships no views. Show a conversation with Stream Chat's AI components,
 `io.getstream:stream-chat-android-ai-compose`, which the app adds itself;
 [`examples/voice_agents/android_demo`](../../examples/voice_agents/android_demo) does.
 
-Stream Chat 7.18.0 is published to Stream's Maven repository rather than Maven Central:
+The SDK and Stream Chat 7.18.0 are published to Stream's Maven repository rather than Maven
+Central:
 
 ```kotlin
 dependencyResolutionManagement {
@@ -19,6 +20,10 @@ dependencyResolutionManagement {
         mavenCentral()
         maven("https://stream-io-repo.com")
     }
+}
+
+dependencies {
+    implementation("io.getstream:stream-agents-android-core:<version>")
 }
 ```
 
@@ -326,3 +331,21 @@ only with `INTEGRATION_ROUTER_KEY` set; the router it needs is set up as in the
 
 The unit tests are plain JVM tests, run by the Android Gradle plugin with no emulator.
 `cimg/android` publishes no arm64 image, hence `--platform linux/amd64`.
+
+## Releasing
+
+`.github/workflows/publish-sdk-kotlin.yml` publishes `io.getstream:stream-agents-android-core`
+to `https://stream-io-repo.com`:
+
+- **A release** is a tag on a commit of `accelerate`:
+
+  ```bash
+  git tag sdk-kotlin-v0.1.0 origin/accelerate
+  git push origin sdk-kotlin-v0.1.0
+  ```
+
+- **A snapshot**, `X.Y.Z-<yyyyMMddHHmm>-SNAPSHOT`, is published on every push to `accelerate`
+  that changes `sdks/kotlin`, with `X.Y.Z` from `gradle.properties`. A snapshot expires after
+  7 days.
+
+There is no GitHub release: publishing one starts the Python release, `release.yml`.
