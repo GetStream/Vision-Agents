@@ -11,11 +11,6 @@ function calling — because the functions are here.
 npm install @stream-io/stream-agents
 ```
 
-Before 0.4.0 this package was published as `@stream-io/calypso`. To move over, install
-`@stream-io/stream-agents` and change the imports: `@stream-io/calypso`,
-`@stream-io/calypso/chat`, `/video` and `/node` become `@stream-io/stream-agents`,
-`@stream-io/stream-agents/chat`, `/video` and `/node`. Nothing else changes.
-
 Node 22 or newer, or any browser. No runtime dependencies: `fetch`, `WebSocket` and Web
 Crypto are all taken from the runtime. `session.chat()` works with `stream-chat` 9 or 10
 (10 needs Node 22.18 or newer).

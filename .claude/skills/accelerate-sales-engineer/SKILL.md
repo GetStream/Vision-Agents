@@ -1,6 +1,6 @@
 ---
 name: accelerate-sales-engineer
-description: "Build a short Stream sales-engineering demo for a customer call: one Accelerate agent, their branding, a streaming web chat UI, and a tunnel link to review. Use this whenever someone asks for a customer demo, a POC, a call demo, a sales-engineering build, a tailored agent for a prospect, or to make something to show a company from a name and URL. Also use it when they mention the Stream CLI, Stream Agents, @stream-io/stream-agents (formerly calypso), A2UI, or a review tunnel for a prospect, even if they never say demo or skill."
+description: "Build a short Stream sales-engineering demo for a customer call: one Accelerate agent, their branding, a streaming web chat UI, and a tunnel link to review. Use this whenever someone asks for a customer demo, a POC, a call demo, a sales-engineering build, a tailored agent for a prospect, or to make something to show a company from a name and URL. Also use it when they mention the Stream CLI, Stream Agents, @stream-io/stream-agents, A2UI, or a review tunnel for a prospect, even if they never say demo or skill."
 compatibility: Stream CLI beta (getstream), Slack, Node 22, cloudflared or ngrok
 ---
 
