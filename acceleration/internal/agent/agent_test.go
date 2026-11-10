@@ -1611,6 +1611,24 @@ func (s *AgentSuite) TestThoseAlreadyInTheCallAreReportedBeforeJoined() {
 	s.Equal([]string{"participant", "joined"}, order)
 }
 
+func (s *AgentSuite) TestNoLogLineOfACallerHoldsTheirNumber() {
+	s.logs = &logLines{}
+	s.join(true)
+	participant := stt.Participant{ID: "session-1", UserID: "sip-+15550001111"}
+	s.edge.attending <- Attendance{Participant: participant, Joined: true}
+	s.edge.attending <- Attendance{Participant: participant, Joined: false}
+
+	s.eventually(func() bool { return len(s.logs.records("a participant left")) == 1 },
+		"the caller hanging up was never logged")
+
+	s.Equal("phone_caller", s.logs.records("a participant left")[0]["participant"])
+	s.logs.mu.Lock()
+	logged := s.logs.buf.String()
+	s.logs.mu.Unlock()
+	s.NotContains(logged, "5550001111")
+	s.NotContains(logged, "sip-")
+}
+
 func (s *AgentSuite) TestSomebodyLeavingIsReportedSeparately() {
 	s.join(true)
 	participant := stt.Participant{ID: "session-1", UserID: "sip-+15550001111"}
