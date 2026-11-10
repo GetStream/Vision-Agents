@@ -6,6 +6,10 @@
 
 Every request an app makes is counted in `customer_activity`, one row per app, area of the API (`dashboard_reads`, `agent_setup`, `conversations`, `workers`, `voice_video`, `model_api`, `phone_sms`, `connectors`, `scheduling`, `evals`, `data`, `other`), client (`X-Stream-Client`: `dashboard`, `cli`, `sdk`, else `api`) and UTC day: the requests, the refusals, the last refusal's error code and time, and the first and last request. The sums are written once a minute and when the router stops (AI-2374, #1897).
 
+### Stream staff read how far an organization got with Agents
+
+`GET /v1/ops/orgs/{org_id}/activity` (ops key only) answers whether an organization tried Agents, how far it got and how much it used. It returns its apps' `customer_activity` by area and client, their `requests` on every shard by modality (requests, tokens, audio, characters, time, cost), `first_seen` and `last_seen`, and `furthest_step` (`none`, `dashboard_reads`, `agent_setup`, `conversations`, `steady_use`). `since` is 30 days ago by default and at most 90 (AI-2379, #PRNUM).
+
 ### The router records each voice session's media quality
 
 Each voice session observes, once when the agent leaves, the media quality of the agent's own leg between the router and the SFU: `router_agent_media_packet_loss_ratio` and `router_agent_media_jitter_seconds` by `direction` (`inbound`, the participants' audio as it reached the agent; `outbound`, the agent's audio in the SFU's receiver reports), `router_agent_media_concealed_ratio`, the share of participants' audio the decoder made up for lost packets, and `router_agent_media_rtt_seconds`, the ICE round trip. No call or customer label; the same numbers go in one `media quality` log line per call. The caller's own leg to the SFU is not in them (#1895).

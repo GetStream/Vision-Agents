@@ -3355,7 +3355,7 @@ type ActivityMeter struct {
 	Requests int64 `json:"requests"`
 }
 
-// ActivityStep The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls on three days or more. A step counts only answered requests: one refused in every request is tried, not reached.
+// ActivityStep The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
 type ActivityStep string
 
 // AddContactsRequest defines model for AddContactsRequest.
@@ -7385,7 +7385,7 @@ type OrganizationActivity struct {
 	// FirstSeen When the first request of any area arrived, absent when none did.
 	FirstSeen *time.Time `json:"first_seen,omitempty"`
 
-	// FurthestStep The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls on three days or more. A step counts only answered requests: one refused in every request is tried, not reached.
+	// FurthestStep The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
 	FurthestStep ActivityStep `json:"furthest_step"`
 
 	// LastSeen When the last request of any area arrived, absent when none did.

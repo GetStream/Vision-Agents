@@ -13,8 +13,8 @@ import (
 )
 
 // activityWindow is how far back an organization's activity is read when the caller names no
-// start, and activityHorizon how far it may be: a month is what the weekly digest compares,
-// and three months keep one read to a bounded part of every shard's requests.
+// start, a month, and activityHorizon how far it may be: three months, so one read scans a
+// bounded part of every shard's requests. Both are judgements, not measurements.
 const (
 	activityWindow  = 30 * 24 * time.Hour
 	activityHorizon = 90 * 24 * time.Hour
@@ -46,8 +46,9 @@ var activitySteps = []ActivityStep{activityStepDashboardReads, activityStepAgent
 func (ActivityStep) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "ActivityStep",
 		"The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then "+
-			"steady_use, which is conversations or model calls on three days or more. A step counts "+
-			"only answered requests: one refused in every request is tried, not reached.",
+			"steady_use, which is conversations or model calls answered on three UTC days or more. A "+
+			"step counts only answered requests: an area whose every request was refused was tried, "+
+			"not reached.",
 		string(activityStepNone), string(activityStepDashboardReads), string(activityStepAgentSetup),
 		string(activityStepConversations), string(activityStepSteadyUse))
 }
@@ -187,6 +188,6 @@ func (s *Server) registerOrganizationActivity(api huma.API) {
 		Tags:      []string{staffTag},
 		Security:  opsSecurity,
 		Responses: map[string]*huma.Response{"200": {Description: "The organization's activity"}},
-		Errors:    []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound},
+		Errors:    []int{http.StatusBadRequest, http.StatusUnauthorized},
 	}, s.getOrganizationActivity)
 }

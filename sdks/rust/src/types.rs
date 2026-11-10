@@ -277,7 +277,7 @@ pub struct ActivityMeter {
     ///How many requests. Runtime and sandbox are time, not requests, and read 0.
     pub requests: i64,
 }
-///The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls on three days or more. A step counts only answered requests: one refused in every request is tried, not reached.
+///The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
 #[derive(
     ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]

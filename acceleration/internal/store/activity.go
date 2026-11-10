@@ -148,8 +148,8 @@ type ActivityArea struct {
 	LastRefusalCode string `bun:"last_refusal_code"`
 }
 
-// ActivityAreas sums the activity of apps, at least one, from the UTC day of since on, by area and client.
-// The record keeps days, so the day since falls on is read whole.
+// ActivityAreas sums the activity of apps, at least one, from the UTC day of since on, by area
+// and client. The record keeps days, so the day since falls on is read whole.
 func (s *Store) ActivityAreas(ctx context.Context, apps []string, since time.Time) ([]ActivityArea, error) {
 	var areas []ActivityArea
 	err := s.db.NewSelect().
@@ -200,8 +200,8 @@ type MeterUse struct {
 	CostMicros   int64  `bun:"cost_micros"`
 }
 
-// MeterUses sums the requests apps, at least one, made since since by modality, over every shard, in the
-// order of their modality.
+// MeterUses sums the requests apps, at least one, made from since on by modality, over every
+// shard, in the order of their modality.
 func (s *Store) MeterUses(ctx context.Context, apps []string, since time.Time) ([]MeterUse, error) {
 	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]MeterUse, error) {
 		var used []MeterUse
