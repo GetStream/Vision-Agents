@@ -698,6 +698,22 @@ class TestChecks:
         basic = base64.b64encode(f"SK2:{KEY}".encode()).decode()
         assert vendor.requests[-1].headers["authorization"] == f"Basic {basic}"
 
+    def test_twilio_error_hides_the_key_secret(
+        self, vendor: Vendor, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        secret = "short-secret"  # under hide()'s 32-character shape rule
+        monkeypatch.setenv("TWILIO_ACCOUNT_SID", "AC1")
+        monkeypatch.setenv("TWILIO_API_KEY_SID", "SK2")
+        vendor.answer(
+            "/2010-04-01/Accounts/AC1/Balance.json",
+            f"bad password {secret}".encode(),
+            401,
+        )
+        with pytest.raises(audit.AuditError) as error:
+            audit.twilio(secret, vendor.url)
+        assert "HTTP 401" in str(error.value)
+        assert secret not in str(error.value)
+
     def test_xai_reads_the_team_of_the_api_key(
         self, vendor: Vendor, monkeypatch: pytest.MonkeyPatch
     ) -> None:
