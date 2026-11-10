@@ -29,23 +29,30 @@ func Noted() llm.ResponseParams {
 // the provider against the endpoint it is given, which answers with one short reply.
 func SentRoles(t *testing.T, build func(baseURL string) (*openaicompat.LLM, error), params llm.ResponseParams) []string {
 	t.Helper()
+	var roles []string
+	messages, _ := Sent(t, build, params)["messages"].([]any)
+	for _, message := range messages {
+		role, _ := message.(map[string]any)["role"].(string)
+		roles = append(roles, role)
+	}
+	return roles
+}
+
+// Sent is the body of the first request a provider sends upstream for params. build makes the
+// provider against the endpoint it is given, which answers with one short reply.
+func Sent(t *testing.T, build func(baseURL string) (*openaicompat.LLM, error), params llm.ResponseParams) map[string]any {
+	t.Helper()
 	var (
-		mu    sync.Mutex
-		roles []string
+		mu   sync.Mutex
+		sent map[string]any
 	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
-		var body struct {
-			Messages []struct {
-				Role string `json:"role"`
-			} `json:"messages"`
-		}
+		var body map[string]any
 		_ = json.Unmarshal(raw, &body)
 		mu.Lock()
-		if roles == nil {
-			for _, message := range body.Messages {
-				roles = append(roles, message.Role)
-			}
+		if sent == nil {
+			sent = body
 		}
 		mu.Unlock()
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -64,5 +71,5 @@ func SentRoles(t *testing.T, build func(baseURL string) (*openaicompat.LLM, erro
 
 	mu.Lock()
 	defer mu.Unlock()
-	return roles
+	return sent
 }

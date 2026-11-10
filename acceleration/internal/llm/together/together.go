@@ -19,6 +19,9 @@ var Host = openweights.Host{
 	APIKeyEnvVar:   "TOGETHER_API_KEY",
 	BaseURLEnvVar:  "TOGETHER_BASE_URL",
 	DefaultBaseURL: "https://api.together.xyz/v1",
+	// Together caches prefixes on its own, and a request naming the key lands where its
+	// prefix was cached more often (https://docs.together.ai/docs/inference/chat/prompt-caching).
+	CacheKeyField: "prompt_cache_key",
 }
 
 // New builds the provider, reading the API key from the environment when it is not given.

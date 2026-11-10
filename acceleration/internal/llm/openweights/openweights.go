@@ -30,6 +30,9 @@ type Host struct {
 	BaseURLEnvVar string
 	// DefaultBaseURL is the public endpoint, up to and including /v1.
 	DefaultBaseURL string
+	// CacheKeyField is the body field this host buckets its prompt cache by, sent with a
+	// request's PromptCacheKey. Empty when the host takes none.
+	CacheKeyField string
 }
 
 // Options configures one of this host's models.
@@ -84,6 +87,7 @@ func (h Host) New(options Options) (*openaicompat.LLM, error) {
 		BaseURL:           options.BaseURL,
 		Capabilities:      Capabilities(options.Model, options.Thinking, options.ReasoningEffort),
 		RequestFields:     RequestFields(options.Model, options.Thinking),
+		CacheKeyField:     h.CacheKeyField,
 		Logger:            options.Logger,
 	})
 }
