@@ -411,6 +411,27 @@ func (s *AgentTeamsSuite) TestAChatThatEndedHereOpenedWithNoConfigIsNotChecked()
 	s.Equal(asked, s.teamReads())
 }
 
+// A config that cannot be read is not taken for a deleted one: the fork and the reopen fail
+// rather than open on what the user is not checked against. With the setting off a reopen does
+// not read it: a fork answered 500 and a reopen 202 on base b4d31ea60, as they do here.
+func (s *AgentTeamsSuite) TestAConfigThatCannotBeReadFailsAReopenOnlyWhenChecked() {
+	for settings, reopened := range map[*bool]int{new(true): http.StatusInternalServerError, nil: http.StatusAccepted} {
+		s.useTeamsApp(store.AppSettings{AgentTeams: settings})
+		anya := s.inTeams("red")
+		parent := anya.createSession(s.recorded(s.configOf("red")))
+		ended := anya.createSession(s.recorded(s.configOf("red")))
+		s.endHere(ended.Id)
+		for _, opened := range []Session{parent, ended} {
+			_, err := s.store.DB().NewRaw(`UPDATE agent_configs SET skills = '"unreadable"'::jsonb WHERE id = ?`,
+				value(opened.ConfigId)).Exec(s.T().Context())
+			s.Require().NoError(err)
+		}
+
+		s.Equal(http.StatusInternalServerError, s.status(anya.call(http.MethodPost, s.forking(parent.Id), s.offRecord())), "flag %v", settings != nil)
+		s.Equal(reopened, s.status(anya.call(http.MethodPost, "/v1/agents/sessions/"+ended.Id+"/responses", s.asking())), "flag %v", settings != nil)
+	}
+}
+
 // A backend forks and carries on any session of another team or a deleted config, without
 // asking Stream, as it opens any config.
 func (s *AgentTeamsSuite) TestABackendForksAndCarriesOnASessionOfAnyTeamWithoutAskingStream() {
