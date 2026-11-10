@@ -265,7 +265,8 @@ func (s *Server) deliverChainHere(ctx context.Context, delivery scheduledDeliver
 // channel's reason, except a call placed already (rangAlready), which gives
 // already_called. It is final when every channel's failure is, and missed
 // when every channel found the occurrence too late. A call placed for the
-// occurrence whose end the run does not record ends the walk (rangAlready).
+// occurrence whose end the run does not record ends the walk (rangAlready), and so
+// does a turn refused for money (refusedTurn): the channels share the turn.
 func (s *Server) deliverChain(ctx context.Context, delivery scheduledDelivery, found *session.Session) (string, string, error) {
 	where := delivery.Channels
 	if len(where) == 0 {
@@ -292,6 +293,11 @@ func (s *Server) deliverChain(ctx context.Context, delivery scheduledDelivery, f
 		reason = cmp.Or(reason, deliveryReason(err))
 		final = final && errors.As(err, &failure) && failure.Final
 		missed = false
+		// The turn is the conversation's, shared by the text channels: the next one would only
+		// read it back as failed.
+		if refusedTurn(err) {
+			break
+		}
 		// A call taken with its end never written (a failed give-back or
 		// reason write) counts too: see rangAlready.
 		if rangAlready(err) {
@@ -338,14 +344,16 @@ func deliveryReason(err error) string {
 	return scheduling.ReasonOf(err)
 }
 
-// unpaid is a text the organization may not pay for (dlc.ErrUnpaid) as its run records it: under
-// the refusal's own code (deliveryReason), and final. A suspension, spent credit or a spent limit
+// unpaid is a step the organization may not pay for as its run records it: under the refusal's own
+// code (deliveryReason), and final. The step is a text the gate refuses (dlc.ErrUnpaid), or any
+// refusal about money (moneyError), such as a session that cannot open or a text whose
+// reservation is refused (routing.ReservationRefused). A suspension, spent credit or a spent limit
 // lasts until somebody pays or the limit resets, so the run's retries, minutes apart
 // (scheduling.DeliveryRetries), would only be refused again. A refusal because the money could
 // not be checked (policy.Transient) passes again on its own, and is tried again. Any other error
 // is returned as it is.
 func unpaid(err error) error {
-	if !errors.Is(err, dlc.ErrUnpaid) {
+	if _, refused := moneyError(err); !refused && !errors.Is(err, dlc.ErrUnpaid) {
 		return err
 	}
 	return &scheduling.Failure{Reason: deliveryReason(err), Final: !policy.Transient(err), Err: err}
@@ -462,6 +470,11 @@ func (s *Server) captureReply(ctx context.Context, found *session.Session, deliv
 				return captured(said, files)
 			}
 			active, last = true, time.Now()
+			// A turn the organization may not pay for ends with the model's refusal, which no
+			// reply follows: the run records the money, not an agent that said nothing.
+			if refusal := turnRefusal(event); refusal != nil {
+				return "", nil, refusal
+			}
 			if text := spokenOf(event); text != "" && (len(said) == 0 || said[len(said)-1] != text) {
 				said = append(said, text)
 			}
@@ -479,6 +492,32 @@ func (s *Server) captureReply(ctx context.Context, found *session.Session, deliv
 			}
 		}
 	}
+}
+
+// turnRefused is the refusal for money that ended a text turn. The turn's reply reads back as
+// failed to a channel tried after the one that ran it, which cannot tell why, so the walk stops
+// at it (deliverChain).
+type turnRefused struct{ error }
+
+func (e turnRefused) Unwrap() error { return e.error }
+
+// turnRefusal is the failure a text turn's event ends it with, when the event is the model's
+// refusal for money (unpaid), and nil otherwise: any other agent.Error, such as a tool's, leaves
+// the turn running.
+func turnRefusal(event session.Event) error {
+	if failed, erred := event.(agent.Error); erred {
+		if _, refused := moneyError(failed.Err); refused {
+			return unpaid(turnRefused{failed.Err})
+		}
+	}
+	return nil
+}
+
+// refusedTurn reports whether err is the failure of a text turn the organization may not pay for.
+func refusedTurn(err error) bool {
+	var failure *scheduling.Failure
+	var refused turnRefused
+	return errors.As(err, &failure) && errors.As(failure.Err, &refused)
 }
 
 // rerunSuffix ends the command id an occurrence's turn runs again under when the reply under
@@ -875,13 +914,13 @@ func (s *Server) deliverChainReopened(ctx context.Context, delivery scheduledDel
 	if delivery.SessionID == "" {
 		created, err := s.openTaskSession(ctx, delivery)
 		if err != nil {
-			return "", "", err
+			return "", "", unpaid(err)
 		}
 		events, detach := created.Watch()
 		go holdUntilAnswered(created, events, detach)
 		return s.deliverChain(ctx, delivery, created)
 	}
-	found, hold, err := s.sessionToAnswer(ctx, delivery.SessionID)
+	found, hold, err := s.carryOn(ctx, delivery.SessionID, unpaid)
 	if err != nil {
 		return "", "", err
 	}
@@ -998,7 +1037,7 @@ func (s *Server) placeCall(ctx context.Context, delivery scheduledDelivery, foun
 		SessionID: sessionID,
 	})
 	if err != nil {
-		return session.Spec{}, err
+		return session.Spec{}, unpaid(err)
 	}
 	return callSpec(config, delivery, found.Spec().AgentID, placed, from, to), nil
 }
