@@ -3133,17 +3133,11 @@ llm:
       tier: high-quality
       prefer: openai/gpt-6.1-sol
 
-    # What the agent moderator (Nora) reviews flagged content on. Gemma on our own GPUs is
-    # preferred: a review is a short ruling against labels, and the app's moderation volume
-    # is billed by the GPU minute there rather than by the token. GPT-6.1 Sol, what
-    # llm-thinking prefers, catches it being down or GEMMA_BASE_URL being unset. Named
-    # outright with only because the two share no tier. It has no title: the moderator
-    # page offers no model picker, so it is the template's default rather than a choice.
+    # What the agent moderator (Nora) reviews flagged content on: GPT-5.6 Luna, with nothing
+    # behind it for now. It has no title: the moderator page offers no model picker, so it
+    # is the template's default rather than a choice.
     llm-moderator:
-      prefer: gemma/gemma-4-26B-A4B-it
-      only:
-        - gemma/gemma-4-26B-A4B-it
-        - openai/gpt-6.1-sol
+      only: [openai/gpt-5.6-luna]
 
     # What product data is analysed on: the model that reads a week of calls, tickets and
     # threads and writes what customers are asking for. That is a different intent from
