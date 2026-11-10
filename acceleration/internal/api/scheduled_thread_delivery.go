@@ -28,6 +28,7 @@ import (
 //	  past WhatsApp's 24 h, no template                         outside_window, final
 //	lease the thread's turn (store.TakeChannelThreadTurn)       another turn: wait
 //	the session on the channel, else threadSpec on the task's config
+//	  the organization may not pay                              its code, final
 //	Session.FollowUp("st_<run>"), wait for its reply            no_reply, reply_failed
 //	  ("st_<run>_r1" once st_<run> was cancelled or interrupted: replyCommand)
 //	Bridge.Send the reply, held from Bridge.Reply                opted out: channel_unreachable, final
@@ -77,7 +78,7 @@ func (s *Server) deliverOnThread(ctx context.Context, delivery scheduledDelivery
 	defer cancelTurn()
 	found, opened, err := s.taskThreadSession(turn, delivery, thread)
 	if err != nil {
-		return "", "", err
+		return "", "", unpaid(err)
 	}
 	if opened {
 		defer func() {

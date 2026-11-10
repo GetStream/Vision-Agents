@@ -338,14 +338,16 @@ func deliveryReason(err error) string {
 	return scheduling.ReasonOf(err)
 }
 
-// unpaid is a text the organization may not pay for (dlc.ErrUnpaid) as its run records it: under
-// the refusal's own code (deliveryReason), and final. A suspension, spent credit or a spent limit
+// unpaid is a step the organization may not pay for as its run records it: under the refusal's own
+// code (deliveryReason), and final. The step is a text the gate refuses (dlc.ErrUnpaid), or any
+// refusal about money (moneyError), such as a session that cannot open or a text whose
+// reservation is refused (routing.ReservationRefused). A suspension, spent credit or a spent limit
 // lasts until somebody pays or the limit resets, so the run's retries, minutes apart
 // (scheduling.DeliveryRetries), would only be refused again. A refusal because the money could
 // not be checked (policy.Transient) passes again on its own, and is tried again. Any other error
 // is returned as it is.
 func unpaid(err error) error {
-	if !errors.Is(err, dlc.ErrUnpaid) {
+	if _, refused := moneyError(err); !refused && !errors.Is(err, dlc.ErrUnpaid) {
 		return err
 	}
 	return &scheduling.Failure{Reason: deliveryReason(err), Final: !policy.Transient(err), Err: err}
@@ -875,13 +877,13 @@ func (s *Server) deliverChainReopened(ctx context.Context, delivery scheduledDel
 	if delivery.SessionID == "" {
 		created, err := s.openTaskSession(ctx, delivery)
 		if err != nil {
-			return "", "", err
+			return "", "", unpaid(err)
 		}
 		events, detach := created.Watch()
 		go holdUntilAnswered(created, events, detach)
 		return s.deliverChain(ctx, delivery, created)
 	}
-	found, hold, err := s.sessionToAnswer(ctx, delivery.SessionID)
+	found, hold, err := s.carryOn(ctx, delivery.SessionID, unpaid)
 	if err != nil {
 		return "", "", err
 	}
@@ -998,7 +1000,7 @@ func (s *Server) placeCall(ctx context.Context, delivery scheduledDelivery, foun
 		SessionID: sessionID,
 	})
 	if err != nil {
-		return session.Spec{}, err
+		return session.Spec{}, unpaid(err)
 	}
 	return callSpec(config, delivery, found.Spec().AgentID, placed, from, to), nil
 }
