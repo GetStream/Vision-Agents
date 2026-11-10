@@ -429,6 +429,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### JavaScript: @stream-io/calypso is @stream-io/stream-agents
+
+The JavaScript SDK is published as `@stream-io/stream-agents` from 0.4.0, where it was `@stream-io/calypso`. Install the new package and change the imports: `@stream-io/calypso`, `/chat`, `/video` and `/node` become `@stream-io/stream-agents`, `/chat`, `/video` and `/node`. Nothing else in the API changed. `@stream-io/calypso` gets no further releases.
+
 ### JavaScript: an Agent opens its sessions on its synced config
 
 An `Agent` without `pipeline.config` now names its stored config by `name` when it opens a session (`join`, `chat`, `answer`, `reply`, `startCall`, `waitForCall`), so the session runs on the instructions, skills and knowledge `agent.sync()` stored. It used to name no config, so such a session ran on the router's defaults and the agent's instructions never reached it. An agent that was never synced under its name is now refused with a 404, `there is no agent called <name>`, where it used to open a session: call `await agent.sync()` before opening one, or pass `pipeline.config` to name a stored config yourself.

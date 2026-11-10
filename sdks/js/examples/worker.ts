@@ -10,7 +10,7 @@
  * router and the router pushes work down that connection as it arrives. Stop it with
  * ctrl-c and the calls it is already holding are allowed to finish.
  */
-import { Agent, Dispatch } from "@stream-io/calypso";
+import { Agent, Dispatch } from "@stream-io/stream-agents";
 
 const dispatch = new Dispatch({ capacity: 4 });
 

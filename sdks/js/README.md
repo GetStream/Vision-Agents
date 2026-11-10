@@ -1,6 +1,6 @@
-# @stream-io/calypso
+# Stream Agents for JavaScript
 
-The JavaScript client for the Stream acceleration backend. One package for both ends: a
+`@stream-io/stream-agents` is the JavaScript client for the Stream acceleration backend. One package for both ends: a
 Node process that runs agents, and a browser that holds a conversation with one.
 
 Nothing here does inference or touches media. The backend joins the call, hears the caller,
@@ -8,8 +8,13 @@ answers and speaks. What arrives here are the events saying so, and what stays h
 function calling — because the functions are here.
 
 ```bash
-npm install @stream-io/calypso
+npm install @stream-io/stream-agents
 ```
+
+Before 0.4.0 this package was published as `@stream-io/calypso`. To move over, install
+`@stream-io/stream-agents` and change the imports: `@stream-io/calypso`,
+`@stream-io/calypso/chat`, `/video` and `/node` become `@stream-io/stream-agents`,
+`@stream-io/stream-agents/chat`, `/video` and `/node`. Nothing else changes.
 
 Node 22 or newer, or any browser. No runtime dependencies: `fetch`, `WebSocket` and Web
 Crypto are all taken from the runtime. `session.chat()` works with `stream-chat` 9 or 10
@@ -27,7 +32,7 @@ Which one a deployment uses is a property of the deployment rather than a choice
 | `apiKey` + `token` | A browser | the conversations that user owns |
 
 ```ts
-import { Client } from "@stream-io/calypso";
+import { Client } from "@stream-io/stream-agents";
 
 // On your own server, with STREAM_API_KEY and STREAM_API_SECRET in the environment.
 const api = new Client();
@@ -121,7 +126,7 @@ of a dollar the router counts in, and never built from a fractional number: `USD
 `USD.cents(1250)`, or `USD.parse("12.50")` (a string of dollars is taken anywhere an amount is).
 
 ```ts
-import { Client, USD } from "@stream-io/calypso";
+import { Client, USD } from "@stream-io/stream-agents";
 
 const api = new Client(); // STREAM_API_KEY and STREAM_API_SECRET: server side only
 await api.spendLimits.create({ subject: "organization", interval: "monthly", amount: USD.dollars(20_000) });
@@ -227,7 +232,7 @@ await api.scheduledTasks.delete(id);
 ## An agent
 
 ```ts
-import { Agent } from "@stream-io/calypso";
+import { Agent } from "@stream-io/stream-agents";
 
 const agent = new Agent({
   name: "John",
@@ -351,7 +356,7 @@ and waits, and the router pushes work down the connection as it arrives — noth
 has to be publicly reachable.
 
 ```ts
-import { Agent, Dispatch } from "@stream-io/calypso";
+import { Agent, Dispatch } from "@stream-io/stream-agents";
 
 const dispatch = new Dispatch({ capacity: 4 });
 
@@ -446,8 +451,8 @@ agents/jean/
 ```
 
 ```ts
-import { Agent } from "@stream-io/calypso";
-import { loadFolder } from "@stream-io/calypso/node";
+import { Agent } from "@stream-io/stream-agents";
+import { loadFolder } from "@stream-io/stream-agents/node";
 
 const agent = new Agent({ folder: await loadFolder("agents/jean") });
 await agent.sync();
@@ -498,7 +503,7 @@ itself touches no filesystem.
 `/video` entry point, which is what brings `@stream-io/video-client` in:
 
 ```ts
-import { VoiceSession } from "@stream-io/calypso/video";
+import { VoiceSession } from "@stream-io/stream-agents/video";
 
 const voice = await VoiceSession.start(api.agent("my-agent"));
 await voice.join(); // the microphone on; { camera: true } for the back lens
@@ -636,7 +641,7 @@ events socket, the dispatch socket and the four modality sockets are written rat
 generated.
 
 ```ts
-import { Socket } from "@stream-io/calypso";
+import { Socket } from "@stream-io/stream-agents";
 
 const socket = await Socket.open(api.backend, await api.backend.socketURL("/v1/stt/stream"));
 socket.send({ type: "start", options: { language: "en" } });
