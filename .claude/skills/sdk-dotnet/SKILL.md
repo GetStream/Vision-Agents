@@ -36,7 +36,12 @@ Stream's .NET packages are `getstream-net` (the current generated server SDK, na
 `GetStream`), `stream-chat-net` and `stream-feed-net`. The package id is the placeholder
 **`getstream-calypso`**, like the JS `@stream-io/calypso`, until the public name is chosen; the
 namespace stays **`GetStream.VisionAgents`**, with the generated DTOs under
-`GetStream.VisionAgents.Models`. Do not rename to `StreamIO.*`; nothing
+`GetStream.VisionAgents.Models`.
+
+Releases run by hand: Actions, "Release .NET SDK", "Use workflow from" `accelerate`, pick the
+part to bump or type an exact version, and untick the dry run to publish. The workflow is
+`.github/workflows/release-sdk-dotnet.yml`; it pushes to NuGet through trusted publishing and
+tags `sdk-dotnet-v<version>`. Keep the file name: the nuget.org policy is bound to it. Do not rename to `StreamIO.*`; nothing
 Stream ships to NuGet is called that.
 
 Public types are named after what they are to a caller (`Agent`, `Session`, `Dispatch`,
