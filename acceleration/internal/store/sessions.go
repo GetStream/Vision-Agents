@@ -1307,7 +1307,7 @@ func (s *Store) SessionEndings(ctx context.Context, apps []string, since time.Ti
 // it ended are read.
 func (s *Store) LatestSessions(ctx context.Context, apps []string, since time.Time, limit int) ([]AgentSession, error) {
 	// Each app's newest from agent_sessions_customer_idx, so a shard reads at most limit
-	// rows of each app however many it opened in the window.
+	// rows of each app however many it opened in the window, and they are ordered and cut here.
 	query := `
 SELECT asn.*
 FROM unnest(?::text[]) AS app(id)
@@ -1317,12 +1317,10 @@ CROSS JOIN LATERAL (
     WHERE customer_id = app.id AND created_at >= ?
     ORDER BY created_at DESC, id DESC
     LIMIT ?
-) AS asn
-ORDER BY asn.created_at DESC, asn.id DESC
-LIMIT ?`
+) AS asn`
 	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]AgentSession, error) {
 		var sessions []AgentSession
-		err := db.NewRaw(query, pgdialect.Array(apps), since, limit, limit).Scan(ctx, &sessions)
+		err := db.NewRaw(query, pgdialect.Array(apps), since, limit).Scan(ctx, &sessions)
 		return sessions, err
 	})
 	if err != nil {
