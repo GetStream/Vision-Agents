@@ -432,6 +432,71 @@ func (s *AgentTeamsSuite) TestAConfigThatCannotBeReadFailsAReopenOnlyWhenChecked
 	}
 }
 
+// The socket reopens a chat that ended here as the REST writes do (sessionws.go:123), so
+// a user who moved to another team is answered as for an unknown config.
+func (s *AgentTeamsSuite) TestASocketReopenOfAChatThatEndedHereIsCheckedAgainstTheUsersTeamsNow() {
+	anya := s.inTeams("red")
+	opened := anya.createSession(s.recorded(s.configOf("red")))
+	s.endHere(opened.Id)
+	_, status := anya.watch("/v1/agents/sessions/" + opened.Id + "/events")
+	s.Equal(http.StatusSwitchingProtocols, status, "still in its team")
+	s.endHere(opened.Id)
+	s.teamsChat.PutUser(map[string]any{"id": anya.userID, "teams": []any{"blue"}})
+
+	status, message := anya.refusal("/v1/agents/sessions/" + opened.Id + "/events")
+
+	s.Equal(http.StatusNotFound, status, message)
+	s.Equal(errUnknownConfig.Message, message)
+}
+
+func (s *AgentTeamsSuite) TestAFailedTeamsReadAnswersASocketReopenAlikeWhetherItsConfigExistsOrNot() {
+	anya := s.inTeams("red")
+	kept := anya.createSession(s.recorded(s.configOf("red")))
+	deleted := anya.createSession(s.recorded(s.configOf("red")))
+	s.endHere(kept.Id)
+	s.endHere(deleted.Id)
+	s.deleteConfig(value(deleted.ConfigId))
+	s.teamsChat.Fail(http.MethodGet, "/users")
+	s.T().Cleanup(func() { s.teamsChat.Heal(http.MethodGet, "/users") })
+
+	keptStatus, keptMessage := anya.refusal("/v1/agents/sessions/" + kept.Id + "/events")
+	deletedStatus, deletedMessage := anya.refusal("/v1/agents/sessions/" + deleted.Id + "/events")
+
+	s.Equal(http.StatusServiceUnavailable, keptStatus, keptMessage)
+	s.Equal(errTeamsUnreadable.Message, keptMessage)
+	s.Equal(keptStatus, deletedStatus)
+	s.Equal(keptMessage, deletedMessage)
+}
+
+func (s *AgentTeamsSuite) TestASocketReopenOfAChatWhoseConfigWasDeletedIsAnsweredAsAnUnknownConfig() {
+	anya := s.inTeams("red")
+	gone := anya.createSession(s.recorded(s.configOf("red")))
+	s.endHere(gone.Id)
+	s.deleteConfig(value(gone.ConfigId))
+
+	status, message := anya.refusal("/v1/agents/sessions/" + gone.Id + "/events")
+
+	s.Equal(http.StatusNotFound, status, message)
+	s.Equal(errUnknownConfig.Message, message)
+}
+
+func (s *AgentTeamsSuite) TestWithTheSettingOffASocketReopenIsNotCheckedAndStreamIsNotAsked() {
+	s.useTeamsApp(store.AppSettings{})
+	anya := s.inTeams("blue")
+	opened := anya.createSession(s.recorded(s.configOf("red")))
+	s.endHere(opened.Id)
+	gone := anya.createSession(s.recorded(s.configOf("red")))
+	s.endHere(gone.Id)
+	s.deleteConfig(value(gone.ConfigId))
+	asked := s.teamReads()
+
+	_, status := anya.watch("/v1/agents/sessions/" + opened.Id + "/events")
+	s.Equal(http.StatusSwitchingProtocols, status)
+	_, status = anya.watch("/v1/agents/sessions/" + gone.Id + "/events")
+	s.Equal(http.StatusSwitchingProtocols, status)
+	s.Equal(asked, s.teamReads())
+}
+
 // A backend forks and carries on any session of another team or a deleted config, without
 // asking Stream, as it opens any config.
 func (s *AgentTeamsSuite) TestABackendForksAndCarriesOnASessionOfAnyTeamWithoutAskingStream() {
