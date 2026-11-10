@@ -72,6 +72,30 @@ func (s *SearchSuite) TestATargetNothingAnswersToIsRefused() {
 	s.Equal(http.StatusBadRequest, status)
 }
 
+func (s *SearchSuite) TestAVendorThatFailsTheQuestionIsAServerError() {
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/search", SearchRequest{
+		Query: "how much does a call cost", Options: &SearchOptions{Target: pointerTo("down/" + failingSearchModels["down"])}})
+
+	s.assertServerError(status, payload)
+}
+
+func (s *SearchSuite) TestAVendorNoSessionCanBeOpenedWithIsAServerError() {
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/search", SearchRequest{
+		Query: "how much does a call cost", Options: &SearchOptions{Target: pointerTo("unbuildable/" + failingSearchModels["unbuildable"])}})
+
+	s.assertServerError(status, payload)
+}
+
+func (s *SearchSuite) TestARefusalAboutMoneyFromTheVendorCallIsStillAPaymentRequired() {
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/search", SearchRequest{
+		Query: "how much does a call cost", Options: &SearchOptions{Target: pointerTo("broke/" + failingSearchModels["broke"])}})
+
+	s.Equal(http.StatusPaymentRequired, status, string(payload))
+	var failure ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &failure))
+	s.Equal(codeSpendLimitReached, failure.Error.Code)
+}
+
 func (s *SearchSuite) TestAModelNamedOutsideTheOptionsIsRefused() {
 	for _, model := range []any{"nobody/nothing", "", 5, map[string]any{}, []string{"nobody/nothing"}} {
 		request := map[string]any{"query": "how much does a call cost"}
@@ -109,4 +133,15 @@ func (s *SearchSuite) search(request SearchRequest) SearchAnswer {
 	s.Require().Equal(http.StatusOK, status, string(payload))
 	s.Require().NoError(json.Unmarshal(payload, &found))
 	return found
+}
+
+// assertServerError says a search failed at its provider and was answered as a failure of the router's
+// own: a 500 that says nothing of what the provider answered.
+func (s *SearchSuite) assertServerError(status int, payload []byte) {
+	s.Require().Equal(http.StatusInternalServerError, status, string(payload))
+	var failure ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &failure))
+	s.Equal(ErrorTypeInternal, failure.Error.Type)
+	s.Equal("internal_error", failure.Error.Code)
+	s.Equal(somethingWentWrong, failure.Error.Message)
 }

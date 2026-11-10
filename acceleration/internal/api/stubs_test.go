@@ -5,6 +5,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -75,10 +76,26 @@ func routableConfig() routing.ModalityConfig {
 
 // searchConfig is routableConfig at a price per search, so what a search is billed can be
 // read off its row.
+//
+// It also holds the models a question can be sent to by name to see a search fail: a vendor that is
+// down, one that cannot be built, and one whose answer is a refusal about money. No shortcut asks
+// for Latin, so none of them is ever chosen for a question that names no target.
 func searchConfig() routing.ModalityConfig {
 	config := routableConfig()
 	config.Providers[0].Price = routing.Price{PerThousandRequests: 5}
+	for _, provider := range []string{"down", "unbuildable", "broke"} {
+		config.Providers = append(config.Providers, routing.ProviderConfig{
+			Provider: provider, Model: failingSearchModels[provider], Languages: []string{"la"}})
+	}
 	return config
+}
+
+// failingSearchModels are the models searchConfig adds, by provider. They are new each run, for the
+// reason refusingModel is: a failure marks a model unavailable in a Redis other runs share.
+var failingSearchModels = map[string]string{
+	"down":        "down-" + rand.Text(),
+	"unbuildable": "unbuildable-" + rand.Text(),
+	"broke":       "broke-" + rand.Text(),
 }
 
 // recordingConfig adds the batch half a whole recording is served by, so a job sent to the
@@ -615,8 +632,29 @@ type answerer struct{}
 func searchRegistry() *searchrouter.Registry {
 	registry := searchrouter.NewRegistry()
 	registry.Register("stub", func(routing.Spec) (search.Provider, error) { return answerer{}, nil })
+	registry.Register("down", func(routing.Spec) (search.Provider, error) {
+		return failingSearch{errors.New("down: search: 503 Service Unavailable: overloaded")}, nil
+	})
+	registry.Register("unbuildable", func(routing.Spec) (search.Provider, error) {
+		return nil, errors.New("unbuildable: dial tcp: connection refused")
+	})
+	registry.Register("broke", func(routing.Spec) (search.Provider, error) {
+		return failingSearch{fmt.Errorf("broke: %w", policy.ErrBudgetSpent)}, nil
+	})
 	return registry
 }
+
+// failingSearch is a search provider whose every question fails with err.
+type failingSearch struct{ err error }
+
+func (f failingSearch) Search(context.Context, search.Query) (search.Result, error) {
+	return search.Result{}, f.err
+}
+
+func (failingSearch) Start(context.Context) error { return nil }
+func (failingSearch) Close() error                { return nil }
+func (failingSearch) Provider() string            { return "failing" }
+func (failingSearch) Model() string               { return "failing-search" }
 
 func (answerer) Search(_ context.Context, query search.Query) (search.Result, error) {
 	return search.Result{Answer: "A call costs a penny.", Documents: []search.Document{

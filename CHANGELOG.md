@@ -479,6 +479,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A search provider that fails answers 500, not 400
+
+`POST /v1/search` answers a question its provider could not answer, or a session it could not open with a provider, with a 500 `internal_error` that says only `something went wrong`, instead of a 400 `invalid_request` carrying the provider's own error text. The router API 5xx monitor now counts a search outage. A request the router refuses (an unknown target, a term nothing serves), a model the customer's policies do not allow, and a refusal about money keep their 400, 402, 403 and 429 answers. The provider's error is in the access log under the request id (AI-3080).
+
 ### ship_stale counts only the usage rows a sweep can ship
 
 `router_usage_unshipped_rows` and `router_usage_unshipped_oldest_seconds` count only the waiting usage rows that name an organization. A row whose app has joined none is skipped by the sweeper until it does, and `router_usage_unowned_total` already reports it; before, it also held `ship_stale` raised for as long as it waited (AI-3044).
