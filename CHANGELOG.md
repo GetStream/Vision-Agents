@@ -4,7 +4,7 @@
 
 ### The router records which areas of the API each app uses
 
-Every request an app makes is counted in `customer_activity`, one row per app, area of the API (`dashboard_reads`, `agent_setup`, `conversations`, `workers`, `voice_video`, `model_api`, `phone_sms`, `connectors`, `scheduling`, `evals`, `data`, `hooks_in`, `other`), client (`X-Stream-Client`: `dashboard`, `cli`, `sdk`, else `api`) and UTC day: the requests, the refusals, the last refusal's error code and time, and the first and last request. The sums are written once a minute and when the router stops (AI-2374, #1897).
+Every request an app makes is counted in `customer_activity`, one row per app, area of the API (`dashboard_reads`, `agent_setup`, `conversations`, `workers`, `voice_video`, `model_api`, `phone_sms`, `connectors`, `scheduling`, `evals`, `data`, `other`), client (`X-Stream-Client`: `dashboard`, `cli`, `sdk`, else `api`) and UTC day: the requests, the refusals, the last refusal's error code and time, and the first and last request. The sums are written once a minute and when the router stops (AI-2374, #1897).
 
 ### The router records each voice session's media quality
 
