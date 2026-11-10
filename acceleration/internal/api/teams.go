@@ -16,7 +16,7 @@ import (
 // while Stream is down, and a 404 would say the config is gone when asking again may work.
 var errTeamsUnreadable = unavailable("could not read the user's teams from Stream; try again shortly")
 
-// errSharedStream is a customer acting in the deployment's shared Stream app.
+// errSharedStream is a customer acting in the deployment's shared Stream app, which is not its own.
 var errSharedStream = errors.New("api: the customer has no Stream app of its own to read teams from")
 
 // teamsGate is what keeps an app's configs of one team to its users: the teams of the end
@@ -88,9 +88,10 @@ func (s *Server) refuseOutsideTeam(ctx context.Context, customerID, configID str
 }
 
 // callerTeams is the teams of the end user asking, as their user in the customer's own
-// Stream app holds them. In the deployment's shared app, user ids are not the customer's and
-// whoever holds that app writes their teams, so a customer acting there reads none. A caller
-// with no token is in none: the user id it goes by is a claim nobody checked,
+// Stream app holds them: an app the customer holds a token for, or the deployment's own app
+// when the customer is that app's. A customer that only borrows the deployment's app reads
+// none: user ids there are not the customer's and whoever holds that app writes their teams.
+// A caller with no token is in none: the user id it goes by is a claim nobody checked,
 // and reading that user's teams would let anybody borrow them.
 func (s *Server) callerTeams(ctx context.Context, customerID string) ([]string, error) {
 	caller := CallerFrom(ctx)
@@ -101,7 +102,7 @@ func (s *Server) callerTeams(ctx context.Context, customerID string) ([]string, 
 	switch {
 	case err == nil && !ok:
 		err = errNoStream
-	case err == nil && !bound.Identity.Registered:
+	case err == nil && !bound.Identity.Registered && !s.ownApp(customerID, bound.Identity.StreamApp):
 		err = errSharedStream
 	}
 	if err == nil {
