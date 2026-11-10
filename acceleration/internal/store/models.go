@@ -590,7 +590,7 @@ type AgentConfig struct {
 	// answers in besides agent channels, such as a team's group channels
 	// (20261222120000_agent_config_chat_channels.sql). Empty, as every config starts, answers
 	// in agent channels alone.
-	ChatChannels []ChatChannel `bun:"chat_channels,type:jsonb,notnull"`
+	ChatChannels []ChatChannel `bun:"chat_channels,type:jsonb"`
 	// Scheduling is whether the agent may schedule tasks for its users, and the
 	// defaults those tasks take. The zero value is off.
 	Scheduling AgentScheduling `bun:"scheduling,type:jsonb,notnull"`

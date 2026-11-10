@@ -585,6 +585,9 @@ func normalizeConfig(config *AgentConfig) {
 	if config.VisibleTools == nil {
 		config.VisibleTools = []string{}
 	}
+	if config.ChatChannels == nil {
+		config.ChatChannels = []ChatChannel{}
+	}
 	if config.Tags == nil {
 		config.Tags = map[string]string{}
 	}

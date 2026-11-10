@@ -14,7 +14,7 @@ import (
 func (s *ConfigsSuite) TestAConfigAnswersInNoOtherChannelTypeUnlessItNamesOne() {
 	unnamed := s.createConfig(map[string]any{"name": "support"})
 	s.Nil(unnamed.ChatChannels)
-	s.storedChatChannels(unnamed.Id, nil)
+	s.storedChatChannels(unnamed.Id, []store.ChatChannel{})
 
 	created := s.createConfig(map[string]any{"name": "rota", "chat_channels": []map[string]any{{"type": "callouts"}}})
 	s.Equal(&[]AgentChatChannel{{Type: "callouts"}}, created.ChatChannels)
@@ -35,7 +35,7 @@ func (s *ConfigsSuite) TestAConfigAnswersInNoOtherChannelTypeUnlessItNamesOne() 
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+created.Id,
 		map[string]any{"name": "rota", "chat_channels": []map[string]any{}}, &emptied))
 	s.Nil(emptied.ChatChannels, "an empty list removes them")
-	s.storedChatChannels(created.Id, nil)
+	s.storedChatChannels(created.Id, []store.ChatChannel{})
 }
 
 // chat_channels names each type once, never agent, as a cid's type is written, and at most 16,
