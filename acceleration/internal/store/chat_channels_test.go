@@ -19,7 +19,7 @@ func (s *StoreSuite) answering(customerID string, at time.Time, types ...string)
 // The oldest of the customer's live configs naming the type answers in it: not a newer one,
 // another type's, another customer's, a deleted one or a test copy.
 func (s *StoreSuite) TestTheOldestConfigNamingAChannelTypeAnswersInIt() {
-	customer, other := "acme-" + newID(), "other-"+newID()
+	customer, other := "acme-"+newID(), "other-"+newID()
 	now := time.Now().UTC()
 	deleted := s.answering(customer, now.Add(-4*time.Hour), "callouts")
 	s.Require().NoError(s.store.DeleteAgentConfig(s.ctx, customer, deleted))

@@ -18,6 +18,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.agent_calls import AgentCalls
     from ..models.agent_channels import AgentChannels
+    from ..models.agent_chat_channel import AgentChatChannel
     from ..models.agent_config_tags import AgentConfigTags
     from ..models.agent_connector_binding import AgentConnectorBinding
     from ..models.agent_dispatch import AgentDispatch
@@ -111,6 +112,8 @@ class AgentConfig:
             voice name instead.
         llm_fallbacks (list[str] | Unset): Where a response goes, in order, when llm fails it. Absent when there are
             none.
+        chat_channels (list[AgentChatChannel] | Unset): The Stream Chat channel types of the app's own Stream app this
+            agent answers in besides agent channels. Absent when there are none.
     """
 
     created_at: datetime.datetime
@@ -152,6 +155,7 @@ class AgentConfig:
     visible_tools: list[str] | Unset = UNSET
     voice: str | Unset = UNSET
     llm_fallbacks: list[str] | Unset = UNSET
+    chat_channels: list[AgentChatChannel] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -283,6 +287,13 @@ class AgentConfig:
         if not isinstance(self.llm_fallbacks, Unset):
             llm_fallbacks = self.llm_fallbacks
 
+        chat_channels: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.chat_channels, Unset):
+            chat_channels = []
+            for chat_channels_item_data in self.chat_channels:
+                chat_channels_item = chat_channels_item_data.to_dict()
+                chat_channels.append(chat_channels_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -361,6 +372,8 @@ class AgentConfig:
             field_dict["voice"] = voice
         if llm_fallbacks is not UNSET:
             field_dict["llm_fallbacks"] = llm_fallbacks
+        if chat_channels is not UNSET:
+            field_dict["chat_channels"] = chat_channels
 
         return field_dict
 
@@ -368,6 +381,7 @@ class AgentConfig:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.agent_calls import AgentCalls
         from ..models.agent_channels import AgentChannels
+        from ..models.agent_chat_channel import AgentChatChannel
         from ..models.agent_config_tags import AgentConfigTags
         from ..models.agent_connector_binding import AgentConnectorBinding
         from ..models.agent_dispatch import AgentDispatch
@@ -556,6 +570,15 @@ class AgentConfig:
 
         llm_fallbacks = cast(list[str], d.pop("llm_fallbacks", UNSET))
 
+        _chat_channels = d.pop("chat_channels", UNSET)
+        chat_channels: list[AgentChatChannel] | Unset = UNSET
+        if _chat_channels is not UNSET:
+            chat_channels = []
+            for chat_channels_item_data in _chat_channels:
+                chat_channels_item = AgentChatChannel.from_dict(chat_channels_item_data)
+
+                chat_channels.append(chat_channels_item)
+
         agent_config = cls(
             created_at=created_at,
             id=id,
@@ -596,6 +619,7 @@ class AgentConfig:
             visible_tools=visible_tools,
             voice=voice,
             llm_fallbacks=llm_fallbacks,
+            chat_channels=chat_channels,
         )
 
         agent_config.additional_properties = d

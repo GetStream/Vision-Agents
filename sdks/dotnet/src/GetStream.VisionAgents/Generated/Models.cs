@@ -477,6 +477,27 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class AgentChatChannel
+    {
+
+        /// <summary>
+        /// The channel type's name, as it comes before the colon in a channel's cid.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("type")]
+        public string Type { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class AgentConfig
     {
 
@@ -485,6 +506,12 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("channels")]
         public AgentChannels? Channels { get; set; } = default!;
+
+        /// <summary>
+        /// The Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels. Absent when there are none.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("chat_channels")]
+        public System.Collections.Generic.List<AgentChatChannel>? ChatChannels { get; set; } = default!;
 
         /// <summary>
         /// The bindings exactly as they were written. Absent when there are none.
@@ -652,6 +679,12 @@ namespace GetStream.VisionAgents.Models
         public AgentChannels? Channels { get; set; } = default!;
 
         /// <summary>
+        /// Replaces the list whole. An empty list removes it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("chat_channels")]
+        public System.Collections.Generic.List<AgentChatChannel>? ChatChannels { get; set; } = default!;
+
+        /// <summary>
         /// The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("connectors")]
@@ -815,6 +848,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("channels")]
         public AgentChannels? Channels { get; set; } = default!;
+
+        /// <summary>
+        /// Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels, such as the type the app's group channels are made with. A message in a channel of a type named here is answered by the router's own session in that channel, under this agent, and the reply is written there as the Stream user whose id is this config's id. Who answers comes from this list alone, never from the channel's custom data, and the oldest config naming a type answers in it. Only a message in the app's own Stream app is answered: the router's shared app answers no type named here. The type's grants must not let a user, guest or member make, change or join a channel of it, or let a user or guest read one they are not a member of; members writing in it is expected. A type whose grants do, or that the app does not have, is not answered. agent is answered already and cannot be named, and each type is named once. Left out on an update, the stored list stays; an empty list removes it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("chat_channels")]
+        public System.Collections.Generic.List<AgentChatChannel>? ChatChannels { get; set; } = default!;
 
         /// <summary>
         /// The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.

@@ -16,6 +16,7 @@ from .add_trunk_number_request_tags import AddTrunkNumberRequestTags
 from .agent_calls import AgentCalls
 from .agent_changes import AgentChanges
 from .agent_channels import AgentChannels
+from .agent_chat_channel import AgentChatChannel
 from .agent_config import AgentConfig
 from .agent_config_patch import AgentConfigPatch
 from .agent_config_patch_mcp_servers_item import AgentConfigPatchMcpServersItem
@@ -646,6 +647,7 @@ __all__ = (
     "AgentCalls",
     "AgentChanges",
     "AgentChannels",
+    "AgentChatChannel",
     "AgentConfig",
     "AgentConfigPatch",
     "AgentConfigPatchMcpServersItem",
