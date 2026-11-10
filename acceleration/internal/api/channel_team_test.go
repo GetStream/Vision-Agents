@@ -94,6 +94,26 @@ func (s *AgentTeamsSuite) TestASessionOfATeamsConfigIsRefusedWhenTheSettingsCann
 	s.False(made, "no channel is made outside the config's team")
 }
 
+// A fork reads the app's settings again, and a read that fails is answered as the create is.
+func (s *AgentTeamsSuite) TestAForkIsRefusedWhenTheSettingsCannotBeRead() {
+	parent := s.serverClient.createSession(s.withCustom(s.recorded(s.configOf("red"))))
+	_, err := s.store.DB().NewRaw(`UPDATE apps SET settings = '{"agent_teams": "unreadable"}'::jsonb WHERE id = ?`,
+		s.customerID()).Exec(s.T().Context())
+	s.Require().NoError(err)
+	client, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
+	s.Require().NoError(err)
+	defer client.Close()
+	s.Require().NoError(client.Do(s.T().Context(), client.B().Del().Key("appcfg:app-settings:"+s.customerID()).Build()).Error())
+	s.Require().Eventually(func() bool {
+		_, err := s.configs.AppSettings(s.T().Context(), s.customerID())
+		return err != nil
+	}, 10*time.Second, 20*time.Millisecond)
+
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+parent.Id+"/fork", ForkSessionRequest{})
+	s.Equal(http.StatusInternalServerError, status, string(payload))
+	s.NotContains(string(payload), "Scan", "the store's error text stays out of the answer")
+}
+
 // A backend may name a team of its own on the request; the channel is still the config's.
 func (s *AgentTeamsSuite) TestABackendsOwnTeamDoesNotMoveTheChannel() {
 	request := s.recorded(s.configOf("red"))
