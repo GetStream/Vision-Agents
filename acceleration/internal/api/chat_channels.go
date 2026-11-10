@@ -84,20 +84,20 @@ func mentionedIn(text, handle string) bool {
 	if handle == "" {
 		return false
 	}
-	for rest := text; ; {
-		at := strings.IndexByte(rest, '@')
+	for from := 0; ; {
+		at := strings.IndexByte(text[from:], '@')
 		if at < 0 {
 			return false
 		}
-		before, after := rest[:at], rest[at+1:]
-		rest = after
-		if previous, _ := utf8.DecodeLastRuneInString(before); before != "" && inHandle(previous) {
+		before, after := text[:from+at], text[from+at+1:]
+		from += at + 1
+		if previous, _ := utf8.DecodeLastRuneInString(before); inHandle(previous) {
 			continue
 		}
 		if len(after) < len(handle) || !strings.EqualFold(after[:len(handle)], handle) {
 			continue
 		}
-		if next, _ := utf8.DecodeRuneInString(after[len(handle):]); len(after) > len(handle) && inHandle(next) {
+		if next, _ := utf8.DecodeRuneInString(after[len(handle):]); inHandle(next) {
 			continue
 		}
 		return true
@@ -105,7 +105,9 @@ func mentionedIn(text, handle string) bool {
 }
 
 // inHandle is whether r may be part of a Stream user's id or a word of their name: a letter, a
-// digit, or one of _ - @, which Stream allows in a user id besides them.
+// digit, or one of _ - @, which Stream allows in a user id beside a dot and a space
+// (GetStream/chat monolith/internal/validator/registry.go, ValidUserIDOrTypeRe). A dot or a
+// space after @rota ends a sentence or a word far more often than it goes on to another id.
 func inHandle(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-' || r == '@'
 }

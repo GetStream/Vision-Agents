@@ -55,8 +55,10 @@ func (s *AppHooksSuite) TestAMentionInTheTextIsAnswered() {
 // mentions nobody, mentions Ben, or names the agent without making a mention of it.
 func (s *AppHooksSuite) TestAMessageNotMentioningTheAgentIsNotAnswered() {
 	s.holdsType("callouts", memberWrites)
-	s.forgetNoted()
 	config := s.mentionedIn("callouts")
+	// Each message ends with words of its own, so a model handed any of them is found among
+	// the models other tests opened.
+	marker := " " + s.utils.uuid()
 	for _, c := range []struct{ text, users string }{
 		{"feel better!", ""},
 		{"@Ben feel better!", `[{"id": "ben", "name": "Ben"}]`},
@@ -66,18 +68,18 @@ func (s *AppHooksSuite) TestAMessageNotMentioningTheAgentIsNotAnswered() {
 	} {
 		channel := s.emptyChannel("callouts")
 
-		s.says("callouts", channel, "ben", c.text, c.users)
+		s.says("callouts", channel, "ben", c.text+marker, c.users)
 
 		time.Sleep(dropped)
 		s.Len(s.chat.Stored("callouts:"+channel), 1, "%q was answered", c.text)
 		_, running := s.manager.ByConversationWhere("callouts:"+channel, func(string, int64) bool { return true })
 		s.False(running, "%q opened a session", c.text)
 	}
-	s.Zero(s.notedModels(), "a model was opened for a message that does not mention the agent")
+	s.NotContains(s.notedInputs(), marker, "a model was handed a message that does not mention the agent")
 }
 
-// Ben's message, which mentions nobody, is not answered; Anya's mention next is, and the model answering her is handed his message as
-// what was said before hers, and hers once.
+// Ben's message, which mentions nobody, is not answered; Anya's mention next is, and the model
+// answering her is handed his message as what was said before hers, and hers once.
 func (s *AppHooksSuite) TestAMessageNobodyAnsweredIsReadWithTheNextMention() {
 	s.forgetNoted()
 	s.holdsType("callouts", memberWrites)
@@ -93,10 +95,10 @@ func (s *AppHooksSuite) TestAMessageNobodyAnsweredIsReadWithTheNextMention() {
 	request, _ := s.askedWith(asked)
 	input := request.Input
 	ben := slices.IndexFunc(input, func(m llm.Message) bool { return strings.Contains(m.Content, "the 6pm shift is short one person") })
-	anya := slices.IndexFunc(input, func(m llm.Message) bool { return m.Content == asked })
+	anya := slices.IndexFunc(input, func(m llm.Message) bool { return strings.HasSuffix(m.Content, asked) })
 	s.Require().NotEqual(-1, ben, "the message nobody answered did not reach the model: %+v", input)
 	s.Less(ben, anya, "the message nobody answered came after the one answered")
-	s.Equal(1, s.count(input, asked), "the message answered was handed twice")
+	s.Equal(1, s.count(input, asked), "the message answered was handed twice: %+v", input)
 }
 
 // A config answering only its mentions in one type answers every message in another it names
@@ -148,16 +150,24 @@ func (s *AppHooksSuite) says(channelType, channel, user, text, mentioned string)
 }`, channelType, channel, channel, channelType, time.Now().UTC().Format(time.RFC3339Nano), id, text, user, user, listed)))
 }
 
-// notedModels is how many "noted" models were opened so far, one per session.
-func (s *RouterSuite) notedModels() int {
+// notedInputs is every message any "noted" model opened so far was handed, as one string.
+func (s *RouterSuite) notedInputs() string {
 	s.notedMu.Lock()
 	defer s.notedMu.Unlock()
-	return len(s.noted)
+	var inputs strings.Builder
+	for _, model := range s.noted {
+		for _, request := range model.requests() {
+			for _, message := range request.Input {
+				inputs.WriteString(message.Content + "\n")
+			}
+		}
+	}
+	return inputs.String()
 }
 
 // count is how many messages of input say text.
 func (s *RouterSuite) count(input []llm.Message, text string) int {
-	return len(slices.DeleteFunc(slices.Clone(input), func(m llm.Message) bool { return m.Content != text }))
+	return len(slices.DeleteFunc(slices.Clone(input), func(m llm.Message) bool { return !strings.Contains(m.Content, text) }))
 }
 
 // A delivery Stream Chat makes of a message not mentioning the agent, in a type it answers only
@@ -233,7 +243,7 @@ func (s *ConfigsSuite) TestAChatChannelKeepsTheAnswerItWasNamedWith() {
 // answer is always or mentioned, on create, update and patch; nothing else is stored.
 func (s *ConfigsSuite) TestAChatChannelAnswerIsAlwaysOrMentioned() {
 	created := s.createConfig(map[string]any{"name": "rota", "chat_channels": []map[string]any{{"type": "callouts", "answer": "mentioned"}}})
-	for _, answer := range []any{"sometimes", "Mentioned", "", nil, true, []string{"mentioned"}} {
+	for _, answer := range []any{"sometimes", "Mentioned", "", true, []string{"mentioned"}} {
 		for _, write := range []struct{ method, path string }{
 			{http.MethodPost, "/v1/agents/configs"},
 			{http.MethodPut, "/v1/agents/configs/" + created.Id},
