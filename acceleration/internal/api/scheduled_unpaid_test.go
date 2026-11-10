@@ -14,6 +14,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
@@ -22,6 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
 
@@ -459,4 +461,50 @@ func (s *TelnyxUnpaidSuite) TestATurnRefusedWhileMoneyCannotBeCheckedIsRetried()
 	s.Require().ErrorAs(s.refusedTurn(user, opened), &failure)
 	s.Equal(codeSpendCheckUnavailable, failure.Reason)
 	s.False(failure.Final, "the check passes again on its own")
+}
+
+// teamSpent tags the config with a team and spends the team's weekly limit. The text gate admits
+// a delivery with the attribution it carries, which has no team, so it lets the task through and
+// only the session the config opens, or the turn it runs, is refused (spend_limit_reached).
+func (s *TelnyxUnpaidSuite) teamSpent(person string) {
+	if s.config.Tags == nil {
+		s.config.Tags = map[string]string{}
+	}
+	s.config.Tags[session.TeamTag] = "finance"
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/spend/limits",
+		map[string]any{"subject": "team", "team": "finance", "interval": "weekly", "limit_micros": 1_000_000})
+	s.Require().Equal(http.StatusCreated, status, string(payload))
+	s.usage.Spend(s.T(), s.RouterSuite.app.organization.ID, 1_000_000, func(event *usage.Event) {
+		event.AppID = s.customerID()
+		event.UsageCategories = []string{"team:finance"}
+	})
+	teamed := routing.WithAttribution(context.Background(), routing.Attribution{APIKey: s.RouterSuite.app.key, UsageCategories: []string{"team:finance"}})
+	s.Require().Eventually(func() bool {
+		s.serverClient.call(http.MethodPost, "/v1/search", SearchRequest{Query: "again"})
+		return s.gate.Allow(teamed, s.customerID(), dlc.SMS, person) != nil
+	}, 10*time.Second, 50*time.Millisecond, "the team's limit is read")
+	s.Require().NoError(s.gate.Allow(context.Background(), s.customerID(), dlc.SMS, person), "no team, no refusal")
+}
+
+// A task made in a thread whose conversation has no session running opens one on the task's
+// config, which a spent team limit refuses though the text gate let the task through: the run
+// records the limit and is not tried again.
+func (s *TelnyxUnpaidSuite) TestAThreadTaskWhoseSessionCannotOpenForATeamLimitIsNotRetried() {
+	person := "+1347" + digits(s.utils.uuid())
+	channel := s.creditedThread(person)
+	cid := chatlog.ChannelType + ":" + channel
+	if found, running := s.router.sessions.ByConversationWhere(cid, func(string, int64) bool { return true }); running {
+		_, err := s.router.sessions.Close(found.ID(), session.OwnerOf(found.Spec()))
+		s.Require().NoError(err)
+	}
+	s.teamSpent(person)
+	task := s.threadTask(channel)
+
+	run, attempts := s.settledByTheWorker(task)
+
+	s.Equal(store.ScheduledTaskRunFailed, run.State)
+	s.Require().NotNil(run.Error)
+	s.Equal(codeSpendLimitReached, *run.Error)
+	s.Equal(int32(1), attempts, "a spent limit outlasts every retry of the run")
 }
