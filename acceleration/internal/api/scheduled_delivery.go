@@ -265,7 +265,8 @@ func (s *Server) deliverChainHere(ctx context.Context, delivery scheduledDeliver
 // channel's reason, except a call placed already (rangAlready), which gives
 // already_called. It is final when every channel's failure is, and missed
 // when every channel found the occurrence too late. A call placed for the
-// occurrence whose end the run does not record ends the walk (rangAlready).
+// occurrence whose end the run does not record ends the walk (rangAlready), and so
+// does a turn refused for money (refusedTurn): the channels share the turn.
 func (s *Server) deliverChain(ctx context.Context, delivery scheduledDelivery, found *session.Session) (string, string, error) {
 	where := delivery.Channels
 	if len(where) == 0 {
@@ -292,6 +293,11 @@ func (s *Server) deliverChain(ctx context.Context, delivery scheduledDelivery, f
 		reason = cmp.Or(reason, deliveryReason(err))
 		final = final && errors.As(err, &failure) && failure.Final
 		missed = false
+		// The turn is the conversation's, shared by the text channels: the next one would only
+		// read it back as failed.
+		if refusedTurn(err) {
+			break
+		}
 		// A call taken with its end never written (a failed give-back or
 		// reason write) counts too: see rangAlready.
 		if rangAlready(err) {
@@ -488,16 +494,30 @@ func (s *Server) captureReply(ctx context.Context, found *session.Session, deliv
 	}
 }
 
+// turnRefused is the refusal for money that ended a text turn. The turn's reply reads back as
+// failed to a channel tried after the one that ran it, which cannot tell why, so the walk stops
+// at it (deliverChain).
+type turnRefused struct{ error }
+
+func (e turnRefused) Unwrap() error { return e.error }
+
 // turnRefusal is the failure a text turn's event ends it with, when the event is the model's
 // refusal for money (unpaid), and nil otherwise: any other agent.Error, such as a tool's, leaves
 // the turn running.
 func turnRefusal(event session.Event) error {
 	if failed, erred := event.(agent.Error); erred {
 		if _, refused := moneyError(failed.Err); refused {
-			return unpaid(failed.Err)
+			return unpaid(turnRefused{failed.Err})
 		}
 	}
 	return nil
+}
+
+// refusedTurn reports whether err is the failure of a text turn the organization may not pay for.
+func refusedTurn(err error) bool {
+	var failure *scheduling.Failure
+	var refused turnRefused
+	return errors.As(err, &failure) && errors.As(failure.Err, &refused)
 }
 
 // rerunSuffix ends the command id an occurrence's turn runs again under when the reply under

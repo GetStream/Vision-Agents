@@ -463,15 +463,20 @@ func (s *TelnyxUnpaidSuite) TestATurnRefusedWhileMoneyCannotBeCheckedIsRetried()
 	s.False(failure.Final, "the check passes again on its own")
 }
 
-// teamSpent tags the config with a team and spends the team's weekly limit. The text gate admits
-// a delivery with the attribution it carries, which has no team, so it lets the task through and
-// only the session the config opens, or the turn it runs, is refused (spend_limit_reached).
-func (s *TelnyxUnpaidSuite) teamSpent(person string) {
+// teamed tags the config with a team: a session opened on it after counts under the team.
+func (s *TelnyxUnpaidSuite) teamed() {
 	if s.config.Tags == nil {
 		s.config.Tags = map[string]string{}
 	}
 	s.config.Tags[session.TeamTag] = "finance"
 	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+}
+
+// teamSpent tags the config with a team and spends the team's weekly limit. The text gate admits
+// a delivery with the attribution it carries, which has no team, so it lets the task through and
+// only the session the config opens, or the turn it runs, is refused (spend_limit_reached).
+func (s *TelnyxUnpaidSuite) teamSpent(person string) {
+	s.teamed()
 	status, payload := s.serverClient.call(http.MethodPost, "/v1/spend/limits",
 		map[string]any{"subject": "team", "team": "finance", "interval": "weekly", "limit_micros": 1_000_000})
 	s.Require().Equal(http.StatusCreated, status, string(payload))
@@ -558,15 +563,39 @@ func (s *TelnyxUnpaidSuite) TestATurnThatReportsAFailureNotAboutMoneyStillCarrie
 // not tried again, as a text channel's turn does.
 func (s *TelnyxUnpaidSuite) TestAThreadTaskWhoseTurnIsRefusedForATeamLimitIsNotRetried() {
 	person := "+1347" + digits(s.utils.uuid())
-	if s.config.Tags == nil {
-		s.config.Tags = map[string]string{}
-	}
-	s.config.Tags[session.TeamTag] = "finance"
-	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	s.teamed()
 	channel := s.creditedThread(person)
 	s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel})
 	s.teamSpent(person)
 	task := s.threadTask(channel)
+
+	run, attempts := s.settledByTheWorker(task)
+
+	s.Equal(store.ScheduledTaskRunFailed, run.State)
+	s.Require().NotNil(run.Error)
+	s.Equal(codeSpendLimitReached, *run.Error)
+	s.Equal(int32(1), attempts, "a spent limit outlasts every retry of the run")
+}
+
+// A task on two text channels whose turn a spent team limit refuses, the text gate having let it
+// through: the second channel does not read the refused turn back as a failed reply. The run
+// records the limit and is not tried again.
+func (s *TelnyxUnpaidSuite) TestATurnRefusedForATeamLimitIsFinalOnEveryTextChannel() {
+	number, writer := "+1555"+digits(s.utils.uuid()), "+1347"+digits(s.utils.uuid())
+	s.seedSMSLine(number)
+	s.config.Channels = store.AgentChannels{SMS: &store.ChannelLine{Number: number}}
+	s.teamed()
+	user := s.data.createUser()
+	s.Require().NoError(s.store.SaveChannelIdentity(context.Background(), &store.ChannelIdentity{
+		CustomerID: s.customerID(), ConfigID: s.config.ID, Kind: string(channels.SMS), Address: writer, UserID: user.userID,
+	}))
+	s.usage.Credit(s.T(), s.RouterSuite.app.organization.ID, 10_000_000)
+	s.Require().Eventually(func() bool {
+		return s.gate.Allow(context.Background(), s.customerID(), dlc.SMS, writer) == nil
+	}, 10*time.Second, 50*time.Millisecond, "the credit is read")
+	opened := user.createSession(CreateSessionRequest{ConfigId: &s.config.ID})
+	s.teamSpent(writer)
+	task := s.userTask(user, opened.Id, "sms", "sms")
 
 	run, attempts := s.settledByTheWorker(task)
 
