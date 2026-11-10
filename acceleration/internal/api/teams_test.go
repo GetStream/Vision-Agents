@@ -139,6 +139,16 @@ func (s *AgentTeamsSuite) TestAnAppWithNoStreamToReadTeamsFromOpensNothingToAUse
 	s.Equal(errTeamsUnreadable.Message, message)
 }
 
+func (s *AgentTeamsSuite) TestAnAppWhoseSettingsCannotBeReadOpensNothingToAUser() {
+	dana := s.inTeams()
+	config := s.configOf("")
+	_, err := s.store.DB().NewRaw(`UPDATE apps SET settings = '{"agent_teams": "unreadable"}'::jsonb WHERE id = ?`,
+		s.customerID()).Exec(s.T().Context())
+	s.Require().NoError(err)
+
+	s.Equal(http.StatusInternalServerError, dana.do(http.MethodPost, "/v1/agents/sessions", s.naming(config), nil))
+}
+
 func (s *AgentTeamsSuite) TestABackendOpensAConfigOfAnyTeamWithoutAskingStream() {
 	anya := s.inTeams("red")
 	asked := s.teamReads()
