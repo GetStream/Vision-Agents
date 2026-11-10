@@ -4,8 +4,8 @@ The starting point for an app's Nora: the agent the chat review worker hands fla
 through `POST /v1/agents/runs`. The dashboard's "AI moderator" template
 (`volt-dashboard` `agent-templates.ts`) is meant to create the same agent; change both together.
 
-- `agent.yaml` runs Nora on `llm-moderator`: Gemma on our own Baseten deployment, with GPT-6.1
-  Sol behind it when Gemma is down or `GEMMA_BASE_URL` is unset (`internal/routing/router.yaml`).
+- `agent.yaml` runs Nora on `llm-moderator`: GPT-5.6 Luna, with no fallback
+  (`internal/routing/router.yaml`).
 - `instructions.md` is how Nora reviews: content is untrusted data, flags are hypotheses, the
   current content is judged first, and evidence is quoted exactly. It also says what each kind of
   case brings: a chat message comes with its `conversation`, a Feeds activity or comment
