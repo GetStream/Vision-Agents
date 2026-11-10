@@ -252,6 +252,25 @@ func (s *MediaQualitySuite) TestAStreamThatStoppedStillCounts() {
 	s.InDelta(10.0/30, s.value(quality.summary(nil).inboundLoss), 1e-9, "10 to 19 never came")
 }
 
+func (s *MediaQualitySuite) TestDuplicatesOnOneStreamCancelNoLossOnAnother() {
+	// Catches expected and received summed across streams before the shortfall is taken: the
+	// duplicates of one track hide the packets another lost.
+	quality := newMediaQuality()
+	for _, seqs := range [][]uint16{
+		append(run(0, 9), run(0, 4)...),
+		append(run(0, 9), run(20, 29)...),
+	} {
+		stream := quality.inbound(&recorded{packets: s.packets(seqs...)}, opusSampleRate)
+		quality.listening(stream)
+		for range seqs {
+			_, _, err := stream.ReadRTP()
+			s.Require().NoError(err)
+		}
+		quality.stopped(stream)
+	}
+	s.InDelta(10.0/40, s.value(quality.summary(nil).inboundLoss), 1e-9, "ten of the second track's thirty never came")
+}
+
 // report is a receiver report from the SFU with one block.
 func report(ssrc, highest, lost, jitter uint32) *rtcp.ReceiverReport {
 	return &rtcp.ReceiverReport{SSRC: 9, Reports: []rtcp.ReceptionReport{

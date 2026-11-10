@@ -80,8 +80,9 @@ const jitterGain = 16
 
 // inboundTotals are what one or more inbound streams counted.
 type inboundTotals struct {
-	// expected is how many packets the sequence numbers say were sent, received how many came.
-	expected, received uint64
+	// expected is how many packets the sequence numbers say were sent, received how many came,
+	// lost the shortfall of a stream (RFC 3550 A.3). received is one stream's; add sums lost.
+	expected, received, lost uint64
 	// inOrder are the packets that moved the sequence on, the ones the decoder decodes; frames
 	// are the buffers the decoder handed out. Each in-order packet is one buffer, so the rest
 	// are buffers the decoder made up for packets that never came.
@@ -93,7 +94,7 @@ type inboundTotals struct {
 
 func (t *inboundTotals) add(other inboundTotals) {
 	t.expected += other.expected
-	t.received += other.received
+	t.lost += other.lost
 	t.inOrder += other.inOrder
 	t.frames += other.frames
 	t.jitterSum += other.jitterSum
@@ -190,6 +191,11 @@ func (s *inboundStream) snapshot() inboundTotals {
 	totals := s.totals
 	if s.started {
 		totals.expected += s.highest - s.base + 1
+	}
+	// Duplicates can make more packets come than were expected (RFC 3550 A.3). That cancels no
+	// loss on another stream, so the shortfall is taken here, per stream, not from the sums.
+	if totals.expected > totals.received {
+		totals.lost = totals.expected - totals.received
 	}
 	return totals
 }
@@ -312,15 +318,14 @@ func (q *mediaQuality) summary(rtt *float64) mediaSummary {
 	}
 	summary := mediaSummary{rtt: rtt}
 	if totals.expected > 0 {
-		// Duplicates can make more packets come than were expected (RFC 3550 A.3).
-		lost := float64(totals.expected) - float64(totals.received)
-		summary.inboundLoss = ratio(max(lost, 0), float64(totals.expected))
+		summary.inboundLoss = ratio(float64(totals.lost), float64(totals.expected))
 	}
 	if totals.jitterSamples > 0 {
 		summary.inboundJitter = ratio(totals.jitterSum, float64(totals.jitterSamples))
 	}
 	if totals.frames > 0 {
-		// A buffer can be counted out before the packet it came from is counted in.
+		// A packet is counted in before its buffer is counted out, so a summary between the two
+		// sees more packets than buffers.
 		concealed := float64(totals.frames) - float64(totals.inOrder)
 		summary.concealed = ratio(max(concealed, 0), float64(totals.frames))
 	}
