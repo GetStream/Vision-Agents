@@ -97,6 +97,33 @@ func (e ActivityGranularity) Valid() bool {
 	}
 }
 
+// Defines values for ActivityStep.
+const (
+	ActivityStepAgentSetup     ActivityStep = "agent_setup"
+	ActivityStepConversations  ActivityStep = "conversations"
+	ActivityStepDashboardReads ActivityStep = "dashboard_reads"
+	ActivityStepNone           ActivityStep = "none"
+	ActivityStepSteadyUse      ActivityStep = "steady_use"
+)
+
+// Valid indicates whether the value is a known member of the ActivityStep enum.
+func (e ActivityStep) Valid() bool {
+	switch e {
+	case ActivityStepAgentSetup:
+		return true
+	case ActivityStepConversations:
+		return true
+	case ActivityStepDashboardReads:
+		return true
+	case ActivityStepNone:
+		return true
+	case ActivityStepSteadyUse:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AgentConnectorSelectionType.
 const (
 	AgentConnectorSelectionTypeFixed   AgentConnectorSelectionType = "fixed"
@@ -3255,6 +3282,30 @@ type AccountBalanceWarningSource string
 // AccountStatus suspended: Stream refuses every request of the organization, free work included, until it restores it.
 type AccountStatus string
 
+// ActivityArea defines model for ActivityArea.
+type ActivityArea struct {
+	// Area The area of the API, such as agent_setup or conversations.
+	Area string `json:"area"`
+
+	// Client The client the requests named themselves as: dashboard, cli, sdk or api.
+	Client string `json:"client"`
+
+	// FirstAt When the first request arrived.
+	FirstAt time.Time `json:"first_at"`
+
+	// LastAt When the last request arrived.
+	LastAt time.Time `json:"last_at"`
+
+	// LastRefusalCode The error code of the latest refusal, empty when there was none.
+	LastRefusalCode string `json:"last_refusal_code"`
+
+	// Refused How many were answered with a status of 400 or more.
+	Refused int64 `json:"refused"`
+
+	// Requests How many requests arrived, refused ones included.
+	Requests int64 `json:"requests"`
+}
+
 // ActivityBucket defines model for ActivityBucket.
 type ActivityBucket struct {
 	// ActiveUsers Distinct end users who opened a session or asked something of an agent in the bucket. A guest who later turned out to be a known user counts as that user.
@@ -3276,6 +3327,36 @@ type ActivityBucket struct {
 
 // ActivityGranularity Separate from Granularity, and coarser, because distinct users cannot be summed: a month of them is who came back rather than the sum of its days.
 type ActivityGranularity string
+
+// ActivityMeter defines model for ActivityMeter.
+type ActivityMeter struct {
+	// AudioMs Billable audio, transcribed or produced, in milliseconds.
+	AudioMs int64 `json:"audio_ms"`
+
+	// Characters Billable text, in characters.
+	Characters int64 `json:"characters"`
+
+	// CostMicros What it is charged, in millionths of a dollar.
+	CostMicros int64 `json:"cost_micros"`
+
+	// DurationMs How long the work took, in milliseconds: for runtime and sandbox, the time held.
+	DurationMs int64 `json:"duration_ms"`
+
+	// InputTokens Tokens read, cached ones included.
+	InputTokens int64 `json:"input_tokens"`
+
+	// Meter The modality, such as llm, tts, runtime or sandbox.
+	Meter string `json:"meter"`
+
+	// OutputTokens Tokens generated.
+	OutputTokens int64 `json:"output_tokens"`
+
+	// Requests How many requests. Runtime and sandbox are time, not requests, and read 0.
+	Requests int64 `json:"requests"`
+}
+
+// ActivityStep The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
+type ActivityStep string
 
 // AddContactsRequest defines model for AddContactsRequest.
 type AddContactsRequest struct {
@@ -7294,6 +7375,33 @@ type OptOutPage struct {
 
 	// NextCursor Pass as `cursor` for the next page. Absent on the last one.
 	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// OrganizationActivity defines model for OrganizationActivity.
+type OrganizationActivity struct {
+	// Areas Every area and client the organization's apps made requests in, by area then client.
+	Areas *[]ActivityArea `json:"areas"`
+
+	// FirstSeen When the first request of any area arrived, absent when none did.
+	FirstSeen *time.Time `json:"first_seen,omitempty"`
+
+	// FurthestStep The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
+	FurthestStep ActivityStep `json:"furthest_step"`
+
+	// LastSeen When the last request of any area arrived, absent when none did.
+	LastSeen *time.Time `json:"last_seen,omitempty"`
+
+	// Meters What the organization's apps' work came to, by modality, from the shards listed in shards.
+	Meters *[]ActivityMeter `json:"meters"`
+
+	// OrganizationId The organization.
+	OrganizationId string `json:"organization_id"`
+
+	// Shards The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them.
+	Shards *[]string `json:"shards"`
+
+	// Since The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on.
+	Since time.Time `json:"since"`
 }
 
 // PhoneCapability What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.

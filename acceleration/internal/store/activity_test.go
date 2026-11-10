@@ -208,3 +208,152 @@ func (s *StoreSuite) TestTwoWritesOfTheSameRowsAtOnceBothSucceed() {
 	}
 	s.Equal(int64(2*rounds), s.activityOf("app-000", "agent_setup", AuditSourceCLI).requests)
 }
+
+// day is a delta of requests in area from client for app on the day of at, refused of them.
+func (s *StoreSuite) day(appID, area, client string, at time.Time, requests, refused int64) ActivityDelta {
+	day := at.UTC().Truncate(24 * time.Hour)
+	delta := ActivityDelta{
+		OrganizationID: "org", AppID: appID, Area: area, Client: client,
+		Day: day, Requests: requests, Refused: refused, FirstAt: at, LastAt: at,
+	}
+	if refused > 0 {
+		delta.LastRefusalCode, delta.LastRefusalAt = "refused-"+at.Format(time.DateOnly), at
+	}
+	return delta
+}
+
+// Defect: an area read for one app of the organization, or for every app (a lost IN), or one
+// row per day rather than one per area and client.
+func (s *StoreSuite) TestActivityAreasSumTheAppsAskedForOverDaysAndLeaveOtherAppsOut() {
+	s.Require().NoError(s.store.RecordActivity(s.ctx, []ActivityDelta{
+		s.day("one", "agent_setup", AuditSourceCLI, s.base.Add(time.Minute), 2, 0),
+		s.day("one", "agent_setup", AuditSourceCLI, s.base.Add(25*time.Hour), 3, 0),
+		s.day("two", "agent_setup", AuditSourceCLI, s.base, 1, 0),
+		s.day("two", "conversations", AuditSourceSDK, s.base.Add(time.Hour), 4, 0),
+		s.day("stranger", "agent_setup", AuditSourceCLI, s.base, 100, 0),
+		s.day("stranger", "workers", AuditSourceAPI, s.base, 100, 0),
+	}))
+
+	areas, err := s.store.ActivityAreas(s.ctx, []string{"one", "two"}, s.base)
+	s.Require().NoError(err)
+
+	s.Require().Len(areas, 2, "%+v", areas)
+	s.Equal("agent_setup", areas[0].Area)
+	s.Equal(AuditSourceCLI, areas[0].Client)
+	s.Equal(int64(6), areas[0].Requests)
+	s.True(s.base.Equal(areas[0].FirstAt), "the first of either app, %s", areas[0].FirstAt)
+	s.True(s.base.Add(25*time.Hour).Equal(areas[0].LastAt), "the last of any day, %s", areas[0].LastAt)
+	s.Equal("conversations", areas[1].Area)
+	s.Equal(AuditSourceSDK, areas[1].Client)
+	s.Equal(int64(4), areas[1].Requests)
+}
+
+// Defect: the days before since read too, or the day since falls on left out because its row
+// began before since.
+func (s *StoreSuite) TestActivityAreasReadTheWholeDaySinceFallsOnAndNothingBefore() {
+	s.Require().NoError(s.store.RecordActivity(s.ctx, []ActivityDelta{
+		s.day("one", "agent_setup", AuditSourceCLI, s.base.Add(-24*time.Hour), 7, 0),
+		s.day("one", "agent_setup", AuditSourceCLI, s.base, 2, 0),
+	}))
+
+	areas, err := s.store.ActivityAreas(s.ctx, []string{"one"}, s.base.Add(3*time.Hour))
+	s.Require().NoError(err)
+
+	s.Require().Len(areas, 1)
+	s.Equal(int64(2), areas[0].Requests)
+}
+
+// Defect: the code of the earliest refusal kept, or of a later day with none (its NULL sorting
+// first in a descending order).
+func (s *StoreSuite) TestTheCodeOfAnAreaIsItsLatestRefusals() {
+	s.Require().NoError(s.store.RecordActivity(s.ctx, []ActivityDelta{
+		s.day("one", "agent_setup", AuditSourceCLI, s.base, 1, 1),
+		s.day("one", "agent_setup", AuditSourceCLI, s.base.Add(24*time.Hour), 2, 1),
+		s.day("one", "agent_setup", AuditSourceCLI, s.base.Add(48*time.Hour), 5, 0),
+		s.day("one", "conversations", AuditSourceCLI, s.base, 3, 0),
+	}))
+
+	areas, err := s.store.ActivityAreas(s.ctx, []string{"one"}, s.base)
+	s.Require().NoError(err)
+
+	s.Require().Len(areas, 2)
+	s.Equal(int64(8), areas[0].Requests)
+	s.Equal(int64(2), areas[0].Refused)
+	s.Equal("refused-"+s.base.Add(24*time.Hour).Format(time.DateOnly), areas[0].LastRefusalCode)
+	s.Empty(areas[1].LastRefusalCode)
+}
+
+// Defect: a day counted twice for two areas, a day of refusals only counted, or a day of another
+// area, another app or before since counted.
+func (s *StoreSuite) TestActivityDaysCountEachDayAnAreaNamedAnsweredOnce() {
+	day := func(n int) time.Time { return s.base.Add(time.Duration(n) * 24 * time.Hour) }
+	s.Require().NoError(s.store.RecordActivity(s.ctx, []ActivityDelta{
+		s.day("one", "conversations", AuditSourceSDK, day(0), 1, 0),
+		s.day("one", "model_api", AuditSourceSDK, day(0), 1, 0),
+		s.day("two", "model_api", AuditSourceAPI, day(1), 3, 1),
+		s.day("one", "conversations", AuditSourceSDK, day(2), 2, 2),
+		s.day("one", "agent_setup", AuditSourceCLI, day(3), 1, 0),
+		s.day("stranger", "conversations", AuditSourceSDK, day(4), 1, 0),
+		s.day("one", "conversations", AuditSourceSDK, day(-1), 1, 0),
+	}))
+
+	days, err := s.store.ActivityDays(s.ctx, []string{"one", "two"}, s.base, []string{"conversations", "model_api"})
+	s.Require().NoError(err)
+	s.Equal(2, days)
+}
+
+// usedBy is a request of app's of modality at at, its quantities set by change.
+func (s *StoreSuite) usedBy(appID, modality string, at time.Time, change func(*Request)) {
+	request := &Request{Modality: modality, CustomerID: appID, Provider: "stub", Model: "stub", StartedAt: at, Success: true}
+	change(request)
+	s.Require().NoError(s.store.RecordRequest(s.ctx, request))
+}
+
+// Defect: a meter summed for one app of the organization or for every app, a quantity left
+// out or summed from another column, a request before since counted, or the sliced time of
+// runtime and sandboxes counted as requests.
+func (s *StoreSuite) TestMeterUsesSumTheAppsAskedForByModality() {
+	took := func(ms float64) *float64 { return &ms }
+	s.usedBy("one", "llm", s.base, func(r *Request) { r.InputTokens, r.OutputTokens, r.CostMicros = 10, 20, 5 })
+	s.usedBy("two", "llm", s.base.Add(time.Hour), func(r *Request) { r.InputTokens, r.OutputTokens, r.CostMicros = 1, 2, 1 })
+	s.usedBy("one", "tts", s.base, func(r *Request) { r.AudioMs, r.Characters, r.CostMicros = 1500, 42, 3 })
+	s.usedBy("two", "sandbox", s.base, func(r *Request) { r.DurationMs, r.CostMicros = took(60_000), 7 })
+	s.usedBy("one", "runtime", s.base, func(r *Request) { r.DurationMs, r.CostMicros = took(30_000.4), 2 })
+	s.usedBy("stranger", "llm", s.base, func(r *Request) { r.InputTokens, r.CostMicros = 1000, 1000 })
+	s.usedBy("one", "llm", s.base.Add(-time.Second), func(r *Request) { r.InputTokens, r.CostMicros = 1000, 1000 })
+
+	uses, err := s.store.MeterUses(s.ctx, []string{"one", "two"}, s.base)
+	s.Require().NoError(err)
+
+	s.Equal([]MeterUse{
+		{Modality: "llm", Requests: 2, InputTokens: 11, OutputTokens: 22, CostMicros: 6},
+		{Modality: "runtime", DurationMs: 30_000, CostMicros: 2},
+		{Modality: "sandbox", DurationMs: 60_000, CostMicros: 7},
+		{Modality: "tts", Requests: 1, AudioMs: 1500, Characters: 42, CostMicros: 3},
+	}, uses)
+}
+
+// Defect: the requests of another shard left out, a shard's answer replacing another's, or one
+// modality listed once per shard.
+func (s *ShardedStoreSuite) TestMeterUsesSumEveryShard() {
+	took := 1000.0
+	s.usedBy("one", "llm", s.base, func(r *Request) {
+		r.InputTokens, r.OutputTokens, r.AudioMs, r.Characters, r.DurationMs, r.CostMicros = 10, 20, 30, 40, &took, 5
+	})
+	s.usedBy("one", "tts", s.base, func(r *Request) { r.Characters, r.CostMicros = 9, 1 })
+	request := &Request{Modality: "llm", CustomerID: "two", Provider: "stub", Model: "stub", StartedAt: s.base,
+		InputTokens: 1, OutputTokens: 2, AudioMs: 3, Characters: 4, DurationMs: &took, CostMicros: 1, Success: true}
+	s.Require().NoError(s.other.RecordRequest(s.ctx, request))
+
+	uses, err := s.store.MeterUses(s.ctx, []string{"one", "two"}, s.base)
+	s.Require().NoError(err)
+	s.Equal([]MeterUse{{Modality: "llm", Requests: 2, InputTokens: 11, OutputTokens: 22, AudioMs: 33, Characters: 44,
+		DurationMs: 2000, CostMicros: 6}, {Modality: "tts", Requests: 1, Characters: 9, CostMicros: 1}}, uses)
+}
+
+// Defect: the shards the meters were read from not named, or named in another order than the
+// reads take them, this shard's first.
+func (s *ShardedStoreSuite) TestMeterShardsNameEveryShardThisOneFirst() {
+	s.Equal([]string{"here", "there"}, s.store.MeterShards())
+	s.Equal([]string{"there", "here"}, s.other.MeterShards())
+}

@@ -122,6 +122,63 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ActivityArea
+    {
+
+        /// <summary>
+        /// The area of the API, such as agent_setup or conversations.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("area")]
+        public string Area { get; set; } = default!;
+
+        /// <summary>
+        /// The client the requests named themselves as: dashboard, cli, sdk or api.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("client")]
+        public string Client { get; set; } = default!;
+
+        /// <summary>
+        /// When the first request arrived.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("first_at")]
+        public System.DateTimeOffset FirstAt { get; set; } = default!;
+
+        /// <summary>
+        /// When the last request arrived.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("last_at")]
+        public System.DateTimeOffset LastAt { get; set; } = default!;
+
+        /// <summary>
+        /// The error code of the latest refusal, empty when there was none.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("last_refusal_code")]
+        public string LastRefusalCode { get; set; } = default!;
+
+        /// <summary>
+        /// How many were answered with a status of 400 or more.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("refused")]
+        public long Refused { get; set; } = default!;
+
+        /// <summary>
+        /// How many requests arrived, refused ones included.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("requests")]
+        public long Requests { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class ActivityBucket
     {
 
@@ -158,6 +215,69 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("voice_minutes")]
         public double VoiceMinutes { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ActivityMeter
+    {
+
+        /// <summary>
+        /// Billable audio, transcribed or produced, in milliseconds.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("audio_ms")]
+        public long AudioMs { get; set; } = default!;
+
+        /// <summary>
+        /// Billable text, in characters.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("characters")]
+        public long Characters { get; set; } = default!;
+
+        /// <summary>
+        /// What it is charged, in millionths of a dollar.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("cost_micros")]
+        public long CostMicros { get; set; } = default!;
+
+        /// <summary>
+        /// How long the work took, in milliseconds: for runtime and sandbox, the time held.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("duration_ms")]
+        public long DurationMs { get; set; } = default!;
+
+        /// <summary>
+        /// Tokens read, cached ones included.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("input_tokens")]
+        public long InputTokens { get; set; } = default!;
+
+        /// <summary>
+        /// The modality, such as llm, tts, runtime or sandbox.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("meter")]
+        public string Meter { get; set; } = default!;
+
+        /// <summary>
+        /// Tokens generated.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("output_tokens")]
+        public long OutputTokens { get; set; } = default!;
+
+        /// <summary>
+        /// How many requests. Runtime and sandbox are time, not requests, and read 0.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("requests")]
+        public long Requests { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -9329,6 +9449,66 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("next_cursor")]
         public string? NextCursor { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class OrganizationActivity
+    {
+
+        /// <summary>
+        /// Every area and client the organization's apps made requests in, by area then client.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("areas")]
+        public System.Collections.Generic.List<ActivityArea>? Areas { get; set; } = default!;
+
+        /// <summary>
+        /// When the first request of any area arrived, absent when none did.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("first_seen")]
+        public System.DateTimeOffset? FirstSeen { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("furthest_step")]
+        public string FurthestStep { get; set; } = default!;
+
+        /// <summary>
+        /// When the last request of any area arrived, absent when none did.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("last_seen")]
+        public System.DateTimeOffset? LastSeen { get; set; } = default!;
+
+        /// <summary>
+        /// What the organization's apps' work came to, by modality, from the shards listed in shards.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("meters")]
+        public System.Collections.Generic.List<ActivityMeter>? Meters { get; set; } = default!;
+
+        /// <summary>
+        /// The organization.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("organization_id")]
+        public string OrganizationId { get; set; } = default!;
+
+        /// <summary>
+        /// The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("shards")]
+        public System.Collections.Generic.List<string>? Shards { get; set; } = default!;
+
+        /// <summary>
+        /// The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("since")]
+        public System.DateTimeOffset Since { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 

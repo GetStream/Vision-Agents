@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // ActivityDelta is what one app did in one area of the API, from one client, on one UTC day,
@@ -131,4 +133,121 @@ func (d *ActivityDelta) Add(other ActivityDelta) {
 		d.LastAt = other.LastAt
 	}
 	d.OrganizationID = other.OrganizationID
+}
+
+// ActivityArea is what some apps did in one area of the API from one client, summed over the
+// days read.
+type ActivityArea struct {
+	Area     string    `bun:"area"`
+	Client   string    `bun:"client"`
+	FirstAt  time.Time `bun:"first_at"`
+	LastAt   time.Time `bun:"last_at"`
+	Requests int64     `bun:"requests"`
+	Refused  int64     `bun:"refused"`
+	// LastRefusalCode is the code of the latest refusal, empty when there was none.
+	LastRefusalCode string `bun:"last_refusal_code"`
+}
+
+// ActivityAreas sums the activity of apps, at least one, from the UTC day of since on, by area
+// and client. The record keeps days, so the day since falls on is read whole.
+func (s *Store) ActivityAreas(ctx context.Context, apps []string, since time.Time) ([]ActivityArea, error) {
+	var areas []ActivityArea
+	err := s.db.NewSelect().
+		TableExpr("customer_activity").
+		ColumnExpr("area, client, MIN(first_at) AS first_at, MAX(last_at) AS last_at").
+		ColumnExpr("SUM(requests) AS requests, SUM(refused) AS refused").
+		ColumnExpr("COALESCE((array_agg(last_refusal_code ORDER BY last_refusal_at DESC)"+
+			" FILTER (WHERE last_refusal_at IS NOT NULL))[1], '') AS last_refusal_code").
+		Where("app_id IN (?)", bun.In(apps)).
+		Where("day >= ?::date", since.UTC().Format(time.DateOnly)).
+		Group("area", "client").
+		Order("area", "client").
+		Scan(ctx, &areas)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: activity areas: %w", err))
+	}
+	return areas, nil
+}
+
+// ActivityDays is how many UTC days from the day of since on apps had a request answered, not
+// refused, in any of areas.
+func (s *Store) ActivityDays(ctx context.Context, apps []string, since time.Time, areas []string) (int, error) {
+	var days int
+	err := s.db.NewSelect().
+		TableExpr("customer_activity").
+		ColumnExpr("COUNT(DISTINCT day)").
+		Where("app_id IN (?)", bun.In(apps)).
+		Where("day >= ?::date", since.UTC().Format(time.DateOnly)).
+		Where("area IN (?)", bun.In(areas)).
+		Where("requests > refused").
+		Scan(ctx, &days)
+	if err != nil {
+		return 0, stack.Wrap(fmt.Errorf("store: activity days: %w", err))
+	}
+	return days, nil
+}
+
+// MeterUse is what some apps' work of one modality came to. Requests leaves out the sliced
+// time of runtime and sandboxes, which DurationMs measures instead.
+type MeterUse struct {
+	Modality     string `bun:"modality"`
+	Requests     int64  `bun:"requests"`
+	InputTokens  int64  `bun:"input_tokens"`
+	OutputTokens int64  `bun:"output_tokens"`
+	AudioMs      int64  `bun:"audio_ms"`
+	Characters   int64  `bun:"characters"`
+	DurationMs   int64  `bun:"duration_ms"`
+	CostMicros   int64  `bun:"cost_micros"`
+}
+
+// MeterShards names the shards MeterUses reads, this one's first: those in Options.Shards, or
+// this shard alone, named by a digest of its DSN, when that is unset.
+func (s *Store) MeterShards() []string { return slices.Clone(s.shardNames) }
+
+// MeterUses sums the requests apps, at least one, made from since on by modality, over every
+// shard, in the order of their modality.
+func (s *Store) MeterUses(ctx context.Context, apps []string, since time.Time) ([]MeterUse, error) {
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]MeterUse, error) {
+		var used []MeterUse
+		err := db.NewSelect().
+			TableExpr("requests").
+			ColumnExpr("modality").
+			ColumnExpr(requestCount+" AS requests").
+			ColumnExpr("COALESCE(SUM(input_tokens), 0) AS input_tokens").
+			ColumnExpr("COALESCE(SUM(output_tokens), 0) AS output_tokens").
+			ColumnExpr("COALESCE(SUM(audio_ms), 0) AS audio_ms").
+			ColumnExpr("COALESCE(SUM(characters), 0) AS characters").
+			ColumnExpr("COALESCE(SUM(duration_ms), 0)::bigint AS duration_ms").
+			ColumnExpr("COALESCE(SUM(cost_micros), 0) AS cost_micros").
+			Where("customer_id IN (?)", bun.In(apps)).
+			Where("started_at >= ?", since).
+			Group("modality").
+			Scan(ctx, &used)
+		return used, err
+	})
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: meter uses: %w", err))
+	}
+	// Sorted first, so the rows of one modality from every shard are next to each other.
+	var all []MeterUse
+	for _, list := range lists {
+		all = append(all, list...)
+	}
+	slices.SortStableFunc(all, func(a, b MeterUse) int { return cmp.Compare(a.Modality, b.Modality) })
+	var uses []MeterUse
+	for _, used := range all {
+		if last := len(uses) - 1; last >= 0 && uses[last].Modality == used.Modality {
+			held := &uses[last]
+			held.Requests += used.Requests
+			held.InputTokens += used.InputTokens
+			held.OutputTokens += used.OutputTokens
+			held.AudioMs += used.AudioMs
+			held.Characters += used.Characters
+			held.DurationMs += used.DurationMs
+			held.CostMicros += used.CostMicros
+			continue
+		}
+		uses = append(uses, used)
+	}
+	return uses, nil
 }

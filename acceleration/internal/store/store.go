@@ -892,6 +892,29 @@ ORDER BY 1`, organizationID, organizationID, organizationID).Scan(ctx, &members)
 	return apps, nil
 }
 
+// OrganizationActivityApps is OrganizationApps for a read of what an organization did: the
+// app whose id is the organization's counts only when the organization is the one the latest
+// request named it for, or, when none did, the one it is registered under, so an app of
+// another organization with that id is not told as this one's.
+func (s *Store) OrganizationActivityApps(ctx context.Context, organizationID string) ([]string, error) {
+	apps, err := s.OrganizationApps(ctx, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	var own bool
+	err = s.db.NewRaw(`SELECT EXISTS (SELECT 1 FROM app_organizations WHERE app_id = ?0 AND organization_id = ?0)
+  OR (NOT EXISTS (SELECT 1 FROM app_organizations WHERE app_id = ?0)
+      AND NOT EXISTS (SELECT 1 FROM apps WHERE id = ?0 AND organization_id <> ?0))`, organizationID).Scan(ctx, &own)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: organization activity apps: %w", err))
+	}
+	if !own {
+		// OrganizationApps puts the organization's own id first.
+		return apps[1:], nil
+	}
+	return apps, nil
+}
+
 // spendOther is the value every group outside the biggest few is summed into.
 const spendOther = "other"
 
