@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -225,14 +224,16 @@ func (s *Store) MeterUses(ctx context.Context, apps []string, since time.Time) (
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: meter uses: %w", err))
 	}
-	summed := map[string]*MeterUse{}
+	// Sorted first, so the rows of one modality from every shard are next to each other.
+	var all []MeterUse
 	for _, list := range lists {
-		for _, used := range list {
-			held, found := summed[used.Modality]
-			if !found {
-				summed[used.Modality] = &used
-				continue
-			}
+		all = append(all, list...)
+	}
+	slices.SortStableFunc(all, func(a, b MeterUse) int { return cmp.Compare(a.Modality, b.Modality) })
+	var uses []MeterUse
+	for _, used := range all {
+		if last := len(uses) - 1; last >= 0 && uses[last].Modality == used.Modality {
+			held := &uses[last]
 			held.Requests += used.Requests
 			held.InputTokens += used.InputTokens
 			held.OutputTokens += used.OutputTokens
@@ -240,11 +241,9 @@ func (s *Store) MeterUses(ctx context.Context, apps []string, since time.Time) (
 			held.Characters += used.Characters
 			held.DurationMs += used.DurationMs
 			held.CostMicros += used.CostMicros
+			continue
 		}
-	}
-	uses := make([]MeterUse, 0, len(summed))
-	for _, modality := range slices.Sorted(maps.Keys(summed)) {
-		uses = append(uses, *summed[modality])
+		uses = append(uses, used)
 	}
 	return uses, nil
 }
