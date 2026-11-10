@@ -355,6 +355,16 @@ func Openable(ctx context.Context, cid string) bool {
 	return channelType == streamapp.AgentChannelType || validChannelType.MatchString(channelType) && vouched == cid
 }
 
+// writtenByAgent is whether a message the user author wrote in the channel cid may carry the
+// conversation's own fields (messageFromWire): any message of an agent channel, as it always
+// was, but in a channel of another type, a customer's group channel whose members set custom
+// data of their own, only one written as the agent, agentID. Ben's message carrying the fields
+// of the agent's reply is his, not a turn of the agent's.
+func writtenByAgent(cid, agentID, author string) bool {
+	channelType, _ := channelOf(cid)
+	return channelType == streamapp.AgentChannelType || author == agentID
+}
+
 // validChannelType is the type part of a cid as Stream Chat checks it, [\w-]+ (GetStream/chat
 // monolith/internal/validator/registry.go, ValidChannelCIDRe).
 var validChannelType = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
@@ -933,6 +943,9 @@ func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, 
 	}
 	var stored []Message
 	for _, m := range r.Data.Messages {
+		if !writtenByAgent(cid, agentID, m.User.ID) {
+			continue
+		}
 		if msg, err := messageFromWire(m.ID, m.Text, m.Custom); err == nil {
 			msg.authorID = m.User.ID
 			stored = append(stored, msg)
@@ -1076,6 +1089,12 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 				p.Messages = append(p.Messages, msg)
 				continue
 			}
+		}
+		if !writtenByAgent(cid, agentID, m.User.ID) {
+			if written, ok := messageFromPerson(m); ok {
+				p.Messages = append(p.Messages, written)
+			}
+			continue
 		}
 		msg, err := messageFromWire(m.ID, m.Text, m.Custom)
 		if err != nil {
