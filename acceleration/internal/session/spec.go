@@ -155,6 +155,13 @@ type Spec struct {
 	// config's TeamTag. A team the caller's token signed is never moved by it. Not read from
 	// Tags, which a device may send.
 	Team string
+	// ConfigTeam is the agent config's own TeamTag, the one an end user's teams are checked
+	// against. Unlike Team, no caller moves it.
+	ConfigTeam string
+	// ChannelTeam is the Chat team the agent channels the session makes are in: ConfigTeam
+	// in an app that keeps each team's configs to its own users (store.AppSettings.AgentTeams),
+	// else none. Manager.Create sets it.
+	ChannelTeam string
 
 	// Incognito holds the conversation and records nothing about it: no session row, no
 	// turns, no transcript. It is the one field that makes a session unfindable afterwards,
@@ -425,6 +432,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		Calls:              config.Calls,
 		Tags:               routing.Tags(config.Tags),
 		Team:               configTeam(config.Tags),
+		ConfigTeam:         strings.TrimSpace(config.Tags[TeamTag]),
 		// The config's alone until Manager.Create holds it to the policies.
 		ToolOutputRetention: config.ToolOutputRetention,
 	}

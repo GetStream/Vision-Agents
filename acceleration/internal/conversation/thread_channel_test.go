@@ -303,7 +303,7 @@ func (s *ThreadChannelSuite) TestAThreadChannelARequestNamesDoesNotOpen() {
 func (s *ThreadChannelSuite) TestASessionNamedLikeAThreadChannelIsItsOwnConversation() {
 	cid := "agent:" + conversation.ThreadChannelPrefix + "order-1042"
 
-	c, _, _, err := s.service.CreateInApp(context.Background(), 0, "customer", "agent", cid, "", "", nil)
+	c, _, _, err := s.service.CreateInApp(context.Background(), 0, "customer", "agent", cid, "", "", nil, "")
 	s.Require().NoError(err)
 	s.Require().NoError(c.Begin("question"))
 	c.Observe(agent.ResponseDelta{Text: "An answer."})

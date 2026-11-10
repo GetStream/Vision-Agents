@@ -61,7 +61,7 @@ func TestOpeningOneConversationDoesNotWaitOnAnother(t *testing.T) {
 
 	stuck := make(chan error, 1)
 	go func() {
-		_, _, _, err := service.CreateInApp(t.Context(), 0, "customer", "agent", "agent:held-conversation", "", "", nil)
+		_, _, _, err := service.CreateInApp(t.Context(), 0, "customer", "agent", "agent:held-conversation", "", "", nil, "")
 		stuck <- err
 	}()
 	select {
@@ -74,7 +74,7 @@ func TestOpeningOneConversationDoesNotWaitOnAnother(t *testing.T) {
 
 	opened := make(chan error, 1)
 	go func() {
-		_, _, _, err := service.CreateInApp(t.Context(), 0, "customer", "agent", "agent:other-conversation", "", "", nil)
+		_, _, _, err := service.CreateInApp(t.Context(), 0, "customer", "agent", "agent:other-conversation", "", "", nil, "")
 		opened <- err
 	}()
 	select {
@@ -97,7 +97,7 @@ func TestTwoOpensOfOneConversationAreTakenInTurn(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _, _, errs[i] = service.CreateInApp(t.Context(), 0, "customer", "agent", "agent:one-conversation", "", "", nil)
+			_, _, _, errs[i] = service.CreateInApp(t.Context(), 0, "customer", "agent", "agent:one-conversation", "", "", nil, "")
 		}()
 	}
 	wg.Wait()
