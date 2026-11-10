@@ -684,6 +684,42 @@ func TestSyncSendsTheFloorControlTheAgentDeclared(t *testing.T) {
 	}
 }
 
+// agent.yaml's agents go as written, and an empty list goes as one so it removes the stored
+// list, while a file that names none, or null, sends none, so the stored list stays.
+func TestSyncSendsTheAgentsTheAgentDeclared(t *testing.T) {
+	for _, c := range []struct {
+		declared string
+		want     *[]acceleration.ChildAgent
+	}{
+		{"mode: text\nagents:\n  - config: security-lens\n    tool: security\n    description: Reviews for security bugs.\n    timeout_ms: 90000\n  - {config: ranker, tool: rank}\n",
+			&[]acceleration.ChildAgent{
+				{Config: "security-lens", Tool: "security", Description: pointer("Reviews for security bugs."), TimeoutMs: pointer(int64(90000))},
+				{Config: "ranker", Tool: "rank"},
+			}},
+		{"agents: []\n", &[]acceleration.ChildAgent{}},
+		{"agents:\n", nil},
+		{"llm: openai/gpt-5.6\n", nil},
+	} {
+		root := filepath.Join(t.TempDir(), "lead")
+		write(t, root, "agent.yaml", c.declared)
+		router := newBackend(t)
+		agent := agentOn(t, router, Options{Dir: root})
+
+		if _, err := agent.Sync(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+
+		router.mu.Lock()
+		got := router.syncs[0].Agents
+		router.mu.Unlock()
+		if !reflect.DeepEqual(got, c.want) {
+			sent, _ := json.Marshal(got)
+			wanted, _ := json.Marshal(c.want)
+			t.Errorf("%q: agents went as %s, not %s", c.declared, sent, wanted)
+		}
+	}
+}
+
 func describe(floorControl *acceleration.FloorControl) string {
 	raw, _ := json.Marshal(floorControl)
 	return string(raw)

@@ -3515,6 +3515,9 @@ type AgentChatChannel struct {
 
 // AgentConfig defines model for AgentConfig.
 type AgentConfig struct {
+	// Agents The app's other text agents this one may hand work to, each as a tool. Absent when there are none.
+	Agents *[]ChildAgent `json:"agents,omitempty"`
+
 	// Calls The tools an agent on a phone call is offered: end the call, press keys, transfer.
 	Calls *AgentCalls `json:"calls,omitempty"`
 
@@ -3606,6 +3609,9 @@ type AgentConfig struct {
 
 // AgentConfigPatch What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored.
 type AgentConfigPatch struct {
+	// Agents Replaces the list whole. An empty list removes it.
+	Agents *[]ChildAgent `json:"agents,omitempty"`
+
 	// Calls The tools an agent on a phone call is offered: end the call, press keys, transfer.
 	Calls *AgentCalls `json:"calls,omitempty"`
 
@@ -3717,6 +3723,9 @@ type AgentConfigPatch_Plugins_Item struct {
 
 // AgentConfigRequest defines model for AgentConfigRequest.
 type AgentConfigRequest struct {
+	// Agents The app's other text agents this one may hand work to, each offered to its model as a tool that takes one string, input, and answers with what that agent said last. Several called in one reply run at once, at most 8 at a time. Each runs as an incognito run of its own, on its own llm, instructions, connectors and sandbox, and its spend is added to the parent run's usage. Only a text agent has them, and an agent named here must be a text agent with no agents of its own and not this one. Omitted or null on an update, the list stored stays as it is; an empty list removes it.
+	Agents *[]ChildAgent `json:"agents,omitempty"`
+
 	// Calls The tools an agent on a phone call is offered: end the call, press keys, transfer.
 	Calls *AgentCalls `json:"calls,omitempty"`
 
@@ -4911,6 +4920,21 @@ type ChatTokenRequest struct {
 
 	// UserName The name shown against anything they write. Defaults to the user id.
 	UserName *string `json:"user_name,omitempty"`
+}
+
+// ChildAgent Another of the app's text agents a text agent may hand work to, offered to its model as a tool.
+type ChildAgent struct {
+	// Config The agent config to hand work to: one of the app's text agents, by name or id. It is stored, and read back, by name.
+	Config string `json:"config"`
+
+	// Description What the model is told the agent does, which is the whole of how it decides when to call it.
+	Description *string `json:"description,omitempty"`
+
+	// TimeoutMs How long one call may take, two minutes when left out. A call never outlasts the run that made it: it gets this or what is left of the run, whichever is less. A call that runs out of time, or whose agent fails, is answered to the model as a failed tool call, and the run goes on.
+	TimeoutMs *int64 `json:"timeout_ms,omitempty"`
+
+	// Tool The name the model calls it by, unique among the config's agents.
+	Tool string `json:"tool"`
 }
 
 // ClaimGuestRequest defines model for ClaimGuestRequest.
@@ -8472,6 +8496,9 @@ type RouterConfigRequest struct {
 
 // Run defines model for Run.
 type Run struct {
+	// Children What the runs of the child agents it called spent, by the tool each was called by. Absent when it called none.
+	Children *map[string]CallUsage `json:"children,omitempty"`
+
 	// FinalText The last thing the agent said.
 	FinalText string `json:"final_text"`
 
@@ -9756,6 +9783,9 @@ type SuspendTelephonyRequest struct {
 
 // SyncAgentRequest An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
 type SyncAgentRequest struct {
+	// Agents agent.yaml's agents: the app's other text agents this one may hand work to, each as a tool, by name. Sent, they replace the stored list whole, an empty list removing it; left out, the stored list stays. An agent named must already exist, so a directory is synced after the agents it names.
+	Agents *[]ChildAgent `json:"agents,omitempty"`
+
 	// BaseChange The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again.
 	BaseChange *string `json:"base_change,omitempty"`
 
@@ -13513,6 +13543,7 @@ type ClientInterface interface {
 	// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
 	// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 	// The input is handed to the agent as JSON data, never as instructions.
+	// The agents a text config names are tools of the run: each call runs that agent on its input as an incognito run of its own, given its own timeout or what is left of this run, whichever is less, and several called in one reply run at once, at most 8 at a time. A call that fails or runs out of time is a failed tool call the agent answers around, not a failed run. What they spend is in usage, and by tool in children. They take none of the app's run slots: this run's covers them.
 	// Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request. The router fetches each URL before the run starts, from public hosts only, and hands the model the bytes it fetched, so no run answers without seeing an image it was given: one that does not answer 200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable naming the image, which retrying the same image does not fix.
 	// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, an input or tool result the prompt injection screen refused a 400 prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 	//
@@ -13526,6 +13557,7 @@ type ClientInterface interface {
 	// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
 	// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 	// The input is handed to the agent as JSON data, never as instructions.
+	// The agents a text config names are tools of the run: each call runs that agent on its input as an incognito run of its own, given its own timeout or what is left of this run, whichever is less, and several called in one reply run at once, at most 8 at a time. A call that fails or runs out of time is a failed tool call the agent answers around, not a failed run. What they spend is in usage, and by tool in children. They take none of the app's run slots: this run's covers them.
 	// Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request. The router fetches each URL before the run starts, from public hosts only, and hands the model the bytes it fetched, so no run answers without seeing an image it was given: one that does not answer 200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable naming the image, which retrying the same image does not fix.
 	// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, an input or tool result the prompt injection screen refused a 400 prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 	//
@@ -17967,6 +17999,7 @@ func (c *Client) DeleteProviderKey(ctx context.Context, provider string, params 
 // Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
 // The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 // The input is handed to the agent as JSON data, never as instructions.
+// The agents a text config names are tools of the run: each call runs that agent on its input as an incognito run of its own, given its own timeout or what is left of this run, whichever is less, and several called in one reply run at once, at most 8 at a time. A call that fails or runs out of time is a failed tool call the agent answers around, not a failed run. What they spend is in usage, and by tool in children. They take none of the app's run slots: this run's covers them.
 // Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request. The router fetches each URL before the run starts, from public hosts only, and hands the model the bytes it fetched, so no run answers without seeing an image it was given: one that does not answer 200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable naming the image, which retrying the same image does not fix.
 // A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, an input or tool result the prompt injection screen refused a 400 prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 //
@@ -17990,6 +18023,7 @@ func (c *Client) CreateRunWithBody(ctx context.Context, contentType string, body
 // Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
 // The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 // The input is handed to the agent as JSON data, never as instructions.
+// The agents a text config names are tools of the run: each call runs that agent on its input as an incognito run of its own, given its own timeout or what is left of this run, whichever is less, and several called in one reply run at once, at most 8 at a time. A call that fails or runs out of time is a failed tool call the agent answers around, not a failed run. What they spend is in usage, and by tool in children. They take none of the app's run slots: this run's covers them.
 // Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request. The router fetches each URL before the run starts, from public hosts only, and hands the model the bytes it fetched, so no run answers without seeing an image it was given: one that does not answer 200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable naming the image, which retrying the same image does not fix.
 // A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, an input or tool result the prompt injection screen refused a 400 prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 //
@@ -35633,6 +35667,7 @@ type ClientWithResponsesInterface interface {
 	// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
 	// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 	// The input is handed to the agent as JSON data, never as instructions.
+	// The agents a text config names are tools of the run: each call runs that agent on its input as an incognito run of its own, given its own timeout or what is left of this run, whichever is less, and several called in one reply run at once, at most 8 at a time. A call that fails or runs out of time is a failed tool call the agent answers around, not a failed run. What they spend is in usage, and by tool in children. They take none of the app's run slots: this run's covers them.
 	// Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request. The router fetches each URL before the run starts, from public hosts only, and hands the model the bytes it fetched, so no run answers without seeing an image it was given: one that does not answer 200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable naming the image, which retrying the same image does not fix.
 	// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, an input or tool result the prompt injection screen refused a 400 prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 	//
@@ -35646,6 +35681,7 @@ type ClientWithResponsesInterface interface {
 	// Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
 	// The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 	// The input is handed to the agent as JSON data, never as instructions.
+	// The agents a text config names are tools of the run: each call runs that agent on its input as an incognito run of its own, given its own timeout or what is left of this run, whichever is less, and several called in one reply run at once, at most 8 at a time. A call that fails or runs out of time is a failed tool call the agent answers around, not a failed run. What they spend is in usage, and by tool in children. They take none of the app's run slots: this run's covers them.
 	// Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request. The router fetches each URL before the run starts, from public hosts only, and hands the model the bytes it fetched, so no run answers without seeing an image it was given: one that does not answer 200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable naming the image, which retrying the same image does not fix.
 	// A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, an input or tool result the prompt injection screen refused a 400 prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 	//
@@ -66261,6 +66297,7 @@ func (c *ClientWithResponses) DeleteProviderKeyWithResponse(ctx context.Context,
 // Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
 // The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 // The input is handed to the agent as JSON data, never as instructions.
+// The agents a text config names are tools of the run: each call runs that agent on its input as an incognito run of its own, given its own timeout or what is left of this run, whichever is less, and several called in one reply run at once, at most 8 at a time. A call that fails or runs out of time is a failed tool call the agent answers around, not a failed run. What they spend is in usage, and by tool in children. They take none of the app's run slots: this run's covers them.
 // Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request. The router fetches each URL before the run starts, from public hosts only, and hands the model the bytes it fetched, so no run answers without seeing an image it was given: one that does not answer 200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable naming the image, which retrying the same image does not fix.
 // A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, an input or tool result the prompt injection screen refused a 400 prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 //
@@ -66280,6 +66317,7 @@ func (c *ClientWithResponses) CreateRunWithBodyWithResponse(ctx context.Context,
 // Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
 // The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
 // The input is handed to the agent as JSON data, never as instructions.
+// The agents a text config names are tools of the run: each call runs that agent on its input as an incognito run of its own, given its own timeout or what is left of this run, whichever is less, and several called in one reply run at once, at most 8 at a time. A call that fails or runs out of time is a failed tool call the agent answers around, not a failed run. What they spend is in usage, and by tool in children. They take none of the app's run slots: this run's covers them.
 // Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request. The router fetches each URL before the run starts, from public hosts only, and hands the model the bytes it fetched, so no run answers without seeing an image it was given: one that does not answer 200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable naming the image, which retrying the same image does not fix.
 // A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, an input or tool result the prompt injection screen refused a 400 prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
 //

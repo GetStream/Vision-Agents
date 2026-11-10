@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from ..models.agent_review import AgentReview
     from ..models.agent_scheduling import AgentScheduling
     from ..models.agent_tools import AgentTools
+    from ..models.child_agent import ChildAgent
     from ..models.floor_control import FloorControl
     from ..models.greeting import Greeting
     from ..models.left_out_connector import LeftOutConnector
@@ -114,6 +115,8 @@ class AgentConfig:
             none.
         chat_channels (list[AgentChatChannel] | Unset): The Stream Chat channel types of the app's own Stream app this
             agent answers in besides agent channels. Absent when there are none.
+        agents (list[ChildAgent] | Unset): The app's other text agents this one may hand work to, each as a tool. Absent
+            when there are none.
     """
 
     created_at: datetime.datetime
@@ -156,6 +159,7 @@ class AgentConfig:
     voice: str | Unset = UNSET
     llm_fallbacks: list[str] | Unset = UNSET
     chat_channels: list[AgentChatChannel] | Unset = UNSET
+    agents: list[ChildAgent] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -294,6 +298,13 @@ class AgentConfig:
                 chat_channels_item = chat_channels_item_data.to_dict()
                 chat_channels.append(chat_channels_item)
 
+        agents: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.agents, Unset):
+            agents = []
+            for agents_item_data in self.agents:
+                agents_item = agents_item_data.to_dict()
+                agents.append(agents_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -374,6 +385,8 @@ class AgentConfig:
             field_dict["llm_fallbacks"] = llm_fallbacks
         if chat_channels is not UNSET:
             field_dict["chat_channels"] = chat_channels
+        if agents is not UNSET:
+            field_dict["agents"] = agents
 
         return field_dict
 
@@ -388,6 +401,7 @@ class AgentConfig:
         from ..models.agent_review import AgentReview
         from ..models.agent_scheduling import AgentScheduling
         from ..models.agent_tools import AgentTools
+        from ..models.child_agent import ChildAgent
         from ..models.floor_control import FloorControl
         from ..models.greeting import Greeting
         from ..models.left_out_connector import LeftOutConnector
@@ -579,6 +593,15 @@ class AgentConfig:
 
                 chat_channels.append(chat_channels_item)
 
+        _agents = d.pop("agents", UNSET)
+        agents: list[ChildAgent] | Unset = UNSET
+        if _agents is not UNSET:
+            agents = []
+            for agents_item_data in _agents:
+                agents_item = ChildAgent.from_dict(agents_item_data)
+
+                agents.append(agents_item)
+
         agent_config = cls(
             created_at=created_at,
             id=id,
@@ -620,6 +643,7 @@ class AgentConfig:
             voice=voice,
             llm_fallbacks=llm_fallbacks,
             chat_channels=chat_channels,
+            agents=agents,
         )
 
         agent_config.additional_properties = d
