@@ -13,7 +13,7 @@ import (
 // errTeamsUnreadable refuses a config to an end user whose teams Stream did not tell, in an
 // app that keeps each team's configs to its own users. Opening it anyway would let anybody in
 // while Stream is down, and a 404 would say the config is gone when asking again may work.
-var errTeamsUnreadable = unavailable("could not read the user's teams from Stream to check the agent is theirs; try again shortly")
+var errTeamsUnreadable = unavailable("could not read the user's teams from Stream; try again shortly")
 
 // refuseOtherTeam answers unknown, what the caller is told of a config that does not exist,
 // when config is of a team the end user asking is not in. Only an app with AgentTeams on is
