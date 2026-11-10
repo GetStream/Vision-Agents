@@ -309,16 +309,20 @@ func (s *AppsSuite) TearDownTest() {
 	s.service.Close()
 }
 
-func (s *AppsSuite) TestANewConversationIsMadeInTheTeamItIsOpenedIn() {
+func (s *AppsSuite) TestANewConversationIsMadeInTheTeamItIsOpenedInAndNoneOtherwise() {
 	red, _, _, err := s.service.OpenInApp(s.T().Context(), 77, "acme", "agent", "", "employee", "", nil, "red")
 	s.Require().NoError(err)
 	none, _, _, err := s.service.OpenInApp(s.T().Context(), 77, "acme", "agent", "", "employee", "", nil, "")
+	s.Require().NoError(err)
+	opened, _, _, err := s.service.OpenForCaller(s.T().Context(), "acme", "agent", "", "employee")
 	s.Require().NoError(err)
 
 	inRed, _ := s.acme.Channel(strings.TrimPrefix(red.CID(), "agent:"))
 	s.Equal("red", inRed["team"])
 	inNone, _ := s.acme.Channel(strings.TrimPrefix(none.CID(), "agent:"))
 	s.NotContains(inNone, "team", "Chat is sent no team field at all")
+	byCaller, _ := s.acme.Channel(strings.TrimPrefix(opened.CID(), "agent:"))
+	s.NotContains(byCaller, "team", "a conversation a caller opens names no team")
 }
 
 func (s *AppsSuite) TestTwoCustomersEachKeepTheirOwnConversationUnderTheSameChannelId() {
