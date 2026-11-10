@@ -400,6 +400,10 @@ func (s *FloorSuite) TestACallerStillSpeakingInANoisyRoomIsNotCut() {
 // voiced a little longer, settles the words: with nothing open, the floor waits for a run begun
 // before the voice stopped only until runLead after it stopped, which a pause long enough to end
 // the turn is past, so the words go out with the ruling and not finalWait later.
+//
+// p_eot 0.3 reaches the default point's bar from 1100 ms into the pause, its fourth check. A
+// check is asked on a frame once the one before has answered, so the pause is held a check at a
+// time up to just short of that one: sent at once, the frames ran out before it was asked.
 func (s *FloorSuite) TestAFinalBeforeTheVoiceStoppedSettlesTheWords() {
 	s.ending(0.3)
 	s.say(800, true)
@@ -407,8 +411,10 @@ func (s *FloorSuite) TestAFinalBeforeTheVoiceStoppedSettlesTheWords() {
 	s.writes(1, stt.ModeFinal, "Tell me a story.")
 	time.Sleep(1300 * time.Millisecond) // the final is older than the voice's last frame will be
 	s.say(300, true)
+	_, _, ended := s.holding(1080, false)
+	s.Require().False(ended, "ended before the check that reaches the bar")
 	began := time.Now()
-	s.say(1200, false)
+	s.say(120, false)
 	end := s.final()
 	s.Less(time.Since(began), finalWait/2, "with the ruling, not finalWait later")
 	s.Equal("Tell me a story.", end.Text)

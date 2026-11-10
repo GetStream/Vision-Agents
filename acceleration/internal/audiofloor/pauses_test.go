@@ -742,6 +742,14 @@ func (s *PausesSuite) TestAPauseOverTheAgentDoesNotEndTheUtterance() {
 	s.server.mu.Unlock()
 	s.agent.speaks(true)
 	s.say(800, true)
+	// The caller's words so far are written by the check over the agent, which answers on a
+	// goroutine of its own: the pause comes once it has. Sent at once, the pause could come
+	// first, and its check found nothing written and ended the utterance as a noise.
+	s.Eventually(func() bool {
+		s.transcriber.mu.Lock()
+		defer s.transcriber.mu.Unlock()
+		return !s.transcriber.over.inFlight
+	}, 5*time.Second, time.Millisecond, "the check over the agent never answered")
 	s.pausing(200)
 	s.say(800, true)
 	s.agent.speaks(false)
