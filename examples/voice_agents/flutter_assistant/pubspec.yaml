@@ -13,6 +13,9 @@ dependencies:
     sdk: flutter
   # A photo from the composer, shrunk and turned the way the camera held it before it is sent.
   flutter_image_compress: ^2.5.1
+  # trip_map's map: OpenStreetMap tiles, no key.
+  flutter_map: ^8.2.2
+  latlong2: ^0.9.1
   # The timezone get_local_context names, such as Europe/Amsterdam.
   flutter_timezone: ^5.1.1
   # A connector's sign-in: a web authentication sheet on iOS, an Auth Tab or a Custom Tab on
@@ -31,8 +34,20 @@ dependencies:
   stream_chat_flutter_ai:
     git:
       url: https://github.com/GetStream/stream-chat-flutter-ai.git
-      ref: 165b016f6093df03c74093b647dd141e43e5f256
+      ref: eefb10b90c3cef486cd03a9843ad428a2e6bc525
       path: packages/stream_chat_flutter_ai
+  # The A2UI and OpenUI renderers for the UI the agent writes in its replies. Pinned to the
+  # OpenUI pull request's head (it holds the A2UI package too) until they are released.
+  stream_chat_flutter_ai_a2ui:
+    git:
+      url: https://github.com/GetStream/stream-chat-flutter-ai.git
+      ref: eefb10b90c3cef486cd03a9843ad428a2e6bc525
+      path: packages/stream_chat_flutter_ai_a2ui
+  stream_chat_flutter_ai_openui:
+    git:
+      url: https://github.com/GetStream/stream-chat-flutter-ai.git
+      ref: eefb10b90c3cef486cd03a9843ad428a2e6bc525
+      path: packages/stream_chat_flutter_ai_openui
   # Stream's design system, which the AI components are built on: its widgets for the app's own
   # screens (app bar, buttons, sheets). The version stream_chat_flutter_ai uses.
   stream_core_flutter: ^0.5.3
@@ -51,6 +66,12 @@ dependencies:
 dependency_overrides:
   vision_agents_core:
     path: ../../../sdks/dart/core
+  # The renderers ask for stream_chat_flutter_ai from pub.dev, where this commit is not.
+  stream_chat_flutter_ai:
+    git:
+      url: https://github.com/GetStream/stream-chat-flutter-ai.git
+      ref: eefb10b90c3cef486cd03a9843ad428a2e6bc525
+      path: packages/stream_chat_flutter_ai
 
 dev_dependencies:
   flutter_test:
@@ -59,3 +80,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/UIComponents.json

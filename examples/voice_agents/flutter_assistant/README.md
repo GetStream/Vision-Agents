@@ -59,8 +59,8 @@ there with `configure` and run the backend with that app's `STREAM_API_KEY` and
 The chat asks for `xai/grok-4.7`, a model that reads photos and streams its reasoning, so the
 router needs `XAI_API_KEY`. A call needs `GOOGLE_API_KEY`, `DEEPGRAM_API_KEY` and
 `INWORLD_API_KEY`. Web search needs one of `EXA_API_KEY`, `TAVILY_API_KEY` or
-`PERPLEXITY_API_KEY`. The AI components come from `stream-chat-flutter-ai`'s `main`, pinned,
-until they are released.
+`PERPLEXITY_API_KEY`. The AI components, and the A2UI and OpenUI renderers, come from `stream-chat-flutter-ai`
+at the head of its OpenUI pull request (#81), pinned by commit, until they are released.
 
 ## Gmail and Linear
 
@@ -112,6 +112,13 @@ swift_assistant's `go run ./configure` again, which binds both:
 
 ## What the app shows
 
+- **Replies in Markdown, A2UI or OpenUI**, chosen as on iOS and Android: the gear beside New chat
+  in the drawer opens Settings, whose Replies list is kept by the swift_assistant backend
+  (`GET` and `PUT /reply-format`) as what the agent is told. A conversation keeps the
+  instructions it started with, so the next new one answers the new way. The app has nothing to
+  switch: its `AIUIHost` has an `OpenUIRenderer` and an `A2UIRenderer` and the trip components
+  (`lib/trip_components.dart`, from `assets/UIComponents.json`), and a reply shows whichever UI
+  it carries in `custom.ai_ui`. Ask "Plan a weekend in Ohrid" to see it.
 - **Conversations** are the router's, in the drawer the menu button opens: `sessions.query()`
   lists this user's, `sessions.search` finds them by title, and the router titles each one as it
   goes. They are under Today, Yesterday, This week and then their month, by when they started.

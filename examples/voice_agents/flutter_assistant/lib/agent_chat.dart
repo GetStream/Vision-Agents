@@ -3,10 +3,13 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:stream_chat/stream_chat.dart' as stream;
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
+import 'package:stream_chat_flutter_ai_a2ui/stream_chat_flutter_ai_a2ui.dart';
+import 'package:stream_chat_flutter_ai_openui/stream_chat_flutter_ai_openui.dart';
 import 'package:vision_agents_chat/vision_agents_chat.dart';
 import 'package:vision_agents_core/vision_agents_core.dart';
 
 import 'photos.dart';
+import 'trip_components.dart';
 
 /// A written conversation as Stream's AI components want it: the channel it is kept in, the
 /// whole of each reply's thinking, and what the agent is doing before it writes.
@@ -47,6 +50,17 @@ class AgentChat extends ChangeNotifier {
   final ratings = <String, AIMessageRating>{};
 
   final _subscriptions = <StreamSubscription<Object?>>[];
+
+  /// Shows the UI the agent writes for some replies, such as an interactive trip plan, with the
+  /// phone's own components, and sends what the person does in it back.
+  late final ui = AIUIHost(
+    components: TripComponents.all,
+    renderers: [
+      OpenUIRenderer(onError: (error, _) => debugPrint('OpenUI: $error')),
+      A2UIRenderer(onError: (error, _) => debugPrint('A2UI: $error')),
+    ],
+    send: _answer,
+  );
 
   /// The channel's messages, oldest first.
   List<stream.Message> get messages => _channel.state?.messages ?? const [];
@@ -164,6 +178,42 @@ class AgentChat extends ChangeNotifier {
     }
   }
 
+  /// Tells the agent what the person did in the UI of a reply, such as tapping a place on its
+  /// map: their message says it in words, and carries the action for the agent.
+  ///
+  /// The router takes one response at a time, so an action taken while a reply is still
+  /// being written waits for it to end rather than failing.
+  Future<void> _answer(AIUIAction action) async {
+    await _whenIdle();
+    if (_closed) return;
+    failure = null;
+    _askedAfter = messages.lastOrNull?.id ?? '';
+    notifyListeners();
+    try {
+      await session.responses.create(action.label, uiAction: action.toJson());
+    } on Object catch (error) {
+      if (_closed) return;
+      failure = '$error';
+      _askedAfter = null;
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  /// Completes once no reply is on its way, or this chat is closed.
+  Future<void> _whenIdle() {
+    if (!isAnswering || _closed) return Future.value();
+    final idle = Completer<void>();
+    void check() {
+      if (isAnswering && !_closed) return;
+      removeListener(check);
+      idle.complete();
+    }
+
+    addListener(check);
+    return idle.future;
+  }
+
   /// Stops the reply in flight. What was written so far is kept.
   void stop() {
     _askedAfter = null;
@@ -185,6 +235,12 @@ class AgentChat extends ChangeNotifier {
     }
     await session.close();
   }
+
+  @override
+  void dispose() {
+    ui.dispose();
+    super.dispose();
+  }
 }
 
 extension on List<stream.Message> {
@@ -203,8 +259,12 @@ extension AgentReply on stream.Message {
   /// Whether the agent is still writing it.
   bool get isGenerating => extraData['generating'] == true;
 
-  /// Whether it is a reply with nothing to show yet: no text and no steps.
-  bool get isEmptyReply => isAgentReply && (text ?? '').isEmpty && steps.isEmpty;
+  /// Whether it is a reply with nothing to show yet: no text, no UI and no steps.
+  bool get isEmptyReply =>
+      isAgentReply &&
+      (text ?? '').isEmpty &&
+      extraData[AIUIDocument.customDataKey] == null &&
+      steps.isEmpty;
 
   /// The reply's steps, in the order they happened.
   List<AIMessagePart> get steps => AIMessagePart.parseAll([
@@ -235,6 +295,10 @@ class AgentMessage with AIMessage {
 
   @override
   bool get isGenerating => message.isGenerating;
+
+  /// The UI the agent wrote for the reply, which shows in place of its text.
+  @override
+  AIUIDocument? get uiDocument => AIUIDocument.fromCustomData(message.extraData);
 
   @override
   List<AIMessageAttachment> get attachments => [

@@ -8,9 +8,12 @@ import 'assistant.dart';
 import 'chat_screen.dart';
 import 'conversations.dart';
 import 'notice.dart';
+import 'settings.dart';
+import 'trip_components.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await TripComponents.load();
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   runApp(const AssistantApp());
 }
@@ -106,6 +109,10 @@ class _RootScreenState extends State<RootScreen> {
           conversations: _conversations,
           selected: _selected,
           onNew: () => _show(null),
+          onSettings: () {
+            _scaffold.currentState?.closeDrawer();
+            SettingsSheet.show(context);
+          },
           onOpen: (session) => _show(session.id),
           onDelete: (session) {
             _conversations.delete(session);

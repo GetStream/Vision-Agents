@@ -35,6 +35,8 @@ class CalendarChannel(context: Context) {
             try {
                 val answer: Any? = when (call.method) {
                     "listEvents" -> eventsOn(call.argument<String>("day").orEmpty())
+                    // A plan's days for its calendar_check, each day's lines in turn.
+                    "eventsBetween" -> call.argument<List<String>>("days").orEmpty().map { eventsOn(it) }
                     "addReminder" -> {
                         val due = call.argument<Number>("due")?.toLong()
                             ?: throw ToolFailure("A reminder needs a due time, such as 2026-10-16T18:00:00+02:00.")

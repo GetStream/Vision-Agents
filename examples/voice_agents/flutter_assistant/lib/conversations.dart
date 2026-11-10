@@ -120,6 +120,7 @@ class ConversationList extends StatefulWidget {
     required this.conversations,
     required this.selected,
     required this.onNew,
+    required this.onSettings,
     required this.onOpen,
     required this.onDelete,
   });
@@ -129,6 +130,7 @@ class ConversationList extends StatefulWidget {
   /// The conversation open beside this, or null for a new one.
   final String? selected;
   final VoidCallback onNew;
+  final VoidCallback onSettings;
   final ValueChanged<Session> onOpen;
   final ValueChanged<Session> onDelete;
 
@@ -171,11 +173,27 @@ class _ConversationListState extends State<ConversationList> {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              StreamListTile(
-                leading: Icon(context.streamIcons.edit),
-                title: const Text('New chat'),
-                titleTextStyle: text.bodyEmphasis.copyWith(color: colors.textPrimary),
-                onTap: widget.onNew,
+              Row(
+                children: [
+                  Expanded(
+                    child: StreamListTile(
+                      leading: Icon(context.streamIcons.edit),
+                      title: const Text('New chat'),
+                      titleTextStyle: text.bodyEmphasis.copyWith(color: colors.textPrimary),
+                      onTap: widget.onNew,
+                    ),
+                  ),
+                  Padding(
+                    padding: EdgeInsets.only(right: spacing.xs),
+                    child: StreamButton.icon(
+                      style: .secondary,
+                      type: .ghost,
+                      tooltip: 'Settings',
+                      onPressed: widget.onSettings,
+                      icon: const Icon(Icons.settings_outlined),
+                    ),
+                  ),
+                ],
               ),
               Padding(
                 padding: EdgeInsets.symmetric(horizontal: spacing.md),
