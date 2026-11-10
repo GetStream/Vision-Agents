@@ -212,6 +212,18 @@ func (s *ScheduledTasksSuite) TestATaskWaitingOutACallThatEndsTheSessionIsNotHer
 	}
 }
 
+// A session that is not on a call and has ended is not here to deliver to: waitOutCall answers
+// errScheduledNotHere without waiting, as the loop never runs.
+func (s *ScheduledTasksSuite) TestATextSessionThatEndedIsNotHereToWaitOutACall() {
+	user := s.data.createUser()
+	opened := s.openScheduling(user, s.agentWithScheduling(nil), nil)
+	found, live := s.router.sessions.Get(opened.Id, s.ownerOf(user))
+	s.Require().True(live)
+	s.Require().NoError(found.Close())
+
+	s.ErrorIs(s.router.waitOutCall(context.Background(), found, time.Hour), errScheduledNotHere)
+}
+
 // A delivery waiting out a call looks again after scheduledPoll, not sooner (a hardcoded or no
 // wait): with the look an hour away and the call's window one second, it holds past the window.
 func (s *ScheduledTasksSuite) TestATaskWaitsItsLookBeforeLookingAtACallAgain() {
