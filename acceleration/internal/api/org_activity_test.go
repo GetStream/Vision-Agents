@@ -257,6 +257,38 @@ func (s *OrganizationActivitySuite) TestAnAppLastSeenUnderThisOrganizationIsRead
 	s.Require().Len(s.read(s.app.organization.ID, time.Time{}).Meters, 1)
 }
 
+// Defect: an app registered under this organization with this organization's id, whose latest
+// request named another organization, is summed into this one, because its registration alone
+// decides.
+func (s *OrganizationActivitySuite) TestAnAppRegisteredHereAndLastSeenElsewhereIsNotRead() {
+	stranger := s.data.createApp()
+	app := store.App{ID: s.app.organization.ID, OrganizationID: s.app.organization.ID, Name: "app-" + s.utils.uuid()}
+	s.Require().NoError(s.store.CreateApp(context.Background(), &app))
+	s.Require().NoError(s.store.JoinOrganization(context.Background(), app.ID, stranger.organization.ID))
+	s.spent(app.ID, stranger.organization.ID, 100)
+
+	s.Empty(s.read(s.app.organization.ID, time.Time{}).Meters)
+	s.Len(s.read(stranger.organization.ID, time.Time{}).Meters, 1)
+}
+
+// Defect: an app with this organization's id and no apps row, whose latest request named
+// another organization, is summed into this one, because no registration contradicts it.
+func (s *OrganizationActivitySuite) TestAnUnregisteredAppLastSeenElsewhereIsNotRead() {
+	stranger := s.data.createApp()
+	s.Require().NoError(s.store.JoinOrganization(context.Background(), s.app.organization.ID, stranger.organization.ID))
+	s.spent(s.app.organization.ID, stranger.organization.ID, 100)
+
+	s.Empty(s.read(s.app.organization.ID, time.Time{}).Meters)
+}
+
+// Defect: the app whose id is the organization's, with no apps row and no latest-request row,
+// is dropped, so an organization's own first calls are not told.
+func (s *OrganizationActivitySuite) TestAnUnregisteredOwnAppWithNoLatestRequestIsRead() {
+	s.spent(s.app.organization.ID, s.app.organization.ID, 100)
+
+	s.Require().Len(s.read(s.app.organization.ID, time.Time{}).Meters, 1)
+}
+
 // readAt is the suite organization's activity read from since, in the offset since carries.
 func (s *OrganizationActivitySuite) readAt(since time.Time) OrganizationActivity {
 	return s.read(s.app.organization.ID, since)
