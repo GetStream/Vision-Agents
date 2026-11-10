@@ -16,7 +16,7 @@ fun setting(name: String, environment: String, default: String): String =
     local.getProperty(name) ?: providers.environmentVariable(environment).orNull ?: default
 
 android {
-    namespace = "io.getstream.visionagents.androidassistant"
+    namespace = "io.getstream.agents.androidassistant"
     compileSdk = 37
     defaultConfig {
         applicationId = "io.getstream.visionagents.androidassistant"
