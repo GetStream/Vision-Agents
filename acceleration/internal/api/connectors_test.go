@@ -344,6 +344,11 @@ func (s *ConnectorsSuite) TestClientCredentialsIsRefusedForACustomConnectorAndAn
 	status, _ = s.serverClient.failure(http.MethodPost, "/v1/agents/connectors", beside)
 	s.Equal(http.StatusBadRequest, status, "listed beside another scheme")
 
+	first := s.customConnector(s.customID())
+	first["schemes"] = []string{"oauth2_client_credentials", "api_key"}
+	status, _ = s.serverClient.failure(http.MethodPost, "/v1/agents/connectors", first)
+	s.Equal(http.StatusBadRequest, status, "listed first, before another scheme")
+
 	allowed := s.customConnector(s.customID())
 	allowed["schemes"] = []string{"api_key"}
 	delete(allowed, "client")
