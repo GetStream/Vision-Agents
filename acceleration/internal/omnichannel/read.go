@@ -457,7 +457,7 @@ func linesOf(ctx context.Context, bound streamapp.Bound, card store.EpisodeCard,
 		// An app chat's agent writes there as the channel's id (api.unopenedSpec, the session a
 		// worker opens for the agent id handed out), and the person, who writes with a token of
 		// their own, may set the agent's source on a message: one by anybody else is theirs.
-		if card.Source == store.EpisodeChat && from == fromAgent && message.User.ID != channelID {
+		if card.Source == store.EpisodeChat && message.User.ID != channelID {
 			from = fromPerson
 		}
 		if call && from == fromPerson && !callerOf(card, message.User.ID) {

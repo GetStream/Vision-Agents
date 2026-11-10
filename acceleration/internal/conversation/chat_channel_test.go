@@ -306,6 +306,30 @@ func (s *ChatChannelSuite) TestAnActionNamingAMembersMessageCarryingTheAgentsFie
 	}
 }
 
+// In a channel of another type a member's message is his whatever custom data it carries: one
+// with the agent's source and none of a conversation's fields is a turn of his all the same.
+func (s *ChatChannelSuite) TestAMembersMessageWithTheAgentsSourceIsHisInAChannelOfAnotherType() {
+	s.created(nil)
+	s.wrote()
+	s.answered(s.routerOpens(s.cid))
+	ben, text := "ben", "Count me in for Saturday."
+	_, err := s.chat.Client.Chat().SendMessage(context.Background(), "callouts", s.channel, &getstream.SendMessageRequest{
+		Message: getstream.MessageRequest{Text: &text, UserID: &ben, Custom: map[string]any{"source": "agent"}},
+	})
+	s.Require().NoError(err)
+	later := conversation.NewForChat(s.chat.Client)
+	s.T().Cleanup(later.Close)
+
+	page, err := later.History(s.routerOpens(s.cid), "customer", "config-1", s.cid, "")
+
+	s.Require().NoError(err)
+	var said []string
+	for _, m := range page.Messages {
+		said = append(said, m.Role+": "+m.Text)
+	}
+	s.Equal([]string{"user: I'm sick, I can't come at 6", "assistant: Feel better.", "user: " + text}, said)
+}
+
 // The router has written every reply of a conversation as its agent since it first wrote one,
 // and a person's turn as that person or, with nobody named, as support-operator. Those turns,
 // in the shape a reply was stored in before schema v1 as in today's, read as they did before
