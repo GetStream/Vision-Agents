@@ -1,0 +1,186 @@
+//go:build integration
+
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/url"
+	"slices"
+	"testing"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+)
+
+// OrganizationActivitySuite is Stream staff reading how far an organization got with Agents.
+// Every test has an organization of its own.
+type OrganizationActivitySuite struct {
+	RouterSuite
+	// staff is Stream's own tool, holding the ops key and no app's credentials.
+	staff *testClient
+}
+
+func TestOrganizationActivitySuite(t *testing.T) {
+	runSuite(t, new(OrganizationActivitySuite))
+}
+
+func (s *OrganizationActivitySuite) SetupTest() {
+	s.useApp(s.data.createApp())
+	s.staff = &testClient{suite: &s.RouterSuite, header: http.Header{opsKeyHeader: {suiteOpsKey}}, kind: noCredential}
+}
+
+func (s *OrganizationActivitySuite) path(organizationID string) string {
+	return "/v1/ops/orgs/" + organizationID + "/activity"
+}
+
+// read is what staff are told of the organization, read from since when it is not zero.
+func (s *OrganizationActivitySuite) read(organizationID string, since time.Time) OrganizationActivity {
+	path := s.path(organizationID)
+	if !since.IsZero() {
+		path += "?since=" + url.QueryEscape(since.Format(time.RFC3339))
+	}
+	var answer OrganizationActivity
+	s.Require().Equal(http.StatusOK, s.staff.do(http.MethodGet, path, nil, &answer))
+	return answer
+}
+
+// spent records a model call of app's that cost micros.
+func (s *OrganizationActivitySuite) spent(appID, organizationID string, micros int64) {
+	s.Require().NoError(s.store.RecordRequest(context.Background(), &store.Request{
+		Modality: "llm", CustomerID: appID, OrganizationID: organizationID, Provider: "stub", Model: "stub-llm",
+		StartedAt: time.Now(), InputTokens: 10, OutputTokens: 5, CostMicros: micros, Billable: true, Success: true,
+	}))
+}
+
+// appOf is a second app of the suite's organization.
+func (s *OrganizationActivitySuite) appOf() string {
+	app := store.App{OrganizationID: s.app.organization.ID, Name: "app-" + s.utils.uuid()}
+	s.Require().NoError(s.store.CreateApp(context.Background(), &app))
+	return app.ID
+}
+
+func areaNames(answer OrganizationActivity) []string {
+	names := make([]string, 0, len(answer.Areas))
+	for _, area := range answer.Areas {
+		names = append(names, area.Area)
+	}
+	return names
+}
+
+// Defect: the endpoint reads neither table the router writes as an app works, or reads the
+// app rather than its organization.
+func (s *OrganizationActivitySuite) TestAnAgentSetUpAndTalkedToIsAConversationWithItsModelsCost() {
+	status, _ := s.serverClient.with(clientHeader, store.AuditSourceCLI).
+		call(http.MethodPost, "/v1/agents/configs", map[string]any{"name": "agent-" + s.utils.uuid()})
+	s.Require().Less(status, http.StatusBadRequest)
+	s.serverClient.with(clientHeader, store.AuditSourceSDK).
+		createSession(CreateSessionRequest{Incognito: pointerTo(true), Llm: pointerTo("llm-flow")})
+	s.spent(s.customerID(), s.app.organization.ID, 7)
+
+	var answer OrganizationActivity
+	s.Require().Eventually(func() bool {
+		answer = s.read(s.app.organization.ID, time.Time{})
+		return slices.Contains(areaNames(answer), activity.AreaAgentSetup) &&
+			slices.Contains(areaNames(answer), activity.AreaConversations)
+	}, settleFor, 10*time.Millisecond, "the agent's setup and conversation were not read")
+
+	s.Equal(s.app.organization.ID, answer.OrganizationId)
+	s.Equal(activityStepConversations, answer.FurthestStep)
+	for _, area := range answer.Areas {
+		if area.Area == activity.AreaAgentSetup {
+			s.Equal(store.AuditSourceCLI, area.Client)
+		}
+		if area.Area == activity.AreaConversations {
+			s.Equal(store.AuditSourceSDK, area.Client)
+		}
+	}
+	s.Require().NotNil(answer.FirstSeen)
+	s.Require().NotNil(answer.LastSeen)
+	s.False(answer.LastSeen.Before(*answer.FirstSeen))
+	s.Require().Len(answer.Meters, 1, "%+v", answer.Meters)
+	s.Equal(ActivityMeter{Meter: "llm", Requests: 1, InputTokens: 10, OutputTokens: 5, CostMicros: 7}, answer.Meters[0])
+}
+
+// Defect: the organization's other apps left out, or another organization's apps let in.
+func (s *OrganizationActivitySuite) TestEveryAppOfTheOrganizationIsReadAndNoOtherOrganizations() {
+	second := s.appOf()
+	stranger := s.data.createApp()
+	s.spent(s.customerID(), s.app.organization.ID, 1)
+	s.spent(second, s.app.organization.ID, 2)
+	s.spent(stranger.app.ID, stranger.organization.ID, 100)
+	now := time.Now().UTC()
+	s.Require().NoError(s.store.RecordActivity(context.Background(), []store.ActivityDelta{
+		{OrganizationID: s.app.organization.ID, AppID: second, Area: activity.AreaWorkers, Client: store.AuditSourceSDK,
+			Day: now, Requests: 3, FirstAt: now, LastAt: now},
+		{OrganizationID: stranger.organization.ID, AppID: stranger.app.ID, Area: activity.AreaEvals,
+			Client: store.AuditSourceSDK, Day: now, Requests: 9, FirstAt: now, LastAt: now},
+	}))
+
+	answer := s.read(s.app.organization.ID, time.Time{})
+
+	s.Require().Len(answer.Meters, 1, "%+v", answer.Meters)
+	s.Equal(int64(2), answer.Meters[0].Requests)
+	s.Equal(int64(3), answer.Meters[0].CostMicros)
+	s.Equal([]string{activity.AreaWorkers}, areaNames(answer))
+}
+
+// Defect: an organization nothing was recorded for answered 404, or with null lists, so a
+// digest cannot say it has not started.
+func (s *OrganizationActivitySuite) TestAnOrganizationWithNothingRecordedHasEmptyListsAndNoStep() {
+	status, payload := s.staff.call(http.MethodGet, s.path("organization-"+s.utils.uuid()), nil)
+	s.Require().Equal(http.StatusOK, status, string(payload))
+
+	var raw map[string]json.RawMessage
+	s.Require().NoError(json.Unmarshal(payload, &raw))
+	s.JSONEq(`[]`, string(raw["areas"]))
+	s.JSONEq(`[]`, string(raw["meters"]))
+	s.JSONEq(`"none"`, string(raw["furthest_step"]))
+	s.NotContains(raw, "first_seen")
+	s.NotContains(raw, "last_seen")
+}
+
+// Defect: the operation reached with an app's credentials, even its backend's, or with a key
+// that is not the ops key.
+func (s *OrganizationActivitySuite) TestOnlyTheOpsKeyReadsAnOrganizationsActivity() {
+	path := s.path(s.app.organization.ID)
+	wrong := &testClient{suite: &s.RouterSuite, header: http.Header{opsKeyHeader: {"not-" + suiteOpsKey}}, kind: noCredential}
+
+	s.Equal(http.StatusUnauthorized, s.serverClient.do(http.MethodGet, path, nil, nil))
+	// An end user is turned away sooner, as from every operation that is not client-side.
+	s.Equal(http.StatusForbidden, s.client.do(http.MethodGet, path, nil, nil))
+	s.Equal(http.StatusUnauthorized, s.unauthenticatedClient.do(http.MethodGet, path, nil, nil))
+	s.Equal(http.StatusUnauthorized, wrong.do(http.MethodGet, path, nil, nil))
+	s.Equal(http.StatusOK, s.staff.do(http.MethodGet, path, nil, nil))
+}
+
+// Defect: a read reaching back further than every shard's requests should be scanned for.
+func (s *OrganizationActivitySuite) TestSinceIsAtMostNinetyDaysAgo() {
+	path := s.path(s.app.organization.ID) + "?since="
+
+	status, payload := s.staff.call(http.MethodGet, path+url.QueryEscape(time.Now().Add(-91*24*time.Hour).Format(time.RFC3339)), nil)
+	s.Equal(http.StatusBadRequest, status, string(payload))
+	s.Contains(string(payload), "90 days")
+	since := time.Now().Add(-89 * 24 * time.Hour).Truncate(time.Second)
+	s.True(since.Equal(s.read(s.app.organization.ID, since).Since))
+}
+
+// Defect: a read that names no start reading another window than the last thirty days.
+func (s *OrganizationActivitySuite) TestAReadNamingNoStartReadsTheLastThirtyDays() {
+	asked := time.Now()
+
+	since := s.read(s.app.organization.ID, time.Time{}).Since
+
+	s.WithinDuration(asked.Add(-30*24*time.Hour), since, time.Minute)
+}
+
+// Defect: a request before since counted in the meters.
+func (s *OrganizationActivitySuite) TestARequestBeforeSinceIsNotCounted() {
+	s.spent(s.customerID(), s.app.organization.ID, 1)
+
+	answer := s.read(s.app.organization.ID, time.Now().Add(time.Hour))
+
+	s.Empty(answer.Meters)
+}
