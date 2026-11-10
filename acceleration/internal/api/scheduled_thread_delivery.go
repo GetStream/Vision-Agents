@@ -30,6 +30,7 @@ import (
 //	the session on the channel, else threadSpec on the task's config
 //	  the organization may not pay                              its code, final
 //	Session.FollowUp("st_<run>"), wait for its reply            no_reply, reply_failed
+//	  the turn refused for money                                its code, final
 //	  ("st_<run>_r1" once st_<run> was cancelled or interrupted: replyCommand)
 //	Bridge.Send the reply, held from Bridge.Reply                opted out: channel_unreachable, final
 //	                                                            may not pay: its code, final
