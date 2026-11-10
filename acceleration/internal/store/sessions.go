@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/pgdialect"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
@@ -1248,4 +1249,91 @@ func unknownStoredSession(id string) error {
 
 func notAGuest(id, customerID string) error {
 	return stack.Wrap(fmt.Errorf("store: %s is not a guest of %s", id, customerID))
+}
+
+// SessionEnding is how many of some apps' sessions are still running, or ended for one
+// reason.
+type SessionEnding struct {
+	Running   bool   `bun:"running"`
+	EndReason string `bun:"end_reason"`
+	Sessions  int64  `bun:"sessions"`
+}
+
+// SessionEndings counts the sessions apps opened from since on, over every shard, by whether
+// they still run and why they ended: running ones first, then by reason.
+func (s *Store) SessionEndings(ctx context.Context, apps []string, since time.Time) ([]SessionEnding, error) {
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]SessionEnding, error) {
+		var endings []SessionEnding
+		err := db.NewSelect().
+			TableExpr("agent_sessions").
+			ColumnExpr("closed_at IS NULL AS running, end_reason, COUNT(*) AS sessions").
+			Where("customer_id IN (?)", bun.In(apps)).
+			Where("created_at >= ?", since).
+			GroupExpr("1, 2").
+			Scan(ctx, &endings)
+		return endings, err
+	})
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: session endings: %w", err))
+	}
+	// Sorted first, so the rows of one ending from every shard are next to each other.
+	var all []SessionEnding
+	for _, list := range lists {
+		all = append(all, list...)
+	}
+	slices.SortStableFunc(all, func(a, b SessionEnding) int {
+		if a.Running != b.Running {
+			if a.Running {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a.EndReason, b.EndReason)
+	})
+	var endings []SessionEnding
+	for _, ending := range all {
+		if last := len(endings) - 1; last >= 0 && endings[last].Running == ending.Running &&
+			endings[last].EndReason == ending.EndReason {
+			endings[last].Sessions += ending.Sessions
+			continue
+		}
+		endings = append(endings, ending)
+	}
+	return endings, nil
+}
+
+// LatestSessions is the limit sessions apps opened most recently from since on, over every
+// shard, newest first. Only the id, the app, the agent, the modality, when it opened and how
+// it ended are read.
+func (s *Store) LatestSessions(ctx context.Context, apps []string, since time.Time, limit int) ([]AgentSession, error) {
+	// Each app's newest from agent_sessions_customer_idx, so a shard reads at most limit
+	// rows of each app however many it opened in the window.
+	query := `
+SELECT asn.*
+FROM unnest(?::text[]) AS app(id)
+CROSS JOIN LATERAL (
+    SELECT id, customer_id, agent_name, modality, created_at, closed_at, end_reason
+    FROM agent_sessions
+    WHERE customer_id = app.id AND created_at >= ?
+    ORDER BY created_at DESC, id DESC
+    LIMIT ?
+) AS asn
+ORDER BY asn.created_at DESC, asn.id DESC
+LIMIT ?`
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]AgentSession, error) {
+		var sessions []AgentSession
+		err := db.NewRaw(query, pgdialect.Array(apps), since, limit, limit).Scan(ctx, &sessions)
+		return sessions, err
+	})
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: latest sessions: %w", err))
+	}
+	var sessions []AgentSession
+	for _, list := range lists {
+		sessions = append(sessions, list...)
+	}
+	slices.SortFunc(sessions, func(a, b AgentSession) int {
+		return cmp.Or(b.CreatedAt.Compare(a.CreatedAt), strings.Compare(b.ID, a.ID))
+	})
+	return sessions[:min(len(sessions), limit)], nil
 }

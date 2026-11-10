@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -356,4 +357,44 @@ func (s *OrganizationActivitySuite) TestTheAnswerNamesTheShardsItsMetersWereRead
 
 	s.Require().Len(answer.Shards, 1)
 	s.Regexp(`^dsn:[0-9a-f]{16}$`, answer.Shards[0])
+}
+
+// Defect: adding sessions and latency changed a field the answer already had, its name, its
+// value or its shape. The keys and values here were read off the answer before either was added.
+func (s *OrganizationActivitySuite) TestTheFieldsTheAnswerHadBeforeSessionsAndLatencyAreUnchanged() {
+	day := time.Now().UTC().Truncate(24 * time.Hour)
+	first, last, refused := day.Add(time.Hour), day.Add(3*time.Hour), day.Add(2*time.Hour)
+	s.Require().NoError(s.store.RecordActivity(context.Background(), []store.ActivityDelta{{
+		OrganizationID: s.app.organization.ID, AppID: s.customerID(), Area: activity.AreaConversations,
+		Client: store.AuditSourceSDK, Day: first, Requests: 4, Refused: 1, LastRefusalCode: "no_credit",
+		LastRefusalAt: refused, FirstAt: first, LastAt: last,
+	}}))
+	s.spent(s.customerID(), s.app.organization.ID, 7)
+	since := day.Add(-24 * time.Hour)
+
+	status, payload := s.staff.call(http.MethodGet,
+		s.path(s.app.organization.ID)+"?since="+url.QueryEscape(since.Format(time.RFC3339)), nil)
+	s.Require().Equal(http.StatusOK, status, string(payload))
+
+	var raw map[string]json.RawMessage
+	s.Require().NoError(json.Unmarshal(payload, &raw))
+	before := map[string]json.RawMessage{}
+	for key, value := range raw {
+		if key != "sessions" && key != "latency" {
+			before[key] = value
+		}
+	}
+	s.ElementsMatch([]string{"duration", "organization_id", "since", "furthest_step", "first_seen", "last_seen",
+		"areas", "meters", "shards"}, slices.Collect(maps.Keys(before)))
+	stamp := func(at time.Time) string { return `"` + at.Format(time.RFC3339) + `"` }
+	s.JSONEq(`"`+s.app.organization.ID+`"`, string(before["organization_id"]))
+	s.JSONEq(stamp(since), string(before["since"]))
+	s.JSONEq(`"conversations"`, string(before["furthest_step"]))
+	s.JSONEq(stamp(first), string(before["first_seen"]))
+	s.JSONEq(stamp(last), string(before["last_seen"]))
+	s.JSONEq(`[{"area":"conversations","client":"sdk","first_at":`+stamp(first)+`,"last_at":`+stamp(last)+
+		`,"requests":4,"refused":1,"last_refusal_code":"no_credit"}]`, string(before["areas"]))
+	s.JSONEq(`[{"meter":"llm","requests":1,"input_tokens":10,"output_tokens":5,"audio_ms":0,"characters":0,`+
+		`"duration_ms":0,"cost_micros":7}]`, string(before["meters"]))
+	s.Regexp(`^\["dsn:[0-9a-f]{16}"\]$`, string(before["shards"]))
 }
