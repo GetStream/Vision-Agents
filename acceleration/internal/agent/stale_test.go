@@ -249,7 +249,7 @@ func (s *AgentSuite) greetedOver(turnID string, greet func(stt.Participant, stri
 // being written, and it was dropped every time.
 func (s *AgentSuite) TestALoneGreetingLetsTheHeldReplyGoOutOnceItSettles() {
 	greets := map[string]func(stt.Participant, string){"partial": s.mutters, "final": s.says}
-	for _, greeting := range []string{"Hello.", "Hello?", "Hey"} {
+	for _, greeting := range []string{"Hello.", "Hello?", "Hey", "Hello? Hello?", "Hello, hello?", "Hey hey"} {
 		for mode, greet := range greets {
 			s.Run(greeting+" "+mode, func() {
 				s.join(true)

@@ -696,10 +696,10 @@ func (c *converse) wentOnUnheard(participantID string) {
 }
 
 // greetsAlone reports whether words are nothing but a greeting that takes the floor alone,
-// with any murmur around it.
+// said once or more, with any murmur around it.
 func greetsAlone(saying string) bool {
 	fields := slices.DeleteFunc(wordList(saying), func(field string) bool { return murmurs[field] })
-	return len(fields) == 1 && (fields[0] == "hello" || fields[0] == "hey")
+	return len(fields) > 0 && !slices.ContainsFunc(fields, func(field string) bool { return field != "hello" && field != "hey" })
 }
 
 // answeredByHeld deals with a lone greeting that settled while the reply its caller had heard
