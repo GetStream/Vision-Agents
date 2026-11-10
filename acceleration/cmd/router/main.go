@@ -800,6 +800,12 @@ func run(settings config.Config, logger *slog.Logger) error {
 		defer stopSweeper()
 	}
 
+	// One router of the deployment checks every organization's spend for a jump each hour.
+	if anomalies := costAnomalies(settings, pgStore, logger); anomalies != nil {
+		anomalies.Start()
+		defer anomalies.Close()
+	}
+
 	limiter, err := newDailyLimiter(liveClient, quota.Limits{
 		MessagesPerDay: settings.RateLimit.MessagesPerDay,
 		TokensPerDay:   settings.RateLimit.TokensPerDay,

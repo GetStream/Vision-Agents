@@ -97,6 +97,22 @@ func limitNotices(settings config.Config, configs *appconfig.Store, logger *slog
 	return limitnotice.New(configs.DB(), limitnotice.NewSlack(token, channel), sandboxEnvironment(), links, logger)
 }
 
+// costAnomalies is what posts to ROUTER_LIMITS_SLACK_CHANNEL when an organization's spend today
+// jumps past its own baseline, or nil when that or its token is unset or there is no Postgres
+// to read the spend from. It runs whatever the limits' mode: work is priced and recorded with
+// limits off too.
+func costAnomalies(settings config.Config, db *store.Store, logger *slog.Logger) *limitnotice.Anomalies {
+	token := strings.TrimSpace(settings.Limits.SlackToken)
+	channel := strings.TrimSpace(settings.Limits.SlackChannel)
+	if token == "" || channel == "" || db == nil {
+		return nil
+	}
+	return limitnotice.NewAnomalies(limitnotice.AnomalyOptions{
+		Store: db, Poster: limitnotice.NewSlack(token, channel), Environment: sandboxEnvironment(),
+		Links: limitnotice.Links{Staff: settings.Limits.StaffURL}, Logger: logger,
+	})
+}
+
 // usageCounters connects to the Redis the usage service keeps its spend counters in, or nil
 // when none is set or no usage service is. A Redis that cannot be reached at startup is warned
 // of and left out, so the limits are read from the service itself until the router restarts.
