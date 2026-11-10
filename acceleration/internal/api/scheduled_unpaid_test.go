@@ -552,3 +552,26 @@ func (s *TelnyxUnpaidSuite) TestATurnThatReportsAFailureNotAboutMoneyStillCarrie
 	s.Require().NoError(got.err)
 	s.Equal("Held.", got.text)
 }
+
+// A task made in a thread, carried in the session the backend keeps on it, whose turn a spent
+// team limit refuses though the text gate let the reply through: the run records the limit and is
+// not tried again, as a text channel's turn does.
+func (s *TelnyxUnpaidSuite) TestAThreadTaskWhoseTurnIsRefusedForATeamLimitIsNotRetried() {
+	person := "+1347" + digits(s.utils.uuid())
+	if s.config.Tags == nil {
+		s.config.Tags = map[string]string{}
+	}
+	s.config.Tags[session.TeamTag] = "finance"
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	channel := s.creditedThread(person)
+	s.serverClient.createSession(CreateSessionRequest{Agent: &s.config.Name, AgentId: &channel})
+	s.teamSpent(person)
+	task := s.threadTask(channel)
+
+	run, attempts := s.settledByTheWorker(task)
+
+	s.Equal(store.ScheduledTaskRunFailed, run.State)
+	s.Require().NotNil(run.Error)
+	s.Equal(codeSpendLimitReached, *run.Error)
+	s.Equal(int32(1), attempts, "a spent limit outlasts every retry of the run")
+}

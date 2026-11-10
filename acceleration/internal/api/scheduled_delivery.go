@@ -466,10 +466,8 @@ func (s *Server) captureReply(ctx context.Context, found *session.Session, deliv
 			active, last = true, time.Now()
 			// A turn the organization may not pay for ends with the model's refusal, which no
 			// reply follows: the run records the money, not an agent that said nothing.
-			if failed, erred := event.(agent.Error); erred {
-				if _, refused := moneyError(failed.Err); refused {
-					return "", nil, unpaid(failed.Err)
-				}
+			if refusal := turnRefusal(event); refusal != nil {
+				return "", nil, refusal
 			}
 			if text := spokenOf(event); text != "" && (len(said) == 0 || said[len(said)-1] != text) {
 				said = append(said, text)
@@ -488,6 +486,18 @@ func (s *Server) captureReply(ctx context.Context, found *session.Session, deliv
 			}
 		}
 	}
+}
+
+// turnRefusal is the failure a text turn's event ends it with, when the event is the model's
+// refusal for money (unpaid), and nil otherwise: any other agent.Error, such as a tool's, leaves
+// the turn running.
+func turnRefusal(event session.Event) error {
+	if failed, erred := event.(agent.Error); erred {
+		if _, refused := moneyError(failed.Err); refused {
+			return unpaid(failed.Err)
+		}
+	}
+	return nil
 }
 
 // rerunSuffix ends the command id an occurrence's turn runs again under when the reply under
