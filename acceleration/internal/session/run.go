@@ -88,10 +88,17 @@ type NotStarted struct{ Err error }
 func (n NotStarted) Error() string { return n.Err.Error() }
 func (n NotStarted) Unwrap() error { return n.Err }
 
-// Run answers input on a headless text session made from spec, waits until the agent has
-// nothing left to do or ctx ends, and ends the session. A session that could not be created
-// is a NotStarted. ctx's deadline is the run's: nothing the session hands work to outlives it.
+// Run answers input on a headless, incognito text session made from spec, waits until the
+// agent has nothing left to do or ctx ends, and ends the session. A session that could not be
+// created is a NotStarted. ctx's deadline is the run's: nothing the session hands work to
+// outlives it.
 func (m *Manager) Run(ctx context.Context, spec Spec, input string, images []llm.ImagePart) (RunOutcome, error) {
+	spec.Text = true
+	spec.CallID = ""
+	spec.STSTarget = ""
+	spec.Greeting = ""
+	// Nothing about a run is kept, so one run's input never reaches the next one's.
+	spec.Incognito = true
 	if deadline, ok := ctx.Deadline(); ok {
 		spec.RunDeadline = deadline
 	}

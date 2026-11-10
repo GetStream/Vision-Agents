@@ -14,6 +14,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -30,7 +31,7 @@ const childInput = "input"
 
 // childAgents offers a text session the app's other text agents its config names, each as a
 // tool. A call runs the child on its input as an incognito run of its own and answers with
-// what the child said last. A name the caller declared stays the caller's.
+// what the child said last. A name any other tool has stays that tool's.
 //
 // A child's run is held to the parent's: it ends when the parent's tool call does, and never
 // after the parent's RunDeadline. It takes none of the app's run slots: the parent's slot
@@ -39,7 +40,8 @@ func (m *Manager) childAgents(spec Spec, parent *Session, declared []harness.Too
 	if !spec.Text || len(spec.Agents) == 0 || m.options.Configs == nil {
 		return declared, next
 	}
-	taken := map[string]bool{}
+	// The agent offers these itself, past the tools it is handed.
+	taken := map[string]bool{harness.LoadSkillTool: true, sandbox.ToolName: true, "confirm_tool_call": true}
 	for _, tool := range declared {
 		taken[tool.Name] = true
 	}
@@ -49,6 +51,8 @@ func (m *Manager) childAgents(spec Spec, parent *Session, declared []harness.Too
 	}
 	for _, child := range spec.Agents {
 		if taken[child.Tool] {
+			m.logger.Warn("a child agent's tool has the name of another tool, which keeps it",
+				"config", spec.ConfigID, "tool", child.Tool)
 			continue
 		}
 		taken[child.Tool] = true
@@ -129,8 +133,6 @@ func (r *childRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.Content
 
 	spec := FromConfig(config)
 	spec.CustomerID = r.spec.CustomerID
-	spec.Text = true
-	spec.Incognito = true
 	spec.Caller, spec.CallerKind = r.spec.Caller, r.spec.CallerKind
 	// The parent's cost labels go on the child's requests too, so its spend is counted
 	// where the parent's is.

@@ -94,24 +94,42 @@ func (s *Server) childAgentsComplaint(ctx context.Context, customerID string, co
 			config.Agents[i].Config = found.Name
 		}
 	}
+	renamed := existing != nil && existing.Name != config.Name
 	// Only a save that could break a parent reads the app's other configs.
-	if len(config.Agents) == 0 && !(wasText && config.Mode != store.AgentModeText) {
+	if len(config.Agents) == 0 && !renamed && !(wasText && config.Mode != store.AgentModeText) {
 		return "", true, nil
 	}
+	name := config.Name
+	if renamed {
+		name = existing.Name
+	}
+	parent, err := s.parentOf(ctx, customerID, name, config.ID)
+	switch {
+	case err != nil:
+		return "", false, err
+	case parent == "":
+		return "", true, nil
+	case renamed:
+		return fmt.Sprintf("%q hands work to this agent by its name, so it keeps it: take it out of %q's agents first", parent, parent), false, nil
+	case len(config.Agents) > 0:
+		return fmt.Sprintf("%q hands work to this agent, so it cannot have agents of its own: agents are one level deep", parent), false, nil
+	}
+	return fmt.Sprintf("%q hands work to this agent, so it stays a text agent", parent), false, nil
+}
+
+// parentOf is the name of a config of the app, other than self, that hands work to the
+// config called name, and empty when none does.
+func (s *Server) parentOf(ctx context.Context, customerID, name, self string) (string, error) {
 	others, err := s.store.CustomerAgentConfigs(ctx, customerID)
 	if err != nil {
-		return "", false, err
+		return "", err
 	}
 	for _, other := range others {
-		if other.ID == config.ID || !slices.ContainsFunc(other.Agents, func(child store.ChildAgent) bool { return child.Config == config.Name }) {
-			continue
+		if other.ID != self && slices.ContainsFunc(other.Agents, func(child store.ChildAgent) bool { return child.Config == name }) {
+			return other.Name, nil
 		}
-		if len(config.Agents) > 0 {
-			return fmt.Sprintf("%q hands work to this agent, so it cannot have agents of its own: agents are one level deep", other.Name), false, nil
-		}
-		return fmt.Sprintf("%q hands work to this agent, so it stays a text agent", other.Name), false, nil
 	}
-	return "", true, nil
+	return "", nil
 }
 
 func (*ChildAgent) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

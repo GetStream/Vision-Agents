@@ -254,6 +254,26 @@ func (s *ChildAgentsSuite) TestAChildStaysATextAgent() {
 	s.Contains(string(payload), "stays a text agent")
 }
 
+func (s *ChildAgentsSuite) TestAChildKeepsItsNameWhileAParentCallsIt() {
+	child := s.textConfig("echo/echo-model")
+	s.saveParent(http.StatusCreated, []ChildAgent{{Config: child.Name, Tool: "ask"}})
+
+	status, payload := s.serverClient.call(http.MethodPatch, "/v1/agents/configs/"+child.Id, map[string]any{"name": "renamed-" + s.utils.uuid()})
+
+	s.Equal(http.StatusBadRequest, status, "a parent names its child by name, and another config could take the old one")
+	s.Contains(string(payload), "keeps it")
+}
+
+func (s *ChildAgentsSuite) TestAChildIsNotDeletedWhileAParentCallsIt() {
+	child := s.textConfig("echo/echo-model")
+	s.saveParent(http.StatusCreated, []ChildAgent{{Config: child.Name, Tool: "ask"}})
+
+	status, payload := s.serverClient.call(http.MethodDelete, "/v1/agents/configs/"+child.Id, nil)
+
+	s.Equal(http.StatusConflict, status, string(payload))
+	s.Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+child.Id, nil, nil))
+}
+
 func (s *ChildAgentsSuite) TestTwoChildrenCannotShareATool() {
 	child := s.textNamed("echo/echo-model")
 

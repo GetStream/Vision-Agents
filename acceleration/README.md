@@ -1655,9 +1655,9 @@ and broken down by tool in its `children`.
 
 Children are one level deep: the parent and every child are text agents, and a child has no
 `agents` of its own and is not the parent. A save is refused that would break that from either
-side, including a child gaining agents or stopping being a text agent, and the child is checked
-again when it runs, which is also where a renamed or deleted child shows up, as a failed tool
-call. A child takes none of the app's run slots (`ROUTER_RUNS_CONCURRENT_PER_APP`): the parent's
+side, including a child gaining agents or stopping being a text agent. A parent names a child
+by name, so a child cannot be renamed or deleted while a parent names it. The child is checked
+again when it runs, and a child tool whose name another tool of the session has is not offered. A child takes none of the app's run slots (`ROUTER_RUNS_CONCURRENT_PER_APP`): the parent's
 slot covers it.
 
 **Knowledge is what the business wrote down.** With `TURBOPUFFER_API_KEY` set, a config's

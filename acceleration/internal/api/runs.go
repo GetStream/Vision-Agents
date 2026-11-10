@@ -123,12 +123,6 @@ func (s *Server) createRun(ctx context.Context, request *createRunRequest) (*cre
 
 	spec := session.FromConfig(*config)
 	spec.CustomerID = customerID
-	spec.Text = true
-	spec.CallID = ""
-	spec.STSTarget = ""
-	spec.Greeting = ""
-	// Nothing about a run is kept, so one run's input never reaches the next one's.
-	spec.Incognito = true
 	if instructions := strings.TrimSpace(value(body.Instructions)); instructions != "" {
 		spec.Instructions = strings.TrimSpace(spec.Instructions + "\n\n" + instructions)
 	}

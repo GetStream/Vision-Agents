@@ -403,6 +403,13 @@ func (s *Server) deleteAgentConfig(ctx context.Context, request *deleteAgentConf
 	if len(answering) > 0 {
 		return nil, configAnswersNumbers(answering)
 	}
+	// Children are named by name, so one deleted would leave its parent calling whichever
+	// config takes the name next.
+	if parent, err := s.parentOf(ctx, customerID, existing.Name, existing.ID); err != nil {
+		return nil, err
+	} else if parent != "" {
+		return nil, conflict(fmt.Sprintf("%q hands work to this agent: take it out of %q's agents first", parent, parent))
+	}
 	if err := s.configs.DeleteAgentConfig(ctx, customerID, request.Id); err != nil {
 		return nil, errUnknownConfig
 	}
