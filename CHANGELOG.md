@@ -422,6 +422,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 The Swift SDK's product and module are `StreamAgents`, and its client is `StreamAgents`: `import StreamAgents`, then `StreamAgents(apiKey:)` or `StreamAgents(url:customerID:)` where it was `VisionAgents(...)`. Nothing else in the API changed. An app adding the package with SPM takes the `StreamAgents` product from the same repository URL. The package is `stream-agents`, so its test scheme is `stream-agents`. The empty `sdks/swift/ui` and `sdks/swift/rtc` directories are gone.
 
+### Kotlin: vision-agents-core is stream-agents-android-core
+
+The Kotlin SDK's artifact is `io.getstream:stream-agents-android-core`, its package is `io.getstream.agents.android.core`, and its client is `StreamAgents`: `StreamAgents(backend)` where it was `VisionAgents(backend)`, with imports from `io.getstream.agents.android.core` where they were from `io.getstream.visionagents.android.core`. Nothing else in the API changed. The Gradle project is `stream-agents-kotlin`.
+
 ### The Go SDK's helpers take a Backend, not the generated client
 
 `agents.DefineAgent`, `agents.DefineSkills`, `agents.IngestKnowledge`, `agents.SubscribeKnowledgeURLs` and `stream.NewPhone` take a `stream.Backend` where they took the generated `*acceleration.ClientWithResponses`, so using them no longer means building the generated client first. `stream.NewPhone` now returns an error too, for a backend that does not resolve. `agents.Harness.VM` is `agents.Harness.Sandbox`, the name every other SDK and the docs use. Pass `stream.Backend{}` for the environment's router, or `api.Backend()` for a client's. `stream.Backend.Client()` and `agents.Agent.Client()` still hand out the generated client, for operations the SDK has no method for yet; its operation methods carry no compatibility promise (AI-1892).

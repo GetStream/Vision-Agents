@@ -12,7 +12,7 @@ import android.os.Build
 import android.os.CancellationSignal
 import android.provider.CalendarContract
 import androidx.core.location.LocationManagerCompat
-import io.getstream.visionagents.android.core.AgentTool
+import io.getstream.agents.android.core.AgentTool
 import java.text.DateFormat
 import java.text.ParseException
 import java.text.SimpleDateFormat

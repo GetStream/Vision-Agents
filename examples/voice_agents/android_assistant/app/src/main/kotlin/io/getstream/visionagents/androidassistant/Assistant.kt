@@ -1,9 +1,9 @@
 package io.getstream.visionagents.androidassistant
 
-import io.getstream.visionagents.android.core.AgentsException
-import io.getstream.visionagents.android.core.Sessions
-import io.getstream.visionagents.android.core.User
-import io.getstream.visionagents.android.core.VisionAgents
+import io.getstream.agents.android.core.AgentsException
+import io.getstream.agents.android.core.Sessions
+import io.getstream.agents.android.core.User
+import io.getstream.agents.android.core.StreamAgents
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -67,8 +67,8 @@ object Assistant {
      */
     val user: User = User(id = "juno-owner", name = "Alex")
 
-    val agents: VisionAgents by lazy {
-        VisionAgents(url = routerUrl, customerId = CUSTOMER_ID, apiKey = streamApiKey).apply {
+    val agents: StreamAgents by lazy {
+        StreamAgents(url = routerUrl, customerId = CUSTOMER_ID, apiKey = streamApiKey).apply {
             setUser(user) { streamToken() }
         }
     }

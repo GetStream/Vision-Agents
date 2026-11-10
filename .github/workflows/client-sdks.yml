@@ -107,7 +107,7 @@ jobs:
       - name: Generated models match the spec
         run: |
           uv run generate.py
-          changed=$(git status --porcelain -- core/src/main/kotlin/io/getstream/visionagents/android/core/generated)
+          changed=$(git status --porcelain -- core/src/main/kotlin/io/getstream/agents/android/core/generated)
           if [ -n "$changed" ]; then echo "$changed"; git diff; exit 1; fi
 
   dart:

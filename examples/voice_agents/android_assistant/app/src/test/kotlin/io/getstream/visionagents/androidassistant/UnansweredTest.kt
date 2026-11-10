@@ -1,6 +1,6 @@
 package io.getstream.visionagents.androidassistant
 
-import io.getstream.visionagents.android.core.AgentEvent
+import io.getstream.agents.android.core.AgentEvent
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull

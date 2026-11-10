@@ -12,11 +12,11 @@ import io.getstream.chat.android.ai.compose.conversation.AIPendingMessage
 import io.getstream.chat.android.ai.compose.generativeui.AIUIAction
 import io.getstream.chat.android.ai.compose.generativeui.AIUIHost
 import io.getstream.chat.android.ai.openui.generativeui.OpenUIRenderer
-import io.getstream.visionagents.android.core.AgentsException
-import io.getstream.visionagents.android.core.Conversation
-import io.getstream.visionagents.android.core.ModelOverwrites
-import io.getstream.visionagents.android.core.SessionOptions
-import io.getstream.visionagents.android.core.VoiceSession
+import io.getstream.agents.android.core.AgentsException
+import io.getstream.agents.android.core.Conversation
+import io.getstream.agents.android.core.ModelOverwrites
+import io.getstream.agents.android.core.SessionOptions
+import io.getstream.agents.android.core.VoiceSession
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers

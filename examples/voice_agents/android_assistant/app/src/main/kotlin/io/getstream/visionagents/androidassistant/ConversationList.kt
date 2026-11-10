@@ -46,7 +46,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import io.getstream.visionagents.android.core.Session
+import io.getstream.agents.android.core.Session
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date

@@ -45,7 +45,7 @@ android {
 }
 
 dependencies {
-    implementation(libs.vision.agents.core)
+    implementation(libs.stream.agents.android.core)
     implementation(libs.stream.chat.ai.compose)
     implementation(libs.stream.chat.ai.openui)
     implementation(libs.stream.chat.ai.a2ui)

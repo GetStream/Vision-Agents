@@ -65,11 +65,11 @@ import io.getstream.chat.android.ai.compose.ui.component.AIVoiceGlow
 import io.getstream.chat.android.ai.compose.ui.component.AIVoiceVisualizationDefaults
 import io.getstream.chat.android.ai.compose.ui.component.AIVoiceWave
 import io.getstream.video.android.core.Call
-import io.getstream.visionagents.android.core.AgentSession
-import io.getstream.visionagents.android.core.AgentsException
-import io.getstream.visionagents.android.core.Conversation
-import io.getstream.visionagents.android.core.ToolApprovalRequest
-import io.getstream.visionagents.android.core.VoiceSession
+import io.getstream.agents.android.core.AgentSession
+import io.getstream.agents.android.core.AgentsException
+import io.getstream.agents.android.core.Conversation
+import io.getstream.agents.android.core.ToolApprovalRequest
+import io.getstream.agents.android.core.VoiceSession
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
