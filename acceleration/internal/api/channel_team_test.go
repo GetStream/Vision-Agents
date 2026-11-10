@@ -94,6 +94,14 @@ func (s *AgentTeamsSuite) TestASessionOfATeamsConfigIsRefusedWhenTheSettingsCann
 	s.False(made, "no channel is made outside the config's team")
 }
 
+// A backend may name a team of its own on the request; the channel is still the config's.
+func (s *AgentTeamsSuite) TestABackendsOwnTeamDoesNotMoveTheChannel() {
+	request := s.recorded(s.configOf("red"))
+	request.Team = pointerTo("blue")
+
+	s.Equal("red", s.channelOf(s.serverClient.createSession(request))["team"])
+}
+
 // channelOf is what the channel a kept session holds its conversation in was made with.
 func (s *AgentTeamsSuite) channelOf(opened Session) map[string]any {
 	data, found := s.teamsChat.Channel(strings.TrimPrefix(value(opened.ConversationId), "agent:"))
