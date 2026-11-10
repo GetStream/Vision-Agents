@@ -122,7 +122,7 @@ func (s *StoreSuite) SetupTest() {
 	for _, db := range append([]bun.IDB{s.store.db}, s.store.shards()...) {
 		_, err := db.ExecContext(
 			s.ctx,
-			"TRUNCATE requests, stats_hourly, stats_daily, stats_tags_hourly, stats_tags_daily,"+
+			"TRUNCATE requests, stats_hourly, stats_daily, stats_tags_hourly, stats_tags_daily, customer_activity,"+
 				" turn_stats_hourly, turn_latency_hourly, calls, phone_numbers, sip_trunks,"+
 				" voices, agent_sessions, agent_responses, agent_response_items, users,"+
 				" policies, app_organizations, call_resources, stream_trunks, organizations, agent_configs,"+

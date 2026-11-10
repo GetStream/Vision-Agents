@@ -345,6 +345,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 		},
 		Formats:       huma.DefaultFormats,
 		DefaultFormat: "application/json",
+		Transformers:  []huma.Transformer{noteRefusals},
 	}
 	// The generated operations ignore a field they do not know, and a client written
 	// against a newer spec sends them.

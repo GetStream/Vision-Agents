@@ -503,6 +503,32 @@ func (s *RouterStartSuite) start(settings config.Config) (stop func() error) {
 	return stop
 }
 
+// Defect: the router built without its activity record (the server counts nothing), or without
+// closing it (what the last minute counted is lost when it stops). The interval is a minute, so
+// the row can only be there because the stop wrote it.
+func (s *RouterStartSuite) TestARunningRouterCountsAnAppsRequestAndWritesItWhenItStops() {
+	settings := s.settings
+	settings.Addr = freeAddress(s.T())
+	customer := "customer-" + uuid.NewString()
+	stop := s.start(settings)
+
+	request, err := http.NewRequest(http.MethodGet, "http://"+settings.Addr+"/v1/agents/skills", nil)
+	s.Require().NoError(err)
+	request.Header.Set("X-Customer-Id", customer)
+	request.Header.Set("X-Stream-Client", store.AuditSourceCLI)
+	response, err := http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	s.Require().NoError(response.Body.Close())
+	s.Require().Less(response.StatusCode, http.StatusInternalServerError)
+	s.Require().NoError(stop())
+
+	var requests int64
+	s.Require().NoError(s.db.DB().QueryRowContext(s.ctx,
+		"SELECT COALESCE(sum(requests), 0) FROM customer_activity WHERE app_id = ? AND area = 'agent_setup' AND client = ?",
+		customer, store.AuditSourceCLI).Scan(&requests))
+	s.Equal(int64(1), requests)
+}
+
 // goroutines is every goroutine's stack, as the pprof endpoint prints it.
 func goroutines() string {
 	var out strings.Builder
