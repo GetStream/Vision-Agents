@@ -3,9 +3,12 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
+	"regexp"
+	"strconv"
 	"testing"
 	"time"
 
@@ -16,10 +19,18 @@ import (
 // SearchSuite covers the one routed modality with no socket: a question and what came back.
 type SearchSuite struct {
 	RouterSuite
+	logged *lockedLog
 }
 
 func TestSearchSuite(t *testing.T) {
 	runSuite(t, new(SearchSuite))
+}
+
+// SetupSuite keeps the router's log, for what a search the caller hung up on was logged as.
+func (s *SearchSuite) SetupSuite() {
+	s.logged = &lockedLog{}
+	s.logs = s.logged
+	s.RouterSuite.SetupSuite()
 }
 
 func (s *SearchSuite) SetupTest() {
@@ -104,6 +115,13 @@ func (s *SearchSuite) TestAVendorNoSessionCanBeOpenedWithIsAServerError() {
 	s.assertServerError(status, payload)
 }
 
+func (s *SearchSuite) TestAVendorThatTimesOutWhileTheCallerWaitsIsAServerError() {
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/search", SearchRequest{
+		Query: "how much does a call cost", Options: &SearchOptions{Target: pointerTo("slow/" + failingSearchModels["slow"])}})
+
+	s.assertServerError(status, payload)
+}
+
 func (s *SearchSuite) TestARefusalAboutMoneyFromTheVendorCallIsStillAPaymentRequired() {
 	status, payload := s.serverClient.call(http.MethodPost, "/v1/search", SearchRequest{
 		Query: "how much does a call cost", Options: &SearchOptions{Target: pointerTo("broke/" + failingSearchModels["broke"])}})
@@ -112,6 +130,37 @@ func (s *SearchSuite) TestARefusalAboutMoneyFromTheVendorCallIsStillAPaymentRequ
 	var failure ErrorResponse
 	s.Require().NoError(json.Unmarshal(payload, &failure))
 	s.Equal(codeSpendLimitReached, failure.Error.Code)
+}
+
+func (s *SearchSuite) TestACallerThatHangsUpMidSearchIsNoServerError() {
+	id := "search-hang-up-" + s.utils.uuid()
+	encoded, err := encode(SearchRequest{Query: "how much does a call cost",
+		Options: &SearchOptions{Target: pointerTo("hang/" + failingSearchModels["hang"])}})
+	s.Require().NoError(err)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, s.serverClient.base()+"/v1/search", bytes.NewReader(encoded))
+	s.Require().NoError(err)
+	request.Header = s.serverClient.header.Clone()
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(RequestIDHeader, id)
+
+	_, err = s.server.Client().Do(request)
+	s.Require().ErrorIs(err, context.DeadlineExceeded, "the caller gave up")
+
+	served := regexp.MustCompile(`msg="served a request".* status=(\d+) .*request_id=` + regexp.QuoteMeta(id) + `\b`)
+	var status int
+	s.Require().Eventually(func() bool {
+		found := served.FindStringSubmatch(s.logged.String())
+		if found == nil {
+			return false
+		}
+		status, err = strconv.Atoi(found[1])
+		return err == nil
+	}, 5*time.Second, 20*time.Millisecond, "the search the caller left is logged")
+	// router_http_requests_total is classed by the same status (withMetrics), and is not read here:
+	// its series has no label of this test's own, and AdmissionSuite's searches answered 503 move it.
+	s.Less(status, http.StatusInternalServerError, "a caller hanging up is no outage of the router's")
 }
 
 func (s *SearchSuite) TestAModelNamedOutsideTheOptionsIsRefused() {

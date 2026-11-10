@@ -78,12 +78,13 @@ func routableConfig() routing.ModalityConfig {
 // read off its row.
 //
 // It also holds the models a question can be sent to by name to see a search fail: a vendor that is
-// down, one that cannot be built, and one whose answer is a refusal about money. No shortcut asks
+// down, one that cannot be built, one whose answer is a refusal about money, one whose own HTTP
+// client timed out, and one that answers nothing until the caller hangs up. No shortcut asks
 // for Latin, so none of them is ever chosen for a question that names no target.
 func searchConfig() routing.ModalityConfig {
 	config := routableConfig()
 	config.Providers[0].Price = routing.Price{PerThousandRequests: 5}
-	for _, provider := range []string{"down", "unbuildable", "broke"} {
+	for _, provider := range []string{"down", "unbuildable", "broke", "slow", "hang"} {
 		config.Providers = append(config.Providers, routing.ProviderConfig{
 			Provider: provider, Model: failingSearchModels[provider], Languages: []string{"la"}})
 	}
@@ -96,6 +97,8 @@ var failingSearchModels = map[string]string{
 	"down":        "down-" + rand.Text(),
 	"unbuildable": "unbuildable-" + rand.Text(),
 	"broke":       "broke-" + rand.Text(),
+	"slow":        "slow-" + rand.Text(),
+	"hang":        "hang-" + rand.Text(),
 }
 
 // recordingConfig adds the batch half a whole recording is served by, so a job sent to the
@@ -641,7 +644,20 @@ func searchRegistry() *searchrouter.Registry {
 	registry.Register("broke", func(routing.Spec) (search.Provider, error) {
 		return failingSearch{fmt.Errorf("broke: %w", policy.ErrBudgetSpent)}, nil
 	})
+	registry.Register("slow", func(routing.Spec) (search.Provider, error) {
+		return failingSearch{fmt.Errorf("slow: Post \"https://vendor.test/search\": %w", context.DeadlineExceeded)}, nil
+	})
+	registry.Register("hang", func(routing.Spec) (search.Provider, error) { return hangingSearch{}, nil })
 	return registry
+}
+
+// hangingSearch is a search provider that answers nothing until the question's context ends, and
+// then fails as an HTTP client does.
+type hangingSearch struct{ failingSearch }
+
+func (hangingSearch) Search(ctx context.Context, _ search.Query) (search.Result, error) {
+	<-ctx.Done()
+	return search.Result{}, fmt.Errorf("hang: Post \"https://vendor.test/search\": %w", ctx.Err())
 }
 
 // failingSearch is a search provider whose every question fails with err.
