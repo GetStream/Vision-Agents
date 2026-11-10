@@ -180,21 +180,41 @@ func (s *AppHooksSuite) TestAChannelTypeWhoseGrantsLetAUserJoinIsNotAnswered() {
 	s.holdsType("callouts", map[string][]string{
 		"channel_member": {"read-channel", "create-message"}, "user": {"add-own-channel-membership"},
 	})
-	s.answeringIn("callouts")
+	config := s.answeringIn("callouts")
 	channel := s.groupChannel("callouts", nil)
 
 	s.Equal(http.StatusOK, s.fromApp(s.appPath("/v1/chat/hooks/stream"), s.groupMessage("callouts", channel, nil)))
 
 	s.nobodyAnswered("callouts:" + channel)
+	_, made := s.chat.User(config.ID)
+	s.False(made, "the agent's Stream user was made for a type it does not answer in")
+}
+
+// Stream refusing to make the agent's user leaves no session open on the channel: the one
+// opened before it is closed, so the next message opens its own.
+func (s *AppHooksSuite) TestAnAgentUserStreamCannotMakeLeavesNoSessionOnTheChannel() {
+	s.holdsType("callouts", memberWrites)
+	s.answeringIn("callouts")
+	channel := s.groupChannel("callouts", nil)
+	s.chat.Fail(http.MethodPost, "/users")
+	s.T().Cleanup(func() { s.chat.Heal(http.MethodPost, "/users") })
+
+	s.Equal(http.StatusOK, s.fromApp(s.appPath("/v1/chat/hooks/stream"), s.groupMessage("callouts", channel, nil)))
+
+	s.nobodyAnswered("callouts:" + channel)
+	_, running := s.manager.ByConversationWhere("callouts:"+channel, func(string, int64) bool { return true })
+	s.False(running, "a session was left open on the channel")
 }
 
 func (s *AppHooksSuite) TestAChannelTypeTheAppDoesNotHaveIsNotAnswered() {
-	s.answeringIn("callouts")
+	config := s.answeringIn("callouts")
 	channel := s.groupChannel("callouts", nil)
 
 	s.Equal(http.StatusOK, s.fromApp(s.appPath("/v1/chat/hooks/stream"), s.groupMessage("callouts", channel, nil)))
 
 	s.nobodyAnswered("callouts:" + channel)
+	_, made := s.chat.User(config.ID)
+	s.False(made, "the agent's Stream user was made for a type the app does not have")
 }
 
 // A config naming one type answers in no other, and the agent channel of the same id is not

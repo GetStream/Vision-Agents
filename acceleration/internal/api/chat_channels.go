@@ -122,11 +122,6 @@ func (s *Server) chatChannelSession(ctx context.Context, origin hookOrigin, conf
 	if err != nil {
 		return nil, err
 	}
-	if err := conversation.CreateMissingUsers(ctx, bound.Client, map[string]getstream.UserRequest{
-		config.ID: {ID: config.ID, Name: &config.Name},
-	}); err != nil {
-		return nil, stack.Wrap(err)
-	}
 	spec := session.FromConfig(config)
 	spec.Text = true
 	spec.CallID, spec.STSTarget, spec.Greeting = "", "", ""
@@ -134,5 +129,19 @@ func (s *Server) chatChannelSession(ctx context.Context, origin hookOrigin, conf
 	spec.ConversationID, spec.Dispatched = cid, true
 	spec.AgentID = config.ID
 	spec.Attribution = chatHookAttribution(config.CustomerID, event)
-	return s.sessions.Create(conversation.RouterOpensDispatched(ctx, cid), spec)
+	opened, err := s.sessions.Create(conversation.RouterOpensDispatched(ctx, cid), spec)
+	if err != nil {
+		return nil, err
+	}
+	// The user is made once the session is: one the type's grants refuse (Manager.keepable), or
+	// a type the app lacks, makes none and writes nothing to Stream.
+	if err := conversation.CreateMissingUsers(ctx, bound.Client, map[string]getstream.UserRequest{
+		config.ID: {ID: config.ID, Name: &config.Name},
+	}); err != nil {
+		if _, closeErr := s.sessions.Close(opened.ID(), session.OwnerOf(opened.Spec())); closeErr != nil {
+			s.logger.Error("could not close the session of a channel the Router answers in", "channel", cid, "session", opened.ID(), "error", closeErr)
+		}
+		return nil, stack.Wrap(err)
+	}
+	return opened, nil
 }
