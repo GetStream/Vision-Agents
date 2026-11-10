@@ -18,7 +18,7 @@ Backend SDKs: Python, Go, Node, Ruby, PHP, .NET, Rust
 
 ## Quickstart
 
-See the [quickstart docs]([url](https://getstream.io/agents/docs/quickstart/))
+See the [quickstart docs](https://getstream.io/agents/docs/quickstart/)
 
 
 ## Agent Folders
