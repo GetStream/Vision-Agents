@@ -4356,6 +4356,34 @@ export type components = {
             /** @description The tier the organization is billed on. */
             readonly tier: string;
         };
+        readonly ActivityArea: {
+            /** @description The area of the API, such as agent_setup or conversations. */
+            readonly area: string;
+            /** @description The client the requests named themselves as: dashboard, cli, sdk or api. */
+            readonly client: string;
+            /**
+             * Format: date-time
+             * @description When the first request arrived.
+             */
+            readonly first_at: string;
+            /**
+             * Format: date-time
+             * @description When the last request arrived.
+             */
+            readonly last_at: string;
+            /** @description The error code of the latest refusal, empty when there was none. */
+            readonly last_refusal_code: string;
+            /**
+             * Format: int64
+             * @description How many were answered with a status of 400 or more.
+             */
+            readonly refused: number;
+            /**
+             * Format: int64
+             * @description How many requests arrived, refused ones included.
+             */
+            readonly requests: number;
+        };
         readonly ActivityBucket: {
             /**
              * Format: int64
@@ -4391,6 +4419,50 @@ export type components = {
          * @enum {string}
          */
         readonly ActivityGranularity: "daily" | "monthly";
+        readonly ActivityMeter: {
+            /**
+             * Format: int64
+             * @description Billable audio, transcribed or produced, in milliseconds.
+             */
+            readonly audio_ms: number;
+            /**
+             * Format: int64
+             * @description Billable text, in characters.
+             */
+            readonly characters: number;
+            /**
+             * Format: int64
+             * @description What it is charged, in millionths of a dollar.
+             */
+            readonly cost_micros: number;
+            /**
+             * Format: int64
+             * @description How long the work took, in milliseconds: for runtime and sandbox, the time held.
+             */
+            readonly duration_ms: number;
+            /**
+             * Format: int64
+             * @description Tokens read, cached ones included.
+             */
+            readonly input_tokens: number;
+            /** @description The modality, such as llm, tts, runtime or sandbox. */
+            readonly meter: string;
+            /**
+             * Format: int64
+             * @description Tokens generated.
+             */
+            readonly output_tokens: number;
+            /**
+             * Format: int64
+             * @description How many requests. Runtime and sandbox are time, not requests, and read 0.
+             */
+            readonly requests: number;
+        };
+        /**
+         * @description The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls on three days or more. A step counts only answered requests: one refused in every request is tried, not reached.
+         * @enum {string}
+         */
+        readonly ActivityStep: "none" | "dashboard_reads" | "agent_setup" | "conversations" | "steady_use";
         readonly AddContactsRequest: {
             /** @description Up to 1,000. */
             readonly contacts: readonly components["schemas"]["ContactInput"][];
@@ -7935,6 +8007,30 @@ export type components = {
             readonly items: readonly components["schemas"]["OptOut"][];
             /** @description Pass as `cursor` for the next page. Absent on the last one. */
             readonly next_cursor?: string;
+        };
+        readonly OrganizationActivity: {
+            /** @description Every area and client the organization's apps made requests in, by area then client. */
+            readonly areas: readonly components["schemas"]["ActivityArea"][] | null;
+            /**
+             * Format: date-time
+             * @description When the first request of any area arrived, absent when none did.
+             */
+            readonly first_seen?: string;
+            readonly furthest_step: components["schemas"]["ActivityStep"];
+            /**
+             * Format: date-time
+             * @description When the last request of any area arrived, absent when none did.
+             */
+            readonly last_seen?: string;
+            /** @description What the organization's apps' work came to, by modality. */
+            readonly meters: readonly components["schemas"]["ActivityMeter"][] | null;
+            /** @description The organization. */
+            readonly organization_id: string;
+            /**
+             * Format: date-time
+             * @description The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on.
+             */
+            readonly since: string;
         };
         /**
          * @description What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.

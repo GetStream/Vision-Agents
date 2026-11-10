@@ -650,6 +650,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "getOrganizationActivity" => {
+          method: :get, path: "/v1/ops/orgs/{org_id}/activity",
+          path_params: %w[org_id].freeze, query: %w[since].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "getOrganizationPolicy" => {
           method: :get, path: "/v1/policies/organization",
           path_params: [].freeze, query: [].freeze,
@@ -1755,9 +1761,17 @@ module GetStream
           properties: %w[balance_micros balance_state balance_warning_micros balance_warning_source granted_micros limits organization_id own_limits spend_hard_limit spent_micros status tier].freeze,
           required: %w[organization_id status tier balance_micros granted_micros spent_micros balance_warning_micros balance_warning_source balance_state limits].freeze, open: false
         }.freeze,
+        "ActivityArea" => {
+          properties: %w[area client first_at last_at last_refusal_code refused requests].freeze,
+          required: %w[area client first_at last_at requests refused last_refusal_code].freeze, open: false
+        }.freeze,
         "ActivityBucket" => {
           properties: %w[active_users bucket calls messages phone_minutes sessions voice_minutes].freeze,
           required: %w[active_users bucket calls messages phone_minutes sessions voice_minutes].freeze, open: false
+        }.freeze,
+        "ActivityMeter" => {
+          properties: %w[audio_ms characters cost_micros duration_ms input_tokens meter output_tokens requests].freeze,
+          required: %w[meter requests input_tokens output_tokens audio_ms characters duration_ms cost_micros].freeze, open: false
         }.freeze,
         "AddContactsRequest" => {
           properties: %w[contacts default_country].freeze,
@@ -2590,6 +2604,10 @@ module GetStream
         "OptOutPage" => {
           properties: %w[has_more items next_cursor].freeze,
           required: %w[has_more items].freeze, open: false
+        }.freeze,
+        "OrganizationActivity" => {
+          properties: %w[areas first_seen furthest_step last_seen meters organization_id since].freeze,
+          required: %w[organization_id since furthest_step areas meters].freeze, open: false
         }.freeze,
         "PhoneNumber" => {
           properties: %w[agent_config_id capabilities country e164 monthly_cost_micros purchased_at released_at sip_trunk_id stream_trunk_id tags vendor].freeze,
