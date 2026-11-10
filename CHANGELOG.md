@@ -5,6 +5,9 @@
 ### The Kotlin SDK is published to Stream's Maven repository
 
 `io.getstream:stream-agents-android-core` is published to `https://stream-io-repo.com` by `publish-sdk-kotlin.yml`. A release is a pull request to `accelerate` from a branch named `release-kotlin-X.Y.Z` that sets `version=X.Y.Z` in `sdks/kotlin/gradle.properties`: the pull request fails unless the version matches the branch, is newer than the last release and is not already published, and merging it publishes that version and tags the commit `sdk-kotlin-vX.Y.Z`. Every other push to `accelerate` that changes `sdks/kotlin` publishes a 7-day snapshot, `X.Y.(Z+1)-<yyyyMMddHHmm>-SNAPSHOT`. No GitHub release is made, so the Python release does not start. The first release is 0.2.0.
+### Juno on Flutter
+
+`examples/voice_agents/flutter_assistant` is the Flutter half of swift_assistant: Juno, talked to from a Flutter app on iOS and Android with swift_assistant's agent, `configure` and backend, on the Dart SDK and Stream's Flutter AI components (`stream_chat_flutter_ai`). Its conversations are the router's, in a drawer that lists, searches, opens and deletes them, and a new one opens its session as its first message is typed and deletes it if it is left unsent. The chat is `AIConversationView`, with the reply's reasoning and steps, copy, share and rating under it, photos from the composer, Think harder, and the composer floating over the conversation. The phone answers `get_local_context`, `get_location`, `list_events`, `add_reminder` (Reminders on iOS, a calendar event with an alert on Android) and `send_email`, asking for each permission the first time a tool needs it. Voice mode starts voice on the open conversation, with Stream's voice glow, paced captions, the approval card over the call and a camera preview that Juno looks through when asked what it sees, and says which part of the agent failed, as the Android app does. Gmail and Linear sign in as on iOS: a call waiting for the person's account shows Connect and Not now on its step (`AIToolAuthorizer`), Connect opens the router's sign-in page with `flutter_web_auth_2` (a web authentication sheet on iOS, an Auth Tab or Custom Tab on Android) and comes back to `io.getstream.visionagents.flutterassistant:/connected`, each new conversation's `return_url`, and Not now calls `declineLogin` (#1361).
 
 ### An agent config names the models its llm falls back to
 
@@ -1256,6 +1259,15 @@ When the provider lists a granted tool with another schema than the one approved
 A chat episode now starts when Stream made the message that opened it. Before, it started when the router opened it, a moment later, so the summary left out that message: a one-message chat was summed up as "the user wrote nothing". A message in a channel with a member other than the person and the agent now opens no episode and writes no card, the rule a session already reads cards by. Without members in what Stream sends, the message opens none. A config with `episode_cards` off writes and reads nothing new (AI-2632).
 
 ## Breaking Changes
+
+### The Dart SDK has no views of its own
+
+`vision_agents_ui` is gone, as the Swift and Kotlin SDKs' views went before it. A conversation is
+shown with Stream Chat's AI components (`stream_chat_flutter_ai`) instead, and
+`examples/voice_agents/flutter_demo` shows how: `AIConversationView` over the session's channel,
+each reply's steps and live reasoning, tool approvals answered with `session.decide`, and the
+voice glow on a call. `LiveValueBuilder` and `LiveValueNotifier` went with it; a `StreamBuilder`
+over a `LiveValue`'s `stream` with `initialData:` its `value` does the same (#1327).
 
 ### A JavaScript tool's result can be parts
 
