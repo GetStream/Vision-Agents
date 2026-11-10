@@ -42,6 +42,47 @@ func (s *AppHooksSuite) TestAMessageInAChannelOfATypeTheConfigNamesIsAnsweredThe
 	s.Equal(config.Name, user["name"])
 }
 
+// Ben writes while the agent still answers Anya: the session answering her takes his message
+// once her reply is done, and both are answered, rather than the session closing under his
+// (answerHosted waits until the session is no longer busy before it closes it).
+func (s *AppHooksSuite) TestAMessageWrittenWhileTheAgentAnswersIsAnsweredAfter() {
+	s.holdsType("callouts", memberWrites)
+	s.answeringIn("callouts")
+	channel := s.groupChannel("callouts", nil)
+	ctx, ben, text := context.Background(), "ben", "feel better!"
+	_, err := s.chat.Client.Chat().SendMessage(ctx, "callouts", channel,
+		&getstream.SendMessageRequest{Message: getstream.MessageRequest{Text: &text, UserID: &ben}})
+	s.Require().NoError(err)
+	writing, release := s.chat.Hold("/" + channel + "/message")
+
+	s.Equal(http.StatusOK, s.fromApp(s.appPath("/v1/chat/hooks/stream"), s.groupMessage("callouts", channel, nil)))
+	select {
+	case <-writing:
+	case <-time.After(settleFor):
+		s.FailNow("the agent never wrote its reply")
+	}
+	s.Equal(http.StatusOK, s.fromApp(s.appPath("/v1/chat/hooks/stream"), strings.Replace(s.groupMessage("callouts", channel, nil),
+		`"text": "I'm sick, I can't come at 6", "user": {"id": "anya", "name": "Anya"}`, `"text": "feel better!", "user": {"id": "ben", "name": "Ben"}`, 1)))
+	time.Sleep(dropped)
+	release()
+
+	s.Eventually(func() bool { return s.replies("callouts:"+channel) == 2 }, settleFor, 20*time.Millisecond,
+		"both messages answered")
+}
+
+// replies counts the agent's finished replies in the channel cid.
+func (s *RouterSuite) replies(cid string) int {
+	count := 0
+	for _, stored := range s.chat.Stored(cid) {
+		custom, _ := stored["custom"].(map[string]any)
+		written, _ := custom["support_message"].(map[string]any)
+		if written["role"] == "assistant" && written["state"] == "completed" {
+			count++
+		}
+	}
+	return count
+}
+
 // The agent's own reply carries a source, as everything it stores does: answering it would be
 // the agent talking to itself.
 func (s *AppHooksSuite) TestTheAgentsOwnReplyInAChannelOfTheTypeIsNotAnswered() {
@@ -55,6 +96,21 @@ func (s *AppHooksSuite) TestTheAgentsOwnReplyInAChannelOfTheTypeIsNotAnswered() 
 	s.Equal(http.StatusOK, s.fromApp(s.appPath("/v1/chat/hooks/stream"), own))
 
 	s.nobodyAnswered("callouts:" + channel)
+}
+
+// A voice agent naming the type answers there in writing, as it does in a thread channel.
+func (s *AppHooksSuite) TestAVoiceConfigNamingTheTypeAnswersInWriting() {
+	s.holdsType("callouts", memberWrites)
+	config := store.AgentConfig{CustomerID: s.customerID(), Name: "rota-" + s.utils.uuid(), Mode: store.AgentModeVoice,
+		LLM: "noted/noted-model", ChatChannels: []store.ChatChannel{{Type: "callouts"}}}
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+	channel := s.groupChannel("callouts", nil)
+
+	s.Equal(http.StatusOK, s.fromApp(s.appPath("/v1/chat/hooks/stream"), s.groupMessage("callouts", channel, nil)))
+
+	reply := s.replyIn("callouts:" + channel)
+	s.Require().NotNil(reply, "nobody answered in the channel")
+	s.Equal(config.ID, reply["user_id"])
 }
 
 // A second customer's config naming the type answers in its own app alone: the type in this
