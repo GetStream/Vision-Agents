@@ -329,6 +329,23 @@ func (s *MediaQualitySuite) TestALostCountThatFallsIsNoNegativeLoss() {
 	s.InDelta(0, s.value(quality.summary(nil).outboundLoss), 1e-9)
 }
 
+func (s *MediaQualitySuite) TestANegativeCumulativeLossIsNoLoss() {
+	// Catches the signed 24-bit lost count (RFC 3550 §6.4.1) read unsigned: -1 arrives from pion
+	// as 0xFFFFFF and counted as sixteen million lost packets.
+	quality := newMediaQuality()
+	quality.reported(report(agentSSRC, 100, 0, 0), agentSSRC)
+	quality.reported(report(agentSSRC, 300, 0xFFFFFF, 0), agentSSRC)
+	s.InDelta(0, s.value(quality.summary(nil).outboundLoss), 1e-9)
+}
+
+func (s *MediaQualitySuite) TestACountOfLossBeyondThePacketsExpectedIsAllLost() {
+	// Catches a loss ratio above 1 when the lost count grows by more than the sequence did.
+	quality := newMediaQuality()
+	quality.reported(report(agentSSRC, 100, 0, 0), agentSSRC)
+	quality.reported(report(agentSSRC, 110, 50, 0), agentSSRC)
+	s.InDelta(1, s.value(quality.summary(nil).outboundLoss), 1e-9)
+}
+
 func (s *MediaQualitySuite) TestRTCPOtherThanAReceiverReportIsLeftOut() {
 	// Catches a sender report's or a NACK's fields read as the SFU's report on the agent's audio.
 	quality := newMediaQuality()

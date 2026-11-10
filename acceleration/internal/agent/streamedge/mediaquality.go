@@ -197,9 +197,9 @@ func (s *inboundStream) snapshot() inboundTotals {
 // outboundWindow is the run of receiver reports about one SSRC whose cumulative counts go on
 // from each other.
 type outboundWindow struct {
-	ssrc                    uint32
-	firstHighest, firstLost uint32
-	lastHighest, lastLost   uint32
+	ssrc                      uint32
+	firstHighest, lastHighest uint32
+	firstLost, lastLost       int32
 }
 
 // mediaQuality gathers one voice session's media quality and observes it once, when it ends.
@@ -261,15 +261,18 @@ func (q *mediaQuality) reported(packet rtcp.Packet, ssrc uint32) {
 		}
 		q.jitterSum += float64(block.Jitter) / opusSampleRate
 		q.jitterReports++
+		// The cumulative lost count is a signed 24-bit number (RFC 3550 §6.4.1), negative when
+		// duplicates outnumber the losses; pion parses it unsigned, so -1 reads as 0xFFFFFF.
+		totalLost := int32(block.TotalLost<<8) >> 8
 		// Another SSRC, or a sequence that went back, is a stream the counts do not go on from.
 		if !q.opened || block.SSRC != q.window.ssrc || block.LastSequenceNumber < q.window.lastHighest {
 			q.closeWindow()
 			q.window = outboundWindow{ssrc: block.SSRC, firstHighest: block.LastSequenceNumber,
-				firstLost: block.TotalLost, lastHighest: block.LastSequenceNumber, lastLost: block.TotalLost}
+				firstLost: totalLost, lastHighest: block.LastSequenceNumber, lastLost: totalLost}
 			q.opened = true
 			continue
 		}
-		q.window.lastHighest, q.window.lastLost = block.LastSequenceNumber, block.TotalLost
+		q.window.lastHighest, q.window.lastLost = block.LastSequenceNumber, totalLost
 	}
 }
 
@@ -287,7 +290,8 @@ func (q *mediaQuality) closeWindow() {
 func (w outboundWindow) counts() (expected, lost uint64) {
 	expected = uint64(w.lastHighest - w.firstHighest)
 	if w.lastLost > w.firstLost {
-		lost = uint64(w.lastLost - w.firstLost)
+		// Never more than the window expected: a count can only grow so far in a window.
+		lost = min(uint64(w.lastLost-w.firstLost), expected)
 	}
 	return expected, lost
 }
