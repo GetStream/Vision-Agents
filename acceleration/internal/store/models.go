@@ -1708,6 +1708,16 @@ type AppSettings struct {
 	// (visibleTo in connectors.go). Stream sets it on its own apps; no operation writes
 	// settings, so an app cannot set it on itself. Nil is no.
 	InternalConnectors *bool `json:"internal_connectors,omitempty"`
+	// AgentTeams is whether an end user opens only the agent configs of a team they are in,
+	// by Chat's shared-team rule (api.refuseOtherTeam). Stream sets it, as it does
+	// InternalConnectors. Nil is no: an app that never asked keeps every config open to
+	// every user, as before the setting existed.
+	AgentTeams *bool `json:"agent_teams,omitempty"`
+}
+
+// AgentTeamsChecked reports whether the app keeps each team's agent configs to its own users.
+func (s AppSettings) AgentTeamsChecked() bool {
+	return s.AgentTeams != nil && *s.AgentTeams
 }
 
 // AnonymousAllowed reports whether the app takes callers who presented no token.

@@ -48,6 +48,9 @@ func (s *Server) configFor(ctx context.Context, customerID string, configID, nam
 		if err != nil {
 			return nil, errUnknownConfig
 		}
+		if failure := s.refuseOtherTeam(ctx, customerID, found, errUnknownConfig); failure != nil {
+			return nil, failure
+		}
 		return &found, nil
 	}
 
@@ -60,6 +63,9 @@ func (s *Server) configFor(ctx context.Context, customerID string, configID, nam
 		// working session with default instructions, which is far harder to notice than an
 		// error: the agent answers, just not as the agent that was asked for.
 		return nil, notFound("there is no agent called " + named)
+	}
+	if failure := s.refuseOtherTeam(ctx, customerID, found, notFound("there is no agent called "+named)); failure != nil {
+		return nil, failure
 	}
 	return &found, nil
 }
