@@ -166,6 +166,9 @@ type Options struct {
 	// CustomerID is stamped on a channel this log creates, so reading it back can tell
 	// whose it is. A bound conversation's channel already carries the stamp.
 	CustomerID string
+	// Team is the Chat team a channel this log creates is in, none for "". A bound
+	// conversation's channel was made in its team already.
+	Team string
 	// Timings writes how long each stage of a turn took after the reply to it, and on the
 	// message as the timings field, for a developer talking to the agent. Off by default:
 	// it is not something a caller should read.
@@ -197,6 +200,7 @@ type Log struct {
 	existing bool
 	opened   bool
 	customer string
+	team     string
 	agent    User
 	visible  []string
 	timings  bool
@@ -273,6 +277,7 @@ func New(options Options) (*Log, error) {
 		existing: options.Channel != "",
 		opened:   options.Channel != "" && options.Opened,
 		customer: options.CustomerID,
+		team:     options.Team,
 		agent:    options.Agent,
 		visible:  options.VisibleTools,
 		timings:  options.Timings,
@@ -300,6 +305,9 @@ func (l *Log) Start(ctx context.Context) error {
 			request.Data = &getstream.ChannelInput{CreatedByID: &l.agent.ID}
 			if l.customer != "" {
 				request.Data.Custom = map[string]any{conversation.CustomerField: l.customer}
+			}
+			if l.team != "" {
+				request.Data.Team = &l.team
 			}
 		}
 		if _, err := l.client.Chat().GetOrCreateChannel(ctx, ChannelType, l.channel, request); err != nil {
