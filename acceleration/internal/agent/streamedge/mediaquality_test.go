@@ -310,6 +310,16 @@ func (s *MediaQualitySuite) TestASequenceThatGoesBackStartsANewRunOfReports() {
 	s.InDelta(15.0/200, s.value(quality.summary(nil).outboundLoss), 1e-9)
 }
 
+func (s *MediaQualitySuite) TestAReportWithTheSameHighestGoesOnFromTheSameRun() {
+	// Catches a report on no new packets, whose lost count fell as a late packet came, starting a
+	// new run: the run's loss is the change in the cumulative count from its first report.
+	quality := newMediaQuality()
+	quality.reported(report(agentSSRC, 100, 10, 0), agentSSRC)
+	quality.reported(report(agentSSRC, 100, 9, 0), agentSSRC)
+	quality.reported(report(agentSSRC, 200, 15, 0), agentSSRC)
+	s.InDelta(0.05, s.value(quality.summary(nil).outboundLoss), 1e-9)
+}
+
 func (s *MediaQualitySuite) TestALostCountThatFallsIsNoNegativeLoss() {
 	// Catches a cumulative lost count that went down, as duplicates make it (RFC 3550 §6.4.1),
 	// wrapping round to a huge loss.

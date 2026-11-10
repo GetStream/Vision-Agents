@@ -281,8 +281,9 @@ func (q *mediaQuality) closeWindow() {
 	q.lost += lost
 }
 
-// counts are the packets the window's reports expected and lost. Its first report counts from
-// the start of the stream, before the agent was listening, so a window counts from that report.
+// counts are the packets the window's reports expected and lost. The first report's counts take
+// in the packets before it, from a first sequence number the edge does not keep, so a window
+// counts from its first report on.
 func (w outboundWindow) counts() (expected, lost uint64) {
 	expected = uint64(w.lastHighest - w.firstHighest)
 	if w.lastLost > w.firstLost {
