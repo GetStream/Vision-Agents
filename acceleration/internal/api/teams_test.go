@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -19,14 +20,25 @@ import (
 // by Chat's shared-team rule, their teams read from their user in the app's Stream.
 type AgentTeamsSuite struct {
 	RouterSuite
+	// teamsChat is the customer's own Stream app, where its users and their teams live.
+	teamsChat *chattest.Server
 }
+
+const teamsAppKey = "own-key"
 
 func TestAgentTeamsSuite(t *testing.T) {
 	runSuite(t, new(AgentTeamsSuite))
 }
 
 func (s *AgentTeamsSuite) SetupTest() {
-	s.useApp(s.data.createAppAdmitting(store.AppSettings{AgentTeams: new(true)}))
+	s.useTeamsApp(store.AppSettings{AgentTeams: new(true)})
+}
+
+// useTeamsApp is an app with settings whose customer acts in a Stream app of its own, the
+// only one whose users' teams the customer's backend sets.
+func (s *AgentTeamsSuite) useTeamsApp(settings store.AppSettings) {
+	s.useApp(s.data.createAppAdmitting(settings))
+	s.teamsChat = s.giveApp(s.customerID(), 4242, teamsAppKey)
 }
 
 func (s *AgentTeamsSuite) TestAUserOpensAConfigOfTheirTeamAskingStreamEachTime() {
@@ -99,7 +111,7 @@ func (s *AgentTeamsSuite) TestAUserStreamDoesNotHaveIsInNoTeam() {
 
 func (s *AgentTeamsSuite) TestAGuestIsCheckedByTheTeamsOfTheirStreamUser() {
 	guest := s.data.createGuest()
-	s.chat.PutUser(map[string]any{"id": guest.userID, "teams": []any{"red"}})
+	s.teamsChat.PutUser(map[string]any{"id": guest.userID, "teams": []any{"red"}})
 
 	s.Equal(http.StatusCreated, guest.do(http.MethodPost, "/v1/agents/sessions", s.naming(s.configOf("red")), nil))
 	s.Equal(http.StatusNotFound, guest.do(http.MethodPost, "/v1/agents/sessions", s.naming(s.configOf("")), nil))
@@ -119,8 +131,8 @@ func (s *AgentTeamsSuite) TestACallerWithNoTokenIsInNoTeamWhoeverItClaimsToBe() 
 func (s *AgentTeamsSuite) TestAFailedTeamsReadOpensNothing() {
 	dana := s.inTeams()
 	config := s.configOf("")
-	s.chat.Fail(http.MethodGet, "/users")
-	s.T().Cleanup(func() { s.chat.Heal(http.MethodGet, "/users") })
+	s.teamsChat.Fail(http.MethodGet, "/users")
+	s.T().Cleanup(func() { s.teamsChat.Heal(http.MethodGet, "/users") })
 
 	status, payload := dana.call(http.MethodPost, "/v1/agents/sessions", s.naming(config))
 
@@ -134,6 +146,20 @@ func (s *AgentTeamsSuite) TestAnAppWithNoStreamToReadTeamsFromOpensNothingToAUse
 	s.setApps(s.customerID(), func(apps *suiteApps) { apps.nowhere[s.customerID()] = true })
 
 	status, message := dana.failure(http.MethodPost, "/v1/agents/sessions", s.naming(config))
+
+	s.Equal(http.StatusServiceUnavailable, status, message)
+	s.Equal(errTeamsUnreadable.Message, message)
+}
+
+// In the deployment's shared app the user ids are nobody's own and its teams are written by
+// whoever holds that app, so a customer acting there cannot tell its users' teams from it.
+func (s *AgentTeamsSuite) TestACustomerInTheDeploymentsSharedAppOpensNothingToAUser() {
+	anya := s.inTeams("red")
+	config := s.configOf("red")
+	s.chat.PutUser(map[string]any{"id": anya.userID, "teams": []any{"red"}})
+	s.setApps(s.customerID(), func(apps *suiteApps) { delete(apps.own, s.customerID()) })
+
+	status, message := anya.failure(http.MethodPost, "/v1/agents/sessions", s.naming(config))
 
 	s.Equal(http.StatusServiceUnavailable, status, message)
 	s.Equal(errTeamsUnreadable.Message, message)
@@ -160,7 +186,7 @@ func (s *AgentTeamsSuite) TestABackendOpensAConfigOfAnyTeamWithoutAskingStream()
 
 func (s *AgentTeamsSuite) TestWithTheSettingOffAUserOpensAnotherTeamsConfigAndStreamIsNotAsked() {
 	for _, settings := range []store.AppSettings{{}, {AgentTeams: new(false)}} {
-		s.useApp(s.data.createAppAdmitting(settings))
+		s.useTeamsApp(settings)
 		anya := s.inTeams("red")
 		config := s.configOf("blue")
 		asked := s.teamReads()
@@ -210,7 +236,7 @@ func (s *AgentTeamsSuite) TestAChatCarriedOnFromItsRowIsCheckedAgainstTheUsersTe
 	_, failure := other.reopenedFromRow(ctx, opened.Id)
 	s.Require().NoError(failure)
 
-	s.chat.PutUser(map[string]any{"id": anya.userID, "teams": []any{"blue"}})
+	s.teamsChat.PutUser(map[string]any{"id": anya.userID, "teams": []any{"blue"}})
 	_, failure = other.reopenedFromRow(ctx, opened.Id)
 	s.Equal(errUnknownConfig, failure)
 }
@@ -226,7 +252,7 @@ func (s *AgentTeamsSuite) inTeams(teams ...string) *testClient {
 		}
 		user["teams"] = listed
 	}
-	s.chat.PutUser(user)
+	s.teamsChat.PutUser(user)
 	return person
 }
 
@@ -261,7 +287,7 @@ func (s *AgentTeamsSuite) recorded(config AgentConfig) CreateSessionRequest {
 // teamReads is how many user queries the suite's Stream has been sent.
 func (s *AgentTeamsSuite) teamReads() int {
 	read := 0
-	for _, request := range s.chat.Requests(suiteStreamKey) {
+	for _, request := range s.teamsChat.Requests(teamsAppKey) {
 		if request.Method == http.MethodGet && strings.HasSuffix(request.Path, "/users") {
 			read++
 		}

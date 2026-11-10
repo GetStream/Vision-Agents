@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 
@@ -14,6 +15,9 @@ import (
 // app that keeps each team's configs to its own users. Opening it anyway would let anybody in
 // while Stream is down, and a 404 would say the config is gone when asking again may work.
 var errTeamsUnreadable = unavailable("could not read the user's teams from Stream; try again shortly")
+
+// errSharedStream is a customer acting in the deployment's shared Stream app.
+var errSharedStream = errors.New("api: the customer has no Stream app of its own to read teams from")
 
 // refuseOtherTeam answers unknown, what the caller is told of a config that does not exist,
 // when config is of a team the end user asking is not in. Only an app with AgentTeams on is
@@ -39,8 +43,10 @@ func (s *Server) refuseOtherTeam(ctx context.Context, customerID string, config 
 	return nil
 }
 
-// callerTeams is the teams of the end user asking, as their user in the app's Stream holds
-// them. A caller with no token is in none: the user id it goes by is a claim nobody checked,
+// callerTeams is the teams of the end user asking, as their user in the customer's own
+// Stream app holds them. In the deployment's shared app, user ids are not the customer's and
+// whoever holds that app writes their teams, so a customer acting there reads none. A caller
+// with no token is in none: the user id it goes by is a claim nobody checked,
 // and reading that user's teams would let anybody borrow them.
 func (s *Server) callerTeams(ctx context.Context, customerID string) ([]string, error) {
 	caller := CallerFrom(ctx)
@@ -48,8 +54,11 @@ func (s *Server) callerTeams(ctx context.Context, customerID string) ([]string, 
 		return nil, nil
 	}
 	bound, ok, err := s.streamFor(ctx, customerID)
-	if err == nil && !ok {
+	switch {
+	case err == nil && !ok:
 		err = errNoStream
+	case err == nil && !bound.Identity.Registered:
+		err = errSharedStream
 	}
 	if err == nil {
 		var teams []string
