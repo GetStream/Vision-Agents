@@ -43,9 +43,16 @@ func (s *Server) configFor(ctx context.Context, customerID string, configID, nam
 		return nil, errNoConfigs
 	}
 
+	teams, err := s.teamsGateFor(ctx, customerID)
+	if err != nil {
+		return nil, err
+	}
 	if id != "" {
 		found, err := s.configs.AgentConfig(ctx, customerID, id)
 		if err != nil {
+			return nil, errUnknownConfig
+		}
+		if teams.refuses(found) {
 			return nil, errUnknownConfig
 		}
 		return &found, nil
@@ -59,6 +66,9 @@ func (s *Server) configFor(ctx context.Context, customerID string, configID, nam
 		// Refused rather than started unconfigured. A typo in a name would otherwise get a
 		// working session with default instructions, which is far harder to notice than an
 		// error: the agent answers, just not as the agent that was asked for.
+		return nil, notFound("there is no agent called " + named)
+	}
+	if teams.refuses(found) {
 		return nil, notFound("there is no agent called " + named)
 	}
 	return &found, nil
