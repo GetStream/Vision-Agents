@@ -1,5 +1,5 @@
 import Foundation
-import VisionAgentsCore
+import StreamAgents
 
 /// Where the router is, where the token backend is, and who this phone is.
 ///
@@ -41,8 +41,8 @@ enum Assistant {
     /// Who this phone is. Every conversation listed is theirs.
     static let user = User(id: "juno-owner", name: "Alex")
 
-    static let agents: VisionAgents = {
-        let agents = VisionAgents(url: routerURL, customerID: customerID, apiKey: streamAPIKey)
+    static let agents: StreamAgents = {
+        let agents = StreamAgents(url: routerURL, customerID: customerID, apiKey: streamAPIKey)
         agents.setUser(user) { try await streamToken() }
         return agents
     }()

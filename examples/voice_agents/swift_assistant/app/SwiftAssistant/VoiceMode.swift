@@ -4,7 +4,7 @@ import StreamVideo
 import StreamVideoSwiftUI
 import StreamWebRTC
 import SwiftUI
-import VisionAgentsCore
+import StreamAgents
 
 /// Talking to Juno, full screen, in the conversation that was open.
 ///

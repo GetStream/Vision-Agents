@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 import Testing
 
-@testable import VisionAgentsCore
+@testable import StreamAgents
 
 /// What a phone holding this SDK can reach: a conversation, and nothing that is the app's
 /// backend's to do.
@@ -10,7 +10,7 @@ struct PostureTests {
     static let repo = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().appendingPathComponent("../../../../..").standardized
     static let generated = repo.appendingPathComponent(
-        "sdks/swift/core/Sources/VisionAgentsCore/Generated/DefaultAPI.swift")
+        "sdks/swift/core/Sources/StreamAgents/Generated/DefaultAPI.swift")
     static let spec = repo.appendingPathComponent("acceleration/api/openapi.yaml")
 
     /// The generated client is committed, so a stale or hand-edited one would ship a method
@@ -56,7 +56,7 @@ struct PostureTests {
 /// The same promise against a router that verifies credentials, which needs one running in
 /// `api_key` mode and a key minted for it with `router keys create`:
 ///
-///     TEST_RUNNER_INTEGRATION_ROUTER_URL=http://localhost:8099 TEST_RUNNER_INTEGRATION_ROUTER_KEY=vak_live_… TEST_RUNNER_INTEGRATION_ROUTER_SECRET=vas_live_… xcodebuild test -scheme vision-agents-core -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+///     TEST_RUNNER_INTEGRATION_ROUTER_URL=http://localhost:8099 TEST_RUNNER_INTEGRATION_ROUTER_KEY=vak_live_… TEST_RUNNER_INTEGRATION_ROUTER_SECRET=vas_live_… xcodebuild test -scheme stream-agents -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 struct KeyedRouter {
     static let environment = ProcessInfo.processInfo.environment
     static let url = URL(string: environment["INTEGRATION_ROUTER_URL"] ?? "http://localhost:8099")!

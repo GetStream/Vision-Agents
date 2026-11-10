@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import VisionAgentsCore
+@testable import StreamAgents
 
 /// Frames exactly as `frameOf` in the router writes them, so that a change to the wire format
 /// on that side fails here rather than in somebody's app.

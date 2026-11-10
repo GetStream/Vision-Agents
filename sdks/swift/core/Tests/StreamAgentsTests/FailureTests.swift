@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import VisionAgentsCore
+@testable import StreamAgents
 
 /// What a refusal says, read off a real HTTP peer: the router's envelope, or whatever else was in
 /// front of it.
@@ -23,7 +23,7 @@ import Testing
                 headers: ["Content-Type": "application/json", "X-Request-Id": "req-1"],
                 body: #"{"error":{"message":"\#(message)","type":"\#(type)","code":"\#(code)","doc_url":"\#(docURL)"}}"#))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
 
         let failure = try await refusal { _ = try await agents.sessions.get("s1") }
 
@@ -48,7 +48,7 @@ import Testing
                 status: status, headers: ["Content-Type": contentType, "X-Request-Id": "req-2"],
                 body: body))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
 
         let failure = try await refusal { _ = try await agents.sessions.get("s1") }
 
@@ -62,7 +62,7 @@ import Testing
     @Test func anEmptyBodyIsNamedByItsStatus() async throws {
         let server = try SessionServer(answer: .init(status: 503, headers: [:], body: ""))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
 
         let failure = try await refusal { try await agents.sessions.delete("s1") }
 
@@ -74,7 +74,7 @@ import Testing
         let server = try SessionServer(
             answer: .init(status: 200, headers: ["Content-Type": "application/json"], body: "{}"))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
 
         let error = try await #require(throws: AgentsError.self) { try await agents.sessions.get("s1") }
 

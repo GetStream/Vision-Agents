@@ -2,7 +2,7 @@ import CoreImage
 import Foundation
 import Testing
 
-@testable import VisionAgentsCore
+@testable import StreamAgents
 
 @Suite struct CameraFramesTests {
     private let start = Date(timeIntervalSince1970: 1_800_000_000)

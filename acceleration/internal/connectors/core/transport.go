@@ -29,7 +29,7 @@ const maxDrainedBody = 2 << 10
 
 // maxErrorExcerpt caps what of a 4xx's or a 5xx's body an Exchange keeps for the dispatcher's
 // log line: 1 KiB, the ticket's choice (AI-1243), the cap of provider_message on that line
-// (session.providerMessageBytes). The body stays readable for the caller.
+// (MessageBytes). The body stays readable for the caller.
 const maxErrorExcerpt = 1 << 10
 
 // closeReadWait caps how long a Close of a 4xx's or a 5xx's body that was read short of

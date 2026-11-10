@@ -8,7 +8,7 @@ import Foundation
 ///     let router = agents.router(config: "healthcare")  // the config holds the target
 ///     let answer = try await router.search("what changed in the pricing page")
 ///
-/// It comes from `VisionAgents.router(config:tags:)`, which is where the URL and credentials
+/// It comes from `StreamAgents.router(config:tags:)`, which is where the URL and credentials
 /// were settled. Transcription, a voice and a model are not here. Those run over the
 /// per-modality socket, which the router refuses to a device, so a pipeline of your own
 /// belongs to a backend and has the Go or the Python SDK. Everything the named config holds is

@@ -1,17 +1,17 @@
 # Swift SDK
 
 One iOS package for talking to an agent from a phone, `core/`, whose module is
-`VisionAgentsCore`: the generated client, the session socket and the conversation state, the
+`StreamAgents`: the generated client, the session socket and the conversation state, the
 Stream Chat channel a text conversation is kept in, and `VoiceSession`, which joins the agent's
 call over Stream Video. It depends on `stream-chat-swift` 5.13+ (`StreamChat`),
 `stream-video-swift` (`StreamVideo`) and the `StreamCore` both of them stand on. `User` and
-`RawJSON` are StreamCore's, and `import VisionAgentsCore` brings them in.
+`RawJSON` are StreamCore's, and `import StreamAgents` brings them in.
 
 It has no views. The views are Stream Chat's AI components, the `StreamChatAI` library of the
 same `stream-chat-swift` package, which render what the router writes into a conversation's
 channel: the reply streaming in, each round of the model's reasoning, each tool call, and the
 question a tool asks before it runs. Add `StreamChatAI` to the app target beside
-`VisionAgentsCore`; it needs Xcode 27 to add with SPM.
+`StreamAgents`; it needs Xcode 27 to add with SPM.
 
 iOS 15 is the floor. `AgentSession` and `VoiceSession` are `ObservableObject`s, so a view holds
 one with `@StateObject` or `@ObservedObject`, and observing a `VoiceSession` follows its
@@ -19,7 +19,7 @@ conversation too. It is iOS only, because Stream Video is and Stream Chat's macO
 not compile under Swift 6.
 
 An app adds it with Swift Package Manager from this repository,
-`https://github.com/GetStream/Vision-Agents.git`, and takes the `VisionAgentsCore` product. Its
+`https://github.com/GetStream/Vision-Agents.git`, and takes the `StreamAgents` product. Its
 manifest is the `Package.swift` at the root of the repository, the only place SwiftPM looks, and
 its versions are the repository's `v` tags, which release the Python packages too. The tags from
 before the first one with Swift in it (0.7.0 or later) have no manifest, so keep them out of the
@@ -29,7 +29,7 @@ is new after that. The examples reach the package by path, so they build against
 ## Using them
 
 ```swift
-let agents = VisionAgents(apiKey: "your_api_key")
+let agents = StreamAgents(apiKey: "your_api_key")
 agents.setUser(User(id: "jlahey")) { try await yourBackend.agentToken() }
 
 // In writing. No call is joined, nothing is transcribed or spoken.
@@ -50,12 +50,12 @@ await voice.join()
 let channel = try await session.chat()
 ```
 
-`VisionAgents(apiKey:)` reaches Stream's hosted router in us-east4; pass `url:` for another router. For another
+`StreamAgents(apiKey:)` reaches Stream's hosted router in us-east4; pass `url:` for another router. For another
 region, pass `url: try Backend.regionURL("europe-west4")`. The token
 comes from a closure because your backend mints it and it expires: it is asked for once, then
 again after a 401. The key goes in the query string and the token in the `Authorization`
 header, never in a URL. A router running locally with nothing in front of it is reached by
-customer id instead: `VisionAgents(url: URL(string: "http://localhost:8080")!, customerID: "acme")`.
+customer id instead: `StreamAgents(url: URL(string: "http://localhost:8080")!, customerID: "acme")`.
 
 Stream is set up once. The key, the user and the token from `setUser` are the one identity for
 the router, Stream Chat and Stream Video, so `join()` and `chat()` need nothing more. Each
@@ -342,7 +342,7 @@ The package is iOS only, so the tests run on a simulator rather than with `swift
 the root of the repository:
 
 ```bash
-xcodebuild test -scheme vision-agents-core -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+xcodebuild test -scheme stream-agents -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
 `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` is needed whenever
@@ -356,7 +356,7 @@ Against a running router:
 
 ```bash
 TEST_RUNNER_VISION_AGENTS_URL=http://localhost:8080 TEST_RUNNER_VISION_AGENTS_CUSTOMER_ID=examples \
-  xcodebuild test -scheme vision-agents-core -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+  xcodebuild test -scheme stream-agents -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
 That enables `LiveTests`, which creates a real session, asks the model something and waits for

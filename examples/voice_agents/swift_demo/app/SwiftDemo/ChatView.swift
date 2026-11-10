@@ -1,7 +1,7 @@
 import StreamChat
 import StreamChatAI
 import SwiftUI
-import VisionAgentsCore
+import StreamAgents
 
 /// A written conversation.
 ///

@@ -99,7 +99,7 @@ public struct Responses: Sendable {
     /// The model forgets the later turns and they drop out of `list` and `items`. A transcript
     /// an `AgentSession` is showing still has them, so read it back after this.
     public func rewind(to responseID: String) async throws {
-        try await VisionAgents(backend: backend).rewind(sessionID: sessionID, to: responseID)
+        try await StreamAgents(backend: backend).rewind(sessionID: sessionID, to: responseID)
     }
 }
 

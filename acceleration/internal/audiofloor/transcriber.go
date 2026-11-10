@@ -64,6 +64,17 @@ const (
 	// not written a word in that long, rather than one restarting between two.
 	failoverAfter  = 3
 	failoverWindow = transcribeTimeout
+	// probeFirst is how long a floor that stepped aside waits before it first asks the server
+	// whether it rules again, each wait after it twice the last, up to probeCap; a floor that
+	// steps aside again goes on from the last wait rather than starting over. A stall of the
+	// server, or of the line to it, lasts seconds; one that outlasts a minute is asked about
+	// once a minute, which a server that is down costs nothing.
+	probeFirst = 10 * time.Second
+	probeCap   = time.Minute
+	// retakeQuiet is how long the caller must have been quiet before a floor whose server
+	// rules again takes the floor back: past the other transcriber's final of what they said,
+	// which comes in a few hundred milliseconds, so the utterance it begins is a new one.
+	retakeQuiet = 500 * time.Millisecond
 	// queued is how many requests may wait for a slow server before the next is dropped.
 	queued      = 8
 	eventBuffer = 64
@@ -156,7 +167,8 @@ type Transcriber struct {
 	// words, for a floor that rules alone (NewFloor), are what another transcriber writes of
 	// the participant's audio, which its utterances are made of, and finalize asks that
 	// transcriber for the final of the run it has open. Nil has the server write the words.
-	// stepped says the floor has stepped aside, its server down for the call (checked).
+	// stepped says the floor has stepped aside, its server down (checked), until it takes the
+	// floor back (retake).
 	words    *spoken
 	finalize func() (bool, error)
 	stepped  atomic.Bool
@@ -186,6 +198,20 @@ type Transcriber struct {
 	// alone, and unruledSince is when the first of them was asked (checked).
 	unruled      int
 	unruledSince time.Time
+
+	// A floor that rules alone and stepped aside (stepped) asks the server again (probe), at
+	// waits from probeFirst doubling to probeCap, probeWait the last one, and takes the floor
+	// back once a probe is answered (answered) and the caller has been quiet for retakeQuiet,
+	// asideQuiet so far on the session's goroutine, with nothing of theirs the other
+	// transcriber has yet to settle (writerOpen, retakeForced once it was asked to). asideSince
+	// is when it stepped aside. The waits are fields so that tests can shorten them.
+	probeFirst, probeCap time.Duration
+	probeWait            time.Duration
+	asideSince           time.Time
+	asideQuiet           time.Duration
+	answered             atomic.Bool
+	writerOpen           atomic.Bool
+	retakeForced         bool
 }
 
 // request is an utterance's words to write, or its end. An end carries the whole
@@ -207,6 +233,7 @@ func NewTranscriber(client *Client, model string, languages []string, logger *sl
 		model = DefaultModel
 	}
 	return &Transcriber{client: client, model: model, languages: languages, logger: logger, now: time.Now, stillBound: stillFor,
+		probeFirst: probeFirst, probeCap: probeCap,
 		asker: neutralAgent{hearer: NewHearer(client, EndOfTurn{}, logger)}, interims: client.interims,
 		emitter: stt.NewEmitter(eventBuffer), requests: make(chan request, queued), done: make(chan struct{})}
 }
@@ -232,13 +259,18 @@ func (t *Transcriber) ProcessAudio(pcm stt.PcmData, participant stt.Participant)
 	if t.ctx == nil {
 		return stack.Wrap(errors.New("audiofloor: the session is not open"))
 	}
-	if t.closed.Load() || t.stepped.Load() {
+	if t.closed.Load() {
 		// A floor's audio comes on the listener's goroutine, which may not have heard yet that
-		// it is closed or has stepped aside.
+		// it is closed.
 		return nil
 	}
 	if err := pcm.Validate(stt.SampleRate); err != nil {
 		return err
+	}
+	if t.stepped.Load() {
+		// A floor that stepped aside asks about nothing, but keeps hearing, so that it can take
+		// the floor back at a quiet moment with the audio before it at hand.
+		return t.aside(pcm, participant)
 	}
 	for samples := pcm.Samples; len(samples) > 0; {
 		n := copy(t.frame[t.filled:], samples)

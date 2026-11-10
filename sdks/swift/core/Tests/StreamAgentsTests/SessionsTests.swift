@@ -2,13 +2,13 @@ import Foundation
 import Network
 import Testing
 
-@testable import VisionAgentsCore
+@testable import StreamAgents
 
 @Suite struct SessionsTests {
     @Test func anUpdateSendsOnlyWhatChangedAndReturnsTheSession() async throws {
         let server = try SessionServer()
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
 
         let session = try await agents.agent("myagent").sessions.update("s1", title: "Renamed")
 
@@ -23,7 +23,7 @@ import Testing
     @Test func labelsAreSentWholeAndReadBack() async throws {
         let server = try SessionServer()
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
         let custom: [String: RawJSON] = ["tier": .string("gold"), "seats": .number(3)]
 
         let session = try await agents.sessions.update("s1", description: "Billing", custom: custom)
@@ -37,7 +37,7 @@ import Testing
     @Test func aDeleteAnsweredWithNoContentSucceeds() async throws {
         let server = try SessionServer(answer: .init(status: 204, headers: [:], body: ""))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
 
         try await agents.sessions.delete("s1")
 
@@ -49,7 +49,7 @@ import Testing
     @Test func aVoiceSessionAsksToStartVoiceAndIsOnItsOwnCall() async throws {
         let server = try SessionServer(answer: .session(status: 201, callID: "s1"))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
         var options = SessionOptions(agent: "myagent")
         options.startVoice = true
 
@@ -65,7 +65,7 @@ import Testing
     @Test func aSessionHeldInWritingSendsNoVoice() async throws {
         let server = try SessionServer(answer: .session(status: 201, callID: ""))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
         var options = SessionOptions(agent: "myagent")
         options.greeting = Greeting("Hello.", mode: .variation)
 
@@ -79,7 +79,7 @@ import Testing
     @Test func aSessionSaysWhereItsSignInsGoBackTo() async throws {
         let server = try SessionServer(answer: .session(status: 201, callID: ""))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
         var options = SessionOptions(agent: "myagent")
         options.returnURL = URL(string: "com.example.app:/connected")
 
@@ -91,7 +91,7 @@ import Testing
     @Test func aSessionOpensWithItsLabelsModelsAndTheSignedInUsersMemory() async throws {
         let server = try SessionServer(answer: .session(status: 201, callID: ""))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
         agents.setUser(User(id: "jlahey"), token: "token")
         var options = SessionOptions(agent: "myagent")
         options.custom = ["ticket": .string("T-7")]
@@ -115,7 +115,7 @@ import Testing
     @Test func aSessionWithoutMemoryOrLabelsSendsNeither() async throws {
         let server = try SessionServer(answer: .session(status: 201, callID: ""))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
         agents.setUser(User(id: "jlahey"), token: "token")
 
         _ = try await agents.createSession(SessionOptions(agent: "myagent"))
@@ -130,7 +130,7 @@ import Testing
     func aSessionIsOpenedInTheDevicesZone(zone: String) async throws {
         let server = try SessionServer(answer: .session(status: 201, callID: ""))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
 
         _ = try await agents.createSession(SessionOptions(agent: "myagent", deviceZone: zone))
 
@@ -146,7 +146,7 @@ import Testing
     func aDeviceZoneWithNoIANANameIsNotSent(zone: String) async throws {
         let server = try SessionServer(answer: .session(status: 201, callID: ""))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
 
         _ = try await agents.createSession(SessionOptions(agent: "myagent", deviceZone: zone))
 
@@ -158,7 +158,7 @@ import Testing
     func theAppsOwnZoneIsSentOverTheDevices(zone: String) async throws {
         let server = try SessionServer(answer: .session(status: 201, callID: ""))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
         var options = SessionOptions(agent: "myagent", deviceZone: "Asia/Tokyo")
         options.timezone = zone
 
@@ -170,7 +170,7 @@ import Testing
     @Test func aSessionToldNoZoneSendsNone() async throws {
         let server = try SessionServer(answer: .session(status: 201, callID: ""))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
         var options = SessionOptions(agent: "myagent", deviceZone: "Asia/Tokyo")
         options.timezone = nil
 
@@ -182,7 +182,7 @@ import Testing
     @Test func aForkNamesTheAgentAndWhatItChanges() async throws {
         let server = try SessionServer()
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
         var options = ForkOptions(responseID: "r2")
         options.agent = "reviewer"
         options.custom = ["branch": .string("b")]
@@ -208,7 +208,7 @@ import Testing
                 status: 200, headers: ["Content-Type": "application/json"],
                 body: #"{"items":[],"has_more":false}"#))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
         var query = SessionQuery()
         query.createdSince = Date(timeIntervalSince1970: 1_790_000_000)
         query.custom = ["ticket": "T-7"]
@@ -237,7 +237,7 @@ import Testing
                     ],"has_more":false}
                     """#))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
 
         var read: [String] = []
         for try await item in agents.sessions.responses("s1").unwind(responseID: "r1") {
@@ -267,7 +267,7 @@ import Testing
                      "updated_at":"2026-10-27T08:00:00Z"}
                     """#))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
 
         let task = try await agents.scheduledTasks.get("t1")
 
@@ -284,7 +284,7 @@ import Testing
     @Test func aSnoozeMovesOnlyTheNextOccurrence() async throws {
         let server = try SessionServer(answer: .init(status: 500, headers: [:], body: ""))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
 
         _ = try? await agents.scheduledTasks.update("t1", next: .in("PT15M"))
 
@@ -304,7 +304,7 @@ import Testing
                      "started_at":"2026-10-28T08:00:01Z","finished_at":null,"error":null}],"has_more":false}
                     """#))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
 
         let runs = try await agents.scheduledTasks.runs("t1")
 

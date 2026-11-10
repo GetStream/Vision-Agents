@@ -16,7 +16,7 @@ import pytest
 import yaml
 
 REPO = Path(__file__).parents[2]
-GENERATED = Path("sdks/swift/core/Sources/VisionAgentsCore/Generated")
+GENERATED = Path("sdks/swift/core/Sources/StreamAgents/Generated")
 FINGERPRINT = Path("sdks/swift/core/generated.json")
 SPEC = Path("acceleration/api/openapi.yaml")
 SESSION_MODEL = GENERATED / "Models" / "SessionPayload.swift"
