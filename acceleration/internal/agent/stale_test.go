@@ -131,9 +131,11 @@ func (s *AgentSuite) TestAnAnswerAHeldReplyWasPassingOnIsStillOwedOnceItIsDroppe
 	s.subagent.finishes(taskID)
 	s.eventually(func() bool { return countOf[TaskSettled](s.reported()) == 1 }, "the task never settled")
 	s.says(nash, "and two")
-	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the caller was never answered")
-	two := s.model.requests()[1].ID
-	s.Require().Contains(shown(s.model.requests()[1]), "It is 12.63.", "the reply to the caller never carried the answer")
+	// The reply that handed the work over can be followed by one of its own before this one.
+	var answer llm.ResponseParams
+	s.eventually(func() bool { answer = s.requestAnswering("and two"); return answer.ID != "" }, "the caller was never answered")
+	two := answer.ID
+	s.Require().Contains(shown(answer), "It is 12.63.", "the reply to the caller never carried the answer")
 
 	s.greetedOver(two, s.mutters, "Hey,")
 	s.model.writes(two, "That comes to 12.63.")
@@ -143,9 +145,20 @@ func (s *AgentSuite) TestAnAnswerAHeldReplyWasPassingOnIsStillOwedOnceItIsDroppe
 	s.oneDropSince(dropped)
 	s.says(nash, "Hey. And three")
 
-	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the newer words were never answered")
-	s.Contains(shown(s.model.requests()[2]), "talked over your last reply passing this on",
+	s.eventually(func() bool { answer = s.requestAnswering("Hey. And three"); return answer.ID != "" },
+		"the newer words were never answered")
+	s.Contains(shown(answer), "talked over your last reply passing this on",
 		"the answer the dropped reply was passing on is owed with the reply to what the caller said")
+}
+
+// requestAnswering is the model request whose newest input is words, if there is one yet.
+func (s *AgentSuite) requestAnswering(words string) llm.ResponseParams {
+	for _, request := range s.model.requests() {
+		if input := harness.WithoutNotes(request.Input); len(input) > 0 && input[len(input)-1].Content == words {
+			return request
+		}
+	}
+	return llm.ResponseParams{}
 }
 
 func (s *AgentSuite) TestALoneGreetingFromAnotherCallerDoesNotHoldTheReply() {
