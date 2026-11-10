@@ -1798,7 +1798,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "AgentChatChannel" => {
-          properties: %w[type].freeze,
+          properties: %w[answer type].freeze,
           required: %w[type].freeze, open: false
         }.freeze,
         "AgentConfig" => {

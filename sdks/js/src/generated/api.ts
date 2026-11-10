@@ -4513,6 +4513,7 @@ export type components = {
             readonly whatsapp?: components["schemas"]["ChannelLineRequest"];
         };
         readonly AgentChatChannel: {
+            readonly answer?: components["schemas"]["ChatChannelAnswer"];
             /**
              * @description The channel type's name, as it comes before the colon in a channel's cid.
              * @example callouts
@@ -5663,6 +5664,11 @@ export type components = {
              */
             readonly expires_at: string;
         };
+        /**
+         * @description Which messages in a channel of the type are answered. always answers every message. mentioned answers only a message that mentions the agent: its mentioned_users holds the Stream user whose id is the config's id, or its text has @ and that user's id or the config's name, as Stream's clients write a mention. A message that does not mention the agent gets no reply and starts no model; it stays in the channel, and the next answered message reads it as what was said before. Omitted is always.
+         * @enum {string}
+         */
+        readonly ChatChannelAnswer: "always" | "mentioned";
         readonly ChatToken: {
             /** @description The Stream app the channel is in, which the browser SDK connects to. */
             readonly api_key: string;

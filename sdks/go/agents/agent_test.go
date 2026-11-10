@@ -594,6 +594,8 @@ func TestSyncSendsTheChatChannelsTheAgentAnswersIn(t *testing.T) {
 		want     *[]acceleration.AgentChatChannel
 	}{
 		{"chat_channels:\n  - type: callouts\n  - type: shifts\n", &[]acceleration.AgentChatChannel{{Type: "callouts"}, {Type: "shifts"}}},
+		{"chat_channels:\n  - type: callouts\n    answer: mentioned\n  - type: shifts\n    answer: always\n",
+			&[]acceleration.AgentChatChannel{{Type: "callouts", Answer: pointer(acceleration.Mentioned)}, {Type: "shifts", Answer: pointer(acceleration.Always)}}},
 		{"chat_channels: []\n", &[]acceleration.AgentChatChannel{}},
 		{"chat_channels: ~\n", nil},
 		{"llm: llm-fast\n", nil},

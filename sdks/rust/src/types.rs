@@ -407,6 +407,8 @@ pub struct AgentChannels {
 ///`AgentChatChannel`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct AgentChatChannel {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub answer: ::std::option::Option<ChatChannelAnswer>,
     ///The channel type's name, as it comes before the colon in a channel's cid.
     #[serde(rename = "type")]
     pub type_: ::std::string::String,
@@ -2987,6 +2989,52 @@ pub struct ChannelLink {
     pub code: ::std::string::String,
     ///When the code stops working.
     pub expires_at: ::std::string::String,
+}
+///Which messages in a channel of the type are answered. always answers every message. mentioned answers only a message that mentions the agent: its mentioned_users holds the Stream user whose id is the config's id, or its text has @ and that user's id or the config's name, as Stream's clients write a mention. A message that does not mention the agent gets no reply and starts no model; it stays in the channel, and the next answered message reads it as what was said before. Omitted is always.
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum ChatChannelAnswer {
+    #[serde(rename = "always")]
+    Always,
+    #[serde(rename = "mentioned")]
+    Mentioned,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for ChatChannelAnswer {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Always => f.write_str("always"),
+            Self::Mentioned => f.write_str("mentioned"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for ChatChannelAnswer {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "always" => Ok(Self::Always),
+            "mentioned" => Ok(Self::Mentioned),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ChatChannelAnswer {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ChatChannelAnswer {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`ChatToken`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]

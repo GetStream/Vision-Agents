@@ -688,6 +688,24 @@ func (e ChannelKind) Valid() bool {
 	}
 }
 
+// Defines values for ChatChannelAnswer.
+const (
+	Always    ChatChannelAnswer = "always"
+	Mentioned ChatChannelAnswer = "mentioned"
+)
+
+// Valid indicates whether the value is a known member of the ChatChannelAnswer enum.
+func (e ChatChannelAnswer) Valid() bool {
+	switch e {
+	case Always:
+		return true
+	case Mentioned:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ClassifyQuestionType.
 const (
 	Choice ClassifyQuestionType = "choice"
@@ -3441,6 +3459,9 @@ type AgentChannels struct {
 
 // AgentChatChannel defines model for AgentChatChannel.
 type AgentChatChannel struct {
+	// Answer Which messages in a channel of the type are answered. always answers every message. mentioned answers only a message that mentions the agent: its mentioned_users holds the Stream user whose id is the config's id, or its text has @ and that user's id or the config's name, as Stream's clients write a mention. A message that does not mention the agent gets no reply and starts no model; it stays in the channel, and the next answered message reads it as what was said before. Omitted is always.
+	Answer *ChatChannelAnswer `json:"answer,omitempty"`
+
 	// Type The channel type's name, as it comes before the colon in a channel's cid.
 	//
 	// Example: callouts
@@ -4818,6 +4839,9 @@ type ChannelLink struct {
 	// ExpiresAt When the code stops working.
 	ExpiresAt time.Time `json:"expires_at"`
 }
+
+// ChatChannelAnswer Which messages in a channel of the type are answered. always answers every message. mentioned answers only a message that mentions the agent: its mentioned_users holds the Stream user whose id is the config's id, or its text has @ and that user's id or the config's name, as Stream's clients write a mention. A message that does not mention the agent gets no reply and starts no model; it stays in the channel, and the next answered message reads it as what was said before. Omitted is always.
+type ChatChannelAnswer string
 
 // ChatToken defines model for ChatToken.
 type ChatToken struct {
