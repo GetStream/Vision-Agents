@@ -1017,6 +1017,7 @@ const (
 	Grant           CreditEntryKind = "grant"
 	Refund          CreditEntryKind = "refund"
 	TopUp           CreditEntryKind = "top_up"
+	Trial           CreditEntryKind = "trial"
 )
 
 // Valid indicates whether the value is a known member of the CreditEntryKind enum.
@@ -1033,6 +1034,8 @@ func (e CreditEntryKind) Valid() bool {
 	case Refund:
 		return true
 	case TopUp:
+		return true
+	case Trial:
 		return true
 	default:
 		return false
@@ -3276,7 +3279,10 @@ type Account struct {
 	// BalanceWarningSource Whose threshold it is: the tier's, the one Stream set for this organization, or the organization policy's balance_warning_micros, which wins over both.
 	BalanceWarningSource AccountBalanceWarningSource `json:"balance_warning_source"`
 
-	// GrantedMicros Every credit entry summed: top-ups, grants, refunds and adjustments.
+	// Funded The organization has credit that is not trial credit: a top-up, net of its refunds and disputes, or credit from Stream's staff. Until it has, buying numbers and registering for 10DLC are refused with top_up_required.
+	Funded bool `json:"funded"`
+
+	// GrantedMicros Every credit entry summed: top-ups, grants, trial credit, refunds and adjustments.
 	GrantedMicros  int64  `json:"granted_micros"`
 	Limits         Limits `json:"limits"`
 	OrganizationId string `json:"organization_id"`
@@ -3295,6 +3301,9 @@ type Account struct {
 
 	// Tier The tier the organization is billed on.
 	Tier string `json:"tier"`
+
+	// TrialMicros What of granted_micros is the trial credit Stream gave the organization to try it with.
+	TrialMicros int64 `json:"trial_micros"`
 }
 
 // AccountBalanceState Where balance_micros stands: exhausted at or below 0, low at or below the threshold.

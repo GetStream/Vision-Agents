@@ -11,6 +11,9 @@ components:
         fallback_tier:
           description: 'The tier read on has no row: tier is the default tier''s.'
           type: boolean
+        funded:
+          description: 'The organization has credit that is not trial credit: a top-up net of its refunds and disputes, or credit from Stream''s staff. Buying numbers and registering for 10DLC take it.'
+          type: boolean
         granted_micros:
           description: Every credit entry summed.
           format: int64
@@ -57,6 +60,10 @@ components:
         tier:
           $ref: '#/components/schemas/Tier'
           description: The row of that tier, or the default tier's when it has none.
+        trial_micros:
+          description: What of granted_micros is trial credit, net of its revocations.
+          format: int64
+          type: integer
       required:
         - organization_id
         - organization_tier
@@ -67,6 +74,8 @@ components:
         - own_limits
         - status
         - granted_micros
+        - trial_micros
+        - funded
         - spent_micros
         - balance_micros
         - spend_windows
@@ -154,6 +163,7 @@ components:
           enum:
             - top_up
             - grant
+            - trial
             - refund
             - dispute
             - dispute_reversal
@@ -203,7 +213,7 @@ components:
       additionalProperties: false
       properties:
         amount_micros:
-          description: 'Signed, in micros: above 0 for top_up, grant and dispute_reversal, below 0 for refund and dispute, either for adjustment.'
+          description: 'Signed, in micros: above 0 for top_up, grant, trial and dispute_reversal, below 0 for refund and dispute, either for adjustment.'
           format: int64
           type: integer
         kind:
@@ -211,6 +221,7 @@ components:
           enum:
             - top_up
             - grant
+            - trial
             - refund
             - dispute
             - dispute_reversal
@@ -249,6 +260,7 @@ components:
           enum:
             - top_up
             - grant
+            - trial
             - refund
             - dispute
             - dispute_reversal
@@ -662,6 +674,9 @@ components:
         fallback_tier:
           description: 'The tier asked about has no row: tier is the default tier''s.'
           type: boolean
+        funded:
+          description: 'The organization has credit that is not trial credit: a top-up net of its refunds and disputes, or credit from Stream''s staff. Buying numbers and registering for 10DLC take it.'
+          type: boolean
         granted_micros:
           description: Every credit entry summed.
           format: int64
@@ -693,6 +708,10 @@ components:
           type: string
         tier:
           $ref: '#/components/schemas/Tier'
+        trial_micros:
+          description: What of granted_micros is trial credit, net of its revocations.
+          format: int64
+          type: integer
       required:
         - organization_id
         - organization_tier
@@ -702,6 +721,8 @@ components:
         - limit_overrides
         - status
         - granted_micros
+        - trial_micros
+        - funded
         - spent_micros
         - balance_micros
         - spend_windows
@@ -1652,9 +1673,9 @@ paths:
         - Staff
     post:
       description: |-
-        Writes a credit entry and adds its amount to the organization's credit, once per `Idempotency-Key` (required, 1 to 255 characters): 201 with the entry written, or 200 with the one already written under the key, which changes nothing. A key that holds another organization's entry, one of another kind, amount or `reverses_id`, or a suspension, restore or settings change, is a 409 `idempotency_key_reused`. Only the sign is checked: `top_up`, `grant` and `dispute_reversal` are above 0, `refund` and `dispute` below, an `adjustment` either but not 0. Any account takes credit, a suspended one included: payment rules are the writer's.
+        Writes a credit entry and adds its amount to the organization's credit, once per `Idempotency-Key` (required, 1 to 255 characters): 201 with the entry written, or 200 with the one already written under the key, which changes nothing. A key that holds another organization's entry, one of another kind, amount or `reverses_id`, or a suspension, restore or settings change, is a 409 `idempotency_key_reused`. Only the sign is checked: `top_up`, `grant`, `trial` and `dispute_reversal` are above 0, `refund` and `dispute` below, an `adjustment` either but not 0. Any account takes credit, a suspended one included: payment rules are the writer's.
 
-        An entry with `reverses_id` reverses that entry. Revoking a grant is an `adjustment` of minus its amount with `reverses_id` the grant; unrevoking it is an `adjustment` of plus the amount with `reverses_id` the revocation, which can be revoked again the same way. A reversal is an `adjustment` of exactly minus the amount of the entry it reverses (400 `invalid_request`); that entry is the organization's (404 `credit_not_found`), a `grant` or an entry that itself reverses one (400 `not_reversible`: a top-up, refund, dispute or plain adjustment is not), and reversed at most once (409 `already_reversed`). Revoking credit already spent takes the balance below 0.
+        An entry with `reverses_id` reverses that entry. Revoking a grant is an `adjustment` of minus its amount with `reverses_id` the grant; unrevoking it is an `adjustment` of plus the amount with `reverses_id` the revocation, which can be revoked again the same way; a `trial` is revoked as a grant is. A reversal is an `adjustment` of exactly minus the amount of the entry it reverses (400 `invalid_request`); that entry is the organization's (404 `credit_not_found`), a `grant`, a `trial` or an entry that itself reverses one (400 `not_reversible`: a top-up, refund, dispute or plain adjustment is not), and reversed at most once (409 `already_reversed`). Revoking credit already spent takes the balance below 0.
 
         Management API: it takes the manage key in `X-Manage-Key`, never the ingest token, and answers 404 `not_configured` when the service has none. Every call names its actor in `X-Stream-Actor-Id` (1 to 256 characters) and may name a person in `X-Stream-Actor-Name`, percent-encoded when it is not printable ASCII; every change is recorded against them.
       operationId: addCredit

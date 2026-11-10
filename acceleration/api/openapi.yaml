@@ -98,8 +98,11 @@ components:
             - account
             - organization_policy
           type: string
+        funded:
+          description: 'The organization has credit that is not trial credit: a top-up, net of its refunds and disputes, or credit from Stream''s staff. Until it has, buying numbers and registering for 10DLC are refused with top_up_required.'
+          type: boolean
         granted_micros:
-          description: 'Every credit entry summed: top-ups, grants, refunds and adjustments.'
+          description: 'Every credit entry summed: top-ups, grants, trial credit, refunds and adjustments.'
           format: int64
           type: integer
         limits:
@@ -129,12 +132,18 @@ components:
         tier:
           description: The tier the organization is billed on.
           type: string
+        trial_micros:
+          description: What of granted_micros is the trial credit Stream gave the organization to try it with.
+          format: int64
+          type: integer
       required:
         - organization_id
         - status
         - tier
         - balance_micros
         - granted_micros
+        - trial_micros
+        - funded
         - spent_micros
         - balance_warning_micros
         - balance_warning_source
@@ -4176,6 +4185,7 @@ components:
           enum:
             - top_up
             - grant
+            - trial
             - refund
             - dispute
             - dispute_reversal
