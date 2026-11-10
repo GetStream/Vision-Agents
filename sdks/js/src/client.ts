@@ -315,13 +315,14 @@ export class Client {
   }
 
   private async send<T>(method: Method, template: string, options: unknown): Promise<T> {
-    const { path, query, body, signal, headers, idempotent } = (options ?? {}) as {
+    const { path, query, body, signal, headers, idempotent, [ON_RETRY]: resending } = (options ?? {}) as {
       path?: Record<string, string | number>;
       query?: Record<string, unknown>;
       body?: unknown;
       signal?: AbortSignal;
       headers?: Record<string, string>;
       idempotent?: boolean;
+      [ON_RETRY]?: () => void;
     };
 
     const operation = `${method.toUpperCase()} ${template}`;
@@ -379,6 +380,7 @@ export class Client {
         }
         await pause(backoff(retries), signal);
         retries += 1;
+        resending?.();
         continue;
       }
 
@@ -401,6 +403,7 @@ export class Client {
           await response.body?.cancel();
           await pause(after ?? backoff(retries), signal);
           retries += 1;
+          resending?.();
           continue;
         }
       }
@@ -435,6 +438,7 @@ export class Client {
         if (retryable && retries < this.backend.maxRetries) {
           await pause(backoff(retries), signal);
           retries += 1;
+          resending?.();
           continue;
         }
         throw new RouterError(0, operation, "the connection ended before the router's response was read", {
@@ -455,6 +459,16 @@ export class Client {
       }
     }
   }
+}
+
+const ON_RETRY = Symbol("calypso.onRetry");
+
+/**
+ * @internal Request options that call `heard` each time the request is sent again, for a caller
+ * whose answer means something different when the router may have seen it before.
+ */
+export function onRetry(heard: () => void): Record<never, never> {
+  return { [ON_RETRY]: heard };
 }
 
 /** The answers that say the router could not take the request just now, rather than that it was wrong. */

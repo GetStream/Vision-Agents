@@ -716,6 +716,86 @@ describe("responses", () => {
     );
   });
 
+  describe("a question whose answer was lost", () => {
+    const turn = (id: string, said: string, status = "completed") => ({
+      id,
+      session_id: "session-1",
+      status,
+      said,
+      created_at: new Date().toISOString(),
+    });
+
+    it("names the turn the first send started, since the router answers the retry with no id", async () => {
+      router.serve("POST", "/v1/agents/sessions/session-1/responses", (_, calls) =>
+        calls === 0
+          ? { status: 502 }
+          : { status: 202, body: { id: "", session_id: "session-1", status: "running", created_at: new Date().toISOString() } },
+      );
+      router.serve("GET", "/v1/agents/sessions/session-1/responses", (request) =>
+        request.query.get("cursor") === "page-2"
+          ? { body: { items: [turn("response-3", "How tall is it?"), turn("response-4", "Something else")], has_more: false } }
+          : {
+              body: {
+                items: [turn("response-1", "How tall is it?"), turn("response-2", "Where is it?")],
+                has_more: true,
+                next_cursor: "page-2",
+              },
+            },
+      );
+
+      const answering = await held.responses.create("How tall is it?");
+
+      assert.equal(answering.id, "response-3", "the latest turn asking it, across pages");
+      assert.equal(answering.status, "completed", "as the turn is now, not as the retry said");
+      const sends = router.requestsTo("POST", "/v1/agents/sessions/session-1/responses");
+      assert.equal(sends.length, 2);
+      assert.equal(
+        (sends[0]?.body as Record<string, unknown>)["request_id"],
+        (sends[1]?.body as Record<string, unknown>)["request_id"],
+        "the retry is the same question",
+      );
+    });
+
+    it("keeps the answer as it came when no turn asked it", async () => {
+      router.serve("POST", "/v1/agents/sessions/session-1/responses", (_, calls) =>
+        calls === 0
+          ? { status: 503 }
+          : { status: 202, body: { id: "", session_id: "session-1", status: "running", created_at: new Date().toISOString() } },
+      );
+      router.serve("GET", "/v1/agents/sessions/session-1/responses", { body: { items: [], has_more: false } });
+
+      const answering = await held.responses.create("Unrecorded");
+
+      assert.equal(answering.id, "");
+      assert.equal(answering.status, "running");
+    });
+
+    it("still answers when the turns cannot be read, since the question was asked", async () => {
+      router.serve("POST", "/v1/agents/sessions/session-1/responses", (_, calls) =>
+        calls === 0
+          ? { status: 503 }
+          : { status: 202, body: { id: "", session_id: "session-1", status: "running", created_at: new Date().toISOString() } },
+      );
+      router.serve("GET", "/v1/agents/sessions/session-1/responses", { status: 403 });
+
+      const answering = await held.responses.create("Forbidden to list");
+
+      assert.equal(answering.id, "");
+    });
+
+    it("looks nothing up for an answer with no id that came the first time", async () => {
+      router.serve("POST", "/v1/agents/sessions/session-1/responses", {
+        status: 202,
+        body: { id: "", session_id: "session-1", status: "running", created_at: new Date().toISOString() },
+      });
+
+      const answering = await held.responses.create("A session that records nothing");
+
+      assert.equal(answering.id, "");
+      assert.equal(router.requestsTo("GET", "/v1/agents/sessions/session-1/responses").length, 0);
+    });
+  });
+
   it("names each question afresh, so a retry is answered once and the next is not mistaken for it", async () => {
     router.serve("POST", "/v1/agents/sessions/session-1/responses", {
       status: 202,

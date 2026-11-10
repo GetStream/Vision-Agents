@@ -1,8 +1,11 @@
-import type { Client, Schemas } from "./client.js";
+import { onRetry, type Client, type Schemas } from "./client.js";
 import { ConfigurationError } from "./errors.js";
 
 /** How many items are read per request while unwinding. */
 const ITEM_PAGE = 200;
+
+/** How many turns are read per request while looking for the one a repeated question started. */
+const RESPONSE_PAGE = 100;
 
 /** An image handed to the model alongside the question. */
 export type ImageSource = Schemas["ImageSource"];
@@ -155,7 +158,9 @@ export class Responses {
    * same one. A personal conversation kept in Stream Chat needs one, and with it the images, as
    * data URIs, are uploaded to the channel and shown on the person's message.
    *
-   * A question that could not be asked is taken back out of `session.conversation`.
+   * A question that could not be asked is taken back out of `session.conversation`. When the
+   * router took the question but its answer was lost, the retry is answered with no id; the turn
+   * is then looked up by what was asked, so the handle still names it.
    */
   async create(text: string, options: CreateResponseOptions = {}): Promise<AgentResponse> {
     const takeBack = this.asked?.(text);
@@ -211,10 +216,14 @@ export async function createResponse(
   options: CreateResponseOptions = {},
 ): Promise<AgentResponse> {
   const id = options.requestId || crypto.randomUUID();
+  let resent = false;
   const created = await client.post("/v1/agents/sessions/{id}/responses", {
     path: { id: sessionId },
     // The request id is what the router answers once by, so sending it again is safe.
     idempotent: true,
+    ...onRetry(() => {
+      resent = true;
+    }),
     body: {
       text,
       ...(options.images?.length ? { images: options.images } : {}),
@@ -224,5 +233,41 @@ export async function createResponse(
       request_id: id,
     },
   });
-  return new AgentResponse(client, created);
+  if (created.id || !resent) {
+    return new AgentResponse(client, created);
+  }
+  // The router answers a question it already took with no id: the first send reached it and
+  // only its answer was lost. The turn that send started is the latest one asking this.
+  return new AgentResponse(client, (await startedBy(client, sessionId, text)) ?? created);
+}
+
+/**
+ * The latest turn on the session that asked `text`, or nothing when there is none or the
+ * turns could not be read: the question was asked either way, so failing to name its turn
+ * does not fail the asking.
+ */
+async function startedBy(
+  client: Client,
+  sessionId: string,
+  text: string,
+): Promise<Schemas["AgentResponse"] | undefined> {
+  let latest: Schemas["AgentResponse"] | undefined;
+  let cursor: string | undefined;
+  try {
+    do {
+      const page = await client.get("/v1/agents/sessions/{id}/responses", {
+        path: { id: sessionId },
+        query: { limit: RESPONSE_PAGE, cursor },
+      });
+      for (const turn of page.items) {
+        if (turn.said === text) {
+          latest = turn;
+        }
+      }
+      cursor = page.has_more ? page.next_cursor : undefined;
+    } while (cursor);
+  } catch {
+    return undefined;
+  }
+  return latest;
 }

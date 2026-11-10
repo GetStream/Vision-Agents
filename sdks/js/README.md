@@ -105,7 +105,9 @@ A request that is safe to send twice (GET, PUT, DELETE, and `responses.create`, 
 answers once per request id) is sent again after a network failure or a 429, 502, 503 or 504,
 up to `maxRetries` times (2 unless the client says), waiting longer each time and as long as
 `Retry-After` asks. To ask again yourself after a failure that may have reached the router,
-pass the same `requestId` to `responses.create`.
+pass the same `requestId` to `responses.create`. When the router took the question and only its
+answer was lost, it answers the retry with no id, and `responses.create` looks up the turn by
+what was asked, so the response it returns still names that turn.
 
 A connection lost while reading a response body follows the same retry policy. Invalid JSON
 is reported with the operation and request id and is not retried. Text responses remain
