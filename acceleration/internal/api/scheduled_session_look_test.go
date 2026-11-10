@@ -17,8 +17,9 @@ import (
 )
 
 // beforeItsLook is how long a delivery that waits scheduledPoll = an hour is watched for answering
-// early: past the 2 s a hardcoded default would wait. It only ever ends a wait that should have
-// held, so a loaded machine can make a broken wait pass this test, never a sound one fail.
+// early (past the 2 s a hardcoded default would wait), and the bound for an answer after the entry
+// moves or the call ends. On the early checks a loaded machine can only pass a broken wait; on the
+// answer waits it can fail a sound one that is slower than this.
 const beforeItsLook = 10 * time.Second
 
 // looksEvery has the router's deliveries look at a holding session again after d, and puts the
