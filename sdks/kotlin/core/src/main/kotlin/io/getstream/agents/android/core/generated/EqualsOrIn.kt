@@ -23,6 +23,7 @@
 
 package io.getstream.agents.android.core.generated
 
+import io.getstream.agents.android.core.generated.EqualsOrInOneOf
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
@@ -34,22 +35,20 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
 /**
- * 
+ * Matches one value exactly, written \"value\" or {\"$eq\": \"value\"}, or any of up to 50 values, written {\"$in\": [\"a\", \"b\"]}. An object holds one of $eq and $in.
  *
- * @param dollarGte At or after this RFC3339 time.
- * @param dollarLt Strictly before this RFC3339 time.
+ * @param dollarEq 
+ * @param dollarIn 
  */
 @Serializable
 
-internal data class TimeRange (
+internal data class EqualsOrIn (
 
-    /* At or after this RFC3339 time. */
-    @SerialName(value = "\$gte")
-    val dollarGte: kotlin.String? = null,
+    @SerialName(value = "\$eq")
+    val dollarEq: kotlin.String? = null,
 
-    /* Strictly before this RFC3339 time. */
-    @SerialName(value = "\$lt")
-    val dollarLt: kotlin.String? = null
+    @SerialName(value = "\$in")
+    val dollarIn: kotlin.collections.List<kotlin.String>? = null
 
 ) {
 

@@ -7,7 +7,7 @@ activity = "1.11.0"
 lifecycle = "2.11.0"
 okhttp = "5.5.0"
 # One version for every Stream Chat AI artifact.
-streamChatAi = "7.18.0"
+streamChatAi = "7.19.0"
 browser = "1.10.0"
 
 [libraries]

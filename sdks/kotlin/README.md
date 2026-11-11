@@ -175,32 +175,55 @@ moderation blur, keeps running underneath, so what the agent sees is what the ca
 
 ### Finding a conversation again
 
-Lists come a page at a time. Pass a page's `nextCursor` back as `cursor`, with the same filters,
-for the next one:
+Lists come a page at a time. `query` takes a `filter`, a `sort`, a `limit` (up to 200, 25 when
+left out) and a `cursor`. Pass a page's `nextCursor` back as `cursor`, with the same filter and
+sort, for the next one:
 
 ```kotlin
 val sessions = agents.agent("docs").sessions
-val live = SessionQuery(state = Session.State.Live, limit = 20)
-val first = sessions.query(live)
-val next = first.nextCursor?.let { sessions.query(live.copy(cursor = it)) }
-val found = sessions.search("billing")
 
-val lastWeek = sessions.query(
-    SessionQuery(
-        custom = mapOf("ticket" to "4721"),   // the labels SessionOptions.custom opened it with
-        createdSince = Clock.System.now() - 7.days,
-        sort = SessionQuery.Sort.UpdatedAt,
-    ),
+val first = sessions.query(limit = 20)
+val next = first.nextCursor?.let { sessions.query(limit = 20, cursor = it) }
+
+// one project, or either of two
+val health = sessions.query(filter = SessionFilter.ProjectId(eq = "health"))
+val either = sessions.query(
+    filter = SessionFilter.Or(SessionFilter.ProjectId("health"), SessionFilter.ProjectId("billing")),
 )
+
+// pinned conversations on top, then the most recent message first
+val pinnedFirst = sessions.query(
+    sort = listOf(SessionSort(SessionSortField.Pinned), SessionSort(SessionSortField.LastMessageAt)),
+)
+
+val found = sessions.search("billing", filter = SessionFilter.ProjectIdIn(listOf("health", "billing")))
 ```
 
-`createdSince` is inclusive and `createdBefore` is not. Every order is descending: most
-recently active first, or best match first for a search, which is also what leaving `sort` out
-means.
+A filter is one of `SessionFilter.ProjectId(eq)`, `SessionFilter.ProjectIdIn(values)` (1 to 50
+projects), `SessionFilter.Agent(eq)`, `SessionFilter.Text(q)`, or `SessionFilter.And(...)` and
+`SessionFilter.Or(...)` over 1 to 10 of them, nested up to 3 deep. `toJson()` is what goes on
+the wire: `{"$or": [{"project_id": {"$eq": "health"}}, {"project_id": {"$eq": "billing"}}]}`.
+From `agents.agent("docs").sessions` the list is always narrowed to that agent. Only ever the
+signed-in user's own conversations come back.
+
+A sort is a list of `SessionSort(field, direction)`, `direction` being -1 for descending (the
+default) or 1 for ascending. Leaving it out is the most recent message first. The orders the
+router takes are `LastMessageAt` either way, `Pinned` alone or followed by `LastMessageAt`, and
+`Relevance`, which only sorts a filter holding a `Text`. A cursor is only good with the sort it
+came from.
+
+`search` finds conversations by title, description, project and agent name, best match first.
+It takes the same `filter`, `limit` and `cursor` and no sort, and refuses a filter that already
+holds a `Text`.
 
 `update` renames a conversation or relabels it, `chat.update(title = "Billing")` on an open one
 and `sessions.update(id, title = "Billing")` on one that ended. A device may change `title`,
-`description` and `custom` and nothing else; models and voice are your backend's.
+`description`, `custom` and `pinned` and nothing else; models and voice are your backend's.
+
+`chat.pin()` and `chat.unpin()` pin an open conversation, `sessions.pin(id)` and
+`sessions.unpin(id)` any of the user's, and `update(pinned = true)` does the same alongside a
+rename. A pinned session carries `pinnedAt`, null otherwise. Pinning does not move a
+conversation in the most-recent-message order; sort by `Pinned` to put them on top.
 
 ### Looking something up
 

@@ -10,6 +10,15 @@
 - It opens its session only when something needs it, and deletes a new conversation's session that was never asked anything.
 - `agentChatTransport` is the transport of an `AIConversationController` from `stream-chat-react-native`. It sends the controller's message id as the question's `requestId`, carries a generated-UI action as `custom.uiAction`, and asks a `regenerate` again as a new question.
 - `chat.state` has `StateStore`'s shape, for `useStateStore`. The package still has no runtime dependencies.
+### Session queries take `$and` / `$or` filters and a sort, and sessions can be pinned
+
+**Breaking.** `querySessions` (`POST /v1/agents/sessions/query`) filters on `project_id` (`$eq`, `$in`), `text` (`$q`), `review_score` (`$eq`, `$gt`, `$gte`, `$lt`, `$lte`; server side only), `agent` and `user_id` (server side only), combined with `$and` and `$or`: 1 to 10 filters each, nested at most 3 deep, 30 conditions in a filter. Any other key is a 400 that names it, which includes the filters taken before: `agent_id`, `config_id`, `modality`, `state`, `team`, `created_at` and `custom`. `text` and `user_id` go at the top level or directly in the top-level `$and`, never inside `$or`, and `text` may now be combined with `project_id`.
+
+`sort` is `last_message_at` in either direction (the default, descending: when the agent last answered, else when the session began), `pinned` first and then `last_message_at`, `review_score` in either direction for a server-side caller, or `relevance` for a text search. `updated_at` is no longer a sort. A cursor holds for the sort it came from.
+
+`PATCH /v1/agents/sessions/{id}` takes `pinned`, and `Session` gains `pinned_at`. Pinning leaves the session where it was in the `last_message_at` order, a client may pin its own session, and an incognito session cannot be pinned. A session's review score is kept on the session as well as on its call, so it can be filtered and sorted on.
+
+Every SDK takes the filter and the sort in place of its flat query fields, with no alias for the old ones, and gains `pin` and `unpin`. The client SDKs offer neither `review_score` nor `user_id`.
 
 ### A session keeps the team its usage is counted under, and is found by it
 

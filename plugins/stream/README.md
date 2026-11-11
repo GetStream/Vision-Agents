@@ -291,21 +291,28 @@ await session.close()  # stops it; what it recorded and remembered is kept
 
 session = await docs.sessions.resume(session.id)  # carry on where it left off
 
-page = await docs.sessions.query(stream.Query(user_id="u1", state="live"))
+# A filter is the router's own, written as a dict: the keys of one dict are ANDed, and
+# $and and $or nest. A query from an agent is always narrowed to that agent.
+either = {"$or": [{"project_id": "support"}, {"project_id": "sales"}]}
+page = await docs.sessions.query(either, limit=50)
 while page.has_more:
-    page = await docs.sessions.query(
-        stream.Query(user_id="u1", state="live", cursor=page.next_cursor)
-    )
+    page = await docs.sessions.query(either, limit=50, cursor=page.next_cursor)
 
-october = await docs.sessions.query(
-    stream.Query(
-        team="finance",  # the team their usage is counted under
-        created_since=datetime(2026, 10, 1, tzinfo=timezone.utc),
-        created_before=datetime(2026, 11, 1, tzinfo=timezone.utc),
-        custom={"ticket": "4721"},
-        sort="updated_at",
-    )
+pinned_first = await docs.sessions.query(
+    filter={"project_id": {"$in": ["support", "sales"]}, "user_id": "u1"},
+    sort=[
+        {"field": "pinned", "direction": -1},
+        {"field": "last_message_at", "direction": -1},
+    ],
 )
+poorly_reviewed = await docs.sessions.query(
+    filter={"review_score": {"$lte": 2}},
+    sort=[{"field": "review_score", "direction": 1}],
+)
+found = await docs.sessions.search("refund policy", {"project_id": "support"})
+
+await session.pin()  # session.unpin() undoes it; a row's pinned_at says when
+await docs.sessions.pin(session.id)  # by id, an ended one too
 
 await docs.sessions.update(session.id, title="Pricing, again")  # an ended one too
 await docs.sessions.delete_memories(session.id)

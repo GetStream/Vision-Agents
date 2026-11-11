@@ -34,12 +34,13 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
 /**
- * What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller.
+ * What to change about one session. A field left out is left as it is. Title, description, custom and pinned can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller.
  *
  * @param custom Replaces the caller's labels whole. An empty object clears them.
  * @param description 
  * @param llm The conversation model, a provider/model or a capability shortcut.
  * @param maxOutputTokens 
+ * @param pinned true pins the session and false unpins it. Pinning one that is already pinned keeps the time it was first pinned. A pin changes nothing else about the session, its place in a last_message_at sort included.
  * @param sts A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
  * @param stt 
  * @param temperature 
@@ -66,6 +67,10 @@ internal data class UpdateSessionRequest (
 
     @SerialName(value = "max_output_tokens")
     val maxOutputTokens: kotlin.Int? = null,
+
+    /* true pins the session and false unpins it. Pinning one that is already pinned keeps the time it was first pinned. A pin changes nothing else about the session, its place in a last_message_at sort included. */
+    @SerialName(value = "pinned")
+    val pinned: kotlin.Boolean? = null,
 
     /* A speech-to-speech target, which makes the session native. Empty makes it a cascade again. */
     @SerialName(value = "sts")

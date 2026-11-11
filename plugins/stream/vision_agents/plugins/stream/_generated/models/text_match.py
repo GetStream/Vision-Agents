@@ -11,7 +11,8 @@ T = TypeVar("T", bound="TextMatch")
 
 @_attrs_define
 class TextMatch:
-    """
+    """A full-text match, Stream's $q.
+
     Attributes:
         q (str): Quoted phrases and bare words both work, and punctuation is taken rather than refused.
     """

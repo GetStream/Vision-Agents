@@ -45,6 +45,8 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
     /// What to change about the models for one session, over whatever its agent config decided.
     /// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent. A backend sets one session's instructions with the instructions of CreateSessionRequest instead, which a device may not send.
     let modelOverwrites: ModelOverwritesPayload?
+    /// When the session was pinned. Absent for one that is not pinned.
+    let pinnedAt: Date?
     let projectId: String?
     /// Why the review scored the conversation as it did. Read by a backend only.
     let reviewNotes: String?
@@ -75,7 +77,7 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
     /// The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none.
     let voice: String?
 
-    init(agent: String? = nil, agentId: String, callId: String, callOutcome: SessionCallOutcome? = nil, callType: String, closedAt: Date? = nil, configId: String? = nil, contextTruncated: Bool? = nil, conversationId: String? = nil, createdAt: Date, custom: [String: RawJSON]? = nil, description: String? = nil, endFault: SessionEndFault? = nil, endReason: SessionEndReason? = nil, endStage: SessionEndStage? = nil, forkedFrom: String? = nil, id: String, incognito: Bool? = nil, instructions: String? = nil, lastResponseAt: Date? = nil, llm: String? = nil, modality: SessionModality, mode: SessionMode? = nil, modelOverwrites: ModelOverwritesPayload? = nil, projectId: String? = nil, reviewNotes: String? = nil, reviewScore: Int? = nil, state: SessionState, sts: String? = nil, stt: String? = nil, subagent: String? = nil, summary: String? = nil, team: String? = nil, text: Bool? = nil, title: String? = nil, tts: String? = nil, usage: CallUsage? = nil, userId: String, video: SessionVideo? = nil, voice: String? = nil) {
+    init(agent: String? = nil, agentId: String, callId: String, callOutcome: SessionCallOutcome? = nil, callType: String, closedAt: Date? = nil, configId: String? = nil, contextTruncated: Bool? = nil, conversationId: String? = nil, createdAt: Date, custom: [String: RawJSON]? = nil, description: String? = nil, endFault: SessionEndFault? = nil, endReason: SessionEndReason? = nil, endStage: SessionEndStage? = nil, forkedFrom: String? = nil, id: String, incognito: Bool? = nil, instructions: String? = nil, lastResponseAt: Date? = nil, llm: String? = nil, modality: SessionModality, mode: SessionMode? = nil, modelOverwrites: ModelOverwritesPayload? = nil, pinnedAt: Date? = nil, projectId: String? = nil, reviewNotes: String? = nil, reviewScore: Int? = nil, state: SessionState, sts: String? = nil, stt: String? = nil, subagent: String? = nil, summary: String? = nil, team: String? = nil, text: Bool? = nil, title: String? = nil, tts: String? = nil, usage: CallUsage? = nil, userId: String, video: SessionVideo? = nil, voice: String? = nil) {
         self.agent = agent
         self.agentId = agentId
         self.callId = callId
@@ -100,6 +102,7 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
         self.modality = modality
         self.mode = mode
         self.modelOverwrites = modelOverwrites
+        self.pinnedAt = pinnedAt
         self.projectId = projectId
         self.reviewNotes = reviewNotes
         self.reviewScore = reviewScore
@@ -144,6 +147,7 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
         self.modality = try container.decode(SessionModality.self, forKey: .modality)
         self.mode = try container.decodeIfPresent(SessionMode.self, forKey: .mode)
         self.modelOverwrites = try container.decodeIfPresent(ModelOverwritesPayload.self, forKey: .modelOverwrites)
+        self.pinnedAt = try container.decodeIfPresent(Date.self, forKey: .pinnedAt)
         self.projectId = try container.decodeIfPresent(String.self, forKey: .projectId)
         self.reviewNotes = try container.decodeIfPresent(String.self, forKey: .reviewNotes)
         self.reviewScore = try container.decodeIfPresent(Int.self, forKey: .reviewScore)
@@ -188,6 +192,7 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
         try container.encode(modality, forKey: .modality)
         try container.encodeIfPresent(mode, forKey: .mode)
         try container.encodeIfPresent(modelOverwrites, forKey: .modelOverwrites)
+        try container.encodeIfPresent(pinnedAt, forKey: .pinnedAt)
         try container.encodeIfPresent(projectId, forKey: .projectId)
         try container.encodeIfPresent(reviewNotes, forKey: .reviewNotes)
         try container.encodeIfPresent(reviewScore, forKey: .reviewScore)
@@ -234,6 +239,7 @@ extension SessionPayload: Hashable {
         lhs.modality == rhs.modality &&
         lhs.mode == rhs.mode &&
         lhs.modelOverwrites == rhs.modelOverwrites &&
+        lhs.pinnedAt == rhs.pinnedAt &&
         lhs.projectId == rhs.projectId &&
         lhs.reviewNotes == rhs.reviewNotes &&
         lhs.reviewScore == rhs.reviewScore &&
@@ -277,6 +283,7 @@ extension SessionPayload: Hashable {
         hasher.combine(modality)
         hasher.combine(mode)
         hasher.combine(modelOverwrites)
+        hasher.combine(pinnedAt)
         hasher.combine(projectId)
         hasher.combine(reviewNotes)
         hasher.combine(reviewScore)

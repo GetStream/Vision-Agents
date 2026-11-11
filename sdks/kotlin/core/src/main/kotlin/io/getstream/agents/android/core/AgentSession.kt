@@ -207,7 +207,14 @@ public class AgentSession internal constructor(
         title: String? = null,
         description: String? = null,
         custom: JsonObject? = null,
-    ): Session = Sessions(backend).update(session.id, title, description, custom).also { session = it }
+        pinned: Boolean? = null,
+    ): Session = Sessions(backend).update(session.id, title, description, custom, pinned).also { session = it }
+
+    /** Pins this conversation, and returns it with its [Session.pinnedAt]. See [Sessions.pin]. */
+    public suspend fun pin(): Session = update(pinned = true)
+
+    /** Unpins this conversation. See [Sessions.unpin]. */
+    public suspend fun unpin(): Session = update(pinned = false)
 
     /**
      * Continues this conversation as a new session, leaving this one as it was.

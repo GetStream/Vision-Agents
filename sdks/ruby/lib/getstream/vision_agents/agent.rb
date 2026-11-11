@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "time"
-
 module GetStream
   module VisionAgents
     # Where code the agent writes gets run.
@@ -486,43 +484,53 @@ module GetStream
         Session.watching(@client, get(id), tools: @agent.tools, interim: interim, decisions: decisions)
       end
 
-      # A page of the agent's conversations, most recently updated first, the ones that ended
-      # included. Rows rather than live handles: reading a conversation back is not holding
-      # one. Pass the page's next_cursor as cursor, with the same filters, for the next.
+      # A page of the agent's conversations, the ones that ended included. Rows rather than
+      # live handles: reading a conversation back is not holding one. Pass the page's
+      # next_cursor as cursor, with the same filter and sort, for the next.
       #
-      # @param project_id [String] one project's. A search covers every project, so it
-      #   cannot be combined with text.
-      # @param user_id [String] one user's, which only a server-side caller may ask for.
-      # @param modality [String] text, voice or video.
-      # @param state [String] live or ended.
-      # @param agent_id [String] the sessions created with this agent id.
-      # @param team [String] the sessions whose usage is counted under this team. A token
-      #   signed for a team may only ask for that one.
-      # @param created_since [Time] the sessions created at or after this moment.
-      # @param created_before [Time] the sessions created before this moment.
-      # @param custom [Hash{String => String}] the sessions whose custom labels hold every
-      #   one of these pairs.
-      # @param sort [String] updated_at, by when each last changed, or relevance, by how well
-      #   it matches a search; always newest first. nil is the router's own.
+      # The filter is the router's own, key for key, with string or symbol keys:
+      #
+      #   project_id    "docs", { "$eq" => "docs" } or { "$in" => %w[docs billing] }
+      #   text          { "$q" => "words" }; see #search
+      #   review_score  1..5, or { "$eq" | "$gt" | "$gte" | "$lt" | "$lte" => n }, several
+      #                 of them narrowing together. Server side only.
+      #   user_id       "u1" or { "$eq" => "u1" }. Server side only.
+      #   $and, $or     1 to 10 filters each, nested at most 3 deep
+      #
+      # The keys of one filter narrow together. text and user_id go at the top level or
+      # straight inside the top-level $and, and never inside an $or. The agent is always this
+      # one: an agent key at the top level is replaced.
+      #
+      #   sessions.query(filter: { "$or" => [{ project_id: "docs" }, { project_id: "billing" }] })
+      #   sessions.query(sort: [{ field: "pinned" }, { field: "last_message_at", direction: -1 }])
+      #
+      # @param filter [Hash] which sessions; empty is all of the agent's.
+      # @param sort [Array<Hash>] { field:, direction: } hashes, direction -1 (newest or
+      #   highest first, what a field left without one gets) or 1. One of: last_message_at;
+      #   pinned, alone or followed by last_message_at; review_score, server side only;
+      #   relevance, only with a text filter. nil is last_message_at newest first, or
+      #   relevance when the filter has a text.
       # @param limit [Integer] up to 200; nil is 25.
-      # @return [Hash] the SessionPage: items, has_more and next_cursor.
-      def query(project_id: nil, user_id: nil, modality: nil, state: nil, agent_id: nil, team: nil,
-                created_since: nil, created_before: nil, custom: nil, sort: nil, limit: nil, cursor: nil)
-        filter = { agent: @agent.config, project_id: project_id, user_id: user_id, modality: modality, state: state,
-                   agent_id: agent_id, team: team, created_at: window(created_since, created_before),
-                   custom: labels(custom) }
-        @client.post("/v1/agents/sessions/query", body: query_body(filter, sort, limit, cursor))
+      # @param cursor [String] the previous page's next_cursor, good only with the sort it
+      #   came from.
+      # @return [Hash] the SessionPage: items, has_more and next_cursor. A pinned session
+      #   carries pinned_at, and one that is not has no such key.
+      def query(filter: {}, sort: nil, limit: nil, cursor: nil)
+        @client.post("/v1/agents/sessions/query",
+                     body: { filter: scoped(filter), sort: orders(sort), limit: limit, cursor: cursor })
       end
 
       # Finds a conversation by what it was called: title, description, project and agent
-      # name, best match first. Takes the filters of #query but project_id, since a search
-      # covers every project, and pages the same way.
-      def search(text, user_id: nil, modality: nil, state: nil, agent_id: nil, team: nil,
-                 created_since: nil, created_before: nil, custom: nil, sort: nil, limit: nil, cursor: nil)
-        filter = { agent: @agent.config, user_id: user_id, modality: modality, state: state, agent_id: agent_id,
-                   team: team, created_at: window(created_since, created_before), custom: labels(custom),
-                   text: { "$q" => text } }
-        @client.post("/v1/agents/sessions/query", body: query_body(filter, sort, limit, cursor))
+      # name, best match first. Takes the filter of #query, which may not have a text of its
+      # own, and pages the same way. There is no sort: a search is ordered by relevance.
+      #
+      #   sessions.search("billing", filter: { project_id: "docs" })
+      def search(text, filter: {}, limit: nil, cursor: nil)
+        sent = scoped(filter)
+        raise ConfigurationError, "the filter already has a text; search sets it" if sent.key?("text")
+
+        sent["text"] = { "$q" => text }
+        @client.post("/v1/agents/sessions/query", body: { filter: sent, limit: limit, cursor: cursor })
       end
 
       # One conversation, whether or not it is still being held.
@@ -531,13 +539,26 @@ module GetStream
       end
 
       # Changes one conversation, whether or not it is still being held. One that ended can
-      # still be renamed and relabelled; models and voice need it running.
-      # Server side only.
+      # still be renamed, relabelled, pinned and unpinned; models and voice need it running.
+      # Server side only, but for pinned: a user may pin a session of their own.
       #
       # @param fields any UpdateSessionRequest field; see Session#update.
       # @return [Hash] the session as the router now has it.
       def update(id, **fields)
         @client.patch("/v1/agents/sessions/{id}", path: { id: id }, body: fields)
+      end
+
+      # Pins a conversation, running or ended, so a query sorted by pinned lists it first.
+      # Its place in last_message_at order is unchanged.
+      #
+      # @return [Hash] the session as the router now has it, with pinned_at.
+      def pin(id)
+        update(id, pinned: true)
+      end
+
+      # Unpins a conversation. The session answered has no pinned_at.
+      def unpin(id)
+        update(id, pinned: false)
       end
 
       # Deletes a conversation, running or ended: it is stopped, and its turns and what it
@@ -558,21 +579,26 @@ module GetStream
 
       private
 
-      # Each filter field is a bare value, the short form of {"$eq": value}; nil leaves it out.
-      # One sort field and no direction: newest first is the only order there is.
-      def query_body(filter, sort, limit, cursor)
-        { filter: filter.compact, sort: sort && [{ field: sort }], limit: limit, cursor: cursor }
+      # The caller's filter with this agent at its top level. The filter is not wrapped in an
+      # $and of its own: text and user_id are only allowed at the top.
+      def scoped(filter)
+        sent = wire(filter || {})
+        raise ConfigurationError, "a session filter is a Hash, not #{filter.class}" unless sent.is_a?(Hash)
+
+        sent.merge("agent" => @agent.config)
       end
 
-      # The half-open created_at window the two bounds name, or nil when neither was given.
-      def window(since, before)
-        return nil if since.nil? && before.nil?
-
-        { "$gte" => since&.utc&.iso8601(3), "$lt" => before&.utc&.iso8601(3) }.compact
+      def orders(sort)
+        sort&.map { |order| wire(order) }
       end
 
-      def labels(custom)
-        custom.nil? || custom.empty? ? nil : custom
+      # String keys all the way down, as the router reads them; values are sent as given.
+      def wire(value)
+        case value
+        when Hash then value.to_h { |key, each| [key.to_s, wire(each)] }
+        when Array then value.map { |each| wire(each) }
+        else value
+        end
       end
     end
   end

@@ -72,6 +72,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param llm The provider and model answering, once routing has picked one.
  * @param mode 
  * @param modelOverwrites 
+ * @param pinnedAt When the session was pinned. Absent for one that is not pinned.
  * @param projectId 
  * @param reviewNotes Why the review scored the conversation as it did. Read by a backend only.
  * @param reviewScore How well the agent handled the conversation, from 1 to 5, written a few seconds after it ended. Read by a backend only.
@@ -180,6 +181,10 @@ internal data class Session (
 
     @SerialName(value = "model_overwrites")
     val modelOverwrites: ModelOverwrites? = null,
+
+    /* When the session was pinned. Absent for one that is not pinned. */
+    @SerialName(value = "pinned_at")
+    val pinnedAt: kotlin.String? = null,
 
     @SerialName(value = "project_id")
     val projectId: kotlin.String? = null,
