@@ -1140,6 +1140,7 @@ var ErrCannotRewind = errors.New("session: this conversation cannot be rewound")
 type Recorded interface {
 	Exchanges(ctx context.Context, customerID, sessionID, upTo string) ([]store.Exchange, error)
 	RewindResponses(ctx context.Context, customerID, sessionID, kept string, at time.Time) error
+	ConversationDocuments(ctx context.Context, customerID string, scope store.DocumentScope) ([]store.ConversationDocument, error)
 }
 
 // Rewind carries the conversation on from the end of a response, as though nothing after it
@@ -1173,6 +1174,13 @@ func (s *Session) Rewind(ctx context.Context, recorded Recorded, responseID stri
 		return stack.Wrap(err)
 	}
 	s.current().RestoreHistory(HistoryOf(exchanges))
+	// The files sent with the turns taken back go with them: what is kept is read again, in
+	// place of what was pinned.
+	documents, err := recorded.ConversationDocuments(ctx, s.spec.CustomerID, store.DocumentScope{SessionID: s.id, Owner: s.spec.Caller.UserID})
+	if err != nil {
+		return stack.Wrap(err)
+	}
+	s.current().ReplaceDocuments(pinnable(documents)...)
 	return nil
 }
 

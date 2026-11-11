@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -53,13 +54,17 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 	if request.Body != nil {
 		files = value(request.Body.Files)
 	}
-	if len(files) > 0 {
-		// A file is held to its own limits (fetchDocument); the body holds at most one inline.
-		if request.Body.Audio != nil {
+	if request.Body != nil {
+		if len(files) > 0 && request.Body.Audio != nil {
 			return nil, errDocumentWithVoiceNote
 		}
-	} else if request.Body != nil {
-		if err := refuseOversizeWithoutAudio(request.Body.Audio, sizeOfResponse(request.Body)); err != nil {
+		// An inline file is held to its own limit (fetchDocument), which the route's body limit
+		// makes room for; the rest of the request is held to the usual one.
+		size := sizeOfResponse(request.Body)
+		if len(files) > 0 && strings.HasPrefix(files[0].Url, "data:") {
+			size -= len(files[0].Url)
+		}
+		if err := refuseOversizeWithoutAudio(request.Body.Audio, size); err != nil {
 			return nil, err
 		}
 	}
@@ -72,7 +77,20 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 		return nil, invalidRequest("there is nothing to answer")
 	}
 
-	// The file is read before anything else is fetched, so a file that is refused costs nothing.
+	images := make([]wireImage, 0, len(value(request.Body.Images)))
+	for _, sent := range value(request.Body.Images) {
+		images = append(images, wireImage{URL: sent.Url, Detail: string(value(sent.Detail))})
+	}
+	parts, err := imagesFromWire(images)
+	if err != nil {
+		return nil, invalidRequest(err.Error())
+	}
+	action := value(request.Body.UiAction)
+	if !conversation.ValidUIAction(action) {
+		return nil, invalidRequest(fmt.Sprintf("a ui_action names message_id, format and name, in at most %d bytes", conversation.MaxUIAction))
+	}
+	// The file is read once the request is otherwise known to be good, and before anything
+	// else is fetched: screening it may be billed, and a request refused after it would be.
 	var document *sentDocument
 	if len(files) > 0 {
 		retry := found.Durable() && found.Taken(value(request.Body.RequestId))
@@ -86,14 +104,6 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 		}
 	}
 
-	images := make([]wireImage, 0, len(value(request.Body.Images)))
-	for _, sent := range value(request.Body.Images) {
-		images = append(images, wireImage{URL: sent.Url, Detail: string(value(sent.Detail))})
-	}
-	parts, err := imagesFromWire(images)
-	if err != nil {
-		return nil, invalidRequest(err.Error())
-	}
 	videos := value(request.Body.Videos)
 	if len(videos) > maxVideos {
 		return nil, invalidRequest(fmt.Sprintf("at most %d videos go with one response", maxVideos))
@@ -129,10 +139,6 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 		}
 	}
 
-	action := value(request.Body.UiAction)
-	if !conversation.ValidUIAction(action) {
-		return nil, invalidRequest(fmt.Sprintf("a ui_action names message_id, format and name, in at most %d bytes", conversation.MaxUIAction))
-	}
 	asked := options.LLM{MaxOutputTokens: request.Body.MaxOutputTokens, ReasoningEffort: value(request.Body.ReasoningEffort)}
 	commandID := value(request.Body.RequestId)
 	text, notes, failure := s.withHeardNote(ctx, found, commandID, request.Body.Text, request.Body.Audio, len(parts) > 0, asked)
@@ -184,6 +190,8 @@ func refusedResponse(err error) error {
 		return conflict(err.Error())
 	case errors.Is(err, agent.ErrCannotSeeImages):
 		return notConfigured(agent.ErrCannotSeeImages.Error())
+	case errors.Is(err, agent.ErrNoRoomForDocument):
+		return documentTooLarge("the conversation has no room left for the file: another was sent at the same time")
 	default:
 		return invalidRequest(err.Error())
 	}

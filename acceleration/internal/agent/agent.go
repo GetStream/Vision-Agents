@@ -958,7 +958,10 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 	if a.native() {
 		return "", a.respondNative(ctx, text, images)
 	}
-	text, undo := a.attachDocument(ctx, text)
+	text, undo, err := a.attachDocument(ctx, text)
+	if err != nil {
+		return "", err
+	}
 	id, err := a.respondTo(ctx, text, images, asked)
 	if err != nil {
 		undo()

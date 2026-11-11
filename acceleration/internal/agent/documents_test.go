@@ -89,3 +89,16 @@ func (s *AgentSuite) TestTheRoomForAFileIsWhatTheFilesPinnedLeave() {
 	s.agent.PinDocuments(Document{ID: "d-1", Name: "a.pdf", Text: strings.Repeat("x", 100_000)})
 	s.Equal(MaxDocumentRunes-100_000, s.agent.DocumentRoom(), "a file pinned again is counted once")
 }
+
+func (s *AgentSuite) TestAFileThatNoLongerFitsWhenItIsPinnedIsRefused() {
+	s.joinText()
+	// Another question's file was pinned after this one was weighed against the room.
+	s.agent.PinDocuments(Document{ID: "d-1", Name: "first.pdf", Text: strings.Repeat("x", MaxDocumentRunes-10)})
+
+	_, err := s.agent.RespondTo(WithDocument(s.ctx, Document{ID: "d-2", Name: "second.pdf", Text: strings.Repeat("y", 20)}),
+		"And this?", nil, options.LLM{})
+
+	s.ErrorIs(err, ErrNoRoomForDocument)
+	s.Len(s.agent.Documents(), 1)
+	s.Empty(s.model.requests(), "the refused turn never reached the model")
+}

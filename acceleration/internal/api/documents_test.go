@@ -231,6 +231,15 @@ func (s *DocumentsSuite) TestAFileWithAVoiceNoteIsRefused() {
 	s.Contains(failure.Message, "separate responses")
 }
 
+func (s *DocumentsSuite) TestAFileDoesNotLiftTheLimitOnTheRestOfTheRequest() {
+	opened := s.opening(s.client)
+
+	status, _ := s.refused(opened, CreateResponseRequest{Text: strings.Repeat("a", 2<<20),
+		Files: &[]FileSource{s.docx("a.docx", "text")}})
+
+	s.Equal(http.StatusRequestEntityTooLarge, status, "the room made for an inline file is the file's alone")
+}
+
 func (s *DocumentsSuite) TestAFileOverTheConversationsRoomIsRefusedBeforeAnyTurn() {
 	opened := s.opening(s.client)
 	question := "What does this say? " + s.utils.uuid()

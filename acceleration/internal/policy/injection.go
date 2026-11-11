@@ -18,6 +18,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // ErrPromptInjection is what a response whose input reads as a prompt injection fails with.
@@ -166,11 +167,14 @@ const documentScreenTimeout = 20 * time.Second
 // after it, and is screened only this once, so it fails with ErrScreenUnavailable. It screens
 // nothing for a customer whose policies do not ask for it, and nothing without a classifier.
 func (e *Enforcer) ScreenDocument(ctx context.Context, classifier *decisionrouter.Router, owner routing.Owner, text string) error {
-	if e == nil || classifier == nil || owner.CustomerID == "" || strings.TrimSpace(text) == "" {
+	if e == nil || owner.CustomerID == "" || strings.TrimSpace(text) == "" {
 		return nil
 	}
 	if !e.decide(ctx, owner.CustomerID).screen {
 		return nil
+	}
+	if classifier == nil {
+		return stack.Wrap(fmt.Errorf("%w: no classifier", ErrScreenUnavailable))
 	}
 	ctx, cancel := context.WithTimeout(ctx, documentScreenTimeout)
 	defer cancel()

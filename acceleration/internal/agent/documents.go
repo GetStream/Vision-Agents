@@ -2,12 +2,14 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // Document is a file the caller attached to the conversation, read as text.
@@ -49,6 +51,17 @@ func (a *Agent) PinDocuments(documents ...Document) {
 	}
 }
 
+// ReplaceDocuments pins documents in place of every file pinned before, as a conversation
+// rewound to before some of them was sent has them.
+func (a *Agent) ReplaceDocuments(documents ...Document) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.documents, a.pinned = nil, nil
+	for _, document := range documents {
+		a.pinLocked(document)
+	}
+}
+
 // pinLocked pins one document, and reports whether it was not pinned already.
 func (a *Agent) pinLocked(document Document) bool {
 	if slices.ContainsFunc(a.documents, func(pinned Document) bool { return pinned.ID == document.ID }) {
@@ -76,12 +89,17 @@ const runesPerToken = 3
 // MaxDocumentRunes, and of a quarter of the conversation model's window when it declares one,
 // after the files already pinned.
 func (a *Agent) DocumentRoom() int {
+	budget := a.documentBudget()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return max(budget-a.pinnedRunesLocked(), 0)
+}
+
+// documentBudget is the room every file of the conversation shares: MaxDocumentRunes, or a
+// quarter of the conversation model's window when it declares less.
+func (a *Agent) documentBudget() int {
 	a.mu.Lock()
 	current := a.harness
-	used := 0
-	for _, document := range a.documents {
-		used += document.Runes()
-	}
 	a.mu.Unlock()
 	budget := MaxDocumentRunes
 	if current != nil {
@@ -89,7 +107,15 @@ func (a *Agent) DocumentRoom() int {
 			budget = min(budget, int(window/4)*runesPerToken)
 		}
 	}
-	return max(budget-used, 0)
+	return budget
+}
+
+func (a *Agent) pinnedRunesLocked() int {
+	used := 0
+	for _, document := range a.documents {
+		used += document.Runes()
+	}
+	return used
 }
 
 // Documents are the files pinned in the conversation, oldest first.
@@ -102,26 +128,36 @@ func (a *Agent) Documents() []Document {
 // attachDocument pins the file ctx brings, if any, for the turn about to start, and returns
 // the words the turn answers: text, or a request to read the file when it came with none.
 // undo takes the pin back when the turn does not start.
-func (a *Agent) attachDocument(ctx context.Context, text string) (string, func()) {
+func (a *Agent) attachDocument(ctx context.Context, text string) (string, func(), error) {
 	document, ok := ctx.Value(documentKey{}).(Document)
 	if !ok {
-		return text, func() {}
+		return text, func() {}, nil
 	}
+	budget := a.documentBudget()
 	a.mu.Lock()
+	// Weighed again as it is pinned: two questions sent at once were each weighed against
+	// the room before either was pinned.
+	if a.pinnedRunesLocked()+document.Runes() > budget && !slices.ContainsFunc(a.documents, func(pinned Document) bool { return pinned.ID == document.ID }) {
+		a.mu.Unlock()
+		return "", nil, stack.Wrap(ErrNoRoomForDocument)
+	}
 	added := a.pinLocked(document)
 	a.mu.Unlock()
 	if strings.TrimSpace(text) == "" {
 		text = documentAlone
 	}
 	if !added {
-		return text, func() {}
+		return text, func() {}, nil
 	}
 	return text, func() {
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		a.unpinLocked(document.ID)
-	}
+	}, nil
 }
+
+// ErrNoRoomForDocument is a file that does not fit beside the files the conversation holds.
+var ErrNoRoomForDocument = errors.New("agent: the conversation has no room for the file")
 
 // pinnedLocked is what every reply is sent ahead of the conversation. The slice is never
 // written in place, only appended to or replaced, so a turn may hold it unlocked.
