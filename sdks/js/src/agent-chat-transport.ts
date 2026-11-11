@@ -97,38 +97,82 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
 ): AgentTransport<Message> {
   const reasoningText = (messageId: string, stepId: string) => chat.reasoning.get(messageId, stepId);
   const workingText = options.workingText ?? defaultWorkingText;
+  // What the latest question went out with, which asking it again keeps: its photos, what the
+  // person did in a reply's UI, and how long the model may think.
+  let lastAsked: { text: string; images: ImageSource[]; uiAction: UIAction | undefined; reasoningEffort: string | undefined } | undefined;
   return {
     connect(feed) {
-      let previous: { messages: readonly M[]; reasoningVersion: number; activity: AgentActivity | undefined } | undefined;
+      // The same message for each Stream message that didn't change, so only the messages an
+      // update touched are made, and shown, afresh.
+      let adapted = new WeakMap<M, Message>();
+      const adapt = (message: M) => {
+        let made = adapted.get(message);
+        if (made === undefined) {
+          made = options.adapt(message, reasoningText);
+          adapted.set(message, made);
+        }
+        return made;
+      };
+      let previous:
+        | { messages: readonly M[]; reasoningVersion: number; activity: AgentActivity | undefined; hasOlderMessages: boolean }
+        | undefined;
       return chat.state.subscribe((state) => {
         if (!feed.isConnected) {
           return;
         }
-        // Each update of a reply's thinking is shown afresh, through the same messages.
-        if (previous?.messages !== state.messages || previous.reasoningVersion !== state.reasoningVersion) {
-          feed.updateMessages(state.messages.map((message) => options.adapt(message, reasoningText)));
+        const thought = previous !== undefined && previous.reasoningVersion !== state.reasoningVersion;
+        if (thought) {
+          // More of a reply's thinking arrived: that reply alone is shown afresh.
+          const reply = state.messages.find((message) => message.id === state.reasoningMessageId);
+          if (reply) {
+            adapted.delete(reply);
+          } else {
+            adapted = new WeakMap();
+          }
         }
-        feed.updateHasOlderMessages(state.hasOlderMessages);
+        if (previous?.messages !== state.messages || thought) {
+          feed.updateMessages(state.messages.map(adapt));
+        }
+        if (previous?.hasOlderMessages !== state.hasOlderMessages) {
+          feed.updateHasOlderMessages(state.hasOlderMessages);
+        }
         if (previous === undefined || previous.activity !== state.activity) {
           feed.updateActivity(transportActivity(state.activity, workingText, options.failedText));
         }
-        previous = { messages: state.messages, reasoningVersion: state.reasoningVersion, activity: state.activity };
+        previous = {
+          messages: state.messages,
+          reasoningVersion: state.reasoningVersion,
+          activity: state.activity,
+          hasOlderMessages: state.hasOlderMessages,
+        };
       });
     },
     async send(request) {
       if (request.kind === "edit") {
         throw new Error("The agent can't edit a message it was sent: give the conversation actions: { edit: false }");
       }
+      if (request.kind === "regenerate") {
+        // Asked again as a new question, under a new request id: under the original one, the
+        // router would take it for the question it already answered. It keeps what the question
+        // went out with, which a regenerate doesn't carry.
+        const again = lastAsked?.text === request.text ? lastAsked : undefined;
+        const reasoningEffort = options.reasoningEffort?.(request.chatOption) ?? again?.reasoningEffort;
+        await chat.send(request.text, {
+          ...(again && again.images.length > 0 ? { images: again.images } : {}),
+          ...(reasoningEffort ? { reasoningEffort } : {}),
+          ...(again?.uiAction ? { uiAction: again.uiAction } : {}),
+        });
+        return;
+      }
       const images = await imagesOf(request.attachments, options.images);
       const reasoningEffort = options.reasoningEffort?.(request.chatOption);
       const uiAction = uiActionOf(request.custom);
+      lastAsked = { text: request.text, images, uiAction, reasoningEffort };
       await chat.send(request.text, {
         ...(images.length > 0 ? { images } : {}),
         ...(reasoningEffort ? { reasoningEffort } : {}),
         ...(uiAction ? { uiAction } : {}),
-        // A regenerate asks the question again: under the original id, the router would take it
-        // for the question it already answered.
-        ...(request.kind === "regenerate" ? {} : { requestId: request.messageId }),
+        requestId: request.messageId,
       });
     },
     stop: () => chat.stop(),

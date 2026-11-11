@@ -600,7 +600,10 @@ fresh ones rather than reusing closed ones:
 ```ts
 useEffect(() => {
   const chat = new AgentChat({ sessionId, open });
-  const conversation = new AIConversationController({ transport: agentChatTransport(chat, { adapt }) });
+  const conversation = new AIConversationController({
+    transport: agentChatTransport(chat, { adapt }),
+    actions: { edit: false, regenerate: false },
+  });
   setScreen({ chat, conversation });
   return () => {
     conversation.dispose();

@@ -1,3 +1,4 @@
+import { RouterError } from "./errors.js";
 import { LiveReasoning } from "./reasoning.js";
 import type { CreateResponseOptions, ImageSource, UIAction } from "./responses.js";
 import type { Session } from "./session.js";
@@ -101,6 +102,13 @@ export interface AgentChatState<M extends AgentChatMessage = AgentChatMessage> e
   readonly isLoaded: boolean;
   /** Bumped each time more of a reply's live thinking arrives, which `reasoning` holds. */
   readonly reasoningVersion: number;
+  /** The message whose live thinking arrived last, which is the one to show afresh. */
+  readonly reasoningMessageId: string | undefined;
+  /**
+   * Why the channel couldn't be read again after the connection came back, or undefined. The
+   * messages are as they were until it reads again.
+   */
+  readonly failure: Error | undefined;
   /** The session the conversation is held in, once something needed it. */
   readonly session: Session | undefined;
   /** What the agent is doing, or undefined. */
@@ -182,6 +190,8 @@ export class AgentChat<M extends AgentChatMessage = AgentChatMessage> {
       hasOlderMessages: false,
       isLoaded: sessionId === undefined,
       reasoningVersion: 0,
+      reasoningMessageId: undefined,
+      failure: undefined,
       session: undefined,
       activity: undefined,
       usedSessionId: undefined,
@@ -240,13 +250,18 @@ export class AgentChat<M extends AgentChatMessage = AgentChatMessage> {
         this.state.partialNext({
           messages: messages as readonly M[],
           hasOlderMessages,
+          failure: undefined,
           // Messages this client read before show at once, while the latest page loads.
           ...(messages.length > 0 ? { isLoaded: true } : {}),
         }),
       updated: (message) => {
         this.reasoning.read(message);
-        this.state.partialNext({ reasoningVersion: this.state.getLatestValue().reasoningVersion + 1 });
+        this.state.partialNext({
+          reasoningVersion: this.state.getLatestValue().reasoningVersion + 1,
+          reasoningMessageId: message.id,
+        });
       },
+      failed: (error) => this.state.partialNext({ failure: error }),
     });
     this.reader = reader;
     try {
@@ -267,15 +282,20 @@ export class AgentChat<M extends AgentChatMessage = AgentChatMessage> {
    * never reached the router isn't left in the list.
    */
   async send(text: string, options: AgentChatSendOptions = {}): Promise<void> {
+    // A session that can't open was never asked anything, and stays unasked.
+    const session = await this.session();
     this.asked = true;
+    if (this.state.getLatestValue().usedSessionId !== session.id) {
+      this.state.partialNext({ usedSessionId: session.id });
+    }
     try {
-      const session = await this.session();
-      if (this.state.getLatestValue().usedSessionId !== session.id) {
-        this.state.partialNext({ usedSessionId: session.id });
-      }
       await session.responses.create(text, responseOptions(options));
     } catch (error) {
-      await this.discardUnusedSession();
+      // A question that may have reached the router keeps its session: the router may be
+      // answering it, and asking again under the same request id is answered once, there.
+      if (!mayHaveReachedRouter(error)) {
+        await this.discardUnusedSession();
+      }
       throw error;
     }
   }
@@ -334,7 +354,16 @@ export class AgentChat<M extends AgentChatMessage = AgentChatMessage> {
     this.opening = undefined;
     this.stopFollowingSession?.();
     this.stopFollowingSession = undefined;
-    this.state.partialNext({ session: undefined, usedSessionId: undefined, activity: undefined });
+    // The next question creates another conversation, in a channel of its own.
+    this.reader?.stop();
+    this.reader = undefined;
+    this.state.partialNext({
+      session: undefined,
+      usedSessionId: undefined,
+      activity: undefined,
+      messages: [],
+      hasOlderMessages: false,
+    });
     await session.delete().catch(() => undefined);
   }
 
@@ -361,6 +390,11 @@ export class AgentChat<M extends AgentChatMessage = AgentChatMessage> {
         await (opened === undefined ? session.delete() : session.close()).catch(() => undefined);
         throw error;
       }
+    }
+    if (this.closed) {
+      // Closed while its channel opened: nothing more is asked of it.
+      await (opened === undefined ? session.delete() : session.close()).catch(() => undefined);
+      throw new Error("The conversation was closed");
     }
     this.followSession(session);
     this.state.partialNext({ session });
@@ -435,6 +469,8 @@ interface ReaderEvents {
   messages(messages: readonly AgentChatMessage[], hasOlderMessages: boolean): void;
   /** A live update of a message, which may carry more of a reply's thinking. */
   updated(message: AgentChatMessage): void;
+  /** Reading the channel again failed, outside any call that could reject with it. */
+  failed(error: Error): void;
 }
 
 interface ChannelReader {
@@ -554,7 +590,11 @@ function readerV9(channel: ChannelV9, pageSize: number, events: ReaderEvents): C
       stops.push(() => subscription.unsubscribe());
       const reconnected = channel.getClient().on("connection.changed", (event) => {
         if (event.online) {
-          void watchLatest().catch(() => undefined);
+          watchLatest().catch((error: unknown) => {
+            if (!stopped) {
+              events.failed(error instanceof Error ? error : new Error(String(error)));
+            }
+          });
         }
       });
       stops.push(() => reconnected.unsubscribe());
@@ -583,4 +623,13 @@ function readerV9(channel: ChannelV9, pageSize: number, events: ReaderEvents): C
       }
     },
   };
+}
+
+/**
+ * Whether a failed question may have reached the router: it never got an answer (status 0), or
+ * the router failed while handling it (5xx). A refusal (4xx) wrote nothing, and nor did a
+ * failure before anything was sent.
+ */
+function mayHaveReachedRouter(error: unknown): boolean {
+  return error instanceof RouterError && (error.status === 0 || error.status >= 500);
 }

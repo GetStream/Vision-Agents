@@ -9,7 +9,7 @@ import {
   type AgentTransportFeed,
   type AgentTransportRequest,
 } from "../src/chat.js";
-import type { CreateResponseOptions, Session } from "../src/index.js";
+import { RouterError, type CreateResponseOptions, type Session } from "../src/index.js";
 
 type Message = { id: string; text?: string; reasoning?: unknown };
 
@@ -93,7 +93,12 @@ class ChannelV9 {
   get listeners() {
     return this.handlers.size;
   }
+  /** What the next `watch` fails with, if anything. */
+  watchError: Error | undefined;
+  private readonly clientHandlers = new Set<(event: { type: string; online?: boolean }) => void>();
+
   async watch(options: { messages: { limit: number } }) {
+    if (this.watchError) throw this.watchError;
     this.state.messages = [...this.latest];
     return { messages: this.latest.slice(-options.messages.limit) };
   }
@@ -104,7 +109,16 @@ class ChannelV9 {
     return { messages: this.older };
   }
   getClient() {
-    return { on: () => ({ unsubscribe: () => undefined }) };
+    return {
+      on: (_type: string, handler: (event: { type: string; online?: boolean }) => void) => {
+        this.clientHandlers.add(handler);
+        return { unsubscribe: () => void this.clientHandlers.delete(handler) };
+      },
+    };
+  }
+  /** The connection coming back. */
+  reconnect() {
+    for (const handler of [...this.clientHandlers]) handler({ type: "connection.changed", online: true });
   }
 }
 
@@ -258,25 +272,99 @@ describe("AgentChat", () => {
     assert.deepEqual(opened, []);
   });
 
-  it("deletes a new conversation's session when its first question fails, and opens another next time", async () => {
-    const { open, opened, sessions } = opener(new ChannelV9());
-    let first = true;
-    const failing = async (sessionId: string | undefined) => {
-      const session = await open(sessionId);
-      if (first) (session as unknown as FakeSession).failCreate = new Error("offline");
-      first = false;
-      return session;
-    };
-    const failingChat = new AgentChat<Message>({ open: failing });
+  it("deletes a new conversation's session when the router refuses its first question, and reads the next one's channel", async () => {
+    // Each new conversation is kept in a channel of its own.
+    const channels = [new ChannelV9(), new ChannelV9()];
+    const sessions: FakeSession[] = [];
+    const chat = new AgentChat<Message>({
+      open: async () => {
+        const channel = channels[sessions.length];
+        const session = new FakeSession(`new-${sessions.length + 1}`, channel);
+        if (sessions.length === 0) session.failCreate = new RouterError(400, "createResponse", "refused");
+        sessions.push(session);
+        return session as unknown as Session;
+      },
+    });
 
-    await assert.rejects(failingChat.send("Hi"), /offline/);
+    await assert.rejects(chat.send("Hi"), /refused/);
     assert.equal(sessions[0]?.deleted, 1);
-    assert.equal(failingChat.state.getLatestValue().usedSessionId, undefined);
-    assert.equal(failingChat.state.getLatestValue().session, undefined);
+    assert.equal(chat.state.getLatestValue().usedSessionId, undefined);
+    assert.equal(chat.state.getLatestValue().session, undefined);
 
-    await failingChat.send("Hi again");
-    assert.equal(opened.length, 2);
-    assert.equal(failingChat.state.getLatestValue().usedSessionId, "new-2");
+    channels[1]!.latest = [{ id: "q2", text: "Hi again" }];
+    await chat.send("Hi again");
+    assert.equal(chat.state.getLatestValue().usedSessionId, "new-2");
+    assert.deepEqual(
+      chat.state.getLatestValue().messages.map((message) => message.id),
+      ["q2"],
+    );
+    channels[1]!.emit({ type: "message.new", message: { id: "r2" } });
+    assert.deepEqual(
+      chat.state.getLatestValue().messages.map((message) => message.id),
+      ["q2", "r2"],
+    );
+  });
+
+  it("keeps the session of a question that may have reached the router, and asks again there", async () => {
+    const { open, opened, sessions } = opener(new ChannelV9());
+    const chat = new AgentChat<Message>({ open });
+    await chat.prepare();
+    sessions[0]!.failCreate = new RouterError(0, "createResponse", "network");
+
+    await assert.rejects(chat.send("Hi", { requestId: "q1" }), /network/);
+    assert.equal(sessions[0]?.deleted, 0);
+    assert.equal(chat.state.getLatestValue().usedSessionId, "new-1");
+
+    sessions[0]!.failCreate = undefined;
+    await chat.send("Hi", { requestId: "q1" });
+    assert.deepEqual(opened, [undefined]);
+    assert.equal(sessions[0]?.asked.at(-1)?.options.requestId, "q1");
+  });
+
+  it("deletes a later unused session when an earlier question never opened one", async () => {
+    let attempts = 0;
+    const { open, sessions } = opener(new ChannelV9());
+    const chat = new AgentChat<Message>({
+      open: async (id) => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("offline");
+        return open(id);
+      },
+    });
+
+    await assert.rejects(chat.send("Hi"), /offline/);
+    await chat.prepare();
+    await chat.close();
+
+    assert.deepEqual([sessions[0]?.deleted, sessions[0]?.closed], [1, 0]);
+  });
+
+  it("asks nothing of a session whose channel opened after the chat was closed", async () => {
+    const channel = new ChannelV9();
+    let release: () => void = () => undefined;
+    const sessions: FakeSession[] = [];
+    const chat = new AgentChat<Message>({
+      open: async () => {
+        const session = new FakeSession("slow", channel);
+        session.chat = async () => {
+          await new Promise<void>((resolve) => (release = resolve));
+          return { client: {}, channel };
+        };
+        sessions.push(session);
+        return session as unknown as Session;
+      },
+    });
+
+    const sending = chat.send("Hi");
+    await new Promise((resolve) => setImmediate(resolve));
+    const closing = chat.close();
+    release();
+
+    await assert.rejects(sending, /closed/);
+    await closing;
+    assert.equal(sessions[0]?.asked.length, 0);
+    assert.equal(sessions[0]?.deleted, 1);
+    assert.equal(chat.state.getLatestValue().session, undefined);
   });
 
   it("lets go of a session that opened after the chat was closed", async () => {
@@ -392,6 +480,23 @@ describe("AgentChat", () => {
   });
 
   describe("on stream-chat 9", () => {
+    it("says when the channel can't be read again after the connection came back, until it can", async () => {
+      const channel = new ChannelV9();
+      const { open } = opener(channel);
+      const chat = new AgentChat<Message>({ sessionId: "s1", open });
+      await chat.prepare();
+
+      channel.watchError = new Error("token expired");
+      channel.reconnect();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(chat.state.getLatestValue().failure?.message, "token expired");
+
+      channel.watchError = undefined;
+      channel.reconnect();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(chat.state.getLatestValue().failure, undefined);
+    });
+
     it("loads older messages before the oldest one, and rejects when they can't load", async () => {
       const channel = new ChannelV9();
       channel.latest = [{ id: "c" }, { id: "d" }];
@@ -554,6 +659,41 @@ describe("agentChatTransport", () => {
       text: "Plan a weekend in Ohrid",
       options: { images: [{ url: "data:image/png;base64,AA" }], reasoningEffort: "high", uiAction, requestId: "m1" },
     });
+  });
+
+  it("makes afresh only the messages an update touched, and the reply whose thinking grew", async () => {
+    const channel = new ChannelV9();
+    channel.latest = [{ id: "q1" }, { id: "r1" }];
+    const { open } = opener(channel);
+    const chat = new AgentChat<Message>({ sessionId: "s1", open });
+    await chat.prepare();
+    const transport = agentChatTransport(chat, { adapt: (message) => ({ id: message.id }) });
+    const fed: (readonly { id: string }[])[] = [];
+    transport.connect({
+      isConnected: true,
+      updateMessages: (messages) => void fed.push(messages),
+      updateHasOlderMessages: () => undefined,
+      updateActivity: () => undefined,
+    });
+    const before = fed.at(-1);
+
+    channel.emit({ type: "message.updated", message: { id: "r1", reasoning: { id: "s1", offset: 0, text: "Hm" } } });
+
+    const after = fed.at(-1);
+    assert.equal(after?.[0], before?.[0]);
+    assert.notEqual(after?.[1], before?.[1]);
+  });
+
+  it("asks a question again with the photos and UI action it went out with", async () => {
+    const { session, transport } = await connected({
+      images: async (attachments) => attachments.map((each) => ({ url: String(each) })),
+    });
+    const uiAction = { message_id: "r1", format: "a2ui", name: "pick", payload: {} };
+
+    await transport.send(request({ attachments: ["data:image/png;base64,AA"], custom: { uiAction } }));
+    await transport.send(request({ kind: "regenerate", messageId: "m2" }));
+
+    assert.deepEqual(session.asked.at(-1)?.options, { images: [{ url: "data:image/png;base64,AA" }], uiAction });
   });
 
   it("asks a regenerate again as a new question, and refuses an edit", async () => {
