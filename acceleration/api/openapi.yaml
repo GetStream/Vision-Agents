@@ -474,6 +474,11 @@ components:
       type: object
     AgentConfig:
       properties:
+        agents:
+          description: The app's other text agents this one may hand work to, each as a tool. Absent when there are none.
+          items:
+            $ref: '#/components/schemas/ChildAgent'
+          type: array
         calls:
           $ref: '#/components/schemas/AgentCalls'
         channels:
@@ -597,6 +602,12 @@ components:
       additionalProperties: false
       description: What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored.
       properties:
+        agents:
+          description: Replaces the list whole. An empty list removes it.
+          items:
+            $ref: '#/components/schemas/ChildAgent'
+          maxItems: 16
+          type: array
         calls:
           $ref: '#/components/schemas/AgentCalls'
         channels:
@@ -725,6 +736,12 @@ components:
       type: object
     AgentConfigRequest:
       properties:
+        agents:
+          description: The app's other text agents this one may hand work to, each offered to its model as a tool that takes one string, input, and answers with what that agent said last. Several called in one reply run at once, at most 8 at a time. Each runs as an incognito run of its own, on its own llm, instructions, connectors and sandbox, and its spend is added to the parent run's usage. Only a text agent has them, and an agent named here must be a text agent with no agents of its own and not this one. Omitted or null on an update, the list stored stays as it is; an empty list removes it.
+          items:
+            $ref: '#/components/schemas/ChildAgent'
+          maxItems: 16
+          type: array
         calls:
           $ref: '#/components/schemas/AgentCalls'
           description: 'The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and press are on and end_call is off. On an update, a tool left out keeps its stored settings and a tool sent replaces its settings whole.'
@@ -2538,6 +2555,31 @@ components:
           type: string
       required:
         - agent_id
+      type: object
+    ChildAgent:
+      description: Another of the app's text agents a text agent may hand work to, offered to its model as a tool.
+      properties:
+        config:
+          description: 'The agent config to hand work to: one of the app''s text agents, by name or id. It is stored, and read back, by name.'
+          minLength: 1
+          type: string
+        description:
+          description: What the model is told the agent does, which is the whole of how it decides when to call it.
+          type: string
+        timeout_ms:
+          description: 'How long one call may take, two minutes when left out. A call never outlasts the run that made it: it gets this or what is left of the run, whichever is less. A call that runs out of time, or whose agent fails, is answered to the model as a failed tool call, and the run goes on.'
+          format: int64
+          maximum: 600000
+          minimum: 1000
+          type: integer
+        tool:
+          description: The name the model calls it by, unique among the config's agents.
+          pattern: ^[a-zA-Z0-9_-]{1,64}$
+          patternDescription: up to 64 letters, digits, underscores and hyphens
+          type: string
+      required:
+        - config
+        - tool
       type: object
     ClaimGuestRequest:
       properties:
@@ -8102,6 +8144,11 @@ components:
       type: object
     Run:
       properties:
+        children:
+          additionalProperties:
+            $ref: '#/components/schemas/CallUsage'
+          description: What the runs of the child agents it called spent, by the tool each was called by. Absent when it called none.
+          type: object
         final_text:
           description: The last thing the agent said.
           type: string
@@ -8113,7 +8160,7 @@ components:
           type: string
         usage:
           $ref: '#/components/schemas/CallUsage'
-          description: What the run's model calls spent.
+          description: What the run's model calls spent, the runs of the child agents it called included.
       required:
         - final_text
         - model_route
@@ -10005,6 +10052,12 @@ components:
     SyncAgentRequest:
       description: An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
       properties:
+        agents:
+          description: 'agent.yaml''s agents: the app''s other text agents this one may hand work to, each as a tool, by name. Sent, they replace the stored list whole, an empty list removing it; left out, the stored list stays. An agent named must already exist, so a directory is synced after the agents it names.'
+          items:
+            $ref: '#/components/schemas/ChildAgent'
+          maxItems: 16
+          type: array
         base_change:
           description: The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again.
           type: string
@@ -17405,6 +17458,7 @@ paths:
         Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
         The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
         The input is handed to the agent as JSON data, never as instructions.
+        The agents a text config names are tools of the run: each call runs that agent on its input as an incognito run of its own, given its own timeout or what is left of this run, whichever is less, and several called in one reply run at once, at most 8 at a time. A call that fails or runs out of time is a failed tool call the agent answers around, not a failed run. What they spend is in usage, and by tool in children. They take none of the app's run slots: this run's covers them.
         Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request. The router fetches each URL before the run starts, from public hosts only, and hands the model the bytes it fetched, so no run answers without seeing an image it was given: one that does not answer 200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable naming the image, which retrying the same image does not fix.
         A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, an input or tool result the prompt injection screen refused a 400 prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
       operationId: createRun

@@ -291,6 +291,19 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 		tags := maps.Clone(settings.Tags)
 		body.Tags = &tags
 	}
+	if settings.Agents != nil {
+		agents := make([]acceleration.ChildAgent, 0, len(*settings.Agents))
+		for _, child := range *settings.Agents {
+			declared := acceleration.ChildAgent{Config: child.Config, Tool: child.Tool}
+			setString(&declared.Description, child.Description)
+			if child.TimeoutMs > 0 {
+				timeout := int64(child.TimeoutMs)
+				declared.TimeoutMs = &timeout
+			}
+			agents = append(agents, declared)
+		}
+		body.Agents = &agents
+	}
 	if settings.Video != nil {
 		body.Video = &acceleration.SessionVideo{MaxFrames: &settings.Video.MaxFrames}
 		setString(&body.Video.Source, settings.Video.Source)

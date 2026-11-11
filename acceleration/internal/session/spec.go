@@ -227,8 +227,14 @@ type Spec struct {
 	// LLMFallbacks are tried in order when LLMTarget fails a turn, from the config's
 	// llm_fallbacks.
 	LLMFallbacks []string
-	STTTarget    string
-	TTSTarget    string
+	// Agents are the app's other text agents a text session may hand work to as tools,
+	// from the config's agents.
+	Agents []store.ChildAgent
+	// RunDeadline is when the run this session answers is given up, and zero for a session
+	// that is no run. Nothing it hands work to is given longer.
+	RunDeadline time.Time
+	STTTarget   string
+	TTSTarget   string
 	// STSTarget routes one native audio model that hears and speaks for itself. Naming
 	// one makes this a native session: the agent opens that model and no transcriber,
 	// conversation model or voice, so the three targets above are left as they are.
@@ -410,6 +416,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		Voice:          config.Voice,
 		LLMTarget:      config.LLM,
 		LLMFallbacks:   config.LLMFallbacks,
+		Agents:         config.Agents,
 		SubagentTarget: config.Subagent,
 		VideoSource:    config.VideoSource, VideoMaxFrames: config.VideoMaxFrames,
 		SearchTarget:       config.Search,

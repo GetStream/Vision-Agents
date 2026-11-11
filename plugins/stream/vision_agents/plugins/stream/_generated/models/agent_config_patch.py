@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from ..models.agent_review import AgentReview
     from ..models.agent_scheduling import AgentScheduling
     from ..models.agent_tools import AgentTools
+    from ..models.child_agent import ChildAgent
     from ..models.floor_control import FloorControl
     from ..models.greeting import Greeting
     from ..models.resume_history import ResumeHistory
@@ -126,6 +127,7 @@ class AgentConfigPatch:
                 voice name instead.
             llm_fallbacks (list[str] | Unset): Replaces the list whole. An empty list removes it.
             chat_channels (list[AgentChatChannel] | Unset): Replaces the list whole. An empty list removes it.
+            agents (list[ChildAgent] | Unset): Replaces the list whole. An empty list removes it.
     """
 
     calls: AgentCalls | Unset = UNSET
@@ -166,6 +168,7 @@ class AgentConfigPatch:
     voice: str | Unset = UNSET
     llm_fallbacks: list[str] | Unset = UNSET
     chat_channels: list[AgentChatChannel] | Unset = UNSET
+    agents: list[ChildAgent] | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.agent_config_patch_plugins_item_type_1 import (
@@ -319,6 +322,13 @@ class AgentConfigPatch:
                 chat_channels_item = chat_channels_item_data.to_dict()
                 chat_channels.append(chat_channels_item)
 
+        agents: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.agents, Unset):
+            agents = []
+            for agents_item_data in self.agents:
+                agents_item = agents_item_data.to_dict()
+                agents.append(agents_item)
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
@@ -398,6 +408,8 @@ class AgentConfigPatch:
             field_dict["llm_fallbacks"] = llm_fallbacks
         if chat_channels is not UNSET:
             field_dict["chat_channels"] = chat_channels
+        if agents is not UNSET:
+            field_dict["agents"] = agents
 
         return field_dict
 
@@ -421,6 +433,7 @@ class AgentConfigPatch:
         from ..models.agent_review import AgentReview
         from ..models.agent_scheduling import AgentScheduling
         from ..models.agent_tools import AgentTools
+        from ..models.child_agent import ChildAgent
         from ..models.floor_control import FloorControl
         from ..models.greeting import Greeting
         from ..models.resume_history import ResumeHistory
@@ -644,6 +657,15 @@ class AgentConfigPatch:
 
                 chat_channels.append(chat_channels_item)
 
+        _agents = d.pop("agents", UNSET)
+        agents: list[ChildAgent] | Unset = UNSET
+        if _agents is not UNSET:
+            agents = []
+            for agents_item_data in _agents:
+                agents_item = ChildAgent.from_dict(agents_item_data)
+
+                agents.append(agents_item)
+
         agent_config_patch = cls(
             calls=calls,
             channels=channels,
@@ -683,6 +705,7 @@ class AgentConfigPatch:
             voice=voice,
             llm_fallbacks=llm_fallbacks,
             chat_channels=chat_channels,
+            agents=agents,
         )
 
         return agent_config_patch

@@ -132,6 +132,7 @@ from .channel_line_request import ChannelLineRequest
 from .channel_link import ChannelLink
 from .chat_token import ChatToken
 from .chat_token_request import ChatTokenRequest
+from .child_agent import ChildAgent
 from .claim_guest_request import ClaimGuestRequest
 from .claim_guest_result import ClaimGuestResult
 from .classify_answer import ClassifyAnswer
@@ -449,6 +450,7 @@ from .route import Route
 from .router_config import RouterConfig
 from .router_config_request import RouterConfigRequest
 from .run import Run
+from .run_children import RunChildren
 from .sandbox import Sandbox
 from .sandbox_limits import SandboxLimits
 from .sandbox_limits_network import SandboxLimitsNetwork
@@ -763,6 +765,7 @@ __all__ = (
     "ChannelLink",
     "ChatToken",
     "ChatTokenRequest",
+    "ChildAgent",
     "ClaimGuestRequest",
     "ClaimGuestResult",
     "ClassifyAnswer",
@@ -1078,6 +1081,7 @@ __all__ = (
     "RouterConfig",
     "RouterConfigRequest",
     "Run",
+    "RunChildren",
     "Sandbox",
     "SandboxLimits",
     "SandboxLimitsNetwork",

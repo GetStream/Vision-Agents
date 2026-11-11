@@ -1813,6 +1813,7 @@ export type paths = {
          * @description Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
          *     The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
          *     The input is handed to the agent as JSON data, never as instructions.
+         *     The agents a text config names are tools of the run: each call runs that agent on its input as an incognito run of its own, given its own timeout or what is left of this run, whichever is less, and several called in one reply run at once, at most 8 at a time. A call that fails or runs out of time is a failed tool call the agent answers around, not a failed run. What they spend is in usage, and by tool in children. They take none of the app's run slots: this run's covers them.
          *     Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request. The router fetches each URL before the run starts, from public hosts only, and hands the model the bytes it fetched, so no run answers without seeing an image it was given: one that does not answer 200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable naming the image, which retrying the same image does not fix.
          *     A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, an input or tool result the prompt injection screen refused a 400 prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
          */
@@ -4591,6 +4592,8 @@ export type components = {
             readonly type: string;
         };
         readonly AgentConfig: {
+            /** @description The app's other text agents this one may hand work to, each as a tool. Absent when there are none. */
+            readonly agents?: readonly components["schemas"]["ChildAgent"][];
             readonly calls?: components["schemas"]["AgentCalls"];
             readonly channels?: components["schemas"]["AgentChannels"];
             /** @description The Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels. Absent when there are none. */
@@ -4652,6 +4655,8 @@ export type components = {
         };
         /** @description What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored. */
         readonly AgentConfigPatch: {
+            /** @description Replaces the list whole. An empty list removes it. */
+            readonly agents?: readonly components["schemas"]["ChildAgent"][];
             readonly calls?: components["schemas"]["AgentCalls"];
             readonly channels?: components["schemas"]["AgentChannels"];
             /** @description Replaces the list whole. An empty list removes it. */
@@ -4724,6 +4729,8 @@ export type components = {
             readonly voice?: string;
         };
         readonly AgentConfigRequest: {
+            /** @description The app's other text agents this one may hand work to, each offered to its model as a tool that takes one string, input, and answers with what that agent said last. Several called in one reply run at once, at most 8 at a time. Each runs as an incognito run of its own, on its own llm, instructions, connectors and sandbox, and its spend is added to the parent run's usage. Only a text agent has them, and an agent named here must be a text agent with no agents of its own and not this one. Omitted or null on an update, the list stored stays as it is; an empty list removes it. */
+            readonly agents?: readonly components["schemas"]["ChildAgent"][];
             /** @description The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and press are on and end_call is off. On an update, a tool left out keeps its stored settings and a tool sent replaces its settings whole. */
             readonly calls?: components["schemas"]["AgentCalls"];
             /** @description Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels. */
@@ -5754,6 +5761,20 @@ export type components = {
             readonly user_id?: string;
             /** @description The name shown against anything they write. Defaults to the user id. */
             readonly user_name?: string;
+        };
+        /** @description Another of the app's text agents a text agent may hand work to, offered to its model as a tool. */
+        readonly ChildAgent: {
+            /** @description The agent config to hand work to: one of the app's text agents, by name or id. It is stored, and read back, by name. */
+            readonly config: string;
+            /** @description What the model is told the agent does, which is the whole of how it decides when to call it. */
+            readonly description?: string;
+            /**
+             * Format: int64
+             * @description How long one call may take, two minutes when left out. A call never outlasts the run that made it: it gets this or what is left of the run, whichever is less. A call that runs out of time, or whose agent fails, is answered to the model as a failed tool call, and the run goes on.
+             */
+            readonly timeout_ms?: number;
+            /** @description The name the model calls it by, unique among the config's agents. */
+            readonly tool: string;
         };
         readonly ClaimGuestRequest: {
             readonly guest_id: string;
@@ -8984,13 +9005,17 @@ export type components = {
             readonly tts?: components["schemas"]["TtsOptions"];
         };
         readonly Run: {
+            /** @description What the runs of the child agents it called spent, by the tool each was called by. Absent when it called none. */
+            readonly children?: {
+                readonly [key: string]: components["schemas"]["CallUsage"];
+            };
             /** @description The last thing the agent said. */
             readonly final_text: string;
             /** @description The provider/model routing picked to answer. */
             readonly model_route: string;
             /** @description The session the run held. It ended with the run, and being incognito, it cannot be read back. */
             readonly session_id: string;
-            /** @description What the run's model calls spent. */
+            /** @description What the run's model calls spent, the runs of the child agents it called included. */
             readonly usage: components["schemas"]["CallUsage"];
         };
         /**
@@ -10133,6 +10158,8 @@ export type components = {
         };
         /** @description An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it. */
         readonly SyncAgentRequest: {
+            /** @description agent.yaml's agents: the app's other text agents this one may hand work to, each as a tool, by name. Sent, they replace the stored list whole, an empty list removing it; left out, the stored list stays. An agent named must already exist, so a directory is synced after the agents it names. */
+            readonly agents?: readonly components["schemas"]["ChildAgent"][];
             /** @description The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again. */
             readonly base_change?: string;
             /** @description The tools an agent on a phone call is offered: end the call, press keys, transfer. A tool left out keeps what is stored; a tool sent replaces its settings whole. */

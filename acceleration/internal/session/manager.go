@@ -749,6 +749,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	}
 	created.connectorsUnavailable = connectorsUnavailable
 	created.toolSources = sources
+	// Last, so every other tool's name is taken first and a child cannot shadow one.
+	tools, runner = m.childAgents(spec, created, tools, runner)
 	if spec.ProgressiveTools {
 		tools, runner = progressively(tools, connectorTools, runner)
 	}
