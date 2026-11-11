@@ -39,7 +39,7 @@ func sold(country string) error {
 	}
 	refused := "not in " + strconv.Quote(country)
 	if country == "" {
-		refused = "and this number is in neither"
+		refused = "and this is in neither"
 	}
 	return stack.Wrap(Invalid(fmt.Errorf("phone: numbers are sold only in the US and Canada (%s), %s",
 		strings.Join(soldIn, ", "), refused)))

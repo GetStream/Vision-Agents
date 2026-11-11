@@ -426,6 +426,21 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 	if purchase.Owner.CustomerID == "" {
 		return store.PhoneNumber{}, stack.Wrap(errors.New("phone: a number must belong to a customer"))
 	}
+	// Refused before anything is changed or paid for, since a number in another form would not be
+	// recorded.
+	if !store.IsE164(purchase.E164) {
+		return store.PhoneNumber{}, stack.Wrap(fmt.Errorf("phone: %w: %q", store.ErrNotE164, purchase.E164))
+	}
+	// The number's own country, not only the one the request names, since +1 is also Jamaica,
+	// Puerto Rico and the Bahamas.
+	if purchase.Country != "" {
+		if err := sold(purchase.Country); err != nil {
+			return store.PhoneNumber{}, err
+		}
+	}
+	if err := sold(Country(purchase.E164)); err != nil {
+		return store.PhoneNumber{}, err
+	}
 	if err := s.Suspended(ctx, purchase.Owner.CustomerID); err != nil {
 		return store.PhoneNumber{}, err
 	}
@@ -444,20 +459,6 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 		if err := s.pointCallHook(ctx, stream, app); err != nil {
 			return store.PhoneNumber{}, err
 		}
-	}
-	// Refused before the vendor is paid, since a number in another form would not be recorded.
-	if !store.IsE164(purchase.E164) {
-		return store.PhoneNumber{}, stack.Wrap(fmt.Errorf("phone: %w: %q", store.ErrNotE164, purchase.E164))
-	}
-	// The number's own country, not only the one the request names, since +1 is also Jamaica,
-	// Puerto Rico and the Bahamas.
-	if purchase.Country != "" {
-		if err := sold(purchase.Country); err != nil {
-			return store.PhoneNumber{}, err
-		}
-	}
-	if err := sold(Country(purchase.E164)); err != nil {
-		return store.PhoneNumber{}, err
 	}
 	provider, err := s.registry.Open(purchase.Vendor)
 	if err != nil {
