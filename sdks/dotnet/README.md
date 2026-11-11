@@ -238,6 +238,14 @@ var branch = await session.ForkAsync(new ForkOptions { ResponseId = items[2].Res
 
 var found = await api.Sessions.SearchAsync("pricing", new SessionQuery { Limit = 20 });
 var live = await api.Sessions.QueryAsync(new SessionQuery { Agent = "docs", State = "live", Cursor = found.NextCursor });
+var october = await api.Sessions.QueryAsync(new SessionQuery
+{
+    Team = "finance", // the team their usage is counted under
+    CreatedSince = new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero),
+    CreatedBefore = new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero),
+    Custom = new Dictionary<string, string> { ["ticket"] = "4721" },
+    Sort = "updated_at",
+});
 ```
 
 Lists come a page at a time: `Items`, and `NextCursor` while `HasMore`. A text conversation

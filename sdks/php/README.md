@@ -96,6 +96,13 @@ $sessions = $client->agent('support')->sessions;
 $page = $sessions->query(userId: 'u1', state: 'live');
 $next = $sessions->query(userId: 'u1', state: 'live', cursor: $page->nextCursor);
 $found = $sessions->search('pricing');
+$october = $sessions->query(
+    team: 'finance', // the team their usage is counted under
+    createdSince: new DateTimeImmutable('2026-10-01T00:00:00Z'),
+    createdBefore: new DateTimeImmutable('2026-11-01T00:00:00Z'),
+    custom: ['ticket' => '4721'],
+    sort: SessionSortField::UpdatedAt,
+);
 ```
 
 `close()` stops a session and keeps what it recorded and remembered; `delete()` deletes it,

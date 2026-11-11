@@ -315,6 +315,13 @@ first:
 ```go
 recent, _ := docs.Sessions.Query(ctx, client.Query{ProjectID: "docs", Limit: 20})
 found, _ := docs.Sessions.Search(ctx, "sendbird comparison", client.Query{})
+october, _ := docs.Sessions.Query(ctx, client.Query{
+	Team:          "finance", // the team their usage is counted under
+	CreatedAfter:  time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
+	CreatedBefore: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC),
+	Custom:        map[string]string{"ticket": "4721"},
+	Sort:          acceleration.UpdatedAt,
+})
 ```
 
 Every text conversation is kept in a Stream Chat channel, `session.ConversationID()`.
