@@ -58,12 +58,12 @@ agent.chat { |session| session.responses.create("What changed in v3?") }
 ```
 
 A tool can say how the backend treats its calls, and its block can take the call it runs for
-as a second argument:
+as its first argument, ahead of the arguments:
 
 ```ruby
 agent.tools.register("book_flight", description: "Book a flight for the caller",
                      parameters: { type: "object", properties: { flight_id: { type: "string" } } },
-                     timeout: 20, approval: "Book flight {flight_id}?") do |args, tool_call_context|
+                     timeout: 20, approval: "Book flight {flight_id}?") do |tool_call_context, args|
   tool_call_context.update("checking seats")
   tool_call_context.disallow_interruptions
   bookings.book(args["flight_id"], user: tool_call_context.user.id, key: tool_call_context.id)

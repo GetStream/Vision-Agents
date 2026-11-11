@@ -32,7 +32,7 @@ public sealed class ToolCallTests
             await Finish(peer);
         });
         await using var agent = Agent(router);
-        agent.Tools.Register("book", "Books a flight", [], async (JsonElement _, ToolCall toolCallContext, CancellationToken cancellationToken) =>
+        agent.Tools.Register("book", "Books a flight", [], async (ToolCallContext toolCallContext, JsonElement _, CancellationToken cancellationToken) =>
         {
             await toolCallContext.UpdateAsync("Looking at flights", cancellationToken);
             await toolCallContext.SayAsync("One moment.", cancellationToken);
@@ -156,7 +156,7 @@ public sealed class ToolCallTests
         });
         await using var agent = Agent(router);
         agent.Tools
-            .Register("talk", "Talks at length", [], async (JsonElement _, ToolCall toolCallContext, CancellationToken cancellationToken) =>
+            .Register("talk", "Talks at length", [], async (ToolCallContext toolCallContext, JsonElement _, CancellationToken cancellationToken) =>
             {
                 var update = toolCallContext.UpdateAsync(new string('x', 32 << 20), cancellationToken);
                 cancellationToken.Register(cancelled.SetResult);
@@ -192,7 +192,7 @@ public sealed class ToolCallTests
         });
         await using var agent = Agent(router);
         agent.Tools
-            .Register("talk", "Talks at length", [], async (JsonElement _, ToolCall toolCallContext, CancellationToken _) =>
+            .Register("talk", "Talks at length", [], async (ToolCallContext toolCallContext, JsonElement _, CancellationToken _) =>
             {
                 using var caller = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
                 try
@@ -230,7 +230,7 @@ public sealed class ToolCallTests
         });
         await using var agent = Agent(router);
         agent.Tools
-            .Register("talk", "Talks", [], async (JsonElement _, ToolCall toolCallContext, CancellationToken cancellationToken) =>
+            .Register("talk", "Talks", [], async (ToolCallContext toolCallContext, JsonElement _, CancellationToken cancellationToken) =>
             {
                 try
                 {
@@ -430,7 +430,7 @@ public sealed class ToolCallTests
     /// which may be interrupted, and <c>fast</c>.
     /// </summary>
     private static void Payments(Tools tools) => tools
-        .Register("pay", "Pays", Amount(), async (JsonElement _, ToolCall toolCallContext, CancellationToken cancellationToken) =>
+        .Register("pay", "Pays", Amount(), async (ToolCallContext toolCallContext, JsonElement _, CancellationToken cancellationToken) =>
         {
             await toolCallContext.DisallowInterruptionsAsync(cancellationToken);
             await Task.Delay(200, cancellationToken);

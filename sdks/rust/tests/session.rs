@@ -5,7 +5,7 @@ use std::time::Duration;
 use axum::http::Method;
 use serde_json::json;
 use support::{Server, item, response, session};
-use vision_agents::{Error, Session, ToolCall, Tools, WatchOptions, types};
+use vision_agents::{Error, Session, ToolCallContext, Tools, WatchOptions, types};
 
 fn weather() -> Tools {
     let tools = Tools::new();
@@ -783,11 +783,14 @@ fn tool(name: &str) -> types::SessionTool {
 fn holding() -> Tools {
     let tools = Tools::new();
     tools
-        .register_with_tool_call_context(tool("pay"), |_, tool_call_context: ToolCall| async move {
-            tool_call_context.disallow_interruptions().await?;
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            Ok::<_, Error>("paid")
-        })
+        .register_with_tool_call_context(
+            tool("pay"),
+            |tool_call_context: ToolCallContext, _| async move {
+                tool_call_context.disallow_interruptions().await?;
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                Ok::<_, Error>("paid")
+            },
+        )
         .unwrap();
     tools.register("fast", "Does not take long", json!({}), |_| async {
         Ok::<_, String>("done")
@@ -800,7 +803,7 @@ async fn a_function_is_told_who_its_call_answers_and_can_say_how_it_is_going() {
     let server = Server::start().await;
     let tools = Tools::new();
     tools
-        .register_with_tool_call_context(tool("book"), |_, tool_call_context: ToolCall| async move {
+        .register_with_tool_call_context(tool("book"), |tool_call_context: ToolCallContext, _| async move {
             tool_call_context.update("Looking at flights")
                 .await
                 .map_err(|error| error.to_string())?;

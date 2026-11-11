@@ -7,7 +7,7 @@ namespace GetStream\VisionAgents\Worker;
 use Amp\Future;
 use GetStream\VisionAgents\Json;
 use GetStream\VisionAgents\Session;
-use GetStream\VisionAgents\ToolCall;
+use GetStream\VisionAgents\ToolCallContext;
 use GetStream\VisionAgents\Tools;
 use Generator;
 use IteratorAggregate;
@@ -32,7 +32,7 @@ final class Watch implements IteratorAggregate
     /** @var array<string, Future<mixed>> tool calls still running, by id */
     private array $running = [];
 
-    /** @var array<string, ToolCall> the calls those are running for, by id */
+    /** @var array<string, ToolCallContext> the calls those are running for, by id */
     private array $calls = [];
 
     private readonly Holds $holds;
@@ -70,7 +70,7 @@ final class Watch implements IteratorAggregate
                         continue;
                     }
                     $id = Json::string($frame, 'id');
-                    $toolCallContext = ToolCall::fromFrame($frame, $this->sessionId, $this->socket->send(...), $this->holds, $id);
+                    $toolCallContext = ToolCallContext::fromFrame($frame, $this->sessionId, $this->socket->send(...), $this->holds, $id);
                     $this->calls[$id] = $toolCallContext;
                     // Each call in its own fiber, so a slow tool does not hold up the events
                     // behind it or the other calls the model made in the same turn.
@@ -146,7 +146,7 @@ final class Watch implements IteratorAggregate
      *
      * @param array<string, mixed> $frame
      */
-    private function runTool(array $frame, ToolCall $toolCallContext): void
+    private function runTool(array $frame, ToolCallContext $toolCallContext): void
     {
         $id = Json::string($frame, 'id');
         $name = Json::string($frame, 'name');

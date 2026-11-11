@@ -192,15 +192,15 @@ model as the tool's error. `register` also takes `displayTitle:`, what the reply
 shows, and `executor: 'client'` for a tool a person's device runs instead.
 
 A tool can say how the backend treats its calls, and its callable can take the call it runs
-for as a second argument:
+for as its first argument, ahead of the arguments:
 
 ```php
-use GetStream\VisionAgents\ToolCall;
+use GetStream\VisionAgents\ToolCallContext;
 
 $agent->tools->register('book_flight', 'Book a flight for the caller', [
     'type' => 'object',
     'properties' => ['flight_id' => ['type' => 'string']],
-], function (array $args, ToolCall $toolCallContext): string {
+], function (ToolCallContext $toolCallContext, array $args): string {
     $toolCallContext->update('checking seats');
     $toolCallContext->disallowInterruptions();
     return $bookings->book($args['flight_id'], user: $toolCallContext->user->id, key: $toolCallContext->id);

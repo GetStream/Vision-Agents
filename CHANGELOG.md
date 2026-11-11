@@ -474,6 +474,17 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### A tool is handed its ToolCallContext as an argument
+
+A tool function that needs the call it runs for (who asked, its id, `update`, `say`, `disallow_interruptions`) now takes it as an argument, a `ToolCallContext` (formerly `ToolCall`). A tool that does not need it takes only its arguments. Go is unchanged.
+
+- Python: annotate the first parameter `ToolCallContext`, as in `async def book_flight(tool_call_context: ToolCallContext, flight_id: str)`. The model is not told about it. `get_tool_call_context()` and `using_tool_call_context()` are gone: a test passes the function a `ToolCallContext(...)`, or `call_function(name, arguments, tool_call_context)`.
+- JavaScript: `run` is handed the arguments, then the context: `run: ({ city }) => ...` or `run: ({ order_id }, toolCallContext) => ...`. There is no `signal`: a cancelled call fails with `<name> was cancelled` and is no longer waited on, and a timed-out one fails as before. `disallowInterruptions()` resolves with nothing, and rejects with `CallNotHeldError` when the call was stopped first.
+- Ruby: a block that takes two arguments gets `|tool_call_context, args|`; one that takes one gets `|args|`.
+- PHP: a callable that takes two arguments, or a `ToolCallContext` first, gets `(ToolCallContext $toolCallContext, array $args)`; one that takes one gets `(array $args)`.
+- Rust: `register_with_tool_call_context` hands its function `(tool_call_context: ToolCallContext, arguments)`.
+- C#: the overloads that take the context are `(ToolCallContext toolCallContext, arguments, cancellationToken)`.
+
 ### A worker cannot host tools for an agent the app does not have
 
 `host_tools` on `/v1/dispatch` is answered `hosting_refused` with `there is no agent called <name>` when the app has no agent config of that name. Sessions are only opened by a config's name, so such tools were never offered to anything while the worker looked healthy. The Go, Python and JavaScript SDKs already stop the worker on a refusal, so a misspelled `api.Agent("<name>")` now fails at start naming the agent; sync the agent before starting its worker. A router with no config store, or one that cannot read it at that moment, still takes the offer (AI-3132).

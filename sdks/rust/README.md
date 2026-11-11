@@ -60,10 +60,10 @@ Tool calls are answered by the session itself, whether or not anything is readin
 model is mid-sentence waiting. A tool that returns `Err` is reported to the model.
 
 A tool declared with `register_with_tool_call_context` says how the backend treats its calls,
-and is handed the call it runs for:
+and is handed the call it runs for, then the arguments:
 
 ```rust
-use vision_agents::{Error, ToolCall, types};
+use vision_agents::{Error, ToolCallContext, types};
 
 tools.register_with_tool_call_context(
     types::SessionTool {
@@ -75,7 +75,7 @@ tools.register_with_tool_call_context(
         approval: Some(types::SessionToolApproval { title: "Book flight {flight_id}?".into(), ..Default::default() }),
         ..Default::default()
     },
-    async |arguments, tool_call_context: ToolCall| {
+    async |tool_call_context: ToolCallContext, arguments| {
         tool_call_context.update("checking seats").await?;
         tool_call_context.disallow_interruptions().await?;
         let user = &tool_call_context.user.id;

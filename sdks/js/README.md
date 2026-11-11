@@ -296,7 +296,8 @@ refuses fail the call with what was wrong, such as `seats: Too big: expected num
 holds; the model is just not told it. A JSON Schema written out is told to the model as it is,
 and its arguments reach `run` unchecked. The package does not depend on Zod.
 
-A tool can say how the backend treats its calls, and read the call it is running for:
+A tool can say how the backend treats its calls. `run` is handed the arguments, then the call it
+is running for, which a tool that does not need it leaves out:
 
 ```ts
 agent.tools.register<{ flight_id: string }>({
@@ -305,14 +306,10 @@ agent.tools.register<{ flight_id: string }>({
   parameters: { type: "object", properties: { flight_id: { type: "string" } }, required: ["flight_id"] },
   approval: { title: "Book flight {flight_id}?" },
   timeoutMs: 20_000,
-  run: async ({ flight_id }, signal, toolCallContext) => {
+  run: async ({ flight_id }, toolCallContext) => {
     toolCallContext.update("checking seats");
-    const writing = await toolCallContext.disallowInterruptions();
-    return bookings.book(flight_id, {
-      user: toolCallContext.user.id,
-      key: toolCallContext.id,
-      signal: writing,
-    });
+    await toolCallContext.disallowInterruptions();
+    return bookings.book(flight_id, { user: toolCallContext.user.id, key: toolCallContext.id });
   },
 });
 ```
@@ -320,7 +317,7 @@ agent.tools.register<{ flight_id: string }>({
 - `interruptible: true` lets the caller talking over the agent cancel a call in flight. By
   default it keeps running and the model is told it is still going.
 - `timeoutMs` is how long one call may take, in place of the session's. A call that takes
-  longer is aborted and fails.
+  longer fails.
 - `approval` is asked before each call runs. In writing the call waits in `session.approvals`
   until `session.decide(id, { allowed })` answers it; a page follows the list in
   `session.conversation`, which says when it changes, a cancel by the model included.
@@ -331,12 +328,12 @@ agent.tools.register<{ flight_id: string }>({
 
 `toolCallContext` is the call being answered: its `id`, which a call sent again keeps, so it is
 the key to make a side effect happen once; `sessionId`, `turnId`, the `user` whose turn asked,
-and the `conversation`. `update(text)` says how the call is going: a voice agent tells the
-caller in its own words once nobody is talking. `say(text)` has it say `text` as written, which
-a speech-to-speech model may paraphrase. `disallowInterruptions()` keeps the call going from
-then on, for a write that must not stop halfway, and resolves with the signal to do it on, which
-only the timeout and the socket ending abort. When the call had already been stopped, that
-signal is already aborted with a `CallNotHeldError`. A call the router addresses to another
+and the `conversation`. A call cancelled, as when the caller talks over the agent, fails at once
+and its result is no longer waited on. `update(text)` says how the call is going: a voice agent
+tells the caller in its own words once nobody is talking. `say(text)` has it say `text` as
+written, which a speech-to-speech model may paraphrase. `disallowInterruptions()` keeps the call
+going from then on, for a write that must not stop halfway, and rejects with a
+`CallNotHeldError` when the call had already been stopped, so the write never starts. A call the router addresses to another
 watcher of the session (`run: false`) is left for whoever runs it.
 
 A function shows the model a picture by returning a `ToolOutput`: its `text`, and `images`
@@ -410,7 +407,7 @@ dispatch.host(agent, { toolTimeoutMs: 60_000 });
 
 The router offers them to each session naming the agent and sends every call here. A hosted
 tool takes the same `interruptible`, `timeoutMs` and `approval` (asked only on a voice
-call), is handed its `toolCallContext`, and is aborted when the router gives up on it. `run`
+call), is handed its `toolCallContext`, and fails when the router gives up on it. `run`
 works with only hosted tools and no handler, and throws `HostingRefusedError` if the router
 refuses them.
 

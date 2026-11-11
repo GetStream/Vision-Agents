@@ -205,7 +205,7 @@ class TestAgent < LocalRouterTest
       3.times { frames << peer.receive(timeout: 5) }
       peer.receive_type("close", timeout: 10)
     end
-    tools = VA::Tools.new.register("search", description: "Search flights") do |_args, tool_call_context|
+    tools = VA::Tools.new.register("search", description: "Search flights") do |tool_call_context, _args|
       seen << tool_call_context
       tool_call_context.update("checking three airlines")
       tool_call_context.say("Still looking, one moment.")
@@ -240,7 +240,7 @@ class TestAgent < LocalRouterTest
       results << peer.receive_type("tool_result")
       peer.receive_type("close", timeout: 10)
     end
-    tools = VA::Tools.new.register("charge", description: "Charge the card") do |_args, tool_call_context|
+    tools = VA::Tools.new.register("charge", description: "Charge the card") do |tool_call_context, _args|
       tool_call_context.disallow_interruptions
       release.pop(timeout: 5)
       tool_call_context.cancelled? ? "stopped" : "charged"
@@ -261,7 +261,7 @@ class TestAgent < LocalRouterTest
       wrote << (peer.receive_type("tool_result", timeout: 0.5) || :nothing)
       peer.receive_type("close", timeout: 10)
     end
-    tools = VA::Tools.new.register("charge", description: "Charge the card") do |_args, tool_call_context|
+    tools = VA::Tools.new.register("charge", description: "Charge the card") do |tool_call_context, _args|
       tool_call_context.disallow_interruptions
       wrote << :charged
     end

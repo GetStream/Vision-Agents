@@ -361,7 +361,7 @@ public sealed class Session : IAsyncDisposable
                     case "tool_call":
                         // Every watcher is sent every call and the first answer wins: answering a
                         // tool held elsewhere would beat whoever runs it, with an error.
-                        if (_tools?.Runs(frame.Text("name")) == true && ToolCall.ToRun(frame))
+                        if (_tools?.Runs(frame.Text("name")) == true && ToolCallContext.ToRun(frame))
                         {
                             RunTool(frame);
                         }
@@ -433,7 +433,7 @@ public sealed class Session : IAsyncDisposable
 
         var cancel = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
         _running[id] = cancel;
-        var toolCallContext = ToolCall.Of(frame, Id, new ToolLine((sent, token) => SendAsync(sent, token), _holds, id));
+        var toolCallContext = ToolCallContext.Of(frame, Id, new ToolLine((sent, token) => SendAsync(sent, token), _holds, id));
         _ = Task.Run(async () =>
         {
             JsonObject result;

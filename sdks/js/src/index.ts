@@ -113,7 +113,7 @@ export {
 
 export {
   CallNotHeldError,
-  ToolCall,
+  ToolCallContext,
   ToolOutput,
   type ToolOutputPart,
   Tools,
