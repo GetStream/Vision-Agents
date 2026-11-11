@@ -247,7 +247,9 @@ func (s *Server) knowledgePassages(
 //
 // With a database, each document is recorded with how many passages it became, and what
 // a shorter version no longer covers is removed, so an edit does not leave its old tail
-// behind to be found.
+// behind to be found. A document stored with the same text, cut into as many passages, is
+// already in the base and is not written again: writing is what knowledge costs, so a sync
+// that changed nothing in knowledge/ writes nothing and is not refused for money.
 func (s *Server) fillKnowledge(
 	ctx context.Context, customerID, region, namespace string, documents []KnowledgeDocument, chunkSize *int,
 ) (int, int, error) {
@@ -256,6 +258,20 @@ func (s *Server) fillKnowledge(
 		size = *chunkSize
 	}
 
+	// With their text, because that is what tells an unchanged document from an edited one,
+	// and what the entry below reports as having moved.
+	before := map[string]store.KnowledgeDocument{}
+	if s.store != nil {
+		stored, err := s.store.CustomerKnowledgeDocumentsWithText(ctx, customerID, namespace)
+		if err != nil {
+			return 0, 0, err
+		}
+		for _, document := range stored {
+			before[document.Source] = document
+		}
+	}
+
+	read, cut := 0, 0
 	var passages []knowledge.Document
 	var written []store.KnowledgeDocument
 	for _, document := range documents {
@@ -268,40 +284,38 @@ func (s *Server) fillKnowledge(
 		if strings.TrimSpace(document.Text) == "" {
 			continue
 		}
-		cut := ingest.Split(source, document.Text, size, s.knowledgeLimits)
-		passages = append(passages, cut...)
+		split := ingest.Split(source, document.Text, size, s.knowledgeLimits)
+		read++
+		cut += len(split)
+		if was, had := before[source]; had && was.Text == document.Text && was.Passages == len(split) {
+			continue
+		}
+		passages = append(passages, split...)
 		written = append(written, store.KnowledgeDocument{
 			CustomerID:  customerID,
 			Namespace:   namespace,
 			Source:      source,
-			Passages:    len(cut),
+			Passages:    len(split),
 			Text:        document.Text,
 			ContentType: "text/markdown",
 			Bytes:       int64(len(document.Text)),
 		})
 	}
 
-	if len(passages) == 0 {
+	if cut == 0 {
 		return 0, 0, invalidRequest("there is nothing to read in these documents")
+	}
+	if len(written) == 0 {
+		return read, cut, nil
 	}
 	writer := s.knowledgeFor(ctx, customerID, region)
 	if err := writer.Upsert(ctx, namespace, passages); err != nil {
 		return 0, 0, err
 	}
 	if s.store == nil {
-		return len(written), len(passages), nil
+		return read, cut, nil
 	}
 
-	// With their text, because that is what the entry below reports as having moved. Read
-	// without it, every document would look rewritten from nothing on every sync.
-	stored, err := s.store.CustomerKnowledgeDocumentsWithText(ctx, customerID, namespace)
-	if err != nil {
-		return 0, 0, err
-	}
-	before := make(map[string]store.KnowledgeDocument, len(stored))
-	for _, document := range stored {
-		before[document.Source] = document
-	}
 	agentID := s.agentOfKnowledge(ctx, customerID, namespace)
 	for i := range written {
 		document := &written[i]
@@ -325,7 +339,7 @@ func (s *Server) fillKnowledge(
 			Changes: auditDiff(previous, auditedKnowledgeOf(*document)),
 		})
 	}
-	return len(written), len(passages), nil
+	return read, cut, nil
 }
 
 // auditedKnowledgeOf is a document as a change records it: the text, because that is what

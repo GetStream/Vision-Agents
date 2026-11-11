@@ -144,6 +144,7 @@ const (
 	// Admission's refusals about money (money.go).
 	codeAccountSuspended    = "account_suspended"
 	codeInsufficientCredits = "insufficient_credits"
+	codeTopUpRequired       = "top_up_required"
 	codeSystemLimitReached  = "system_limit_reached"
 	codeSpendLimitReached   = "spend_limit_reached"
 	codeUserLimitReached    = "user_limit_reached"

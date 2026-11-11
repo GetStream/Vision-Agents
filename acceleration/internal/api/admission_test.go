@@ -819,6 +819,41 @@ func (s *AdmissionSuite) TestAKnowledgeIngestForASuspendedAccountIsForbidden() {
 	s.Equal(codeAccountSuspended, answered.Error.Code)
 }
 
+// syncWithNoCreditLeft syncs an agent with one document while the organization has credit,
+// then spends its credit, and returns the next sync's answer with the document's text.
+func (s *AdmissionSuite) syncWithNoCreditLeft(text string) (int, []byte) {
+	name := "agent-" + s.utils.uuid()
+	declaration := func(hash, instructions, text string) map[string]any {
+		return map[string]any{"name": name, "hash": hash, "instructions": instructions,
+			"knowledge": []map[string]string{{"source": "faq.md", "text": text}}}
+	}
+	s.usage.Credit(s.T(), s.organization(), 10_000_000)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/sync",
+		declaration("v1", "Be brief.", "Open at nine."), nil))
+	s.usage.Credit(s.T(), s.organization(), -10_000_000)
+	s.refused(http.MethodPost, "/v1/agents/runs", s.run("echo/echo-model"))
+
+	return s.serverClient.call(http.MethodPost, "/v1/agents/sync", declaration("v2", "Be warm.", text))
+}
+
+func (s *AdmissionSuite) TestASyncThatLeavesItsKnowledgeAsItWasNeedsNoCredit() {
+	status, payload := s.syncWithNoCreditLeft("Open at nine.")
+
+	s.Require().Equal(http.StatusOK, status, string(payload))
+	var synced SyncAgentResult
+	s.Require().NoError(json.Unmarshal(payload, &synced))
+	s.Equal("Be warm.", value(synced.Config.Instructions))
+}
+
+func (s *AdmissionSuite) TestASyncThatRewritesItsKnowledgeWithNoCreditIsAPaymentRequired() {
+	status, payload := s.syncWithNoCreditLeft("Open at eight.")
+
+	s.Require().Equal(http.StatusPaymentRequired, status, string(payload))
+	var answered ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &answered))
+	s.Equal(codeInsufficientCredits, answered.Error.Code)
+}
+
 func (s *AdmissionSuite) TestADocumentIsDeletedPastASpentLimit() {
 	s.usage.Credit(s.T(), s.organization(), 10_000_000)
 	namespace := "namespace-" + s.utils.uuid()

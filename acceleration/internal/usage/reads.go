@@ -53,6 +53,8 @@ type Standing struct {
 	Status        AccountStatus `json:"status" enum:"active,suspended"`
 	StatusReason  string        `json:"status_reason,omitempty" doc:"Why the organization is suspended."`
 	GrantedMicros int64         `json:"granted_micros" doc:"Every credit entry summed."`
+	TrialMicros   int64         `json:"trial_micros" doc:"What of granted_micros is trial credit, net of its revocations."`
+	Funded        bool          `json:"funded" doc:"The organization has credit that is not trial credit: a top-up net of its refunds and disputes, or credit from Stream's staff. Buying numbers and registering for 10DLC take it."`
 	SpentMicros   int64         `json:"spent_micros" doc:"Every billable event's cost summed."`
 	BalanceMicros int64         `json:"balance_micros" doc:"granted_micros less spent_micros."`
 	SpendWindows  SpendWindows  `json:"spend_windows" doc:"The organization's spend in the current UTC day and calendar month, for the spend hard limit."`

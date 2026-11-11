@@ -116,9 +116,11 @@ type Account struct {
 	StatusReason   string              `bun:"status_reason,notnull" json:"status_reason"`
 	LimitOverrides usage.Limits        `bun:"limit_overrides,type:jsonb,notnull" json:"limit_overrides"`
 	GrantedMicros  int64               `bun:"granted_micros,notnull" json:"granted_micros"`
-	SpentMicros    int64               `bun:"spent_micros,notnull" json:"spent_micros"`
-	CreatedAt      time.Time           `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
-	UpdatedAt      time.Time           `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
+	// TrialMicros is what of GrantedMicros is trial credit, net of its revocations.
+	TrialMicros int64     `bun:"trial_micros,notnull" json:"trial_micros"`
+	SpentMicros int64     `bun:"spent_micros,notnull" json:"spent_micros"`
+	CreatedAt   time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
+	UpdatedAt   time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
 }
 
 // virtualAccount is the account of an organization with no row.
@@ -156,10 +158,11 @@ func (e CreditEntry) Contract() usage.CreditEntry {
 	}
 }
 
-// reversible reports whether another entry may reverse this one: a grant, or a reversal, so
-// a grant's revocation can be undone, and that undone again.
+// reversible reports whether another entry may reverse this one: a grant or a trial, or a
+// reversal, so a revocation can be undone, and that undone again.
 func (e CreditEntry) reversible() bool {
-	return e.Kind == usage.CreditGrant || (e.Kind == usage.CreditAdjustment && e.ReversesID != 0)
+	return e.Kind == usage.CreditGrant || e.Kind == usage.CreditTrial ||
+		(e.Kind == usage.CreditAdjustment && e.ReversesID != 0)
 }
 
 // creditEntries selects credit entries into model, each with the entry reversing it.
@@ -622,8 +625,9 @@ func (l *Ledger) AddCredit(ctx context.Context, entry CreditEntry) (CreditEntry,
 			}
 			return nil
 		}
+		trial := entry.Kind == usage.CreditTrial
 		if entry.ReversesID != 0 {
-			if err := checkReversal(ctx, tx, entry); err != nil {
+			if trial, err = checkReversal(ctx, tx, entry); err != nil {
 				return err
 			}
 		}
@@ -652,8 +656,11 @@ func (l *Ledger) AddCredit(ctx context.Context, entry CreditEntry) (CreditEntry,
 		}
 		entry, written = inserted[0], true
 		after := before
-		if err := tx.NewUpdate().Model(&after).Set("granted_micros = a.granted_micros + ?", entry.AmountMicros).
-			Set("updated_at = now()").WherePK().Returning("*").Scan(ctx); err != nil {
+		update := tx.NewUpdate().Model(&after).Set("granted_micros = a.granted_micros + ?", entry.AmountMicros)
+		if trial {
+			update = update.Set("trial_micros = a.trial_micros + ?", entry.AmountMicros)
+		}
+		if err := update.Set("updated_at = now()").WherePK().Returning("*").Scan(ctx); err != nil {
 			return fmt.Errorf("ledger: add credit: %w", err)
 		}
 		return audit(ctx, tx, Actor{ID: entry.Actor, Name: entry.ActorName}, entry.OrganizationID, ActionAddCredit, "",
@@ -667,24 +674,35 @@ func (l *Ledger) AddCredit(ctx context.Context, entry CreditEntry) (CreditEntry,
 
 // checkReversal refuses entry when the entry it reverses is not the organization's, cannot be
 // reversed, or is not its amount the other way. Whether it is reversed already is the unique
-// index's to refuse, when entry is written.
-func checkReversal(ctx context.Context, tx bun.Tx, entry CreditEntry) error {
+// index's to refuse, when entry is written. It reports whether the chain of reversals entry
+// joins starts at a trial, whose credit entry then moves as it moves the rest.
+func checkReversal(ctx context.Context, tx bun.Tx, entry CreditEntry) (bool, error) {
 	var reversed CreditEntry
 	err := tx.NewSelect().Model(&reversed).Where("id = ?", entry.ReversesID).Where("organization_id = ?", entry.OrganizationID).Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ErrCreditNotFound
+		return false, ErrCreditNotFound
 	}
 	if err != nil {
-		return fmt.Errorf("ledger: add credit: %w", err)
+		return false, fmt.Errorf("ledger: add credit: %w", err)
 	}
 	if !reversed.reversible() {
-		return ErrNotReversible
+		return false, ErrNotReversible
 	}
 	if entry.AmountMicros != -reversed.AmountMicros {
-		return invalid("a reversal is minus the amount of the entry it reverses: amount_micros must be %d, not %d",
+		return false, invalid("a reversal is minus the amount of the entry it reverses: amount_micros must be %d, not %d",
 			-reversed.AmountMicros, entry.AmountMicros)
 	}
-	return nil
+	var root usage.CreditKind
+	err = tx.NewRaw(`WITH RECURSIVE chain AS (
+			SELECT id, kind, reverses_id FROM credit_entries WHERE id = ?
+			UNION ALL
+			SELECT ce.id, ce.kind, ce.reverses_id FROM credit_entries ce JOIN chain ON ce.id = chain.reverses_id
+		)
+		SELECT kind FROM chain WHERE reverses_id IS NULL`, reversed.ID).Scan(ctx, &root)
+	if err != nil {
+		return false, fmt.Errorf("ledger: add credit: %w", err)
+	}
+	return root == usage.CreditTrial, nil
 }
 
 // creditAudit is what an add_credit audit row keeps: the account before, and after it the
@@ -782,6 +800,8 @@ func (l *Ledger) Standings(ctx context.Context, organizations []usage.StandingOr
 			Status:           account.Status,
 			StatusReason:     account.StatusReason,
 			GrantedMicros:    account.GrantedMicros,
+			TrialMicros:      account.TrialMicros,
+			Funded:           account.GrantedMicros-account.TrialMicros > 0,
 			SpentMicros:      account.SpentMicros,
 			BalanceMicros:    account.GrantedMicros - account.SpentMicros,
 			SpendWindows:     usage.SpendWindows{Daily: spend(wanted[2*i]), Monthly: spend(wanted[2*i+1])},

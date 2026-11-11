@@ -4332,9 +4332,11 @@ export type components = {
              * @enum {string}
              */
             readonly balance_warning_source: "tier" | "account" | "organization_policy";
+            /** @description The organization has credit that is not trial credit: a top-up, net of its refunds and disputes, or credit from Stream's staff. Until it has, buying numbers and registering for 10DLC are refused with top_up_required. */
+            readonly funded: boolean;
             /**
              * Format: int64
-             * @description Every credit entry summed: top-ups, grants, refunds and adjustments.
+             * @description Every credit entry summed: top-ups, grants, trial credit, refunds and adjustments.
              */
             readonly granted_micros: number;
             /** @description What Stream allows the organization: its tier's settings, with those Stream set for this organization laid over them. */
@@ -4356,6 +4358,11 @@ export type components = {
             readonly status: "active" | "suspended";
             /** @description The tier the organization is billed on. */
             readonly tier: string;
+            /**
+             * Format: int64
+             * @description What of granted_micros is the trial credit Stream gave the organization to try it with.
+             */
+            readonly trial_micros: number;
         };
         readonly ActivityArea: {
             /** @description The area of the API, such as agent_setup or conversations. */
@@ -6775,7 +6782,7 @@ export type components = {
             /** Format: int64 */
             readonly id: number;
             /** @enum {string} */
-            readonly kind: "top_up" | "grant" | "refund" | "dispute" | "dispute_reversal" | "adjustment";
+            readonly kind: "top_up" | "grant" | "trial" | "refund" | "dispute" | "dispute_reversal" | "adjustment";
             /** @description The payment's own reference, such as a top-up's payment id. Absent on entries Stream's staff wrote. */
             readonly reference?: string;
         };

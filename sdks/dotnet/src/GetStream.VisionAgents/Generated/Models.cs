@@ -64,7 +64,13 @@ namespace GetStream.VisionAgents.Models
         public string BalanceWarningSource { get; set; } = default!;
 
         /// <summary>
-        /// Every credit entry summed: top-ups, grants, refunds and adjustments.
+        /// The organization has credit that is not trial credit: a top-up, net of its refunds and disputes, or credit from Stream's staff. Until it has, buying numbers and registering for 10DLC are refused with top_up_required.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("funded")]
+        public bool Funded { get; set; } = default!;
+
+        /// <summary>
+        /// Every credit entry summed: top-ups, grants, trial credit, refunds and adjustments.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("granted_micros")]
         public long GrantedMicros { get; set; } = default!;
@@ -109,6 +115,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tier")]
         public string Tier { get; set; } = default!;
+
+        /// <summary>
+        /// What of granted_micros is the trial credit Stream gave the organization to try it with.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("trial_micros")]
+        public long TrialMicros { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -6546,7 +6558,7 @@ namespace GetStream.VisionAgents.Models
         public long Id { get; set; } = default!;
 
         /// <summary>
-        /// One of `top_up`, `grant`, `refund`, `dispute`, `dispute_reversal`, `adjustment`.
+        /// One of `top_up`, `grant`, `trial`, `refund`, `dispute`, `dispute_reversal`, `adjustment`.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("kind")]
         public string Kind { get; set; } = default!;

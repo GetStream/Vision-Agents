@@ -13,7 +13,9 @@ pub struct Account {
     pub balance_warning_micros: i64,
     ///Whose threshold it is: the tier's, the one Stream set for this organization, or the organization policy's balance_warning_micros, which wins over both.
     pub balance_warning_source: AccountBalanceWarningSource,
-    ///Every credit entry summed: top-ups, grants, refunds and adjustments.
+    ///The organization has credit that is not trial credit: a top-up, net of its refunds and disputes, or credit from Stream's staff. Until it has, buying numbers and registering for 10DLC are refused with top_up_required.
+    pub funded: bool,
+    ///Every credit entry summed: top-ups, grants, trial credit, refunds and adjustments.
     pub granted_micros: i64,
     ///What Stream allows the organization: its tier's settings, with those Stream set for this organization laid over them.
     pub limits: Limits,
@@ -30,6 +32,8 @@ pub struct Account {
     pub status: AccountStatus,
     ///The tier the organization is billed on.
     pub tier: ::std::string::String,
+    ///What of granted_micros is the trial credit Stream gave the organization to try it with.
+    pub trial_micros: i64,
 }
 ///Where balance_micros stands: exhausted at or below 0, low at or below the threshold.
 #[derive(
@@ -4933,6 +4937,8 @@ pub enum CreditEntryKind {
     TopUp,
     #[serde(rename = "grant")]
     Grant,
+    #[serde(rename = "trial")]
+    Trial,
     #[serde(rename = "refund")]
     Refund,
     #[serde(rename = "dispute")]
@@ -4950,6 +4956,7 @@ impl ::std::fmt::Display for CreditEntryKind {
         match *self {
             Self::TopUp => f.write_str("top_up"),
             Self::Grant => f.write_str("grant"),
+            Self::Trial => f.write_str("trial"),
             Self::Refund => f.write_str("refund"),
             Self::Dispute => f.write_str("dispute"),
             Self::DisputeReversal => f.write_str("dispute_reversal"),
@@ -4964,6 +4971,7 @@ impl ::std::str::FromStr for CreditEntryKind {
         match value {
             "top_up" => Ok(Self::TopUp),
             "grant" => Ok(Self::Grant),
+            "trial" => Ok(Self::Trial),
             "refund" => Ok(Self::Refund),
             "dispute" => Ok(Self::Dispute),
             "dispute_reversal" => Ok(Self::DisputeReversal),

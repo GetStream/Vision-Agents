@@ -2,6 +2,9 @@
 
 ## Features
 
+### Trial credit pays for usage but not phone numbers, and a sync that changed nothing costs nothing
+
+Credit has a `trial` kind, written once per organization by the gateway's `/v1/billing/trial`. `GET /v1/account` (and the usage service's account) gives `trial_micros`, the trial credit granted, and `funded`, true once credit other than trial was granted: a top-up or Stream's grant. Renting a phone number and submitting a 10DLC brand or campaign are refused with 402 `top_up_required` while the organization is not funded, so trial credit pays for models and usage only. Writing knowledge skips a document stored with the same text and passage count, so `getstream agents sync` with nothing changed in `knowledge/` writes nothing and is not refused for money (AI-3179).
 ### Stream staff read an organization's sessions and turn latency
 
 `GET /v1/ops/orgs/{org_id}/activity` (ops key only) also answers `sessions` and `latency` for the same `since` window, over every shard. `sessions` holds how many the organization's apps opened, how many still run, how many ended for each `end_reason`, and the 20 opened last (id, app, agent, modality, opened, ended, end reason). `latency` holds one item per leg (`stt_latency`, `llm_ttft`, `tts_ttfb`, `roundtrip`): the turns counted and their p50, p95 and p99 in milliseconds, within 5% of the true ones. The fields the answer already had are unchanged (AI-2843).
