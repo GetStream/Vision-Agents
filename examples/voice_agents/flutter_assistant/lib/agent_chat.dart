@@ -347,6 +347,8 @@ class AgentChat with AIConversationTransport<AgentMessage> {
       images: images,
       reasoningEffort: reasoningEffortOf(request.chatOption),
     );
+    // Stopped while the router took the question: its reply starts only now, so stop it.
+    if (stops != _stops) await stop();
   }
 
   /// Gives up on [request] when the chat was closed, or the person stopped it, since it was

@@ -112,9 +112,9 @@ swift_assistant's `go run ./configure` again, which binds both:
 
 ## What the app shows
 
-- **Replies in Markdown or A2UI**, chosen as on iOS and Android: the gear beside New chat
-  in the drawer opens Settings, whose Replies list is kept by the swift_assistant backend
-  (`GET` and `PUT /reply-format`) as what the agent is told. A conversation keeps the
+- **Replies in Markdown or A2UI**, the formats the Flutter app supports for now: the gear
+  beside New chat in the drawer opens Settings, whose Replies list is kept by the
+  swift_assistant backend (`GET` and `PUT /reply-format`) as what the agent is told. A conversation keeps the
   instructions it started with, so the next new one answers the new way. The app has nothing to
   switch: its `AIUIHost` has an `A2UIRenderer` and the trip components
   (`lib/trip_components.dart`, from `assets/UIComponents.json`), and a reply shows whichever UI

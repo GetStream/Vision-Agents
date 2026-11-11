@@ -139,17 +139,17 @@ class _VoiceScreenState extends State<VoiceScreen> with WidgetsBindingObserver {
 
   Future<void> _start() async {
     await _hangingUp;
-    if (!await Permissions.allOf([Permission.microphone], needed: true)) {
-      if (mounted) {
-        setState(() {
-          _failure = 'Talking to Juno needs the microphone.';
-          _refused = Permission.microphone;
-        });
-      }
-      return;
-    }
     final session = widget.session;
     try {
+      if (!await Permissions.allOf([Permission.microphone], needed: true)) {
+        if (mounted) {
+          setState(() {
+            _failure = 'Talking to Juno needs the microphone.';
+            _refused = Permission.microphone;
+          });
+        }
+        return;
+      }
       await session.startVoice();
       if (!mounted) return;
       final voice = _voice = await VoiceSession.attach(Assistant.agents, session.id);
@@ -291,22 +291,26 @@ class _VoiceScreenState extends State<VoiceScreen> with WidgetsBindingObserver {
 
   Future<void> _toggleCamera(VoiceSession voice) async {
     final enabled = voice.state.value.isCameraEnabled;
-    if (!enabled && !await Permissions.allOf([Permission.camera], needed: true)) {
-      if (mounted) {
+    try {
+      if (!enabled && !await Permissions.allOf([Permission.camera], needed: true)) {
+        if (mounted) {
+          setState(() {
+            _failure = 'Showing Juno the camera needs the camera.';
+            _refused = Permission.camera;
+          });
+        }
+        return;
+      }
+      if (_failure != null) {
         setState(() {
-          _failure = 'Showing Juno the camera needs the camera.';
-          _refused = Permission.camera;
+          _failure = null;
+          _refused = null;
         });
       }
-      return;
+      await voice.setCameraEnabled(!enabled);
+    } on Object catch (error) {
+      if (mounted) setState(() => _failure = '$error');
     }
-    if (_failure != null) {
-      setState(() {
-        _failure = null;
-        _refused = null;
-      });
-    }
-    await voice.setCameraEnabled(!enabled);
   }
 
   bool get _inCall => _voice?.state.value.call != null;

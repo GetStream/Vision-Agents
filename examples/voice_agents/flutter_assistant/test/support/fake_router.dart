@@ -14,15 +14,22 @@ final class FakeRouter {
 
   final HttpServer _server;
   final _answers = <String, (int, Object?)>{};
+  final _holds = <String, Future<void>>{};
   final _sockets = <WebSocket>[];
 
   /// The requests that arrived, each as `METHOD /path`, oldest first.
   final arrived = <String>[];
 
+  /// What the sessions' sockets sent, oldest first.
+  final said = <String>[];
+
   Uri get url => Uri.parse('http://127.0.0.1:${_server.port}');
 
   /// Answers `METHOD /path` with this status and JSON body from now on.
   void answer(String route, int status, [Object? body]) => _answers[route] = (status, body);
+
+  /// Holds the answer to `METHOD /path` back until [until] completes.
+  void hold(String route, Future<void> until) => _holds[route] = until;
 
   /// The socket of the session opened [index]th, from the router's end, once it is open.
   Future<WebSocket> socket([int index = 0]) async {
@@ -40,14 +47,15 @@ final class FakeRouter {
   Future<void> _handle(HttpRequest request) async {
     if (WebSocketTransformer.isUpgradeRequest(request)) {
       final socket = await WebSocketTransformer.upgrade(request);
-      // Read, so the socket notices the app closing its end.
-      socket.listen((_) {}, onError: (_) {});
+      // Read, which also lets the socket notice the app closing its end.
+      socket.listen((message) => said.add('$message'), onError: (_) {});
       _sockets.add(socket);
       return;
     }
     await request.drain<void>();
     final route = '${request.method} ${request.uri.path}';
     arrived.add(route);
+    await _holds[route];
     final (status, body) = _answers[route] ?? (404, _error('not_found', 'no route'));
     request.response.statusCode = status;
     if (body != null) {

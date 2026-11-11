@@ -339,6 +339,24 @@ void main() {
       expect(chat.usedSessionId.value, isNull);
     });
 
+    test('a question stopped while the router takes it has its reply stopped', () async {
+      final taken = Completer<void>();
+      sessions.holdQuestion('s1', taken.future);
+      final chat = closing(AgentChat(null, sessions: sessions));
+      final conversation = conversationOf(chat);
+      await chat.open();
+      await until(() => chat.session!.isConnected);
+      conversation.send('Plan a weekend');
+      await until(() => sessions.asked == 1);
+
+      conversation.stop();
+      await until(() => sessions.interrupts == 1);
+      taken.complete();
+
+      // Stopping before the router had the question stopped nothing: it is told again.
+      await until(() => sessions.interrupts == 2);
+    });
+
     test('a reply the agent could not write is not the session failing', () async {
       final chat = closing(AgentChat('s1', sessions: sessions));
       await chat.open();
@@ -547,6 +565,13 @@ class _FakeSessions extends AgentSessions {
 
   /// How many questions the router was asked.
   int get asked => _router.arrived.where((route) => route.endsWith('/responses')).length;
+
+  /// How many times the router was told to stop a reply.
+  int get interrupts => _router.said.where((message) => message.contains('"interrupt"')).length;
+
+  /// Holds back the router's answer to the next question in session [id] until [until].
+  void holdQuestion(String id, Future<void> until) =>
+      _router.hold('POST /v1/agents/sessions/$id/responses', until);
 
   /// The open session's socket, from the router's end.
   Future<WebSocket> socket() => _router.socket();
