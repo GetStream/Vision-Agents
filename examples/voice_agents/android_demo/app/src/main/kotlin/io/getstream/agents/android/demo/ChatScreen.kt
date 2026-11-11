@@ -3,8 +3,10 @@ package io.getstream.agents.android.demo
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -15,26 +17,21 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import io.getstream.chat.android.ai.compose.conversation.AIReplyActions
-import io.getstream.chat.android.ai.compose.parts.AIClientIdentity
+import io.getstream.chat.android.ai.compose.conversation.AIAgentError
+import io.getstream.chat.android.ai.compose.conversation.AIConversationState
+import io.getstream.chat.android.ai.compose.conversation.AIConversationStatus
 import io.getstream.chat.android.ai.compose.ui.component.AIConversation
-import io.getstream.chat.android.ai.compose.ui.component.AIConversationReplyActionsParams
-import io.getstream.chat.android.ai.compose.ui.component.AIReplyActionsRow
 import io.getstream.chat.android.ai.compose.ui.component.AISuggestions
-import io.getstream.chat.android.ai.compose.ui.component.AIToolApprover
-import io.getstream.chat.android.ai.compose.ui.component.AITypingIndicator
 import io.getstream.chat.android.ai.compose.ui.component.ChatAiComponentFactory
 import io.getstream.chat.android.ai.compose.ui.component.ChatComposer
 import io.getstream.chat.android.ai.compose.ui.component.ComposerLeadingContentParams
@@ -54,7 +51,7 @@ fun ChatScreen(modifier: Modifier = Modifier, viewModel: ChatViewModel = viewMod
             message = current.reason,
             modifier = modifier,
         )
-        is ChatViewModel.State.Open -> AgentConversation(current.chat, modifier)
+        is ChatViewModel.State.Open -> AgentConversation(current.conversation, modifier)
     }
 }
 
@@ -65,35 +62,23 @@ private val starters = listOf(
 )
 
 @Composable
-private fun AgentConversation(chat: AgentChat, modifier: Modifier = Modifier) {
-    val messages by chat.conversation.collectAsStateWithLifecycle()
-    val activity by chat.activity.collectAsStateWithLifecycle()
-    val answering by chat.isAnswering.collectAsStateWithLifecycle()
-    val failure by chat.failure.collectAsStateWithLifecycle()
-    val hasOlder by chat.hasOlderMessages.collectAsStateWithLifecycle()
-    val approver = rememberApprover(chat)
-    val views = remember(chat) { DemoViews(chat) }
+private fun AgentConversation(conversation: AIConversationState<AgentMessage>, modifier: Modifier = Modifier) {
+    val messages by conversation.messages.collectAsStateWithLifecycle()
+    val pending by conversation.pendingMessage.collectAsStateWithLifecycle()
+    val status by conversation.status.collectAsStateWithLifecycle()
+    val error by conversation.error.collectAsStateWithLifecycle()
 
-    CompositionLocalProvider(LocalChatAiComponentFactory provides views) {
+    CompositionLocalProvider(LocalChatAiComponentFactory provides DemoViews) {
         Column(modifier.fillMaxSize().imePadding()) {
             // A question moves to the top as it is asked, and its reply writes itself out below
             // it without moving what is on screen. While the agent thinks, the list shows its
             // thinking, which the reply's first step takes over once it arrives.
             AIConversation(
-                messages = messages,
+                state = conversation,
                 modifier = Modifier.weight(1f),
-                isThinking = activity == AgentChat.Activity.Thinking,
-                approver = approver,
-                loadOlderMessages = if (hasOlder) chat::loadOlderMessages else null,
                 footer = {
-                    (activity as? AgentChat.Activity.Working)?.let { working ->
-                        AITypingIndicator(label = {
-                            Text(
-                                working.text,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        })
+                    error?.takeIf { status == AIConversationStatus.Error }?.let {
+                        Failure(it, onRetry = conversation::retry)
                     }
                 },
                 emptyContent = {
@@ -105,42 +90,33 @@ private fun AgentConversation(chat: AgentChat, modifier: Modifier = Modifier) {
                 },
             )
 
-            if (messages.isEmpty()) {
-                AISuggestions(suggestions = starters, onSuggestionClick = chat::ask)
+            if (messages.isEmpty() && pending == null) {
+                AISuggestions(suggestions = starters, onSuggestionClick = { conversation.send(it) })
             }
-            failure?.let {
-                Text(
-                    it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                )
-            }
-            ChatComposer(
-                onSendClick = { chat.ask(it.text) },
-                onStopClick = chat::stop,
-                isGenerating = answering,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-            )
+            ChatComposer(state = conversation, modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp))
         }
     }
 }
 
 /**
- * Answers the questions of the tools that ask first, as the person signed in here.
- *
- * The router addresses a question to the person whose message the call answers, and Stream's
- * components show it only to them. The answer goes back over the session's socket, which is
- * also what runs the tool once it is allowed.
+ * Why the latest question failed, under it. A question the router never had is sent again; one
+ * the agent couldn't answer, or older messages that couldn't load, are let go, and the person asks
+ * again.
  */
 @Composable
-private fun rememberApprover(chat: AgentChat): AIToolApprover {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    return remember(chat) {
-        AIToolApprover(Demo.user.id, AIClientIdentity.installId(context), scope) { call, allowed ->
-            chat.session.decide(call.id, allowed)
-        }
+private fun Failure(error: Throwable, onRetry: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            if (error is AIAgentError) "The agent couldn't answer." else error.message ?: "Something went wrong.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        TextButton(onClick = onRetry) { Text(if (error is AIAgentError) "OK" else "Try again") }
     }
 }
 
@@ -168,23 +144,12 @@ private fun EmptyState(
 }
 
 /**
- * Stream's views, with what the person can do under each finished reply (copy it, share it and
- * rate it) and the composer without its attachment button: a question goes to the agent as text,
- * and dictating one stays. Asking for a reply again needs the router to replace one, which it
- * does not yet.
+ * Stream's views, with the composer without its attachment button: a question goes to the agent
+ * as text, and dictating one stays. Under each finished reply the conversation offers to copy,
+ * share and rate it; asking for a reply again needs the router to replace one, which it does not
+ * yet.
  */
-private class DemoViews(private val chat: AgentChat) : ChatAiComponentFactory {
+private object DemoViews : ChatAiComponentFactory {
     @Composable
     override fun RowScope.ComposerLeadingContent(params: ComposerLeadingContentParams) = Unit
-
-    @Composable
-    override fun AIConversationReplyActions(params: AIConversationReplyActionsParams) {
-        // Read here, so the thumbs change as soon as the rating does.
-        val ratings by chat.ratings.collectAsStateWithLifecycle()
-        val reply = params.message.id
-        AIReplyActionsRow(
-            text = params.text,
-            actions = AIReplyActions(rating = ratings[reply], onRate = { chat.rate(reply, it) }),
-        )
-    }
 }
