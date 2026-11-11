@@ -1,4 +1,5 @@
 ## 0.1.0
 
-- First release: the Stream Chat channel a Stream Agents conversation is kept in, on one Stream
-  Chat client shared by every session, or on the app's own.
+- First release: keeps a Stream Agents conversation in a Stream Chat channel. Opens the channel
+  on the app's own Stream Chat client, or on one the SDK connects for the user and reuses for
+  that user's sessions.
