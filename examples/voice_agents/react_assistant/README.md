@@ -6,14 +6,16 @@ Stream token are all swift_assistant's, as they are for the [Android app](../and
 Only the page is here.
 
 ```
-package.json     React and Vite over @stream-io/stream-agents (0.4.0 from npm, with
-                 stream-chat 10) and stream-chat-react's AI components
+package.json     React and Vite over @stream-io/stream-agents (0.4.1 and up, for its
+                 AgentChat, with stream-chat 10) and stream-chat-react's AI components
+                 (15.0.1 and up)
 connected.html   where a connector's sign-in comes back to
 src/             the page
-tests/           its pure parts (captions, the glow's phases, photos, days) and the chat over a
-                 fake channel and session
+tests/           its pure parts (captions, the glow's phases, photos, days) and the chat screen
+                 over a fake channel and session
 ```
 
+The conversation's state is stream-chat-react's `AIConversationController`: the question on its way, whether Juno thinks or writes, errors and Try again, Send turning into Stop. Its transport is the SDK's `AgentChat` (`agentChatTransport`), which reads the router's channel and session. The page keeps only what is its own, in `src/chatScreen.ts`: voice mode, and naming a new conversation to the list once it is used. Edit and regenerate are turned off (`actions`), since the router keeps the conversation in Stream Chat and can't rewind it.
 It runs on `stream-chat` 10 and `stream-chat-react` 15, with React 19, Vite 8 and TypeScript 7.
 That takes Node 22.18 or newer: `stream-chat` 10's own floor, above Vite 8's.
 

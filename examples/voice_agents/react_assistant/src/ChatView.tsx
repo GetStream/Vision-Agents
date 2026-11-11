@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { LocalMessage } from "stream-chat";
+import type { AgentChat, AgentChatState } from "@stream-io/stream-agents/chat";
 import {
   AIClientIdentity,
   AIConversation,
@@ -7,10 +8,11 @@ import {
   AISuggestions,
   AITypingIndicator,
   createPopupAuthorizer,
-  fromStreamMessage,
-  useAIMessageComposerContext,
+  isAIConversationAnswering,
+  useAIConversationState,
   useAttachments,
   type AIChatOption,
+  type AIConversationControllerState,
   type AIToolApprover,
   AIUIHost,
   aiUIActionJSON,
@@ -18,11 +20,10 @@ import {
 import { createA2UIRenderer } from "stream-chat-react/a2ui";
 import { createOpenUIRenderer } from "stream-chat-react/openui";
 
-import type { AgentChat, AgentChatSnapshot } from "./agentChat";
 import { Assistant } from "./assistant";
-import type { ChatScreen } from "./chatScreen";
+import { THINK_HARDER_ID, type ChatScreen } from "./chatScreen";
 import { messageOf } from "./errors";
-import { Store, useStore } from "./store";
+import { useStore } from "./store";
 import { tripComponents } from "./tripComponents";
 
 const STARTERS = [
@@ -33,46 +34,42 @@ const STARTERS = [
 ];
 
 const THINK_HARDER: AIChatOption = {
-  id: "think_harder",
+  id: THINK_HARDER_ID,
   title: "Think harder",
   description: "More time to reason before answering",
   shortTitle: "Think",
 };
 
-const NO_MESSAGES: readonly LocalMessage[] = [];
-
-/** Followed before a conversation has a chat, so the hooks below always have a store. */
-const NO_CHAT = new Store<AgentChatSnapshot>({
-  messages: [],
-  reasoningVersion: 0,
-  hasOlderMessages: false,
-  ratings: {},
-  failure: undefined,
-  askedAfter: undefined,
+const conversationSelector = ({ activity, error, messages, pendingMessage, status }: AIConversationControllerState) => ({
+  activity,
+  error,
+  isEmpty: messages.length === 0 && !pendingMessage,
+  status,
 });
+
+/** What one part of the chat's state is now, kept current. `select` returns a value that stays the same while unchanged. */
+function useChatState<S>(chat: AgentChat<LocalMessage>, select: (state: AgentChatState<LocalMessage>) => S): S {
+  const subscribe = useCallback((changed: () => void) => chat.state.subscribe(() => changed()), [chat]);
+  return useSyncExternalStore(subscribe, () => select(chat.state.getLatestValue()));
+}
 
 /**
  * One conversation: the messages, the composer floating over the bottom of them, and the way into
  * voice mode.
  *
- * The person's messages are in bubbles, the agent's as their steps and then their answer. What the
- * person asks shows at once, and Stream's copy takes its place. Each question goes to the top as
- * it is asked, and its reply writes itself out below it without moving what is on screen. While
- * the agent thinks, the list shows its thinking, which the reply's first step takes over.
+ * Everything about the conversation is the controller's (`screen.conversation`): the question on
+ * its way, whether the agent thinks or writes, an error with a way to try again, the reply
+ * actions and the Send button turning into Stop. The SDK's `AgentChat` is its transport.
  */
 export function ChatView({ screen }: { screen: ChatScreen }) {
-  const { chat, pending, failure: openFailure, history, isLoading } = useStore(screen);
-  const state = useStore<AgentChatSnapshot>(chat ?? NO_CHAT);
-  // What the agent is doing comes from the session, which the chat's store follows.
-  const activity = chat?.activity();
-  // A question on its way counts too: a new conversation's session can still be opening.
-  const answering = screen.isBusy();
-  const approver = useApprover(chat);
+  const { conversation, chat } = screen;
+  const { failure: openFailure } = useStore(screen);
+  const { activity, error, isEmpty, status } = useAIConversationState(conversation, conversationSelector);
+  const isLoaded = useChatState(chat, (state) => state.isLoaded);
+  const readFailure = useChatState(chat, (state) => state.failure);
   const [barHeight, setBarHeight] = useState(0);
   const bar = useRef<HTMLDivElement>(null);
-  const [thinkHarder, setThinkHarder] = useState(false);
-  const composer = useRef<ComposerDraft | null>(null);
-  const { ui, unsent } = useGeneratedUI(screen);
+  const { ui, unsent } = useGeneratedUI(screen, status);
 
   useEffect(() => {
     const element = bar.current;
@@ -82,79 +79,49 @@ export function ChatView({ screen }: { screen: ChatScreen }) {
     return () => observer.disconnect();
   }, []);
 
-  // The conversation's messages read while its session opens, until the chat has them.
-  const shown = chat ? state.messages : (history ?? NO_MESSAGES);
-  const messages = useMemo(
-    () =>
-      shown.map((message) =>
-        fromStreamMessage(message, { reasoningText: (id, step) => chat?.reasoning.get(id, step) }),
-      ),
-    // The live thinking is read through `chat.reasoning`; its version says when it grew.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [shown, state.reasoningVersion, chat],
-  );
-
-  const isWelcoming = shown.length === 0 && !pending && !isLoading;
-  const failure = openFailure ?? state.failure ?? unsent;
-
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    // The draft waits, as the send button does, until the reply is done or stopped.
-    if (screen.isBusy()) return;
-    const draft = composer.current?.getLatestValue();
-    const text = draft?.text.trim() ?? "";
-    const photos = draft?.attachments.map((each) => each.file) ?? [];
-    if (!text && photos.length === 0) return;
-    void screen.send(text, photos, thinkHarder);
-    event.currentTarget.reset();
-  };
+  const isWelcoming = isEmpty && isLoaded;
+  const failure = openFailure ?? (readFailure ? messageOf(readFailure) : undefined) ?? unsent;
+  // Skills running, said in words; thinking is shown by the conversation itself.
+  const working = status !== "ready" && activity?.state === "AI_STATE_EXTERNAL_SOURCES" ? activity.text : undefined;
 
   return (
     <div className="chat">
       <AIConversation
-        approver={approver}
         bottomInset={barHeight}
-        emptyContent={isLoading ? <LoadingConversation /> : <Welcome />}
-        footer={activity?.kind === "working" ? <AITypingIndicator text={activity.text} /> : undefined}
-        isThinking={activity?.kind === "thinking"}
-        loadOlderMessages={state.hasOlderMessages && chat ? () => chat.loadOlderMessages() : undefined}
-        messages={messages}
-        pendingMessage={pending ?? null}
-        ui={ui}
-        replyActions={(message) =>
-          // Copying and sharing work on history read ahead of the chat; rating waits for the chat.
-          chat ? { rating: state.ratings[message.id] ?? null, onRate: (rating) => chat.rate(message.id, rating) } : {}
+        conversation={conversation}
+        emptyContent={isLoaded ? <Welcome /> : <LoadingConversation />}
+        footer={
+          error ? (
+            <p className="failure-pill">
+              {error.name === "AIAgentError" && !("agentMessage" in error && error.agentMessage) ? "Juno couldn't answer." : messageOf(error)}{" "}
+              <button className="link-button" onClick={() => conversation.retry()} type="button">
+                Try again
+              </button>
+            </p>
+          ) : working ? (
+            <AITypingIndicator text={working} />
+          ) : undefined
         }
+        ui={ui}
       />
       {/* The conversation fades away under the composer, rather than stopping at a hairline. */}
       <div className="composer-bar" ref={bar}>
-        {isWelcoming && <AISuggestions onSelect={(text) => void screen.send(text)} suggestions={STARTERS} />}
+        {isWelcoming && <AISuggestions onSelect={(text) => conversation.send({ text })} suggestions={STARTERS} />}
         {failure && <p className="failure-pill">{failure}</p>}
         <AIMessageComposer
+          conversation={conversation}
           onChange={(event) => {
             const input = event.target as unknown as HTMLInputElement;
             if (input.name === "message") screen.draftChanged(input.value);
           }}
-          onSubmit={submit}
         >
-          <ComposerStore into={composer} />
           <PickedPhotos />
           <div className="composer-row">
             <AIMessageComposer.FileInput accept="image/*" multiple name="attachments" />
-            <AIMessageComposer.ChatOptions
-              icon={<OptionsIcon />}
-              onSelectedChange={(option) => setThinkHarder(option?.id === THINK_HARDER.id)}
-              options={[THINK_HARDER]}
-              selectedId={thinkHarder ? THINK_HARDER.id : null}
-            />
+            <AIMessageComposer.ChatOptions icon={<OptionsIcon />} options={[THINK_HARDER]} />
             <AIMessageComposer.TextInput name="message" placeholder="Ask Juno" />
-            {answering ? (
-              <button aria-label="Stop" className="round-button" onClick={() => chat?.stop()} type="button">
-                ■
-              </button>
-            ) : (
-              <AIMessageComposer.SubmitButton />
-            )}
+            {/* Turns into the Stop button while Juno answers. */}
+            <AIMessageComposer.SubmitButton />
             <button aria-label="Talk to Juno" className="round-button talk" onClick={() => void screen.talk()} type="button">
               <WaveformIcon />
             </button>
@@ -172,7 +139,7 @@ export function ChatView({ screen }: { screen: ChatScreen }) {
  * can't send yet, while the agent still answers, fails, and says why where a failed question
  * does, rather than doing nothing.
  */
-function useGeneratedUI(screen: ChatScreen): { ui: AIUIHost; unsent: string | undefined } {
+function useGeneratedUI(screen: ChatScreen, status: string): { ui: AIUIHost; unsent: string | undefined } {
   const [unsent, setUnsent] = useState<string>();
   const ui = useMemo(
     () =>
@@ -182,15 +149,18 @@ function useGeneratedUI(screen: ChatScreen): { ui: AIUIHost; unsent: string | un
         onError: (error) => setUnsent(messageOf(error)),
         send: async (action) => {
           setUnsent(undefined);
-          if (!(await screen.send(action.label, [], false, aiUIActionJSON(action)))) {
+          const { conversation } = screen;
+          if (isAIConversationAnswering(conversation.state.getLatestValue().status)) {
             throw new Error(`"${action.label}" wasn't sent: Juno is still answering. Try again once it's done.`);
           }
+          // What the person did travels as `custom.uiAction`, which the SDK's transport hands to the router.
+          conversation.send({ text: action.label, custom: { uiAction: aiUIActionJSON(action) } });
         },
       }),
     [screen],
   );
   // It no longer applies once the agent has answered.
-  const answering = screen.isBusy();
+  const answering = isAIConversationAnswering(status as never);
   useEffect(() => {
     if (!answering) setUnsent(undefined);
   }, [answering]);
@@ -214,15 +184,6 @@ function PickedPhotos() {
   );
 }
 
-/** The composer's draft, as stream-chat-react hands it out: its store, typed by the hook that gives it. */
-type ComposerDraft = ReturnType<typeof useAIMessageComposerContext>;
-
-/** Hands the composer's draft out, so sending reads its text and photos. */
-function ComposerStore({ into }: { into: { current: ComposerDraft | null } }) {
-  into.current = useAIMessageComposerContext();
-  return null;
-}
-
 /**
  * Answers the questions of the tools that ask first, as the person signed in here, and signs them
  * in when a connector's call waits for their account.
@@ -233,26 +194,23 @@ function ComposerStore({ into }: { into: { current: ComposerDraft | null } }) {
  * router sends back to this page's origin once the account is connected, and the call carries on
  * at the router. Not now ends the call there.
  */
-function useApprover(chat: AgentChat | undefined): AIToolApprover | undefined {
-  return useMemo(() => {
-    if (!chat) return undefined;
-    return {
-      userId: Assistant.user.id,
-      clientId: AIClientIdentity.installId(),
-      authorizer: createPopupAuthorizer({
-        returnUrl: Assistant.returnUrl,
-        decline: async (call) => chat.session.declineLogin(call.id),
-      }),
-      decide: async (call, allowed) => {
-        // A reminder alerts with a notification, which a browser lets a page ask for only in a
-        // click: this is that click.
-        if (allowed && call.name === "add_reminder" && "Notification" in window && Notification.permission === "default") {
-          void Notification.requestPermission();
-        }
-        chat.session.decide(call.id, { allowed });
-      },
-    };
-  }, [chat]);
+export function approverFor(chat: AgentChat<LocalMessage>): AIToolApprover {
+  return {
+    userId: Assistant.user.id,
+    clientId: AIClientIdentity.installId(),
+    authorizer: createPopupAuthorizer({
+      returnUrl: Assistant.returnUrl,
+      decline: async (call) => (await chat.session()).declineLogin(call.id),
+    }),
+    decide: async (call, allowed) => {
+      // A reminder alerts with a notification, which a browser lets a page ask for only in a
+      // click: this is that click.
+      if (allowed && call.name === "add_reminder" && "Notification" in window && Notification.permission === "default") {
+        void Notification.requestPermission();
+      }
+      (await chat.session()).decide(call.id, { allowed });
+    },
+  };
 }
 
 /** What a new conversation shows before anything is said. */
