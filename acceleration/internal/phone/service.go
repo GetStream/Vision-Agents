@@ -270,6 +270,9 @@ func (s *Service) Registry() *Registry { return s.registry }
 
 // Search returns the numbers one vendor is offering.
 func (s *Service) Search(ctx context.Context, vendor string, search Search) ([]Available, error) {
+	if err := sold(search.Country); err != nil {
+		return nil, err
+	}
 	provider, err := s.registry.Open(vendor)
 	if err != nil {
 		return nil, err
@@ -305,6 +308,9 @@ type Offers struct {
 // are different: every vendor reports what a number carries even when it cannot filter on it,
 // so those are checked here on the results.
 func (s *Service) SearchAll(ctx context.Context, search Search) (Offers, error) {
+	if err := sold(search.Country); err != nil {
+		return Offers{}, err
+	}
 	usable := s.registry.Available()
 	if len(usable) == 0 {
 		return Offers{}, stack.Wrap(NotConfigured(errors.New("phone: no vendor has the credentials to be searched")))
@@ -442,6 +448,16 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 	// Refused before the vendor is paid, since a number in another form would not be recorded.
 	if !store.IsE164(purchase.E164) {
 		return store.PhoneNumber{}, stack.Wrap(fmt.Errorf("phone: %w: %q", store.ErrNotE164, purchase.E164))
+	}
+	// The number's own country, not only the one the request names, since +1 is also Jamaica,
+	// Puerto Rico and the Bahamas.
+	if purchase.Country != "" {
+		if err := sold(purchase.Country); err != nil {
+			return store.PhoneNumber{}, err
+		}
+	}
+	if err := sold(Country(purchase.E164)); err != nil {
+		return store.PhoneNumber{}, err
 	}
 	provider, err := s.registry.Open(purchase.Vendor)
 	if err != nil {

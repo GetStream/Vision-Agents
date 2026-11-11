@@ -11344,7 +11344,7 @@ type SearchPhoneNumbersParams struct {
 	// Vendor One vendor to search. Absent searches every usable vendor.
 	Vendor *string `form:"vendor,omitempty" json:"vendor,omitempty"`
 
-	// Country ISO 3166-1 alpha-2 country code.
+	// Country ISO 3166-1 alpha-2 country code. Numbers are sold only in the US (US) and Canada (CA); any other country is refused.
 	Country  string  `form:"country" json:"country"`
 	AreaCode *string `form:"area_code,omitempty" json:"area_code,omitempty"`
 
@@ -14631,12 +14631,16 @@ type ClientInterface interface {
 
 	// BuyPhoneNumberWithBody Buy a number, which starts its monthly charge
 	//
+	// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/phone/numbers (the `BuyPhoneNumber` operationId).
 	BuyPhoneNumberWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// BuyPhoneNumber Buy a number, which starts its monthly charge
+	//
+	// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -20237,6 +20241,8 @@ func (c *Client) ListPhoneNumbers(ctx context.Context, params *ListPhoneNumbersP
 
 // BuyPhoneNumberWithBody Buy a number, which starts its monthly charge
 //
+// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/phone/numbers (the `BuyPhoneNumber` operationId).
@@ -20253,6 +20259,8 @@ func (c *Client) BuyPhoneNumberWithBody(ctx context.Context, contentType string,
 }
 
 // BuyPhoneNumber Buy a number, which starts its monthly charge
+//
+// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -36851,12 +36859,16 @@ type ClientWithResponsesInterface interface {
 
 	// BuyPhoneNumberWithBodyWithResponse Buy a number, which starts its monthly charge
 	//
+	// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/phone/numbers (the `BuyPhoneNumber` operationId).
 	BuyPhoneNumberWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BuyPhoneNumberResponse, error)
 
 	// BuyPhoneNumberWithResponse Buy a number, which starts its monthly charge
+	//
+	// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -68171,6 +68183,8 @@ func (c *ClientWithResponses) ListPhoneNumbersWithResponse(ctx context.Context, 
 
 // BuyPhoneNumberWithBodyWithResponse Buy a number, which starts its monthly charge
 //
+// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/phone/numbers (the `BuyPhoneNumber` operationId).
@@ -68183,6 +68197,8 @@ func (c *ClientWithResponses) BuyPhoneNumberWithBodyWithResponse(ctx context.Con
 }
 
 // BuyPhoneNumberWithResponse Buy a number, which starts its monthly charge
+//
+// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

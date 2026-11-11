@@ -3283,7 +3283,10 @@ export type paths = {
         /** The numbers the calling customer holds */
         readonly get: operations["listPhoneNumbers"];
         readonly put?: never;
-        /** Buy a number, which starts its monthly charge */
+        /**
+         * Buy a number, which starts its monthly charge
+         * @description Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
+         */
         readonly post: operations["buyPhoneNumber"];
         readonly delete?: never;
         readonly options?: never;
@@ -19248,7 +19251,7 @@ export interface operations {
                 readonly area_code?: string;
                 /** @description Digits the number must contain, anywhere in it. */
                 readonly contains?: string;
-                /** @description ISO 3166-1 alpha-2 country code. */
+                /** @description ISO 3166-1 alpha-2 country code. Numbers are sold only in the US (US) and Canada (CA); any other country is refused. */
                 readonly country: string;
                 /** @description Capabilities every number must have. Repeat the parameter to require several. A vendor that cannot filter on one still reports what its numbers carry, so these are checked on the results either way. */
                 readonly features?: readonly components["schemas"]["PhoneCapability"][];

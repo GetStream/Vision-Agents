@@ -94,8 +94,9 @@ func (s *AppsSuite) serviceAt(publicURL string) *Service {
 	return service
 }
 
-// aNumber is a number nobody in the suite's database holds yet.
-func aNumber() string { return fmt.Sprintf("+1512%010d", rand.Int64N(10_000_000_000)) }
+// aNumber is a number nobody in the suite's database holds yet: a real Austin number, since a
+// number in no country is not sold.
+func aNumber() string { return fmt.Sprintf("+1512%d%06d", 2+rand.Int64N(8), rand.Int64N(1_000_000)) }
 
 func (s *AppsSuite) config() Config {
 	config, err := DefaultConfig()
