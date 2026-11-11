@@ -3,11 +3,6 @@ import { defineConfig, searchForWorkspaceRoot } from "vite";
 
 export default defineConfig({
   plugins: [react()],
-  // One copy of each of these, the page's own, also for packages linked from elsewhere (the SDK
-  // and stream-chat-react built from their branches), which bring their own node_modules.
-  resolve: {
-    dedupe: ["react", "react-dom", "stream-chat", "@stream-io/video-client", "@stream-io/state-store", "use-sync-external-store"],
-  },
   server: {
     // The router takes a sign-in's return page only on the origin the session named, and an
     // http one only on localhost, so the page is always served here.
