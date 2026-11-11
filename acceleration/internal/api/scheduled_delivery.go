@@ -344,6 +344,16 @@ func deliveryReason(err error) string {
 	return scheduling.ReasonOf(err)
 }
 
+// overTier is a call or a text its organization's tier limits refuse, recorded as such and tried
+// again, as a day's limit or the calls at once pass on their own. Any other error is returned as
+// it is.
+func overTier(err error) error {
+	if dlc.TierLimit(err) == "" {
+		return err
+	}
+	return undelivered(scheduling.ReasonTierLimit, err)
+}
+
 // unpaid is a step the organization may not pay for as its run records it: under the refusal's own
 // code (deliveryReason), and final. The step is a text the gate refuses (dlc.ErrUnpaid), or any
 // refusal about money (moneyError), such as a session that cannot open or a text whose
@@ -394,6 +404,9 @@ func (s *Server) deliverOn(ctx context.Context, delivery scheduledDelivery, foun
 		// A send the channel would refuse is refused before the turn that
 		// writes it is paid for.
 		if err := s.reachableText(ctx, delivery, channel); err != nil {
+			if dlc.TierLimit(err) != "" {
+				return "", "", overTier(err)
+			}
 			if errors.Is(err, channels.ErrUnreachable) {
 				return "", "", undelivered(scheduling.ReasonUnreachable, err)
 			}
@@ -1037,7 +1050,7 @@ func (s *Server) placeCall(ctx context.Context, delivery scheduledDelivery, foun
 		SessionID: sessionID,
 	})
 	if err != nil {
-		return session.Spec{}, unpaid(err)
+		return session.Spec{}, unpaid(overTier(err))
 	}
 	return callSpec(config, delivery, found.Spec().AgentID, placed, from, to), nil
 }

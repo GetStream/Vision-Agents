@@ -27,7 +27,8 @@ class ScheduledTaskRun:
             the user is not rung again; that call may have carried the task out, so the run does not count toward the five
             failures in a row), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no
             template to send), thread_gone (a thread task's thread no longer exists or is not its user's),
-            connection_removed (a thread task's line was removed), or, refused for money, account_suspended,
+            connection_removed (a thread task's line was removed), tier_limit_reached (the organization's tier limits refuse
+            the call or the text, so the run is tried again), or, refused for money, account_suspended,
             insufficient_credits, system_limit_reached, spend_limit_reached or user_limit_reached, none of which is tried
             again, or spend_check_unavailable (the router could not check what the organization has spent, so the run is
             tried again); on a missed run, task_paused (a run's time came while its task was paused). The full error is in

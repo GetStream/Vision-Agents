@@ -431,6 +431,9 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 	}
 
 	placed, err := s.phone.Call(ctx, call)
+	if failure, over := tierLimitReached(err); over {
+		return nil, failure
+	}
 	if errors.Is(err, dlc.ErrRefused) || errors.Is(err, phone.ErrDestinationRefused) {
 		return nil, forbidden(err.Error())
 	}
@@ -448,6 +451,16 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 		Status:    placed.Status,
 		Vendor:    &placed.Vendor,
 		SessionId: &placed.SessionID}}, nil
+}
+
+// tierLimitReached is the answer to a call or a transfer its organization's tier limits refuse,
+// naming the limit, and false for any other error, the gate's other refusals among them.
+func tierLimitReached(err error) (APIError, bool) {
+	limit := dlc.TierLimit(err)
+	if limit == "" {
+		return APIError{}, false
+	}
+	return APIError{Type: ErrorTypePermission, Code: codeTierLimitReached, Message: err.Error(), Limit: limit}, true
 }
 
 // answerPhoneCall serves the call plan a vendor fetches when the person it called picks up.
@@ -573,6 +586,9 @@ func (s *Server) transferPhoneCall(ctx context.Context, request *transferPhoneCa
 	transfer.StreamApp = app
 
 	placed, err := s.phone.Transfer(ctx, transfer)
+	if failure, over := tierLimitReached(err); over {
+		return nil, failure
+	}
 	if errors.Is(err, phone.ErrDestinationRefused) {
 		return nil, forbidden(err.Error())
 	}

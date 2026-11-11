@@ -904,3 +904,67 @@ func (s *AdmissionSuite) TestThePolicysCodesAreTheAPIs() {
 	}
 	s.Empty(policy.Code(errors.New("anything else")))
 }
+
+// overTier answers a call and a transfer once the organization's voice limits, set to limits,
+// refuse them: the limits are read after the organization's first admission.
+func (s *AdmissionSuite) overTier(limits usage.ChannelLimits) map[string]ErrorDetail {
+	s.usage.Credit(s.T(), s.organization(), 10_000_000)
+	s.usage.SetLimits(s.T(), s.organization(), usage.Limits{Channels: map[string]usage.ChannelLimits{dlc.Voice: limits}})
+	answers := map[string]ErrorDetail{}
+	for name, ask := range s.telephony() {
+		if name == "buy" {
+			continue
+		}
+		s.Require().Eventually(func() bool {
+			status, failure := ask()
+			answers[name] = failure
+			return status == http.StatusForbidden
+		}, 10*time.Second, 50*time.Millisecond, "%s: the organization's limits are read", name)
+	}
+	return answers
+}
+
+// tierLimitReached checks every answer is the tier limit named limit, its message as before.
+func (s *AdmissionSuite) tierLimitReached(answers map[string]ErrorDetail, limit, message string) {
+	s.Require().Len(answers, 2)
+	for name, failure := range answers {
+		s.Equal(ErrorTypePermission, failure.Type, name)
+		s.Equal("tier_limit_reached", failure.Code, name)
+		s.Equal(limit, failure.Limit, name)
+		s.Contains(failure.Message, message, name)
+	}
+}
+
+func (s *AdmissionSuite) TestACallOverTheTiersCountriesIsATierLimitReached() {
+	s.tierLimitReached(s.overTier(usage.ChannelLimits{Countries: []string{"CA"}}), "country",
+		"the default tier allows voice only to CA")
+}
+
+func (s *AdmissionSuite) TestACallOverTheTiersMinutesADayIsATierLimitReached() {
+	s.tierLimitReached(s.overTier(usage.ChannelLimits{PerDay: new(0)}), "per_day",
+		"the default tier allows 0 minutes of voice a day")
+}
+
+func (s *AdmissionSuite) TestACallOverTheTiersRecipientsADayIsATierLimitReached() {
+	s.tierLimitReached(s.overTier(usage.ChannelLimits{RecipientsPerDay: new(0)}), "recipients_per_day",
+		"the default tier allows voice to 0 recipients a day")
+}
+
+func (s *AdmissionSuite) TestACallOverTheTiersCallsAtOnceIsATierLimitReached() {
+	s.tierLimitReached(s.overTier(usage.ChannelLimits{Concurrent: new(0)}), "concurrent",
+		"the default tier allows 0 calls at once")
+}
+
+func (s *AdmissionSuite) TestACallToSomebodyWhoOptedOutIsStillForbidden() {
+	s.Require().NoError(s.store.OptOut(context.Background(), &store.OptOut{
+		CustomerID: s.customerID(), Recipient: "+15550001111", Channel: dlc.Voice, Source: "keyword",
+	}))
+
+	answers := s.overTier(usage.ChannelLimits{})
+
+	for name, failure := range answers {
+		s.Equal("forbidden", failure.Code, name)
+		s.Empty(failure.Limit, name)
+		s.Contains(failure.Message, "opted out", name)
+	}
+}
