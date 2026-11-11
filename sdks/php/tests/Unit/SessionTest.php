@@ -8,6 +8,8 @@ use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Exception\RouterException;
 use GetStream\VisionAgents\Generated\ForkSessionRequest;
 use GetStream\VisionAgents\Generated\ImageSource;
+use GetStream\VisionAgents\Generated\SessionSortField;
+
 use GetStream\VisionAgents\Generated\SessionState;
 use GetStream\VisionAgents\Json;
 use GetStream\VisionAgents\Session;
@@ -238,6 +240,41 @@ final class SessionTest extends TestCase
         self::assertSame(
             ['cursor' => 'cur_1', 'filter' => ['agent' => 'jean', 'agent_id' => 'jean-7', 'state' => 'live', 'user_id' => 'u1'], 'limit' => 10],
             $this->router->to('POST', '/v1/agents/sessions/query')[0]->json(),
+        );
+    }
+
+    public function testQueryNarrowsByTeamWindowLabelsAndOrder(): void
+    {
+        $this->router->answer('POST', '/v1/agents/sessions/query', 200, ['items' => [], 'has_more' => false]);
+
+        $this->router->client()->agent('jean')->sessions->query(
+            team: 'finance',
+            createdSince: new \DateTimeImmutable('2026-10-01T00:00:00Z'),
+            createdBefore: new \DateTimeImmutable('2026-11-01T00:00:00Z'),
+            custom: ['ticket' => '4721'],
+            sort: SessionSortField::UpdatedAt,
+        );
+        $this->router->client()->agent('jean')->sessions->search('lisbon', createdSince: new \DateTimeImmutable('2026-10-01T00:00:00Z'), sort: SessionSortField::Relevance);
+
+        [$queried, $searched] = $this->router->to('POST', '/v1/agents/sessions/query');
+        self::assertSame(
+            [
+                'filter' => [
+                    'agent' => 'jean',
+                    'created_at' => ['$gte' => '2026-10-01T00:00:00.000+00:00', '$lt' => '2026-11-01T00:00:00.000+00:00'],
+                    'custom' => ['ticket' => '4721'],
+                    'team' => 'finance',
+                ],
+                'sort' => [['field' => 'updated_at']],
+            ],
+            $queried->json(),
+        );
+        self::assertSame(
+            [
+                'filter' => ['agent' => 'jean', 'created_at' => ['$gte' => '2026-10-01T00:00:00.000+00:00'], 'text' => ['$q' => 'lisbon']],
+                'sort' => [['field' => 'relevance']],
+            ],
+            $searched->json(),
         );
     }
 

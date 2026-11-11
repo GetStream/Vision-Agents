@@ -10,7 +10,10 @@ use GetStream\VisionAgents\Generated\Session as SessionRow;
 use GetStream\VisionAgents\Generated\SessionFilter;
 use GetStream\VisionAgents\Generated\SessionPage;
 use GetStream\VisionAgents\Generated\SessionQuery;
+use GetStream\VisionAgents\Generated\SessionSort;
+use GetStream\VisionAgents\Generated\SessionSortField;
 use GetStream\VisionAgents\Generated\TextMatch;
+use GetStream\VisionAgents\Generated\TimeRange;
 use GetStream\VisionAgents\Generated\UpdateSessionRequest;
 
 /**
@@ -77,6 +80,12 @@ final readonly class Sessions
      * @param 'live'|'ended'|null $state
      * @param ?string $agentId the agent id the sessions were created with
      * @param ?int $limit up to 200; null is the router's 25
+     * @param ?string $team the team their usage is counted under; a token signed for a team
+     *     may only ask for that one
+     * @param ?\DateTimeInterface $createdSince created at or after this moment
+     * @param ?\DateTimeInterface $createdBefore created before this moment
+     * @param array<string, string> $custom custom labels every one of which they hold
+     * @param SessionSortField|null $sort always newest first; null is the router's own order
      */
     public function query(
         ?string $projectId = null,
@@ -86,8 +95,13 @@ final readonly class Sessions
         ?string $agentId = null,
         ?int $limit = null,
         ?string $cursor = null,
+        ?string $team = null,
+        ?\DateTimeInterface $createdSince = null,
+        ?\DateTimeInterface $createdBefore = null,
+        array $custom = [],
+        ?SessionSortField $sort = null,
     ): SessionPage {
-        return $this->page(null, $projectId, $userId, $modality, $state, $agentId, $limit, $cursor);
+        return $this->page(null, $projectId, $userId, $modality, $state, $agentId, $limit, $cursor, $team, $createdSince, $createdBefore, $custom, $sort);
     }
 
     /**
@@ -97,6 +111,7 @@ final readonly class Sessions
      *
      * @param 'text'|'voice'|'video'|null $modality
      * @param 'live'|'ended'|null $state
+     * @param array<string, string> $custom
      */
     public function search(
         string $text,
@@ -106,8 +121,13 @@ final readonly class Sessions
         ?string $agentId = null,
         ?int $limit = null,
         ?string $cursor = null,
+        ?string $team = null,
+        ?\DateTimeInterface $createdSince = null,
+        ?\DateTimeInterface $createdBefore = null,
+        array $custom = [],
+        ?SessionSortField $sort = null,
     ): SessionPage {
-        return $this->page($text, null, $userId, $modality, $state, $agentId, $limit, $cursor);
+        return $this->page($text, null, $userId, $modality, $state, $agentId, $limit, $cursor, $team, $createdSince, $createdBefore, $custom, $sort);
     }
 
     /**
@@ -189,6 +209,8 @@ final readonly class Sessions
     /**
      * One function for the listing and the search, so the two cannot drift apart in which
      * filters they honour. Text makes it a search.
+     *
+     * @param array<string, string> $custom
      */
     private function page(
         ?string $text,
@@ -199,19 +221,32 @@ final readonly class Sessions
         ?string $agentId,
         ?int $limit,
         ?string $cursor,
+        ?string $team,
+        ?\DateTimeInterface $createdSince,
+        ?\DateTimeInterface $createdBefore,
+        array $custom,
+        ?SessionSortField $sort,
     ): SessionPage {
         $query = new SessionQuery(
             cursor: $cursor,
             filter: new SessionFilter(
                 agent: $this->agent,
                 agentId: $agentId,
+                createdAt: $createdSince === null && $createdBefore === null ? null : new TimeRange(
+                    gte: $createdSince === null ? null : \DateTimeImmutable::createFromInterface($createdSince),
+                    lt: $createdBefore === null ? null : \DateTimeImmutable::createFromInterface($createdBefore),
+                ),
+                custom: $custom === [] ? null : $custom,
                 modality: $modality,
                 projectId: $projectId,
                 state: $state,
                 text: $text === null ? null : new TextMatch($text),
                 userId: $userId,
+                team: $team,
             ),
             limit: $limit,
+            // One field and no direction: newest first is the only order there is.
+            sort: $sort === null ? null : [new SessionSort($sort)],
         );
         return SessionPage::fromArray(Json::asObject($this->client->post('/v1/agents/sessions/query', body: $query->toArray())));
     }
