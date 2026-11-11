@@ -586,7 +586,9 @@ const conversation = new AIConversationController({
 The session opens only once something needs it: `send`, `prepare` (call it while the person
 writes the first question, since opening takes seconds) or `stop`. A new conversation that was
 only looked at is never created, and one whose session opened but was never asked anything is
-deleted on `close`. Each question goes out under the controller's message id as its
+deleted on `close`. A conversation used some other way, such as talked to in voice mode, says so
+with `use()`, which hands back the session and keeps the conversation as asking does. Each
+question goes out under the controller's message id as its
 `requestId`, which the router stores the person's message under, so its copy replaces the
 question on its way. A reply the model couldn't write shows as the AI indicator's error state,
 with no text of the router's, so the components show their own. `chat.state` has the shape of

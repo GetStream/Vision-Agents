@@ -403,6 +403,18 @@ describe("AgentChat", () => {
     assert.equal(sessions[0]?.deleted, 1);
   });
 
+  it("counts a conversation used without asking, such as talked to, and keeps it on close", async () => {
+    const { open, sessions } = opener(new ChannelV9());
+    const chat = new AgentChat<Message>({ open });
+
+    const session = await chat.use();
+    await chat.close();
+
+    assert.equal(session.id, "new-1");
+    assert.equal(chat.state.getLatestValue().usedSessionId, "new-1");
+    assert.deepEqual([sessions[0]?.closed, sessions[0]?.deleted], [1, 0]);
+  });
+
   it("stops a reply through the session, and has nothing to stop before one opened", async () => {
     const { open, opened, sessions } = opener(new ChannelV9());
     const chat = new AgentChat<Message>({ open });

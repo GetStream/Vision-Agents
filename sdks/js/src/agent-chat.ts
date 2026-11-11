@@ -283,11 +283,7 @@ export class AgentChat<M extends AgentChatMessage = AgentChatMessage> {
    */
   async send(text: string, options: AgentChatSendOptions = {}): Promise<void> {
     // A session that can't open was never asked anything, and stays unasked.
-    const session = await this.session();
-    this.asked = true;
-    if (this.state.getLatestValue().usedSessionId !== session.id) {
-      this.state.partialNext({ usedSessionId: session.id });
-    }
+    const session = await this.use();
     try {
       await session.responses.create(text, responseOptions(options));
     } catch (error) {
@@ -298,6 +294,20 @@ export class AgentChat<M extends AgentChatMessage = AgentChatMessage> {
       }
       throw error;
     }
+  }
+
+  /**
+   * The session, opened if it isn't, with the conversation counted as used, as asking does: for a
+   * conversation used some other way, such as talking to the agent on the session's call. A used
+   * conversation joins a list of conversations (`usedSessionId`), and isn't deleted on `close`.
+   */
+  async use(): Promise<Session> {
+    const session = await this.session();
+    this.asked = true;
+    if (this.state.getLatestValue().usedSessionId !== session.id) {
+      this.state.partialNext({ usedSessionId: session.id });
+    }
+    return session;
   }
 
   /** Stops the reply in flight. What was written so far stays. */
