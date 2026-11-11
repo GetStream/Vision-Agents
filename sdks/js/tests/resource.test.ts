@@ -403,12 +403,13 @@ describe("sessions", () => {
     );
   });
 
-  it("filters a query by when sessions were made and by their labels, and sorts it", async () => {
+  it("filters a query by when sessions were made, their team and their labels, and sorts it", async () => {
     router.serve("POST", "/v1/agents/sessions/query", {
       body: { items: [session()], has_more: false },
     });
 
     await api.agent("docs").sessions.query({
+      team: "finance",
       createdSince: new Date("2026-10-01T00:00:00Z"),
       createdBefore: new Date("2026-11-01T00:00:00Z"),
       custom: { team: "support" },
@@ -418,6 +419,7 @@ describe("sessions", () => {
     assert.deepEqual(router.last.body, {
       filter: {
         agent: "docs",
+        team: "finance",
         created_at: { $gte: "2026-10-01T00:00:00.000Z", $lt: "2026-11-01T00:00:00.000Z" },
         custom: { team: "support" },
       },

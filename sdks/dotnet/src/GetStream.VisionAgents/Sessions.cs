@@ -23,6 +23,24 @@ public sealed record SessionQuery
     /// <summary>The sessions still running, <c>live</c>, or the ones over, <c>ended</c>.</summary>
     public string? State { get; init; }
 
+    /// <summary>Sessions whose usage is counted under this team. A token signed for a team may only ask for that one.</summary>
+    public string? Team { get; init; }
+
+    /// <summary>Sessions created at or after this moment.</summary>
+    public DateTimeOffset? CreatedSince { get; init; }
+
+    /// <summary>Sessions created before this moment.</summary>
+    public DateTimeOffset? CreatedBefore { get; init; }
+
+    /// <summary>Sessions holding every one of these custom labels.</summary>
+    public IReadOnlyDictionary<string, string>? Custom { get; init; }
+
+    /// <summary>
+    /// The order, always newest first: <c>updated_at</c>, or <c>relevance</c> for a search. Null is the
+    /// router's own: best match first for a search, most recently updated otherwise.
+    /// </summary>
+    public string? Sort { get; init; }
+
     /// <summary>How many to return, up to 200. Null is the router's 25.</summary>
     public int? Limit { get; init; }
 
@@ -93,8 +111,14 @@ public sealed class Sessions(VisionAgentsClient client, string? agent = null)
             ProjectId = VisionAgentsClient.Blank(query.ProjectId),
             Modality = VisionAgentsClient.Blank(query.Modality),
             State = VisionAgentsClient.Blank(query.State),
+            Team = VisionAgentsClient.Blank(query.Team),
+            CreatedAt = query.CreatedSince is null && query.CreatedBefore is null
+                ? null
+                : new TimeRange { Gte = query.CreatedSince?.ToUniversalTime(), Lt = query.CreatedBefore?.ToUniversalTime() },
+            Custom = query.Custom is { Count: > 0 } ? new Dictionary<string, string>(query.Custom) : null,
             Text = text is { Length: > 0 } ? new TextMatch { Q = text } : null,
         },
+        Sort = VisionAgentsClient.Blank(query.Sort) is { } field ? [new SessionSort { Field = field }] : null,
         Limit = query.Limit is > 0 ? query.Limit : null,
         Cursor = VisionAgentsClient.Blank(query.Cursor),
     };

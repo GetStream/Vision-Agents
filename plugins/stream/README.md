@@ -297,6 +297,16 @@ while page.has_more:
         stream.Query(user_id="u1", state="live", cursor=page.next_cursor)
     )
 
+october = await docs.sessions.query(
+    stream.Query(
+        team="finance",  # the team their usage is counted under
+        created_since=datetime(2026, 10, 1, tzinfo=timezone.utc),
+        created_before=datetime(2026, 11, 1, tzinfo=timezone.utc),
+        custom={"ticket": "4721"},
+        sort="updated_at",
+    )
+)
+
 await docs.sessions.update(session.id, title="Pricing, again")  # an ended one too
 await docs.sessions.delete_memories(session.id)
 await docs.sessions.delete(session.id)  # its turns and memories go with it

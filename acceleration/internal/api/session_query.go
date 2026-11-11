@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -39,6 +41,7 @@ type SessionFilter struct {
 	UserID    *Equals            `json:"user_id,omitempty" doc:"Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for."`
 	Modality  *Equals            `json:"modality,omitempty" doc:"text, voice or video: how the user took part."`
 	State     *Equals            `json:"state,omitempty" doc:"live or ended, as each session reports its state."`
+	Team      *Equals            `json:"team,omitempty" doc:"The team the session's usage is counted under. A caller whose token was signed for a team may only ask for that one."`
 	CreatedAt *TimeRange         `json:"created_at,omitempty" doc:"When the session started."`
 	Custom    *map[string]string `json:"custom,omitempty" doc:"The session's custom object holds every one of these pairs, which is how a caller finds again what it labelled."`
 }
@@ -170,7 +173,7 @@ func (s *Server) registerSessionQuery(api huma.API) {
 			"- every session, sorted by `updated_at`\n" +
 			"- a text search, `{\"text\": {\"$q\": \"billing\"}}`, sorted by `relevance`\n" +
 			"- one project's, `{\"project_id\": \"health\"}`, sorted by `updated_at`\n\n" +
-			"`agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `created_at` and " +
+			"`agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `team`, `created_at` and " +
 			"`custom` narrow any of them. A backend gets its customer's " +
 			"sessions; an end user gets their own, whatever they ask for, and an anonymous " +
 			"caller who named nobody gets none.\n\n" +
@@ -247,6 +250,7 @@ func sessionQueryOf(ctx context.Context, sent SessionQuery) (sessionQuery, error
 	query.filter.AgentName = string(value(filter.Agent))
 	query.filter.AgentID = string(value(filter.AgentID))
 	query.filter.Modality = string(value(filter.Modality))
+	query.filter.Team = string(value(filter.Team))
 	state := SessionState(value(filter.State))
 	switch state {
 	case Live:
@@ -275,6 +279,10 @@ func sessionQueryOf(ctx context.Context, sent SessionQuery) (sessionQuery, error
 			return sessionQuery{}, stack.Wrap(errors.New("a text search is sorted by relevance"))
 		}
 		return sessionQuery{}, stack.Wrap(errors.New("only a text search is sorted by relevance"))
+	}
+
+	if signed := routing.AttributionFrom(ctx).Team(); signed != "" && query.filter.Team != "" && query.filter.Team != signed {
+		return sessionQuery{}, stack.Wrap(fmt.Errorf("team %q is not the team %q the token was signed for", query.filter.Team, signed))
 	}
 
 	if requested := string(value(filter.UserID)); requested != "" {

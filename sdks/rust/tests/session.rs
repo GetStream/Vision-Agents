@@ -617,6 +617,67 @@ async fn an_agents_conversations_are_listed_searched_and_opened_by_name() {
 }
 
 #[tokio::test]
+async fn a_query_narrows_by_team_window_labels_and_order() {
+    let server = Server::start().await;
+    server.route(
+        Method::POST,
+        "/v1/agents/sessions/query",
+        200,
+        json!({"items": [], "has_more": false}),
+    );
+    let agent = server.client().agent("docs");
+
+    agent
+        .sessions
+        .query(vision_agents::Query {
+            team: Some("finance".into()),
+            created_since: Some("2026-10-01T00:00:00Z".into()),
+            created_before: Some("2026-11-01T00:00:00Z".into()),
+            custom: [("ticket".to_string(), "4721".to_string())].into(),
+            sort: Some(types::SessionSortField::UpdatedAt),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    agent
+        .sessions
+        .search(
+            "lisbon",
+            vision_agents::Query {
+                created_since: Some("2026-10-01T00:00:00Z".into()),
+                sort: Some(types::SessionSortField::Relevance),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    let queries: Vec<_> = server
+        .requests(Method::POST, "/v1/agents/sessions/query")
+        .into_iter()
+        .map(|seen| seen.body)
+        .collect();
+    assert_eq!(
+        queries,
+        [
+            json!({
+                "filter": {
+                    "agent": "docs",
+                    "team": "finance",
+                    "created_at": {"$gte": "2026-10-01T00:00:00Z", "$lt": "2026-11-01T00:00:00Z"},
+                    "custom": {"ticket": "4721"},
+                },
+                "sort": [{"field": "updated_at"}],
+            }),
+            json!({
+                "filter": {"agent": "docs", "created_at": {"$gte": "2026-10-01T00:00:00Z"}, "text": {"$q": "lisbon"}},
+                "sort": [{"field": "relevance"}],
+            }),
+        ]
+    );
+}
+
+#[tokio::test]
 async fn a_session_asked_to_start_voice_is_on_its_call() {
     let server = Server::start().await;
     server.route(Method::POST, "/v1/agents/sessions", 201, session("s1"));

@@ -60,6 +60,8 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
     let subagent: String?
     /// What a model made of the conversation, written a few seconds after it ended. A session nobody spoke in has none. Read by a backend only.
     let summary: String?
+    /// The team the session's usage is counted under: the team the caller's token was signed for, else the one the session was opened with, else its agent config's tags: team. Absent for a session counted under none.
+    let team: String?
     /// The conversation is held in writing rather than on a call.
     let text: Bool?
     let title: String?
@@ -73,7 +75,7 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
     /// The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none.
     let voice: String?
 
-    init(agent: String? = nil, agentId: String, callId: String, callOutcome: SessionCallOutcome? = nil, callType: String, closedAt: Date? = nil, configId: String? = nil, contextTruncated: Bool? = nil, conversationId: String? = nil, createdAt: Date, custom: [String: RawJSON]? = nil, description: String? = nil, endFault: SessionEndFault? = nil, endReason: SessionEndReason? = nil, endStage: SessionEndStage? = nil, forkedFrom: String? = nil, id: String, incognito: Bool? = nil, instructions: String? = nil, lastResponseAt: Date? = nil, llm: String? = nil, modality: SessionModality, mode: SessionMode? = nil, modelOverwrites: ModelOverwritesPayload? = nil, projectId: String? = nil, reviewNotes: String? = nil, reviewScore: Int? = nil, state: SessionState, sts: String? = nil, stt: String? = nil, subagent: String? = nil, summary: String? = nil, text: Bool? = nil, title: String? = nil, tts: String? = nil, usage: CallUsage? = nil, userId: String, video: SessionVideo? = nil, voice: String? = nil) {
+    init(agent: String? = nil, agentId: String, callId: String, callOutcome: SessionCallOutcome? = nil, callType: String, closedAt: Date? = nil, configId: String? = nil, contextTruncated: Bool? = nil, conversationId: String? = nil, createdAt: Date, custom: [String: RawJSON]? = nil, description: String? = nil, endFault: SessionEndFault? = nil, endReason: SessionEndReason? = nil, endStage: SessionEndStage? = nil, forkedFrom: String? = nil, id: String, incognito: Bool? = nil, instructions: String? = nil, lastResponseAt: Date? = nil, llm: String? = nil, modality: SessionModality, mode: SessionMode? = nil, modelOverwrites: ModelOverwritesPayload? = nil, projectId: String? = nil, reviewNotes: String? = nil, reviewScore: Int? = nil, state: SessionState, sts: String? = nil, stt: String? = nil, subagent: String? = nil, summary: String? = nil, team: String? = nil, text: Bool? = nil, title: String? = nil, tts: String? = nil, usage: CallUsage? = nil, userId: String, video: SessionVideo? = nil, voice: String? = nil) {
         self.agent = agent
         self.agentId = agentId
         self.callId = callId
@@ -106,6 +108,7 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
         self.stt = stt
         self.subagent = subagent
         self.summary = summary
+        self.team = team
         self.text = text
         self.title = title
         self.tts = tts
@@ -149,6 +152,7 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
         self.stt = try container.decodeIfPresent(String.self, forKey: .stt)
         self.subagent = try container.decodeIfPresent(String.self, forKey: .subagent)
         self.summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        self.team = try container.decodeIfPresent(String.self, forKey: .team)
         self.text = try container.decodeIfPresent(Bool.self, forKey: .text)
         self.title = try container.decodeIfPresent(String.self, forKey: .title)
         self.tts = try container.decodeIfPresent(String.self, forKey: .tts)
@@ -192,6 +196,7 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
         try container.encodeIfPresent(stt, forKey: .stt)
         try container.encodeIfPresent(subagent, forKey: .subagent)
         try container.encodeIfPresent(summary, forKey: .summary)
+        try container.encodeIfPresent(team, forKey: .team)
         try container.encodeIfPresent(text, forKey: .text)
         try container.encodeIfPresent(title, forKey: .title)
         try container.encodeIfPresent(tts, forKey: .tts)
@@ -237,6 +242,7 @@ extension SessionPayload: Hashable {
         lhs.stt == rhs.stt &&
         lhs.subagent == rhs.subagent &&
         lhs.summary == rhs.summary &&
+        lhs.team == rhs.team &&
         lhs.text == rhs.text &&
         lhs.title == rhs.title &&
         lhs.tts == rhs.tts &&
@@ -279,6 +285,7 @@ extension SessionPayload: Hashable {
         hasher.combine(stt)
         hasher.combine(subagent)
         hasher.combine(summary)
+        hasher.combine(team)
         hasher.combine(text)
         hasher.combine(title)
         hasher.combine(tts)

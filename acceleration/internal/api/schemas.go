@@ -846,6 +846,7 @@ type Session struct {
 	Stt              *string                 `json:"stt,omitempty" doc:"The provider and model transcribing, once somebody has been heard."`
 	Subagent         *string                 `json:"subagent,omitempty" doc:"The provider and model delegated work runs on."`
 	Summary          *string                 `json:"summary,omitempty" doc:"What a model made of the conversation, written a few seconds after it ended. A session nobody spoke in has none. Read by a backend only."`
+	Team             *string                 `json:"team,omitempty" doc:"The team the session's usage is counted under: the team the caller's token was signed for, else the one the session was opened with, else its agent config's tags: team. Absent for a session counted under none."`
 	Text             *bool                   `json:"text,omitempty" doc:"The conversation is held in writing rather than on a call."`
 	Title            *string                 `json:"title,omitempty"`
 	Tts              *string                 `json:"tts,omitempty" doc:"The provider and model speaking."`

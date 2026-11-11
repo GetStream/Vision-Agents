@@ -315,6 +315,16 @@ let sessions = &api.agent("support").sessions;
 let page = sessions.query(Query { state: Some("live".into()), ..Default::default() }).await?;
 let next = sessions.query(Query { cursor: page.next_cursor.clone(), ..Default::default() }).await?;
 let found = sessions.search("pricing", Query::default()).await?;
+let october = sessions
+    .query(Query {
+        team: Some("finance".into()), // the team their usage is counted under
+        created_since: Some("2026-10-01T00:00:00Z".into()),
+        created_before: Some("2026-11-01T00:00:00Z".into()),
+        custom: [("ticket".into(), "4721".into())].into(),
+        sort: Some(types::SessionSortField::UpdatedAt),
+        ..Default::default()
+    })
+    .await?;
 ```
 
 Lists page by cursor: pass a page's `next_cursor` back, with the same filters, while

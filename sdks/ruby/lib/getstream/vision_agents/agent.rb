@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "time"
+
 module GetStream
   module VisionAgents
     # Where code the agent writes gets run.
@@ -494,21 +496,33 @@ module GetStream
       # @param modality [String] text, voice or video.
       # @param state [String] live or ended.
       # @param agent_id [String] the sessions created with this agent id.
+      # @param team [String] the sessions whose usage is counted under this team. A token
+      #   signed for a team may only ask for that one.
+      # @param created_since [Time] the sessions created at or after this moment.
+      # @param created_before [Time] the sessions created before this moment.
+      # @param custom [Hash{String => String}] the sessions whose custom labels hold every
+      #   one of these pairs.
+      # @param sort [String] updated_at, by when each last changed, or relevance, by how well
+      #   it matches a search; always newest first. nil is the router's own.
       # @param limit [Integer] up to 200; nil is 25.
       # @return [Hash] the SessionPage: items, has_more and next_cursor.
-      def query(project_id: nil, user_id: nil, modality: nil, state: nil, agent_id: nil, limit: nil, cursor: nil)
+      def query(project_id: nil, user_id: nil, modality: nil, state: nil, agent_id: nil, team: nil,
+                created_since: nil, created_before: nil, custom: nil, sort: nil, limit: nil, cursor: nil)
         filter = { agent: @agent.config, project_id: project_id, user_id: user_id, modality: modality, state: state,
-                   agent_id: agent_id }
-        @client.post("/v1/agents/sessions/query", body: query_body(filter, limit, cursor))
+                   agent_id: agent_id, team: team, created_at: window(created_since, created_before),
+                   custom: labels(custom) }
+        @client.post("/v1/agents/sessions/query", body: query_body(filter, sort, limit, cursor))
       end
 
       # Finds a conversation by what it was called: title, description, project and agent
       # name, best match first. Takes the filters of #query but project_id, since a search
       # covers every project, and pages the same way.
-      def search(text, user_id: nil, modality: nil, state: nil, agent_id: nil, limit: nil, cursor: nil)
+      def search(text, user_id: nil, modality: nil, state: nil, agent_id: nil, team: nil,
+                 created_since: nil, created_before: nil, custom: nil, sort: nil, limit: nil, cursor: nil)
         filter = { agent: @agent.config, user_id: user_id, modality: modality, state: state, agent_id: agent_id,
+                   team: team, created_at: window(created_since, created_before), custom: labels(custom),
                    text: { "$q" => text } }
-        @client.post("/v1/agents/sessions/query", body: query_body(filter, limit, cursor))
+        @client.post("/v1/agents/sessions/query", body: query_body(filter, sort, limit, cursor))
       end
 
       # One conversation, whether or not it is still being held.
@@ -545,8 +559,20 @@ module GetStream
       private
 
       # Each filter field is a bare value, the short form of {"$eq": value}; nil leaves it out.
-      def query_body(filter, limit, cursor)
-        { filter: filter.compact, limit: limit, cursor: cursor }
+      # One sort field and no direction: newest first is the only order there is.
+      def query_body(filter, sort, limit, cursor)
+        { filter: filter.compact, sort: sort && [{ field: sort }], limit: limit, cursor: cursor }
+      end
+
+      # The half-open created_at window the two bounds name, or nil when neither was given.
+      def window(since, before)
+        return nil if since.nil? && before.nil?
+
+        { "$gte" => since&.utc&.iso8601(3), "$lt" => before&.utc&.iso8601(3) }.compact
+      end
+
+      def labels(custom)
+        custom.nil? || custom.empty? ? nil : custom
       end
     end
   end

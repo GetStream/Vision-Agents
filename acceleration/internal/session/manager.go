@@ -1573,6 +1573,8 @@ func matchesLive(live *Session, filter store.SessionFilter) bool {
 		return false
 	case filter.AgentID != "" && spec.AgentID != filter.AgentID:
 		return false
+	case filter.Team != "" && usage.Team(spec.Attribution.UsageCategories) != filter.Team:
+		return false
 	case filter.State == store.SessionRunning && live.State() != Live,
 		filter.State == store.SessionClosed && live.State() != Ended:
 		return false

@@ -349,7 +349,7 @@ void main() {
     });
 
     test(
-      'narrows a query to when a conversation started and its labels, in the order asked',
+      'narrows a query to when a conversation started, its team and its labels, in the order asked',
       () async {
         router.answer('POST /v1/agents/sessions/query', Answer(200, pageJson([])));
 
@@ -359,6 +359,7 @@ void main() {
             createdBefore: DateTime.utc(2026, 10, 8),
             custom: const {'topic': 'billing'},
             sort: SessionSort.updatedAt,
+            team: 'finance',
           ),
         );
         final ranged = router.last('POST /v1/agents/sessions/query').json;
@@ -371,6 +372,7 @@ void main() {
           'filter': {
             'created_at': {r'$gte': '2026-10-01T00:00:00.000Z', r'$lt': '2026-10-08T00:00:00.000Z'},
             'custom': {'topic': 'billing'},
+            'team': 'finance',
           },
           'sort': [
             {'field': 'updated_at'},

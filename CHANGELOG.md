@@ -2,6 +2,10 @@
 
 ## Features
 
+### A session keeps the team its usage is counted under, and is found by it
+
+`Session` gains `team`: the team its usage is counted under, from the caller's token, else the session's `team`, else its agent config's `tags: team`. It is kept with the session from when it opens, so an ended session answers it too. `querySessions` takes `filter.team` (a bare value or `{"$eq": ...}`). A caller whose token is signed for a team may only ask for that team, and asking for another is refused with a 400. Sessions kept before this have their team filled in by the migration from the `team:` usage category they were counted under. Every SDK's session query now takes the same fields as JavaScript's: `team`, a created-at window (`$gte`/`$lt`), custom labels and an order.
+
 ### Trial credit pays for usage but not phone numbers, and a sync that changed nothing costs nothing
 
 Credit has a `trial` kind, written once per organization by the gateway's `/v1/billing/trial`. `GET /v1/account` (and the usage service's account) gives `trial_micros`, the trial credit granted, and `funded`, true once credit other than trial was granted: a top-up or Stream's grant. Renting a phone number and submitting a 10DLC brand or campaign are refused with 402 `top_up_required` while the organization is not funded, so trial credit pays for models and usage only. Writing knowledge skips a document stored with the same text and passage count, so `getstream agents sync` with nothing changed in `knowledge/` writes nothing and is not refused for money (AI-3179).

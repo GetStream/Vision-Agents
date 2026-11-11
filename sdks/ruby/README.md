@@ -272,6 +272,11 @@ end
 page = api.agent("support").sessions.query(user_id: "u1", state: "live", limit: 20)
 page = api.agent("support").sessions.query(user_id: "u1", state: "live", cursor: page["next_cursor"]) if page["has_more"]
 api.agent("support").sessions.search("billing")["items"]
+api.agent("support").sessions.query(
+  team: "finance", # the team their usage is counted under
+  created_since: Time.utc(2026, 10, 1), created_before: Time.utc(2026, 11, 1),
+  custom: { "ticket" => "4721" }, sort: "updated_at"
+)
 ```
 
 `query` and `search` answer a page, `{items, has_more, next_cursor}`; pass `next_cursor` back

@@ -193,6 +193,29 @@ func (s *StoreSuite) TestQueryNarrowsByProjectAndAgent() {
 	s.Len(byAgent, 2)
 }
 
+func (s *StoreSuite) TestQueryAndSearchNarrowToATeam() {
+	s.opened("finance", "app", s.base, func(session *AgentSession) {
+		session.Team = "finance"
+		session.Title = "shared subject"
+	})
+	s.opened("sales", "app", s.base.Add(time.Minute), func(session *AgentSession) {
+		session.Team = "sales"
+		session.Title = "shared subject"
+	})
+	s.opened("none", "app", s.base.Add(2*time.Minute), func(session *AgentSession) { session.Title = "shared subject" })
+
+	listed, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{Team: "finance"})
+	s.Require().NoError(err)
+	s.Require().Len(listed, 1)
+	s.Equal("finance", listed[0].ID)
+	s.Equal("finance", listed[0].Team)
+
+	found, err := s.store.SearchSessions(s.ctx, "app", "shared", SessionFilter{Team: "sales"})
+	s.Require().NoError(err)
+	s.Require().Len(found, 1)
+	s.Equal("sales", found[0].ID)
+}
+
 func (s *StoreSuite) TestASessionIsTextWithoutACallAndVoiceWithOne() {
 	s.opened("written", "app", s.base, nil)
 	s.opened("called", "app", s.base.Add(time.Minute), func(session *AgentSession) { session.CallID = "call-1" })

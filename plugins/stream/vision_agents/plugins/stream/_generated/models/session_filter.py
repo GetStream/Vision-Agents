@@ -34,6 +34,7 @@ class SessionFilter:
         state (EqualsType1 | str | Unset): Matches one value exactly: "value" is short for {"$eq": "value"}.
         text (TextMatch | Unset):
         user_id (EqualsType1 | str | Unset): Matches one value exactly: "value" is short for {"$eq": "value"}.
+        team (EqualsType1 | str | Unset): Matches one value exactly: "value" is short for {"$eq": "value"}.
     """
 
     agent: EqualsType1 | str | Unset = UNSET
@@ -46,6 +47,7 @@ class SessionFilter:
     state: EqualsType1 | str | Unset = UNSET
     text: TextMatch | Unset = UNSET
     user_id: EqualsType1 | str | Unset = UNSET
+    team: EqualsType1 | str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.equals_type_1 import EqualsType1
@@ -118,6 +120,14 @@ class SessionFilter:
         else:
             user_id = self.user_id
 
+        team: dict[str, Any] | str | Unset
+        if isinstance(self.team, Unset):
+            team = UNSET
+        elif isinstance(self.team, EqualsType1):
+            team = self.team.to_dict()
+        else:
+            team = self.team
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
@@ -141,6 +151,8 @@ class SessionFilter:
             field_dict["text"] = text
         if user_id is not UNSET:
             field_dict["user_id"] = user_id
+        if team is not UNSET:
+            field_dict["team"] = team
 
         return field_dict
 
@@ -279,6 +291,21 @@ class SessionFilter:
 
         user_id = _parse_user_id(d.pop("user_id", UNSET))
 
+        def _parse_team(data: object) -> EqualsType1 | str | Unset:
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                componentsschemas_equals_type_1 = EqualsType1.from_dict(data)
+
+                return componentsschemas_equals_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(EqualsType1 | str | Unset, data)
+
+        team = _parse_team(d.pop("team", UNSET))
+
         session_filter = cls(
             agent=agent,
             agent_id=agent_id,
@@ -290,6 +317,7 @@ class SessionFilter:
             state=state,
             text=text,
             user_id=user_id,
+            team=team,
         )
 
         return session_filter

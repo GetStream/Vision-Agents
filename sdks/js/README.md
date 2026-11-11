@@ -184,6 +184,9 @@ const trip = await support.sessions.query({
   sort: "updated_at",
 });
 
+// The ones whose usage is counted under the finance team.
+const finance = await support.sessions.query({ team: "finance" });
+
 // Carry one on, running or ended, by the id of the session it was held in.
 const again = await support.sessions.resume(session.id);
 ```

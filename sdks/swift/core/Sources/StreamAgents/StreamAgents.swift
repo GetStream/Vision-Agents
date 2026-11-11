@@ -441,6 +441,7 @@ public struct Sessions: Sendable {
                 modality: equals(query.modality?.rawValue),
                 projectId: equals(query.projectID),
                 state: equals(query.state?.rawValue),
+                team: equals(query.team),
                 text: text.map { .init(q: $0) }),
             limit: query.limit,
             sort: query.sort.map { [.init(field: .init(rawValue: $0.rawValue))] })

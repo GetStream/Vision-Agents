@@ -6,7 +6,8 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Optional, Union
+from datetime import datetime, timezone
+from typing import Any, AsyncIterator, Literal, Optional, Union
 
 from vision_agents.core.llm.function_registry import FunctionRegistry, ToolPolicy
 
@@ -33,18 +34,23 @@ from ._generated.models import (
     Session as SessionRow,
     SessionConnectorBinding,
     SessionFilter,
+    SessionFilterCustom,
     SessionPage,
     SessionPhone,
     SessionQuery,
+    SessionSort,
+    SessionSortField,
     SessionTool,
     SessionToolApproval,
     SessionToolParameters,
     TextMatch,
+    TimeRange,
     UpdateSessionRequest,
     UpdateSessionRequestCustom,
     UpdateSessionRequestThinking,
     UpdateSessionRequestVerbosity,
 )
+from ._generated.types import UNSET
 from ._socket import Socket
 from ._tool_line import (
     Holds,
@@ -206,6 +212,15 @@ class Query:
         limit: Up to 200. Zero is 25.
         cursor: The ``next_cursor`` of the page before, with the same filters. Empty is the
             first page.
+        team: Only the ones whose usage is counted under this team. A token signed for a team
+            may only ask for that one.
+        created_since: Only the ones created at or after this moment. A naive datetime is
+            taken as local time.
+        created_before: Only the ones created before this moment.
+        custom: Only the ones whose ``custom`` labels hold every one of these pairs.
+        sort: The order, always newest first: ``updated_at``, by when each last changed, or
+            ``relevance``, by how well it matches a search. Empty is the router's own, which
+            is ``updated_at`` for a query and ``relevance`` for a search.
     """
 
     project_id: str = ""
@@ -215,6 +230,11 @@ class Query:
     agent_id: str = ""
     limit: int = 0
     cursor: str = ""
+    team: str = ""
+    created_since: Optional[datetime] = None
+    created_before: Optional[datetime] = None
+    custom: Optional[dict[str, str]] = None
+    sort: Literal["", "updated_at", "relevance"] = ""
 
 
 class Sessions:
@@ -419,13 +439,27 @@ class Sessions:
         worst a list somebody reads another user's conversations out of.
         """
         narrowed = SessionFilter(agent=self._agent)
-        for name in ("project_id", "user_id", "modality", "state", "agent_id"):
+        for name in ("project_id", "user_id", "modality", "state", "agent_id", "team"):
             if getattr(query, name):
                 setattr(narrowed, name, getattr(query, name))
+        if query.created_since or query.created_before:
+            window = TimeRange()
+            if query.created_since:
+                window.gte = query.created_since.astimezone(timezone.utc)
+            if query.created_before:
+                window.lt = query.created_before.astimezone(timezone.utc)
+            narrowed.created_at = window
+        if query.custom:
+            narrowed.custom = SessionFilterCustom.from_dict(dict(query.custom))
         if text:
             narrowed.text = TextMatch(q=text)
 
         body = SessionQuery(filter_=narrowed)
+        if query.sort:
+            # One field and no direction: newest first is the only order there is.
+            body.sort = [
+                SessionSort(field=SessionSortField(query.sort), direction=UNSET)
+            ]
         if query.limit:
             body.limit = query.limit
         if query.cursor:

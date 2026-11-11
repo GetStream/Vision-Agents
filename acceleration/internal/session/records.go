@@ -11,6 +11,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
 
 // recordQueueSize bounds how far the session writer may fall behind before rows are
@@ -445,6 +446,7 @@ func sessionRow(created *Session) store.AgentSession {
 	row.UserID = spec.Caller.UserID
 	row.CallerKind = string(spec.CallerKind)
 	row.APIKey, row.UsageCategories = spec.Attribution.APIKey, spec.Attribution.UsageCategories
+	row.Team = usage.Team(spec.Attribution.UsageCategories)
 	// What opens the session's memory (Manager.Create), so a delete knows whether there is
 	// anything in the memory store to forget.
 	row.Remembers = new(spec.Memory.UserID != "")

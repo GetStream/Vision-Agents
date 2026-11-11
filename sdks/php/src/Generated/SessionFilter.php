@@ -34,6 +34,8 @@ final readonly class SessionFilter
         public ?TextMatch $text = null,
         // Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever...
         public mixed $userId = null,
+        // The team the session's usage is counted under. A caller whose token was signed for a team may only ask for...
+        public mixed $team = null,
     ) {
     }
 
@@ -53,6 +55,7 @@ final readonly class SessionFilter
             state: $data['state'] ?? null,
             text: array_key_exists('text', $data) && $data['text'] !== null ? TextMatch::fromArray(Json::object($data, 'text')) : null,
             userId: $data['user_id'] ?? null,
+            team: $data['team'] ?? null,
         );
     }
 
@@ -93,6 +96,9 @@ final readonly class SessionFilter
         }
         if ($this->userId !== null) {
             $out['user_id'] = $this->userId;
+        }
+        if ($this->team !== null) {
+            $out['team'] = $this->team;
         }
         return $out;
     }
