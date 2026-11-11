@@ -74,11 +74,11 @@ when it syncs, and every session under that config runs with it. The model asks 
 the session socket, this process runs it, and the answer or the exception goes back the same way.
 
 A tool can say how the backend treats its calls, and its function can take the call it runs
-for:
+for as its first argument:
 
 ```csharp
 agent.Tools.Register<Booking, string>("book_flight", "Book a flight for the caller",
-    async (booking, toolCallContext, cancellationToken) =>
+    async (toolCallContext, booking, cancellationToken) =>
     {
         await toolCallContext.UpdateAsync("checking seats", cancellationToken);
         await toolCallContext.DisallowInterruptionsAsync(cancellationToken);

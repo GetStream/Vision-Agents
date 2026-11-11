@@ -17,7 +17,6 @@ from vision_agents.core.llm.tool_call import (
     ToolCall,
     ToolConversation,
     ToolUser,
-    get_tool_call_context,
 )
 from vision_agents.core.llm.remote import (
     RemoteCall,
@@ -869,8 +868,8 @@ class TestAccelerated:
         seen: list[ToolCall] = []
 
         @joined.register_function(description="Look the caller up")
-        async def whoami() -> str:
-            seen.append(get_tool_call_context())
+        async def whoami(tool_call_context: ToolCall) -> str:
+            seen.append(tool_call_context)
             return "ok"
 
         await router.send(
@@ -895,15 +894,14 @@ class TestAccelerated:
             cid="agent:kept", custom={"line": "support"}
         )
         assert seen[0].approved
-        assert get_tool_call_context() == ToolCall(), "outside a call there is none"
 
     async def test_a_function_tells_the_caller_how_it_is_going(
         self, router: Router, joined: stream.Accelerated
     ):
         @joined.register_function(description="Search flights")
-        async def search() -> str:
-            await get_tool_call_context().update("checking three airlines")
-            await get_tool_call_context().say("Still looking, one moment.")
+        async def search(tool_call_context: ToolCall) -> str:
+            await tool_call_context.update("checking three airlines")
+            await tool_call_context.say("Still looking, one moment.")
             return "found two"
 
         await router.send(
@@ -931,8 +929,8 @@ class TestAccelerated:
         release = asyncio.Event()
 
         @joined.register_function(description="Charge the card")
-        async def charge() -> str:
-            await get_tool_call_context().disallow_interruptions()
+        async def charge(tool_call_context: ToolCall) -> str:
+            await tool_call_context.disallow_interruptions()
             held.set()
             await release.wait()
             return "charged"
@@ -964,9 +962,9 @@ class TestAccelerated:
         stopped = asyncio.Event()
 
         @joined.register_function(description="Charge the card")
-        async def charge() -> str:
+        async def charge(tool_call_context: ToolCall) -> str:
             try:
-                await get_tool_call_context().disallow_interruptions()
+                await tool_call_context.disallow_interruptions()
                 wrote.set()
                 return "charged"
             finally:

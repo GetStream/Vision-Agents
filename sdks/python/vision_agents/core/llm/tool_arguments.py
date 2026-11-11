@@ -34,16 +34,24 @@ class ToolArgumentsError(TypeError):
 class Arguments:
     """A function's arguments as one Pydantic model.
 
-    A function whose only parameter is a model takes that model's fields as its arguments
-    and is handed the model; any other function takes its parameters as the fields.
+    A function whose only parameter, besides the call it may take first, is a model takes
+    that model's fields as its arguments and is handed the model; any other function takes
+    its parameters as the fields.
     """
 
-    def __init__(self, name: str, func: Callable, type_hints: dict[str, Any]):
+    def __init__(
+        self,
+        name: str,
+        func: Callable,
+        type_hints: dict[str, Any],
+        context: Optional[str] = None,
+    ):
+        """`context` names the parameter handed the `ToolCall`, which the model does not fill in."""
         self.name = name
         parameters = [
             parameter
             for parameter in inspect.signature(func).parameters.values()
-            if parameter.name != "self"
+            if parameter.name not in ("self", context)
             and parameter.kind
             not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
         ]

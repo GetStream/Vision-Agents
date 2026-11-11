@@ -722,7 +722,7 @@ fn tool(name: &str) -> types::SessionTool {
 fn holding() -> Tools {
     let tools = Tools::new();
     tools
-        .register_with_tool_call_context(tool("pay"), |_, tool_call_context: ToolCall| async move {
+        .register_with_tool_call_context(tool("pay"), |tool_call_context: ToolCall, _| async move {
             tool_call_context.disallow_interruptions().await?;
             tokio::time::sleep(Duration::from_millis(200)).await;
             Ok::<_, Error>("paid")
@@ -739,7 +739,7 @@ async fn a_function_is_told_who_its_call_answers_and_can_say_how_it_is_going() {
     let server = Server::start().await;
     let tools = Tools::new();
     tools
-        .register_with_tool_call_context(tool("book"), |_, tool_call_context: ToolCall| async move {
+        .register_with_tool_call_context(tool("book"), |tool_call_context: ToolCall, _| async move {
             tool_call_context.update("Looking at flights")
                 .await
                 .map_err(|error| error.to_string())?;

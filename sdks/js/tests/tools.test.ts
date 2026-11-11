@@ -215,7 +215,7 @@ describe("render", () => {
       name: "stuck",
       description: "Never finishes",
       timeoutMs: 20,
-      run: (_input, signal) =>
+      runWithContext: ({ signal }) =>
         new Promise(() => {
           signal.addEventListener("abort", () => (aborted = signal.reason));
         }),
@@ -230,7 +230,7 @@ describe("render", () => {
     const tools = new Tools().register({
       name: "whoami",
       description: "Who asked",
-      run: async (_input, _signal, toolCallContext) => {
+      runWithContext: async (toolCallContext) => {
         seen = toolCallContext;
         toolCallContext.update("checking");
         toolCallContext.say("One moment.");
@@ -240,6 +240,61 @@ describe("render", () => {
 
     assert.equal(await tools.call("whoami", "{}", new AbortController().signal), "kept");
     assert.equal(seen?.id, "");
+  });
+
+  it("hands runWithContext the call first and the arguments second, and run only the arguments", async () => {
+    const tools = new Tools()
+      .register<{ city: string }>({
+        name: "simple",
+        description: "Only the arguments",
+        run: (...given: unknown[]) => given,
+      })
+      .register<{ city: string }>({
+        name: "context",
+        description: "The call, then the arguments",
+        runWithContext: (toolCallContext, { city }) => `${toolCallContext.id} ${city}`,
+      });
+    const call = new ToolCall({ id: "call-1" });
+
+    assert.equal(
+      await tools.call("simple", JSON.stringify({ city: "Rome" }), new AbortController().signal, call),
+      JSON.stringify([{ city: "Rome" }]),
+    );
+    assert.equal(
+      await tools.call("context", JSON.stringify({ city: "Rome" }), new AbortController().signal, call),
+      "call-1 Rome",
+    );
+  });
+
+  it("aborts the call's signal when the call is cancelled", async () => {
+    const cancel = new AbortController();
+    const tools = new Tools().register({
+      name: "slow",
+      description: "Wait to be cancelled",
+      runWithContext: ({ signal }) =>
+        new Promise((resolve) => signal.addEventListener("abort", () => resolve("cancelled"))),
+    });
+
+    const answer = tools.call("slow", "{}", cancel.signal);
+    cancel.abort();
+    assert.equal(await answer, "cancelled");
+  });
+
+  it("refuses a tool with both run and runWithContext, or neither", () => {
+    assert.throws(
+      () =>
+        new Tools().register({
+          name: "both",
+          description: "Two ways to run",
+          run: () => "a",
+          runWithContext: () => "b",
+        } as never),
+      /one of run or runWithContext/,
+    );
+    assert.throws(
+      () => new Tools().register({ name: "none", description: "No way to run" } as never),
+      /one of run or runWithContext/,
+    );
   });
 
   it("reports how a call is going on its line, and a call stopped before it was held", async () => {

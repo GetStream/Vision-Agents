@@ -138,7 +138,7 @@ describe("production hardening", () => {
     agent.tools.register({
       name: "write",
       description: "Write after holding the call",
-      run: async (_, _signal, context) => {
+      runWithContext: async (context) => {
         aborted = (await context.disallowInterruptions()).aborted;
         return "finished";
       },

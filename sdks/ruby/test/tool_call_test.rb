@@ -43,15 +43,17 @@ class TestToolCall < Minitest::Test
     assert tool_call_context.cancelled?
   end
 
-  def test_a_block_is_handed_its_call_and_a_one_argument_lambda_is_not
-    seen = nil
+  def test_a_block_of_two_is_handed_its_call_first_and_a_block_of_one_only_the_arguments
     tools = VA::Tools.new
-    tools.register("whoami", description: "Who asked") { |_args, tool_call_context| seen = tool_call_context.id }
-    tools.register("plain", description: "Takes arguments only", &->(args) { args["x"] })
+    tools.register("whoami", description: "Who asked") { |tool_call_context, args| "#{tool_call_context.id} #{args["x"]}" }
+    tools.register("plain", description: "Takes arguments only") { |args| args["x"] }
+    tools.register("lambda", description: "Takes arguments only", &->(args) { args["x"] })
+    tools.register("none", description: "Takes nothing") { "done" }
 
-    tools.call("whoami", "{}", VA::ToolCall.new(id: "t1"))
-    assert_equal "t1", seen
-    assert_equal "7", tools.call("plain", '{"x":"7"}')
+    assert_equal "t1 7", tools.call("whoami", '{"x":"7"}', VA::ToolCall.new(id: "t1"))
+    assert_equal "7", tools.call("plain", '{"x":"7"}', VA::ToolCall.new(id: "t1"))
+    assert_equal "7", tools.call("lambda", '{"x":"7"}')
+    assert_equal "done", tools.call("none", "{}")
   end
 
   def test_a_call_without_a_socket_does_nothing

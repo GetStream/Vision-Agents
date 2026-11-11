@@ -616,7 +616,7 @@ describe("Dispatch", () => {
     agent.tools.register({
       name: "investigate",
       description: "Investigate for a long time",
-      run: (_input, signal) =>
+      runWithContext: ({ signal }) =>
         new Promise((resolve) => {
           signal.addEventListener("abort", () => {
             stopped = true;
@@ -649,7 +649,7 @@ describe("Dispatch", () => {
     agent.tools.register({
       name: "investigate",
       description: "Investigate",
-      run: (_input, _signal, toolCallContext) => {
+      runWithContext: (toolCallContext) => {
         seen = {
           id: toolCallContext.id,
           sessionId: toolCallContext.sessionId,

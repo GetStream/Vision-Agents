@@ -13,7 +13,8 @@ use GetStream\VisionAgents\Worker\Holds;
 /**
  * One call of one of the caller's tools: who it is for, and its line back to them.
  *
- * A tool whose callable takes a second argument is handed one. A call made with no socket
+ * A tool whose callable takes two arguments, or a `ToolCall` first, is handed one ahead of its
+ * arguments. A call made with no socket
  * behind it, as a test makes, has no line, so its updates go nowhere.
  */
 final class ToolCall

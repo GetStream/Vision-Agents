@@ -11,9 +11,9 @@ module GetStream
     # The Chat channel a call was made in, and the session's own labels.
     ToolConversation = Data.define(:cid, :custom)
 
-    # The call a tool's block is running for, handed to it as the second argument:
+    # The call a tool's block is running for, handed to it as the first argument:
     #
-    #   tools.register("book_flight", description: "Book a flight", ...) do |args, tool_call_context|
+    #   tools.register("book_flight", description: "Book a flight", ...) do |tool_call_context, args|
     #     tool_call_context.update("checking seats")
     #     tool_call_context.disallow_interruptions
     #     bookings.book(args["flight_id"], key: tool_call_context.id) unless tool_call_context.cancelled?

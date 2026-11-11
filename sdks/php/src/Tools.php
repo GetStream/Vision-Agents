@@ -12,6 +12,7 @@ use GetStream\VisionAgents\Generated\SessionTool;
 use GetStream\VisionAgents\Generated\SessionToolApproval;
 use JsonException;
 use ReflectionFunction;
+use ReflectionNamedType;
 use RuntimeException;
 
 use function Amp\async;
@@ -37,8 +38,9 @@ final class Tools
 
     /**
      * @param array<string, mixed> $parameters a JSON Schema for the arguments
-     * @param callable(array<string, mixed>, ToolCall): mixed $run given the decoded arguments,
-     *     and the call it runs for when it takes a second argument; what it returns is sent
+     * @param callable(array<string, mixed>): mixed|callable(ToolCall, array<string, mixed>): mixed $run
+     *     given the decoded arguments, or, when it takes two parameters or its first is a
+     *     `ToolCall`, the call it runs for and then the arguments; what it returns is sent
      *     back as the output, JSON encoded unless it is already a string
      * @param ?string $displayTitle what the reply's tool call attachment shows, at most 80 characters
      * @param 'server'|'client'|null $executor who runs it: `server`, the router's default, or
@@ -73,7 +75,7 @@ final class Tools
             'description' => $description,
             'parameters' => $parameters,
             'run' => $run,
-            'takesCall' => $reflected->isVariadic() || $reflected->getNumberOfParameters() >= 2,
+            'takesCall' => self::takesCall($reflected),
             'displayTitle' => $displayTitle,
             'executor' => $executor,
             'interruptible' => $interruptible,
@@ -135,7 +137,7 @@ final class Tools
         $toolCallContext ??= new ToolCall();
         $run = $tool['run'];
         $running = $tool['takesCall']
-            ? static fn (): mixed => $run(Json::asObject($decoded), $toolCallContext)
+            ? static fn (): mixed => $run($toolCallContext, Json::asObject($decoded))
             : static fn (): mixed => $run(Json::asObject($decoded));
         if ($tool['timeout'] === null) {
             $output = $running();
@@ -151,6 +153,19 @@ final class Tools
             }
         }
         return is_string($output) ? $output : Json::encode($output);
+    }
+
+    /**
+     * Whether a function is handed the call it runs for, ahead of the arguments.
+     */
+    private static function takesCall(ReflectionFunction $run): bool
+    {
+        if ($run->isVariadic() || $run->getNumberOfParameters() >= 2) {
+            return true;
+        }
+        $first = $run->getParameters()[0] ?? null;
+        $type = $first?->getType();
+        return $type instanceof ReflectionNamedType && is_a($type->getName(), ToolCall::class, true);
     }
 
     /**

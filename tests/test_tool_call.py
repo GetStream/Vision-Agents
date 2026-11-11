@@ -4,8 +4,6 @@ from vision_agents.core.llm import (
     FunctionRegistry,
     ToolCall,
     ToolPolicy,
-    using_tool_call_context,
-    get_tool_call_context,
 )
 
 
@@ -84,34 +82,77 @@ class TestPolicies:
             FunctionRegistry().register(**options)
 
 
-class TestCurrentCall:
-    async def test_outside_a_call_there_is_an_empty_one_that_does_nothing(self):
-        tool_call_context = get_tool_call_context()
-
-        await tool_call_context.update("still going")
-        await tool_call_context.say("one moment")
-        await tool_call_context.disallow_interruptions()
-
-        assert tool_call_context == ToolCall()
-
-    async def test_a_call_set_for_a_function_is_the_one_it_reads(self):
+class TestToolCallContext:
+    async def test_a_function_whose_first_parameter_is_a_tool_call_is_handed_it(self):
+        registry = FunctionRegistry()
         line = Line()
 
-        async def search() -> str:
-            await get_tool_call_context().update("checking")
-            await get_tool_call_context().say("One moment.")
-            return get_tool_call_context().id
+        @registry.register()
+        async def search(tool_call_context: ToolCall, city: str) -> str:
+            await tool_call_context.update("checking")
+            await tool_call_context.say("One moment.")
+            return f"{tool_call_context.id} {city}"
 
-        with using_tool_call_context(ToolCall(id="call-1", line=line)):
-            assert await search() == "call-1"
+        answer = await registry.call_function(
+            "search", {"city": "Rome"}, ToolCall(id="call-1", line=line)
+        )
 
+        assert answer == "call-1 Rome"
         assert line.sent == [
             ("call-1", "checking", False),
             ("call-1", "One moment.", True),
         ]
-        assert get_tool_call_context() == ToolCall()
+
+    def test_the_model_is_not_told_about_the_tool_call(self):
+        registry = FunctionRegistry()
+
+        @registry.register()
+        async def search(tool_call_context: ToolCall, city: str) -> str:
+            return city
+
+        (schema,) = registry.get_tool_schemas()
+        assert set(schema["parameters_schema"]["properties"]) == {"city"}
+        assert schema["parameters_schema"]["required"] == ["city"]
+
+    async def test_a_function_that_takes_only_its_arguments_is_handed_only_them(self):
+        registry = FunctionRegistry()
+
+        @registry.register()
+        async def search(city: str) -> str:
+            return city
+
+        assert (
+            await registry.call_function("search", {"city": "Rome"}, ToolCall())
+            == "Rome"
+        )
+
+    async def test_without_a_call_there_is_an_empty_one_that_does_nothing(self):
+        registry = FunctionRegistry()
+        seen: list[ToolCall] = []
+
+        @registry.register()
+        async def search(tool_call_context: ToolCall) -> str:
+            await tool_call_context.update("still going")
+            await tool_call_context.disallow_interruptions()
+            seen.append(tool_call_context)
+            return "ok"
+
+        assert await registry.call_function("search", {}) == "ok"
+        assert seen == [ToolCall()]
+
+    async def test_a_schema_given_as_written_still_hands_the_call(self):
+        registry = FunctionRegistry()
+        schema = {"type": "object", "properties": {"city": {"type": "string"}}}
+
+        @registry.register(parameters_schema=schema)
+        async def search(tool_call_context: ToolCall, **arguments) -> str:
+            return f"{tool_call_context.id} {arguments['city']}"
+
+        assert (
+            await registry.call_function("search", {"city": "Rome"}, ToolCall(id="c"))
+            == "c Rome"
+        )
 
     async def test_a_call_stopped_before_it_was_held_says_so(self):
-        with using_tool_call_context(ToolCall(id="call-1", line=Line(holds=False))):
-            with pytest.raises(CallNotHeld):
-                await get_tool_call_context().disallow_interruptions()
+        with pytest.raises(CallNotHeld):
+            await ToolCall(id="call-1", line=Line(holds=False)).disallow_interruptions()

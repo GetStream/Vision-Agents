@@ -470,6 +470,17 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### A tool is handed its call as the first argument
+
+A tool function that needs the call it runs for (who asked, its id, `update`, `say`, `disallow_interruptions`) now takes it as its first argument, ahead of the tool's arguments. A tool that does not need it takes only its arguments, as before. Go is unchanged.
+
+- Python: annotate the first parameter `ToolCall`, as in `async def book_flight(tool_call_context: ToolCall, flight_id: str)`. The model is not told about it. `get_tool_call_context()` and `using_tool_call_context()` are gone: a test passes the function a `ToolCall(...)`, or `call_function(name, arguments, tool_call_context)`.
+- JavaScript: `run: (input) => ...` is handed the arguments only, and `runWithContext: (toolCallContext, input) => ...` the call first. `signal` is no longer an argument: it is `toolCallContext.signal`.
+- Ruby: a block that takes two arguments gets `|tool_call_context, args|`; one that takes one gets `|args|`.
+- PHP: a callable that takes two arguments, or a `ToolCall` first, gets `(ToolCall $toolCallContext, array $args)`; one that takes one gets `(array $args)`.
+- Rust: `register_with_tool_call_context` hands its function `(tool_call_context, arguments)`.
+- C#: the overloads that take the call are `(toolCallContext, arguments, cancellationToken)`.
+
 ### A worker cannot host tools for an agent the app does not have
 
 `host_tools` on `/v1/dispatch` is answered `hosting_refused` with `there is no agent called <name>` when the app has no agent config of that name. Sessions are only opened by a config's name, so such tools were never offered to anything while the worker looked healthy. The Go, Python and JavaScript SDKs already stop the worker on a refusal, so a misspelled `api.Agent("<name>")` now fails at start naming the agent; sync the agent before starting its worker. A router with no config store, or one that cannot read it at that moment, still takes the offer (AI-3132).

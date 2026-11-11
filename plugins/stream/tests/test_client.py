@@ -377,9 +377,9 @@ class TestSessions:
         seen: list[stream.ToolCall] = []
 
         @agent.register(description="Look up an order", timeout=2.5)
-        async def lookup_order() -> str:
-            seen.append(stream.get_tool_call_context())
-            await stream.get_tool_call_context().update("searching the archive")
+        async def lookup_order(tool_call_context: stream.ToolCall) -> str:
+            seen.append(tool_call_context)
+            await tool_call_context.update("searching the archive")
             return "found"
 
         router.frames = [

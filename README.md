@@ -97,16 +97,16 @@ func main() {
 ```python
 import asyncio
 
-from vision_agents.core.llm import get_tool_call_context
+from vision_agents.core.llm import ToolCall
 from vision_agents.plugins import stream
 
 agent = stream.Client().agent("my-agent")
 
 
 @agent.register()
-async def customer_case_lookup() -> list:
+async def customer_case_lookup(tool_call_context: ToolCall) -> list:
     "Look up the user's open support cases"
-    user = get_tool_call_context().user
+    user = tool_call_context.user
     if not user.id:
         raise ValueError("unknown user")
     # pretend this calls your CRM

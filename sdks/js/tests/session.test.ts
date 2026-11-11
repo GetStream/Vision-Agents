@@ -297,7 +297,7 @@ describe("Session", () => {
     const tools = new Tools().register({
       name: "slow",
       description: "Take a while",
-      run: (_input, signal) =>
+      runWithContext: ({ signal }) =>
         new Promise((resolve) => {
           signal.addEventListener("abort", () => {
             aborted = true;
@@ -332,7 +332,7 @@ describe("Session", () => {
     const tools = new Tools().register({
       name: "search",
       description: "Search flights",
-      run: (_input, _signal, toolCallContext) => {
+      runWithContext: (toolCallContext) => {
         seen = toolCallContext;
         toolCallContext.update("checking three airlines");
         toolCallContext.say("Still looking, one moment.");
@@ -380,7 +380,7 @@ describe("Session", () => {
     const tools = new Tools().register({
       name: "charge",
       description: "Charge the card",
-      run: async (_input, _signal, toolCallContext) => {
+      runWithContext: async (toolCallContext) => {
         writing = await toolCallContext.disallowInterruptions();
         await new Promise<void>((resolve) => (release = resolve));
         return "charged";
@@ -408,7 +408,7 @@ describe("Session", () => {
     const tools = new Tools().register({
       name: "charge",
       description: "Charge the card",
-      run: async (_input, _signal, toolCallContext) => {
+      runWithContext: async (toolCallContext) => {
         writing = await toolCallContext.disallowInterruptions();
         return writing.aborted ? "never charged" : "charged";
       },

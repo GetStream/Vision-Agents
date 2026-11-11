@@ -8,7 +8,6 @@ from aiohttp.test_utils import TestServer
 from vision_agents.core.llm.tool_call import (
     CallNotHeld,
     ToolCall,
-    get_tool_call_context,
 )
 from vision_agents.plugins import stream
 
@@ -77,8 +76,8 @@ class TestSTSTools:
         seen: list[ToolCall] = []
 
         @model.register_function(description="Look the caller up")
-        async def whoami() -> str:
-            seen.append(get_tool_call_context())
+        async def whoami(tool_call_context: ToolCall) -> str:
+            seen.append(tool_call_context)
             return "ok"
 
         await model.connect()
@@ -93,9 +92,9 @@ class TestSTSTools:
         self, conversation: Conversation, model: stream.STS
     ):
         @model.register_function(description="Check the book")
-        async def check() -> str:
-            await get_tool_call_context().update("checking the patio")
-            await get_tool_call_context().say("One moment.")
+        async def check(tool_call_context: ToolCall) -> str:
+            await tool_call_context.update("checking the patio")
+            await tool_call_context.say("One moment.")
             return "a table at 7:30"
 
         await model.connect()
@@ -125,8 +124,8 @@ class TestSTSTools:
         self, conversation: Conversation, model: stream.STS
     ):
         @model.register_function(description="Charge the card")
-        async def charge() -> str:
-            await get_tool_call_context().disallow_interruptions()
+        async def charge(tool_call_context: ToolCall) -> str:
+            await tool_call_context.disallow_interruptions()
             return "charged"
 
         await model.connect()
@@ -147,9 +146,9 @@ class TestSTSTools:
         refused: list[BaseException] = []
 
         @model.register_function(description="Charge the card")
-        async def charge() -> str:
+        async def charge(tool_call_context: ToolCall) -> str:
             try:
-                await get_tool_call_context().disallow_interruptions()
+                await tool_call_context.disallow_interruptions()
             except CallNotHeld as error:
                 refused.append(error)
                 raise

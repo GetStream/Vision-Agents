@@ -293,7 +293,8 @@ refuses fail the call with what was wrong, such as `seats: Too big: expected num
 holds; the model is just not told it. A JSON Schema written out is told to the model as it is,
 and its arguments reach `run` unchecked. The package does not depend on Zod.
 
-A tool can say how the backend treats its calls, and read the call it is running for:
+A tool can say how the backend treats its calls. With `runWithContext` in place of `run`, it is
+handed the call it is running for first, then the arguments:
 
 ```ts
 agent.tools.register<{ flight_id: string }>({
@@ -302,7 +303,7 @@ agent.tools.register<{ flight_id: string }>({
   parameters: { type: "object", properties: { flight_id: { type: "string" } }, required: ["flight_id"] },
   approval: { title: "Book flight {flight_id}?" },
   timeoutMs: 20_000,
-  run: async ({ flight_id }, signal, toolCallContext) => {
+  runWithContext: async (toolCallContext, { flight_id }) => {
     toolCallContext.update("checking seats");
     const writing = await toolCallContext.disallowInterruptions();
     return bookings.book(flight_id, {
@@ -328,7 +329,8 @@ agent.tools.register<{ flight_id: string }>({
 
 `toolCallContext` is the call being answered: its `id`, which a call sent again keeps, so it is
 the key to make a side effect happen once; `sessionId`, `turnId`, the `user` whose turn asked,
-and the `conversation`. `update(text)` says how the call is going: a voice agent tells the
+and the `conversation`. Its `signal` aborts when the call is cancelled, as when the caller talks
+over the agent, or times out. `update(text)` says how the call is going: a voice agent tells the
 caller in its own words once nobody is talking. `say(text)` has it say `text` as written, which
 a speech-to-speech model may paraphrase. `disallowInterruptions()` keeps the call going from
 then on, for a write that must not stop halfway, and resolves with the signal to do it on, which

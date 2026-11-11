@@ -16,8 +16,6 @@ from .tool_call import (
     ToolConversation,
     ToolLine,
     ToolUser,
-    get_tool_call_context,
-    using_tool_call_context,
 )
 
 __all__ = [
@@ -44,6 +42,4 @@ __all__ = [
     "ToolConversation",
     "ToolLine",
     "ToolUser",
-    "get_tool_call_context",
-    "using_tool_call_context",
 ]

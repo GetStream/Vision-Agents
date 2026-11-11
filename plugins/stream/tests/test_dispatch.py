@@ -1276,9 +1276,9 @@ class TestDispatch:
         seen: list[stream.ToolCall] = []
 
         @agent.register(description="Investigate")
-        async def investigate() -> str:
-            seen.append(stream.get_tool_call_context())
-            await stream.get_tool_call_context().update("reading the logs")
+        async def investigate(tool_call_context: stream.ToolCall) -> str:
+            seen.append(tool_call_context)
+            await tool_call_context.update("reading the logs")
             return "found it"
 
         worker = stream.Dispatch(url=router.url, customer_id="acme")
