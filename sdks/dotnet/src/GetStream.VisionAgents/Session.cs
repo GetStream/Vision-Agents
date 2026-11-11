@@ -134,6 +134,9 @@ public sealed class Session : IAsyncDisposable
     /// <summary>The team the session's usage is counted under; empty when it has none.</summary>
     public string Team => Created.Team ?? "";
 
+    /// <summary>When the session was pinned, as the router said when this was read; null for one that is not pinned.</summary>
+    public DateTimeOffset? PinnedAt => Created.PinnedAt;
+
     /// <summary>Whether the session's socket is still open.</summary>
     public bool Live => _socket is { Open: true };
 
@@ -179,12 +182,23 @@ public sealed class Session : IAsyncDisposable
         SendAsync(Frames.Of("interrupt"), cancellationToken);
 
     /// <summary>
-    /// Changes this session: its title, description, custom labels, models or voice, and
+    /// Changes this session: its title, description, custom labels, pin, models or voice, and
     /// returns it as it now is. A field left null is left as it is.
     /// </summary>
     /// <remarks>Models take over from the next turn. The id, the call and incognito cannot change; fork for that.</remarks>
     public Task<Models.Session> UpdateAsync(UpdateSessionRequest update, CancellationToken cancellationToken = default) =>
         new Sessions(_client).UpdateAsync(Id, update, cancellationToken);
+
+    /// <summary>
+    /// Pins this session and returns it as it now is, with its <c>PinnedAt</c>. A pin does not
+    /// move it in a <c>last_message_at</c> order.
+    /// </summary>
+    public Task<Models.Session> PinAsync(CancellationToken cancellationToken = default) =>
+        new Sessions(_client).PinAsync(Id, cancellationToken);
+
+    /// <summary>Unpins this session and returns it as it now is.</summary>
+    public Task<Models.Session> UnpinAsync(CancellationToken cancellationToken = default) =>
+        new Sessions(_client).UnpinAsync(Id, cancellationToken);
 
     /// <summary>
     /// Deletes this conversation: it is stopped, and its turns and what it remembered are

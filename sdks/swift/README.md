@@ -195,20 +195,36 @@ device cannot name yet, so declare a tool that asks first with the default execu
 Lists page by cursor: pass a page's `nextCursor` back as `cursor` for the next one.
 
 ```swift
-var query = SessionQuery(limit: 50)
-query.state = .live
-query.custom = ["ticket": "4721"]          // the labels SessionOptions.custom opened it with
-query.createdSince = Calendar.current.date(byAdding: .day, value: -7, to: Date())
-let page = try await agents.agent("myagent").sessions.query(query)
-let found = try await agents.agent("myagent").sessions.search("pricing")
-// page.hasMore, page.nextCursor
+let sessions = agents.agent("myagent").sessions
+let page = try await sessions.query(
+    filter: .or([.projectID("a"), .projectID("b")]),      // or .projectIDIn(["a", "b"])
+    sort: [.pinned, .lastMessageAt()],                      // the pinned ones first
+    limit: 20)
+let next = try await sessions.query(
+    filter: .or([.projectID("a"), .projectID("b")]), sort: [.pinned, .lastMessageAt()],
+    limit: 20, cursor: page.nextCursor)                     // page.hasMore says whether to ask
+let found = try await sessions.search("pricing", filter: .projectID("a"))
 
 try await session.update(title: "Pricing questions")      // nil leaves a field as it is
-_ = try await agents.agent("myagent").sessions.update(page.items[0].id, title: "Old pricing")
+_ = try await sessions.update(page.items[0].id, title: "Old pricing")
+
+try await session.pin()                                     // session.session.pinnedAt says when
+try await sessions.unpin(page.items[0].id)                  // by id, for one read back from a query
 
 try await agents.close(sessionID: page.items[0].id)         // stops it, keeps the transcript
-try await agents.agent("myagent").sessions.delete(page.items[0].id)   // and this deletes it
+try await sessions.delete(page.items[0].id)                 // and this deletes it
 ```
+
+A filter is a `SessionFilter`, which is sent as the router reads it: `.projectID` and
+`.projectIDIn` match a project, `.agent` an agent by name, and `.and` and `.or` put up to 10
+filters together, nested at most 3 deep. From `agent(...).sessions` every query is narrowed to
+that agent, whatever the filter says at its top. The sort is `[.lastMessageAt()]` when left
+out, most recently answered first; `.lastMessageAt(ascending: true)` turns it round, and
+`.pinned` comes first and may be followed by `.lastMessageAt`. A cursor only continues the
+filter and sort it came from. `search` takes the same filter and no sort, since it lists the
+best match first. A pin does not move a conversation in the `lastMessageAt` order, and
+`update(pinned:)` pins or unpins along with a rename. A device cannot filter by user or filter
+or sort by review score: it only ever sees its own conversations, and reviews are for a backend.
 
 ### Looking something up
 
@@ -331,6 +347,11 @@ generator. The check's rules are tested: `uv run --no-project --with pytest --wi
 The generated code is `internal`, and every type crossing the public API is hand-written in
 `Models.swift`. That is what lets the spec churn without breaking anybody: a field added to
 `Session` is a generated field nobody outside the module can see until it is wrapped.
+
+One request body is hand-written too. The generator drops a field that is a string or an object,
+which is every condition a session filter has, so the generated `SessionFilterPayload` keeps only
+`$and`, `$or` and `text`. `SessionFilter` and `SessionQueryBody` in `Models.swift` encode the
+query instead, and it is sent over the generated client's own request path.
 
 Websockets are not generated — OpenAPI stops at the upgrade — so `SessionSocket.swift` is
 hand-written against the contract in

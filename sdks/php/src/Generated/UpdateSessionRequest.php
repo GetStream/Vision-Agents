@@ -9,9 +9,9 @@ namespace GetStream\VisionAgents\Generated;
 use GetStream\VisionAgents\Json;
 
 /**
- * What to change about one session. A field left out is left as it is. Title, description and
- * custom can change on a session that ended, and are all an end user's device may change;
- * everything else needs the session running and a server-side caller.
+ * What to change about one session. A field left out is left as it is. Title, description,
+ * custom and pinned can change on a session that ended, and are all an end user's device may
+ * change; everything else needs the session running and a server-side caller.
  */
 final readonly class UpdateSessionRequest
 {
@@ -33,6 +33,8 @@ final readonly class UpdateSessionRequest
         public ?string $verbosity = null,
         // The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. P...
         public ?string $voice = null,
+        // true pins the session and false unpins it. Pinning one that is already pinned keeps the time it was first p...
+        public ?bool $pinned = null,
     ) {
     }
 
@@ -54,6 +56,7 @@ final readonly class UpdateSessionRequest
             tts: array_key_exists('tts', $data) && $data['tts'] !== null ? Json::string($data, 'tts') : null,
             verbosity: array_key_exists('verbosity', $data) && $data['verbosity'] !== null ? Json::string($data, 'verbosity') : null,
             voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
+            pinned: array_key_exists('pinned', $data) && $data['pinned'] !== null ? Json::bool($data, 'pinned') : null,
         );
     }
 
@@ -100,6 +103,9 @@ final readonly class UpdateSessionRequest
         }
         if ($this->voice !== null) {
             $out['voice'] = $this->voice;
+        }
+        if ($this->pinned !== null) {
+            $out['pinned'] = $this->pinned;
         }
         return $out;
     }

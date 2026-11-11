@@ -1467,10 +1467,17 @@ func (m *Manager) find(ctx context.Context, owner Owner, text string, filter sto
 		filter.CallerKinds = owner.reachedKinds()
 	}
 
+	// A search is sorted by relevance and nothing else, as the store sorts it.
+	if text != "" {
+		filter.Order = store.SessionOrder{By: store.SessionSortRelevance}
+	} else if filter.Order.By == store.SessionSortRelevance {
+		filter.Order.By = store.SessionSortLastMessage
+	}
+
 	found := make([]Found, 0, filter.Limit)
 	seen := map[string]int{}
 	// Only a live session nothing records is listed from memory. A recorded one is listed
-	// by its row, so it sorts and pages on the row's updated_at like every other.
+	// by its row, so it sorts and pages on the row's keys like every other.
 	for _, live := range m.List(owner) {
 		// A live session has no title to search, so a search skips them unless the row
 		// behind them matches. Whatever the store turns up is merged in below.
@@ -1516,17 +1523,12 @@ func (m *Manager) find(ctx context.Context, owner Owner, text string, filter sto
 		}
 	}
 
-	// A search is already ranked by the store, so only a plain query is sorted here, on
-	// the same keys as the store so a cursor from either half holds for both.
-	if text == "" {
-		sort.Slice(found, func(i, j int) bool {
-			a, b := found[i].updatedAt(), found[j].updatedAt()
-			if !a.Equal(b) {
-				return a.After(b)
-			}
-			return found[i].ID() > found[j].ID()
-		})
-	}
+	// Both halves are sorted here on the same keys as the store, so a cursor from either
+	// half holds for both. The sort is stable and the store's rows arrive in this order
+	// already, so it only places the sessions nothing records among them.
+	sort.SliceStable(found, func(i, j int) bool {
+		return filter.Order.Compare(found[i].Position(), found[j].Position()) < 0
+	})
 	// One more than the page, which is how the caller tells there is another.
 	if limit := store.SessionLimit(filter.Limit) + 1; len(found) > limit {
 		found = found[:limit]
@@ -1535,33 +1537,36 @@ func (m *Manager) find(ctx context.Context, owner Owner, text string, filter sto
 }
 
 // Position is where the session sits in the list it was found in, which is what a cursor
-// holds.
+// holds: the row's keys, or for a session nothing records, when it began, which has no
+// later message, pin or review written anywhere to sort by.
 func (f Found) Position() store.SessionPosition {
-	position := store.SessionPosition{UpdatedAt: f.updatedAt(), ID: f.ID()}
 	if f.Stored != nil {
-		position.Rank = f.Stored.Rank
-	}
-	return position
-}
-
-// updatedAt is what the list sorts on: the row's updated_at, or when it began for a session
-// nothing records, which has no later change written anywhere to sort by.
-func (f Found) updatedAt() time.Time {
-	if f.Stored != nil {
-		return f.Stored.UpdatedAt
+		return f.Stored.Position()
 	}
 	if f.Live != nil {
-		return f.Live.CreatedAt()
+		return livePosition(f.Live)
 	}
-	return time.Time{}
+	return store.SessionPosition{}
+}
+
+// livePosition is where a session nothing records sits. Its time is cut to the microsecond
+// a row's is kept to, so a cursor on it compares the same way here and in the store.
+func livePosition(live *Session) store.SessionPosition {
+	return store.SessionPosition{LastMessageAt: live.CreatedAt().Truncate(time.Microsecond), ID: live.ID()}
 }
 
 // matchesLive applies the filter to a session that has not been written down, so a query
 // answers the same way with a store and without one.
+//
+// The filter's own fields are who the caller may see, and what the request spelled out is
+// its Where. They are ANDed here as the store ANDs them, so an $or in the request chooses
+// among the caller's sessions and never reaches another's.
 func matchesLive(live *Session, filter store.SessionFilter) bool {
 	spec := live.Spec()
 	switch {
 	case filter.UserID != "" && spec.Caller.UserID != filter.UserID:
+		return false
+	case len(filter.CallerKinds) > 0 && !slices.Contains(filter.CallerKinds, string(spec.CallerKind)):
 		return false
 	case filter.ConfigID != "" && spec.ConfigID != filter.ConfigID:
 		return false
@@ -1584,7 +1589,12 @@ func matchesLive(live *Session, filter store.SessionFilter) bool {
 		return false
 	case !contains(spec.Custom, filter.Custom):
 		return false
-	case filter.Cursor != nil && !before(live.CreatedAt(), live.ID(), *filter.Cursor):
+	// Nobody has reviewed a session that is still running, so it has no score.
+	case !filter.Where.Matches(store.SessionValues{
+		Project: spec.Project, Agent: spec.AgentName, UserID: spec.Caller.UserID,
+	}):
+		return false
+	case filter.Cursor != nil && filter.Order.Compare(livePosition(live), *filter.Cursor) <= 0:
 		return false
 	}
 	return true
@@ -1601,14 +1611,25 @@ func contains(custom map[string]any, wanted map[string]string) bool {
 	return true
 }
 
-// before is the store's (updated_at, id) < (?, ?), for a session that has no row to ask.
-// Ids are lowercase hex, which Postgres collates the same way Go compares bytes.
-func before(updated time.Time, id string, cursor store.SessionPosition) bool {
-	if !updated.Equal(cursor.UpdatedAt) {
-		return updated.Before(cursor.UpdatedAt)
+// ErrNotRecorded is a session nothing records, which has no row to keep a pin on.
+var ErrNotRecorded = errors.New("session: nothing records this session, so it cannot be pinned")
+
+// Pin pins a running session, or unpins it, and returns when it was pinned: nil once it is
+// not. The pin is kept on the session's row, which is written behind the conversation, so
+// the writer is waited for first. A session nothing records is ErrNotRecorded.
+func (m *Manager) Pin(ctx context.Context, live *Session, pinned bool) (*time.Time, error) {
+	if live.records == nil || m.options.Store == nil {
+		return nil, stack.Wrap(ErrNotRecorded)
 	}
-	return id < cursor.ID
+	if err := live.records.Flush(ctx); err != nil {
+		return nil, stack.Wrap(err)
+	}
+	return m.options.Store.PinSession(ctx, live.spec.CustomerID, live.id, pinned, time.Now().UTC())
 }
+
+// Recorded reports whether the session has a row: false for an incognito one and for a
+// deployment that keeps nothing.
+func (s *Session) Recorded() bool { return s.records != nil }
 
 // Close ends a session its owner may have, reporting whether they had one by that id.
 func (m *Manager) Close(id string, owner Owner) (bool, error) {

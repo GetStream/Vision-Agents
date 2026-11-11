@@ -119,17 +119,23 @@ struct LiveTests {
         await #expect(throws: AgentsError.self) { try await agents.sessions.get(fork.id) }
     }
 
-    /// A query narrowed to the sessions still running finds the one just opened.
-    @Test func aQueryFindsTheLiveSessionItWasNarrowedTo() async throws {
+    /// A query of the agent's sessions, last answered first, finds the one just opened, and a
+    /// pinned one comes first when the pinned are asked for first.
+    @Test func aQueryFindsTheSessionJustOpenedAndListsAPinnedOneFirst() async throws {
         let session = try await Live.agents.chat(agent: Live.agent)
         defer { Task { await session.close() } }
+        let sessions = Live.agents.agent(Live.agent).sessions
 
-        var query = SessionQuery(limit: 200)
-        query.state = .live
-        let page = try await Live.agents.agent(Live.agent).sessions.query(query)
-
+        let page = try await sessions.query(sort: [.lastMessageAt()], limit: 200)
         #expect(page.items.contains { $0.id == session.id })
-        #expect(page.items.allSatisfy { $0.state == .live })
+
+        try await session.pin()
+        defer { Task { try? await sessions.unpin(session.id) } }
+        #expect(session.session.pinnedAt != nil)
+        let pinnedFirst = try await sessions.query(sort: [.pinned, .lastMessageAt()], limit: 200)
+        let unpinned = pinnedFirst.items.firstIndex { $0.pinnedAt == nil } ?? pinnedFirst.items.count
+        #expect(pinnedFirst.items[..<unpinned].contains { $0.id == session.id })
+        #expect(pinnedFirst.items[unpinned...].allSatisfy { $0.pinnedAt == nil })
     }
 
     @Test func aRenamedSessionReadsBackItsNewTitle() async throws {

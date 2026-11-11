@@ -32,10 +32,9 @@ class Conversations extends ChangeNotifier {
     _reads += 1;
     final read = _reads;
     try {
-      const query = SessionQuery(limit: 50);
       final page = searchText.isEmpty
-          ? await Assistant.sessions.query(query)
-          : await Assistant.sessions.search(searchText, query);
+          ? await Assistant.sessions.query(limit: 50)
+          : await Assistant.sessions.search(searchText, limit: 50);
       if (read != _reads) return;
       // Only the ones kept in writing can be opened again as a chat: a session that was only
       // ever a call, or incognito, has no channel to read back.
