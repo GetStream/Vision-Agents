@@ -228,6 +228,30 @@ func (s *DocumentsSuite) TestAReopenedConversationReadsItsFileAgain() {
 	s.Contains(read[0].Content, phrase)
 }
 
+func (s *DocumentsSuite) TestAScannedPageIsReadFromItsPicture() {
+	opened := s.opening(s.client)
+	question := "What does the scan say? " + s.utils.uuid()
+
+	s.ask(s.client, opened, question, s.testdata("scanned.pdf"))
+
+	read := documentsIn(s.asked(question))
+	s.Require().Len(read, 1)
+	s.Contains(read[0].Content, "Drain the oil.", "a page that is only a picture is read from it")
+	s.NotContains(read[0].Content, "only a picture, which was not read")
+}
+
+func (s *DocumentsSuite) TestAPageWithAChartHasTheChartRead() {
+	opened := s.opening(s.client)
+	question := "What does the chart show? " + s.utils.uuid()
+
+	s.ask(s.client, opened, question, s.testdata("figures.pdf"))
+
+	read := documentsIn(s.asked(question))
+	s.Require().Len(read, 1)
+	s.Contains(read[0].Content, "Oil changes rise each week.", "a chart is read as words the model can answer from")
+	s.NotContains(read[0].Content, "which were not read")
+}
+
 func (s *DocumentsSuite) TestAPictureSentAsAFileIsRefused() {
 	opened := s.opening(s.client)
 	picture := "data:image/png;base64," + base64.StdEncoding.EncodeToString(drawn.Images[0].Data)
@@ -386,6 +410,13 @@ func (s *DocumentsSuite) docx(name, text string) FileSource {
 	s.Require().NoError(err)
 	s.Require().NoError(writer.Close())
 	return FileSource{Url: "data:application/octet-stream;base64," + base64.StdEncoding.EncodeToString(archive.Bytes()), Name: &name}
+}
+
+// testdata is a file of the extractor's test data, sent as a data URI under its own name.
+func (s *DocumentsSuite) testdata(name string) FileSource {
+	data, err := os.ReadFile("../knowledge/extract/testdata/" + name)
+	s.Require().NoError(err)
+	return FileSource{Url: "data:application/octet-stream;base64," + base64.StdEncoding.EncodeToString(data), Name: &name}
 }
 
 // documentsIn are the files a request was sent.
