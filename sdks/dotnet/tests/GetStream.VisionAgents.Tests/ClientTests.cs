@@ -299,6 +299,37 @@ public sealed class ClientTests
     }
 
     [Fact]
+    public async Task ASessionQueryNarrowsByTeamWindowLabelsAndOrder()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sessions/query", 200, Page(false, null));
+        using var client = Fixtures.Client(router);
+        var cancel = TestContext.Current.CancellationToken;
+
+        await client.Agent("support").Sessions.QueryAsync(new SessionQuery
+        {
+            Team = "finance",
+            CreatedSince = new DateTimeOffset(2026, 10, 1, 2, 0, 0, TimeSpan.FromHours(2)),
+            CreatedBefore = new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero),
+            Custom = new Dictionary<string, string> { ["ticket"] = "4721" },
+            Sort = "updated_at",
+        }, cancel);
+        await client.Sessions.SearchAsync("lisbon", new SessionQuery { CreatedSince = new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero), Sort = "relevance" }, cancel);
+
+        var bodies = router.To("POST", "/v1/agents/sessions/query").Select(seen => seen.Body!.AsObject()).ToList();
+        var listed = bodies[0]["filter"]!.AsObject();
+        Assert.Equal(["agent", "created_at", "custom", "team"], listed.Select(pair => pair.Key).Order());
+        Assert.Equal(("support", "finance", "4721"), (listed.Text("agent"), listed.Text("team"), listed["custom"]!.AsObject().Text("ticket")));
+        Assert.Equal(("2026-10-01T00:00:00+00:00", "2026-11-01T00:00:00+00:00"),
+            (listed["created_at"]!.AsObject().Text("$gte"), listed["created_at"]!.AsObject().Text("$lt")));
+        Assert.Equal("""[{"field":"updated_at"}]""", bodies[0]["sort"]!.ToJsonString());
+        var searched = bodies[1]["filter"]!.AsObject();
+        Assert.Equal(["created_at", "text"], searched.Select(pair => pair.Key).Order());
+        Assert.Equal("2026-10-01T00:00:00+00:00", searched["created_at"]!.AsObject().Text("$gte"));
+        Assert.Equal("""[{"field":"relevance"}]""", bodies[1]["sort"]!.ToJsonString());
+    }
+
+    [Fact]
     public async Task ASessionIsUpdatedStoppedAndDeletedByItsId()
     {
         await using var router = await TestRouter.StartAsync();

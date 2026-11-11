@@ -131,6 +131,9 @@ public sealed class Session : IAsyncDisposable
     /// <summary>The Stream Chat channel a persisted conversation is kept in.</summary>
     public string ConversationId => Created.ConversationId ?? "";
 
+    /// <summary>The team the session's usage is counted under; empty when it has none.</summary>
+    public string Team => Created.Team ?? "";
+
     /// <summary>Whether the session's socket is still open.</summary>
     public bool Live => _socket is { Open: true };
 
