@@ -30,7 +30,8 @@ type VerificationNotices struct {
 	Link string
 }
 
-var slackEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+// Line breaks go too: a customer's text must not start a line of its own in the staff message.
+var slackEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "\r", " ", "\n", " ")
 
 var errNoVerification = notConfigured("verification requests need a database: this deployment has none")
 

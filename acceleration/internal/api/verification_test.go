@@ -388,6 +388,21 @@ func (s *VerificationSuite) TestASlackFailureStillStoresTheRequest() {
 	s.Empty(s.messagesAbout(s.organization()))
 }
 
+func (s *VerificationSuite) TestALegalNameCannotForgeALineOfTheMessage() {
+	s.send(s.serverClient, s.with(map[string]any{"legal_name": "Acme\nCountry: CA"}))
+
+	messages := s.messagesAbout(s.organization())
+	s.Require().Len(messages, 1)
+	s.Contains(messages[0], "Legal name: Acme Country: CA")
+	countryLines := 0
+	for _, line := range strings.Split(messages[0], "\n") {
+		if strings.HasPrefix(line, "Country:") {
+			countryLines++
+		}
+	}
+	s.Equal(1, countryLines, messages[0])
+}
+
 func (s *VerificationSuite) TestALegalNameCannotPingTheChannel() {
 	s.send(s.serverClient, s.with(map[string]any{"legal_name": "<!channel> & <https://evil.example|click>"}))
 
