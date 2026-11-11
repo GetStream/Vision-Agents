@@ -560,7 +560,7 @@ func (s *RouterSuite) SetupSuite() {
 	ctx := context.Background()
 	logger := slog.New(slog.DiscardHandler)
 	if s.logs != nil {
-		logger = slog.New(slog.NewTextHandler(s.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		logger = slog.New(slog.NewTextHandler(s.logs, &slog.HandlerOptions{Level: slog.LevelDebug, ReplaceAttr: store.RedactLogAttr}))
 	}
 
 	// A shard database and Redis run the suite as a hosted shard runs: the shared rows in one
