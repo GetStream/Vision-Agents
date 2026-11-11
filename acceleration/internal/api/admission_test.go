@@ -24,6 +24,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
@@ -31,6 +33,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
@@ -482,7 +485,7 @@ func (s *AdmissionSuite) TestASuspendedOrganizationCanNeitherBuyNorDialNorTransf
 	}
 }
 
-func (s *AdmissionSuite) TestACallOrATransferToACountryTheTierDoesNotAllowIsForbidden() {
+func (s *AdmissionSuite) TestACallOrATransferToACountryTheTierDoesNotAllowIsRefused() {
 	s.usage.Credit(s.T(), s.organization(), 10_000_000)
 	s.usage.SetLimits(s.T(), s.organization(), usage.Limits{Channels: map[string]usage.ChannelLimits{
 		dlc.Voice: {Countries: []string{"US", "CA"}},
@@ -905,9 +908,9 @@ func (s *AdmissionSuite) TestThePolicysCodesAreTheAPIs() {
 	s.Empty(policy.Code(errors.New("anything else")))
 }
 
-// overTier answers a call and a transfer once the organization's voice limits, set to limits,
-// refuse them: the limits are read after the organization's first admission.
-func (s *AdmissionSuite) overTier(limits usage.ChannelLimits) map[string]ErrorDetail {
+// refusedTelephony sets the organization's voice limits and answers a call and a transfer once
+// they are refused: the limits are read after the organization's first admission.
+func (s *AdmissionSuite) refusedTelephony(limits usage.ChannelLimits) map[string]ErrorDetail {
 	s.usage.Credit(s.T(), s.organization(), 10_000_000)
 	s.usage.SetLimits(s.T(), s.organization(), usage.Limits{Channels: map[string]usage.ChannelLimits{dlc.Voice: limits}})
 	answers := map[string]ErrorDetail{}
@@ -932,26 +935,27 @@ func (s *AdmissionSuite) tierLimitReached(answers map[string]ErrorDetail, limit,
 		s.Equal("tier_limit_reached", failure.Code, name)
 		s.Equal(limit, failure.Limit, name)
 		s.Contains(failure.Message, message, name)
+		s.NotContains(failure.Message, "+1555", "%s: the refusal does not name the number", name)
 	}
 }
 
 func (s *AdmissionSuite) TestACallOverTheTiersCountriesIsATierLimitReached() {
-	s.tierLimitReached(s.overTier(usage.ChannelLimits{Countries: []string{"CA"}}), "country",
+	s.tierLimitReached(s.refusedTelephony(usage.ChannelLimits{Countries: []string{"CA"}}), "country",
 		"the default tier allows voice only to CA")
 }
 
 func (s *AdmissionSuite) TestACallOverTheTiersMinutesADayIsATierLimitReached() {
-	s.tierLimitReached(s.overTier(usage.ChannelLimits{PerDay: new(0)}), "per_day",
+	s.tierLimitReached(s.refusedTelephony(usage.ChannelLimits{PerDay: new(0)}), "per_day",
 		"the default tier allows 0 minutes of voice a day")
 }
 
 func (s *AdmissionSuite) TestACallOverTheTiersRecipientsADayIsATierLimitReached() {
-	s.tierLimitReached(s.overTier(usage.ChannelLimits{RecipientsPerDay: new(0)}), "recipients_per_day",
+	s.tierLimitReached(s.refusedTelephony(usage.ChannelLimits{RecipientsPerDay: new(0)}), "recipients_per_day",
 		"the default tier allows voice to 0 recipients a day")
 }
 
 func (s *AdmissionSuite) TestACallOverTheTiersCallsAtOnceIsATierLimitReached() {
-	s.tierLimitReached(s.overTier(usage.ChannelLimits{Concurrent: new(0)}), "concurrent",
+	s.tierLimitReached(s.refusedTelephony(usage.ChannelLimits{Concurrent: new(0)}), "concurrent",
 		"the default tier allows 0 calls at once")
 }
 
@@ -960,11 +964,42 @@ func (s *AdmissionSuite) TestACallToSomebodyWhoOptedOutIsStillForbidden() {
 		CustomerID: s.customerID(), Recipient: "+15550001111", Channel: dlc.Voice, Source: "keyword",
 	}))
 
-	answers := s.overTier(usage.ChannelLimits{})
+	answers := s.refusedTelephony(usage.ChannelLimits{})
 
 	for name, failure := range answers {
 		s.Equal("forbidden", failure.Code, name)
 		s.Empty(failure.Limit, name)
 		s.Contains(failure.Message, "opted out", name)
 	}
+}
+
+func (s *AdmissionSuite) TestAScheduledCallOrTextATierLimitRefusedIsRecordedUnderTierLimitReached() {
+	daily := stack.Wrap(dlc.NewRefusal("per_day"))
+	country := stack.Wrap(dlc.NewRefusal("country"))
+	unreachable := func(refusal error) error { return fmt.Errorf("%w: %w", channels.ErrUnreachable, refusal) }
+
+	for name, failed := range map[string]error{
+		"a call":        unpaid(overTier(daily)),
+		"a text":        textUnreachable(unreachable(daily)),
+		"a thread text": threadUnreachable(fmt.Errorf("%w: %w", channelbridge.ErrHeldBack, daily)),
+	} {
+		s.Equal(scheduling.ReasonTierLimit, deliveryReason(failed), name)
+		s.False(s.finalFailure(failed), "%s: the day's limit passes on its own", name)
+	}
+	s.True(s.finalFailure(unpaid(overTier(country))), "a country the tier does not reach never passes")
+	s.True(s.finalFailure(textUnreachable(unreachable(country))))
+}
+
+func (s *AdmissionSuite) TestAScheduledTextTheGateRefusesForAnythingButATierLimitIsUnreachable() {
+	optedOut := stack.Wrap(dlc.NewRefusal("opted_out"))
+
+	s.Equal(scheduling.ReasonUnreachable, deliveryReason(textUnreachable(fmt.Errorf("%w: %w", channels.ErrUnreachable, optedOut))))
+	s.Equal(scheduling.ReasonFailed, deliveryReason(unpaid(overTier(optedOut))), "a call refused as before")
+}
+
+// finalFailure reports whether err is a run's failure that is not tried again.
+func (s *AdmissionSuite) finalFailure(err error) bool {
+	var failure *scheduling.Failure
+	s.Require().ErrorAs(err, &failure)
+	return failure.Final
 }

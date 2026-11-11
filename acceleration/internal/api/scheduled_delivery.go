@@ -344,14 +344,27 @@ func deliveryReason(err error) string {
 	return scheduling.ReasonOf(err)
 }
 
-// overTier is a call or a text its organization's tier limits refuse, recorded as such and tried
-// again, as a day's limit or the calls at once pass on their own. Any other error is returned as
-// it is.
+// overTier is a call or a text its organization's tier limits refuse, recorded as such. A day's
+// limit or the calls at once pass on their own, so it is tried again; a country never does, so it
+// is final. Any other error is returned as it is.
 func overTier(err error) error {
-	if dlc.TierLimit(err) == "" {
+	limit := dlc.TierLimit(err)
+	if limit == "" {
 		return err
 	}
-	return undelivered(scheduling.ReasonTierLimit, err)
+	return &scheduling.Failure{Reason: scheduling.ReasonTierLimit, Final: !dlc.RefusalResets(limit), Err: err}
+}
+
+// textUnreachable is the failure a run records for a text channel that would refuse the task's
+// words now (channels.Service.Reachable).
+func textUnreachable(err error) error {
+	switch {
+	case dlc.TierLimit(err) != "":
+		return overTier(err)
+	case errors.Is(err, channels.ErrUnreachable):
+		return undelivered(scheduling.ReasonUnreachable, err)
+	}
+	return unpaid(err)
 }
 
 // unpaid is a step the organization may not pay for as its run records it: under the refusal's own
@@ -404,13 +417,7 @@ func (s *Server) deliverOn(ctx context.Context, delivery scheduledDelivery, foun
 		// A send the channel would refuse is refused before the turn that
 		// writes it is paid for.
 		if err := s.reachableText(ctx, delivery, channel); err != nil {
-			if dlc.TierLimit(err) != "" {
-				return "", "", overTier(err)
-			}
-			if errors.Is(err, channels.ErrUnreachable) {
-				return "", "", undelivered(scheduling.ReasonUnreachable, err)
-			}
-			return "", "", unpaid(err)
+			return "", "", textUnreachable(err)
 		}
 		text, files, err := s.captureReply(ctx, found, delivery)
 		if err != nil {
