@@ -2,6 +2,10 @@
 
 ## Features
 
+### Python: an `authorize` hook on tool calls
+
+`FunctionRegistry(authorize=...)`, or `llm.function_registry.authorize = ...`, takes an async callable that runs before every tool call with the function's name, its arguments and the `ToolCallContext`. Raise `ToolCallRefused("...")` to stop the call; the function does not run and the model is told the message.
+
 ### Session queries take `$and` / `$or` filters and a sort, and sessions can be pinned
 
 **Breaking.** `querySessions` (`POST /v1/agents/sessions/query`) filters on `project_id` (`$eq`, `$in`), `text` (`$q`), `review_score` (`$eq`, `$gt`, `$gte`, `$lt`, `$lte`; server side only), `agent` and `user_id` (server side only), combined with `$and` and `$or`: 1 to 10 filters each, nested at most 3 deep, 30 conditions in a filter. Any other key is a 400 that names it, which includes the filters taken before: `agent_id`, `config_id`, `modality`, `state`, `team`, `created_at` and `custom`. `text` and `user_id` go at the top level or directly in the top-level `$and`, never inside `$or`, and `text` may now be combined with `project_id`.
@@ -483,6 +487,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 `GET /v1/agents/connections/{id}/tools` gives each tool `read_only`: true when, in the connector's latest revision, every source lists it in `read_only_tools` or says it sends nothing out (`outbound: false`); false when the connector is gone. A binding may grant such a tool by name beside a sensitive connector such as Nessy without `require_approval`; the config save refuses any other tool there unless `require_approval` holds it. It is the same rule the save checks, so an admin can preselect the tools that only read without guessing from their names: Linear's `list_issues` is `read_only`, its `search_documentation` and `save_issue` are not (AI-2788).
 
 ## Breaking Changes
+
+### Python: tool calls run by a local model are checked, and a tool's exception text stays out of the model's context
+
+A tool call from a model run in this process (every LLM and realtime plugin, and `stream.STS`) now goes through `FunctionRegistry.call_function`, so its arguments are held to the function's signature as a hosted call's already were. A call with a missing or wrongly typed argument is refused, and the model is told which argument is wrong. When a function raises, the exception is logged and the model is told only that the tool failed; before, it was sent the exception text. To send a message to the model on purpose, raise `ToolError("...")`. The MCP tool wrapper follows the same rule. `ToolArgumentsError` is now a `ToolError`.
 
 ### A tool is handed its ToolCallContext as an argument
 

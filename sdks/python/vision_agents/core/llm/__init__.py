@@ -13,7 +13,9 @@ from .tool_arguments import ToolArgumentsError
 from .tool_call import (
     CallNotHeld,
     ToolCallContext,
+    ToolCallRefused,
     ToolConversation,
+    ToolError,
     ToolLine,
     ToolUser,
 )
@@ -39,7 +41,9 @@ __all__ = [
     "function_registry",
     "CallNotHeld",
     "ToolCallContext",
+    "ToolCallRefused",
     "ToolConversation",
+    "ToolError",
     "ToolLine",
     "ToolUser",
 ]

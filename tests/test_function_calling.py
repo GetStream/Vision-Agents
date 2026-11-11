@@ -7,7 +7,13 @@ from unittest.mock import Mock, patch
 
 import pytest
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.llm import FunctionRegistry, function_registry
+from vision_agents.core.llm import (
+    FunctionRegistry,
+    ToolCallContext,
+    ToolCallRefused,
+    ToolError,
+    function_registry,
+)
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.plugins.anthropic import LLM as ClaudeLLM
 from vision_agents.plugins.gemini import LLM as GeminiLLM
@@ -88,6 +94,46 @@ class TestFunctionRegistry:
         assert await registry.call_function("check_outage", {"query": "x"}) == {
             "outage": False
         }
+
+    async def test_authorize_refuses_a_call(self):
+        ran = []
+
+        async def refuse(
+            name: str, arguments: dict, tool_call_context: Optional[ToolCallContext]
+        ) -> None:
+            raise ToolCallRefused(f"{name} is not allowed for this caller")
+
+        registry = FunctionRegistry(authorize=refuse)
+
+        @registry.register(description="Refund an order")
+        async def refund(order_id: str) -> str:
+            ran.append(order_id)
+            return "refunded"
+
+        with pytest.raises(ToolCallRefused, match="refund is not allowed"):
+            await registry.call_function("refund", {"order_id": "42"})
+
+        assert ran == []
+
+    async def test_authorize_is_handed_the_call(self):
+        seen = []
+
+        async def allow(
+            name: str, arguments: dict, tool_call_context: Optional[ToolCallContext]
+        ) -> None:
+            seen.append((name, arguments, tool_call_context))
+
+        registry = FunctionRegistry(authorize=allow)
+
+        @registry.register(description="Refund an order")
+        async def refund(order_id: str) -> str:
+            return f"refunded {order_id}"
+
+        call = ToolCallContext(id="call-1")
+        result = await registry.call_function("refund", {"order_id": "42"}, call)
+
+        assert result == "refunded 42"
+        assert seen == [("refund", {"order_id": "42"}, call)]
 
     async def test_get_tool_schemas(self):
         """Test getting tool schemas."""
@@ -617,6 +663,77 @@ class TestConcurrentToolExecution:
 
         assert llm.metrics.agent_metrics.llm_tool_calls__total.value() == 1
         assert llm.metrics.agent_metrics.llm_tool_latency_ms__avg.value() is not None
+
+    async def test_run_one_tool_refuses_argument_of_wrong_type(self, llm: DummyLLM):
+        ran = []
+
+        @llm.register_function(description="Double a number")
+        async def double(x: int) -> int:
+            ran.append(x)
+            return x * 2
+
+        _, result, _ = await llm._run_one_tool(
+            {"id": "call1", "name": "double", "arguments_json": {"x": "five"}}, 30.0
+        )
+
+        assert ran == []
+        assert "x" in result["error"]
+        assert "double" in result["error"]
+
+    async def test_run_one_tool_keeps_exception_text_from_the_model(
+        self, llm: DummyLLM
+    ):
+        @llm.register_function(description="Look up an order")
+        async def lookup() -> str:
+            raise RuntimeError("could not connect to db-internal-7:5432")
+
+        _, result, _ = await llm._run_one_tool(
+            {"id": "call1", "name": "lookup", "arguments_json": {}}, 30.0
+        )
+
+        assert "db-internal-7" not in result["error"]
+        assert "lookup" in result["error"]
+
+    async def test_run_one_tool_tells_the_model_a_tool_error(self, llm: DummyLLM):
+        @llm.register_function(description="Look up an order")
+        async def lookup() -> str:
+            raise ToolError("No order with that number")
+
+        _, result, _ = await llm._run_one_tool(
+            {"id": "call1", "name": "lookup", "arguments_json": {}}, 30.0
+        )
+
+        assert result["error"] == "No order with that number"
+
+    async def test_run_one_tool_is_refused_by_authorize(self, llm: DummyLLM):
+        ran = []
+
+        async def refuse(
+            name: str, arguments: dict, tool_call_context: Optional[ToolCallContext]
+        ) -> None:
+            raise ToolCallRefused("Refunds need a signed-in user")
+
+        llm.function_registry.authorize = refuse
+
+        @llm.register_function(description="Refund an order")
+        async def refund(order_id: str) -> str:
+            ran.append(order_id)
+            return "refunded"
+
+        _, result, _ = await llm._run_one_tool(
+            {"id": "call1", "name": "refund", "arguments_json": {"order_id": "42"}},
+            30.0,
+        )
+
+        assert ran == []
+        assert result["error"] == "Refunds need a signed-in user"
+
+    async def test_run_one_tool_names_an_unregistered_function(self, llm: DummyLLM):
+        _, result, _ = await llm._run_one_tool(
+            {"id": "call1", "name": "missing", "arguments_json": {}}, 30.0
+        )
+
+        assert result["error"] == "Function 'missing' is not registered"
 
     async def test_output_sanitization(self, llm: DummyLLM):
         """Test output sanitization for large responses."""

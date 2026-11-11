@@ -18,6 +18,8 @@ from pydantic import (
 from pydantic.errors import PydanticInvalidForJsonSchema
 from pydantic.fields import FieldInfo
 
+from .tool_call import ToolError
+
 # What an argument with no type, or a type Pydantic cannot describe, is told to the model as,
 # and taken as it comes.
 _UNDESCRIBED = Annotated[Any, WithJsonSchema({"type": "string"})]
@@ -26,7 +28,7 @@ _UNDESCRIBED = Annotated[Any, WithJsonSchema({"type": "string"})]
 _CONFIG = ConfigDict(coerce_numbers_to_str=True, arbitrary_types_allowed=True)
 
 
-class ToolArgumentsError(TypeError):
+class ToolArgumentsError(ToolError, TypeError):
     """A call's arguments are not what its function takes. The message says what is wrong
     with each, in words the model can correct."""
 
