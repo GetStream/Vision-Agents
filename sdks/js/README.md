@@ -591,6 +591,61 @@ token; Not now is `session.declineLogin(toolCallId)`, and the router ends the ca
 the agent. A `connector_scope_required` event, the step-up a call needs, reads as
 `connectorScopeRequiredOf(event)`.
 
+## A written conversation in Stream's AI components
+
+`AgentChat`, in the `/chat` entry point, is a conversation held in writing as Stream's AI
+components want it: the messages of the channel the router keeps it in, each reply's whole
+thinking, what the agent is doing, and asking. `agentChatTransport` hands it to an
+`AIConversationController` from `stream-chat-react-native` (and, once it has one,
+`stream-chat-react`), which keeps the rest: the question on its way, status, errors and retry.
+
+```ts
+import { AgentChat, agentChatTransport } from "@stream-io/stream-agents/chat";
+
+const sessions = api.agent("my-agent").sessions;
+const chat = new AgentChat({
+  sessionId, // undefined for a new conversation
+  open: (id) => (id ? sessions.resume(id, { tools }) : sessions.create({ tools })),
+});
+const conversation = new AIConversationController({
+  transport: agentChatTransport(chat, {
+    adapt: (message, reasoningText) => fromStreamMessage(message, { reasoningText }),
+  }),
+  actions: { edit: false, regenerate: false }, // the router can't rewind a conversation
+});
+```
+
+The session opens only once something needs it: `send`, `prepare` (call it while the person
+writes the first question, since opening takes seconds) or `stop`. A new conversation that was
+only looked at is never created, and one whose session opened but was never asked anything is
+deleted on `close`. A conversation used some other way, such as talked to in voice mode, says so
+with `use()`, which hands back the session and keeps the conversation as asking does. Each
+question goes out under the controller's message id as its
+`requestId`, which the router stores the person's message under, so its copy replaces the
+question on its way. A reply the model couldn't write shows as the AI indicator's error state,
+with no text of the router's, so the components show their own. `chat.state` has the shape of
+`StateStore` from `@stream-io/state-store`, so `useStateStore(chat.state, selector)` reads it.
+It reads the channel with stream-chat 9 or 10, whichever `session.chat()` opens it on.
+
+Make one per conversation and close it when the person leaves it. In React, make the chat and
+the controller in an effect and let them go in its cleanup, so StrictMode's second mount makes
+fresh ones rather than reusing closed ones:
+
+```ts
+useEffect(() => {
+  const chat = new AgentChat({ sessionId, open });
+  const conversation = new AIConversationController({
+    transport: agentChatTransport(chat, { adapt }),
+    actions: { edit: false, regenerate: false },
+  });
+  setScreen({ chat, conversation });
+  return () => {
+    conversation.dispose();
+    void chat.close();
+  };
+}, [sessionId]);
+```
+
 ## A reply as it is heard
 
 The Chat channel has the agent's reply as fast as the model writes it, seconds ahead of the
