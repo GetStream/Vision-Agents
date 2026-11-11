@@ -2590,14 +2590,26 @@ func (s *ConverseSuite) TestTheFloorsIgnoreOfAMurmurIsHeardAndKeptForTheNextRepl
 	s.Empty(s.converse.takeAside(caller.ID), "seen once")
 }
 
-// With the agent quiet there is nothing to interrupt and nothing to wait for: words that take
-// the floor are answered now.
-func (s *ConverseSuite) TestTheFloorsIgnoreOfWordsWithTheAgentQuietIsAnswered() {
-	ready := s.settle("yeah, zip is 46281", s.quiet())
+// With the agent quiet, ignore says the words were not for it (a voice in the room, a radio):
+// they are heard and kept for the next reply to the caller to see, and answered on their own
+// never, as answering a room's voice is worse than hearing it late.
+func (s *ConverseSuite) TestTheFloorsIgnoreOfWordsWithTheAgentQuietIsHeardAndKeptForTheNextReply() {
+	ready := s.settle("turn that down, the agent is on", s.quiet())
 	actions := s.floorIgnores(ready, s.quiet())
-	s.Equal([]ActionKind{ActAnswer}, kinds(actions))
+	s.Require().Equal([]ActionKind{ActIgnore}, kinds(actions))
+	s.NotEmpty(actions[0].LineID)
 	s.eventually(func() bool { return len(s.heard()) == 1 }, "the words were never heard")
-	s.Equal("yeah, zip is 46281", s.heard()[0].Text)
+	s.Equal("turn that down, the agent is on", s.heard()[0].Text)
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting, "not a turn of its own")
+	s.Equal("turn that down, the agent is on", s.converse.takeAside(caller.ID), "kept for the next reply")
+
+	// Over the agent, words that take the floor are the queue, answered once the agent is quiet.
+	ready = s.settle("and what time do you open", s.talking())
+	s.Equal([]ActionKind{ActQueue}, kinds(s.floorIgnores(ready, s.talking())))
+	answer, waiting := s.converse.Waiting(s.quiet())
+	s.Require().True(waiting)
+	s.Equal(ActAnswer, answer.Kind)
 }
 
 // A cough or a lone "uh" is no words: it stays ignored, and nothing is heard of it.

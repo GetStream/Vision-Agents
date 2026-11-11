@@ -910,17 +910,20 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 	}
 
 	// A floor that heard the audio (chorus-asr, Ruler Heard) rules on when the agent speaks,
-	// never on whether the caller's words count. Its ignore of words that take the floor is
-	// what the default flow controller's queue is: the agent is not interrupted, and the
-	// words are heard now and answered once it is quiet, at once when it is. Its ignore of a
-	// murmur ("yeah", "mm-hmm") is heard and kept for the next reply to see, as context and
-	// no turn of its own (keepAside). A cough or a lone "uh" is no words, and stays ignored.
+	// never on whether the caller's words count. Over the agent, its ignore of words that
+	// take the floor is what the default flow controller's queue is: the agent is not
+	// interrupted, and the words are heard now and answered once it is quiet. Its ignore of
+	// a murmur ("yeah", "mm-hmm"), or of any words with the agent quiet, where ignore says
+	// they were not for the agent (a voice in the room, a radio), is heard and kept for the
+	// next reply to see, as context and no turn of its own (keepAside): answering a room's
+	// voice is worse than hearing it late. A cough or a lone "uh" is no words, and stays
+	// ignored.
 	heardFloor := ruling.Ruler == harness.Heard && ruling.Disposition == harness.Ignore &&
 		words(ready.Text) != "" && !overlapNoise(ready.Text)
-	murmur := heardFloor && !takesFloor(ready.Text)
-	if heardFloor && !murmur {
-		c.logger.Info("the floor ruled ignore on words that take the floor, which are kept: the agent is not interrupted, and they are answered once it is quiet",
-			"candidate", ruling.CandidateID, "participant", ready.Participant.ID, "text", ready.Text, "quiet", state.Quiet)
+	aside := heardFloor && (state.Quiet || !takesFloor(ready.Text))
+	if heardFloor && !aside {
+		c.logger.Info("the floor ruled ignore on words that take the floor over the agent, which are kept: the agent is not interrupted, and they are answered once it is quiet",
+			"candidate", ruling.CandidateID, "participant", ready.Participant.ID, "text", ready.Text)
 		ruling.Disposition, ruling.Floor = harness.Respond, harness.Continue
 	}
 
@@ -952,7 +955,7 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 	switch {
 	case !state.Quiet && overlapNoise(ready.Text):
 		ignore = "a cough or other non-speech noise overlapping the reply, so the agent keeps talking"
-	case murmur:
+	case aside:
 		// Heard, as the caller said it, and the next reply to them sees it; nothing is said
 		// to it alone.
 		shown, line := c.closeLine(ready.Participant.ID, ready.Text, true)
@@ -963,9 +966,13 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 			Language:    ready.Language,
 			LineID:      line,
 		})
+		reason := "words the floor ruled were not for the agent: heard, and kept for the next reply to see, as no turn of their own"
+		if !state.Quiet {
+			reason = "a murmur the floor let the agent talk through: heard, and kept for the next reply to see, as no turn of its own"
+		}
 		return []Action{c.decide(Action{
 			Kind:        ActIgnore,
-			Reason:      "a murmur the floor let the agent talk through: heard, and kept for the next reply to see, as no turn of its own",
+			Reason:      reason,
 			Candidate:   ready,
 			Participant: ready.Participant,
 			Text:        shown,

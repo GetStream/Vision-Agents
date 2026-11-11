@@ -729,11 +729,13 @@ Nothing acts on the tool the caller wants, or on `cannot`, and a tool's approval
 untouched. Acting, a decision's `Ruler` is `heard`.
 
 The words always count. Floor control says when the agent speaks, never whether what the
-caller said reaches it. `ignore` on words that take the floor ("Just want to know the T-shirt
-count." over a reply) is the flow controller's queue: the agent is not interrupted, the words
-are heard at once and answered when the agent is quiet, now if it is. `ignore` on a murmur
-("yeah", "mm-hmm") is heard and kept for the next reply to the caller as context, not a turn
-of its own; a cough or a lone "uh" stays ignored. With another transcriber writing the words,
+caller said reaches it. Over the agent, `ignore` on words that take the floor ("Just want to
+know the T-shirt count." over a reply) is the flow controller's queue: the agent is not
+interrupted, the words are heard at once and answered when the agent is quiet. `ignore` on a
+murmur ("yeah", "mm-hmm"), or on any words with the agent quiet, where it says they were not
+for the agent (a voice in the room, a radio), is heard and kept for the next reply to the
+caller as context, never answered on its own; a cough or a lone "uh" stays ignored. With
+another transcriber writing the words,
 the runs it had settled go out as a turn of their own when the floor steps aside or takes the
 turns back, a final that comes after the floor gave up waiting for it is the next turn's (its
 words past the ones the turn ended on), and words settled with no voice heard since are a
