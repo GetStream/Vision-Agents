@@ -678,7 +678,7 @@ The tests run against a real HTTP server and a real WebSocket upgrade rather tha
 `fetch`, so what they exercise is the request this SDK actually puts on the wire.
 
 `npm test` is hermetic and is what CI runs, once with the `stream-chat` 9 the lockfile has
-and once with 10. To run it against 10 here: `npm install --no-save stream-chat@^10.0.0-0`,
+and once with 10. To run it against 10 here: `npm install --no-save stream-chat@^10.0.2`,
 then `npm test`, then `npm ci` to go back. The two live suites are not part of it and are
 not in CI: they talk to a deployment, and they skip rather than fail when there is none to
 talk to — a laptop with no router up, or a checkout with no credentials, is not a broken

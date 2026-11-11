@@ -8,8 +8,12 @@
  * Its own entry point so `stream-chat` is resolved only for an app that asked for it.
  */
 
-import { StreamChat } from "stream-chat";
+import * as streamChat from "stream-chat";
 
-import { registerChat } from "./stream.js";
+import { registerChat, type ChatConstructor, type ChatVersion } from "./stream.js";
 
-registerChat(StreamChat);
+// `version` is exported from stream-chat 10.0.2 on, and not at all by 9. Read through a plain
+// object rather than as a named import, which 9 would fail to link and a bundler would warn on.
+const installed: { readonly StreamChat: ChatConstructor; readonly version?: ChatVersion } = streamChat;
+
+registerChat(installed.StreamChat, installed.version);
