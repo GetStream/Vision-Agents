@@ -12821,6 +12821,12 @@ namespace GetStream.VisionAgents.Models
         public string? Summary { get; set; } = default!;
 
         /// <summary>
+        /// The team the session's usage is counted under: the team the caller's token was signed for, else the one the session was opened with, else its agent config's tags: team. Absent for a session counted under none.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("team")]
+        public string? Team { get; set; } = default!;
+
+        /// <summary>
         /// The conversation is held in writing rather than on a call.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("text")]
@@ -13005,6 +13011,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("state")]
         public string? State { get; set; } = default!;
+
+        /// <summary>
+        /// The team the session's usage is counted under. A caller whose token was signed for a team may only ask for that one.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("team")]
+        public string? Team { get; set; } = default!;
 
         /// <summary>
         /// Full text over the title, description, project and agent name. Sorted by relevance, and not combined with project_id.
