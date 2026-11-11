@@ -1385,6 +1385,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	logger.Info("management API, /v1/manage", "on", settings.Auth.ManageKey != "", "setting", "ROUTER_AUTH_MANAGE_KEY")
 
 	options := api.Options{
+		VerificationNotices:   verificationNotices(settings),
 		Routers:               routers,
 		Pricer:                prices,
 		Prices:                activePrices,

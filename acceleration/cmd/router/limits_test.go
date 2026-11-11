@@ -113,3 +113,30 @@ func (s *LimitsSuite) TestTheCostAnomalyCheckNamesItsEnvironmentAndLinksTheStaff
 	s.Equal(s.settings.Limits.StaffURL, options.Links.Staff)
 	s.Same(db, options.Store)
 }
+
+func (s *LimitsSuite) TestVerificationLinkKeepsOnlyTheDashboardsOrigin() {
+	s.Equal("https://dash.example/internal/agents/organizations/{organization}",
+		verificationLink("https://dash.example/{organization}/{app}"))
+	s.Equal("http://localhost:3000/internal/agents/organizations/{organization}",
+		verificationLink("http://localhost:3000/x"))
+}
+
+func (s *LimitsSuite) TestVerificationLinkIsEmptyWithoutAnAbsoluteAppURL() {
+	for _, appURL := range []string{"", "/relative/{organization}", "::bad"} {
+		s.Empty(verificationLink(appURL), appURL)
+	}
+}
+
+func (s *LimitsSuite) TestVerificationNoticesNeedATokenAndAChannel() {
+	s.settings.Limits.Mode = config.LimitsOff
+	s.settings.Limits.SlackToken = "xoxb-token"
+	s.settings.Limits.SlackChannel = "  "
+
+	s.True(verificationNotices(s.settings).Poster == nil, "a token alone posts nothing")
+
+	s.settings.Limits.SlackChannel = "C123"
+	s.NotNil(verificationNotices(s.settings).Poster, "posts even with limits off")
+
+	s.settings.Limits.SlackToken = " "
+	s.True(verificationNotices(s.settings).Poster == nil, "a channel alone posts nothing")
+}

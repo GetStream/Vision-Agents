@@ -3,11 +3,13 @@ package main
 import (
 	"errors"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/redis/rueidis"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
@@ -120,6 +122,31 @@ func costAnomalyOptions(settings config.Config, db *store.Store, logger *slog.Lo
 		Store: db, Poster: limitnotice.NewSlack(token, channel), Environment: sandboxEnvironment(),
 		Links: limitnotice.Links{Staff: settings.Limits.StaffURL}, Logger: logger,
 	}, true
+}
+
+// verificationNotices posts each verification request to the limits Slack channel. Unlike the
+// limit notices it needs neither Postgres nor limits to be on.
+func verificationNotices(settings config.Config) api.VerificationNotices {
+	notices := api.VerificationNotices{
+		Environment: sandboxEnvironment(),
+		Link:        verificationLink(settings.Limits.AppURL),
+	}
+	token := strings.TrimSpace(settings.Limits.SlackToken)
+	channel := strings.TrimSpace(settings.Limits.SlackChannel)
+	if token != "" && channel != "" {
+		notices.Poster = limitnotice.NewSlack(token, channel)
+	}
+	return notices
+}
+
+// verificationLink is the staff page of an organization, on the dashboard AppURL names. Only the
+// origin of AppURL is kept: its path is the organization's own page, not staff's.
+func verificationLink(appURL string) string {
+	parsed, err := url.Parse(appURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	return parsed.Scheme + "://" + parsed.Host + "/internal/agents/organizations/{organization}"
 }
 
 // usageCounters connects to the Redis the usage service keeps its spend counters in, or nil
