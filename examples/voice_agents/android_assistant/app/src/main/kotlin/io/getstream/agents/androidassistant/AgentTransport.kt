@@ -20,6 +20,7 @@ import io.getstream.chat.android.client.events.MessageUpdatedEvent
 import io.getstream.chat.android.client.utils.observable.Disposable
 import io.getstream.chat.android.models.Message
 import io.getstream.result.Result
+import io.getstream.result.call.Call
 import io.getstream.agents.android.core.AgentEvent
 import io.getstream.agents.android.core.AgentSession
 import io.getstream.agents.android.core.Conversation
@@ -136,7 +137,7 @@ class AgentTransport(
     override suspend fun loadOlderMessages() {
         val cid = opened.value?.channel?.value?.cid ?: return
         val page = ChatClient.instance().loadOlderMessages(cid, PAGE_SIZE).await()
-        if (page is Result.Failure) throw LoadFailed(page.value.message)
+        if (page is Result.Failure && !page.isCanceled) throw LoadFailed(page.value.message)
     }
 
     /** Stops following the channel and ends the session. */
@@ -170,6 +171,13 @@ private val Conversation.activity: AIAgentActivity?
         )
         else -> null
     }
+
+/**
+ * Whether the call was cancelled rather than failed: Stream Chat cancels a load of older messages
+ * when a newer one for the same channel takes its place, and the newer one loads them.
+ */
+private val Result.Failure.isCanceled: Boolean
+    get() = value == (Call.callCanceledError<Unit>() as Result.Failure).value
 
 /** Whether this is the router reporting that a reply failed, rather than some other part. */
 private val AgentEvent.isFailedReply: Boolean
