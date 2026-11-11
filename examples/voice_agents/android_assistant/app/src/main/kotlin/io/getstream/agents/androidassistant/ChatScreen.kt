@@ -1,6 +1,5 @@
 package io.getstream.agents.androidassistant
 
-import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,10 +23,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -35,20 +34,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import io.getstream.chat.android.ai.compose.conversation.AIReplyActions
-import io.getstream.chat.android.ai.compose.parts.AIClientIdentity
+import io.getstream.chat.android.ai.compose.conversation.AIConversationStatus
 import io.getstream.chat.android.ai.compose.ui.component.AIConversation
-import io.getstream.chat.android.ai.compose.ui.component.AIConversationReplyActionsParams
-import io.getstream.chat.android.ai.compose.ui.component.AIReplyActionsRow
 import io.getstream.chat.android.ai.compose.ui.component.AISuggestions
-import io.getstream.chat.android.ai.compose.ui.component.AIToolApprover
-import io.getstream.chat.android.ai.compose.ui.component.AIToolAuthorizer
-import io.getstream.chat.android.ai.compose.ui.component.AITypingIndicator
 import io.getstream.chat.android.ai.compose.ui.component.ChatAiComponentFactory
 import io.getstream.chat.android.ai.compose.ui.component.ChatComposer
 import io.getstream.chat.android.ai.compose.ui.component.ComposerTrailingContentParams
@@ -74,15 +66,17 @@ private val starters = listOf(
  */
 @Composable
 fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
-    val messages by viewModel.messages.collectAsStateWithLifecycle()
-    val pending by viewModel.pending.collectAsStateWithLifecycle()
-    val activity by viewModel.activity.collectAsStateWithLifecycle()
-    val answering by viewModel.isAnswering.collectAsStateWithLifecycle()
-    val failure by viewModel.failure.collectAsStateWithLifecycle()
-    val unanswered by viewModel.unanswered.collectAsStateWithLifecycle()
-    val hasOlder by viewModel.hasOlderMessages.collectAsStateWithLifecycle()
-    val chat by viewModel.chat.collectAsStateWithLifecycle()
-    val approver = chat?.let { rememberApprover(it) }
+    val conversation by viewModel.conversation.collectAsStateWithLifecycle()
+    val messages by conversation.messages.collectAsStateWithLifecycle()
+    val pending by conversation.pendingMessage.collectAsStateWithLifecycle()
+    val status by conversation.status.collectAsStateWithLifecycle()
+    val error by conversation.error.collectAsStateWithLifecycle()
+    val opening by viewModel.failure.collectAsStateWithLifecycle()
+    val signIn = LocalSignIn.current
+    DisposableEffect(viewModel, signIn) {
+        viewModel.signIn = signIn
+        onDispose { if (viewModel.signIn === signIn) viewModel.signIn = null }
+    }
     val views = remember(viewModel) { AssistantViews(viewModel) }
     var draft by rememberSaveable(stateSaver = MessageData.Saver) { mutableStateOf(MessageData()) }
     // How tall the composer is, keyboard included, which the conversation keeps clear of so the
@@ -90,28 +84,17 @@ fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
     var barHeight by remember { mutableStateOf(0.dp) }
     val density = LocalDensity.current
     val isWelcoming = messages.isEmpty() && pending == null
+    // Older messages that could not load show with the other failures, over the composer; a
+    // question that went unanswered, under it with a way to try again.
+    val failure = opening ?: (error as? LoadFailed)?.message
+    val unanswered = error?.takeIf { it !is LoadFailed && status == AIConversationStatus.Error }
 
     CompositionLocalProvider(LocalChatAiComponentFactory provides views) {
         Box(modifier.fillMaxSize()) {
             AIConversation(
-                messages = messages,
+                state = conversation,
                 modifier = Modifier.fillMaxSize(),
-                pendingMessage = pending,
-                isThinking = activity == AgentChat.Activity.Thinking,
-                approver = approver,
-                loadOlderMessages = if (hasOlder) viewModel::loadOlderMessages else null,
-                footer = {
-                    (activity as? AgentChat.Activity.Working)?.let { working ->
-                        AITypingIndicator(label = {
-                            Text(
-                                working.text,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        })
-                    }
-                    unanswered?.let { Unanswered(it, onRetry = viewModel::retry) }
-                },
+                footer = { unanswered?.let { Unanswered(UNANSWERED, onRetry = viewModel::retry) } },
                 emptyContent = { Welcome() },
                 contentPadding = PaddingValues(bottom = barHeight),
                 ui = viewModel.uiHost,
@@ -158,38 +141,10 @@ fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
                         viewModel.draftChanged(it.text)
                     },
                     onSendClick = { viewModel.send(it.text, it.attachments) },
-                    onStopClick = viewModel::stop,
-                    isGenerating = answering,
+                    onStopClick = conversation::stop,
+                    isGenerating = status.isAnswering,
                 )
             }
-        }
-    }
-}
-
-/**
- * Answers the questions of the tools that ask first, as the person signed in here, and signs
- * them in when a connector's call waits for their account.
- *
- * The router addresses a question to the person whose message the call answers, and Stream's
- * components show it only to them. The answer goes back over the session's socket, which is
- * also what runs the tool once it is allowed. Connect opens the sign-in page in an Auth Tab; the
- * page comes back to this app with `status=connected` when the account is connected, and the
- * call carries on at the router. Not now ends the call there.
- */
-@Composable
-private fun rememberApprover(chat: AgentChat): AIToolApprover {
-    val context = LocalContext.current
-    val signIn = LocalSignIn.current
-    val scope = rememberCoroutineScope()
-    return remember(chat, signIn) {
-        val authorizer = AIToolAuthorizer(
-            connect = { _, url ->
-                signIn.authenticate(Uri.parse(url))?.getQueryParameter("status") == "connected"
-            },
-            decline = { call -> chat.session.declineLogin(call.id) },
-        )
-        AIToolApprover(Assistant.user.id, AIClientIdentity.installId(context), scope, authorizer) { call, allowed ->
-            chat.session.decide(call.id, allowed)
         }
     }
 }
@@ -243,8 +198,9 @@ private fun greeting(): String {
 }
 
 /**
- * Stream's views, with the way into voice mode beside the composer, and what the person can do
- * under each finished reply: copy it, share it and rate it. Asking for a reply again needs the router to replace one, which it does not yet.
+ * Stream's views, with the way into voice mode beside the composer. Under each finished reply the
+ * conversation offers to copy, share and rate it; asking for a reply again needs the router to
+ * replace one, which it does not yet.
  */
 private class AssistantViews(private val viewModel: ChatViewModel) : ChatAiComponentFactory {
     /** The way into voice mode, beside the message box. */
@@ -253,16 +209,5 @@ private class AssistantViews(private val viewModel: ChatViewModel) : ChatAiCompo
         FilledIconButton(onClick = viewModel::talk) {
             Icon(Icons.Rounded.GraphicEq, contentDescription = "Talk to Juno")
         }
-    }
-
-    @Composable
-    override fun AIConversationReplyActions(params: AIConversationReplyActionsParams) {
-        // Read here, so the thumbs change as soon as the rating does.
-        val ratings by viewModel.ratings.collectAsStateWithLifecycle()
-        val reply = params.message.id
-        AIReplyActionsRow(
-            text = params.text,
-            actions = AIReplyActions(rating = ratings[reply], onRate = { viewModel.rate(reply, it) }),
-        )
     }
 }

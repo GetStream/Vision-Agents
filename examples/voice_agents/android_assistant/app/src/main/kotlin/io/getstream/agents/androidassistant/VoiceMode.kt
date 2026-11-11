@@ -96,12 +96,12 @@ import stream.video.sfu.models.TrackType
  * vision skill's requests to look with what the camera showed, and the preview is that view.
  */
 @Composable
-fun VoiceMode(viewModel: ChatViewModel, chat: AgentChat, modifier: Modifier = Modifier) {
+fun VoiceMode(viewModel: ChatViewModel, session: AgentSession, modifier: Modifier = Modifier) {
     val voice by viewModel.voice.collectAsStateWithLifecycle()
     val failure by viewModel.voiceFailure.collectAsStateWithLifecycle()
-    val approvals by chat.session.approvals.collectAsStateWithLifecycle()
+    val approvals by session.approvals.collectAsStateWithLifecycle()
 
-    LaunchedEffect(chat) { viewModel.startVoice() }
+    LaunchedEffect(session) { viewModel.startVoice() }
     BackHandler(onBack = viewModel::hangUp)
 
     Surface(modifier.fillMaxSize()) {
@@ -122,7 +122,7 @@ fun VoiceMode(viewModel: ChatViewModel, chat: AgentChat, modifier: Modifier = Mo
             approvals.firstOrNull()?.let { request ->
                 // Keyed by the call, so a second question starts with no answer sending.
                 key(request.id) {
-                    ApprovalCard(request, chat.session, Modifier.padding(horizontal = 16.dp))
+                    ApprovalCard(request, session, Modifier.padding(horizontal = 16.dp))
                 }
             }
             val joining by remember(current) { current?.failure ?: MutableStateFlow(null) }.collectAsStateWithLifecycle()
