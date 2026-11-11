@@ -1,6 +1,6 @@
-# vision_agents_chat
+# stream_agents_chat
 
-The Stream Chat channel a Stream Vision Agents conversation is kept in.
+The Stream Chat channel a Stream Agents conversation is kept in.
 
 ```dart
 final chat = await agents.agent('support').chat();

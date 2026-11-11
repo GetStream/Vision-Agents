@@ -1,10 +1,10 @@
-# vision_agents_core
+# stream_agents_core
 
-The client for talking to a Stream Vision Agent from Dart: sessions, responses, the session
+The client for talking to a Stream agent from Dart: sessions, responses, the session
 socket, and the conversation as state. Pure Dart, so it runs in Flutter, a CLI or a server.
 
 ```dart
-final agents = VisionAgents(apiKey: 'your_api_key', userId: 'jlahey', token: yourBackend.agentToken);
+final agents = StreamAgents(apiKey: 'your_api_key', userId: 'jlahey', token: yourBackend.agentToken);
 final chat = await agents.agent('support').chat();
 await chat.responses.create('What are your opening hours?');
 chat.conversation.stream.listen((conversation) => print(conversation.turns.last.text));

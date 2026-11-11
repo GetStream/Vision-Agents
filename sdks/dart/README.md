@@ -8,13 +8,13 @@ itself, as the Swift SDK leaves them to `StreamChatAI`;
 
 | Package | pub name | Depends on | What it is |
 | --- | --- | --- | --- |
-| `core/` | `vision_agents_core` | `http`, `web_socket` | The generated client, the session socket, and the conversation state |
-| `chat/` | `vision_agents_chat` | `core`, `stream_chat` 10.4.0 | The Stream Chat channel a conversation is kept in, on one shared client |
-| `rtc/` | `vision_agents_rtc` | `core`, `stream_video_flutter` 1.6.0 | Joining the call, so the conversation can be spoken |
+| `core/` | `stream_agents_core` | `http`, `web_socket` | The generated client, the session socket, and the conversation state |
+| `chat/` | `stream_agents_chat` | `core`, `stream_chat` 10.4.0 | The Stream Chat channel a conversation is kept in, on one shared client |
+| `rtc/` | `stream_agents_rtc` | `core`, `stream_video_flutter` 1.6.0 | Joining the call, so the conversation can be spoken |
 
 They are three packages rather than one pub workspace. A workspace resolves as one, so a
 Flutter member would make the pure-Dart core unresolvable without the Flutter SDK. The others
-depend on `vision_agents_core` from pub.dev, and a committed `pubspec_overrides.yaml` points them
+depend on `stream_agents_core` from pub.dev, and a committed `pubspec_overrides.yaml` points them
 at `../core` in this repository.
 
 Until they are on pub.dev, an app depends on them by git, and names the core in its own
@@ -22,17 +22,17 @@ Until they are on pub.dev, an app depends on them by git, and names the core in 
 
 ```yaml
 dependencies:
-  vision_agents_chat:
+  stream_agents_chat:
     git: {url: https://github.com/GetStream/Vision-Agents, ref: accelerate, path: sdks/dart/chat}
 dependency_overrides:
-  vision_agents_core:
+  stream_agents_core:
     git: {url: https://github.com/GetStream/Vision-Agents, ref: accelerate, path: sdks/dart/core}
 ```
 
 ## Using them
 
 ```dart
-final agents = VisionAgents(apiKey: 'your_api_key', userId: 'jlahey', token: yourBackend.agentToken);
+final agents = StreamAgents(apiKey: 'your_api_key', userId: 'jlahey', token: yourBackend.agentToken);
 
 // In writing. No call is joined, nothing is transcribed or spoken.
 final chat = await agents.agent('support').chat();
@@ -40,7 +40,7 @@ await chat.responses.create('What are your opening hours?');
 // chat.conversation.value is the transcript and what the agent is doing, and
 // chat.conversation.stream says each time it changes. The question shows there at once.
 
-// The Stream Chat channel the conversation is kept in, with vision_agents_chat.
+// The Stream Chat channel the conversation is kept in, with stream_agents_chat.
 final channel = await chat.chat();
 
 // Out loud. The agent joins a call and so does this device.
@@ -51,10 +51,10 @@ await voice.join();
 await agents.disconnect();
 ```
 
-`VisionAgents(apiKey: ...)` reaches Stream's hosted router in us-east4; pass `url:` for another router. For another
+`StreamAgents(apiKey: ...)` reaches Stream's hosted router in us-east4; pass `url:` for another router. For another
 region, pass `url: Backend.regionUrl('europe-west4')`. A router
 running locally with nothing in front of it is reached by customer id instead:
-`VisionAgents(url: Uri.parse('http://localhost:8080'), customerId: 'acme')`. Pass `apiKey`,
+`StreamAgents(url: Uri.parse('http://localhost:8080'), customerId: 'acme')`. Pass `apiKey`,
 `userId` and `token` beside it and the key is Stream's alone, so chat and video connect on a
 local router too.
 
@@ -80,9 +80,9 @@ draws its first frame before the stream's first event, with no data.
 
 A conversation kept in Stream Chat is shown with Stream Chat's AI components:
 `AIConversationView` over the channel's messages, `AIMessagePart.parseAll` for each reply's steps,
-`LiveReasoning` from `vision_agents_chat` for the whole of its thinking and an `AIToolApprover` that answers with
+`LiveReasoning` from `stream_agents_chat` for the whole of its thinking and an `AIToolApprover` that answers with
 `session.decide`. A call is shown with `AIVoiceGlowView` or `AIVoiceWaveView`, and `AgentVideoView`
-and `VoiceCallView` in `vision_agents_rtc` render its video.
+and `VoiceCallView` in `stream_agents_rtc` render its video.
 
 ### A tool that runs on the device
 
@@ -250,7 +250,7 @@ await chat.pin(); // a session being held pins itself, as does chat.update(pinne
 final answer = await agents.router(config: 'healthcare').search('perioperative antibiotic guidance');
 ```
 
-`VisionAgents(apiKey: ...)` with no token asks for a guest anonymously and may do nothing else
+`StreamAgents(apiKey: ...)` with no token asks for a guest anonymously and may do nothing else
 until `withGuest` or `withUser`. A router that admits no anonymous callers, Stream's hosted one
 for now, throws a `StateError`, and your backend mints the guest instead.
 

@@ -2,7 +2,7 @@ import 'package:flutter_assistant/agent_chat.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stream_chat/stream_chat.dart' as stream;
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
-import 'package:vision_agents_chat/vision_agents_chat.dart';
+import 'package:stream_agents_chat/stream_agents_chat.dart';
 
 void main() {
   test('AgentChat.workingOnSkills names a skill in words', () {

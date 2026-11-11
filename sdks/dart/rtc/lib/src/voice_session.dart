@@ -1,5 +1,5 @@
 import 'package:stream_video_flutter/stream_video_flutter.dart' as video;
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents_core/stream_agents_core.dart';
 
 import 'camera_jpeg.dart';
 import 'camera_shots.dart';
@@ -7,7 +7,7 @@ import 'camera_shots.dart';
 const _kind = 'video';
 
 /// The app's own Stream Video client.
-extension VideoClients on VisionAgents {
+extension VideoClients on StreamAgents {
   /// Hands over the app's own Stream Video client, so every call is joined on it rather than
   /// on a second one. It must be connected as the agents' `userId`, and [disconnect] leaves it
   /// alone.
@@ -73,7 +73,7 @@ final class VoiceSession {
   /// Starts an agent on a new session's call and prepares to join it, so a person tapping
   /// "talk to the agent" needs no id from anywhere.
   static Future<VoiceSession> start(
-    VisionAgents agents, {
+    StreamAgents agents, {
     String? agent,
     SessionOptions options = const SessionOptions(),
   }) async {
@@ -88,7 +88,7 @@ final class VoiceSession {
   /// [sessionId] is the id the router holds the session by. A session this user did not open
   /// is not found, since reading one is reading a conversation.
   static Future<VoiceSession> attach(
-    VisionAgents agents,
+    StreamAgents agents,
     String sessionId, {
     List<AgentTool> tools = const [],
   }) async => VoiceSession._(await agents.attach(sessionId, tools: tools), createdLocally: false);
@@ -200,7 +200,7 @@ final class VoiceSession {
 
   /// Leaves this device's call. Closes the router session only if this device started it;
   /// an attached device navigating away leaves it running. The Video client stays connected
-  /// for the next call, until [VisionAgents.disconnect].
+  /// for the next call, until [StreamAgents.disconnect].
   Future<void> leave() => _leave(closeSession: _createdLocally);
 
   /// Hangs up: leaves the call and ends the agent session, whoever started it.

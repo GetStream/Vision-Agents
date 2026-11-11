@@ -97,7 +97,7 @@ final class AgentSession {
   /// Takes pictures with this device's camera when the agent asks to see, or null to leave
   /// the asking to somebody else.
   ///
-  /// Set by `vision_agents_rtc` while the call's camera is on, and not for apps. It is called
+  /// Set by `stream_agents_rtc` while the call's camera is on, and not for apps. It is called
   /// with the moment the question was taken and how many pictures are wanted, 1 to 8, and
   /// returns JPEGs with when each was taken. None at all tells the agent the camera has shown
   /// nothing recent.
