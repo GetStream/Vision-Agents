@@ -2,6 +2,15 @@
 
 ## Features
 
+### JavaScript: AgentChat, a written conversation for Stream's AI components
+
+`@stream-io/stream-agents/chat` exports `AgentChat` and `agentChatTransport`. An app no longer writes its own state between a session and the AI components.
+
+- `AgentChat` holds a conversation in writing: the channel's messages (stream-chat 9 or 10), each reply's whole thinking, what the agent is doing (`thinking`, `working` with its skills, or `failed` when the model couldn't write the reply), and `send`, `stop` and `loadOlderMessages`.
+- It opens its session only when something needs it, and deletes a new conversation's session that was never asked anything.
+- `agentChatTransport` is the transport of an `AIConversationController` from `stream-chat-react-native`. It sends the controller's message id as the question's `requestId`, carries a generated-UI action as `custom.uiAction`, and asks a `regenerate` again as a new question.
+- `chat.state` has `StateStore`'s shape, for `useStateStore`. The package still has no runtime dependencies.
+
 ### A session keeps the team its usage is counted under, and is found by it
 
 `Session` gains `team`: the team its usage is counted under, from the caller's token, else the session's `team`, else its agent config's `tags: team`. It is kept with the session from when it opens, so an ended session answers it too. `querySessions` takes `filter.team` (a bare value or `{"$eq": ...}`). A caller whose token is signed for a team may only ask for that team, and asking for another is refused with a 400. Sessions kept before this have their team filled in by the migration from the `team:` usage category they were counted under. Every SDK's session query now takes the same fields as JavaScript's: `team`, a created-at window (`$gte`/`$lt`), custom labels and an order.
