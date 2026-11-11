@@ -40,7 +40,8 @@ public data class Conversation(
     val state: State = State.Idle,
     /**
      * What the agent reported going wrong, or null. Errors arrive as events rather than being
-     * thrown, because nobody is awaiting the socket.
+     * thrown, because nobody is awaiting the socket. It lasts until the agent shows it works
+     * again: it next hears, starts answering or speaks.
      */
     val failure: String? = null,
 ) {
@@ -72,6 +73,9 @@ public data class Conversation(
      * leave it as it was.
      */
     public fun reduce(event: AgentEvent, at: Instant = Clock.System.now()): Conversation =
+        (if (failure != null && event.kind in recovered) copy(failure = null) else this).fold(event, at)
+
+    private fun fold(event: AgentEvent, at: Instant): Conversation =
         when (event.kind) {
             // A text session echoes nothing back, so what the caller typed is already here. A
             // call transcribes what was spoken, which is the first anyone hears of it.
@@ -125,6 +129,9 @@ public data class Conversation(
     private companion object {
         /** The `context` of an error from the model writing the reply, as text or as speech. */
         val replyModels = setOf("llm", "sts")
+
+        /** The events that show the agent works again, so whatever it last reported is over. */
+        val recovered = setOf(AgentEvent.Kind.Heard, AgentEvent.Kind.Responding, AgentEvent.Kind.Spoke)
     }
 
     /**
