@@ -360,6 +360,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerLimitGrants(api)
 	s.registerLimits(api)
 	s.registerAccount(api)
+	s.registerVerification(api)
 	s.registerPrices(api)
 	s.registerSettings(api)
 	s.registerSessionQuery(api)

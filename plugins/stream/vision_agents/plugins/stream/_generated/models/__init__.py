@@ -345,6 +345,7 @@ from .manage_limit_grant_input import ManageLimitGrantInput
 from .manage_limit_input import ManageLimitInput
 from .manage_limit_reset_input import ManageLimitResetInput
 from .manage_status import ManageStatus
+from .managed_verification_request import ManagedVerificationRequest
 from .modality import Modality
 from .model_call_timing import ModelCallTiming
 from .model_overwrites import ModelOverwrites
@@ -366,6 +367,7 @@ from .opt_out import OptOut
 from .opt_out_channel import OptOutChannel
 from .opt_out_page import OptOutPage
 from .organization_activity import OrganizationActivity
+from .organization_verification_request import OrganizationVerificationRequest
 from .phone_capability import PhoneCapability
 from .phone_number import PhoneNumber
 from .phone_number_tags import PhoneNumberTags
@@ -621,6 +623,16 @@ from .user_policy import UserPolicy
 from .user_policy_entry import UserPolicyEntry
 from .user_policy_input import UserPolicyInput
 from .user_policy_page import UserPolicyPage
+from .verification_request import VerificationRequest
+from .verification_request_calls_per_month import VerificationRequestCallsPerMonth
+from .verification_request_country import VerificationRequestCountry
+from .verification_request_entry import VerificationRequestEntry
+from .verification_request_input import VerificationRequestInput
+from .verification_request_input_calls_per_month import (
+    VerificationRequestInputCallsPerMonth,
+)
+from .verification_request_input_country import VerificationRequestInputCountry
+from .verification_request_page import VerificationRequestPage
 from .video_source import VideoSource
 from .voice import Voice
 from .voice_binding import VoiceBinding
@@ -976,6 +988,7 @@ __all__ = (
     "ManageLimitInput",
     "ManageLimitResetInput",
     "ManageStatus",
+    "ManagedVerificationRequest",
     "Modality",
     "ModelCallTiming",
     "ModelOverwrites",
@@ -997,6 +1010,7 @@ __all__ = (
     "OptOutChannel",
     "OptOutPage",
     "OrganizationActivity",
+    "OrganizationVerificationRequest",
     "PhoneCapability",
     "PhoneNumber",
     "PhoneNumberTags",
@@ -1252,6 +1266,14 @@ __all__ = (
     "UserPolicyEntry",
     "UserPolicyInput",
     "UserPolicyPage",
+    "VerificationRequest",
+    "VerificationRequestCallsPerMonth",
+    "VerificationRequestCountry",
+    "VerificationRequestEntry",
+    "VerificationRequestInput",
+    "VerificationRequestInputCallsPerMonth",
+    "VerificationRequestInputCountry",
+    "VerificationRequestPage",
     "VideoSource",
     "Voice",
     "VoiceBinding",

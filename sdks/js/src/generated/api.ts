@@ -4306,6 +4306,34 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/verification": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read the organization's verification request
+         * @description The request the calling organization sent, or null when it never sent one.
+         *
+         *     Server-side only: a request that is not server-side answers 403 server_side_only.
+         */
+        readonly get: operations["getVerification"];
+        /**
+         * Send the organization's verification request
+         * @description Sends the calling organization's request to be verified, replacing the one it sent before, and tells Stream's staff. Whether the organization is verified is the tier getAccount reads.
+         *
+         *     Server-side only: a request that is not server-side answers 403 server_side_only.
+         */
+        readonly put: operations["putVerification"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
 };
 export type webhooks = Record<string, never>;
 export type components = {
@@ -7856,6 +7884,12 @@ export type components = {
             /** @enum {string} */
             readonly verbosity?: "low" | "medium" | "high";
         };
+        readonly ManagedVerificationRequest: {
+            /** @description The organization's request, null when it never sent one. */
+            readonly request: components["schemas"]["VerificationRequest"] | null;
+            /** @description The organization's last tier the router knows: verified or not-verified, empty when unknown. */
+            readonly tier: string;
+        };
         /** @description A one-time grant staff make for an organization, for support. It is the customer's like any other. */
         readonly ManageLimitGrantInput: {
             /** Format: int64 */
@@ -8160,6 +8194,10 @@ export type components = {
              * @description The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on.
              */
             readonly since: string;
+        };
+        readonly OrganizationVerificationRequest: {
+            /** @description The organization's request, null when it never sent one. */
+            readonly request: components["schemas"]["VerificationRequest"] | null;
         };
         /**
          * @description What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.
@@ -11087,6 +11125,82 @@ export type components = {
         readonly UserPolicyPage: {
             readonly has_more: boolean;
             readonly items: readonly components["schemas"]["UserPolicyEntry"][] | null;
+            readonly next_cursor?: string;
+        };
+        /** @description An organization's request to be verified: who it is, what its agents will do and where Stream answers. An organization has one, replaced whenever it sends again. */
+        readonly VerificationRequest: {
+            /**
+             * @description How many calls a month the organization expects.
+             * @enum {string}
+             */
+            readonly calls_per_month: "under_1k" | "1k_10k" | "10k_100k" | "over_100k";
+            /**
+             * @description Where the organization is registered: US or CA.
+             * @enum {string}
+             */
+            readonly country: "US" | "CA";
+            /**
+             * Format: email
+             * @description Where Stream answers.
+             */
+            readonly email: string;
+            /** @description The organization's registered legal name. */
+            readonly legal_name: string;
+            /**
+             * Format: date-time
+             * @description When the router took the request.
+             */
+            readonly submitted_at: string;
+            /** @description The user the request was made as, when the caller said, else empty. */
+            readonly submitted_by: string;
+            /** @description The organization's tax id: an EIN in the US, a BN in Canada. Not checked further. */
+            readonly tax_id: string;
+            /** @description What the organization's agents will do on calls. */
+            readonly use_case: string;
+            /**
+             * Format: uri
+             * @description The organization's website, an http or https URL.
+             */
+            readonly website: string;
+        };
+        readonly VerificationRequestEntry: {
+            readonly organization_id: string;
+            readonly request: components["schemas"]["VerificationRequest"];
+            /** @description The organization's last tier the router knows: verified or not-verified, empty when unknown. */
+            readonly tier: string;
+        };
+        readonly VerificationRequestInput: {
+            /**
+             * @description How many calls a month the organization expects.
+             * @enum {string}
+             */
+            readonly calls_per_month: "under_1k" | "1k_10k" | "10k_100k" | "over_100k";
+            /**
+             * @description Where the organization is registered: US or CA.
+             * @enum {string}
+             */
+            readonly country: "US" | "CA";
+            /**
+             * Format: email
+             * @description Where Stream answers.
+             */
+            readonly email: string;
+            /** @description The organization's registered legal name. */
+            readonly legal_name: string;
+            /** @description The organization's tax id: an EIN in the US, a BN in Canada. Not checked further. */
+            readonly tax_id: string;
+            /** @description What the organization's agents will do on calls. */
+            readonly use_case: string;
+            /**
+             * Format: uri
+             * @description The organization's website, an http or https URL.
+             */
+            readonly website: string;
+        };
+        readonly VerificationRequestPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["VerificationRequestEntry"][];
+            /** @description Where the next page starts, for cursor; absent on the last page. */
             readonly next_cursor?: string;
         };
         readonly VideoSource: {
@@ -21448,6 +21562,72 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["UsageEventPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly getVerification: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["OrganizationVerificationRequest"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly putVerification: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["VerificationRequestInput"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["OrganizationVerificationRequest"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];

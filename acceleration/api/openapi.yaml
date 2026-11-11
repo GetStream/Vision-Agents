@@ -6321,6 +6321,20 @@ components:
       required:
         - actor
       type: object
+    ManagedVerificationRequest:
+      properties:
+        request:
+          description: The organization's request, null when it never sent one.
+          oneOf:
+            - $ref: '#/components/schemas/VerificationRequest'
+            - type: "null"
+        tier:
+          description: 'The organization''s last tier the router knows: verified or not-verified, empty when unknown.'
+          type: string
+      required:
+        - request
+        - tier
+      type: object
     MessageContent:
       oneOf:
         - type: string
@@ -6709,6 +6723,16 @@ components:
         - shards
         - sessions
         - latency
+      type: object
+    OrganizationVerificationRequest:
+      properties:
+        request:
+          description: The organization's request, null when it never sent one.
+          oneOf:
+            - $ref: '#/components/schemas/VerificationRequest'
+            - type: "null"
+      required:
+        - request
       type: object
     PhoneCapability:
       description: What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.
@@ -11620,6 +11644,149 @@ components:
           nullable: true
           type: array
         next_cursor:
+          type: string
+      required:
+        - items
+        - has_more
+      type: object
+    VerificationRequest:
+      description: 'An organization''s request to be verified: who it is, what its agents will do and where Stream answers. An organization has one, replaced whenever it sends again.'
+      properties:
+        calls_per_month:
+          description: How many calls a month the organization expects.
+          enum:
+            - under_1k
+            - 1k_10k
+            - 10k_100k
+            - over_100k
+          type: string
+        country:
+          description: 'Where the organization is registered: US or CA.'
+          enum:
+            - US
+            - CA
+          type: string
+        email:
+          description: Where Stream answers.
+          format: email
+          maxLength: 254
+          type: string
+        legal_name:
+          description: The organization's registered legal name.
+          maxLength: 200
+          minLength: 1
+          type: string
+        submitted_at:
+          description: When the router took the request.
+          format: date-time
+          readOnly: true
+          type: string
+        submitted_by:
+          description: The user the request was made as, when the caller said, else empty.
+          readOnly: true
+          type: string
+        tax_id:
+          description: 'The organization''s tax id: an EIN in the US, a BN in Canada. Not checked further.'
+          maxLength: 50
+          minLength: 1
+          type: string
+        use_case:
+          description: What the organization's agents will do on calls.
+          maxLength: 2000
+          minLength: 1
+          type: string
+        website:
+          description: The organization's website, an http or https URL.
+          format: uri
+          maxLength: 300
+          pattern: ^https?://\S+$
+          type: string
+      required:
+        - submitted_at
+        - submitted_by
+        - legal_name
+        - country
+        - website
+        - tax_id
+        - use_case
+        - calls_per_month
+        - email
+      type: object
+    VerificationRequestEntry:
+      properties:
+        organization_id:
+          type: string
+        request:
+          $ref: '#/components/schemas/VerificationRequest'
+        tier:
+          description: 'The organization''s last tier the router knows: verified or not-verified, empty when unknown.'
+          type: string
+      required:
+        - organization_id
+        - request
+        - tier
+      type: object
+    VerificationRequestInput:
+      properties:
+        calls_per_month:
+          description: How many calls a month the organization expects.
+          enum:
+            - under_1k
+            - 1k_10k
+            - 10k_100k
+            - over_100k
+          type: string
+        country:
+          description: 'Where the organization is registered: US or CA.'
+          enum:
+            - US
+            - CA
+          type: string
+        email:
+          description: Where Stream answers.
+          format: email
+          maxLength: 254
+          type: string
+        legal_name:
+          description: The organization's registered legal name.
+          maxLength: 200
+          minLength: 1
+          type: string
+        tax_id:
+          description: 'The organization''s tax id: an EIN in the US, a BN in Canada. Not checked further.'
+          maxLength: 50
+          minLength: 1
+          type: string
+        use_case:
+          description: What the organization's agents will do on calls.
+          maxLength: 2000
+          minLength: 1
+          type: string
+        website:
+          description: The organization's website, an http or https URL.
+          format: uri
+          maxLength: 300
+          pattern: ^https?://\S+$
+          type: string
+      required:
+        - legal_name
+        - country
+        - website
+        - tax_id
+        - use_case
+        - calls_per_month
+        - email
+      type: object
+    VerificationRequestPage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/VerificationRequestEntry'
+          type: array
+        next_cursor:
+          description: Where the next page starts, for cursor; absent on the last page.
           type: string
       required:
         - items
@@ -21137,6 +21304,41 @@ paths:
       summary: Replace a customer's policy
       tags:
         - Staff
+  /v1/manage/organizations/{organization_id}/verification-request:
+    get:
+      description: |-
+        The request the organization sent, null when it never sent one, with the tier the router last knew it on.
+
+        Stream staff only, for support: it needs the manage key.
+      operationId: manageGetVerificationRequest
+      parameters:
+        - in: path
+          name: organization_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedVerificationRequest'
+          description: OK
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - ManageKey: []
+      summary: Read one organization's verification request
+      tags:
+        - Staff
   /v1/manage/price-lists/active:
     get:
       description: |-
@@ -22123,6 +22325,54 @@ paths:
       security:
         - ManageKey: []
       summary: List the organization's teams
+      tags:
+        - Staff
+  /v1/manage/verification-requests:
+    get:
+      description: |-
+        Every organization's request, newest first, each with the tier the router last knew the organization on.
+
+        Stream staff only, for support: it needs the manage key.
+      operationId: manageListVerificationRequests
+      parameters:
+        - description: The most requests one page holds.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            default: 50
+            description: The most requests one page holds.
+            format: int64
+            maximum: 100
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationRequestPage'
+          description: OK
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - ManageKey: []
+      summary: List the organizations' verification requests
       tags:
         - Staff
   /v1/ocr:
@@ -26223,6 +26473,87 @@ paths:
         "503":
           $ref: '#/components/responses/Unavailable'
       summary: List the usage events
+  /v1/verification:
+    get:
+      description: |-
+        The request the calling organization sent, or null when it never sent one.
+
+        Server-side only: a request that is not server-side answers 403 server_side_only.
+      operationId: getVerification
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationVerificationRequest'
+          description: OK
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Read the organization's verification request
+    put:
+      description: |-
+        Sends the calling organization's request to be verified, replacing the one it sent before, and tells Stream's staff. Whether the organization is verified is the tier getAccount reads.
+
+        Server-side only: a request that is not server-side answers 403 server_side_only.
+      operationId: putVerification
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerificationRequestInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationVerificationRequest'
+          description: OK
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Send the organization's verification request
 security:
   - CustomerId: []
   - ApiKey: []
