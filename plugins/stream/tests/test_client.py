@@ -1,6 +1,7 @@
 import asyncio
 import json
 import pickle
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 import pytest
@@ -654,6 +655,53 @@ class TestSessions:
             },
             "limit": 50,
             "cursor": "page-1",
+        }
+
+    async def test_querying_by_team_window_labels_and_order(
+        self, api: stream.Client, router: Router
+    ):
+        await api.agent("docs").sessions.query(
+            stream.Query(
+                team="finance",
+                created_since=datetime(2026, 10, 1, tzinfo=timezone.utc),
+                created_before=datetime(2026, 11, 1, tzinfo=timezone.utc),
+                custom={"ticket": "4721"},
+                sort="updated_at",
+            )
+        )
+
+        assert router.body("POST", "/v1/agents/sessions/query") == {
+            "filter": {
+                "agent": "docs",
+                "team": "finance",
+                "created_at": {
+                    "$gte": "2026-10-01T00:00:00+00:00",
+                    "$lt": "2026-11-01T00:00:00+00:00",
+                },
+                "custom": {"ticket": "4721"},
+            },
+            "sort": [{"field": "updated_at"}],
+        }
+
+    async def test_one_end_of_a_window_is_sent_alone_and_no_empty_labels(
+        self, api: stream.Client, router: Router
+    ):
+        await api.agent("docs").sessions.search(
+            "lisbon",
+            stream.Query(
+                created_since=datetime(2026, 10, 1, tzinfo=timezone.utc),
+                custom={},
+                sort="relevance",
+            ),
+        )
+
+        assert router.body("POST", "/v1/agents/sessions/query") == {
+            "filter": {
+                "agent": "docs",
+                "created_at": {"$gte": "2026-10-01T00:00:00+00:00"},
+                "text": {"$q": "lisbon"},
+            },
+            "sort": [{"field": "relevance"}],
         }
 
     async def test_an_unset_filter_is_left_to_the_router(
