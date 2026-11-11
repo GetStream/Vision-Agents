@@ -64,12 +64,20 @@ func (a *Agent) ReplaceDocuments(documents ...Document) {
 
 // pinLocked pins one document, and reports whether it was not pinned already.
 func (a *Agent) pinLocked(document Document) bool {
-	if slices.ContainsFunc(a.documents, func(pinned Document) bool { return pinned.ID == document.ID }) {
+	if a.holdsLocked(document) {
 		return false
 	}
 	a.documents = append(a.documents, document)
 	a.pinned = append(a.pinned, harness.DocumentMessage(document.Name, document.Pages, document.Text))
 	return true
+}
+
+// holdsLocked reports whether document is pinned already: by its id, or, sent again as a retry
+// of a session that keeps no command ids sends it, by its name and text.
+func (a *Agent) holdsLocked(document Document) bool {
+	return slices.ContainsFunc(a.documents, func(pinned Document) bool {
+		return pinned.ID == document.ID || pinned.Name == document.Name && pinned.Text == document.Text
+	})
 }
 
 // unpinLocked takes back the document pinned for a turn that did not start.
@@ -137,7 +145,7 @@ func (a *Agent) attachDocument(ctx context.Context, text string) (string, func()
 	a.mu.Lock()
 	// Weighed again as it is pinned: two questions sent at once were each weighed against
 	// the room before either was pinned.
-	if a.pinnedRunesLocked()+document.Runes() > budget && !slices.ContainsFunc(a.documents, func(pinned Document) bool { return pinned.ID == document.ID }) {
+	if a.pinnedRunesLocked()+document.Runes() > budget && !a.holdsLocked(document) {
 		a.mu.Unlock()
 		return "", nil, stack.Wrap(ErrNoRoomForDocument)
 	}

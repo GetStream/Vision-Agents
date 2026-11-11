@@ -94,6 +94,17 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 	var document *sentDocument
 	if len(files) > 0 {
 		retry := found.Durable() && found.Taken(value(request.Body.RequestId))
+		if !retry {
+			// Whatever would refuse the question is asked first, as before hearing a voice
+			// note: reading the file pays for its pictures and its screen.
+			if len(value(request.Body.Videos)) > maxVideos {
+				return nil, invalidRequest(fmt.Sprintf("at most %d videos go with one response", maxVideos))
+			}
+			asked := options.LLM{MaxOutputTokens: request.Body.MaxOutputTokens, ReasoningEffort: value(request.Body.ReasoningEffort)}
+			if _, err := found.CheckRespond(ctx, value(request.Body.RequestId), request.Body.Text, len(parts) > 0, asked); err != nil {
+				return nil, refusedResponse(err)
+			}
+		}
 		sent, failure := s.readDocument(ctx, found, files[0], retry)
 		if failure != nil {
 			return nil, failure

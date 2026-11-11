@@ -1228,10 +1228,14 @@ func (r *recordedTurns) Exchanges(_ context.Context, _, _, upTo string) ([]store
 	return nil, store.ErrUnknownResponse
 }
 
-func (r *recordedTurns) ConversationDocuments(context.Context, string, store.DocumentScope) ([]store.ConversationDocument, error) {
+func (r *recordedTurns) ConversationDocuments(_ context.Context, _ string, scope store.DocumentScope) ([]store.ConversationDocument, error) {
+	until := len(r.exchanges) - 1
+	if scope.UntilResponse != "" {
+		until = slices.IndexFunc(r.exchanges, func(exchange store.Exchange) bool { return exchange.ResponseID == scope.UntilResponse })
+	}
 	var kept []store.ConversationDocument
 	for _, document := range r.documents {
-		if slices.ContainsFunc(r.exchanges, func(exchange store.Exchange) bool { return exchange.ResponseID == document.ResponseID }) {
+		if at := slices.IndexFunc(r.exchanges, func(exchange store.Exchange) bool { return exchange.ResponseID == document.ResponseID }); at >= 0 && at <= until {
 			kept = append(kept, document)
 		}
 	}

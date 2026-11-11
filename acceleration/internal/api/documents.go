@@ -108,6 +108,9 @@ func (s *Server) readDocument(ctx context.Context, found *session.Session, sourc
 		return sentDocument{}, errDocumentShared
 	}
 
+	// Fetched, read and screened while the person waits, so all of it within one deadline.
+	ctx, cancel := context.WithTimeout(ctx, inlineDeadline)
+	defer cancel()
 	data, name, failure := s.fetchDocument(ctx, source)
 	if failure != nil {
 		return sentDocument{}, failure
@@ -136,7 +139,12 @@ func (s *Server) readDocument(ctx context.Context, found *session.Session, sourc
 
 	owner := routing.Owner{CustomerID: spec.CustomerID, AgentID: spec.AgentID, CallID: spec.CallID, Region: spec.Region,
 		Tags: spec.Tags, Attribution: spec.Attribution}
-	switch err := s.policies.ScreenDocument(ctx, s.decisionModel(), owner, text); {
+	// The name goes ahead of every reply with the text, so it is screened with it.
+	err = s.policies.ScreenDocument(ctx, s.decisionModel(), owner, name+"\n\n"+text)
+	if answer, money := moneyError(err); money {
+		return sentDocument{}, answer
+	}
+	switch {
 	case errors.Is(err, policy.ErrPromptInjection):
 		return sentDocument{}, errDocumentRefused
 	case err != nil:
@@ -167,7 +175,8 @@ func (s *Server) keepDocument(ctx context.Context, found *session.Session, respo
 	if s.store == nil || spec.Incognito || responseID == "" {
 		return
 	}
-	err := s.store.AddConversationDocument(ctx, &store.ConversationDocument{
+	// The turn is running whether or not the caller is still there to hear it started.
+	err := s.store.AddConversationDocument(context.WithoutCancel(ctx), &store.ConversationDocument{
 		ID: sent.read.ID, CustomerID: spec.CustomerID, OwnerUserID: spec.Caller.UserID, SessionID: found.ID(),
 		ConversationID: spec.ConversationID, ResponseID: responseID, Name: sent.read.Name, Pages: sent.read.Pages,
 		SHA256: sent.sha, Markdown: sent.read.Text,
@@ -191,9 +200,10 @@ func (s *Server) fetchDocument(ctx context.Context, source FileSource) ([]byte, 
 		}
 		return parsed.Data, documentName(name, "document"), nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, inlineDeadline)
-	defer cancel()
 	data, _, err := fetchAtMost(ctx, s.imageHTTP, source.Url, maxFetchedDocument)
+	if errors.As(err, new(fetchTooLargeError)) {
+		return nil, "", documentTooLarge(fmt.Sprintf("a file fetched by URL is at most %d MiB", maxFetchedDocument>>20))
+	}
 	if err != nil {
 		return nil, "", invalidRequest(fmt.Sprintf("the file could not be fetched: %v", err))
 	}
@@ -204,17 +214,27 @@ func (s *Server) fetchDocument(ctx context.Context, source FileSource) ([]byte, 
 	return data, documentName(name, fallback), nil
 }
 
-// documentName is a file's name as it is uploaded: never a path, never empty.
+// maxDocumentName is the most runes of a file's name kept, as FileSource.name allows.
+const maxDocumentName = 255
+
+// documentName is a file's name as it is uploaded: never a path, never empty, and no longer
+// than a name sent in the request may be, since one taken from a URL is the URL's.
 func documentName(name, fallback string) string {
 	name = path.Base(strings.ReplaceAll(strings.TrimSpace(name), "\\", "/"))
 	if name == "" || name == "." || name == "/" {
-		return fallback
+		name = fallback
+	}
+	if runes := []rune(name); len(runes) > maxDocumentName {
+		name = string(runes[:maxDocumentName])
 	}
 	return name
 }
 
 // documentFailure is the answer to a file the reader refused.
 func documentFailure(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return documentTooLarge(fmt.Sprintf("the file took longer than the %s a file sent with a question may take to read", documentReadTimeout))
+	}
 	reason, ok := extract.ReasonOf(err)
 	if !ok {
 		return err

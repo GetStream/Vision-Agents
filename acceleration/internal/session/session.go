@@ -1170,16 +1170,17 @@ func (s *Session) Rewind(ctx context.Context, recorded Recorded, responseID stri
 	if err != nil {
 		return stack.Wrap(err)
 	}
+	// The files sent with the turns taken back go with them. They are read before anything
+	// is rewound, so a read that fails leaves the session as it was.
+	documents, err := recorded.ConversationDocuments(ctx, s.spec.CustomerID,
+		store.DocumentScope{ConversationID: s.spec.ConversationID, SessionID: s.id, Owner: s.spec.Caller.UserID, UntilResponse: responseID})
+	if err != nil {
+		return stack.Wrap(err)
+	}
 	if err := recorded.RewindResponses(ctx, s.spec.CustomerID, s.id, responseID, time.Now().UTC()); err != nil {
 		return stack.Wrap(err)
 	}
 	s.current().RestoreHistory(HistoryOf(exchanges))
-	// The files sent with the turns taken back go with them: what is kept is read again, in
-	// place of what was pinned.
-	documents, err := recorded.ConversationDocuments(ctx, s.spec.CustomerID, store.DocumentScope{SessionID: s.id, Owner: s.spec.Caller.UserID})
-	if err != nil {
-		return stack.Wrap(err)
-	}
 	s.current().ReplaceDocuments(pinnable(documents)...)
 	return nil
 }

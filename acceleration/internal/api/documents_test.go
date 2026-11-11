@@ -174,6 +174,36 @@ func (s *DocumentsSuite) TestAForkOfAForkStillCarriesTheFile() {
 	s.Require().Len(documentsIn(request), 1, "the first fork kept the file, so its own fork carries it")
 }
 
+func (s *DocumentsSuite) TestAForkOfAForkWithoutItsMessagesCarriesNoFile() {
+	opened := s.opening(s.client)
+	s.ask(s.client, opened, "Read this "+s.utils.uuid(), s.docx("payslip.docx", "net pay 2,400 "+s.utils.uuid()))
+	var forked, bare Session
+	s.Require().Equal(http.StatusCreated, s.client.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/fork",
+		ForkSessionRequest{}, &forked))
+
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/sessions/"+forked.Id+"/fork",
+		ForkSessionRequest{Messages: pointerTo(false)}, &bare))
+	question := "What does the file say? " + s.utils.uuid()
+	s.ask(s.serverClient, bare, question)
+
+	s.Empty(documentsIn(s.asked(question)), "a fork that carries no messages carries no file either, whoever forks it")
+}
+
+func (s *DocumentsSuite) TestAForksFileIsReadOnceAfterTheForkIsReopened() {
+	opened := s.opening(s.client)
+	s.ask(s.client, opened, "Read this "+s.utils.uuid(), s.docx("lease.docx", "the lease ends in March "+s.utils.uuid()))
+	var forked Session
+	s.Require().Equal(http.StatusCreated, s.client.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/fork",
+		ForkSessionRequest{}, &forked))
+	s.ask(s.client, forked, "Anything else? "+s.utils.uuid())
+	s.client.stopSession(forked.Id)
+
+	question := "When does it end? " + s.utils.uuid()
+	s.ask(s.client, forked, question)
+
+	s.Len(documentsIn(s.asked(question)), 1, "the reopened fork reads its file once, not once per opening")
+}
+
 func (s *DocumentsSuite) TestABackendCannotForkAPersonsConversationWithTheirFile() {
 	opened := s.opening(s.client)
 	s.ask(s.client, opened, "Read this "+s.utils.uuid(), s.docx("medical.docx", "blood type O negative "+s.utils.uuid()))

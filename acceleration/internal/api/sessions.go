@@ -166,9 +166,7 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	spec.Caller = CallerFrom(ctx)
 	spec.CallerKind = KindFrom(ctx)
 	if body.Messages == nil || *body.Messages {
-		if spec.Documents, err = s.forkedDocuments(ctx, parent, value(body.ResponseId), spec.Caller.UserID); err != nil {
-			return nil, err
-		}
+		spec.Documents = s.forkedDocuments(ctx, parent, value(body.ResponseId), spec.Caller.UserID)
 	}
 
 	created, err := s.sessions.Create(ctx, spec)
@@ -1225,9 +1223,12 @@ func (s *Server) recordedHistory(ctx context.Context, parent session.Found, requ
 // forkedDocuments are the files a fork carries from its parent's conversation: those sent up to
 // the turn it stops at, and only when the person forking it is the one who sent them. Anybody
 // else's fork, a server's included, carries the words and not the files.
-func (s *Server) forkedDocuments(ctx context.Context, parent session.Found, until, owner string) ([]store.ConversationDocument, error) {
+//
+// Files that cannot be read leave the fork without them rather than unopened, as a session's
+// other records do, and say so in the log.
+func (s *Server) forkedDocuments(ctx context.Context, parent session.Found, until, owner string) []store.ConversationDocument {
 	if s.store == nil {
-		return nil, nil
+		return nil
 	}
 	scope := store.DocumentScope{SessionID: parent.ID(), Owner: owner, UntilResponse: until}
 	switch {
@@ -1238,9 +1239,10 @@ func (s *Server) forkedDocuments(ctx context.Context, parent session.Found, unti
 	}
 	documents, err := s.store.ConversationDocuments(ctx, OwnerFrom(ctx).CustomerID, scope)
 	if err != nil {
-		return nil, err
+		s.logger.Error("could not read the files a fork carries", "session", parent.ID(), "error", err)
+		return nil
 	}
-	return documents, nil
+	return documents
 }
 
 // value reads an optional field, which the generated types carry as pointers.
