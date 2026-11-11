@@ -1179,6 +1179,44 @@ func TestAClipOnDiskIsSentInline(t *testing.T) {
 	}
 }
 
+func TestADocumentGoesOverWithTheQuestionAndItsRequestID(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	if _, err := session.Responses.Create(t.Context(), "What is the deposit?",
+		Document{URL: "https://example.com/lease.pdf", Name: "lease.pdf"}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/session-1/responses")
+	files, _ := json.Marshal(body["files"])
+	if string(files) != `[{"name":"lease.pdf","url":"https://example.com/lease.pdf"}]` {
+		t.Errorf("the document went over as %s", files)
+	}
+	if id, _ := body["request_id"].(string); len(id) != 32 {
+		t.Errorf("a question with a document went with request id %v, so a personal conversation refuses it", body["request_id"])
+	}
+}
+
+func TestADocumentOnDiskIsSentInlineUnderItsName(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lease.pdf")
+	if err := os.WriteFile(path, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	document, err := DocumentFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := "data:application/octet-stream;base64,JVBERi0xLjc="; document.URL != want {
+		t.Errorf("the file went over as %q, want %q", document.URL, want)
+	}
+	if document.Name != "lease.pdf" {
+		t.Errorf("the file is named %q", document.Name)
+	}
+}
+
 func TestATurnsItemsAreNarrowedToThatTurn(t *testing.T) {
 	backend := newRouter(t)
 	backend.items = [][]acceleration.AgentResponseItem{{
