@@ -113,7 +113,7 @@ export {
 
 export {
   CallNotHeldError,
-  ToolCall,
+  ToolCallContext,
   ToolOutput,
   type ToolOutputPart,
   Tools,
@@ -121,11 +121,8 @@ export {
   type ParameterSchema,
   type StandardIssue,
   type StandardToolSchema,
-  type ContextTool,
-  type SimpleTool,
   type Tool,
   type ToolApproval,
-  type ToolOptions,
   type ToolCallFields,
   type ToolConversation,
   type ToolLine,

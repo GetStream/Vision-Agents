@@ -33,34 +33,8 @@ export interface StandardToolSchema<Input = unknown, Output = Input> {
   };
 }
 
-/**
- * One of the caller's own functions, as the model is offered it and as it runs: with `run`,
- * which is handed the arguments, or with `runWithContext`, which is handed the call first.
- */
-export type Tool<In = Readonly<Record<string, unknown>>> = SimpleTool<In> | ContextTool<In>;
-
-/**
- * A tool that is handed only its arguments. What it returns is rendered for the model: a
- * string is used as it is, a `ToolOutput` also shows the model its images, and anything else
- * becomes JSON.
- */
-export interface SimpleTool<In = Readonly<Record<string, unknown>>> extends ToolOptions<In> {
-  run: (input: In) => unknown;
-  runWithContext?: never;
-}
-
-/**
- * A tool that is handed the call it runs for, then its arguments. `toolCallContext` says who
- * asked, is how the function tells the conversation how it is going, and its `signal` aborts
- * when the call is cancelled or times out.
- */
-export interface ContextTool<In = Readonly<Record<string, unknown>>> extends ToolOptions<In> {
-  runWithContext: (toolCallContext: ToolCall, input: In) => unknown;
-  run?: never;
-}
-
-/** What every tool declares, whichever way it runs. */
-export interface ToolOptions<In = Readonly<Record<string, unknown>>> {
+/** One of the caller's own functions, as the model is offered it and as it runs. */
+export interface Tool<In = Readonly<Record<string, unknown>>> {
   /** How the model asks for it. */
   name: string;
   /** What the model is told it does, which is the whole of how it decides to reach for one. */
@@ -105,6 +79,13 @@ export interface ToolOptions<In = Readonly<Record<string, unknown>>> {
    * longer is aborted and fails. Zero or omitted takes the session's.
    */
   timeoutMs?: number;
+  /**
+   * Runs it, with the arguments and then the call it runs for, which a function that needs
+   * neither who asked nor how to tell them how it is going leaves out. What it returns is
+   * rendered for the model: a string is used as it is, a `ToolOutput` also shows the model its
+   * images, and anything else becomes JSON.
+   */
+  run: (input: In, toolCallContext: ToolCallContext) => unknown;
 }
 
 /** The person whose turn asked for a call. */
@@ -147,7 +128,7 @@ export interface ToolLine {
   hold(id: string, signal?: AbortSignal): Promise<boolean>;
 }
 
-/** Why the signal `disallowInterruptions` returns is aborted when the call had already been stopped. */
+/** What `disallowInterruptions` rejects with when the call had already been stopped. */
 export class CallNotHeldError extends Error {
   constructor(id: string) {
     super(`the call ${id} was stopped before it could be held`);
@@ -160,31 +141,21 @@ export class CallNotHeldError extends Error {
  *
  * Built without a line, as in a unit test of the function, its methods do nothing.
  */
-export class ToolCall implements ToolCallFields {
+export class ToolCallContext implements ToolCallFields {
   readonly id: string;
   readonly sessionId: string;
   readonly turnId: string;
   readonly user: ToolUser;
   readonly conversation: ToolConversation;
   readonly approved: boolean;
-  /**
-   * Aborts when the call is cancelled, as when the caller talks over the agent, or times
-   * out. Pass it to whatever the function waits on.
-   */
-  readonly signal: AbortSignal;
   private readonly line: ToolLine | undefined;
   private readonly lasting: AbortSignal;
 
   /**
    * `lasting` is what still stops the call once it is held: its socket ending, and its
-   * timeout. `signal` is what stops it before then, and is `lasting` when not given.
+   * timeout.
    */
-  constructor(
-    fields: Partial<ToolCallFields> = {},
-    line?: ToolLine,
-    lasting?: AbortSignal,
-    signal?: AbortSignal,
-  ) {
+  constructor(fields: Partial<ToolCallFields> = {}, line?: ToolLine, lasting?: AbortSignal) {
     this.id = fields.id ?? "";
     this.sessionId = fields.sessionId ?? "";
     this.turnId = fields.turnId ?? "";
@@ -193,7 +164,6 @@ export class ToolCall implements ToolCallFields {
     this.approved = fields.approved ?? false;
     this.line = line;
     this.lasting = lasting ?? new AbortController().signal;
-    this.signal = signal ?? this.lasting;
   }
 
   /**
@@ -219,37 +189,23 @@ export class ToolCall implements ToolCallFields {
 
   /**
    * Keeps the call going from now on when the caller talks over the agent, which is what a
-   * write that must not be left halfway wants. Resolves with the signal to do that write on:
-   * only the call's timeout and its socket ending abort it. When the call was stopped before
-   * it could be held, that signal is already aborted, with a `CallNotHeldError`.
+   * write that must not be left halfway wants: from then on only the call's timeout and its
+   * socket ending stop it. Rejects with a `CallNotHeldError` when the call was stopped before
+   * it could be held, so the write should not start.
    */
-  async disallowInterruptions(): Promise<AbortSignal> {
+  async disallowInterruptions(): Promise<void> {
     if (!this.line || !this.id) {
-      return this.lasting;
+      return;
     }
     const held = await this.line.hold(this.id, this.lasting);
-    if (this.lasting.aborted) {
-      return this.lasting;
+    if (!held || this.lasting.aborted) {
+      throw new CallNotHeldError(this.id);
     }
-    if (!held) {
-      return AbortSignal.abort(new CallNotHeldError(this.id));
-    }
-    return this.lasting;
   }
 
-  /** The same call, which also stops when `signal` aborts, held or not. */
-  lastingUntil(signal: AbortSignal): ToolCall {
-    return new ToolCall(
-      this,
-      this.line,
-      AbortSignal.any([this.lasting, signal]),
-      AbortSignal.any([this.signal, signal]),
-    );
-  }
-
-  /** The same call, cancelled when `signal` aborts until it is held. */
-  cancelledBy(signal: AbortSignal): ToolCall {
-    return new ToolCall(this, this.line, this.lasting, AbortSignal.any([this.lasting, signal]));
+  /** The same call, which also stops when `signal` aborts once it is held. */
+  lastingUntil(signal: AbortSignal): ToolCallContext {
+    return new ToolCallContext(this, this.line, AbortSignal.any([this.lasting, signal]));
   }
 }
 
@@ -302,9 +258,6 @@ export class Tools {
     }
     if (this.registered.has(tool.name)) {
       throw new ConfigurationError(`${tool.name} is registered twice`);
-    }
-    if ((typeof tool.run === "function") === (typeof tool.runWithContext === "function")) {
-      throw new ConfigurationError(`${tool.name} needs one of run or runWithContext`);
     }
     if (tool.timeoutMs !== undefined && !(Number.isFinite(tool.timeoutMs) && tool.timeoutMs >= 0)) {
       throw new ConfigurationError(`${tool.name} has a timeout that is not a duration: ${tool.timeoutMs}`);
@@ -368,7 +321,7 @@ export class Tools {
     name: string,
     args: string,
     signal: AbortSignal,
-    toolCallContext: ToolCall = new ToolCall(),
+    toolCallContext: ToolCallContext = new ToolCallContext(),
   ): Promise<string | ToolOutputPart[]> {
     const registered = this.registered.get(name);
     if (!registered) {
@@ -395,28 +348,33 @@ export class Tools {
       }
       input = parsed.value;
     }
-    const run = (call: ToolCall): unknown =>
-      tool.runWithContext ? tool.runWithContext(call, input as never) : tool.run(input as never);
-    if (!tool.timeoutMs) {
-      return render(await run(toolCallContext.cancelledBy(signal)));
+    // The function cannot be stopped from here, so a cancelled call stops being waited on.
+    let stop = (): void => undefined;
+    const cancelled = new Promise<never>((_, reject) => {
+      stop = () => reject(new Error(`${name} was cancelled`));
+    });
+    cancelled.catch(() => undefined);
+    signal.addEventListener("abort", stop, { once: true });
+    if (signal.aborted) {
+      stop();
     }
 
     const timeout = tool.timeoutMs;
     const late = new AbortController();
-    const timer = setTimeout(
-      () => late.abort(new Error(`${name} took longer than ${timeout} ms`)),
-      timeout,
-    );
+    const timer = timeout
+      ? setTimeout(() => late.abort(new Error(`${name} took longer than ${timeout} ms`)), timeout)
+      : undefined;
+    const timedOut = new Promise<never>((_, reject) => {
+      late.signal.addEventListener("abort", () => reject(late.signal.reason as Error), { once: true });
+    });
+    timedOut.catch(() => undefined);
     try {
-      const running = Promise.resolve(
-        run(toolCallContext.lastingUntil(late.signal).cancelledBy(signal)),
-      );
-      const timedOut = new Promise<never>((_, reject) => {
-        late.signal.addEventListener("abort", () => reject(late.signal.reason as Error), { once: true });
-      });
-      return render(await Promise.race([running, timedOut]));
+      const call = timeout ? toolCallContext.lastingUntil(late.signal) : toolCallContext;
+      const running = Promise.resolve(tool.run(input as never, call));
+      return render(await Promise.race([running, timedOut, cancelled]));
     } finally {
       clearTimeout(timer);
+      signal.removeEventListener("abort", stop);
     }
   }
 }

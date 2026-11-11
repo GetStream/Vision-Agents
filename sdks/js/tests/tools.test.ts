@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { CallNotHeldError, ConfigurationError, ToolCall, ToolOutput, Tools, render } from "../src/index.js";
+import { CallNotHeldError, ConfigurationError, ToolCallContext, ToolOutput, Tools, render } from "../src/index.js";
 
 describe("Tools", () => {
   const nothing = new AbortController().signal;
@@ -209,32 +209,28 @@ describe("render", () => {
     );
   });
 
-  it("fails and aborts a call that takes longer than its timeout", async () => {
-    let aborted: unknown;
+  it("fails a call that takes longer than its timeout", async () => {
     const tools = new Tools().register({
       name: "stuck",
       description: "Never finishes",
       timeoutMs: 20,
-      runWithContext: ({ signal }) =>
-        new Promise(() => {
-          signal.addEventListener("abort", () => (aborted = signal.reason));
-        }),
+      run: () => new Promise(() => undefined),
     });
 
     await assert.rejects(() => tools.call("stuck", "{}", new AbortController().signal), /stuck took longer than 20 ms/);
-    assert.match(String(aborted), /took longer/);
   });
 
   it("hands a function the call it runs for, which does nothing without a line", async () => {
-    let seen: ToolCall | undefined;
+    let seen: ToolCallContext | undefined;
     const tools = new Tools().register({
       name: "whoami",
       description: "Who asked",
-      runWithContext: async (toolCallContext) => {
+      run: async (_input, toolCallContext) => {
         seen = toolCallContext;
         toolCallContext.update("checking");
         toolCallContext.say("One moment.");
-        return (await toolCallContext.disallowInterruptions()).aborted ? "stopped" : "kept";
+        await toolCallContext.disallowInterruptions();
+        return "kept";
       },
     });
 
@@ -242,59 +238,38 @@ describe("render", () => {
     assert.equal(seen?.id, "");
   });
 
-  it("hands runWithContext the call first and the arguments second, and run only the arguments", async () => {
+  it("hands run the arguments, then the call it runs for", async () => {
     const tools = new Tools()
       .register<{ city: string }>({
         name: "simple",
         description: "Only the arguments",
-        run: (...given: unknown[]) => given,
+        run: ({ city }) => city,
       })
       .register<{ city: string }>({
         name: "context",
-        description: "The call, then the arguments",
-        runWithContext: (toolCallContext, { city }) => `${toolCallContext.id} ${city}`,
+        description: "The arguments, then the call",
+        run: ({ city }, toolCallContext) => `${toolCallContext.id} ${city}`,
       });
-    const call = new ToolCall({ id: "call-1" });
+    const call = new ToolCallContext({ id: "call-1" });
 
-    assert.equal(
-      await tools.call("simple", JSON.stringify({ city: "Rome" }), new AbortController().signal, call),
-      JSON.stringify([{ city: "Rome" }]),
-    );
+    assert.equal(await tools.call("simple", JSON.stringify({ city: "Rome" }), new AbortController().signal, call), "Rome");
     assert.equal(
       await tools.call("context", JSON.stringify({ city: "Rome" }), new AbortController().signal, call),
       "call-1 Rome",
     );
   });
 
-  it("aborts the call's signal when the call is cancelled", async () => {
+  it("stops waiting on a call that is cancelled", async () => {
     const cancel = new AbortController();
     const tools = new Tools().register({
       name: "slow",
-      description: "Wait to be cancelled",
-      runWithContext: ({ signal }) =>
-        new Promise((resolve) => signal.addEventListener("abort", () => resolve("cancelled"))),
+      description: "Never finishes",
+      run: () => new Promise(() => undefined),
     });
 
     const answer = tools.call("slow", "{}", cancel.signal);
     cancel.abort();
-    assert.equal(await answer, "cancelled");
-  });
-
-  it("refuses a tool with both run and runWithContext, or neither", () => {
-    assert.throws(
-      () =>
-        new Tools().register({
-          name: "both",
-          description: "Two ways to run",
-          run: () => "a",
-          runWithContext: () => "b",
-        } as never),
-      /one of run or runWithContext/,
-    );
-    assert.throws(
-      () => new Tools().register({ name: "none", description: "No way to run" } as never),
-      /one of run or runWithContext/,
-    );
+    await assert.rejects(answer, /slow was cancelled/);
   });
 
   it("reports how a call is going on its line, and a call stopped before it was held", async () => {
@@ -303,19 +278,19 @@ describe("render", () => {
       update: (id: string, text: string, verbatim: boolean) => void sent.push([id, text, verbatim]),
       hold: async () => holds,
     });
-    const toolCallContext = new ToolCall({ id: "call_1" }, line(true));
+    const toolCallContext = new ToolCallContext({ id: "call_1" }, line(true));
 
     toolCallContext.update("checking");
     toolCallContext.say("One moment.");
-    const kept = await toolCallContext.disallowInterruptions();
-    const stopped = await new ToolCall({ id: "call_2" }, line(false)).disallowInterruptions();
+    await toolCallContext.disallowInterruptions();
 
     assert.deepEqual(sent, [
       ["call_1", "checking", false],
       ["call_1", "One moment.", true],
     ]);
-    assert.equal(kept.aborted, false);
-    assert.equal(stopped.aborted, true);
-    assert.ok(stopped.reason instanceof CallNotHeldError);
+    await assert.rejects(
+      new ToolCallContext({ id: "call_2" }, line(false)).disallowInterruptions(),
+      CallNotHeldError,
+    );
   });
 });
