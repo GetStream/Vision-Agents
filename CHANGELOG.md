@@ -16,7 +16,7 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
-### `neon` plugin: Neon AI Gateway LLM
+### `neon` plugin: Neon AI Gateway LLM (#1929)
 
 New `neon` plugin exposing `neon.LLM` over Neon AI Gateway's OpenAI-compatible Chat Completions endpoint, giving access to OpenAI, Anthropic, Meta, Alibaba and other models with one Neon credential. Defaults to `gpt-5-mini`. Reads `NEON_AI_GATEWAY_TOKEN` and `NEON_AI_GATEWAY_BASE_URL`. Install with `vision-agents[neon]`.
 
