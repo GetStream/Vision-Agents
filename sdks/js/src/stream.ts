@@ -28,6 +28,11 @@ export interface StreamClients {
 /** `StreamChat`, typed as far as this package uses it. */
 export type ChatConstructor = new (apiKey: string) => ChatClient;
 
+/** The `version` stream-chat exports from 10.0.2 on, as far as this package reads it. */
+export interface ChatVersion {
+  readonly major: number;
+}
+
 /** `StreamVideoClient`, typed as far as this package uses it. */
 export type VideoConstructor = new (options: {
   apiKey: string;
@@ -42,11 +47,15 @@ export type VideoConstructor = new (options: {
  * them for an app that asked and never sees them in one that did not. This package imports
  * neither: it has no dependencies, and two large ones would be paid for by everybody.
  */
-const registered: { chat?: ChatConstructor; video?: VideoConstructor } = {};
+const registered: { chat?: ChatConstructor; chatVersion?: ChatVersion | undefined; video?: VideoConstructor } = {};
 
-/** Called by `@stream-io/stream-agents/chat`. */
-export function registerChat(StreamChat: ChatConstructor): void {
+/**
+ * Called by `@stream-io/stream-agents/chat`, with the `version` the installed stream-chat
+ * exports, which 9 does not.
+ */
+export function registerChat(StreamChat: ChatConstructor, version?: ChatVersion): void {
   registered.chat = StreamChat;
+  registered.chatVersion = version;
 }
 
 /** Called by `@stream-io/stream-agents/video`. */
@@ -92,7 +101,10 @@ export class StreamPeers {
       const credentials = await this.credentials("chat");
       const StreamChat = installed(registered.chat, "chat", "stream-chat");
       const client = new StreamChat(credentials.apiKey);
-      await client.connectUser(chatUser(client, credentials.user), streamTokens(this.backend, credentials, "chat"));
+      await client.connectUser(
+        chatUser(registered.chatVersion, credentials.user),
+        streamTokens(this.backend, credentials, "chat"),
+      );
       return client;
     });
   }
@@ -200,11 +212,10 @@ const CONNECT_FIELDS = new Set(["id", "name", "image", "language", "invisible", 
  * The user `setUser` named, as the installed stream-chat takes it.
  *
  * `StreamUser` keeps the app's own fields top level, which is how stream-chat 9 takes them.
- * 10 takes them only under `custom`, and a client with `userId` is 10's: 9 has only `userID`,
- * set once connected. What the app already put under `custom` is kept there.
+ * 10 takes them only under `custom`. What the app already put under `custom` is kept there.
  */
-function chatUser(client: ChatClient, user: StreamUser): StreamUser {
-  if (!("userId" in client)) {
+function chatUser(version: ChatVersion | undefined, user: StreamUser): StreamUser {
+  if (!takesCustom(version)) {
     return user;
   }
   const top: StreamUser = { id: user.id };
@@ -223,4 +234,13 @@ function chatUser(client: ChatClient, user: StreamUser): StreamUser {
     custom["custom"] = given;
   }
   return Object.keys(custom).length > 0 ? { ...top, custom } : top;
+}
+
+/**
+ * Whether the installed stream-chat is 10 or later, which takes a user's own fields only under
+ * `custom`. 9 exports no `version`. A `major` of 0 is a build with no version injected (a linked
+ * checkout), which stream-chat says to take as the newest.
+ */
+function takesCustom(version: ChatVersion | undefined): boolean {
+  return version !== undefined && (version.major === 0 || version.major >= 10);
 }
