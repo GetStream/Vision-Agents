@@ -1,7 +1,6 @@
 package api
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"net/http"
@@ -16,7 +15,6 @@ import (
 )
 
 const (
-	defaultVerificationPage = 50
 	verificationPostTimeout = 5 * time.Second
 )
 
@@ -195,7 +193,7 @@ func (s *Server) manageListVerificationRequests(ctx context.Context, request *ma
 	if err != nil {
 		return nil, errPageCursor
 	}
-	limit := cmp.Or(request.Limit, defaultVerificationPage)
+	limit := request.Limit
 	rows, err := s.store.ListVerificationRequests(ctx, limit, after)
 	if err != nil {
 		return nil, err
