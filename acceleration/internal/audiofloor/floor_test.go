@@ -630,6 +630,20 @@ func (s *FloorSuite) stalls() func(time.Duration) {
 	}
 }
 
+// noCutWaiting waits until no utterance the floor ended is waiting for its words, as none is
+// by the time a floor takes the floor back (probeFirst, against finalWait). A cut gives up by
+// a timer, which a loaded runner fires late: a final handed to one still waiting is that
+// utterance's, which retake ends, and no sleep says when the timer has fired.
+func (s *FloorSuite) noCutWaiting() {
+	s.T().Helper()
+	w := s.transcriber.words
+	s.Require().Eventually(func() bool {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		return w.cut == nil
+	}, 5*time.Second, time.Millisecond, "an utterance the floor ended still waits for its words")
+}
+
 // quietUntilFinal feeds the line's silence, a frame at a time, until the floor sends a final,
 // which only its own clock can bring with no voice (stray), or d has passed.
 func (s *FloorSuite) quietUntilFinal(d time.Duration) (stt.Transcript, bool) {
@@ -690,9 +704,7 @@ func (s *FloorSuite) TestAFloorThatStepsAsideMidUtteranceSendsTheRunsItHadSettle
 // turn of its own, rather than with the utterance left open, which is over.
 func (s *FloorSuite) TestAFloorThatTakesTheFloorBackSendsAFinalWrittenAsItSteppedAside() {
 	s.stepAside()
-	// The utterance ended before the floor stepped aside has given up waiting for its words,
-	// as it has long before a floor takes the floor back (probeFirst).
-	time.Sleep(finalWait + 100*time.Millisecond)
+	s.noCutWaiting()
 	s.transcriber.words.heard(stt.Transcript{Participant: stt.Participant{ID: "p"}, Mode: stt.ModeFinal, Utterance: 9,
 		Text: "Yeah, zip is 46281.", Provider: "stub", Model: "stub-1"})
 	s.transcriber.retake(stt.Participant{ID: "p"})
@@ -832,7 +844,7 @@ func (s *FloorSuite) TestNoWordTheOtherTranscriberWritesIsLost() {
 		{"a final written as the floor stepped aside, and the floor back", func(r *recorder) {
 			s.transcriber.probeFirst, s.transcriber.probeCap = 20*time.Millisecond, 80*time.Millisecond
 			s.stepAside()
-			time.Sleep(finalWait + 100*time.Millisecond)
+			s.noCutWaiting()
 			s.transcriber.words.heard(stt.Transcript{Participant: p, Mode: stt.ModeFinal, Utterance: 9, Text: "Yeah, zip is 46281.", Provider: "stub"})
 			r.wrote[9] = "Yeah, zip is 46281."
 			s.say(100, false)
