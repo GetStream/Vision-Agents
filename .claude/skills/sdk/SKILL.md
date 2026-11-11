@@ -755,3 +755,4 @@ A session keeps its team, and every SDK queries sessions alike. `Session` gains 
 - JavaScript, Swift, Kotlin and Dart: `team` on their session query and on `Session`.
 
 Every generated client is regenerated. The `.sdk_update_log` files are left where they were, since each SDK still lags older notes.
+Swift's `agents.attach(sessionID:)` now starts the session it returns, as Kotlin's and Dart's do, so a resumed or forked session receives events and answers tools without a separate `start()` (no spec change). Dart's `SessionQuery` drops `userId`, a server-only filter that Kotlin and Swift already leave out.

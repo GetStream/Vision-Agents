@@ -279,7 +279,9 @@ public struct StreamAgents: Sendable {
     /// somebody else is not found, because reading one is reading a conversation.
     public func attach(sessionID: String, tools: [AgentTool] = []) async throws -> AgentSession {
         let session = try await sessions.get(sessionID)
-        return await AgentSession(backend: backend, session: session, tools: tools)
+        let attached = await AgentSession(backend: backend, session: session, tools: tools)
+        await attached.start()
+        return attached
     }
 
     /// Stops a session, which is how the agent leaves. What it recorded and remembered is
