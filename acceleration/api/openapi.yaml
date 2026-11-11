@@ -215,6 +215,18 @@ components:
         - sessions
         - voice_minutes
       type: object
+    ActivityEnding:
+      properties:
+        end_reason:
+          $ref: '#/components/schemas/SessionEndReason'
+          description: Why they ended. Absent for the sessions that ended with no reason kept, as before reasons were.
+        sessions:
+          description: How many ended so.
+          format: int64
+          type: integer
+      required:
+        - sessions
+      type: object
     ActivityGranularity:
       default: daily
       description: 'Separate from Granularity, and coarser, because distinct users cannot be summed: a month of them is who came back rather than the sum of its days.'
@@ -222,6 +234,34 @@ components:
         - daily
         - monthly
       type: string
+    ActivityLatency:
+      properties:
+        leg:
+          description: 'The leg: stt_latency, the speech-to-text vendor''s decode of the transcript that settled the turn; llm_ttft, asking the model to its first token; tts_ttfb, the first sentence sent to its first audio; roundtrip, the settled transcript to the first audio published.'
+          type: string
+        p50_ms:
+          description: The median, in milliseconds. Absent when no turn had the leg.
+          format: double
+          nullable: true
+          type: number
+        p95_ms:
+          description: The 95th percentile, in milliseconds. Absent when no turn had the leg.
+          format: double
+          nullable: true
+          type: number
+        p99_ms:
+          description: The 99th percentile, in milliseconds. Absent when no turn had the leg.
+          format: double
+          nullable: true
+          type: number
+        turns:
+          description: How many turns the leg was counted for.
+          format: int64
+          type: integer
+      required:
+        - leg
+        - turns
+      type: object
     ActivityMeter:
       properties:
         audio_ms:
@@ -264,6 +304,66 @@ components:
         - characters
         - duration_ms
         - cost_micros
+      type: object
+    ActivitySession:
+      properties:
+        agent_name:
+          description: The name of the agent config it was opened with.
+          type: string
+        app_id:
+          description: The app it was opened in.
+          type: string
+        closed_at:
+          description: When it ended. Absent while it runs.
+          format: date-time
+          type: string
+        created_at:
+          description: When it was opened.
+          format: date-time
+          type: string
+        end_reason:
+          $ref: '#/components/schemas/SessionEndReason'
+          description: Why it ended. Absent while it runs, and for one that ended with no reason kept.
+        id:
+          description: The session.
+          type: string
+        modality:
+          description: text, voice or video.
+          type: string
+      required:
+        - id
+        - app_id
+        - agent_name
+        - modality
+        - created_at
+      type: object
+    ActivitySessions:
+      properties:
+        ended:
+          description: How many of them ended for each reason, by reason, the ones with no reason kept first.
+          items:
+            $ref: '#/components/schemas/ActivityEnding'
+          nullable: true
+          type: array
+        latest:
+          description: The 20 opened last, newest first.
+          items:
+            $ref: '#/components/schemas/ActivitySession'
+          nullable: true
+          type: array
+        opened:
+          description: How many sessions were opened, running ones included.
+          format: int64
+          type: integer
+        running:
+          description: How many of them have not ended.
+          format: int64
+          type: integer
+      required:
+        - opened
+        - running
+        - ended
+        - latest
       type: object
     ActivityStep:
       description: 'The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.'
@@ -359,12 +459,30 @@ components:
         whatsapp:
           $ref: '#/components/schemas/ChannelLineRequest'
       type: object
+    AgentChatChannel:
+      properties:
+        type:
+          description: The channel type's name, as it comes before the colon in a channel's cid.
+          example: callouts
+          maxLength: 64
+          minLength: 1
+          pattern: ^[A-Za-z0-9_-]+$
+          patternDescription: letters, digits, _ and -
+          type: string
+      required:
+        - type
+      type: object
     AgentConfig:
       properties:
         calls:
           $ref: '#/components/schemas/AgentCalls'
         channels:
           $ref: '#/components/schemas/AgentChannels'
+        chat_channels:
+          description: The Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels. Absent when there are none.
+          items:
+            $ref: '#/components/schemas/AgentChatChannel'
+          type: array
         connectors:
           description: The bindings exactly as they were written. Absent when there are none.
           items:
@@ -483,6 +601,12 @@ components:
           $ref: '#/components/schemas/AgentCalls'
         channels:
           $ref: '#/components/schemas/AgentChannels'
+        chat_channels:
+          description: Replaces the list whole. An empty list removes it.
+          items:
+            $ref: '#/components/schemas/AgentChatChannel'
+          maxItems: 16
+          type: array
         connectors:
           description: The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out.
           items:
@@ -607,6 +731,12 @@ components:
         channels:
           $ref: '#/components/schemas/AgentChannels'
           description: 'Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels.'
+        chat_channels:
+          description: 'Stream Chat channel types of the app''s own Stream app this agent answers in besides agent channels, such as the type the app''s group channels are made with. A message in a channel of a type named here is answered by the router''s own session in that channel, under this agent, and the reply is written there as the Stream user whose id is this config''s id. Who answers comes from this list alone, never from the channel''s custom data, and the oldest config naming a type answers in it. Only a message in the app''s own Stream app is answered: the router''s shared app answers no type named here. The type''s grants must not let a user, guest or member make, change or join a channel of it, or let a user or guest read one they are not a member of; members writing in it is expected. A type whose grants do, or that the app does not have, is not answered. agent is answered already and cannot be named, and each type is named once. Left out on an update, the stored list stays; an empty list removes it.'
+          items:
+            $ref: '#/components/schemas/AgentChatChannel'
+          maxItems: 16
+          type: array
         connectors:
           description: The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
           items:
@@ -4230,7 +4360,7 @@ components:
           minLength: 1
           type: string
         schemes:
-          description: How a connection may authenticate. Each must be a scheme this deployment has.
+          description: 'How a connection may authenticate. Each must be a scheme this deployment has, except oauth2_client_credentials, which a custom connector cannot use: it needs a token endpoint a custom connector cannot set.'
           items:
             type: string
           minItems: 1
@@ -6490,6 +6620,12 @@ components:
           description: When the last request of any area arrived, absent when none did.
           format: date-time
           type: string
+        latency:
+          description: 'How long the turns of the organization''s apps took, every agent summed, one item per leg: stt_latency, llm_ttft, tts_ttfb, then roundtrip. Turns are kept by the hour they started in, so they count the whole hour since falls in. The percentiles are read off bins 5% wide, so they are within 5% of the true ones.'
+          items:
+            $ref: '#/components/schemas/ActivityLatency'
+          nullable: true
+          type: array
         meters:
           description: What the organization's apps' work came to, by modality, from the shards listed in shards.
           items:
@@ -6499,6 +6635,9 @@ components:
         organization_id:
           description: The organization.
           type: string
+        sessions:
+          $ref: '#/components/schemas/ActivitySessions'
+          description: The sessions the organization's apps opened from since on, from the shards listed in shards.
         shards:
           description: The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them.
           items:
@@ -6516,6 +6655,8 @@ components:
         - areas
         - meters
         - shards
+        - sessions
+        - latency
       type: object
     PhoneCapability:
       description: What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.
@@ -9873,6 +10014,12 @@ components:
         channels:
           $ref: '#/components/schemas/AgentChannels'
           description: Lines this agent answers on besides Stream Chat, each a number the app connected.
+        chat_channels:
+          description: 'agent.yaml''s chat_channels: the Stream Chat channel types of the app''s own Stream app this agent answers in besides agent channels, as AgentConfigRequest''s chat_channels names them, with the same rules. Sent, they replace the stored list whole, an empty list removing it. Left out, the stored list stays.'
+          items:
+            $ref: '#/components/schemas/AgentChatChannel'
+          maxItems: 16
+          type: array
         check_changes:
           description: Refuse the sync, with unsynced_changes, when somebody has changed one of the settings it would write since the last sync -- in the dashboard, say. A client that asks for this shows the person what changed (GET /v1/agents/configs/{id}/changes) and syncs again with base_change once they have decided. Omitted, the sync writes over whatever is there, which is what a process syncing on startup wants.
           type: boolean
@@ -22161,7 +22308,7 @@ paths:
   /v1/ops/orgs/{org_id}/activity:
     get:
       description: |-
-        Whether an organization tried Agents, how far it got and how much it used: what its apps did in each area of the API, from each client, and what their work came to by modality, summed over every shard in postgres.shards, which the answer names. An organization with nothing recorded is answered with empty lists and furthest_step none. Every area and client is one item, so the lists are short and have no cursor. Areas, first_seen, last_seen and furthest_step come from counts kept since they were first recorded, while meters come from every request, so an organization whose use is older than the counts can read furthest_step none with meters that show use.
+        Whether an organization tried Agents, how far it got and how much it used: what its apps did in each area of the API, from each client, and what their work came to by modality, summed over every shard in postgres.shards, which the answer names, with the sessions they opened, how those ended and how long their turns took. An organization with nothing recorded is answered with empty lists and furthest_step none. Every area and client is one item, so the lists are short and have no cursor. Areas, first_seen, last_seen and furthest_step come from counts kept since they were first recorded, while meters come from every request, so an organization whose use is older than the counts can read furthest_step none with meters that show use.
 
         Stream staff only: it needs the ops key.
       operationId: getOrganizationActivity

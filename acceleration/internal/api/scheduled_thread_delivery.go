@@ -28,7 +28,9 @@ import (
 //	  past WhatsApp's 24 h, no template                         outside_window, final
 //	lease the thread's turn (store.TakeChannelThreadTurn)       another turn: wait
 //	the session on the channel, else threadSpec on the task's config
+//	  the organization may not pay                              its code, final
 //	Session.FollowUp("st_<run>"), wait for its reply            no_reply, reply_failed
+//	  the turn refused for money                                its code, final
 //	  ("st_<run>_r1" once st_<run> was cancelled or interrupted: replyCommand)
 //	Bridge.Send the reply, held from Bridge.Reply                opted out: channel_unreachable, final
 //	                                                            may not pay: its code, final
@@ -77,7 +79,7 @@ func (s *Server) deliverOnThread(ctx context.Context, delivery scheduledDelivery
 	defer cancelTurn()
 	found, opened, err := s.taskThreadSession(turn, delivery, thread)
 	if err != nil {
-		return "", "", err
+		return "", "", unpaid(err)
 	}
 	if opened {
 		defer func() {
@@ -93,6 +95,8 @@ func (s *Server) deliverOnThread(ctx context.Context, delivery scheduledDelivery
 	// A retried occurrence whose turn the thread already holds is a duplicate follow-up, which
 	// runs nothing (Session.FollowUp); its reply is read back, and sent unless it went out.
 	_, _, retried := found.FollowUpReply(delivery.CommandID)
+	events, detach := found.Watch()
+	defer detach()
 	if err := s.followUpWithin(turn, found, delivery); err != nil {
 		return "", "", err
 	}
@@ -100,7 +104,22 @@ func (s *Server) deliverOnThread(ctx context.Context, delivery scheduledDelivery
 	// for a follow-up that finished on an earlier attempt.
 	reply, err := s.readBackReply(turn, found, delivery.CommandID)
 	if err != nil {
-		return "", "", err
+		// A turn the organization may not pay for failed on the model's refusal, which the
+		// conversation does not keep: the run records the money, as a text channel's does.
+		for {
+			select {
+			case event, open := <-events:
+				// A session that ended closes its watchers: nothing more comes.
+				if !open {
+					return "", "", err
+				}
+				if refusal := turnRefusal(event); refusal != nil {
+					return "", "", refusal
+				}
+			default:
+				return "", "", err
+			}
+		}
 	}
 	if !retried {
 		select {

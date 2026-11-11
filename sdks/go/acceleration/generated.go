@@ -3349,8 +3349,35 @@ type ActivityBucket struct {
 	VoiceMinutes float64 `json:"voice_minutes"`
 }
 
+// ActivityEnding defines model for ActivityEnding.
+type ActivityEnding struct {
+	// EndReason Why the session ended, with whose fault it was and the stage it came at: agent_hangup, the agent hung up (fault none, stage conversation); transferred, the agent handed the caller to a person (fault none, stage conversation); hangup, the caller left (fault caller, stage conversation); start, nobody joined the phone call in time (fault carrier, stage ringing); unanswered, the call placed was never answered (fault caller, stage ringing); voicemail, an answering machine picked up the call placed, and the agent left its message or hung up (fault none, stage ringing); closed, the session was closed through the API, or replaced by a newer one (fault none, stage conversation); shutdown, the router ended the session as it shut down (fault router, stage conversation); agent_failed, the agent left the call or answered no turn for a failure of the router's own (fault router, stage conversation); model_failed, a model vendor failed: the agent left the call or answered no turn (fault vendor, stage conversation); model_config_refused, the model failed on the customer's own key or model, or refused a setting, and the agent answered no turn (fault customer_config, stage conversation); model_no_credit, the credit or spend limits refused the model's work, and the agent answered no turn (fault customer_credit, stage conversation).
+	EndReason *SessionEndReason `json:"end_reason,omitempty"`
+
+	// Sessions How many ended so.
+	Sessions int64 `json:"sessions"`
+}
+
 // ActivityGranularity Separate from Granularity, and coarser, because distinct users cannot be summed: a month of them is who came back rather than the sum of its days.
 type ActivityGranularity string
+
+// ActivityLatency defines model for ActivityLatency.
+type ActivityLatency struct {
+	// Leg The leg: stt_latency, the speech-to-text vendor's decode of the transcript that settled the turn; llm_ttft, asking the model to its first token; tts_ttfb, the first sentence sent to its first audio; roundtrip, the settled transcript to the first audio published.
+	Leg string `json:"leg"`
+
+	// P50Ms The median, in milliseconds. Absent when no turn had the leg.
+	P50Ms *float64 `json:"p50_ms,omitempty"`
+
+	// P95Ms The 95th percentile, in milliseconds. Absent when no turn had the leg.
+	P95Ms *float64 `json:"p95_ms,omitempty"`
+
+	// P99Ms The 99th percentile, in milliseconds. Absent when no turn had the leg.
+	P99Ms *float64 `json:"p99_ms,omitempty"`
+
+	// Turns How many turns the leg was counted for.
+	Turns int64 `json:"turns"`
+}
 
 // ActivityMeter defines model for ActivityMeter.
 type ActivityMeter struct {
@@ -3377,6 +3404,45 @@ type ActivityMeter struct {
 
 	// Requests How many requests. Runtime and sandbox are time, not requests, and read 0.
 	Requests int64 `json:"requests"`
+}
+
+// ActivitySession defines model for ActivitySession.
+type ActivitySession struct {
+	// AgentName The name of the agent config it was opened with.
+	AgentName string `json:"agent_name"`
+
+	// AppId The app it was opened in.
+	AppId string `json:"app_id"`
+
+	// ClosedAt When it ended. Absent while it runs.
+	ClosedAt *time.Time `json:"closed_at,omitempty"`
+
+	// CreatedAt When it was opened.
+	CreatedAt time.Time `json:"created_at"`
+
+	// EndReason Why the session ended, with whose fault it was and the stage it came at: agent_hangup, the agent hung up (fault none, stage conversation); transferred, the agent handed the caller to a person (fault none, stage conversation); hangup, the caller left (fault caller, stage conversation); start, nobody joined the phone call in time (fault carrier, stage ringing); unanswered, the call placed was never answered (fault caller, stage ringing); voicemail, an answering machine picked up the call placed, and the agent left its message or hung up (fault none, stage ringing); closed, the session was closed through the API, or replaced by a newer one (fault none, stage conversation); shutdown, the router ended the session as it shut down (fault router, stage conversation); agent_failed, the agent left the call or answered no turn for a failure of the router's own (fault router, stage conversation); model_failed, a model vendor failed: the agent left the call or answered no turn (fault vendor, stage conversation); model_config_refused, the model failed on the customer's own key or model, or refused a setting, and the agent answered no turn (fault customer_config, stage conversation); model_no_credit, the credit or spend limits refused the model's work, and the agent answered no turn (fault customer_credit, stage conversation).
+	EndReason *SessionEndReason `json:"end_reason,omitempty"`
+
+	// Id The session.
+	Id string `json:"id"`
+
+	// Modality text, voice or video.
+	Modality string `json:"modality"`
+}
+
+// ActivitySessions defines model for ActivitySessions.
+type ActivitySessions struct {
+	// Ended How many of them ended for each reason, by reason, the ones with no reason kept first.
+	Ended *[]ActivityEnding `json:"ended"`
+
+	// Latest The 20 opened last, newest first.
+	Latest *[]ActivitySession `json:"latest"`
+
+	// Opened How many sessions were opened, running ones included.
+	Opened int64 `json:"opened"`
+
+	// Running How many of them have not ended.
+	Running int64 `json:"running"`
 }
 
 // ActivityStep The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
@@ -3439,6 +3505,14 @@ type AgentChannels struct {
 	Whatsapp *ChannelLineRequest `json:"whatsapp,omitempty"`
 }
 
+// AgentChatChannel defines model for AgentChatChannel.
+type AgentChatChannel struct {
+	// Type The channel type's name, as it comes before the colon in a channel's cid.
+	//
+	// Example: callouts
+	Type string `json:"type"`
+}
+
 // AgentConfig defines model for AgentConfig.
 type AgentConfig struct {
 	// Calls The tools an agent on a phone call is offered: end the call, press keys, transfer.
@@ -3446,6 +3520,9 @@ type AgentConfig struct {
 
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
+
+	// ChatChannels The Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels. Absent when there are none.
+	ChatChannels *[]AgentChatChannel `json:"chat_channels,omitempty"`
 
 	// Connectors The bindings exactly as they were written. Absent when there are none.
 	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
@@ -3534,6 +3611,9 @@ type AgentConfigPatch struct {
 
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
+
+	// ChatChannels Replaces the list whole. An empty list removes it.
+	ChatChannels *[]AgentChatChannel `json:"chat_channels,omitempty"`
 
 	// Connectors The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out.
 	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
@@ -3642,6 +3722,9 @@ type AgentConfigRequest struct {
 
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
+
+	// ChatChannels Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels, such as the type the app's group channels are made with. A message in a channel of a type named here is answered by the router's own session in that channel, under this agent, and the reply is written there as the Stream user whose id is this config's id. Who answers comes from this list alone, never from the channel's custom data, and the oldest config naming a type answers in it. Only a message in the app's own Stream app is answered: the router's shared app answers no type named here. The type's grants must not let a user, guest or member make, change or join a channel of it, or let a user or guest read one they are not a member of; members writing in it is expected. A type whose grants do, or that the app does not have, is not answered. agent is answered already and cannot be named, and each type is named once. Left out on an update, the stored list stays; an empty list removes it.
+	ChatChannels *[]AgentChatChannel `json:"chat_channels,omitempty"`
 
 	// Connectors The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
 	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
@@ -5993,7 +6076,7 @@ type CustomConnectorRequest struct {
 	Id   string `json:"id"`
 	Name string `json:"name"`
 
-	// Schemes How a connection may authenticate. Each must be a scheme this deployment has.
+	// Schemes How a connection may authenticate. Each must be a scheme this deployment has, except oauth2_client_credentials, which a custom connector cannot use: it needs a token endpoint a custom connector cannot set.
 	Schemes *[]string `json:"schemes"`
 
 	// Scopes The scopes a consent asks for, each an RFC 6749 scope token.
@@ -7430,11 +7513,15 @@ type OrganizationActivity struct {
 	// LastSeen When the last request of any area arrived, absent when none did.
 	LastSeen *time.Time `json:"last_seen,omitempty"`
 
+	// Latency How long the turns of the organization's apps took, every agent summed, one item per leg: stt_latency, llm_ttft, tts_ttfb, then roundtrip. Turns are kept by the hour they started in, so they count the whole hour since falls in. The percentiles are read off bins 5% wide, so they are within 5% of the true ones.
+	Latency *[]ActivityLatency `json:"latency"`
+
 	// Meters What the organization's apps' work came to, by modality, from the shards listed in shards.
 	Meters *[]ActivityMeter `json:"meters"`
 
 	// OrganizationId The organization.
-	OrganizationId string `json:"organization_id"`
+	OrganizationId string           `json:"organization_id"`
+	Sessions       ActivitySessions `json:"sessions"`
 
 	// Shards The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them.
 	Shards *[]string `json:"shards"`
@@ -9677,6 +9764,9 @@ type SyncAgentRequest struct {
 
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
+
+	// ChatChannels agent.yaml's chat_channels: the Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels, as AgentConfigRequest's chat_channels names them, with the same rules. Sent, they replace the stored list whole, an empty list removing it. Left out, the stored list stays.
+	ChatChannels *[]AgentChatChannel `json:"chat_channels,omitempty"`
 
 	// CheckChanges Refuse the sync, with unsynced_changes, when somebody has changed one of the settings it would write since the last sync -- in the dashboard, say. A client that asks for this shows the person what changed (GET /v1/agents/configs/{id}/changes) and syncs again with base_change once they have decided. Omitted, the sync writes over whatever is there, which is what a process syncing on startup wants.
 	CheckChanges *bool `json:"check_changes,omitempty"`

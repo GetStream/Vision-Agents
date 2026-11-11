@@ -6,8 +6,12 @@ from .account_balance_warning_source import AccountBalanceWarningSource
 from .account_status import AccountStatus
 from .activity_area import ActivityArea
 from .activity_bucket import ActivityBucket
+from .activity_ending import ActivityEnding
 from .activity_granularity import ActivityGranularity
+from .activity_latency import ActivityLatency
 from .activity_meter import ActivityMeter
+from .activity_session import ActivitySession
+from .activity_sessions import ActivitySessions
 from .activity_step import ActivityStep
 from .add_contacts_request import AddContactsRequest
 from .add_contacts_response import AddContactsResponse
@@ -16,6 +20,7 @@ from .add_trunk_number_request_tags import AddTrunkNumberRequestTags
 from .agent_calls import AgentCalls
 from .agent_changes import AgentChanges
 from .agent_channels import AgentChannels
+from .agent_chat_channel import AgentChatChannel
 from .agent_config import AgentConfig
 from .agent_config_patch import AgentConfigPatch
 from .agent_config_patch_mcp_servers_item import AgentConfigPatchMcpServersItem
@@ -636,8 +641,12 @@ __all__ = (
     "AccountStatus",
     "ActivityArea",
     "ActivityBucket",
+    "ActivityEnding",
     "ActivityGranularity",
+    "ActivityLatency",
     "ActivityMeter",
+    "ActivitySession",
+    "ActivitySessions",
     "ActivityStep",
     "AddContactsRequest",
     "AddContactsResponse",
@@ -646,6 +655,7 @@ __all__ = (
     "AgentCalls",
     "AgentChanges",
     "AgentChannels",
+    "AgentChatChannel",
     "AgentConfig",
     "AgentConfigPatch",
     "AgentConfigPatchMcpServersItem",

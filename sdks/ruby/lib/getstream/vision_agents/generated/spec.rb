@@ -1769,9 +1769,25 @@ module GetStream
           properties: %w[active_users bucket calls messages phone_minutes sessions voice_minutes].freeze,
           required: %w[active_users bucket calls messages phone_minutes sessions voice_minutes].freeze, open: false
         }.freeze,
+        "ActivityEnding" => {
+          properties: %w[end_reason sessions].freeze,
+          required: %w[sessions].freeze, open: false
+        }.freeze,
+        "ActivityLatency" => {
+          properties: %w[leg p50_ms p95_ms p99_ms turns].freeze,
+          required: %w[leg turns].freeze, open: false
+        }.freeze,
         "ActivityMeter" => {
           properties: %w[audio_ms characters cost_micros duration_ms input_tokens meter output_tokens requests].freeze,
           required: %w[meter requests input_tokens output_tokens audio_ms characters duration_ms cost_micros].freeze, open: false
+        }.freeze,
+        "ActivitySession" => {
+          properties: %w[agent_name app_id closed_at created_at end_reason id modality].freeze,
+          required: %w[id app_id agent_name modality created_at].freeze, open: false
+        }.freeze,
+        "ActivitySessions" => {
+          properties: %w[ended latest opened running].freeze,
+          required: %w[opened running ended latest].freeze, open: false
         }.freeze,
         "AddContactsRequest" => {
           properties: %w[contacts default_country].freeze,
@@ -1797,16 +1813,20 @@ module GetStream
           properties: %w[identity imessage sms whatsapp].freeze,
           required: [].freeze, open: false
         }.freeze,
+        "AgentChatChannel" => {
+          properties: %w[type].freeze,
+          required: %w[type].freeze, open: false
+        }.freeze,
         "AgentConfig" => {
-          properties: %w[calls channels connectors created_at dispatch episode_cards floor_control greeting guardrail harness id instructions keyterms knowledge_namespace left_out_connectors llm llm_fallbacks mode name region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent sync_hash tags tools tts updated_at video visible_tools voice].freeze,
+          properties: %w[calls channels chat_channels connectors created_at dispatch episode_cards floor_control greeting guardrail harness id instructions keyterms knowledge_namespace left_out_connectors llm llm_fallbacks mode name region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent sync_hash tags tools tts updated_at video visible_tools voice].freeze,
           required: %w[created_at id mode name region updated_at].freeze, open: false
         }.freeze,
         "AgentConfigPatch" => {
-          properties: %w[calls channels connectors dispatch episode_cards floor_control greeting guardrail harness instructions keyterms knowledge_namespace llm llm_fallbacks mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
+          properties: %w[calls channels chat_channels connectors dispatch episode_cards floor_control greeting guardrail harness instructions keyterms knowledge_namespace llm llm_fallbacks mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "AgentConfigRequest" => {
-          properties: %w[calls channels connectors dispatch episode_cards floor_control greeting guardrail harness instructions keyterms knowledge_namespace llm llm_fallbacks mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
+          properties: %w[calls channels chat_channels connectors dispatch episode_cards floor_control greeting guardrail harness instructions keyterms knowledge_namespace llm llm_fallbacks mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
           required: %w[name].freeze, open: false
         }.freeze,
         "AgentConnectorBinding" => {
@@ -2606,8 +2626,8 @@ module GetStream
           required: %w[has_more items].freeze, open: false
         }.freeze,
         "OrganizationActivity" => {
-          properties: %w[areas first_seen furthest_step last_seen meters organization_id shards since].freeze,
-          required: %w[organization_id since furthest_step areas meters shards].freeze, open: false
+          properties: %w[areas first_seen furthest_step last_seen latency meters organization_id sessions shards since].freeze,
+          required: %w[organization_id since furthest_step areas meters shards sessions latency].freeze, open: false
         }.freeze,
         "PhoneNumber" => {
           properties: %w[agent_config_id capabilities country e164 monthly_cost_micros purchased_at released_at sip_trunk_id stream_trunk_id tags vendor].freeze,
@@ -3038,7 +3058,7 @@ module GetStream
           required: %w[reason suspended_by].freeze, open: false
         }.freeze,
         "SyncAgentRequest" => {
-          properties: %w[base_change calls channels check_changes connectors dispatch floor_control greeting guardrail harness hash instructions keyterms knowledge knowledge_urls left_out_connectors llm mcp_servers mode name plugin_events plugins region resume_history role sandbox sandbox_options scheduling search simulations skills sts stt subagent tags tools tts video voice].freeze,
+          properties: %w[base_change calls channels chat_channels check_changes connectors dispatch floor_control greeting guardrail harness hash instructions keyterms knowledge knowledge_urls left_out_connectors llm mcp_servers mode name plugin_events plugins region resume_history role sandbox sandbox_options scheduling search simulations skills sts stt subagent tags tools tts video voice].freeze,
           required: %w[name hash].freeze, open: false
         }.freeze,
         "SyncAgentResult" => {

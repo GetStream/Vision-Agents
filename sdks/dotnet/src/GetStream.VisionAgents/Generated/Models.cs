@@ -228,6 +228,78 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ActivityEnding
+    {
+
+        /// <summary>
+        /// Why they ended. Absent for the sessions that ended with no reason kept, as before reasons were.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("end_reason")]
+        public string? EndReason { get; set; } = default!;
+
+        /// <summary>
+        /// How many ended so.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("sessions")]
+        public long Sessions { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ActivityLatency
+    {
+
+        /// <summary>
+        /// The leg: stt_latency, the speech-to-text vendor's decode of the transcript that settled the turn; llm_ttft, asking the model to its first token; tts_ttfb, the first sentence sent to its first audio; roundtrip, the settled transcript to the first audio published.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("leg")]
+        public string Leg { get; set; } = default!;
+
+        /// <summary>
+        /// The median, in milliseconds. Absent when no turn had the leg.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("p50_ms")]
+        public double? P50Ms { get; set; } = default!;
+
+        /// <summary>
+        /// The 95th percentile, in milliseconds. Absent when no turn had the leg.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("p95_ms")]
+        public double? P95Ms { get; set; } = default!;
+
+        /// <summary>
+        /// The 99th percentile, in milliseconds. Absent when no turn had the leg.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("p99_ms")]
+        public double? P99Ms { get; set; } = default!;
+
+        /// <summary>
+        /// How many turns the leg was counted for.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("turns")]
+        public long Turns { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class ActivityMeter
     {
 
@@ -278,6 +350,102 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("requests")]
         public long Requests { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ActivitySession
+    {
+
+        /// <summary>
+        /// The name of the agent config it was opened with.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("agent_name")]
+        public string AgentName { get; set; } = default!;
+
+        /// <summary>
+        /// The app it was opened in.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("app_id")]
+        public string AppId { get; set; } = default!;
+
+        /// <summary>
+        /// When it ended. Absent while it runs.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("closed_at")]
+        public System.DateTimeOffset? ClosedAt { get; set; } = default!;
+
+        /// <summary>
+        /// When it was opened.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("created_at")]
+        public System.DateTimeOffset CreatedAt { get; set; } = default!;
+
+        /// <summary>
+        /// Why it ended. Absent while it runs, and for one that ended with no reason kept.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("end_reason")]
+        public string? EndReason { get; set; } = default!;
+
+        /// <summary>
+        /// The session.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("id")]
+        public string Id { get; set; } = default!;
+
+        /// <summary>
+        /// text, voice or video.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("modality")]
+        public string Modality { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ActivitySessions
+    {
+
+        /// <summary>
+        /// How many of them ended for each reason, by reason, the ones with no reason kept first.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("ended")]
+        public System.Collections.Generic.List<ActivityEnding>? Ended { get; set; } = default!;
+
+        /// <summary>
+        /// The 20 opened last, newest first.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("latest")]
+        public System.Collections.Generic.List<ActivitySession>? Latest { get; set; } = default!;
+
+        /// <summary>
+        /// How many sessions were opened, running ones included.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("opened")]
+        public long Opened { get; set; } = default!;
+
+        /// <summary>
+        /// How many of them have not ended.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("running")]
+        public long Running { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -477,6 +645,27 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class AgentChatChannel
+    {
+
+        /// <summary>
+        /// The channel type's name, as it comes before the colon in a channel's cid.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("type")]
+        public string Type { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class AgentConfig
     {
 
@@ -485,6 +674,12 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("channels")]
         public AgentChannels? Channels { get; set; } = default!;
+
+        /// <summary>
+        /// The Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels. Absent when there are none.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("chat_channels")]
+        public System.Collections.Generic.List<AgentChatChannel>? ChatChannels { get; set; } = default!;
 
         /// <summary>
         /// The bindings exactly as they were written. Absent when there are none.
@@ -652,6 +847,12 @@ namespace GetStream.VisionAgents.Models
         public AgentChannels? Channels { get; set; } = default!;
 
         /// <summary>
+        /// Replaces the list whole. An empty list removes it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("chat_channels")]
+        public System.Collections.Generic.List<AgentChatChannel>? ChatChannels { get; set; } = default!;
+
+        /// <summary>
         /// The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("connectors")]
@@ -815,6 +1016,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("channels")]
         public AgentChannels? Channels { get; set; } = default!;
+
+        /// <summary>
+        /// Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels, such as the type the app's group channels are made with. A message in a channel of a type named here is answered by the router's own session in that channel, under this agent, and the reply is written there as the Stream user whose id is this config's id. Who answers comes from this list alone, never from the channel's custom data, and the oldest config naming a type answers in it. Only a message in the app's own Stream app is answered: the router's shared app answers no type named here. The type's grants must not let a user, guest or member make, change or join a channel of it, or let a user or guest read one they are not a member of; members writing in it is expected. A type whose grants do, or that the app does not have, is not answered. agent is answered already and cannot be named, and each type is named once. Left out on an update, the stored list stays; an empty list removes it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("chat_channels")]
+        public System.Collections.Generic.List<AgentChatChannel>? ChatChannels { get; set; } = default!;
 
         /// <summary>
         /// The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
@@ -6357,7 +6564,7 @@ namespace GetStream.VisionAgents.Models
         public string Name { get; set; } = default!;
 
         /// <summary>
-        /// How a connection may authenticate. Each must be a scheme this deployment has.
+        /// How a connection may authenticate. Each must be a scheme this deployment has, except oauth2_client_credentials, which a custom connector cannot use: it needs a token endpoint a custom connector cannot set.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("schemes")]
         public System.Collections.Generic.List<string>? Schemes { get; set; } = default!;
@@ -9513,6 +9720,12 @@ namespace GetStream.VisionAgents.Models
         public System.DateTimeOffset? LastSeen { get; set; } = default!;
 
         /// <summary>
+        /// How long the turns of the organization's apps took, every agent summed, one item per leg: stt_latency, llm_ttft, tts_ttfb, then roundtrip. Turns are kept by the hour they started in, so they count the whole hour since falls in. The percentiles are read off bins 5% wide, so they are within 5% of the true ones.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("latency")]
+        public System.Collections.Generic.List<ActivityLatency>? Latency { get; set; } = default!;
+
+        /// <summary>
         /// What the organization's apps' work came to, by modality, from the shards listed in shards.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("meters")]
@@ -9523,6 +9736,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("organization_id")]
         public string OrganizationId { get; set; } = default!;
+
+        /// <summary>
+        /// The sessions the organization's apps opened from since on, from the shards listed in shards.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("sessions")]
+        public ActivitySessions Sessions { get; set; } = new ActivitySessions();
 
         /// <summary>
         /// The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them.
@@ -14601,6 +14820,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("channels")]
         public AgentChannels? Channels { get; set; } = default!;
+
+        /// <summary>
+        /// agent.yaml's chat_channels: the Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels, as AgentConfigRequest's chat_channels names them, with the same rules. Sent, they replace the stored list whole, an empty list removing it. Left out, the stored list stays.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("chat_channels")]
+        public System.Collections.Generic.List<AgentChatChannel>? ChatChannels { get; set; } = default!;
 
         /// <summary>
         /// Refuse the sync, with unsynced_changes, when somebody has changed one of the settings it would write since the last sync -- in the dashboard, say. A client that asks for this shows the person what changed (GET /v1/agents/configs/{id}/changes) and syncs again with base_change once they have decided. Omitted, the sync writes over whatever is there, which is what a process syncing on startup wants.

@@ -1,0 +1,15 @@
+name: crew_assistant
+description: Crew, the assistant a restaurant's team members talk to from their phone.
+llm: xai/grok-4.7
+stt: deepgram/flux-general-en
+tts: inworld/inworld-tts-2-flash
+greeting:
+  text: Hey, it's Crew. What do you need before, during or after your shift?
+  mode: exact
+# The person's own Cal.com, connected in the chat the first time the agent needs it, the way
+# swift_assistant connects Linear: Cal.com registers the router as its client by itself, so the
+# router needs no OAuth client. The one tool that writes, create_booking, runs only after the
+# person said yes to book_check_in on the phone.
+connectors:
+  - name: calcom
+    tools: [get_me, get_busy_times, get_bookings, get_schedules, get_default_schedule, get_connected_calendars, get_event_types, create_booking]

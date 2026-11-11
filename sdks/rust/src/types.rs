@@ -211,6 +211,15 @@ pub struct ActivityBucket {
     ///How long those calls lasted. One still running counts up to now.
     pub voice_minutes: f64,
 }
+///`ActivityEnding`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ActivityEnding {
+    ///Why they ended. Absent for the sessions that ended with no reason kept, as before reasons were.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub end_reason: ::std::option::Option<SessionEndReason>,
+    ///How many ended so.
+    pub sessions: i64,
+}
 ///Separate from Granularity, and coarser, because distinct users cannot be summed: a month of them is who came back rather than the sum of its days.
 #[derive(
     ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
@@ -257,6 +266,23 @@ impl ::std::convert::TryFrom<::std::string::String> for ActivityGranularity {
         value.parse()
     }
 }
+///`ActivityLatency`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ActivityLatency {
+    ///The leg: stt_latency, the speech-to-text vendor's decode of the transcript that settled the turn; llm_ttft, asking the model to its first token; tts_ttfb, the first sentence sent to its first audio; roundtrip, the settled transcript to the first audio published.
+    pub leg: ::std::string::String,
+    ///The median, in milliseconds. Absent when no turn had the leg.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub p50_ms: ::std::option::Option<f64>,
+    ///The 95th percentile, in milliseconds. Absent when no turn had the leg.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub p95_ms: ::std::option::Option<f64>,
+    ///The 99th percentile, in milliseconds. Absent when no turn had the leg.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub p99_ms: ::std::option::Option<f64>,
+    ///How many turns the leg was counted for.
+    pub turns: i64,
+}
 ///`ActivityMeter`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct ActivityMeter {
@@ -276,6 +302,40 @@ pub struct ActivityMeter {
     pub output_tokens: i64,
     ///How many requests. Runtime and sandbox are time, not requests, and read 0.
     pub requests: i64,
+}
+///`ActivitySession`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ActivitySession {
+    ///The name of the agent config it was opened with.
+    pub agent_name: ::std::string::String,
+    ///The app it was opened in.
+    pub app_id: ::std::string::String,
+    ///When it ended. Absent while it runs.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub closed_at: ::std::option::Option<::std::string::String>,
+    ///When it was opened.
+    pub created_at: ::std::string::String,
+    ///Why it ended. Absent while it runs, and for one that ended with no reason kept.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub end_reason: ::std::option::Option<SessionEndReason>,
+    ///The session.
+    pub id: ::std::string::String,
+    ///text, voice or video.
+    pub modality: ::std::string::String,
+}
+///`ActivitySessions`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ActivitySessions {
+    ///How many of them ended for each reason, by reason, the ones with no reason kept first.
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub ended: ::std::option::Option<::std::vec::Vec<ActivityEnding>>,
+    ///The 20 opened last, newest first.
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub latest: ::std::option::Option<::std::vec::Vec<ActivitySession>>,
+    ///How many sessions were opened, running ones included.
+    pub opened: i64,
+    ///How many of them have not ended.
+    pub running: i64,
 }
 ///The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
 #[derive(
@@ -404,6 +464,13 @@ pub struct AgentChannels {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub whatsapp: ::std::option::Option<ChannelLineRequest>,
 }
+///`AgentChatChannel`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct AgentChatChannel {
+    ///The channel type's name, as it comes before the colon in a channel's cid.
+    #[serde(rename = "type")]
+    pub type_: ::std::string::String,
+}
 ///`AgentConfig`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct AgentConfig {
@@ -411,6 +478,9 @@ pub struct AgentConfig {
     pub calls: ::std::option::Option<AgentCalls>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub channels: ::std::option::Option<AgentChannels>,
+    ///The Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels. Absent when there are none.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub chat_channels: ::std::option::Option<::std::vec::Vec<AgentChatChannel>>,
     ///The bindings exactly as they were written. Absent when there are none.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
@@ -501,6 +571,9 @@ pub struct AgentConfigPatch {
     pub calls: ::std::option::Option<AgentCalls>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub channels: ::std::option::Option<AgentChannels>,
+    ///Replaces the list whole. An empty list removes it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub chat_channels: ::std::option::Option<::std::vec::Vec<AgentChatChannel>>,
     ///The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
@@ -615,6 +688,9 @@ pub struct AgentConfigRequest {
     ///Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub channels: ::std::option::Option<AgentChannels>,
+    ///Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels, such as the type the app's group channels are made with. A message in a channel of a type named here is answered by the router's own session in that channel, under this agent, and the reply is written there as the Stream user whose id is this config's id. Who answers comes from this list alone, never from the channel's custom data, and the oldest config naming a type answers in it. Only a message in the app's own Stream app is answered: the router's shared app answers no type named here. The type's grants must not let a user, guest or member make, change or join a channel of it, or let a user or guest read one they are not a member of; members writing in it is expected. A type whose grants do, or that the app does not have, is not answered. agent is answered already and cannot be named, and each type is named once. Left out on an update, the stored list stays; an empty list removes it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub chat_channels: ::std::option::Option<::std::vec::Vec<AgentChatChannel>>,
     ///The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
@@ -4911,7 +4987,7 @@ pub struct CustomConnectorRequest {
     ///Starts with custom_, which no built-in does, so a custom definition never stands in for one. Creating an id that exists stores the next revision, unless the newest already says the same.
     pub id: ::std::string::String,
     pub name: ::std::string::String,
-    ///How a connection may authenticate. Each must be a scheme this deployment has.
+    ///How a connection may authenticate. Each must be a scheme this deployment has, except oauth2_client_credentials, which a custom connector cannot use: it needs a token endpoint a custom connector cannot set.
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub schemes: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     ///The scopes a consent asks for, each an RFC 6749 scope token.
@@ -8234,11 +8310,16 @@ pub struct OrganizationActivity {
     ///When the last request of any area arrived, absent when none did.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub last_seen: ::std::option::Option<::std::string::String>,
+    ///How long the turns of the organization's apps took, every agent summed, one item per leg: stt_latency, llm_ttft, tts_ttfb, then roundtrip. Turns are kept by the hour they started in, so they count the whole hour since falls in. The percentiles are read off bins 5% wide, so they are within 5% of the true ones.
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub latency: ::std::option::Option<::std::vec::Vec<ActivityLatency>>,
     ///What the organization's apps' work came to, by modality, from the shards listed in shards.
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub meters: ::std::option::Option<::std::vec::Vec<ActivityMeter>>,
     ///The organization.
     pub organization_id: ::std::string::String,
+    ///The sessions the organization's apps opened from since on, from the shards listed in shards.
+    pub sessions: ActivitySessions,
     ///The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them.
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub shards: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
@@ -12561,6 +12642,9 @@ pub struct SyncAgentRequest {
     ///Lines this agent answers on besides Stream Chat, each a number the app connected.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub channels: ::std::option::Option<AgentChannels>,
+    ///agent.yaml's chat_channels: the Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels, as AgentConfigRequest's chat_channels names them, with the same rules. Sent, they replace the stored list whole, an empty list removing it. Left out, the stored list stays.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub chat_channels: ::std::option::Option<::std::vec::Vec<AgentChatChannel>>,
     ///Refuse the sync, with unsynced_changes, when somebody has changed one of the settings it would write since the last sync -- in the dashboard, say. A client that asks for this shows the person what changed (GET /v1/agents/configs/{id}/changes) and syncs again with base_change once they have decided. Omitted, the sync writes over whatever is there, which is what a process syncing on startup wants.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub check_changes: ::std::option::Option<bool>,

@@ -16,6 +16,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.agent_calls import AgentCalls
     from ..models.agent_channels import AgentChannels
+    from ..models.agent_chat_channel import AgentChatChannel
     from ..models.agent_connector_binding import AgentConnectorBinding
     from ..models.agent_dispatch import AgentDispatch
     from ..models.agent_scheduling import AgentScheduling
@@ -139,6 +140,10 @@ class SyncAgentRequest:
             voice (str | Unset): The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or
                 one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own
                 voice name instead.
+            chat_channels (list[AgentChatChannel] | Unset): agent.yaml's chat_channels: the Stream Chat channel types of the
+                app's own Stream app this agent answers in besides agent channels, as AgentConfigRequest's chat_channels names
+                them, with the same rules. Sent, they replace the stored list whole, an empty list removing it. Left out, the
+                stored list stays.
     """
 
     hash_: str
@@ -180,6 +185,7 @@ class SyncAgentRequest:
     tts: str | Unset = UNSET
     video: SessionVideo | Unset = UNSET
     voice: str | Unset = UNSET
+    chat_channels: list[AgentChatChannel] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -346,6 +352,13 @@ class SyncAgentRequest:
 
         voice = self.voice
 
+        chat_channels: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.chat_channels, Unset):
+            chat_channels = []
+            for chat_channels_item_data in self.chat_channels:
+                chat_channels_item = chat_channels_item_data.to_dict()
+                chat_channels.append(chat_channels_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -428,6 +441,8 @@ class SyncAgentRequest:
             field_dict["video"] = video
         if voice is not UNSET:
             field_dict["voice"] = voice
+        if chat_channels is not UNSET:
+            field_dict["chat_channels"] = chat_channels
 
         return field_dict
 
@@ -435,6 +450,7 @@ class SyncAgentRequest:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.agent_calls import AgentCalls
         from ..models.agent_channels import AgentChannels
+        from ..models.agent_chat_channel import AgentChatChannel
         from ..models.agent_connector_binding import AgentConnectorBinding
         from ..models.agent_dispatch import AgentDispatch
         from ..models.agent_scheduling import AgentScheduling
@@ -703,6 +719,15 @@ class SyncAgentRequest:
 
         voice = d.pop("voice", UNSET)
 
+        _chat_channels = d.pop("chat_channels", UNSET)
+        chat_channels: list[AgentChatChannel] | Unset = UNSET
+        if _chat_channels is not UNSET:
+            chat_channels = []
+            for chat_channels_item_data in _chat_channels:
+                chat_channels_item = AgentChatChannel.from_dict(chat_channels_item_data)
+
+                chat_channels.append(chat_channels_item)
+
         sync_agent_request = cls(
             hash_=hash_,
             name=name,
@@ -743,6 +768,7 @@ class SyncAgentRequest:
             tts=tts,
             video=video,
             voice=voice,
+            chat_channels=chat_channels,
         )
 
         sync_agent_request.additional_properties = d

@@ -534,7 +534,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		}
 		// A channel OpenInApp refuses, such as a thread channel a request named, takes over
 		// no session that holds it.
-		if spec.ConversationID != "" && persistent.Openable(spec.ConversationID) {
+		if spec.ConversationID != "" && persistent.Openable(ctx, spec.ConversationID) {
 			m.awaitRetiring(ctx, spec.CustomerID, spec.ConversationID)
 			m.takeOver(spec.CustomerID, spec.ConversationID, spec.Thread)
 		}
@@ -2231,19 +2231,27 @@ func (m *Manager) keepable(ctx context.Context, spec Spec, stream streamapp.Boun
 	if !stream.Identity.Registered {
 		return nil
 	}
-	readiness, err := m.options.Stream.Readiness(ctx, stream)
+	// A conversation the Router holds on a channel of another type, one an agent config answers
+	// in, trusts that type's grants as an agent channel's are trusted.
+	channelType, _ := spec.ConversationChannel()
+	named := cmp.Or(channelType, streamapp.AgentChannelType)
+	readiness, err := m.options.Stream.ReadinessOf(ctx, stream, named)
 	if err != nil {
 		// Stream being out of reach is found out by the conversation itself, which says so.
 		m.logger.Warn("could not check the Stream app a conversation is kept in", "customer_id", spec.CustomerID, "error", err)
 		return nil
 	}
+	var refused error
 	switch readiness.ChannelType {
 	case streamapp.TypeMissing:
-		return ErrNoAgentChannelType
+		refused = ErrNoAgentChannelType
 	case streamapp.TypeUnsafe:
-		return ErrUnsafeAgentChannelType
+		refused = ErrUnsafeAgentChannelType
 	}
-	return nil
+	if refused != nil && named != streamapp.AgentChannelType {
+		return fmt.Errorf("session: the %s channel type, checked as the agent channel type is: %w", named, refused)
+	}
+	return refused
 }
 
 // ErrNoAgentChannelType is a conversation to keep in a Stream app of the customer's own that

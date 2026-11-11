@@ -2,6 +2,13 @@
 
 ## Features
 
+### Stream staff read an organization's sessions and turn latency
+
+`GET /v1/ops/orgs/{org_id}/activity` (ops key only) also answers `sessions` and `latency` for the same `since` window, over every shard. `sessions` holds how many the organization's apps opened, how many still run, how many ended for each `end_reason`, and the 20 opened last (id, app, agent, modality, opened, ended, end reason). `latency` holds one item per leg (`stt_latency`, `llm_ttft`, `tts_ttfb`, `roundtrip`): the turns counted and their p50, p95 and p99 in milliseconds, within 5% of the true ones. The fields the answer already had are unchanged (AI-2843).
+### An agent answers in the channel types its config names
+
+An agent config's `chat_channels` names Stream Chat channel types of the app's own Stream app, such as `[{"type": "callouts"}]` for a team's group channels. A message in a channel of a named type is answered there by the router's own session under that config, written as the Stream user whose id is the config's id. Who answers comes from the config alone, never from the channel's custom data, and the router's shared app answers no named type. A type is answered only when its grants pass the check an `agent` channel type is held to: members may write, and no user, guest or member may make, change or join a channel of it. An agent directory declares it in `agent.yaml` as `chat_channels`, which the Go SDK's sync sends. Left unset, an agent answers in `agent` channels alone, as before.
+
 ### The router counts the voice sessions judged for silence
 
 `/metrics` serves `router_voice_sessions_judged_total{kind}`: each voice session somebody besides the agent joined, once at its end, whether or not it is in a silent case. `kind` is `phone` or `web`, as in `router_silent_sessions_total`. A case's count divided by it is at most 1, so it is the denominator of the silent share. A session nobody joined counts in neither. Nothing else changes (AI-3156).
@@ -534,6 +541,13 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 `Folder.load`, and so `Agent.new(folder: "…")`, raise a `ConfigurationError` for a folder whose agent.yaml names `plugins:`, with an error that names the file and points to `connectors:`. An empty or null `plugins` still loads and sends nothing, as before. Folder sync no longer sends `plugins`, and the warning that plugins are deprecated is gone, as is the check that no name is under both `connectors` and `plugins`. Move each plugin to a `connectors:` entry (AI-2528).
 
 ## Bug Fixes
+
+### A custom connector cannot list oauth2_client_credentials
+
+`POST /v1/agents/connectors` answers 400 when `schemes` of a custom connector contains `oauth2_client_credentials`. That scheme reads its token URL from `endpoints.token`, which a custom connector has no way to set, so such a definition could be saved and never connected. Built-in connectors (Salesforce) are unchanged; a custom connector already stored keeps what it has (AI-3155).
+### A scheduled task refused for money is not retried, wherever it is refused
+
+A scheduled task whose session cannot open or be carried on, whose call the gate refuses, whose text is refused at its reservation, or whose turn the model refuses, in the session of a text channel, of the thread it was made in, or of the task, because the organization may not pay, is tried once and its run records the refusal's code, such as `insufficient_credits`. Before, only a text the gate refused was; the rest were retried and recorded `delivery_failed` or `reply_failed`. A refusal because the money could not be checked (`spend_check_unavailable`) is still tried again (AI-2941, AI-2942).
 
 ### JavaScript: reliable configuration, shutdown and transport failures
 
