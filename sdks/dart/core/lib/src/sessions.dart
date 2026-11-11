@@ -105,7 +105,6 @@ final class Sessions {
       agent: _named(query.agent) ?? _named(agent),
       agentId: _named(query.agentId),
       projectId: _named(query.projectId),
-      userId: _named(query.userId),
       modality: query.modality?.name,
       state: query.state?.name,
       team: _named(query.team),

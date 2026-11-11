@@ -485,7 +485,6 @@ final class SessionQuery {
     this.agent,
     this.agentId,
     this.projectId,
-    this.userId,
     this.modality,
     this.state,
     this.limit,
@@ -505,9 +504,6 @@ final class SessionQuery {
 
   /// Only this project's. A search covers every project, so the router refuses one with it.
   final String? projectId;
-
-  /// Only this user's. A device is narrowed to its own whatever it asks for.
-  final String? userId;
 
   /// Only those the user took part in this way.
   final SessionModality? modality;
