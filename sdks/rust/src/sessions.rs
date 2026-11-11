@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::client::Client;
 use crate::error::{Error, Result};
 use crate::operations::ListAgentConfigsQuery;
@@ -76,6 +78,17 @@ pub struct Query {
     pub state: Option<String>,
     /// The ones created with this agent id.
     pub agent_id: Option<String>,
+    /// The ones whose usage is counted under this team. A token signed for a team may only
+    /// ask for that one.
+    pub team: Option<String>,
+    /// The ones created at or after this RFC 3339 moment.
+    pub created_since: Option<String>,
+    /// The ones created before this RFC 3339 moment.
+    pub created_before: Option<String>,
+    /// The ones holding every one of these custom labels.
+    pub custom: BTreeMap<String, String>,
+    /// Always newest first; `None` is the router's own order, best match first for a search.
+    pub sort: Option<types::SessionSortField>,
     /// Up to 200. `None` is 25.
     pub limit: Option<i64>,
     /// The `next_cursor` of the page before, with the same filters. `None` is the first page.
@@ -174,12 +187,24 @@ impl Sessions {
                 modality: equals(query.modality),
                 state: equals(query.state),
                 agent_id: equals(query.agent_id),
+                team: equals(query.team),
+                created_at: (query.created_since.is_some() || query.created_before.is_some())
+                    .then_some(types::TimeRange {
+                        gte: query.created_since,
+                        lt: query.created_before,
+                    }),
+                custom: query.custom,
                 text: text.map(|text| types::TextMatch { q: text.into() }),
                 ..Default::default()
             }),
             limit: query.limit,
             cursor: query.cursor,
-            sort: None,
+            sort: query.sort.map(|field| {
+                vec![types::SessionSort {
+                    field,
+                    direction: None,
+                }]
+            }),
         }
     }
 }
