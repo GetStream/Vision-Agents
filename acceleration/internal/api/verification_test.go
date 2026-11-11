@@ -6,13 +6,18 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/limitnotice"
 )
 
 // VerificationSuite sends and reads organizations' verification requests, as the customer
@@ -20,6 +25,11 @@ import (
 type VerificationSuite struct {
 	RouterSuite
 	staff *testClient
+
+	slack     *httptest.Server
+	slackDown atomic.Bool
+	slackMu   sync.Mutex
+	posted    []string
 }
 
 func TestVerificationSuite(t *testing.T) {
@@ -28,7 +38,30 @@ func TestVerificationSuite(t *testing.T) {
 
 func (s *VerificationSuite) SetupSuite() {
 	s.limited = true
+	s.slack = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Text string `json:"text"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if s.slackDown.Load() {
+			_, _ = w.Write([]byte(`{"ok":false,"error":"channel_not_found"}`))
+			return
+		}
+		s.slackMu.Lock()
+		s.posted = append(s.posted, body.Text)
+		s.slackMu.Unlock()
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	s.verificationNotices = VerificationNotices{
+		Poster:      limitnotice.NewSlackAt("xoxb-test", "C123", s.slack.URL),
+		Environment: "test",
+		Link:        "https://dash.example/internal/agents/organizations/{organization}",
+	}
 	s.RouterSuite.SetupSuite()
+}
+
+func (s *VerificationSuite) TearDownSuite() {
+	s.slack.Close()
 }
 
 func (s *VerificationSuite) SetupTest() {
@@ -303,4 +336,93 @@ func (s *VerificationSuite) TestTheStaffPathsNeedTheManageKey() {
 func (s *VerificationSuite) TestAStaffListCursorItNeverHandedOutIsRefused() {
 	status, payload := s.staff.call(http.MethodGet, "/v1/manage/verification-requests?cursor="+url.QueryEscape("garbage"), nil)
 	s.Equal(http.StatusBadRequest, status, string(payload))
+}
+
+func (s *VerificationSuite) messagesAbout(organization string) []string {
+	s.slackMu.Lock()
+	defer s.slackMu.Unlock()
+	var found []string
+	for _, text := range s.posted {
+		if strings.Contains(text, "`"+organization+"`") {
+			found = append(found, text)
+		}
+	}
+	return found
+}
+
+func (s *VerificationSuite) TestARequestIsAnnouncedInSlack() {
+	s.send(s.serverClient, validRequest())
+
+	messages := s.messagesAbout(s.organization())
+	s.Require().Len(messages, 1)
+	text := messages[0]
+	s.True(strings.HasPrefix(text, "[TEST] "), text)
+	for _, want := range []string{
+		"`" + s.organization() + "`",
+		"Legal name: Acme Inc",
+		"Website: https://acme.example",
+		"Country: US",
+		"Calls a month: 1k_10k",
+		"<https://dash.example/internal/agents/organizations/" + s.organization() + "|Organization>",
+	} {
+		s.Contains(text, want)
+	}
+}
+
+func (s *VerificationSuite) TestAResendIsAnnouncedAgain() {
+	s.send(s.serverClient, validRequest())
+	s.send(s.serverClient, s.with(map[string]any{"legal_name": "Acme Corp"}))
+
+	s.Len(s.messagesAbout(s.organization()), 2)
+}
+
+func (s *VerificationSuite) TestASlackFailureStillStoresTheRequest() {
+	s.slackDown.Store(true)
+	defer s.slackDown.Store(false)
+
+	s.send(s.serverClient, validRequest())
+
+	read, _ := s.read(s.serverClient)
+	s.Require().NotNil(read.Request)
+	s.Equal("Acme Inc", read.Request.LegalName)
+	s.Empty(s.messagesAbout(s.organization()))
+}
+
+func (s *VerificationSuite) TestALegalNameCannotPingTheChannel() {
+	s.send(s.serverClient, s.with(map[string]any{"legal_name": "<!channel> & <https://evil.example|click>"}))
+
+	messages := s.messagesAbout(s.organization())
+	s.Require().Len(messages, 1)
+	s.Contains(messages[0], "&lt;!channel&gt; &amp; &lt;https://evil.example|click&gt;")
+	s.NotContains(messages[0], "<!channel>")
+}
+
+// VerificationNoSlackSuite is a deployment with no Slack settings.
+type VerificationNoSlackSuite struct {
+	RouterSuite
+}
+
+func TestVerificationNoSlackSuite(t *testing.T) {
+	runSuite(t, new(VerificationNoSlackSuite))
+}
+
+func (s *VerificationNoSlackSuite) SetupSuite() {
+	s.limited = true
+	s.RouterSuite.SetupSuite()
+}
+
+func (s *VerificationNoSlackSuite) SetupTest() {
+	s.useApp(s.data.createApp())
+}
+
+func (s *VerificationNoSlackSuite) TestWithNoSlackSettingsTheRequestStillSucceeds() {
+	status, payload := s.serverClient.call(http.MethodPut, "/v1/verification", validRequest())
+	s.Require().Equal(http.StatusOK, status, string(payload))
+
+	var read verificationAnswer
+	status, payload = s.serverClient.call(http.MethodGet, "/v1/verification", nil)
+	s.Require().Equal(http.StatusOK, status, string(payload))
+	s.Require().NoError(json.Unmarshal(payload, &read))
+	s.Require().NotNil(read.Request)
+	s.Equal("Acme Inc", read.Request.LegalName)
 }

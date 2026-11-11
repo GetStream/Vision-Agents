@@ -3,15 +3,34 @@ package api
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/limitnotice"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-const defaultVerificationPage = 50
+const (
+	defaultVerificationPage = 50
+	verificationPostTimeout = 5 * time.Second
+)
+
+// VerificationNotices is where a verification request is announced.
+type VerificationNotices struct {
+	// Poster posts the message. Nil announces nothing.
+	Poster limitnotice.Poster
+	// Environment names the deployment in the message, as limit notices do.
+	Environment string
+	// Link is the organization's page for staff, with {organization} for its id. Empty links nothing.
+	Link string
+}
+
+var slackEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 
 var errNoVerification = notConfigured("verification requests need a database: this deployment has none")
 
@@ -143,6 +162,7 @@ func (s *Server) putVerification(ctx context.Context, request *putVerificationRe
 		return nil, err
 	}
 	sent := verificationRequestOf(saved)
+	s.announceVerification(ctx, organization, sent)
 	return &organizationVerificationResponse{Body: OrganizationVerificationRequest{Request: &sent}}, nil
 }
 
@@ -239,4 +259,29 @@ func nullableRequest(schema *huma.Schema) {
 		Description: request.Description,
 		OneOf:       []*huma.Schema{{Ref: request.Ref}, {Type: "null"}},
 	}
+}
+
+func (s *Server) announceVerification(ctx context.Context, organization string, request VerificationRequest) {
+	if s.verificationNotices.Poster == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), verificationPostTimeout)
+	defer cancel()
+	if err := s.verificationNotices.Poster.Post(ctx, verificationMessage(s.verificationNotices, organization, request)); err != nil {
+		s.logger.Error("could not post a verification request to Slack", "organization", organization, "error", err)
+	}
+}
+
+func verificationMessage(notices VerificationNotices, organization string, request VerificationRequest) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%sVerification request from organization `%s`\n", limitnotice.EnvironmentTag(notices.Environment), slackEscaper.Replace(organization))
+	fmt.Fprintf(&b, "Legal name: %s\n", slackEscaper.Replace(request.LegalName))
+	fmt.Fprintf(&b, "Website: %s\n", slackEscaper.Replace(request.Website))
+	fmt.Fprintf(&b, "Country: %s\n", slackEscaper.Replace(request.Country))
+	fmt.Fprintf(&b, "Calls a month: %s", slackEscaper.Replace(request.CallsPerMonth))
+	if notices.Link != "" {
+		link := strings.ReplaceAll(notices.Link, "{organization}", url.PathEscape(organization))
+		fmt.Fprintf(&b, "\n<%s|Organization>", link)
+	}
+	return b.String()
 }

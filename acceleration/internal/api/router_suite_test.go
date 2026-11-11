@@ -393,6 +393,9 @@ type RouterSuite struct {
 	// harness. Nil leaves those paths unconfigured, as a deployment without connectors has.
 	slackApps    *slackapps.Client
 	operatorApps OperatorAppLookup
+	// verificationNotices is where a verification request is announced, for a suite about
+	// them to set before it starts the harness. Zero announces nothing.
+	verificationNotices VerificationNotices
 	// channelProvider, set by a suite about the channel bridge before it starts the harness,
 	// gives the router the real bridge (internal/channelbridge), whose replies dial the address
 	// it returns at the time, whatever host a manifest's reply names: the test's own fake
@@ -793,6 +796,7 @@ func (s *RouterSuite) SetupSuite() {
 		MCPEvents:             s.mcpEvents,
 		Episodes:              episodes,
 		SlackApps:             s.slackApps,
+		VerificationNotices:   s.verificationNotices,
 		OperatorProviderApps:  s.operatorApps,
 	})
 	listener.Config.Handler = server.Handler()
