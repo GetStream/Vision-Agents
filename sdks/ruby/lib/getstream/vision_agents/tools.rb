@@ -13,7 +13,7 @@ module GetStream
     #
     # The model asks for one over the session socket and waits. What the block returns is
     # sent back: a String as it is, anything else as JSON. A block that takes two arguments
-    # is handed the ToolCall it runs for first, then the arguments:
+    # is handed the ToolCallContext it runs for first, then the arguments:
     #
     #   agent.tools.register("book_flight", description: "Book a flight", ...) do |tool_call_context, args|
     #     bookings.book(args["flight_id"], key: tool_call_context.id)
@@ -80,7 +80,7 @@ module GetStream
       #
       # @raise [ConfigurationError] for a tool nobody registered.
       # @raise [Error] for a call that took longer than the tool's timeout, which is stopped.
-      def call(name, arguments, tool_call_context = ToolCall.new)
+      def call(name, arguments, tool_call_context = ToolCallContext.new)
         tool = @lock.synchronize { @tools[name] }
         raise ConfigurationError, "no tool is called #{name}" unless tool
 

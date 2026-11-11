@@ -9,8 +9,8 @@ use serde_json::json;
 use support::{Server, claims, response, session};
 use tokio::sync::mpsc;
 use vision_agents::{
-    Agent, AgentRef, Client, Dispatch, Error, InboundCall, InboundImage, InboundMessage, ToolCall,
-    types,
+    Agent, AgentRef, Client, Dispatch, Error, InboundCall, InboundImage, InboundMessage,
+    ToolCallContext, types,
 };
 
 fn stream_support(client: &Client) -> AgentRef {
@@ -612,7 +612,7 @@ async fn hosting_payments(
                     .clone(),
                 ..Default::default()
             },
-            |tool_call_context: ToolCall, _| async move {
+            |tool_call_context: ToolCallContext, _| async move {
                 tool_call_context.disallow_interruptions().await?;
                 tokio::time::sleep(Duration::from_millis(200)).await;
                 Ok::<_, Error>(format!("paid for {}", tool_call_context.session_id))

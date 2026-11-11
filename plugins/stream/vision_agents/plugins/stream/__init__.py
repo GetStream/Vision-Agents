@@ -1,6 +1,6 @@
 from vision_agents.core.llm.tool_call import (
     CallNotHeld,
-    ToolCall,
+    ToolCallContext,
     ToolConversation,
     ToolUser,
 )
@@ -136,7 +136,7 @@ __all__ = [
     "TTS",
     "Team",
     "Teams",
-    "ToolCall",
+    "ToolCallContext",
     "ToolConversation",
     "ToolUser",
     "Track",

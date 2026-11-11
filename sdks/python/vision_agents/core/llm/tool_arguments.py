@@ -46,7 +46,7 @@ class Arguments:
         type_hints: dict[str, Any],
         context: Optional[str] = None,
     ):
-        """`context` names the parameter handed the `ToolCall`, which the model does not fill in."""
+        """`context` names the parameter handed the `ToolCallContext`, which the model does not fill in."""
         self.name = name
         parameters = [
             parameter

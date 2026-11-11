@@ -32,7 +32,7 @@ class TestToolCall < Minitest::Test
   end
 
   def test_a_call_that_takes_longer_than_its_timeout_fails_and_is_stopped
-    tool_call_context = VA::ToolCall.new(id: "t1")
+    tool_call_context = VA::ToolCallContext.new(id: "t1")
     tools = VA::Tools.new.register("stuck", description: "Never finishes", timeout: 0.05) do
       sleep 1
       "never"
@@ -50,14 +50,14 @@ class TestToolCall < Minitest::Test
     tools.register("lambda", description: "Takes arguments only", &->(args) { args["x"] })
     tools.register("none", description: "Takes nothing") { "done" }
 
-    assert_equal "t1 7", tools.call("whoami", '{"x":"7"}', VA::ToolCall.new(id: "t1"))
-    assert_equal "7", tools.call("plain", '{"x":"7"}', VA::ToolCall.new(id: "t1"))
+    assert_equal "t1 7", tools.call("whoami", '{"x":"7"}', VA::ToolCallContext.new(id: "t1"))
+    assert_equal "7", tools.call("plain", '{"x":"7"}', VA::ToolCallContext.new(id: "t1"))
     assert_equal "7", tools.call("lambda", '{"x":"7"}')
     assert_equal "done", tools.call("none", "{}")
   end
 
   def test_a_call_without_a_socket_does_nothing
-    tool_call_context = VA::ToolCall.new
+    tool_call_context = VA::ToolCallContext.new
 
     assert_nil tool_call_context.update("checking")
     assert_nil tool_call_context.say("One moment.")
@@ -67,7 +67,7 @@ class TestToolCall < Minitest::Test
 
   def test_a_call_reports_how_it_is_going_and_a_call_stopped_first_is_not_held
     sent = []
-    tool_call_context = VA::ToolCall.new(id: "t1", send: ->(frame) { sent << frame })
+    tool_call_context = VA::ToolCallContext.new(id: "t1", send: ->(frame) { sent << frame })
 
     tool_call_context.update("checking")
     tool_call_context.say("One moment.")

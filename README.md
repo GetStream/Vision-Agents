@@ -97,14 +97,14 @@ func main() {
 ```python
 import asyncio
 
-from vision_agents.core.llm import ToolCall
+from vision_agents.core.llm import ToolCallContext
 from vision_agents.plugins import stream
 
 agent = stream.Client().agent("my-agent")
 
 
 @agent.register()
-async def customer_case_lookup(tool_call_context: ToolCall) -> list:
+async def customer_case_lookup(tool_call_context: ToolCallContext) -> list:
     "Look up the user's open support cases"
     user = tool_call_context.user
     if not user.id:

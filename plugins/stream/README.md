@@ -90,10 +90,10 @@ a `ToolArgumentsError` naming each one and why, which the model is told so it ca
 arguments.
 
 A function can say how the backend treats its calls, and take the call it is running for as
-its first argument, annotated `ToolCall`. The model is not told about that argument:
+its first argument, annotated `ToolCallContext`. The model is not told about that argument:
 
 ```python
-from vision_agents.core.llm import ToolCall
+from vision_agents.core.llm import ToolCallContext
 
 
 @agent.llm.register_function(
@@ -101,7 +101,7 @@ from vision_agents.core.llm import ToolCall
     timeout=20,
     needs_approval="Book flight {flight_id}?",
 )
-async def book_flight(tool_call_context: ToolCall, flight_id: str) -> str:
+async def book_flight(tool_call_context: ToolCallContext, flight_id: str) -> str:
     await tool_call_context.update("checking seats")
     await tool_call_context.disallow_interruptions()
     return await bookings.book(flight_id, user=tool_call_context.user.id, key=tool_call_context.id)
@@ -124,7 +124,7 @@ tells the caller in its own words once nobody is talking. `say(text)` has it say
 written, which a speech-to-speech model may paraphrase. `disallow_interruptions()` keeps the
 call going from then on, for a write that must not stop halfway, and raises `CallNotHeld`
 when the call had already been stopped. Under a model that does not say, it is an empty
-call whose methods do nothing; a unit test of the function passes it a `ToolCall(...)`.
+call whose methods do nothing; a unit test of the function passes it a `ToolCallContext(...)`.
 
 A call the router addresses to another watcher of the session (`run: false`), or for a
 function this process does not hold, is left for whoever runs it.

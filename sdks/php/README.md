@@ -188,12 +188,12 @@ A tool can say how the backend treats its calls, and its callable can take the c
 for as its first argument, ahead of the arguments:
 
 ```php
-use GetStream\VisionAgents\ToolCall;
+use GetStream\VisionAgents\ToolCallContext;
 
 $agent->tools->register('book_flight', 'Book a flight for the caller', [
     'type' => 'object',
     'properties' => ['flight_id' => ['type' => 'string']],
-], function (ToolCall $toolCallContext, array $args): string {
+], function (ToolCallContext $toolCallContext, array $args): string {
     $toolCallContext->update('checking seats');
     $toolCallContext->disallowInterruptions();
     return $bookings->book($args['flight_id'], user: $toolCallContext->user->id, key: $toolCallContext->id);

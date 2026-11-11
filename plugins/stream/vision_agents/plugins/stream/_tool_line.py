@@ -5,7 +5,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from vision_agents.core.llm.function_registry import FunctionRegistry
 from vision_agents.core.llm.tool_call import (
-    ToolCall,
+    ToolCallContext,
     ToolConversation,
     ToolUser,
 )
@@ -79,7 +79,7 @@ def cancel(call_id: str, holds: Holds, task: Optional[asyncio.Task]) -> None:
 
 def tool_call_context_of(
     frame: dict[str, Any], session_id: str, line: SocketLine
-) -> ToolCall:
+) -> ToolCallContext:
     """The call a tool_call frame asks for, as the function is handed it.
 
     `session_id` stands in for a frame that does not name its session, as one from a
@@ -87,7 +87,7 @@ def tool_call_context_of(
     """
     user = frame.get("user") or {}
     conversation = frame.get("conversation") or {}
-    return ToolCall(
+    return ToolCallContext(
         id=str(frame.get("id", "")),
         session_id=str(frame.get("session_id") or session_id),
         turn_id=str(frame.get("turn_id", "")),
@@ -109,7 +109,7 @@ async def run_with_tool_call_context(
     functions: FunctionRegistry,
     name: str,
     arguments: dict[str, Any],
-    tool_call_context: ToolCall,
+    tool_call_context: ToolCallContext,
     holds: Holds,
 ) -> Any:
     """Run one function for `tool_call_context`, within its own timeout when it has one."""

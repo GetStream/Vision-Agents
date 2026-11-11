@@ -14,7 +14,7 @@ from vision_agents.core.agents.agents import DEFAULT_INSTRUCTIONS
 from vision_agents.core.harness import Daytona, DefaultHarness
 from vision_agents.core.llm.llm import ImageContent
 from vision_agents.core.llm.tool_call import (
-    ToolCall,
+    ToolCallContext,
     ToolConversation,
     ToolUser,
 )
@@ -865,10 +865,10 @@ class TestAccelerated:
     async def test_a_function_reads_the_call_it_is_running_for(
         self, router: Router, joined: stream.Accelerated
     ):
-        seen: list[ToolCall] = []
+        seen: list[ToolCallContext] = []
 
         @joined.register_function(description="Look the caller up")
-        async def whoami(tool_call_context: ToolCall) -> str:
+        async def whoami(tool_call_context: ToolCallContext) -> str:
             seen.append(tool_call_context)
             return "ok"
 
@@ -899,7 +899,7 @@ class TestAccelerated:
         self, router: Router, joined: stream.Accelerated
     ):
         @joined.register_function(description="Search flights")
-        async def search(tool_call_context: ToolCall) -> str:
+        async def search(tool_call_context: ToolCallContext) -> str:
             await tool_call_context.update("checking three airlines")
             await tool_call_context.say("Still looking, one moment.")
             return "found two"
@@ -929,7 +929,7 @@ class TestAccelerated:
         release = asyncio.Event()
 
         @joined.register_function(description="Charge the card")
-        async def charge(tool_call_context: ToolCall) -> str:
+        async def charge(tool_call_context: ToolCallContext) -> str:
             await tool_call_context.disallow_interruptions()
             held.set()
             await release.wait()
@@ -962,7 +962,7 @@ class TestAccelerated:
         stopped = asyncio.Event()
 
         @joined.register_function(description="Charge the card")
-        async def charge(tool_call_context: ToolCall) -> str:
+        async def charge(tool_call_context: ToolCallContext) -> str:
             try:
                 await tool_call_context.disallow_interruptions()
                 wrote.set()

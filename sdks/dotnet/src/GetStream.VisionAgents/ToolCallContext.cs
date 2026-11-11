@@ -25,14 +25,14 @@ public class CallNotHeldException(string toolCallId)
 /// One call of one of the caller's functions: who it is for, and its line back to them.
 /// </summary>
 /// <remarks>
-/// A function registered with a <see cref="ToolCall"/> parameter is handed one. A call made
+/// A function registered with a <see cref="ToolCallContext"/> parameter is handed one. A call made
 /// with no socket behind it, as a test makes, has no line, so its updates go nowhere.
 /// </remarks>
-public sealed class ToolCall
+public sealed class ToolCallContext
 {
     private readonly ToolLine? _line;
 
-    internal ToolCall(ToolLine? line = null) => _line = line;
+    internal ToolCallContext(ToolLine? line = null) => _line = line;
 
     /// <summary>The id the model gave the call, which a call sent again keeps.</summary>
     public string Id { get; init; } = "";
@@ -95,11 +95,11 @@ public sealed class ToolCall
     /// The call a <c>tool_call</c> frame asks for. <paramref name="sessionId"/> stands in for
     /// a frame that does not name its session.
     /// </summary>
-    internal static ToolCall Of(Frame frame, string sessionId, ToolLine line)
+    internal static ToolCallContext Of(Frame frame, string sessionId, ToolLine line)
     {
         var user = frame.Nested("user");
         var conversation = frame.Nested("conversation");
-        return new ToolCall(line)
+        return new ToolCallContext(line)
         {
             Id = frame.Text("id"),
             SessionId = frame.Text("session_id") is { Length: > 0 } named ? named : sessionId,

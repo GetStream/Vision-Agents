@@ -30,7 +30,7 @@ def mock_functions(
     so that the original behaviour is preserved while call tracking
     (``assert_called_once``, ``assert_called_with``, etc.) becomes
     available via the standard ``unittest.mock`` API. A mock whose first
-    parameter is annotated ``ToolCall`` is handed the call, whatever the tool
+    parameter is annotated ``ToolCallContext`` is handed the call, whatever the tool
     it stands in for takes.
 
     Args:

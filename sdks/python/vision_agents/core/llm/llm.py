@@ -40,7 +40,7 @@ from ..base import Component
 from ..utils.video_forwarder import VideoForwarder
 from .function_registry import FunctionRegistry
 from .llm_types import NormalizedToolCallItem, ToolSchema
-from .tool_call import ToolCall
+from .tool_call import ToolCallContext
 
 T = TypeVar("T")
 
@@ -429,7 +429,7 @@ class LLM(Component):
         """
         Decorator to register a function with the LLM's function registry.
 
-        A function whose first parameter is annotated `ToolCall` is handed the call it
+        A function whose first parameter is annotated `ToolCallContext` is handed the call it
         runs for there, and the model is not told about that parameter.
 
         Args:
@@ -461,7 +461,7 @@ class LLM(Component):
         self,
         name: str,
         arguments: Dict[str, Any],
-        tool_call_context: Optional[ToolCall] = None,
+        tool_call_context: Optional[ToolCallContext] = None,
     ) -> Any:
         """
         Call a registered function with the given arguments.
@@ -470,7 +470,7 @@ class LLM(Component):
             name: Name of the function to call.
             arguments: Dictionary of arguments to pass to the function.
             tool_call_context: The call it runs for, handed to a function whose first
-                parameter is a `ToolCall`.
+                parameter is a `ToolCallContext`.
 
         Returns:
             Result of the function call.
@@ -498,7 +498,7 @@ class LLM(Component):
         self,
         tc: Dict[str, Any],
         timeout_s: float,
-        tool_call_context: Optional[ToolCall] = None,
+        tool_call_context: Optional[ToolCallContext] = None,
     ):
         """Run a single tool call with timeout.
 
@@ -515,7 +515,7 @@ class LLM(Component):
         args = tc.get("arguments_json", tc.get("arguments", {})) or {}
         start_time = time.perf_counter()
         if tool_call_context is None:
-            tool_call_context = ToolCall(id=str(tc.get("id") or ""))
+            tool_call_context = ToolCallContext(id=str(tc.get("id") or ""))
 
         async def _invoke():
             fn = self.function_registry.get_callable(tc["name"], tool_call_context)

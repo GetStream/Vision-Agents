@@ -38,9 +38,9 @@ final class Tools
 
     /**
      * @param array<string, mixed> $parameters a JSON Schema for the arguments
-     * @param callable(array<string, mixed>): mixed|callable(ToolCall, array<string, mixed>): mixed $run
+     * @param callable(array<string, mixed>): mixed|callable(ToolCallContext, array<string, mixed>): mixed $run
      *     given the decoded arguments, or, when it takes two parameters or its first is a
-     *     `ToolCall`, the call it runs for and then the arguments; what it returns is sent
+     *     `ToolCallContext`, the call it runs for and then the arguments; what it returns is sent
      *     back as the output, JSON encoded unless it is already a string
      * @param ?string $displayTitle what the reply's tool call attachment shows, at most 80 characters
      * @param 'server'|'client'|null $executor who runs it: `server`, the router's default, or
@@ -123,7 +123,7 @@ final class Tools
      * @throws ConfigurationException when there is no tool by that name or the arguments are not JSON
      * @throws RuntimeException when the call takes longer than the tool's timeout, which stops it
      */
-    public function call(string $name, string $arguments, ?ToolCall $toolCallContext = null): string
+    public function call(string $name, string $arguments, ?ToolCallContext $toolCallContext = null): string
     {
         $tool = $this->tools[$name] ?? null;
         if ($tool === null) {
@@ -134,7 +134,7 @@ final class Tools
         } catch (JsonException) {
             throw new ConfigurationException("the arguments to {$name} are not JSON");
         }
-        $toolCallContext ??= new ToolCall();
+        $toolCallContext ??= new ToolCallContext();
         $run = $tool['run'];
         $running = $tool['takesCall']
             ? static fn (): mixed => $run($toolCallContext, Json::asObject($decoded))
@@ -165,7 +165,7 @@ final class Tools
         }
         $first = $run->getParameters()[0] ?? null;
         $type = $first?->getType();
-        return $type instanceof ReflectionNamedType && is_a($type->getName(), ToolCall::class, true);
+        return $type instanceof ReflectionNamedType && is_a($type->getName(), ToolCallContext::class, true);
     }
 
     /**

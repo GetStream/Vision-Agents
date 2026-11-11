@@ -470,16 +470,16 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
-### A tool is handed its call as the first argument
+### A tool is handed its ToolCallContext as an argument
 
-A tool function that needs the call it runs for (who asked, its id, `update`, `say`, `disallow_interruptions`) now takes it as its first argument, ahead of the tool's arguments. A tool that does not need it takes only its arguments, as before. Go is unchanged.
+A tool function that needs the call it runs for (who asked, its id, `update`, `say`, `disallow_interruptions`) now takes it as an argument, a `ToolCallContext` (formerly `ToolCall`). A tool that does not need it takes only its arguments. Go is unchanged.
 
-- Python: annotate the first parameter `ToolCall`, as in `async def book_flight(tool_call_context: ToolCall, flight_id: str)`. The model is not told about it. `get_tool_call_context()` and `using_tool_call_context()` are gone: a test passes the function a `ToolCall(...)`, or `call_function(name, arguments, tool_call_context)`.
-- JavaScript: `run: (input) => ...` is handed the arguments only, and `runWithContext: (toolCallContext, input) => ...` the call first. `signal` is no longer an argument: it is `toolCallContext.signal`.
+- Python: annotate the first parameter `ToolCallContext`, as in `async def book_flight(tool_call_context: ToolCallContext, flight_id: str)`. The model is not told about it. `get_tool_call_context()` and `using_tool_call_context()` are gone: a test passes the function a `ToolCallContext(...)`, or `call_function(name, arguments, tool_call_context)`.
+- JavaScript: `run` is handed the arguments, then the context: `run: ({ city }) => ...` or `run: ({ order_id }, toolCallContext) => ...`. There is no `signal`: a cancelled call fails with `<name> was cancelled` and is no longer waited on, and a timed-out one fails as before. `disallowInterruptions()` resolves with nothing, and rejects with `CallNotHeldError` when the call was stopped first.
 - Ruby: a block that takes two arguments gets `|tool_call_context, args|`; one that takes one gets `|args|`.
-- PHP: a callable that takes two arguments, or a `ToolCall` first, gets `(ToolCall $toolCallContext, array $args)`; one that takes one gets `(array $args)`.
-- Rust: `register_with_tool_call_context` hands its function `(tool_call_context, arguments)`.
-- C#: the overloads that take the call are `(toolCallContext, arguments, cancellationToken)`.
+- PHP: a callable that takes two arguments, or a `ToolCallContext` first, gets `(ToolCallContext $toolCallContext, array $args)`; one that takes one gets `(array $args)`.
+- Rust: `register_with_tool_call_context` hands its function `(tool_call_context: ToolCallContext, arguments)`.
+- C#: the overloads that take the context are `(ToolCallContext toolCallContext, arguments, cancellationToken)`.
 
 ### A worker cannot host tools for an agent the app does not have
 

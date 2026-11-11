@@ -339,11 +339,11 @@ class Agent:
         """Register one of the caller's functions, which every conversation offers the model.
 
         The decorator the core registry provides, so the schema comes from the type hints and
-        the description from the docstring. A first parameter annotated `ToolCall` is
+        the description from the docstring. A first parameter annotated `ToolCallContext` is
         handed the call it runs for:
 
             @agent.register(needs_approval="Book flight {flight_id}?")
-            async def book_flight(tool_call_context: ToolCall, flight_id: str) -> str:
+            async def book_flight(tool_call_context: ToolCallContext, flight_id: str) -> str:
                 "Book a flight for the caller"
                 await tool_call_context.update("checking seats")
                 await tool_call_context.disallow_interruptions()

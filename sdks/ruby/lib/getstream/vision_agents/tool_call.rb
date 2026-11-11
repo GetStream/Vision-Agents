@@ -2,7 +2,7 @@
 
 module GetStream
   module VisionAgents
-    # Raised by ToolCall#disallow_interruptions when the call had already been stopped, so the
+    # Raised by ToolCallContext#disallow_interruptions when the call had already been stopped, so the
     # write it guards never starts.
     class CallNotHeldError < Error; end
 
@@ -22,7 +22,7 @@ module GetStream
     # A Ruby thread cannot be stopped safely from outside, so a call the router cancels or
     # that runs past its timeout keeps running: cancelled? turns true and its answer is
     # dropped. Built without a socket, as in a unit test of the block, its methods do nothing.
-    class ToolCall
+    class ToolCallContext
       # id is the id the model gave the call. A call sent again keeps it, so it is the key to
       # make a side effect happen once.
       attr_reader :id, :session_id, :turn_id, :user, :conversation

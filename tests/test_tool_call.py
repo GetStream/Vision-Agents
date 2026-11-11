@@ -2,7 +2,7 @@ import pytest
 from vision_agents.core.llm import (
     CallNotHeld,
     FunctionRegistry,
-    ToolCall,
+    ToolCallContext,
     ToolPolicy,
 )
 
@@ -88,13 +88,13 @@ class TestToolCallContext:
         line = Line()
 
         @registry.register()
-        async def search(tool_call_context: ToolCall, city: str) -> str:
+        async def search(tool_call_context: ToolCallContext, city: str) -> str:
             await tool_call_context.update("checking")
             await tool_call_context.say("One moment.")
             return f"{tool_call_context.id} {city}"
 
         answer = await registry.call_function(
-            "search", {"city": "Rome"}, ToolCall(id="call-1", line=line)
+            "search", {"city": "Rome"}, ToolCallContext(id="call-1", line=line)
         )
 
         assert answer == "call-1 Rome"
@@ -107,7 +107,7 @@ class TestToolCallContext:
         registry = FunctionRegistry()
 
         @registry.register()
-        async def search(tool_call_context: ToolCall, city: str) -> str:
+        async def search(tool_call_context: ToolCallContext, city: str) -> str:
             return city
 
         (schema,) = registry.get_tool_schemas()
@@ -122,37 +122,41 @@ class TestToolCallContext:
             return city
 
         assert (
-            await registry.call_function("search", {"city": "Rome"}, ToolCall())
+            await registry.call_function("search", {"city": "Rome"}, ToolCallContext())
             == "Rome"
         )
 
     async def test_without_a_call_there_is_an_empty_one_that_does_nothing(self):
         registry = FunctionRegistry()
-        seen: list[ToolCall] = []
+        seen: list[ToolCallContext] = []
 
         @registry.register()
-        async def search(tool_call_context: ToolCall) -> str:
+        async def search(tool_call_context: ToolCallContext) -> str:
             await tool_call_context.update("still going")
             await tool_call_context.disallow_interruptions()
             seen.append(tool_call_context)
             return "ok"
 
         assert await registry.call_function("search", {}) == "ok"
-        assert seen == [ToolCall()]
+        assert seen == [ToolCallContext()]
 
     async def test_a_schema_given_as_written_still_hands_the_call(self):
         registry = FunctionRegistry()
         schema = {"type": "object", "properties": {"city": {"type": "string"}}}
 
         @registry.register(parameters_schema=schema)
-        async def search(tool_call_context: ToolCall, **arguments) -> str:
+        async def search(tool_call_context: ToolCallContext, **arguments) -> str:
             return f"{tool_call_context.id} {arguments['city']}"
 
         assert (
-            await registry.call_function("search", {"city": "Rome"}, ToolCall(id="c"))
+            await registry.call_function(
+                "search", {"city": "Rome"}, ToolCallContext(id="c")
+            )
             == "c Rome"
         )
 
     async def test_a_call_stopped_before_it_was_held_says_so(self):
         with pytest.raises(CallNotHeld):
-            await ToolCall(id="call-1", line=Line(holds=False)).disallow_interruptions()
+            await ToolCallContext(
+                id="call-1", line=Line(holds=False)
+            ).disallow_interruptions()

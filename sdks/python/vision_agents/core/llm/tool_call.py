@@ -15,7 +15,7 @@ class ToolLine(Protocol):
     """How a running call reaches the session it runs for.
 
     The socket that delivered the call provides one. Without one, as outside a call,
-    `ToolCall.update`, `say` and `disallow_interruptions` do nothing.
+    `ToolCallContext.update`, `say` and `disallow_interruptions` do nothing.
     """
 
     async def update(self, call_id: str, text: str, verbatim: bool) -> None:
@@ -46,13 +46,13 @@ class ToolConversation:
 
 
 @dataclass
-class ToolCall:
+class ToolCallContext:
     """The call a function is running for.
 
-    A function whose first parameter is annotated `ToolCall` is handed it there:
+    A function whose first parameter is annotated `ToolCallContext` is handed it there:
 
         @llm.register_function(description="Book a flight")
-        async def book_flight(tool_call_context: ToolCall, flight_id: str) -> str:
+        async def book_flight(tool_call_context: ToolCallContext, flight_id: str) -> str:
             await tool_call_context.update("checking seats")
             return await bookings.book(flight_id, key=tool_call_context.id)
 
@@ -108,7 +108,7 @@ class ToolCall:
 
 
 def context_parameter(func: Callable[..., Any]) -> Optional[str]:
-    """The name of `func`'s first parameter when it is annotated `ToolCall`, else None.
+    """The name of `func`'s first parameter when it is annotated `ToolCallContext`, else None.
 
     That parameter is handed the call rather than filled in by the model.
     """
@@ -130,6 +130,6 @@ def context_parameter(func: Callable[..., Any]) -> Optional[str]:
             annotation = get_type_hints(func).get(first.name)
         except Exception:
             return None
-    if inspect.isclass(annotation) and issubclass(annotation, ToolCall):
+    if inspect.isclass(annotation) and issubclass(annotation, ToolCallContext):
         return first.name
     return None

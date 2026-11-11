@@ -13,7 +13,7 @@ use GetStream\VisionAgents\Json;
 use GetStream\VisionAgents\Session;
 use GetStream\VisionAgents\Tests\Support\LocalSocketServer;
 use GetStream\VisionAgents\Tests\Support\Rows;
-use GetStream\VisionAgents\ToolCall;
+use GetStream\VisionAgents\ToolCallContext;
 use GetStream\VisionAgents\Tools;
 use GetStream\VisionAgents\Worker\Dispatch;
 use PHPUnit\Framework\TestCase;
@@ -40,7 +40,7 @@ final class ToolCallTest extends TestCase
             self::until($socket, $server, 'tool_result');
         });
         $agent = new Agent(name: 'jean', client: $server->client());
-        $agent->tools->register('book', 'Books a flight', [], static function (ToolCall $toolCallContext, array $args): string {
+        $agent->tools->register('book', 'Books a flight', [], static function (ToolCallContext $toolCallContext, array $args): string {
             $toolCallContext->update('Looking at flights');
             $toolCallContext->say('One moment.');
             return implode(' ', [$toolCallContext->id, $toolCallContext->sessionId, $toolCallContext->turnId, $toolCallContext->user->id, $toolCallContext->user->name,
@@ -117,7 +117,7 @@ final class ToolCallTest extends TestCase
             self::until($socket, $server, 'tool_result');
         });
         $agent = new Agent(name: 'jean', client: $server->client());
-        $agent->tools->register('slow', 'Takes a while', [], static function (ToolCall $toolCallContext, array $args) use (&$stopped): string {
+        $agent->tools->register('slow', 'Takes a while', [], static function (ToolCallContext $toolCallContext, array $args) use (&$stopped): string {
             try {
                 delay(5, cancellation: $toolCallContext->cancellation());
             } finally {
@@ -137,9 +137,9 @@ final class ToolCallTest extends TestCase
     {
         $tools = (new Tools())
             ->register('simple', 'Only the arguments', [], static fn (array $args): string => Json::encode(func_get_args()))
-            ->register('context', 'The call, then the arguments', [], static fn (ToolCall $toolCallContext, array $args): string => $toolCallContext->id . ' ' . Json::encode($args))
-            ->register('only_call', 'Only the call', [], static fn (ToolCall $toolCallContext): string => $toolCallContext->id);
-        $call = new ToolCall(id: 'c1');
+            ->register('context', 'The call, then the arguments', [], static fn (ToolCallContext $toolCallContext, array $args): string => $toolCallContext->id . ' ' . Json::encode($args))
+            ->register('only_call', 'Only the call', [], static fn (ToolCallContext $toolCallContext): string => $toolCallContext->id);
+        $call = new ToolCallContext(id: 'c1');
 
         self::assertSame('[{"city":"Rome"}]', $tools->call('simple', '{"city":"Rome"}', $call));
         self::assertSame('c1 {"city":"Rome"}', $tools->call('context', '{"city":"Rome"}', $call));
@@ -257,12 +257,12 @@ final class ToolCallTest extends TestCase
     private static function payments(Tools $tools): void
     {
         $tools
-            ->register('pay', 'Pays', self::amount(), static function (ToolCall $toolCallContext, array $args): string {
+            ->register('pay', 'Pays', self::amount(), static function (ToolCallContext $toolCallContext, array $args): string {
                 $toolCallContext->disallowInterruptions();
                 delay(0.2);
                 return 'paid for ' . $toolCallContext->sessionId;
             }, approval: 'Pay {amount}?')
-            ->register('slow', 'Takes a while', [], static function (ToolCall $toolCallContext, array $args): string {
+            ->register('slow', 'Takes a while', [], static function (ToolCallContext $toolCallContext, array $args): string {
                 delay(5, cancellation: $toolCallContext->cancellation());
                 return 'done';
             }, interruptible: true)

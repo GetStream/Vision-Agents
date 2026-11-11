@@ -374,10 +374,10 @@ class TestSessions:
         self, api: stream.Client, router: Router
     ):
         agent = api.agent("docs")
-        seen: list[stream.ToolCall] = []
+        seen: list[stream.ToolCallContext] = []
 
         @agent.register(description="Look up an order", timeout=2.5)
-        async def lookup_order(tool_call_context: stream.ToolCall) -> str:
+        async def lookup_order(tool_call_context: stream.ToolCallContext) -> str:
             seen.append(tool_call_context)
             await tool_call_context.update("searching the archive")
             return "found"

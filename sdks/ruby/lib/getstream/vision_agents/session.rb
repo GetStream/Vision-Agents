@@ -268,7 +268,7 @@ module GetStream
         answer[:request_id] = frame["request_id"] unless frame["request_id"].to_s.empty?
         answer[:turn_id] = frame["turn_id"] unless frame["turn_id"].to_s.empty?
 
-        tool_call_context = ToolCall.from(frame, session_id: id, send: ->(sent) { reply(sent) })
+        tool_call_context = ToolCallContext.from(frame, session_id: id, send: ->(sent) { reply(sent) })
         busy = @lock.synchronize do
           full = @running.size >= RUNNING_TOOLS
           # Held before the thread starts, so a tool quicker than this line still finds itself

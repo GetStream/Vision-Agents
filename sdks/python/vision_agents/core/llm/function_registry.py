@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 from .llm_types import ToolSchema
 from .tool_arguments import Arguments
-from .tool_call import ToolCall, context_parameter
+from .tool_call import ToolCallContext, context_parameter
 
 
 @dataclass
@@ -60,7 +60,7 @@ class FunctionDefinition:
     # What the model is told the function takes, and what each call's arguments are parsed
     # by before it runs.
     arguments: Arguments = field(kw_only=True)
-    # takes_context hands the function its ToolCall as the first argument.
+    # takes_context hands the function its ToolCallContext as the first argument.
     takes_context: bool = field(default=False, kw_only=True)
 
 
@@ -94,7 +94,7 @@ class FunctionRegistry:
         """
         Decorator to register a function with the registry.
 
-        A function whose first parameter is annotated `ToolCall` is handed the call it
+        A function whose first parameter is annotated `ToolCallContext` is handed the call it
         runs for there, and the model is not told about that parameter.
 
         Args:
@@ -236,7 +236,7 @@ class FunctionRegistry:
         self,
         name: str,
         arguments: Dict[str, Any],
-        tool_call_context: Optional[ToolCall] = None,
+        tool_call_context: Optional[ToolCallContext] = None,
     ) -> Any:
         """
         Call a registered function with the given arguments.
@@ -267,7 +267,7 @@ class FunctionRegistry:
         return await function(**func_def.arguments.parse(arguments))
 
     def get_callable(
-        self, name: str, tool_call_context: Optional[ToolCall] = None
+        self, name: str, tool_call_context: Optional[ToolCallContext] = None
     ) -> Callable:
         """
         Get the callable function by name.
@@ -288,7 +288,9 @@ class FunctionRegistry:
 
         func_def = self.functions[name]
         if func_def.takes_context:
-            return functools.partial(func_def.function, tool_call_context or ToolCall())
+            return functools.partial(
+                func_def.function, tool_call_context or ToolCallContext()
+            )
         return func_def.function
 
     def _function_to_tool_schema(self, func_def: FunctionDefinition) -> ToolSchema:
