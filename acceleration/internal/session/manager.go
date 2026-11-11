@@ -937,6 +937,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		created.cardsFor = person
 	}
 	built.RestoreHistory(append(cards, previous...))
+	if !spec.Native() {
+		built.PinDocuments(m.documents(ctx, spec)...)
+	}
 	// A reopened chat is reviewed again when it ends, and its summary is of all of it.
 	if !spec.Reopened.IsZero() {
 		earlier := spokenOf(previous)

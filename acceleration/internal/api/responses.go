@@ -10,6 +10,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/video"
 	"github.com/danielgtaylor/huma/v2"
@@ -33,6 +34,9 @@ func sizeOfResponse(body *CreateResponseRequest) int {
 	for _, clip := range value(body.Videos) {
 		size += len(clip.Url)
 	}
+	for _, file := range value(body.Files) {
+		size += len(file.Url)
+	}
 	return size
 }
 
@@ -45,7 +49,16 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 	// A response is asked of a running session rather than a stored one: a call that ended
 	// can be read and forked, but not talked to. A chat that ended is reopened.
 	leaveUncosted(ctx)
+	var files []FileSource
 	if request.Body != nil {
+		files = value(request.Body.Files)
+	}
+	if len(files) > 0 {
+		// A file is held to its own limits (fetchDocument); the body holds at most one inline.
+		if request.Body.Audio != nil {
+			return nil, errDocumentWithVoiceNote
+		}
+	} else if request.Body != nil {
 		if err := refuseOversizeWithoutAudio(request.Body.Audio, sizeOfResponse(request.Body)); err != nil {
 			return nil, err
 		}
@@ -55,8 +68,22 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 		return nil, failure
 	}
 	defer sent()
-	if request.Body == nil || (request.Body.Text == "" && request.Body.Audio == nil && len(value(request.Body.Images)) == 0) {
+	if request.Body == nil || (request.Body.Text == "" && request.Body.Audio == nil && len(value(request.Body.Images)) == 0 && len(files) == 0) {
 		return nil, invalidRequest("there is nothing to answer")
+	}
+
+	// The file is read before anything else is fetched, so a file that is refused costs nothing.
+	var document *sentDocument
+	if len(files) > 0 {
+		retry := found.Durable() && found.Taken(value(request.Body.RequestId))
+		sent, failure := s.readDocument(ctx, found, files[0], retry)
+		if failure != nil {
+			return nil, failure
+		}
+		document = &sent
+		if !retry {
+			ctx = agent.WithDocument(ctx, sent.read)
+		}
 	}
 
 	images := make([]wireImage, 0, len(value(request.Body.Images)))
@@ -115,7 +142,11 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 
 	var responseID string
 	if commandID != "" && found.Durable() {
-		_, responseID, err = found.RespondCommandWithAction(ctx, commandID, text, "", parts, asked, action, notes...)
+		var file *sandbox.File
+		if document != nil {
+			file = &document.file
+		}
+		_, responseID, err = found.RespondCommandWithAction(ctx, commandID, text, "", parts, asked, action, file, notes...)
 	} else {
 		told := text
 		// A session not kept in Stream Chat has no reply to read the words of.
@@ -129,6 +160,9 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 	}
 	if len(videos) > 0 {
 		found.SawVideo()
+	}
+	if document != nil {
+		s.keepDocument(ctx, found, responseID, *document)
 	}
 	if responseID == "" {
 		// The turn is being answered, it just has no name. A session that records nothing
@@ -465,6 +499,7 @@ type AgentResponsePage struct {
 // CreateResponseRequest is the CreateResponseRequest schema.
 type CreateResponseRequest struct {
 	RequestId       *string         `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and the frames of videos are shown to the model alone. A retry with the same id, text, images and voice note starts no second turn, returns no id and does not fetch its videos again: videos are not part of what a retry is matched on. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images." pattern:"^[A-Za-z0-9_-]{1,128}$"`
+	Files           *[]FileSource   `json:"files,omitempty" doc:"A file to answer questions about: a PDF or a Word document. The router reads it as text before the turn starts, and the agent answers from it on this turn and on every turn of the conversation after it, including a conversation carried on later or forked by the same person. In a conversation kept in Stream Chat the person's message shows the file. At most 100 pages, and at most 120,000 characters of text together with the files the conversation already holds, or a quarter of what the model reads at once. Only in a person's own conversation: refused in a thread, in a channel others write in, in a session a worker opened for a channel's message, and by a speech-to-speech session. Not with a voice note. Refused before any turn starts when it cannot be read, is too large, or reads as a prompt injection under the organization's policy." maxItems:"1"`
 	Audio           *AudioSource    `json:"audio,omitempty" doc:"A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region."`
 	Images          *[]ImageSource  `json:"images,omitempty"`
 	MaxOutputTokens *int            `json:"max_output_tokens,omitempty" doc:"Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's." minimum:"1"`

@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -94,9 +95,24 @@ func (e *Enforcer) Screener(classifier *decisionrouter.Router) func(context.Cont
 // judge asks the classifier about every harm at once. A classifier that cannot be reached
 // or leaves a harm unanswered lets the response stand, and says so in the log.
 func (e *Enforcer) judge(ctx context.Context, classifier *decisionrouter.Router, owner routing.Owner, text string) error {
-	ctx, cancel := context.WithTimeout(routing.WithAttribution(ctx, owner.Attribution), screenTimeout)
+	ctx, cancel := context.WithTimeout(ctx, screenTimeout)
 	defer cancel()
+	err := e.classify(ctx, classifier, owner, text)
+	if errors.Is(err, ErrScreenUnavailable) {
+		e.logger.Warn("could not screen a response for prompt injection", "customer", owner.CustomerID, "error", err)
+		return nil
+	}
+	return err
+}
 
+// ErrScreenUnavailable is a screen the classifier could not finish: it could not be
+// reached, or left a harm unanswered.
+var ErrScreenUnavailable = errors.New("policy: the prompt injection screen could not be finished")
+
+// classify asks the classifier about every harm in text at once: ErrPromptInjection naming
+// the harms found, or ErrScreenUnavailable when it gave no full answer.
+func (e *Enforcer) classify(ctx context.Context, classifier *decisionrouter.Router, owner routing.Owner, text string) error {
+	ctx = routing.WithAttribution(ctx, owner.Attribution)
 	session, err := classifier.Start(ctx, decisionrouter.Request{
 		CustomerID: owner.CustomerID,
 		AgentID:    owner.AgentID,
@@ -105,24 +121,20 @@ func (e *Enforcer) judge(ctx context.Context, classifier *decisionrouter.Router,
 		Tags:       owner.Tags,
 	})
 	if err != nil {
-		e.logger.Warn("could not screen a response for prompt injection", "customer", owner.CustomerID, "error", err)
-		return nil
+		return fmt.Errorf("%w: %w", ErrScreenUnavailable, err)
 	}
 	defer session.Close()
 
 	answered, err := session.Classify(ctx, injectionRequest(text))
 	if err != nil {
-		e.logger.Warn("could not screen a response for prompt injection", "customer", owner.CustomerID, "error", err)
-		return nil
+		return fmt.Errorf("%w: %w", ErrScreenUnavailable, err)
 	}
 
 	var found []string
 	for id := range harms {
 		answer, ok := answered.Answers[id]
 		if !ok {
-			e.logger.Warn("the classifier left a prompt injection harm unanswered",
-				"customer", owner.CustomerID, "harm", id, "model", answered.Model)
-			return nil
+			return fmt.Errorf("%w: harm %s unanswered by %s", ErrScreenUnavailable, id, answered.Model)
 		}
 		if answer.Yes >= injectionThreshold {
 			found = append(found, id)
@@ -132,9 +144,74 @@ func (e *Enforcer) judge(ctx context.Context, classifier *decisionrouter.Router,
 		return nil
 	}
 	slices.Sort(found)
-	e.logger.Info("refused a response whose input reads as a prompt injection",
+	e.logger.Info("refused input that reads as a prompt injection",
 		"customer", owner.CustomerID, "agent", owner.AgentID, "harms", found, "model", answered.Model)
 	return fmt.Errorf("%w: %s", ErrPromptInjection, strings.Join(found, ", "))
+}
+
+// documentChunk is the most of a document one classification reads, in runes: a page or
+// two, so a phrase is judged beside what is around it.
+const documentChunk = 8000
+
+// documentScreens is how many of a document's chunks are classified at once.
+const documentScreens = 4
+
+// documentScreenTimeout bounds screening one document, which the person waits for before
+// their question is answered.
+const documentScreenTimeout = 20 * time.Second
+
+// ScreenDocument judges a file a caller attached, as text, for prompt injection before any
+// reply reads it: ErrPromptInjection when a part of it reads as one. Unlike a reply's screen
+// it does not let the input stand when it cannot finish: a document is read on every reply
+// after it, and is screened only this once, so it fails with ErrScreenUnavailable. It screens
+// nothing for a customer whose policies do not ask for it, and nothing without a classifier.
+func (e *Enforcer) ScreenDocument(ctx context.Context, classifier *decisionrouter.Router, owner routing.Owner, text string) error {
+	if e == nil || classifier == nil || owner.CustomerID == "" || strings.TrimSpace(text) == "" {
+		return nil
+	}
+	if !e.decide(ctx, owner.CustomerID).screen {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, documentScreenTimeout)
+	defer cancel()
+
+	chunks := chunked(text, documentChunk)
+	verdicts := make([]error, len(chunks))
+	slots := make(chan struct{}, documentScreens)
+	var wg sync.WaitGroup
+	for i, chunk := range chunks {
+		wg.Go(func() {
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			verdicts[i] = e.classify(ctx, classifier, owner, chunk)
+		})
+	}
+	wg.Wait()
+	// An injection found anywhere is the answer, even beside a chunk that went unjudged.
+	for _, verdict := range verdicts {
+		if errors.Is(verdict, ErrPromptInjection) {
+			return verdict
+		}
+	}
+	return errors.Join(verdicts...)
+}
+
+// chunked is text in pieces of at most size runes, cut at a line break where one is near.
+func chunked(text string, size int) []string {
+	var chunks []string
+	for text != "" {
+		if utf8.RuneCountInString(text) <= size {
+			chunks = append(chunks, text)
+			break
+		}
+		cut := len(string([]rune(text)[:size]))
+		if newline := strings.LastIndexByte(text[:cut], '\n'); newline > cut/2 {
+			cut = newline + 1
+		}
+		chunks = append(chunks, text[:cut])
+		text = text[cut:]
+	}
+	return chunks
 }
 
 // injectionRequest asks every harm about one piece of input.
@@ -155,7 +232,7 @@ func newestInput(input []llm.Message) string {
 	var parts []string
 	for i := len(input) - 1; i >= 0 && input[i].Role != llm.Assistant; i-- {
 		message := input[i]
-		if message.Role != llm.User && message.Role != llm.ToolResult {
+		if message.Document || message.Role != llm.User && message.Role != llm.ToolResult {
 			continue
 		}
 		text := message.Content

@@ -48,6 +48,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/extract"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/files"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
@@ -193,6 +194,9 @@ type Options struct {
 	// ManageKey is what Stream staff's billing paths, under /v1/manage, are reached with.
 	// Empty turns them off: they answer 404 not_configured.
 	ManageKey string
+	// Documents reads the files a person sends with a question (createResponse files). Nil
+	// refuses them as a feature this deployment does not offer.
+	Documents *extract.Extractor
 	// Knowledge fills the bases a config's knowledge_namespace has an agent read from, each
 	// call recorded for the customer and key that asked. Absent when the deployment has no
 	// knowledge provider, in which case there is nothing to fill and the path says so.
@@ -432,6 +436,8 @@ type Server struct {
 	runsPerApp int64
 	// imageHTTP fetches the images a run is handed by URL.
 	imageHTTP *http.Client
+	// documents reads the files sent with a question.
+	documents *extract.Extractor
 	// callbackHTTP posts a finished recording to its callback.
 	callbackHTTP *http.Client
 	// scheduledPoll is how often a delivery waiting on the holding session looks again: a call
@@ -625,6 +631,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		server.runSlots, server.runsPerApp = concurrency.New(options.Live.Redis(), nil), options.RunsPerApp
 	}
 	server.imageHTTP = options.ImageHTTP
+	server.documents = options.Documents
 	if server.imageHTTP == nil {
 		// No proxy, which would dial on the client's behalf where the check cannot see.
 		server.imageHTTP = &http.Client{Transport: &http.Transport{Proxy: nil, DialContext: egress.DialPublic}}
