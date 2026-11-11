@@ -168,8 +168,7 @@ func TestSlackPostsToTheChannel(t *testing.T) {
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer server.Close()
-	slack := NewSlack("xoxb-test", "C123")
-	slack.baseURL = server.URL
+	slack := NewSlackAt("xoxb-test", "C123", server.URL)
 
 	require.NoError(t, slack.Post(context.Background(), "hello"))
 	require.Equal(t, "Bearer xoxb-test", authorization)
@@ -182,8 +181,7 @@ func TestSlackSaysWhyItRefused(t *testing.T) {
 		_, _ = w.Write([]byte(`{"ok":false,"error":"not_in_channel"}`))
 	}))
 	defer server.Close()
-	slack := NewSlack("xoxb-test", "C123")
-	slack.baseURL = server.URL
+	slack := NewSlackAt("xoxb-test", "C123", server.URL)
 
 	require.ErrorContains(t, slack.Post(context.Background(), "hello"), "not_in_channel")
 }

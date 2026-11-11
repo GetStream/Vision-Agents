@@ -105,8 +105,7 @@ func (s *slackServer) posts() []string {
 // anomalies is a check over the suite's store posting to its Slack every few milliseconds, with
 // every threshold at its default, closed when the test ends.
 func (s *AnomalySuite) anomalies() *Anomalies {
-	slack := NewSlack("xoxb-test", "C123")
-	slack.baseURL = s.slack.URL
+	slack := NewSlackAt("xoxb-test", "C123", s.slack.URL)
 	anomalies := NewAnomalies(AnomalyOptions{
 		Store: s.db, Poster: slack, Environment: "prod", Logger: slog.New(slog.DiscardHandler),
 		Every: 20 * time.Millisecond,
@@ -341,8 +340,7 @@ func (s *AnomalySuite) TestACheckThatFailsGivesTheLockBack() {
 	}})
 	s.Require().NoError(err)
 	defer broken.Close()
-	slack := NewSlack("xoxb-test", "C123")
-	slack.baseURL = s.slack.URL
+	slack := NewSlackAt("xoxb-test", "C123", s.slack.URL)
 	failing := NewAnomalies(AnomalyOptions{
 		Store: broken, Poster: slack, Logger: slog.New(slog.DiscardHandler), Every: 20 * time.Millisecond,
 		Now: func() time.Time {

@@ -24,7 +24,12 @@ type Slack struct {
 
 // NewSlack posts to channel, an id such as C0123456789, with token.
 func NewSlack(token, channel string) *Slack {
-	return &Slack{token: token, channel: channel, baseURL: slackAPI, client: &http.Client{Timeout: 10 * time.Second}}
+	return NewSlackAt(token, channel, slackAPI)
+}
+
+// NewSlackAt is NewSlack against baseURL, for a Slack stand-in in tests.
+func NewSlackAt(token, channel, baseURL string) *Slack {
+	return &Slack{token: token, channel: channel, baseURL: baseURL, client: &http.Client{Timeout: 10 * time.Second}}
 }
 
 // Post sends text with chat.postMessage.
