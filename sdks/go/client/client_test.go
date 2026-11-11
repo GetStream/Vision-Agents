@@ -780,6 +780,63 @@ func TestQueryingNarrowsToTheAgentAndTheFiltersGiven(t *testing.T) {
 	}
 }
 
+func TestQueryingByTeamLabelsWindowAndOrderSendsThemAll(t *testing.T) {
+	backend := newRouter(t)
+
+	if _, err := backend.client(t).Agent("docs").Sessions.Query(t.Context(), Query{
+		Team:          "finance",
+		ConfigID:      "cfg-docs",
+		Custom:        map[string]string{"ticket": "4721"},
+		CreatedAfter:  time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
+		CreatedBefore: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC),
+		Sort:          acceleration.UpdatedAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/query")
+	filter, _ := body["filter"].(map[string]any)
+	if filter["team"] != "finance" || filter["config_id"] != "cfg-docs" {
+		t.Errorf("the filters went over as %v", filter)
+	}
+	if custom, _ := filter["custom"].(map[string]any); custom["ticket"] != "4721" || len(custom) != 1 {
+		t.Errorf("the labels went over as %v", filter["custom"])
+	}
+	window, _ := filter["created_at"].(map[string]any)
+	if window["$gte"] != "2026-10-01T00:00:00Z" || window["$lt"] != "2026-11-01T00:00:00Z" {
+		t.Errorf("the window went over as %v", filter["created_at"])
+	}
+	sort, _ := body["sort"].([]any)
+	if len(sort) != 1 || sort[0].(map[string]any)["field"] != "updated_at" {
+		t.Errorf("the order went over as %v", body["sort"])
+	}
+}
+
+func TestAQueryWithNoOrderLeavesItToTheRouter(t *testing.T) {
+	backend := newRouter(t)
+
+	if _, err := backend.client(t).Agent("docs").Sessions.Query(t.Context(), Query{
+		CreatedBefore: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/query")
+	if _, sent := body["sort"]; sent {
+		t.Errorf("an order nobody asked for was sent: %v", body["sort"])
+	}
+	filter, _ := body["filter"].(map[string]any)
+	window, _ := filter["created_at"].(map[string]any)
+	if _, sent := window["$gte"]; sent || window["$lt"] != "2026-11-01T00:00:00Z" {
+		t.Errorf("one end of the window went over as %v", filter["created_at"])
+	}
+	for _, field := range []string{"team", "custom", "config_id"} {
+		if _, sent := filter[field]; sent {
+			t.Errorf("%s was sent unasked", field)
+		}
+	}
+}
+
 func TestQueryingTheNextPageSendsTheCursor(t *testing.T) {
 	backend := newRouter(t)
 
@@ -1669,6 +1726,22 @@ func TestSetUserRefusesAUserWithNothingToProveIt(t *testing.T) {
 	}
 	if _, err := api.SetUser("jean", ""); err == nil {
 		t.Error("a user with no token was allowed")
+	}
+}
+
+func TestSetUserLeavesTheTeamToTheUsersToken(t *testing.T) {
+	api, err := New(stream.Backend{URL: "http://localhost:8080", CustomerID: "acme",
+		Team: "finance", UsageCategories: []string{"project:onboarding"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	jean, err := api.SetUser("jean", "minted.elsewhere")
+	if err != nil {
+		t.Fatalf("a client with a team could not act for a user: %v", err)
+	}
+	if backend := jean.Backend(); backend.Team != "" || len(backend.UsageCategories) > 0 {
+		t.Errorf("the user's client kept team %q and categories %q", backend.Team, backend.UsageCategories)
 	}
 }
 

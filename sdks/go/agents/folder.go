@@ -201,6 +201,11 @@ type Settings struct {
 	// WhatsApp number, a number to text, an iMessage line. Each names a number the app
 	// connected on the router, which is where the provider's credentials live.
 	Channels *ChannelsSettings `yaml:"channels"`
+	// ChatChannels are the Stream Chat channel types of the app's own Stream app the agent
+	// answers in besides agent channels, such as the type a team's group channels are made
+	// with. Nil when the declaration says nothing, which leaves the stored list; empty when the
+	// file lists none, which removes it.
+	ChatChannels *[]ChatChannelSettings `yaml:"chat_channels"`
 	// Scheduling is whether the agent may schedule tasks for its users: reminders
 	// and check-ins it creates in conversation and carries out when they come due.
 	Scheduling *SchedulingSettings `yaml:"scheduling"`
@@ -211,10 +216,15 @@ type Settings struct {
 	// wait once they stop. Nil leaves the stored choice; an empty mapping ({}) is the default
 	// flow controller again, which an agent that never chose has.
 	FloorControl *FloorControlSettings `yaml:"floor_control"`
-	Keyterms     []string              `yaml:"keyterms"`
-	Tags         map[string]string     `yaml:"tags"`
-	Video        *VideoSettings        `yaml:"video"`
-	Dispatch     *DispatchSettings     `yaml:"dispatch"`
+	// Agents are the app's other text agents this one may hand work to, each offered to its
+	// model as a tool. Nil when the declaration says nothing, which leaves the stored list;
+	// empty when the file lists none, which removes it. Only a text agent has them, and each
+	// one named must already be synced.
+	Agents   *[]AgentSettings  `yaml:"agents"`
+	Keyterms []string          `yaml:"keyterms"`
+	Tags     map[string]string `yaml:"tags"`
+	Video    *VideoSettings    `yaml:"video"`
+	Dispatch *DispatchSettings `yaml:"dispatch"`
 	// App is the application's own section of the declaration, which this SDK never reads
 	// and the backend is never sent. It is the one place an unknown key is not refused.
 	App map[string]any `yaml:"app"`
@@ -339,6 +349,12 @@ type ChannelsSettings struct {
 	// an end user of its own; link answers only a number somebody tied to an end user with
 	// a code.
 	Identity string `yaml:"identity"`
+}
+
+// ChatChannelSettings is one Stream Chat channel type an agent answers in.
+type ChatChannelSettings struct {
+	// Type is the channel type's name, as it comes before the colon in a channel's cid.
+	Type string `yaml:"type"`
 }
 
 // SchedulingSettings is an agent's scheduled tasks: whether its users may ask
@@ -742,6 +758,18 @@ func WriteStamp(path, hash string) error {
 		return fmt.Errorf("agents: writing %s: %w", AgentStamp, err)
 	}
 	return nil
+}
+
+// AgentSettings is one of agent.yaml's agents: another of the app's text agents, offered to
+// this one's model as a tool that hands it work and answers with what it said.
+type AgentSettings struct {
+	// Config is the agent's name.
+	Config string `yaml:"config"`
+	// Tool is the name the model calls it by.
+	Tool        string `yaml:"tool"`
+	Description string `yaml:"description"`
+	// TimeoutMs is how long one call may take. Zero is the router's default, two minutes.
+	TimeoutMs int `yaml:"timeout_ms"`
 }
 
 // declare reads agent.yaml. A key nobody knows is refused rather than dropped, since a

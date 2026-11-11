@@ -315,6 +315,13 @@ first:
 ```go
 recent, _ := docs.Sessions.Query(ctx, client.Query{ProjectID: "docs", Limit: 20})
 found, _ := docs.Sessions.Search(ctx, "sendbird comparison", client.Query{})
+october, _ := docs.Sessions.Query(ctx, client.Query{
+	Team:          "finance", // the team their usage is counted under
+	CreatedAfter:  time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
+	CreatedBefore: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC),
+	Custom:        map[string]string{"ticket": "4721"},
+	Sort:          acceleration.UpdatedAt,
+})
 ```
 
 Every text conversation is kept in a Stream Chat channel, `session.ConversationID()`.
@@ -643,12 +650,24 @@ spend in each day, week, two weeks or month. Amounts are `client.USD`, written t
 limits := api.SpendLimits()
 limits.Create(ctx, client.Limit{Subject: client.Organization, Interval: client.Monthly, Amount: 20_000 * client.Dollar})
 
+// Every key of app 1234 may spend $50 a day, and the CI key $10.
+limits.Create(ctx, client.Limit{Subject: client.APIKey, AppID: "1234", Interval: client.Daily, Amount: 50 * client.Dollar})
+limits.Create(ctx, client.Limit{Subject: client.APIKey, AppID: "1234", APIKey: "mz7kq2xa9b", Interval: client.Daily, Amount: 10 * client.Dollar, Note: "CI key"})
+keys, err := limits.List(ctx, client.LimitFilter{Subject: client.APIKey, AppID: "1234", APIKey: "mz7kq2xa9b"})
+limits.SetAmount(ctx, keys[0].Id, 25*client.Dollar)
+limits.Delete(ctx, keys[0].Id)
+
 // Every user of app 1234 may spend $20 a day, and user-42 $50.
 limits.Create(ctx, client.Limit{Subject: client.User, AppID: "1234", Interval: client.Daily, Amount: 20 * client.Dollar})
 limits.Create(ctx, client.Limit{Subject: client.User, AppID: "1234", UserID: "user-42", Interval: client.Daily, Amount: 50 * client.Dollar})
 
 // Created or changed, whichever the team needs.
-api.Teams().SetLimit(ctx, client.TeamLimit{Team: "finance", Interval: client.Weekly, Amount: 2_500 * client.Dollar})
+api.Teams().SetLimit(ctx, client.TeamLimit{Team: "finance", Interval: client.Monthly, Amount: 8_000 * client.Dollar})
+session, err := api.Agent("docs").Sessions.Create(ctx, client.SessionOptions{Team: "finance"})
+finance, err := client.New(stream.Backend{Team: "finance"}) // all of its work is finance's
+
+limits.Reset(ctx, client.Reset{Subject: client.User, AppID: "1234", UserID: "user-42",
+    Intervals: []acceleration.LimitInterval{client.Weekly}, Reason: "refunded a failed run"})
 
 amount, err := client.ParseUSD("12.50") // from a form or a config file
 ```
@@ -656,16 +675,17 @@ amount, err := client.ParseUSD("12.50") // from a form or a config file
 Work counts under a team, and so against its limits, three ways. Whichever comes first wins,
 and a session is counted under one team at most:
 
-1. The team signed into the end user's token. A session cannot be moved off it, so a `Team`
-   naming another is refused with a 400.
+1. The team signed into the token: the end user's, or the one a client built with
+   `stream.Backend{Team: "finance"}` signs for itself, which a router with no proxy in front
+   of it is sent in `X-Stream-Usage-Categories` instead. A session cannot be moved off it, so
+   a `Team` naming another is refused with a 400.
 2. `client.SessionOptions{Team: "finance"}`, from a backend. A device sending a team is
    refused with a 403.
 3. The agent's tag, `tags: team: finance` in its `agent.yaml`. A tag that is no team name is
    refused when the agent is synced.
 
-```go
-session, err := docs.Sessions.Create(ctx, client.SessionOptions{Team: "finance", UserID: "jean"})
-```
+`stream.Backend.UsageCategories`, such as `project:onboarding`, are counted the same way as the
+team, up to 10 with it. Neither can be set beside a `Token` handed in, which carries its own.
 
 What the router answers is in micros too: `client.USD(limit.LimitMicros)` prints as `$20000.00`.
 Work a limit refuses is a `*stream.RouterError` of 402 `spend_limit_reached`, or 429
