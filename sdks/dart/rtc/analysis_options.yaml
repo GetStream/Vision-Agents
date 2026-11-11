@@ -1,6 +1,10 @@
 include: package:flutter_lints/flutter.yaml
 
 analyzer:
+  # Flutter 3.47 adds this to a Flutter package's analysis options on `pub get` when it is
+  # missing, which leaves the package modified and fails `pub publish --dry-run`.
+  exclude:
+    - build/**
   language:
     strict-casts: true
     strict-raw-types: true
