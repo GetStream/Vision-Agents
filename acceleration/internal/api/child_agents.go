@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -77,12 +78,11 @@ func (s *Server) childAgentsComplaint(ctx context.Context, customerID string, co
 				return fmt.Sprintf("agents has two called %q", child.Tool), false, nil
 			}
 			tools[child.Tool] = true
-			found, err := s.configFor(ctx, customerID, nil, &child.Config)
-			if err != nil {
-				found, err = s.configFor(ctx, customerID, &child.Config, nil)
-			}
+			found, exists, err := s.childConfig(ctx, customerID, child.Config)
 			switch {
 			case err != nil:
+				return "", false, err
+			case !exists:
 				return fmt.Sprintf("agents[%d]: the app has no agent config %q", i, child.Config), false, nil
 			case found.ID == config.ID || found.Name == config.Name:
 				return fmt.Sprintf("agents[%d]: an agent cannot hand work to itself", i), false, nil
@@ -117,19 +117,34 @@ func (s *Server) childAgentsComplaint(ctx context.Context, customerID string, co
 	return fmt.Sprintf("%q hands work to this agent, so it stays a text agent", parent), false, nil
 }
 
+// childConfig is the app's config named, by name or else by id, that the caller may see.
+// Only a config that is not there, or that the caller's teams keep from it, is not found;
+// a failure to read is returned.
+func (s *Server) childConfig(ctx context.Context, customerID, named string) (store.AgentConfig, bool, error) {
+	teams, err := s.teamsGateFor(ctx, customerID)
+	if err != nil {
+		return store.AgentConfig{}, false, err
+	}
+	found, exists, err := s.configs.AgentConfigByName(ctx, customerID, named)
+	if err != nil {
+		return store.AgentConfig{}, false, err
+	}
+	if !exists {
+		found, err = s.configs.AgentConfig(ctx, customerID, named)
+		if errors.Is(err, store.ErrNoAgentConfig) {
+			return store.AgentConfig{}, false, nil
+		}
+		if err != nil {
+			return store.AgentConfig{}, false, err
+		}
+	}
+	return found, !teams.refuses(found), nil
+}
+
 // parentOf is the name of a config of the app, other than self, that hands work to the
 // config called name, and empty when none does.
 func (s *Server) parentOf(ctx context.Context, customerID, name, self string) (string, error) {
-	others, err := s.store.CustomerAgentConfigs(ctx, customerID)
-	if err != nil {
-		return "", err
-	}
-	for _, other := range others {
-		if other.ID != self && slices.ContainsFunc(other.Agents, func(child store.ChildAgent) bool { return child.Config == name }) {
-			return other.Name, nil
-		}
-	}
-	return "", nil
+	return s.store.AgentConfigCalling(ctx, customerID, name, self)
 }
 
 func (*ChildAgent) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

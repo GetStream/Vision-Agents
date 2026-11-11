@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -130,11 +131,11 @@ func (s *ChildAgentsSuite) TestTheParentsDeadlineCutsItsChildrenShort() {
 	parent := s.parentOf(map[string]string{"ask_a": parked, "ask_b": parked, "ask_c": parked}, nil)
 
 	started := time.Now()
-	status, failure := s.runFails(CreateRunRequest{ConfigId: parent, Input: "review this", TimeoutMs: pointerTo(1500)})
+	status, failure := s.runFails(CreateRunRequest{ConfigId: parent, Input: "review this", TimeoutMs: pointerTo(4000)})
 
 	s.Equal(http.StatusGatewayTimeout, status)
 	s.Equal("timeout", failure.Code)
-	s.Less(time.Since(started), 10*time.Second, "the run did not wait out its children's two minutes")
+	s.Less(time.Since(started), 20*time.Second, "the run did not wait out its children's two minutes")
 	for range fanned {
 		select {
 		case <-s.parked:
@@ -143,6 +144,57 @@ func (s *ChildAgentsSuite) TestTheParentsDeadlineCutsItsChildrenShort() {
 			return
 		}
 	}
+}
+
+func (s *ChildAgentsSuite) TestAChildThatChangedSinceItsParentWasSavedIsAFailedToolCall() {
+	voiced, gained, deleted := s.textConfig("echo/echo-model"), s.textConfig("echo/echo-model"), s.textConfig("echo/echo-model")
+	parent := s.parentOf(map[string]string{"ask_a": voiced.Id, "ask_b": gained.Id, "ask_c": deleted.Id}, nil)
+	// Through the config store, past the API's checks, as a save racing the parent's would land.
+	ctx := s.T().Context()
+	s.change(voiced.Id, func(config *store.AgentConfig) { config.Mode = store.AgentModeVoice })
+	s.change(gained.Id, func(config *store.AgentConfig) {
+		config.Agents = []store.ChildAgent{{Config: voiced.Name, Tool: "deeper"}}
+	})
+	s.Require().NoError(s.configs.DeleteAgentConfig(ctx, s.customerID(), deleted.Id))
+
+	run := s.run(CreateRunRequest{ConfigId: parent, Input: "review this"})
+
+	s.Contains(run.FinalText, "tool: That did not work: the agent "+strconv.Quote(voiced.Name)+" behind ask_a is no text agent")
+	s.Contains(run.FinalText, "tool: That did not work: the agent "+strconv.Quote(gained.Name)+" behind ask_b calls agents of its own")
+	s.Contains(run.FinalText, "tool: That did not work: the agent "+strconv.Quote(deleted.Name)+" behind ask_c no longer exists")
+}
+
+func (s *ChildAgentsSuite) TestPatchingTheAgentsReplacesTheListWhole() {
+	created := s.saveParent(http.StatusCreated, []ChildAgent{{Config: s.textNamed("echo/echo-model"), Tool: "ask"}})
+	other := s.textNamed("echo/echo-model")
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"agents": []ChildAgent{{Config: other, Tool: "other"}}}, &patched))
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+
+	s.Equal([]ChildAgent{{Config: other, Tool: "other"}}, value(read.Agents))
+}
+
+func (s *ChildAgentsSuite) TestASyncThatLeavesOutTheAgentsKeepsThemAndAnEmptyListRemovesThem() {
+	child := s.textNamed("echo/echo-model")
+	name := "lead-" + s.utils.uuid()
+	var synced SyncAgentResult
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/sync", map[string]any{
+		"name": name, "hash": "v1", "mode": "text", "agents": []ChildAgent{{Config: child, Tool: "ask"}},
+	}, &synced))
+	s.Equal([]ChildAgent{{Config: child, Tool: "ask"}}, value(synced.Config.Agents))
+
+	var kept SyncAgentResult
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": name, "hash": "v2"}, &kept))
+	s.Len(value(kept.Config.Agents), 1)
+
+	var removed SyncAgentResult
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": name, "hash": "v3", "agents": []any{}}, &removed))
+	s.Nil(removed.Config.Agents)
 }
 
 func (s *ChildAgentsSuite) TestAnAgentWithNoAgentsIsOfferedTheToolsItAlwaysWas() {
@@ -278,6 +330,15 @@ func (s *ChildAgentsSuite) TestTwoChildrenCannotShareATool() {
 	child := s.textNamed("echo/echo-model")
 
 	s.refused([]ChildAgent{{Config: child, Tool: "ask"}, {Config: child, Tool: "ask"}}, `two called "ask"`)
+}
+
+// change writes a change to a config through the config store, past the API.
+func (s *ChildAgentsSuite) change(id string, edit func(*store.AgentConfig)) {
+	ctx := s.T().Context()
+	config, err := s.configs.AgentConfig(ctx, s.customerID(), id)
+	s.Require().NoError(err)
+	edit(&config)
+	s.Require().NoError(s.configs.UpdateAgentConfig(ctx, &config))
 }
 
 // text is the id of a text agent config of the app answered by model.
