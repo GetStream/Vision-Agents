@@ -3133,6 +3133,90 @@ func (e UseCaseStatus) Valid() bool {
 	}
 }
 
+// Defines values for VerificationRequestCallsPerMonth.
+const (
+	VerificationRequestCallsPerMonthN10k100k VerificationRequestCallsPerMonth = "10k_100k"
+	VerificationRequestCallsPerMonthN1k10k   VerificationRequestCallsPerMonth = "1k_10k"
+	VerificationRequestCallsPerMonthOver100k VerificationRequestCallsPerMonth = "over_100k"
+	VerificationRequestCallsPerMonthUnder1k  VerificationRequestCallsPerMonth = "under_1k"
+)
+
+// Valid indicates whether the value is a known member of the VerificationRequestCallsPerMonth enum.
+func (e VerificationRequestCallsPerMonth) Valid() bool {
+	switch e {
+	case VerificationRequestCallsPerMonthN10k100k:
+		return true
+	case VerificationRequestCallsPerMonthN1k10k:
+		return true
+	case VerificationRequestCallsPerMonthOver100k:
+		return true
+	case VerificationRequestCallsPerMonthUnder1k:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for VerificationRequestCountry.
+const (
+	VerificationRequestCountryCA VerificationRequestCountry = "CA"
+	VerificationRequestCountryUS VerificationRequestCountry = "US"
+)
+
+// Valid indicates whether the value is a known member of the VerificationRequestCountry enum.
+func (e VerificationRequestCountry) Valid() bool {
+	switch e {
+	case VerificationRequestCountryCA:
+		return true
+	case VerificationRequestCountryUS:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for VerificationRequestInputCallsPerMonth.
+const (
+	VerificationRequestInputCallsPerMonthN10k100k VerificationRequestInputCallsPerMonth = "10k_100k"
+	VerificationRequestInputCallsPerMonthN1k10k   VerificationRequestInputCallsPerMonth = "1k_10k"
+	VerificationRequestInputCallsPerMonthOver100k VerificationRequestInputCallsPerMonth = "over_100k"
+	VerificationRequestInputCallsPerMonthUnder1k  VerificationRequestInputCallsPerMonth = "under_1k"
+)
+
+// Valid indicates whether the value is a known member of the VerificationRequestInputCallsPerMonth enum.
+func (e VerificationRequestInputCallsPerMonth) Valid() bool {
+	switch e {
+	case VerificationRequestInputCallsPerMonthN10k100k:
+		return true
+	case VerificationRequestInputCallsPerMonthN1k10k:
+		return true
+	case VerificationRequestInputCallsPerMonthOver100k:
+		return true
+	case VerificationRequestInputCallsPerMonthUnder1k:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for VerificationRequestInputCountry.
+const (
+	VerificationRequestInputCountryCA VerificationRequestInputCountry = "CA"
+	VerificationRequestInputCountryUS VerificationRequestInputCountry = "US"
+)
+
+// Valid indicates whether the value is a known member of the VerificationRequestInputCountry enum.
+func (e VerificationRequestInputCountry) Valid() bool {
+	switch e {
+	case VerificationRequestInputCountryCA:
+		return true
+	case VerificationRequestInputCountryUS:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for VoiceBindingState.
 const (
 	VoiceBindingStateFailed  VoiceBindingState = "failed"
@@ -7314,6 +7398,15 @@ type ManageStatus struct {
 	Name *string `json:"name,omitempty"`
 }
 
+// ManagedVerificationRequest defines model for ManagedVerificationRequest.
+type ManagedVerificationRequest struct {
+	// Request The organization's request, null when it never sent one.
+	Request VerificationRequest `json:"request"`
+
+	// Tier The organization's last tier the router knows: verified or not-verified, empty when unknown.
+	Tier string `json:"tier"`
+}
+
 // MessageContent defines model for MessageContent.
 type MessageContent struct {
 	union json.RawMessage
@@ -7561,6 +7654,12 @@ type OrganizationActivity struct {
 
 	// Since The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on.
 	Since time.Time `json:"since"`
+}
+
+// OrganizationVerificationRequest defines model for OrganizationVerificationRequest.
+type OrganizationVerificationRequest struct {
+	// Request The organization's request, null when it never sent one.
+	Request VerificationRequest `json:"request"`
 }
 
 // PhoneCapability What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.
@@ -10792,6 +10891,92 @@ type UserPolicyPage struct {
 	NextCursor *string            `json:"next_cursor,omitempty"`
 }
 
+// VerificationRequest An organization's request to be verified: who it is, what its agents will do and where Stream answers. An organization has one, replaced whenever it sends again.
+type VerificationRequest struct {
+	// CallsPerMonth How many calls a month the organization expects.
+	CallsPerMonth VerificationRequestCallsPerMonth `json:"calls_per_month"`
+
+	// Country Where the organization is registered: US or CA.
+	Country VerificationRequestCountry `json:"country"`
+
+	// Email Where Stream answers.
+	Email openapi_types.Email `json:"email"`
+
+	// LegalName The organization's registered legal name.
+	LegalName string `json:"legal_name"`
+
+	// SubmittedAt When the router took the request.
+	SubmittedAt *time.Time `json:"submitted_at,omitempty"`
+
+	// SubmittedBy The user the request was made as, when the caller said, else empty.
+	SubmittedBy *string `json:"submitted_by,omitempty"`
+
+	// TaxId The organization's tax id: an EIN in the US, a BN in Canada. Not checked further.
+	TaxId string `json:"tax_id"`
+
+	// UseCase What the organization's agents will do on calls.
+	UseCase string `json:"use_case"`
+
+	// Website The organization's website, an http or https URL.
+	Website string `json:"website"`
+}
+
+// VerificationRequestCallsPerMonth How many calls a month the organization expects.
+type VerificationRequestCallsPerMonth string
+
+// VerificationRequestCountry Where the organization is registered: US or CA.
+type VerificationRequestCountry string
+
+// VerificationRequestEntry defines model for VerificationRequestEntry.
+type VerificationRequestEntry struct {
+	OrganizationId string `json:"organization_id"`
+
+	// Request An organization's request to be verified: who it is, what its agents will do and where Stream answers. An organization has one, replaced whenever it sends again.
+	Request VerificationRequest `json:"request"`
+
+	// Tier The organization's last tier the router knows: verified or not-verified, empty when unknown.
+	Tier string `json:"tier"`
+}
+
+// VerificationRequestInput defines model for VerificationRequestInput.
+type VerificationRequestInput struct {
+	// CallsPerMonth How many calls a month the organization expects.
+	CallsPerMonth VerificationRequestInputCallsPerMonth `json:"calls_per_month"`
+
+	// Country Where the organization is registered: US or CA.
+	Country VerificationRequestInputCountry `json:"country"`
+
+	// Email Where Stream answers.
+	Email openapi_types.Email `json:"email"`
+
+	// LegalName The organization's registered legal name.
+	LegalName string `json:"legal_name"`
+
+	// TaxId The organization's tax id: an EIN in the US, a BN in Canada. Not checked further.
+	TaxId string `json:"tax_id"`
+
+	// UseCase What the organization's agents will do on calls.
+	UseCase string `json:"use_case"`
+
+	// Website The organization's website, an http or https URL.
+	Website string `json:"website"`
+}
+
+// VerificationRequestInputCallsPerMonth How many calls a month the organization expects.
+type VerificationRequestInputCallsPerMonth string
+
+// VerificationRequestInputCountry Where the organization is registered: US or CA.
+type VerificationRequestInputCountry string
+
+// VerificationRequestPage defines model for VerificationRequestPage.
+type VerificationRequestPage struct {
+	HasMore bool                       `json:"has_more"`
+	Items   []VerificationRequestEntry `json:"items"`
+
+	// NextCursor Where the next page starts, for cursor; absent on the last page.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
 // VideoSource defines model for VideoSource.
 type VideoSource struct {
 	// MaxFrames How many frames to sample, evenly spaced across the clip. Default 8.
@@ -11880,6 +12065,9 @@ type TranscribeRecordingJSONRequestBody = TranscriptionRequest
 
 // RecordSpeechJSONRequestBody defines body for RecordSpeech for application/json ContentType.
 type RecordSpeechJSONRequestBody = SpeechRequest
+
+// PutVerificationJSONRequestBody defines body for PutVerification for application/json ContentType.
+type PutVerificationJSONRequestBody = VerificationRequestInput
 
 // AsAgentConfigPatchPlugins0 returns the union data inside the AgentConfigPatch_Plugins_Item as a AgentConfigPatchPlugins0
 func (t AgentConfigPatch_Plugins_Item) AsAgentConfigPatchPlugins0() (AgentConfigPatchPlugins0, error) {
@@ -15422,6 +15610,37 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/usage/events (the `ListUsageEvents` operationId).
 	ListUsageEvents(ctx context.Context, params *ListUsageEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetVerification Read the organization's verification request
+	//
+	// The request the calling organization sent, or null when it never sent one.
+	//
+	// Server-side only: a request that is not server-side answers 403 server_side_only.
+	//
+	// Corresponds with GET /v1/verification (the `GetVerification` operationId).
+	GetVerification(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutVerificationWithBody Send the organization's verification request
+	//
+	// Sends the calling organization's request to be verified, replacing the one it sent before, and tells Stream's staff. Whether the organization is verified is the tier getAccount reads.
+	//
+	// Server-side only: a request that is not server-side answers 403 server_side_only.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/verification (the `PutVerification` operationId).
+	PutVerificationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutVerification Send the organization's verification request
+	//
+	// Sends the calling organization's request to be verified, replacing the one it sent before, and tells Stream's staff. Whether the organization is verified is the tier getAccount reads.
+	//
+	// Server-side only: a request that is not server-side answers 403 server_side_only.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/verification (the `PutVerification` operationId).
+	PutVerification(ctx context.Context, body PutVerificationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListProviders List the providers configured for a modality and their live health
 	//
@@ -21909,6 +22128,67 @@ func (c *Client) GetTurnStats(ctx context.Context, params *GetTurnStatsParams, r
 // Corresponds with GET /v1/usage/events (the `ListUsageEvents` operationId).
 func (c *Client) ListUsageEvents(ctx context.Context, params *ListUsageEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListUsageEventsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetVerification Read the organization's verification request
+//
+// The request the calling organization sent, or null when it never sent one.
+//
+// Server-side only: a request that is not server-side answers 403 server_side_only.
+//
+// Corresponds with GET /v1/verification (the `GetVerification` operationId).
+func (c *Client) GetVerification(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetVerificationRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PutVerificationWithBody Send the organization's verification request
+//
+// Sends the calling organization's request to be verified, replacing the one it sent before, and tells Stream's staff. Whether the organization is verified is the tier getAccount reads.
+//
+// Server-side only: a request that is not server-side answers 403 server_side_only.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/verification (the `PutVerification` operationId).
+func (c *Client) PutVerificationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutVerificationRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PutVerification Send the organization's verification request
+//
+// Sends the calling organization's request to be verified, replacing the one it sent before, and tells Stream's staff. Whether the organization is verified is the tier getAccount reads.
+//
+// Server-side only: a request that is not server-side answers 403 server_side_only.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/verification (the `PutVerification` operationId).
+func (c *Client) PutVerification(ctx context.Context, body PutVerificationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutVerificationRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -33955,6 +34235,73 @@ func NewListUsageEventsRequest(server string, params *ListUsageEventsParams) (*h
 	return req, nil
 }
 
+// NewGetVerificationRequest constructs an http.Request for the GetVerification method
+func NewGetVerificationRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/verification")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPutVerificationRequest calls the generic PutVerification builder with application/json body
+func NewPutVerificationRequest(server string, body PutVerificationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutVerificationRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewPutVerificationRequestWithBody constructs an http.Request for the PutVerification method, with any body, and a specified content type
+func NewPutVerificationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/verification")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListProvidersRequest constructs an http.Request for the ListProviders method
 func NewListProvidersRequest(server string, modality Modality) (*http.Request, error) {
 	var err error
@@ -37724,6 +38071,39 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/usage/events (the `ListUsageEvents` operationId).
 	ListUsageEventsWithResponse(ctx context.Context, params *ListUsageEventsParams, reqEditors ...RequestEditorFn) (*ListUsageEventsResponse, error)
+
+	// GetVerificationWithResponse Read the organization's verification request
+	//
+	// The request the calling organization sent, or null when it never sent one.
+	//
+	// Server-side only: a request that is not server-side answers 403 server_side_only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/verification (the `GetVerification` operationId).
+	GetVerificationWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetVerificationResponse, error)
+
+	// PutVerificationWithBodyWithResponse Send the organization's verification request
+	//
+	// Sends the calling organization's request to be verified, replacing the one it sent before, and tells Stream's staff. Whether the organization is verified is the tier getAccount reads.
+	//
+	// Server-side only: a request that is not server-side answers 403 server_side_only.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/verification (the `PutVerification` operationId).
+	PutVerificationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutVerificationResponse, error)
+
+	// PutVerificationWithResponse Send the organization's verification request
+	//
+	// Sends the calling organization's request to be verified, replacing the one it sent before, and tells Stream's staff. Whether the organization is verified is the tier getAccount reads.
+	//
+	// Server-side only: a request that is not server-side answers 403 server_side_only.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/verification (the `PutVerification` operationId).
+	PutVerificationWithResponse(ctx context.Context, body PutVerificationJSONRequestBody, reqEditors ...RequestEditorFn) (*PutVerificationResponse, error)
 
 	// ListProvidersWithResponse List the providers configured for a modality and their live health
 	//
@@ -63601,6 +63981,222 @@ func (r ListUsageEventsResponse) ContentType() string {
 	return ""
 }
 
+// GetVerificationResponse200Headers the declared response headers of an HTTP 200 response for GetVerification
+type GetVerificationResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// GetVerificationResponse402Headers the declared response headers of an HTTP 402 response for GetVerification
+type GetVerificationResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type GetVerificationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OrganizationVerificationRequest
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetVerificationResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *GetVerificationResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetVerificationResponse) GetJSON200() *OrganizationVerificationRequest {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetVerificationResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetVerificationResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetVerificationResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetVerificationResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetVerificationResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetVerificationResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetVerificationResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetVerificationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetVerificationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetVerificationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetVerificationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// PutVerificationResponse200Headers the declared response headers of an HTTP 200 response for PutVerification
+type PutVerificationResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// PutVerificationResponse402Headers the declared response headers of an HTTP 402 response for PutVerification
+type PutVerificationResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type PutVerificationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OrganizationVerificationRequest
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *PutVerificationResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *PutVerificationResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PutVerificationResponse) GetJSON200() *OrganizationVerificationRequest {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PutVerificationResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PutVerificationResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r PutVerificationResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PutVerificationResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PutVerificationResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PutVerificationResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r PutVerificationResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r PutVerificationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PutVerificationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutVerificationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PutVerificationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListProvidersResponse200Headers the declared response headers of an HTTP 200 response for ListProviders
 type ListProvidersResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -69577,6 +70173,57 @@ func (c *ClientWithResponses) ListUsageEventsWithResponse(ctx context.Context, p
 		return nil, err
 	}
 	return ParseListUsageEventsResponse(rsp)
+}
+
+// GetVerificationWithResponse Read the organization's verification request
+//
+// The request the calling organization sent, or null when it never sent one.
+//
+// Server-side only: a request that is not server-side answers 403 server_side_only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/verification (the `GetVerification` operationId).
+func (c *ClientWithResponses) GetVerificationWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetVerificationResponse, error) {
+	rsp, err := c.GetVerification(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetVerificationResponse(rsp)
+}
+
+// PutVerificationWithBodyWithResponse Send the organization's verification request
+//
+// Sends the calling organization's request to be verified, replacing the one it sent before, and tells Stream's staff. Whether the organization is verified is the tier getAccount reads.
+//
+// Server-side only: a request that is not server-side answers 403 server_side_only.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/verification (the `PutVerification` operationId).
+func (c *ClientWithResponses) PutVerificationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutVerificationResponse, error) {
+	rsp, err := c.PutVerificationWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutVerificationResponse(rsp)
+}
+
+// PutVerificationWithResponse Send the organization's verification request
+//
+// Sends the calling organization's request to be verified, replacing the one it sent before, and tells Stream's staff. Whether the organization is verified is the tier getAccount reads.
+//
+// Server-side only: a request that is not server-side answers 403 server_side_only.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/verification (the `PutVerification` operationId).
+func (c *ClientWithResponses) PutVerificationWithResponse(ctx context.Context, body PutVerificationJSONRequestBody, reqEditors ...RequestEditorFn) (*PutVerificationResponse, error) {
+	rsp, err := c.PutVerification(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutVerificationResponse(rsp)
 }
 
 // ListProvidersWithResponse List the providers configured for a modality and their live health
@@ -99787,6 +100434,258 @@ func ParseListUsageEventsResponse(rsp *http.Response) (*ListUsageEventsResponse,
 		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
 		var headers ListUsageEventsResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetVerificationResponse parses an HTTP response from a GetVerificationWithResponse call
+func ParseGetVerificationResponse(rsp *http.Response) (*GetVerificationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetVerificationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OrganizationVerificationRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetVerificationResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers GetVerificationResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParsePutVerificationResponse parses an HTTP response from a PutVerificationWithResponse call
+func ParsePutVerificationResponse(rsp *http.Response) (*PutVerificationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutVerificationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OrganizationVerificationRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers PutVerificationResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers PutVerificationResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
