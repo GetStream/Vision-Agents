@@ -15,7 +15,7 @@ import 'permissions.dart';
 
 /// Talking to Juno, full screen, in the conversation that was open.
 ///
-/// Voice is started on the chat's own session, so the agent joins its call with everything
+/// Voice is started on the conversation's own session, so the agent joins its call with everything
 /// said so far, and what is said on the call is written into the same channel: the chat shows
 /// it once voice mode is closed. The chat's socket stays open the whole time and is what runs
 /// this phone's tools, so the call is followed with a second, tool-less session of its own.
@@ -23,17 +23,21 @@ import 'permissions.dart';
 /// The camera button shows Juno what the phone is pointing at, through the back lens, with a
 /// preview of it.
 class VoiceScreen extends StatefulWidget {
-  const VoiceScreen({super.key, required this.chat});
+  const VoiceScreen({super.key, required this.session});
 
-  final AgentChat chat;
+  /// The conversation's session, which the call is started on.
+  final AgentSession session;
 
   @override
   State<VoiceScreen> createState() => _VoiceScreenState();
 }
 
-class _VoiceScreenState extends State<VoiceScreen> {
+class _VoiceScreenState extends State<VoiceScreen> with WidgetsBindingObserver {
   VoiceSession? _voice;
   String? _failure;
+
+  /// The permission [_failure] says the person denied, which they give in Settings, or null.
+  Permission? _refused;
   final _subscriptions = <StreamSubscription<Object?>>[];
   StreamSubscription<video.CallState>? _participants;
 
@@ -71,8 +75,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
   String? _trouble;
 
   /// Starting voice, which leaving waits for: the agent is only taken off the call once it has
-  /// been put on it.
-  late final Future<void> _starting;
+  /// been put on it. Started again once a microphone that was denied is given.
+  late Future<void> _starting;
 
   /// The last voice mode's hang-up while it is on its way, which starting again waits for, or
   /// it would take the agent off the new call.
@@ -81,17 +85,49 @@ class _VoiceScreenState extends State<VoiceScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _starting = _start();
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_permissionsChanged());
+  }
+
+  /// Looks at the permissions again once the app is back, such as from Settings or from the
+  /// system's own question.
+  ///
+  /// One given since takes its failure away, and the microphone starts the call that waited
+  /// for it. A microphone refused since, such as at the question iOS asks when the call first
+  /// uses it, is said with the way to Settings.
+  Future<void> _permissionsChanged() async {
+    final refused = _refused;
+    if (refused != null) {
+      if (!await Permissions.has([refused]) || !mounted || _refused != refused) return;
+      setState(() {
+        _failure = null;
+        _refused = null;
+      });
+      if (refused == Permission.microphone && _voice == null) _starting = _start();
+      return;
+    }
+    if (_voice == null || _failure != null) return;
+    if (await Permissions.has([Permission.microphone]) || !mounted || _failure != null) return;
+    setState(() {
+      _failure = 'Talking to Juno needs the microphone.';
+      _refused = Permission.microphone;
+    });
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     for (final subscription in _subscriptions) {
       unawaited(subscription.cancel());
     }
     unawaited(_participants?.cancel());
     _meter?.cancel();
-    final session = widget.chat.session;
+    final session = widget.session;
     final hangingUp = _hangingUp = _starting.whenComplete(() => _hangUp(_voice, session));
     unawaited(
       hangingUp.whenComplete(() {
@@ -103,23 +139,26 @@ class _VoiceScreenState extends State<VoiceScreen> {
 
   Future<void> _start() async {
     await _hangingUp;
-    if (!await Permissions.allOf([Permission.microphone])) {
+    if (!await Permissions.allOf([Permission.microphone], needed: true)) {
       if (mounted) {
-        setState(() => _failure = 'Talking to Juno needs the microphone.');
+        setState(() {
+          _failure = 'Talking to Juno needs the microphone.';
+          _refused = Permission.microphone;
+        });
       }
       return;
     }
-    final chat = widget.chat;
+    final session = widget.session;
     try {
-      await chat.session.startVoice();
+      await session.startVoice();
       if (!mounted) return;
-      final voice = _voice = await VoiceSession.attach(Assistant.agents, chat.session.id);
+      final voice = _voice = await VoiceSession.attach(Assistant.agents, session.id);
       if (!mounted) return;
       _subscriptions
         ..add(voice.session.conversation.stream.listen(_conversationChanged))
         ..add(voice.session.events().listen(_eventReceived))
         // The card over the call shows the chat session's first question.
-        ..add(chat.session.approvals.stream.listen((_) => setState(() {})))
+        ..add(session.approvals.stream.listen((_) => setState(() {})))
         ..add(voice.state.stream.listen(_voiceChanged));
       // The call's session is attached: the controls and the status read it.
       setState(() {});
@@ -252,13 +291,21 @@ class _VoiceScreenState extends State<VoiceScreen> {
 
   Future<void> _toggleCamera(VoiceSession voice) async {
     final enabled = voice.state.value.isCameraEnabled;
-    if (!enabled && !await Permissions.allOf([Permission.camera])) {
+    if (!enabled && !await Permissions.allOf([Permission.camera], needed: true)) {
       if (mounted) {
-        setState(() => _failure = 'Showing Juno the camera needs the camera.');
+        setState(() {
+          _failure = 'Showing Juno the camera needs the camera.';
+          _refused = Permission.camera;
+        });
       }
       return;
     }
-    if (_failure != null) setState(() => _failure = null);
+    if (_failure != null) {
+      setState(() {
+        _failure = null;
+        _refused = null;
+      });
+    }
     await voice.setCameraEnabled(!enabled);
   }
 
@@ -307,7 +354,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
     final presence = _presence;
     final colors = context.streamColorScheme;
     final text = context.streamTextTheme;
-    final request = widget.chat.session.approvals.value.firstOrNull;
+    final request = widget.session.approvals.value.firstOrNull;
     final failure = _failure ?? voiceState?.failure?.toString() ?? _trouble;
 
     return Scaffold(
@@ -374,7 +421,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
                 child: _ApprovalCard(
                   key: ValueKey(request.id),
                   request: request,
-                  session: widget.chat.session,
+                  session: widget.session,
                 ),
               ),
             if (failure != null)
@@ -385,6 +432,13 @@ class _VoiceScreenState extends State<VoiceScreen> {
                   textAlign: TextAlign.center,
                   style: text.captionDefault.copyWith(color: colors.accentError),
                 ),
+              ),
+            if (_failure != null && _refused != null)
+              StreamButton(
+                onPressed: Permissions.openSettings,
+                type: .ghost,
+                size: .small,
+                child: const Text('Open settings'),
               ),
             if (voice != null)
               Padding(

@@ -6,14 +6,13 @@ import 'package:stream_core_flutter/core.dart';
 
 import 'assistant.dart';
 
-/// How the agent answers: in Markdown, or with interactive UI in A2UI or OpenUI.
+/// How the agent answers: in Markdown, or with interactive UI in A2UI.
 ///
 /// The backend keeps it, as what the agent is told, so the app has nothing to switch: its
 /// conversations show any UI it can draw, and a reply without UI as its text.
 enum ReplyFormat {
   markdown('Markdown'),
-  a2ui('A2UI'),
-  openui('OpenUI');
+  a2ui('A2UI');
 
   const ReplyFormat(this.title);
 
@@ -111,8 +110,8 @@ class _SettingsSheetState extends State<SettingsSheet> {
             padding: const EdgeInsets.all(16),
             child: Text(
               _failure ??
-                  'New conversations answer in this format. A2UI and OpenUI replies can show maps, '
-                      'places and forms.',
+                  'New conversations answer in this format. A2UI replies can show maps, places '
+                      'and forms.',
               style: text.captionDefault.copyWith(
                 color: _failure == null ? colors.textSecondary : colors.accentError,
               ),

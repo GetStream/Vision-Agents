@@ -9,7 +9,9 @@ void main() {
   group('ReplyFormat', () {
     test('current reads the format the backend says the agent answers in', () async {
       for (final format in ReplyFormat.values) {
-        final client = MockClient((_) async => http.Response(jsonEncode({'format': format.name}), 200));
+        final client = MockClient(
+          (_) async => http.Response(jsonEncode({'format': format.name}), 200),
+        );
         final read = await http.runWithClient(ReplyFormat.current, () => client);
         expect(read, format);
       }
@@ -21,13 +23,16 @@ void main() {
         sent = '${request.method} ${request.url.path} ${request.body}';
         return http.Response(request.body, 200);
       });
-      await http.runWithClient(ReplyFormat.openui.choose, () => client);
-      expect(sent, 'PUT /reply-format ${jsonEncode({'format': 'openui'})}');
+      await http.runWithClient(ReplyFormat.a2ui.choose, () => client);
+      expect(sent, 'PUT /reply-format ${jsonEncode({'format': 'a2ui'})}');
     });
 
     test('fails with what the backend said when it refuses', () async {
       final client = MockClient((_) async => http.Response('no such format', 400));
-      expect(http.runWithClient(ReplyFormat.markdown.choose, () => client), throwsA(isA<Exception>()));
+      expect(
+        http.runWithClient(ReplyFormat.markdown.choose, () => client),
+        throwsA(isA<Exception>()),
+      );
     });
   });
 }
