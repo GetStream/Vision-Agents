@@ -384,7 +384,7 @@ func (s *ConnectionToolsSuite) TestAValidateTheProviderRefusesLogsItsStatusAndMe
 			s.Contains(lines[0], "level=WARN")
 			s.Contains(lines[0], " connector="+connection.ConnectorID+" ")
 			s.Contains(lines[0], " provider_status="+strconv.Itoa(status)+" ")
-			s.Contains(lines[0], `echoed Bearer [redacted] `, "the provider's own words")
+			s.Contains(lines[0], `echoed [redacted] `, "the provider's own words")
 			s.NotContains(lines[0], strings.Repeat("x", maxStoredErrorBytes), "cut to 1 KiB")
 			s.False(strings.Contains(s.logged.String(), token), "no line holds the token")
 		})
@@ -408,7 +408,7 @@ func (s *ConnectionToolsSuite) TestAValidateLogsNoTokenTheProviderEchoedJSONEsca
 
 			s.Equal(validationNeedsReauthorization, string(validation.Status))
 			s.Equal(codeCredentialRejected, validation.Code)
-			s.Contains(s.refusedLine(id), "echoed Bearer [redacted]", "the provider's own words")
+			s.Contains(s.refusedLine(id), "echoed [redacted]", "the provider's own words")
 			// s.False on strings.Contains, not s.NotContains, so a failure never prints the token.
 			s.False(strings.Contains(s.logged.String(), start), "no line holds the token, escaped or not")
 		})

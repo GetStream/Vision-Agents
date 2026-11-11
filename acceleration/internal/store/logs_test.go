@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/getsentry/sentry-go"
+	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
@@ -684,6 +685,54 @@ func TestRedactSentryEventLeavesAnEventWithNoKeyAsItWas(t *testing.T) {
 	}
 	if event.Tags["usage_alert"] != "sandbox_mismatch" || event.Tags["source"] != "router" || len(event.Tags) != 2 {
 		t.Fatalf("the tags changed: %+v", event.Tags)
+	}
+}
+
+func TestRedactSentryEventMasksANumber(t *testing.T) {
+	event := RedactSentryEvent(&sentry.Event{
+		Message:     "call from +15550001101 failed",
+		Exception:   []sentry.Exception{{Value: "dial +15550001101: busy"}},
+		Breadcrumbs: []*sentry.Breadcrumb{{Message: "ringing +15550001101"}},
+		Tags:        map[string]string{"line": "+15550001101", "caller": "5550001101"},
+		Contexts: map[string]sentry.Context{"call": {
+			"caller": "5550001101",
+			"to":     []any{"5550001101"},
+			// Its first number changes its JSON, so it is decoded, and its second is masked under
+			// the key it was decoded under.
+			"from":   []string{"+15550001101", "5550001101"},
+			"nested": map[string]any{"error": "no answer from +15550001101"},
+			"typed":  map[string][]string{"to": {"+15550001101"}},
+		}},
+	}, nil)
+	sent, err := json.Marshal(event)
+	require.NoError(t, err)
+	require.NotContains(t, string(sent), "5550001101")
+	require.Equal(t, "call from +1•••01 failed", event.Message)
+	require.Equal(t, "dial +1•••01: busy", event.Exception[0].Value)
+	require.Equal(t, "ringing +1•••01", event.Breadcrumbs[0].Message)
+	require.Equal(t, "+1•••01", event.Tags["line"])
+	context := event.Contexts["call"]
+	require.Equal(t, "•••01", event.Tags["caller"])
+	require.Equal(t, "•••01", context["caller"])
+	require.Equal(t, []any{"•••01"}, context["to"])
+	require.Equal(t, []any{"+1•••01", "•••01"}, context["from"])
+	require.Equal(t, "no answer from +1•••01", context["nested"].(map[string]any)["error"])
+}
+
+func TestRedactSentryEventMasksANumberValueAndRedactsTheValuesBesideIt(t *testing.T) {
+	// The order a map is walked in is random, so each event has a new chance to walk the
+	// number before the credential.
+	key := rand.Text()
+	for range 20 {
+		event := RedactSentryEvent(&sentry.Event{Contexts: map[string]sentry.Context{"call": {
+			"caller": int64(15550001101),
+			"nested": map[string]any{"error": map[string]any{"text": "Authorization: Bearer sk-test-" + key}},
+		}}}, nil)
+		sent, err := json.Marshal(event.Contexts)
+		require.NoError(t, err)
+		require.NotContains(t, string(sent), key)
+		require.NotContains(t, string(sent), "15550001101")
+		require.Equal(t, "•••01", event.Contexts["call"]["caller"])
 	}
 }
 

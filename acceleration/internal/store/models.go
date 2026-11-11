@@ -561,6 +561,10 @@ type AgentConfig struct {
 	// is still the first choice; nil falls back only among LLM's own candidates.
 	LLMFallbacks []string `bun:"llm_fallbacks,type:jsonb"`
 
+	// Agents are the app's other text agents this one may hand work to, each offered to its
+	// model as a tool. Only a text agent has them, and none of them has any of its own.
+	Agents []ChildAgent `bun:"agents,type:jsonb"`
+
 	// GreetingMode is GreetingExact, said word for word, or GreetingVariation, which the
 	// model rewords on every call.
 	GreetingMode string `bun:"greeting_mode,notnull"`
@@ -656,6 +660,19 @@ type AgentConfig struct {
 // cards and their summaries: on (EpisodeCards) or record (EpisodeCardsRecord).
 func (c AgentConfig) WritesCards() bool {
 	return c.EpisodeCards || c.EpisodeCardsRecord
+}
+
+// ChildAgent is another of the app's text agents a text agent may hand work to, as it is
+// stored in agent_configs.agents.
+type ChildAgent struct {
+	// Config is the name of the agent config the child runs from, in the same app.
+	Config string `json:"config"`
+	// Tool is the name the parent's model calls the child by.
+	Tool string `json:"tool"`
+	// Description is what the parent's model is told the child does.
+	Description string `json:"description,omitempty"`
+	// TimeoutMs is how long one call to the child may take. Zero is the default.
+	TimeoutMs int `json:"timeout_ms,omitempty"`
 }
 
 // ConnectorBinding is one connector an agent config may call tools of, as it is stored in
@@ -1905,8 +1922,11 @@ type AgentSession struct {
 	// from its row keeps them; one from before they were kept has no key.
 	APIKey          string   `bun:"api_key,notnull"`
 	UsageCategories []string `bun:"usage_categories,array,nullzero"`
-	Title           string   `bun:"title,notnull"`
-	Description     string   `bun:"description,notnull"`
+	// Team is the team in UsageCategories, a column of its own so a list narrowed to one team
+	// reads an index. Empty for a session counted under none. It never changes.
+	Team        string `bun:"team,notnull"`
+	Title       string `bun:"title,notnull"`
+	Description string `bun:"description,notnull"`
 	// Project is what the conversation belongs to, a column as well as a cost tag so a
 	// list grouped by project needs no JSON unpacking.
 	Project string `bun:"project,notnull"`
@@ -1943,6 +1963,13 @@ type AgentSession struct {
 	// ended before reasons were kept.
 	EndReason      string     `bun:"end_reason,notnull"`
 	LastResponseAt *time.Time `bun:"last_response_at"`
+	// PinnedAt is when the session was pinned, nil for one that is not. Pinning is not a
+	// change to the conversation, so it moves neither UpdatedAt nor LastResponseAt.
+	PinnedAt *time.Time `bun:"pinned_at"`
+	// ReviewScore is the score the review of the session's call gave it, from 1 to 5, kept
+	// here as well so a list filters and sorts on it without joining calls. Nil until the
+	// review is written, and for a session nobody spoke in.
+	ReviewScore *int `bun:"review_score"`
 	// Rank is how well a search matched, zero outside a search.
 	Rank float32 `bun:"rank,scanonly"`
 }
@@ -1954,11 +1981,16 @@ type SessionConnectorSelection struct {
 	ConnectionID string `json:"connection_id"`
 }
 
-// SessionPosition is the last session of a page, by every key the list is sorted on.
+// SessionPosition is the last session of a page, by every key any order sorts on, so one
+// position serves whichever order the list has.
 type SessionPosition struct {
-	UpdatedAt time.Time `json:"u"`
-	ID        string    `json:"id"`
-	Rank      float32   `json:"r,omitempty"`
+	// LastMessageAt is when the agent last answered, or when the session began.
+	LastMessageAt time.Time `json:"t"`
+	ID            string    `json:"id"`
+	Rank          float32   `json:"r,omitempty"`
+	Pinned        bool      `json:"p,omitempty"`
+	// ReviewScore is nil for a session nobody reviewed, which sorts after every score.
+	ReviewScore *int `json:"v,omitempty"`
 }
 
 // ResponsePosition is the last turn of a page.
@@ -1992,6 +2024,8 @@ type SessionFilter struct {
 	CallerKinds []string
 	// State is SessionRunning or SessionClosed.
 	State string
+	// Team is the team the session's usage is counted under.
+	Team string
 	// Custom matches sessions whose custom object contains every one of these pairs, which
 	// is what makes custom worth writing: a caller that labelled a session can find it
 	// again by the label.
@@ -1999,8 +2033,15 @@ type SessionFilter struct {
 	// After and Before bound when the session started, After inclusive and Before not.
 	After  time.Time
 	Before time.Time
-	Limit  int
-	// Cursor starts the page after this session. Nil is the first page.
+	// Where is the filter the request spelled out, with its $and and $or. Nil admits every
+	// session. It is ANDed with every field above, so nothing in it reaches past them: an
+	// end user's UserID and CallerKinds hold whatever the expression says.
+	Where *SessionExpr
+	// Order is what the list is sorted by. The zero value is the most recent message first.
+	// A search is always sorted by relevance, whatever is here.
+	Order SessionOrder
+	Limit int
+	// Cursor starts the page after this session, in Order. Nil is the first page.
 	Cursor *SessionPosition
 }
 

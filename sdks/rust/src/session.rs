@@ -13,7 +13,7 @@ use crate::error::{Error, Result};
 use crate::responses::Responses;
 use crate::socket::{Frame, Incoming, SocketReceiver, SocketSender};
 use crate::stream::{Call, DEFAULT_CALL_TYPE};
-use crate::tool_call::{Holds, Line, ToolCall, to_run};
+use crate::tool_call::{Holds, Line, ToolCallContext, to_run};
 use crate::tools::Tools;
 use crate::types;
 
@@ -289,11 +289,30 @@ impl Session {
         self.command(json!({"type": "interrupt"})).await
     }
 
-    /// Changes this session: its title, description, custom labels, models or voice, from
-    /// the next turn. A field left `None` is left as it is. Returns the session
+    /// Changes this session: its title, description, custom labels, pin, models or voice,
+    /// from the next turn. A field left `None` is left as it is. Returns the session
     /// as it now is.
     pub async fn update(&self, update: &types::UpdateSessionRequest) -> Result<types::Session> {
         self.client.update_session(self.id(), update).await
+    }
+
+    /// Pins this conversation and returns it as it now is, with `pinned_at` set. A pin does
+    /// not move it in the order of last answers.
+    pub async fn pin(&self) -> Result<types::Session> {
+        self.pinned(true).await
+    }
+
+    /// Unpins this conversation and returns it as it now is.
+    pub async fn unpin(&self) -> Result<types::Session> {
+        self.pinned(false).await
+    }
+
+    async fn pinned(&self, pinned: bool) -> Result<types::Session> {
+        let update = types::UpdateSessionRequest {
+            pinned: Some(pinned),
+            ..Default::default()
+        };
+        self.client.update_session(self.id(), &update).await
     }
 
     /// Deletes this conversation: it is stopped, and its turns and what it remembered are
@@ -489,7 +508,7 @@ fn run_tool(frame: Frame, sender: &SocketSender, shared: &Arc<Shared>, tools: &T
         holds: shared.holds.clone(),
         key: id.clone(),
     };
-    let tool_call_context = ToolCall::of(&frame, &shared.session_id, line);
+    let tool_call_context = ToolCallContext::of(&frame, &shared.session_id, line);
     let (sender, shared_for_task, tools) = (sender.clone(), shared.clone(), tools.clone());
     let key = id.clone();
     let task = tokio::spawn(async move {

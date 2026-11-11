@@ -59,11 +59,13 @@ final class Session {
     this.title = '',
     this.description = '',
     this.projectId = '',
+    this.team = '',
     this.custom = const {},
     this.incognito = false,
     this.forkedFrom = '',
     this.closedAt,
     this.lastResponseAt,
+    this.pinnedAt,
   });
 
   /// What the router holds this session by. It addresses the session and its socket, and it
@@ -106,6 +108,9 @@ final class Session {
   final String description;
   final String projectId;
 
+  /// The team the session's usage is counted under. Empty for none.
+  final String team;
+
   /// The caller's own, handed back untouched.
   final Map<String, Object?> custom;
 
@@ -117,6 +122,9 @@ final class Session {
   final DateTime createdAt;
   final DateTime? closedAt;
   final DateTime? lastResponseAt;
+
+  /// When the user pinned this conversation, null for one that is not pinned.
+  final DateTime? pinnedAt;
 
   @override
   bool operator ==(Object other) =>
@@ -475,69 +483,31 @@ final class ForkOptions {
   final ModelOverwrites? modelOverwrites;
 }
 
-/// Which conversations to list.
-final class SessionQuery {
-  const SessionQuery({
-    this.agent,
-    this.agentId,
-    this.projectId,
-    this.userId,
-    this.modality,
-    this.state,
-    this.limit,
-    this.cursor,
-    this.createdSince,
-    this.createdBefore,
-    this.custom = const {},
-    this.sort,
-  });
+/// One key to order conversations by.
+///
+/// [field] is the router's own name for it: `last_message_at`, when the agent last answered;
+/// `pinned`, the pinned ones first, which comes first and may be followed by
+/// `last_message_at`; or `relevance`, best match first, which only sorts a query whose filter
+/// has `text`. Ordering by review score is a backend's, not a device's, and is refused before
+/// anything is sent.
+final class SessionSort {
+  const SessionSort({required this.field, this.direction = -1});
 
-  /// Only those opened against this agent name.
-  final String? agent;
+  /// `last_message_at`, `pinned` or `relevance`.
+  final String field;
 
-  /// Only those created with this agent id.
-  final String? agentId;
+  /// -1 is descending and 1 ascending. `pinned` and `relevance` only sort descending.
+  final int direction;
 
-  /// Only this project's. A search covers every project, so the router refuses one with it.
-  final String? projectId;
+  @override
+  bool operator ==(Object other) =>
+      other is SessionSort && other.field == field && other.direction == direction;
 
-  /// Only this user's. A device is narrowed to its own whatever it asks for.
-  final String? userId;
+  @override
+  int get hashCode => Object.hash(field, direction);
 
-  /// Only those the user took part in this way.
-  final SessionModality? modality;
-
-  /// Only the running ones, or only the ones that ended. Omitted is both.
-  final SessionState? state;
-
-  /// Up to 200. Omitted is 25.
-  final int? limit;
-
-  /// The [ListPage.nextCursor] of the page before, asked with the same filters. Omitted is
-  /// the first page.
-  final String? cursor;
-
-  /// Only those started at or after this.
-  final DateTime? createdSince;
-
-  /// Only those started before this.
-  final DateTime? createdBefore;
-
-  /// Only those whose [SessionOptions.custom] labels hold every one of these pairs.
-  final Map<String, String> custom;
-
-  /// The order. Omitted is most recently active first, or best match first for a search.
-  final SessionSort? sort;
-}
-
-/// An order to list conversations in. Every one is descending: the router offers no ascending
-/// one.
-enum SessionSort {
-  /// Most recently active first.
-  updatedAt,
-
-  /// Best match first, which only sorts a search.
-  relevance,
+  @override
+  String toString() => 'SessionSort($field, $direction)';
 }
 
 /// One page of a list, and where the next one starts.

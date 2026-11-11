@@ -309,12 +309,51 @@ for event := range session.Events() {
 `Command` is the last question `Responses.Create` asked. A call's events are not reconnected:
 the call ends with the router holding it, and `Events()` closes as before.
 
-Old conversations are listed most recently updated first, or found by phrase, best match
-first:
+Old conversations are listed by when the agent last answered, newest first, or found by
+phrase, best match first. The filter is written in the shape the router reads, as a
+`client.Filter` (a `map[string]any`), and is always narrowed to the agent asked:
 
 ```go
-recent, _ := docs.Sessions.Query(ctx, client.Query{ProjectID: "docs", Limit: 20})
-found, _ := docs.Sessions.Search(ctx, "sendbird comparison", client.Query{})
+recent, _ := docs.Sessions.Query(ctx, client.Query{
+	Filter: client.Filter{"project_id": "docs"},
+	Limit:  20,
+})
+either, _ := docs.Sessions.Query(ctx, client.Query{
+	Filter: client.Filter{"$or": []client.Filter{
+		{"project_id": "docs"},
+		{"project_id": "blog"},
+	}},
+})
+pinnedFirst, _ := docs.Sessions.Query(ctx, client.Query{
+	Sort: []client.Sort{{Field: client.SortPinned}, {Field: client.SortLastMessageAt, Direction: -1}},
+})
+poor, _ := docs.Sessions.Query(ctx, client.Query{
+	Filter: client.Filter{"user_id": "jean", "review_score": client.Filter{"$lte": 2}},
+	Sort:   []client.Sort{{Field: client.SortReviewScore, Direction: 1}},
+})
+found, _ := docs.Sessions.Search(ctx, "sendbird comparison", client.Query{
+	Filter: client.Filter{"project_id": "docs"},
+})
+if recent.HasMore {
+	next, _ := docs.Sessions.Query(ctx, client.Query{
+		Filter: client.Filter{"project_id": "docs"}, Limit: 20, Cursor: *recent.NextCursor,
+	})
+}
+```
+
+The fields are `project_id` (a string, `{"$eq": s}` or `{"$in": [...]}`), `review_score` (a
+number 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt`, `$lte`), `user_id` and `text`, combined with
+`$and` and `$or`; the router refuses any other with a 400 that names it. `Search` writes
+`text` itself and takes no `Sort`. A sort is `client.SortLastMessageAt` either way,
+`client.SortPinned` alone or followed by `client.SortLastMessageAt`, or
+`client.SortReviewScore` either way; a cursor only continues the sort it came from.
+
+A session is pinned and unpinned by id or on the session held, and says when in `PinnedAt`:
+
+```go
+pinned, _ := docs.Sessions.Pin(ctx, id) // pinned.PinnedAt is set
+session.Unpin(ctx)
+docs.Sessions.Update(ctx, id, client.SessionUpdate{Pinned: &yes}) // with other changes
 ```
 
 Every text conversation is kept in a Stream Chat channel, `session.ConversationID()`.

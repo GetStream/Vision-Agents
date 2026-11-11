@@ -89,10 +89,11 @@ a `ToolArgumentsError` naming each one and why, which the model is told so it ca
 `parameters_schema=` still takes a JSON Schema as it is, for a function that reads its own
 arguments.
 
-A function can say how the backend treats its calls, and read the call it is running for:
+A function can say how the backend treats its calls, and take the call it is running for as
+its first argument, annotated `ToolCallContext`. The model is not told about that argument:
 
 ```python
-from vision_agents.core.llm import get_tool_call_context
+from vision_agents.core.llm import ToolCallContext
 
 
 @agent.llm.register_function(
@@ -100,8 +101,7 @@ from vision_agents.core.llm import get_tool_call_context
     timeout=20,
     needs_approval="Book flight {flight_id}?",
 )
-async def book_flight(flight_id: str) -> str:
-    tool_call_context = get_tool_call_context()
+async def book_flight(tool_call_context: ToolCallContext, flight_id: str) -> str:
     await tool_call_context.update("checking seats")
     await tool_call_context.disallow_interruptions()
     return await bookings.book(flight_id, user=tool_call_context.user.id, key=tool_call_context.id)
@@ -113,18 +113,18 @@ async def book_flight(flight_id: str) -> str:
   `tool_timeout`. A call that takes longer fails with a `TimeoutError`.
 - `needs_approval` is a question the caller answers before each call runs, where each
   `{name}` is one of the function's arguments. On a voice call the agent asks it out loud
-  and waits 15 seconds for a yes; `get_tool_call_context().approved` is then true. In writing the
+  and waits 15 seconds for a yes; `tool_call_context.approved` is then true. In writing the
   question goes to the app, which asks. A `{name}` the function does not take is refused
   when it is registered.
 
-`get_tool_call_context()` is the call being answered: its `id`, which a call sent again keeps, so it
+`tool_call_context` is the call being answered: its `id`, which a call sent again keeps, so it
 is the key to make a side effect happen once; `session_id`, `turn_id`, the `user` whose turn
 asked, and the `conversation`. `update(text)` says how the call is going: a voice agent
 tells the caller in its own words once nobody is talking. `say(text)` has it say `text` as
 written, which a speech-to-speech model may paraphrase. `disallow_interruptions()` keeps the
 call going from then on, for a write that must not stop halfway, and raises `CallNotHeld`
-when the call had already been stopped. Outside a call, as in a unit test of the function,
-it is an empty call whose methods do nothing; `using_tool_call_context(ToolCall(...))` sets one.
+when the call had already been stopped. Under a model that does not say, it is an empty
+call whose methods do nothing; a unit test of the function passes it a `ToolCallContext(...)`.
 
 A call the router addresses to another watcher of the session (`run: false`), or for a
 function this process does not hold, is left for whoever runs it.
@@ -291,11 +291,28 @@ await session.close()  # stops it; what it recorded and remembered is kept
 
 session = await docs.sessions.resume(session.id)  # carry on where it left off
 
-page = await docs.sessions.query(stream.Query(user_id="u1", state="live"))
+# A filter is the router's own, written as a dict: the keys of one dict are ANDed, and
+# $and and $or nest. A query from an agent is always narrowed to that agent.
+either = {"$or": [{"project_id": "support"}, {"project_id": "sales"}]}
+page = await docs.sessions.query(either, limit=50)
 while page.has_more:
-    page = await docs.sessions.query(
-        stream.Query(user_id="u1", state="live", cursor=page.next_cursor)
-    )
+    page = await docs.sessions.query(either, limit=50, cursor=page.next_cursor)
+
+pinned_first = await docs.sessions.query(
+    filter={"project_id": {"$in": ["support", "sales"]}, "user_id": "u1"},
+    sort=[
+        {"field": "pinned", "direction": -1},
+        {"field": "last_message_at", "direction": -1},
+    ],
+)
+poorly_reviewed = await docs.sessions.query(
+    filter={"review_score": {"$lte": 2}},
+    sort=[{"field": "review_score", "direction": 1}],
+)
+found = await docs.sessions.search("refund policy", {"project_id": "support"})
+
+await session.pin()  # session.unpin() undoes it; a row's pinned_at says when
+await docs.sessions.pin(session.id)  # by id, an ended one too
 
 await docs.sessions.update(session.id, title="Pricing, again")  # an ended one too
 await docs.sessions.delete_memories(session.id)
@@ -408,7 +425,7 @@ await dispatch.run()
 
 `tool_timeout` is how long the router gives one call, in seconds; zero takes its default
 of 30. A hosted function takes the same `interruptible`, `timeout` and `needs_approval` as
-`register_function`, reads its call with `get_tool_call_context()`, and is cancelled when the router
+`register_function`, can take its call as its first argument, and is cancelled when the router
 gives up on it. The worker declares its tools again whenever it reconnects, and `run` raises `RouterError` if the
 router refuses them.
 

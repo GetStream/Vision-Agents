@@ -25,12 +25,14 @@ Session sessionOf(api.Session wire) => Session(
   title: wire.title ?? '',
   description: wire.description ?? '',
   projectId: wire.projectId ?? '',
+  team: wire.team ?? '',
   custom: wire.custom ?? const {},
   incognito: wire.incognito ?? false,
   forkedFrom: wire.forkedFrom ?? '',
   createdAt: wire.createdAt,
   closedAt: wire.closedAt,
   lastResponseAt: wire.lastResponseAt,
+  pinnedAt: wire.pinnedAt,
 );
 
 AgentResponse responseOf(api.AgentResponse wire) => AgentResponse(

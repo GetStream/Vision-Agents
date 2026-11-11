@@ -13,7 +13,9 @@ pub struct Account {
     pub balance_warning_micros: i64,
     ///Whose threshold it is: the tier's, the one Stream set for this organization, or the organization policy's balance_warning_micros, which wins over both.
     pub balance_warning_source: AccountBalanceWarningSource,
-    ///Every credit entry summed: top-ups, grants, refunds and adjustments.
+    ///The organization has credit that is not trial credit: a top-up, net of its refunds and disputes, or credit from Stream's staff. Until it has, buying numbers and registering for 10DLC are refused with top_up_required.
+    pub funded: bool,
+    ///Every credit entry summed: top-ups, grants, trial credit, refunds and adjustments.
     pub granted_micros: i64,
     ///What Stream allows the organization: its tier's settings, with those Stream set for this organization laid over them.
     pub limits: Limits,
@@ -30,6 +32,8 @@ pub struct Account {
     pub status: AccountStatus,
     ///The tier the organization is billed on.
     pub tier: ::std::string::String,
+    ///What of granted_micros is the trial credit Stream gave the organization to try it with.
+    pub trial_micros: i64,
 }
 ///Where balance_micros stands: exhausted at or below 0, low at or below the threshold.
 #[derive(
@@ -474,6 +478,9 @@ pub struct AgentChatChannel {
 ///`AgentConfig`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct AgentConfig {
+    ///The app's other text agents this one may hand work to, each as a tool. Absent when there are none.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub agents: ::std::option::Option<::std::vec::Vec<ChildAgent>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub calls: ::std::option::Option<AgentCalls>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -567,6 +574,9 @@ pub struct AgentConfig {
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct AgentConfigPatch {
+    ///Replaces the list whole. An empty list removes it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub agents: ::std::option::Option<::std::vec::Vec<ChildAgent>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub calls: ::std::option::Option<AgentCalls>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -682,6 +692,9 @@ impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json:
 ///`AgentConfigRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct AgentConfigRequest {
+    ///The app's other text agents this one may hand work to, each offered to its model as a tool that takes one string, input, and answers with what that agent said last. Several called in one reply run at once, at most 8 at a time. Each runs as an incognito run of its own, on its own llm, instructions, connectors and sandbox, and its spend is added to the parent run's usage. Only a text agent has them, and an agent named here must be a text agent with no agents of its own and not this one. Omitted or null on an update, the list stored stays as it is; an empty list removes it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub agents: ::std::option::Option<::std::vec::Vec<ChildAgent>>,
     ///The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and press are on and end_call is off. On an update, a tool left out keeps its stored settings and a tool sent replaces its settings whole.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub calls: ::std::option::Option<AgentCalls>,
@@ -3074,6 +3087,20 @@ pub struct ChatTokenRequest {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub user_name: ::std::option::Option<::std::string::String>,
 }
+///Another of the app's text agents a text agent may hand work to, offered to its model as a tool.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ChildAgent {
+    ///The agent config to hand work to: one of the app's text agents, by name or id. It is stored, and read back, by name.
+    pub config: ::std::string::String,
+    ///What the model is told the agent does, which is the whole of how it decides when to call it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub description: ::std::option::Option<::std::string::String>,
+    ///How long one call may take, two minutes when left out. A call never outlasts the run that made it: it gets this or what is left of the run, whichever is less. A call that runs out of time, or whose agent fails, is answered to the model as a failed tool call, and the run goes on.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub timeout_ms: ::std::option::Option<i64>,
+    ///The name the model calls it by, unique among the config's agents.
+    pub tool: ::std::string::String,
+}
 ///`ClaimGuestRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct ClaimGuestRequest {
@@ -4910,6 +4937,8 @@ pub enum CreditEntryKind {
     TopUp,
     #[serde(rename = "grant")]
     Grant,
+    #[serde(rename = "trial")]
+    Trial,
     #[serde(rename = "refund")]
     Refund,
     #[serde(rename = "dispute")]
@@ -4927,6 +4956,7 @@ impl ::std::fmt::Display for CreditEntryKind {
         match *self {
             Self::TopUp => f.write_str("top_up"),
             Self::Grant => f.write_str("grant"),
+            Self::Trial => f.write_str("trial"),
             Self::Refund => f.write_str("refund"),
             Self::Dispute => f.write_str("dispute"),
             Self::DisputeReversal => f.write_str("dispute_reversal"),
@@ -4941,6 +4971,7 @@ impl ::std::str::FromStr for CreditEntryKind {
         match value {
             "top_up" => Ok(Self::TopUp),
             "grant" => Ok(Self::Grant),
+            "trial" => Ok(Self::Trial),
             "refund" => Ok(Self::Refund),
             "dispute" => Ok(Self::Dispute),
             "dispute_reversal" => Ok(Self::DisputeReversal),
@@ -5701,6 +5732,18 @@ pub enum Equals {
     Object {
         #[serde(rename = "$eq")]
         eq: ::std::string::String,
+    },
+}
+///Matches one value exactly, written "value" or {"$eq": "value"}, or any of up to 50 values, written {"$in": ["a", "b"]}. An object holds one of $eq and $in.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum EqualsOrIn {
+    String(::std::string::String),
+    Object {
+        #[serde(rename = "$eq", skip_serializing_if = "::std::option::Option::is_none")]
+        eq: ::std::option::Option<::std::string::String>,
+        #[serde(rename = "$in", skip_serializing_if = "::std::option::Option::is_none")]
+        in_: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     },
 }
 ///`ErrorDetail`
@@ -9705,6 +9748,35 @@ pub struct ReviewQueue {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub next_cursor: ::std::option::Option<::std::string::String>,
 }
+///Matches a review score from 1 to 5: a number, which is short for $eq, or an object of $eq, $gt, $gte, $lt and $lte, every one of which has to hold.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum ReviewScoreMatch {
+    Integer(i64),
+    Object {
+        #[serde(rename = "$eq", skip_serializing_if = "::std::option::Option::is_none")]
+        eq: ::std::option::Option<i64>,
+        #[serde(rename = "$gt", skip_serializing_if = "::std::option::Option::is_none")]
+        gt: ::std::option::Option<i64>,
+        #[serde(
+            rename = "$gte",
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        gte: ::std::option::Option<i64>,
+        #[serde(rename = "$lt", skip_serializing_if = "::std::option::Option::is_none")]
+        lt: ::std::option::Option<i64>,
+        #[serde(
+            rename = "$lte",
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        lte: ::std::option::Option<i64>,
+    },
+}
+impl ::std::convert::From<i64> for ReviewScoreMatch {
+    fn from(value: i64) -> Self {
+        Self::Integer(value)
+    }
+}
 ///`ReviewUseCaseRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct ReviewUseCaseRequest {
@@ -9783,13 +9855,19 @@ pub struct RouterConfigRequest {
 ///`Run`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct Run {
+    ///What the runs of the child agents it called spent, by the tool each was called by. Absent when it called none.
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub children: ::std::collections::BTreeMap<::std::string::String, CallUsage>,
     ///The last thing the agent said.
     pub final_text: ::std::string::String,
     ///The provider/model routing picked to answer.
     pub model_route: ::std::string::String,
     ///The session the run held. It ended with the run, and being incognito, it cannot be read back.
     pub session_id: ::std::string::String,
-    ///What the run's model calls spent.
+    ///What the run's model calls spent, the runs of the child agents it called included.
     pub usage: CallUsage,
 }
 ///Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
@@ -10495,6 +10573,9 @@ pub struct Session {
     pub mode: ::std::option::Option<SessionMode>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub model_overwrites: ::std::option::Option<ModelOverwrites>,
+    ///When the session was pinned. Absent for one that is not pinned.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub pinned_at: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub project_id: ::std::option::Option<::std::string::String>,
     ///Why the review scored the conversation as it did. Read by a backend only.
@@ -10516,6 +10597,9 @@ pub struct Session {
     ///What a model made of the conversation, written a few seconds after it ended. A session nobody spoke in has none. Read by a backend only.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub summary: ::std::option::Option<::std::string::String>,
+    ///The team the session's usage is counted under: the team the caller's token was signed for, else the one the session was opened with, else its agent config's tags: team. Absent for a session counted under none.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub team: ::std::option::Option<::std::string::String>,
     ///The conversation is held in writing rather than on a call.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub text: ::std::option::Option<bool>,
@@ -10765,40 +10849,32 @@ impl ::std::convert::TryFrom<::std::string::String> for SessionEndStage {
         value.parse()
     }
 }
-///Which sessions to list. A field not listed here is refused rather than ignored.
+///Which sessions to list. The keys of one object are ANDed. $and and $or each take 1 to 10 filters and nest up to 3 deep; a whole filter holds at most 30 field conditions. An empty filter lists every session the caller may see. Any other key, and any other operator, is refused with a 400 that names it and lists the fields that can be filtered.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct SessionFilter {
     ///The agent name the session was opened against.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub agent: ::std::option::Option<Equals>,
-    ///The agent id the session was created with, which names its transcript channel.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub agent_id: ::std::option::Option<Equals>,
-    ///The agent config the session ran under. Empty for a session that spelled itself out.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub config_id: ::std::option::Option<Equals>,
-    ///When the session started.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub created_at: ::std::option::Option<TimeRange>,
-    ///The session's custom object holds every one of these pairs, which is how a caller finds again what it labelled.
+    ///Every one of these filters holds.
     #[serde(
-        default,
-        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+        rename = "$and",
+        skip_serializing_if = "::std::option::Option::is_none"
     )]
-    pub custom: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
-    ///text, voice or video: how the user took part.
+    pub and: ::std::option::Option<::std::vec::Vec<SessionFilter>>,
+    ///At least one of these filters holds. It chooses among the sessions the caller may see and never adds to them. text and user_id are refused inside it.
+    #[serde(rename = "$or", skip_serializing_if = "::std::option::Option::is_none")]
+    pub or: ::std::option::Option<::std::vec::Vec<SessionFilter>>,
+    ///The project the session belongs to.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub modality: ::std::option::Option<Equals>,
+    pub project_id: ::std::option::Option<EqualsOrIn>,
+    ///The score the review gave the conversation. A session with no review matches no condition on it. Only a server-side caller may use it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub project_id: ::std::option::Option<Equals>,
-    ///live or ended, as each session reports its state.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub state: ::std::option::Option<Equals>,
-    ///Full text over the title, description, project and agent name. Sorted by relevance, and not combined with project_id.
+    pub review_score: ::std::option::Option<ReviewScoreMatch>,
+    ///Full text over the title, description, project and agent name, sorted by relevance. Once per filter, at its top level or in a top-level $and, and never inside $or.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub text: ::std::option::Option<TextMatch>,
-    ///Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for.
+    ///Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for. Only at the top level of the filter or in a top-level $and.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub user_id: ::std::option::Option<Equals>,
 }
@@ -10954,7 +11030,7 @@ pub struct SessionQuery {
     ///Up to 200. Omitted is 25.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub limit: ::std::option::Option<i64>,
-    ///Omitted is updated_at, or relevance for a text search.
+    ///Omitted is last_message_at descending, or relevance for a text search. One of: last_message_at; pinned, then last_message_at, which lists the pinned sessions first; review_score, for a server-side caller; relevance, for a text search and nothing else.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub sort: ::std::option::Option<::std::vec::Vec<SessionSort>>,
 }
@@ -11149,12 +11225,12 @@ impl ::std::convert::TryFrom<::std::string::String> for SessionSettingsRequestVe
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct SessionSort {
-    ///-1, descending. Ascending is not offered.
+    ///-1 is descending and 1 ascending. pinned and relevance only sort descending.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub direction: ::std::option::Option<SessionSortDirection>,
     pub field: SessionSortField,
 }
-///-1, descending. Ascending is not offered.
+///-1 is descending and 1 ascending. pinned and relevance only sort descending.
 #[derive(::serde::Serialize, Clone, Debug, PartialEq)]
 #[serde(transparent)]
 pub struct SessionSortDirection(i64);
@@ -11172,7 +11248,7 @@ impl ::std::convert::From<SessionSortDirection> for i64 {
 impl ::std::convert::TryFrom<i64> for SessionSortDirection {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![-1_i64].contains(&value) {
+        if ![-1_i64, 1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -11188,13 +11264,17 @@ impl<'de> ::serde::Deserialize<'de> for SessionSortDirection {
             .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
     }
 }
-///updated_at is the most recently active first. relevance is the best match first, and only sorts a text search.
+///last_message_at is when the agent last answered, or when the session began if it has not. pinned lists the pinned sessions first: it sorts descending only, comes first, and is followed by last_message_at, descending when left out. review_score is the review's score, sessions without one last either way, and is a server-side caller's only. relevance is the best match first, and is the one sort of a text search.
 #[derive(
     ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SessionSortField {
-    #[serde(rename = "updated_at")]
-    UpdatedAt,
+    #[serde(rename = "last_message_at")]
+    LastMessageAt,
+    #[serde(rename = "pinned")]
+    Pinned,
+    #[serde(rename = "review_score")]
+    ReviewScore,
     #[serde(rename = "relevance")]
     Relevance,
     /// A value this SDK's spec does not list, as the router sent it.
@@ -11204,7 +11284,9 @@ pub enum SessionSortField {
 impl ::std::fmt::Display for SessionSortField {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
-            Self::UpdatedAt => f.write_str("updated_at"),
+            Self::LastMessageAt => f.write_str("last_message_at"),
+            Self::Pinned => f.write_str("pinned"),
+            Self::ReviewScore => f.write_str("review_score"),
             Self::Relevance => f.write_str("relevance"),
             Self::Unlisted(ref value) => f.write_str(value),
         }
@@ -11214,7 +11296,9 @@ impl ::std::str::FromStr for SessionSortField {
     type Err = self::error::ConversionError;
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
-            "updated_at" => Ok(Self::UpdatedAt),
+            "last_message_at" => Ok(Self::LastMessageAt),
+            "pinned" => Ok(Self::Pinned),
+            "review_score" => Ok(Self::ReviewScore),
             "relevance" => Ok(Self::Relevance),
             _ => Err("invalid value".into()),
         }
@@ -12633,6 +12717,9 @@ pub struct SuspendTelephonyRequest {
 ///An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct SyncAgentRequest {
+    ///agent.yaml's agents: the app's other text agents this one may hand work to, each as a tool, by name. Sent, they replace the stored list whole, an empty list removing it; left out, the stored list stays. An agent named must already exist, so a directory is synced after the agents it names.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub agents: ::std::option::Option<::std::vec::Vec<ChildAgent>>,
     ///The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub base_change: ::std::option::Option<::std::string::String>,
@@ -12883,7 +12970,7 @@ impl ::std::convert::TryFrom<::std::string::String> for TextContentPartType {
         value.parse()
     }
 }
-///`TextMatch`
+///A full-text match, Stream's $q.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 #[derive(Default)]
@@ -12937,20 +13024,6 @@ impl ::std::convert::TryFrom<::std::string::String> for Tier {
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
-}
-///`TimeRange`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct TimeRange {
-    ///At or after this RFC3339 time.
-    #[serde(
-        rename = "$gte",
-        skip_serializing_if = "::std::option::Option::is_none"
-    )]
-    pub gte: ::std::option::Option<::std::string::String>,
-    ///Strictly before this RFC3339 time.
-    #[serde(rename = "$lt", skip_serializing_if = "::std::option::Option::is_none")]
-    pub lt: ::std::option::Option<::std::string::String>,
 }
 ///`TimelineEntry`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -13597,7 +13670,7 @@ pub struct UpdateScheduledTaskRequest {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub title: ::std::option::Option<::std::string::String>,
 }
-///What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller.
+///What to change about one session. A field left out is left as it is. Title, description, custom and pinned can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 pub struct UpdateSessionRequest {
     ///Replaces the caller's labels whole. An empty object clears them.
@@ -13610,6 +13683,9 @@ pub struct UpdateSessionRequest {
     pub llm: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub max_output_tokens: ::std::option::Option<i64>,
+    ///true pins the session and false unpins it. Pinning one that is already pinned keeps the time it was first pinned. A pin changes nothing else about the session, its place in a last_message_at sort included.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub pinned: ::std::option::Option<bool>,
     ///A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub sts: ::std::option::Option<::std::string::String>,

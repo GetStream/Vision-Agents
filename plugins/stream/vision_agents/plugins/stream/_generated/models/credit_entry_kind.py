@@ -8,6 +8,7 @@ class CreditEntryKind(StrEnum):
     GRANT = "grant"
     REFUND = "refund"
     TOP_UP = "top_up"
+    TRIAL = "trial"
 
     def __str__(self) -> str:
         return str(self.value)

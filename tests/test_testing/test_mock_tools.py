@@ -6,6 +6,7 @@ import pytest
 
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
+from vision_agents.core.llm.tool_call import ToolCallContext
 from vision_agents.testing import TestSession
 
 
@@ -91,6 +92,31 @@ async def test_mock_functions_restores_on_exit():
 
         restored_fn = llm.function_registry.functions["get_weather"].function
         assert restored_fn is original_fn
+
+
+async def test_a_mock_takes_the_tool_call_only_when_it_asks_for_it():
+    llm = _FakeLLM()
+
+    @llm.register_function(description="weather tool")
+    async def get_weather(tool_call_context: ToolCallContext, location: str) -> dict:
+        return {"temp": 70}
+
+    async def _fake_weather_for(
+        tool_call_context: ToolCallContext, location: str
+    ) -> dict:
+        return {"temp": 70, "call": tool_call_context.id}
+
+    async with TestSession(llm=llm) as session:
+        with session.mock_functions({"get_weather": _fake_weather}):
+            assert await llm.call_function(
+                "get_weather", {"location": "Berlin"}, ToolCallContext(id="c1")
+            ) == {"temp": 70}
+        with session.mock_functions({"get_weather": _fake_weather_for}):
+            assert await llm.call_function(
+                "get_weather", {"location": "Berlin"}, ToolCallContext(id="c1")
+            ) == {"temp": 70, "call": "c1"}
+
+    assert llm.function_registry.functions["get_weather"].takes_context
 
 
 async def test_mock_functions_unknown_tool_raises():

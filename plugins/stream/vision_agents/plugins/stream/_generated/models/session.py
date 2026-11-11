@@ -106,6 +106,10 @@ class Session:
         video (SessionVideo | Unset):
         voice (str | Unset): The voice speaking, in the provider's own terms. It is the provider's default when the
             session asked for none.
+        team (str | Unset): The team the session's usage is counted under: the team the caller's token was signed for,
+            else the one the session was opened with, else its agent config's tags: team. Absent for a session counted under
+            none.
+        pinned_at (datetime.datetime | Unset): When the session was pinned. Absent for one that is not pinned.
     """
 
     agent_id: str
@@ -147,6 +151,8 @@ class Session:
     usage: CallUsage | Unset = UNSET
     video: SessionVideo | Unset = UNSET
     voice: str | Unset = UNSET
+    team: str | Unset = UNSET
+    pinned_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -250,6 +256,12 @@ class Session:
 
         voice = self.voice
 
+        team = self.team
+
+        pinned_at: str | Unset = UNSET
+        if not isinstance(self.pinned_at, Unset):
+            pinned_at = self.pinned_at.isoformat()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -326,6 +338,10 @@ class Session:
             field_dict["video"] = video
         if voice is not UNSET:
             field_dict["voice"] = voice
+        if team is not UNSET:
+            field_dict["team"] = team
+        if pinned_at is not UNSET:
+            field_dict["pinned_at"] = pinned_at
 
         return field_dict
 
@@ -471,6 +487,15 @@ class Session:
 
         voice = d.pop("voice", UNSET)
 
+        team = d.pop("team", UNSET)
+
+        _pinned_at = d.pop("pinned_at", UNSET)
+        pinned_at: datetime.datetime | Unset
+        if isinstance(_pinned_at, Unset):
+            pinned_at = UNSET
+        else:
+            pinned_at = datetime.datetime.fromisoformat(_pinned_at)
+
         session = cls(
             agent_id=agent_id,
             call_id=call_id,
@@ -511,6 +536,8 @@ class Session:
             usage=usage,
             video=video,
             voice=voice,
+            team=team,
+            pinned_at=pinned_at,
         )
 
         session.additional_properties = d

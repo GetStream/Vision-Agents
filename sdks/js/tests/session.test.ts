@@ -11,7 +11,7 @@ import {
   Tools,
   connectorScopeRequiredOf,
   type SessionEvent,
-  type ToolCall,
+  type ToolCallContext,
 } from "../src/index.js";
 import { TestRouter, type Connection } from "./router.js";
 
@@ -292,18 +292,11 @@ describe("Session", () => {
     await session.close();
   });
 
-  it("aborts a running tool when the model cancels it", async () => {
-    let aborted = false;
+  it("stops waiting on a running tool when the model cancels it", async () => {
     const tools = new Tools().register({
       name: "slow",
       description: "Take a while",
-      run: (_input, signal) =>
-        new Promise((resolve) => {
-          signal.addEventListener("abort", () => {
-            aborted = true;
-            resolve("abandoned");
-          });
-        }),
+      run: () => new Promise(() => undefined),
     });
     const [session, connection] = await opened(tools);
 
@@ -311,8 +304,7 @@ describe("Session", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     connection.send({ type: "tool_cancel", id: "call_1" });
 
-    await connection.next();
-    assert.equal(aborted, true);
+    assert.deepEqual(await connection.next(), { type: "tool_result", tool_call_id: "call_1", error: "slow was cancelled" });
     await session.close();
   });
 
@@ -328,11 +320,11 @@ describe("Session", () => {
   });
 
   it("hands a function the call it runs for, and sends how it is going", async () => {
-    let seen: ToolCall | undefined;
+    let seen: ToolCallContext | undefined;
     const tools = new Tools().register({
       name: "search",
       description: "Search flights",
-      run: (_input, _signal, toolCallContext) => {
+      run: (_input, toolCallContext) => {
         seen = toolCallContext;
         toolCallContext.update("checking three airlines");
         toolCallContext.say("Still looking, one moment.");
@@ -376,12 +368,13 @@ describe("Session", () => {
 
   it("keeps a held call going when the caller talks over the agent", async () => {
     let release = () => {};
-    let writing: AbortSignal | undefined;
+    let writing = false;
     const tools = new Tools().register({
       name: "charge",
       description: "Charge the card",
-      run: async (_input, _signal, toolCallContext) => {
-        writing = await toolCallContext.disallowInterruptions();
+      run: async (_input, toolCallContext) => {
+        await toolCallContext.disallowInterruptions();
+        writing = true;
         await new Promise<void>((resolve) => (release = resolve));
         return "charged";
       },
@@ -399,18 +392,24 @@ describe("Session", () => {
     release();
 
     assert.deepEqual(await connection.next(), { type: "tool_result", tool_call_id: "call_1", output: "charged" });
-    assert.equal(writing.aborted, false);
     await session.close();
   });
 
-  it("hands a call stopped before it could be held a signal already aborted", async () => {
-    let writing: AbortSignal | undefined;
+  it("refuses to hold a call stopped before it could be held", async () => {
+    let refused: unknown;
+    let charged = false;
     const tools = new Tools().register({
       name: "charge",
       description: "Charge the card",
-      run: async (_input, _signal, toolCallContext) => {
-        writing = await toolCallContext.disallowInterruptions();
-        return writing.aborted ? "never charged" : "charged";
+      run: async (_input, toolCallContext) => {
+        try {
+          await toolCallContext.disallowInterruptions();
+        } catch (error) {
+          refused = error;
+          throw error;
+        }
+        charged = true;
+        return "charged";
       },
     });
     const [session, connection] = await opened(tools);
@@ -419,8 +418,10 @@ describe("Session", () => {
     assert.deepEqual(await connection.next(), { type: "tool_hold", tool_call_id: "call_1" });
     connection.send({ type: "tool_cancel", id: "call_1" });
 
-    assert.equal((await connection.next())["output"], "never charged");
-    assert.ok(writing?.reason instanceof CallNotHeldError);
+    assert.ok((await connection.next())["error"]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.ok(refused instanceof CallNotHeldError);
+    assert.equal(charged, false);
     await session.close();
   });
 

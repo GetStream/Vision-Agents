@@ -27,7 +27,7 @@ final class UpdateSessionRequestVerbosity: RawRepresentable, Codable, Hashable, 
     static let medium = UpdateSessionRequestVerbosity(rawValue: "medium")
 }
 
-/// What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller.
+/// What to change about one session. A field left out is left as it is. Title, description, custom and pinned can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller.
 final class UpdateSessionRequest: Sendable, Codable, JSONEncodable {
     /// Replaces the caller's labels whole. An empty object clears them.
     let custom: [String: RawJSON]?
@@ -35,6 +35,8 @@ final class UpdateSessionRequest: Sendable, Codable, JSONEncodable {
     /// The conversation model, a provider/model or a capability shortcut.
     let llm: String?
     let maxOutputTokens: Int?
+    /// true pins the session and false unpins it. Pinning one that is already pinned keeps the time it was first pinned. A pin changes nothing else about the session, its place in a last_message_at sort included.
+    let pinned: Bool?
     /// A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
     let sts: String?
     let stt: String?
@@ -46,11 +48,12 @@ final class UpdateSessionRequest: Sendable, Codable, JSONEncodable {
     /// The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI. Empty returns to the provider's default.
     let voice: String?
 
-    init(custom: [String: RawJSON]? = nil, description: String? = nil, llm: String? = nil, maxOutputTokens: Int? = nil, sts: String? = nil, stt: String? = nil, temperature: Double? = nil, thinking: UpdateSessionRequestThinking? = nil, title: String? = nil, tts: String? = nil, verbosity: UpdateSessionRequestVerbosity? = nil, voice: String? = nil) {
+    init(custom: [String: RawJSON]? = nil, description: String? = nil, llm: String? = nil, maxOutputTokens: Int? = nil, pinned: Bool? = nil, sts: String? = nil, stt: String? = nil, temperature: Double? = nil, thinking: UpdateSessionRequestThinking? = nil, title: String? = nil, tts: String? = nil, verbosity: UpdateSessionRequestVerbosity? = nil, voice: String? = nil) {
         self.custom = custom
         self.description = description
         self.llm = llm
         self.maxOutputTokens = maxOutputTokens
+        self.pinned = pinned
         self.sts = sts
         self.stt = stt
         self.temperature = temperature
@@ -67,6 +70,7 @@ final class UpdateSessionRequest: Sendable, Codable, JSONEncodable {
         self.description = try container.decodeIfPresent(String.self, forKey: .description)
         self.llm = try container.decodeIfPresent(String.self, forKey: .llm)
         self.maxOutputTokens = try container.decodeIfPresent(Int.self, forKey: .maxOutputTokens)
+        self.pinned = try container.decodeIfPresent(Bool.self, forKey: .pinned)
         self.sts = try container.decodeIfPresent(String.self, forKey: .sts)
         self.stt = try container.decodeIfPresent(String.self, forKey: .stt)
         self.temperature = try container.decodeIfPresent(Double.self, forKey: .temperature)
@@ -83,6 +87,7 @@ final class UpdateSessionRequest: Sendable, Codable, JSONEncodable {
         try container.encodeIfPresent(description, forKey: .description)
         try container.encodeIfPresent(llm, forKey: .llm)
         try container.encodeIfPresent(maxOutputTokens, forKey: .maxOutputTokens)
+        try container.encodeIfPresent(pinned, forKey: .pinned)
         try container.encodeIfPresent(sts, forKey: .sts)
         try container.encodeIfPresent(stt, forKey: .stt)
         try container.encodeIfPresent(temperature, forKey: .temperature)
@@ -101,6 +106,7 @@ extension UpdateSessionRequest: Hashable {
         lhs.description == rhs.description &&
         lhs.llm == rhs.llm &&
         lhs.maxOutputTokens == rhs.maxOutputTokens &&
+        lhs.pinned == rhs.pinned &&
         lhs.sts == rhs.sts &&
         lhs.stt == rhs.stt &&
         lhs.temperature == rhs.temperature &&
@@ -116,6 +122,7 @@ extension UpdateSessionRequest: Hashable {
         hasher.combine(description)
         hasher.combine(llm)
         hasher.combine(maxOutputTokens)
+        hasher.combine(pinned)
         hasher.combine(sts)
         hasher.combine(stt)
         hasher.combine(temperature)

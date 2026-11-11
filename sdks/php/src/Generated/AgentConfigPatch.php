@@ -77,6 +77,9 @@ final readonly class AgentConfigPatch
         // Replaces the list whole. An empty list removes it.
         /** @var list<AgentChatChannel>|null */
         public ?array $chatChannels = null,
+        // Replaces the list whole. An empty list removes it.
+        /** @var list<ChildAgent>|null */
+        public ?array $agents = null,
     ) {
     }
 
@@ -124,6 +127,7 @@ final readonly class AgentConfigPatch
             voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
             llmFallbacks: array_key_exists('llm_fallbacks', $data) && $data['llm_fallbacks'] !== null ? Json::strings($data, 'llm_fallbacks') : null,
             chatChannels: array_key_exists('chat_channels', $data) && $data['chat_channels'] !== null ? array_map(AgentChatChannel::fromArray(...), Json::objects($data, 'chat_channels')) : null,
+            agents: array_key_exists('agents', $data) && $data['agents'] !== null ? array_map(ChildAgent::fromArray(...), Json::objects($data, 'agents')) : null,
         );
     }
 
@@ -248,6 +252,9 @@ final readonly class AgentConfigPatch
         }
         if ($this->chatChannels !== null) {
             $out['chat_channels'] = array_map(static fn (AgentChatChannel $each): array => $each->toArray(), $this->chatChannels);
+        }
+        if ($this->agents !== null) {
+            $out['agents'] = array_map(static fn (ChildAgent $each): array => $each->toArray(), $this->agents);
         }
         return $out;
     }

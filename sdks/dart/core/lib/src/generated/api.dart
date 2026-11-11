@@ -1430,6 +1430,7 @@ final class Session {
     required this.modality,
     this.mode,
     this.modelOverwrites,
+    this.pinnedAt,
     this.projectId,
     this.reviewNotes,
     this.reviewScore,
@@ -1438,6 +1439,7 @@ final class Session {
     this.stt,
     this.subagent,
     this.summary,
+    this.team,
     this.text,
     this.title,
     this.tts,
@@ -1528,6 +1530,10 @@ final class Session {
         null => null,
         final Object value => ModelOverwrites.fromJson(value),
       },
+      pinnedAt: switch (json['pinned_at']) {
+        null => null,
+        final Object value => _date(value, 'Session.pinned_at'),
+      },
       projectId: switch (json['project_id']) {
         null => null,
         final Object value => _string(value, 'Session.project_id'),
@@ -1556,6 +1562,10 @@ final class Session {
       summary: switch (json['summary']) {
         null => null,
         final Object value => _string(value, 'Session.summary'),
+      },
+      team: switch (json['team']) {
+        null => null,
+        final Object value => _string(value, 'Session.team'),
       },
       text: switch (json['text']) {
         null => null,
@@ -1609,6 +1619,7 @@ final class Session {
   final String modality;
   final String? mode;
   final ModelOverwrites? modelOverwrites;
+  final DateTime? pinnedAt;
   final String? projectId;
   final String? reviewNotes;
   final int? reviewScore;
@@ -1617,6 +1628,7 @@ final class Session {
   final String? stt;
   final String? subagent;
   final String? summary;
+  final String? team;
   final bool? text;
   final String? title;
   final String? tts;
@@ -1650,6 +1662,7 @@ final class Session {
     'modality': modality,
     'mode': ?mode,
     if (modelOverwrites case final value?) 'model_overwrites': value.toJson(),
+    if (pinnedAt case final value?) 'pinned_at': value.toUtc().toIso8601String(),
     'project_id': ?projectId,
     'review_notes': ?reviewNotes,
     'review_score': ?reviewScore,
@@ -1658,6 +1671,7 @@ final class Session {
     'stt': ?stt,
     'subagent': ?subagent,
     'summary': ?summary,
+    'team': ?team,
     'text': ?text,
     'title': ?title,
     'tts': ?tts,
@@ -1740,14 +1754,11 @@ final class SessionConnectorBinding {
 /// Which sessions to list.
 final class SessionFilter {
   const SessionFilter({
+    this.and,
+    this.or,
     this.agent,
-    this.agentId,
-    this.configId,
-    this.createdAt,
-    this.custom,
-    this.modality,
     this.projectId,
-    this.state,
+    this.reviewScore,
     this.text,
     this.userId,
   });
@@ -1755,27 +1766,19 @@ final class SessionFilter {
   factory SessionFilter.fromJson(Object? value) {
     final json = _object(value, 'SessionFilter');
     return SessionFilter(
+      and: switch (json['\$and']) {
+        null => null,
+        final Object value => [
+          for (final item in _list(value, 'SessionFilter.\$and')) SessionFilter.fromJson(item),
+        ],
+      },
+      or: switch (json['\$or']) {
+        null => null,
+        final Object value => [
+          for (final item in _list(value, 'SessionFilter.\$or')) SessionFilter.fromJson(item),
+        ],
+      },
       agent: switch (json['agent']) {
-        null => null,
-        final Object value => value,
-      },
-      agentId: switch (json['agent_id']) {
-        null => null,
-        final Object value => value,
-      },
-      configId: switch (json['config_id']) {
-        null => null,
-        final Object value => value,
-      },
-      createdAt: switch (json['created_at']) {
-        null => null,
-        final Object value => TimeRange.fromJson(value),
-      },
-      custom: switch (json['custom']) {
-        null => null,
-        final Object value => _strings(value, 'SessionFilter.custom'),
-      },
-      modality: switch (json['modality']) {
         null => null,
         final Object value => value,
       },
@@ -1783,7 +1786,7 @@ final class SessionFilter {
         null => null,
         final Object value => value,
       },
-      state: switch (json['state']) {
+      reviewScore: switch (json['review_score']) {
         null => null,
         final Object value => value,
       },
@@ -1798,26 +1801,20 @@ final class SessionFilter {
     );
   }
 
+  final List<SessionFilter>? and;
+  final List<SessionFilter>? or;
   final Object? agent;
-  final Object? agentId;
-  final Object? configId;
-  final TimeRange? createdAt;
-  final Map<String, String>? custom;
-  final Object? modality;
   final Object? projectId;
-  final Object? state;
+  final Object? reviewScore;
   final TextMatch? text;
   final Object? userId;
 
   Map<String, Object?> toJson() => {
+    if (and case final value?) '\$and': [for (final item in value) item.toJson()],
+    if (or case final value?) '\$or': [for (final item in value) item.toJson()],
     'agent': ?agent,
-    'agent_id': ?agentId,
-    'config_id': ?configId,
-    if (createdAt case final value?) 'created_at': value.toJson(),
-    'custom': ?custom,
-    'modality': ?modality,
     'project_id': ?projectId,
-    'state': ?state,
+    'review_score': ?reviewScore,
     if (text case final value?) 'text': value.toJson(),
     'user_id': ?userId,
   };
@@ -2150,6 +2147,7 @@ final class StartSessionVoiceRequest {
   Map<String, Object?> toJson() => {if (call case final value?) 'call': value.toJson()};
 }
 
+/// A full-text match, Stream's $q.
 final class TextMatch {
   const TextMatch({required this.q});
 
@@ -2163,32 +2161,6 @@ final class TextMatch {
   Map<String, Object?> toJson() => {'\$q': q};
 }
 
-final class TimeRange {
-  const TimeRange({this.gte, this.lt});
-
-  factory TimeRange.fromJson(Object? value) {
-    final json = _object(value, 'TimeRange');
-    return TimeRange(
-      gte: switch (json['\$gte']) {
-        null => null,
-        final Object value => _date(value, 'TimeRange.\$gte'),
-      },
-      lt: switch (json['\$lt']) {
-        null => null,
-        final Object value => _date(value, 'TimeRange.\$lt'),
-      },
-    );
-  }
-
-  final DateTime? gte;
-  final DateTime? lt;
-
-  Map<String, Object?> toJson() => {
-    if (gte case final value?) '\$gte': value.toUtc().toIso8601String(),
-    if (lt case final value?) '\$lt': value.toUtc().toIso8601String(),
-  };
-}
-
 /// What to change about one session.
 final class UpdateSessionRequest {
   const UpdateSessionRequest({
@@ -2196,6 +2168,7 @@ final class UpdateSessionRequest {
     this.description,
     this.llm,
     this.maxOutputTokens,
+    this.pinned,
     this.sts,
     this.stt,
     this.temperature,
@@ -2224,6 +2197,10 @@ final class UpdateSessionRequest {
       maxOutputTokens: switch (json['max_output_tokens']) {
         null => null,
         final Object value => _int(value, 'UpdateSessionRequest.max_output_tokens'),
+      },
+      pinned: switch (json['pinned']) {
+        null => null,
+        final Object value => _bool(value, 'UpdateSessionRequest.pinned'),
       },
       sts: switch (json['sts']) {
         null => null,
@@ -2264,6 +2241,7 @@ final class UpdateSessionRequest {
   final String? description;
   final String? llm;
   final int? maxOutputTokens;
+  final bool? pinned;
   final String? sts;
   final String? stt;
   final double? temperature;
@@ -2278,6 +2256,7 @@ final class UpdateSessionRequest {
     'description': ?description,
     'llm': ?llm,
     'max_output_tokens': ?maxOutputTokens,
+    'pinned': ?pinned,
     'sts': ?sts,
     'stt': ?stt,
     'temperature': ?temperature,

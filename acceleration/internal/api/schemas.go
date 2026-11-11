@@ -838,6 +838,7 @@ type Session struct {
 	Modality         SessionModality         `json:"modality"`
 	Mode             *SessionMode            `json:"mode,omitempty"`
 	ModelOverwrites  *ModelOverwrites        `json:"model_overwrites,omitempty"`
+	PinnedAt         *time.Time              `json:"pinned_at,omitempty" doc:"When the session was pinned. Absent for one that is not pinned."`
 	ProjectId        *string                 `json:"project_id,omitempty"`
 	ReviewNotes      *string                 `json:"review_notes,omitempty" doc:"Why the review scored the conversation as it did. Read by a backend only."`
 	ReviewScore      *int                    `json:"review_score,omitempty" doc:"How well the agent handled the conversation, from 1 to 5, written a few seconds after it ended. Read by a backend only."`
@@ -846,6 +847,7 @@ type Session struct {
 	Stt              *string                 `json:"stt,omitempty" doc:"The provider and model transcribing, once somebody has been heard."`
 	Subagent         *string                 `json:"subagent,omitempty" doc:"The provider and model delegated work runs on."`
 	Summary          *string                 `json:"summary,omitempty" doc:"What a model made of the conversation, written a few seconds after it ended. A session nobody spoke in has none. Read by a backend only."`
+	Team             *string                 `json:"team,omitempty" doc:"The team the session's usage is counted under: the team the caller's token was signed for, else the one the session was opened with, else its agent config's tags: team. Absent for a session counted under none."`
 	Text             *bool                   `json:"text,omitempty" doc:"The conversation is held in writing rather than on a call."`
 	Title            *string                 `json:"title,omitempty"`
 	Tts              *string                 `json:"tts,omitempty" doc:"The provider and model speaking."`

@@ -24,8 +24,9 @@
 package io.getstream.agents.android.core.generated
 
 import io.getstream.agents.android.core.generated.Equals
+import io.getstream.agents.android.core.generated.EqualsOrIn
+import io.getstream.agents.android.core.generated.ReviewScoreMatch
 import io.getstream.agents.android.core.generated.TextMatch
-import io.getstream.agents.android.core.generated.TimeRange
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
@@ -37,16 +38,13 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
 /**
- * Which sessions to list. A field not listed here is refused rather than ignored.
+ * Which sessions to list. The keys of one object are ANDed. $and and $or each take 1 to 10 filters and nest up to 3 deep; a whole filter holds at most 30 field conditions. An empty filter lists every session the caller may see. Any other key, and any other operator, is refused with a 400 that names it and lists the fields that can be filtered.
  *
+ * @param dollarAnd Every one of these filters holds.
+ * @param dollarOr At least one of these filters holds. It chooses among the sessions the caller may see and never adds to them. text and user_id are refused inside it.
  * @param agent 
- * @param agentId 
- * @param configId 
- * @param createdAt 
- * @param custom The session's custom object holds every one of these pairs, which is how a caller finds again what it labelled.
- * @param modality 
  * @param projectId 
- * @param state 
+ * @param reviewScore 
  * @param text 
  * @param userId 
  */
@@ -54,30 +52,22 @@ import kotlinx.serialization.encoding.Encoder
 
 internal data class SessionFilter (
 
+    /* Every one of these filters holds. */
+    @SerialName(value = "\$and")
+    val dollarAnd: kotlin.collections.List<SessionFilter>? = null,
+
+    /* At least one of these filters holds. It chooses among the sessions the caller may see and never adds to them. text and user_id are refused inside it. */
+    @SerialName(value = "\$or")
+    val dollarOr: kotlin.collections.List<SessionFilter>? = null,
+
     @SerialName(value = "agent")
     val agent: Equals? = null,
 
-    @SerialName(value = "agent_id")
-    val agentId: Equals? = null,
-
-    @SerialName(value = "config_id")
-    val configId: Equals? = null,
-
-    @SerialName(value = "created_at")
-    val createdAt: TimeRange? = null,
-
-    /* The session's custom object holds every one of these pairs, which is how a caller finds again what it labelled. */
-    @SerialName(value = "custom")
-    val custom: kotlin.collections.Map<kotlin.String, kotlin.String>? = null,
-
-    @SerialName(value = "modality")
-    val modality: Equals? = null,
-
     @SerialName(value = "project_id")
-    val projectId: Equals? = null,
+    val projectId: EqualsOrIn? = null,
 
-    @SerialName(value = "state")
-    val state: Equals? = null,
+    @SerialName(value = "review_score")
+    val reviewScore: ReviewScoreMatch? = null,
 
     @SerialName(value = "text")
     val text: TextMatch? = null,

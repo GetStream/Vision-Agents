@@ -64,7 +64,13 @@ namespace GetStream.VisionAgents.Models
         public string BalanceWarningSource { get; set; } = default!;
 
         /// <summary>
-        /// Every credit entry summed: top-ups, grants, refunds and adjustments.
+        /// The organization has credit that is not trial credit: a top-up, net of its refunds and disputes, or credit from Stream's staff. Until it has, buying numbers and registering for 10DLC are refused with top_up_required.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("funded")]
+        public bool Funded { get; set; } = default!;
+
+        /// <summary>
+        /// Every credit entry summed: top-ups, grants, trial credit, refunds and adjustments.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("granted_micros")]
         public long GrantedMicros { get; set; } = default!;
@@ -109,6 +115,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tier")]
         public string Tier { get; set; } = default!;
+
+        /// <summary>
+        /// What of granted_micros is the trial credit Stream gave the organization to try it with.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("trial_micros")]
+        public long TrialMicros { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -669,6 +681,12 @@ namespace GetStream.VisionAgents.Models
     public partial class AgentConfig
     {
 
+        /// <summary>
+        /// The app's other text agents this one may hand work to, each as a tool. Absent when there are none.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("agents")]
+        public System.Collections.Generic.List<ChildAgent>? Agents { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("calls")]
         public AgentCalls? Calls { get; set; } = default!;
 
@@ -840,6 +858,12 @@ namespace GetStream.VisionAgents.Models
     public partial class AgentConfigPatch
     {
 
+        /// <summary>
+        /// Replaces the list whole. An empty list removes it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("agents")]
+        public System.Collections.Generic.List<ChildAgent>? Agents { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("calls")]
         public AgentCalls? Calls { get; set; } = default!;
 
@@ -1004,6 +1028,12 @@ namespace GetStream.VisionAgents.Models
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class AgentConfigRequest
     {
+
+        /// <summary>
+        /// The app's other text agents this one may hand work to, each offered to its model as a tool that takes one string, input, and answers with what that agent said last. Several called in one reply run at once, at most 8 at a time. Each runs as an incognito run of its own, on its own llm, instructions, connectors and sandbox, and its spend is added to the parent run's usage. Only a text agent has them, and an agent named here must be a text agent with no agents of its own and not this one. Omitted or null on an update, the list stored stays as it is; an empty list removes it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("agents")]
+        public System.Collections.Generic.List<ChildAgent>? Agents { get; set; } = default!;
 
         /// <summary>
         /// The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and press are on and end_call is off. On an update, a tool left out keeps its stored settings and a tool sent replaces its settings whole.
@@ -3813,6 +3843,48 @@ namespace GetStream.VisionAgents.Models
 
     }
 
+    /// <summary>
+    /// Another of the app's text agents a text agent may hand work to, offered to its model as a tool.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ChildAgent
+    {
+
+        /// <summary>
+        /// The agent config to hand work to: one of the app's text agents, by name or id. It is stored, and read back, by name.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("config")]
+        public string Config { get; set; } = default!;
+
+        /// <summary>
+        /// What the model is told the agent does, which is the whole of how it decides when to call it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("description")]
+        public string? Description { get; set; } = default!;
+
+        /// <summary>
+        /// How long one call may take, two minutes when left out. A call never outlasts the run that made it: it gets this or what is left of the run, whichever is less. A call that runs out of time, or whose agent fails, is answered to the model as a failed tool call, and the run goes on.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("timeout_ms")]
+        public long? TimeoutMs { get; set; } = default!;
+
+        /// <summary>
+        /// The name the model calls it by, unique among the config's agents.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tool")]
+        public string Tool { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class ClaimGuestRequest
     {
@@ -6486,7 +6558,7 @@ namespace GetStream.VisionAgents.Models
         public long Id { get; set; } = default!;
 
         /// <summary>
-        /// One of `top_up`, `grant`, `refund`, `dispute`, `dispute_reversal`, `adjustment`.
+        /// One of `top_up`, `grant`, `trial`, `refund`, `dispute`, `dispute_reversal`, `adjustment`.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("kind")]
         public string Kind { get; set; } = default!;
@@ -7180,6 +7252,21 @@ namespace GetStream.VisionAgents.Models
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class Equals
+    {
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class EqualsOrIn
     {
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
@@ -11715,6 +11802,21 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ReviewScoreMatch
+    {
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class ReviewUseCaseRequest
     {
 
@@ -11926,6 +12028,12 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
+        /// What the runs of the child agents it called spent, by the tool each was called by. Absent when it called none.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("children")]
+        public System.Collections.Generic.Dictionary<string, CallUsage>? Children { get; set; } = default!;
+
+        /// <summary>
         /// The last thing the agent said.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("final_text")]
@@ -11944,7 +12052,7 @@ namespace GetStream.VisionAgents.Models
         public string SessionId { get; set; } = default!;
 
         /// <summary>
-        /// What the run's model calls spent.
+        /// What the run's model calls spent, the runs of the child agents it called included.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("usage")]
         public CallUsage Usage { get; set; } = new CallUsage();
@@ -12700,6 +12808,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("model_overwrites")]
         public ModelOverwrites? ModelOverwrites { get; set; } = default!;
 
+        /// <summary>
+        /// When the session was pinned. Absent for one that is not pinned.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("pinned_at")]
+        public System.DateTimeOffset? PinnedAt { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("project_id")]
         public string? ProjectId { get; set; } = default!;
 
@@ -12741,6 +12855,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("summary")]
         public string? Summary { get; set; } = default!;
+
+        /// <summary>
+        /// The team the session's usage is counted under: the team the caller's token was signed for, else the one the session was opened with, else its agent config's tags: team. Absent for a session counted under none.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("team")]
+        public string? Team { get; set; } = default!;
 
         /// <summary>
         /// The conversation is held in writing rather than on a call.
@@ -12877,11 +12997,23 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
-    /// Which sessions to list. A field not listed here is refused rather than ignored.
+    /// Which sessions to list. The keys of one object are ANDed. $and and $or each take 1 to 10 filters and nest up to 3 deep; a whole filter holds at most 30 field conditions. An empty filter lists every session the caller may see. Any other key, and any other operator, is refused with a 400 that names it and lists the fields that can be filtered.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class SessionFilter
     {
+
+        /// <summary>
+        /// Every one of these filters holds.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("$and")]
+        public System.Collections.Generic.List<SessionFilter>? And { get; set; } = default!;
+
+        /// <summary>
+        /// At least one of these filters holds. It chooses among the sessions the caller may see and never adds to them. text and user_id are refused inside it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("$or")]
+        public System.Collections.Generic.List<SessionFilter>? Or { get; set; } = default!;
 
         /// <summary>
         /// The agent name the session was opened against.
@@ -12890,52 +13022,25 @@ namespace GetStream.VisionAgents.Models
         public string? Agent { get; set; } = default!;
 
         /// <summary>
-        /// The agent id the session was created with, which names its transcript channel.
+        /// The project the session belongs to.
         /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("agent_id")]
-        public string? AgentId { get; set; } = default!;
-
-        /// <summary>
-        /// The agent config the session ran under. Empty for a session that spelled itself out.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("config_id")]
-        public string? ConfigId { get; set; } = default!;
-
-        /// <summary>
-        /// When the session started.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("created_at")]
-        public TimeRange? CreatedAt { get; set; } = default!;
-
-        /// <summary>
-        /// The session's custom object holds every one of these pairs, which is how a caller finds again what it labelled.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("custom")]
-        public System.Collections.Generic.Dictionary<string, string>? Custom { get; set; } = default!;
-
-        /// <summary>
-        /// text, voice or video: how the user took part.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("modality")]
-        public string? Modality { get; set; } = default!;
-
         [System.Text.Json.Serialization.JsonPropertyName("project_id")]
         public string? ProjectId { get; set; } = default!;
 
         /// <summary>
-        /// live or ended, as each session reports its state.
+        /// The score the review gave the conversation. A session with no review matches no condition on it. Only a server-side caller may use it.
         /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("state")]
-        public string? State { get; set; } = default!;
+        [System.Text.Json.Serialization.JsonPropertyName("review_score")]
+        public int? ReviewScore { get; set; } = default!;
 
         /// <summary>
-        /// Full text over the title, description, project and agent name. Sorted by relevance, and not combined with project_id.
+        /// Full text over the title, description, project and agent name, sorted by relevance. Once per filter, at its top level or in a top-level $and, and never inside $or.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("text")]
         public TextMatch? Text { get; set; } = default!;
 
         /// <summary>
-        /// Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for.
+        /// Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for. Only at the top level of the filter or in a top-level $and.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("user_id")]
         public string? UserId { get; set; } = default!;
@@ -13067,7 +13172,7 @@ namespace GetStream.VisionAgents.Models
         public long? Limit { get; set; } = default!;
 
         /// <summary>
-        /// Omitted is updated_at, or relevance for a text search.
+        /// Omitted is last_message_at descending, or relevance for a text search. One of: last_message_at; pinned, then last_message_at, which lists the pinned sessions first; review_score, for a server-side caller; relevance, for a text search and nothing else.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("sort")]
         public System.Collections.Generic.List<SessionSort>? Sort { get; set; } = default!;
@@ -13172,7 +13277,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// -1, descending. Ascending is not offered.
+        /// -1 is descending and 1 ascending. pinned and relevance only sort descending.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("direction")]
         public SessionSortDirection? Direction { get; set; } = default!;
@@ -14804,6 +14909,12 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
+        /// agent.yaml's agents: the app's other text agents this one may hand work to, each as a tool, by name. Sent, they replace the stored list whole, an empty list removing it; left out, the stored list stays. An agent named must already exist, so a directory is synced after the agents it names.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("agents")]
+        public System.Collections.Generic.List<ChildAgent>? Agents { get; set; } = default!;
+
+        /// <summary>
         /// The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("base_change")]
@@ -15249,6 +15360,9 @@ namespace GetStream.VisionAgents.Models
 
     }
 
+    /// <summary>
+    /// A full-text match, Stream's $q.
+    /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class TextMatch
     {
@@ -15258,24 +15372,6 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("$q")]
         public string Q { get; set; } = default!;
-
-    }
-
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class TimeRange
-    {
-
-        /// <summary>
-        /// At or after this RFC3339 time.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("$gte")]
-        public System.DateTimeOffset? Gte { get; set; } = default!;
-
-        /// <summary>
-        /// Strictly before this RFC3339 time.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("$lt")]
-        public System.DateTimeOffset? Lt { get; set; } = default!;
 
     }
 
@@ -16227,7 +16323,7 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
-    /// What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller.
+    /// What to change about one session. A field left out is left as it is. Title, description, custom and pinned can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class UpdateSessionRequest
@@ -16250,6 +16346,12 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("max_output_tokens")]
         public int? MaxOutputTokens { get; set; } = default!;
+
+        /// <summary>
+        /// true pins the session and false unpins it. Pinning one that is already pinned keeps the time it was first pinned. A pin changes nothing else about the session, its place in a last_message_at sort included.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("pinned")]
+        public bool? Pinned { get; set; } = default!;
 
         /// <summary>
         /// A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
@@ -17506,6 +17608,8 @@ namespace GetStream.VisionAgents.Models
     {
 
         __1 = -1,
+
+        _1 = 1,
 
     }
 

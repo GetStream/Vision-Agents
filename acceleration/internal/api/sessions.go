@@ -18,6 +18,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 	"github.com/danielgtaylor/huma/v2"
 )
 
@@ -192,6 +193,7 @@ func (s *Server) getSession(ctx context.Context, request *getSessionRequest) (*g
 	var rendered Session
 	if found.Live != nil {
 		rendered = sessionOf(ctx, found.Live)
+		rendered.PinnedAt = s.livePinnedAt(ctx, found.Live)
 	} else {
 		rendered = storedSessionOf(*found.Stored)
 	}
@@ -905,6 +907,9 @@ func describe(rendered *Session, spec session.Spec) {
 	if spec.Project != "" {
 		rendered.ProjectId = &spec.Project
 	}
+	if team := usage.Team(spec.Attribution.UsageCategories); team != "" {
+		rendered.Team = &team
+	}
 	if len(spec.Custom) > 0 {
 		rendered.Custom = &spec.Custom
 	}
@@ -968,6 +973,9 @@ func mergeStored(rendered *Session, row *store.AgentSession) {
 	if row.Project != "" {
 		rendered.ProjectId = &row.Project
 	}
+	if row.Team != "" {
+		rendered.Team = &row.Team
+	}
 	if len(row.Custom) > 0 {
 		custom := row.Custom
 		rendered.Custom = &custom
@@ -985,6 +993,7 @@ func mergeStored(rendered *Session, row *store.AgentSession) {
 		rendered.EndFault, rendered.EndStage = &fault, &stage
 	}
 	rendered.LastResponseAt = row.LastResponseAt
+	rendered.PinnedAt = row.PinnedAt
 }
 
 // SessionEndReason is why a session ended: a session.EndReasons value a row can keep.

@@ -30,6 +30,11 @@ var ErrBudgetSpent = errors.New("policy: the spend limit is reached")
 // whose balance could not be read for long enough that its tier refuses work it cannot bill.
 var ErrNoCredits = errors.New("policy: no credit left")
 
+// ErrTopUpRequired is a purchase, such as a number or a 10DLC registration, asked for by an
+// organization whose only credit is trial credit: Stream pays a vendor for it on the
+// organization's behalf, which takes a top-up or credit from Stream's staff first.
+var ErrTopUpRequired = errors.New("policy: a top-up is required first")
+
 // ErrSuspended is any work asked for by an organization the operator has suspended. Why stays
 // with the operator, as for a telephony suspension (internal/phone/phone.go).
 var ErrSuspended = errors.New("policy: this organization is suspended; contact support")
@@ -46,6 +51,8 @@ func Code(err error) string {
 		return "account_suspended"
 	case errors.Is(err, ErrNoCredits):
 		return "insufficient_credits"
+	case errors.Is(err, ErrTopUpRequired):
+		return "top_up_required"
 	case errors.Is(err, ErrSystemLimit):
 		return "system_limit_reached"
 	case errors.Is(err, ErrBudgetSpent):

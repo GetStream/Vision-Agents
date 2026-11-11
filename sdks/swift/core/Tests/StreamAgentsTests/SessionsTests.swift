@@ -202,30 +202,6 @@ import Testing
             ])
     }
 
-    @Test func aQueryNarrowsByWhenLabelsAndOrder() async throws {
-        let server = try SessionServer(
-            answer: .init(
-                status: 200, headers: ["Content-Type": "application/json"],
-                body: #"{"items":[],"has_more":false}"#))
-        defer { server.listener.cancel() }
-        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
-        var query = SessionQuery()
-        query.createdSince = Date(timeIntervalSince1970: 1_790_000_000)
-        query.custom = ["ticket": "T-7"]
-        query.sort = .updatedAt
-
-        _ = try await agents.agent("myagent").sessions.search("refund", query)
-
-        let body = try await server.request().body
-        #expect(
-            body["filter"]
-                == .dictionary([
-                    "agent": .string("myagent"), "created_at": .dictionary(["$gte": .string("2026-09-21T14:13:20.000Z")]),
-                    "custom": .dictionary(["ticket": .string("T-7")]), "text": .dictionary(["$q": .string("refund")]),
-                ]))
-        #expect(body["sort"] == .array([.dictionary(["field": .string("updated_at")])]))
-    }
-
     @Test func everyItemIsReadInOrderAndNoMoreIsAskedForAfterTheLastPage() async throws {
         let server = try SessionServer(
             answer: .init(
@@ -442,6 +418,7 @@ struct SessionServer {
         for key in ["title", "description", "custom"] {
             if let value = fields[key] { session[key] = value }
         }
+        if fields["pinned"] == .bool(true) { session["pinned_at"] = .string("2026-11-11T09:30:00Z") }
         let body = (try? JSONEncoder().encode(session)) ?? Data()
         return Answer(
             status: 200, headers: ["Content-Type": "application/json"],

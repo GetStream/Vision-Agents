@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -71,7 +72,7 @@ func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) erro
 // A field added to AgentConfig and forgotten here is stored on create and silently
 // dropped on every update after, which reads as a setting that will not save.
 var configColumns = []string{
-	"name", "role", "mode", "region", "stt", "tts", "sts", "voice", "llm", "llm_fallbacks", "subagent",
+	"name", "role", "mode", "region", "stt", "tts", "sts", "voice", "llm", "llm_fallbacks", "agents", "subagent",
 	"video_source", "video_max_frames", "search", "instructions", "greeting", "greeting_mode", "guardrail", "review_instructions",
 	"skills", "connectors", "left_out_connectors", "channels", "chat_channels", "scheduling", "calls", "keyterms", "visible_tools", "knowledge_namespace", "sandbox", "sandbox_options", "harness", "tags",
 	"dispatch_incoming_call", "dispatch_text", "episode_cards", "episode_cards_record", "progressive_tools", "tool_output_retention", "resume_history", "floor_control", "sync_hash", "updated_at",
@@ -353,6 +354,30 @@ func (s *Store) AgentConfigByName(ctx context.Context, customerID, name string) 
 		return AgentConfig{}, false, stack.Wrap(fmt.Errorf("store: agent config by name: %w", err))
 	}
 	return config, true, nil
+}
+
+// AgentConfigCalling is the name of a live config the customer holds, other than except, whose
+// agents name the config called child, and empty when none does.
+func (s *Store) AgentConfigCalling(ctx context.Context, customerID, child, except string) (string, error) {
+	named, err := json.Marshal([]map[string]string{{"config": child}})
+	if err != nil {
+		return "", stack.Wrap(err)
+	}
+	var parent string
+	err = s.db.NewSelect().Model((*AgentConfig)(nil)).Column("name").
+		Where("customer_id = ?", customerID).
+		Where("id <> ?", except).
+		Where("agents @> ?::jsonb", string(named)).
+		Where("deleted_at IS NULL").
+		Limit(1).
+		Scan(ctx, &parent)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", stack.Wrap(fmt.Errorf("store: agent config calling: %w", err))
+	}
+	return parent, nil
 }
 
 // AgentConfigByRole returns the live config a customer holds in this role. Test copies are
