@@ -39,6 +39,7 @@ var areaPrefixes = []struct {
 	{"/v1/agents/logs", activity.AreaDashboardReads},
 	{"/v1/audit", activity.AreaDashboardReads},
 	{"/v1/account", activity.AreaDashboardReads},
+	{"/v1/verification", activity.AreaDashboardReads},
 	{"/v1/spend", activity.AreaDashboardReads},
 	{"/v1/policies", activity.AreaDashboardReads},
 	{"/v1/settings", activity.AreaDashboardReads},
