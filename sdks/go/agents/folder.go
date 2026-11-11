@@ -418,9 +418,11 @@ type TransferDestination struct {
 //
 // Each is nil when the file doesn't name it, and both are sent as written: which models there
 // are, and whether a wait needs one, is the router's to say, and it refuses stream/chorus-asr
-// when it has no chorus-asr server. An empty mapping is the default flow controller again.
+// when it has no chorus-asr server. An empty mapping is no choice again, which the router's
+// default rules; {model: flow-controller} keeps the flow controller whatever that default.
 type FloorControlSettings struct {
-	// Model is the model that controls the floor; stream/chorus-asr is the one there is.
+	// Model is the model that controls the floor: stream/chorus-asr, or flow-controller for the
+	// flow controller.
 	Model *string
 	// MaxWaitMs is the most a caller who has finished may wait for the answer, in
 	// milliseconds: the server's measured point with the fewest cut-ins within it.

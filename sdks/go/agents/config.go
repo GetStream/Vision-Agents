@@ -348,7 +348,8 @@ func declareCalls(calls *CallSettings) *acceleration.AgentCalls {
 
 // declareFloorControl is what the file says of floor_control for the wire, as written, or nil
 // when it says nothing, which leaves the stored choice. An empty mapping is sent as an empty
-// object, the default flow controller again.
+// object, no choice again, which the router's default rules; {model: flow-controller} keeps
+// the flow controller whatever that default.
 func declareFloorControl(settings *FloorControlSettings) *acceleration.FloorControl {
 	if settings == nil {
 		return nil

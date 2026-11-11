@@ -24,7 +24,7 @@ Each agent opts in to chorus-asr's floor control in its own `agent.yaml`, so one
 agents with it and without it at once:
 
 ```yaml
-floor_control:            # leave it out to keep the default flow controller
+floor_control:            # leave it out for the router's default; {model: flow-controller} keeps the flow controller
   model: stream/chorus-asr
   max_wait_ms: 1100       # optional: how long a caller may wait once they stop
 ```

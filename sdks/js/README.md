@@ -475,8 +475,9 @@ floor_control:
   max_wait_ms: 800      # optional; left out, the server's default point
 ```
 
-Left out or null, the stored choice stays, and an agent that never chose has the default flow
-controller; `floor_control: {}` is the default flow controller again. The router refuses
+Left out or null, the stored choice stays; `floor_control: {}` is no choice, which follows the
+router's default (the flow controller, or `stream/chorus-asr` where the router defaults every
+agent to it); `{model: flow-controller}` keeps the flow controller whatever that default. The router refuses
 `stream/chorus-asr` without a chorus-asr server, and a `max_wait_ms` shorter than every point
 the server has measured.
 

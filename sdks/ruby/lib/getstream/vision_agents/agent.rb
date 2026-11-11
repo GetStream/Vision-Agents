@@ -384,7 +384,7 @@ module GetStream
           video: video && { source: video["source"], max_frames: video["max_frames"] }.compact,
           dispatch: settings["dispatch"],
           # As written, or nil when agent.yaml names none, which leaves the stored choice; {} is
-          # the default flow controller again.
+          # no choice again, which the router's default rules.
           floor_control: settings["floor_control"],
           subagent: presence(@pipeline[:subagent].to_s) || presence(settings["subagent"]),
           sandbox: @sandbox&.provider || presence(settings["sandbox"]),
