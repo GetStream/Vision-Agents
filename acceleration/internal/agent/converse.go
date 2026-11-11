@@ -262,6 +262,9 @@ type converse struct {
 	// greeted is the turn whose unheard reply each participant's lone greeting holds, until
 	// the greeting settles or they go on.
 	greeted map[string]string
+	// asides is, for each participant, what they said that the floor ruled was no turn of
+	// theirs, a murmur over the agent, kept for the next reply to them to see (keepAside).
+	asides map[string]string
 }
 
 // stoppedOn is an utterance a stop over the agent was ruled on, and the words so far it was
@@ -365,6 +368,7 @@ func newConverse(
 		repeated:     map[string]string{},
 		stops:        map[string]stoppedOn{},
 		greeted:      map[string]string{},
+		asides:       map[string]string{},
 	}
 }
 
@@ -905,6 +909,21 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 		clarified = "the caller went quiet on an unfinished thought, so what was heard may not be what was said"
 	}
 
+	// A floor that heard the audio (chorus-asr, Ruler Heard) rules on when the agent speaks,
+	// never on whether the caller's words count. Its ignore of words that take the floor is
+	// what the default flow controller's queue is: the agent is not interrupted, and the
+	// words are heard now and answered once it is quiet, at once when it is. Its ignore of a
+	// murmur ("yeah", "mm-hmm") is heard and kept for the next reply to see, as context and
+	// no turn of its own (keepAside). A cough or a lone "uh" is no words, and stays ignored.
+	heardFloor := ruling.Ruler == harness.Heard && ruling.Disposition == harness.Ignore &&
+		words(ready.Text) != "" && !overlapNoise(ready.Text)
+	murmur := heardFloor && !takesFloor(ready.Text)
+	if heardFloor && !murmur {
+		c.logger.Info("the floor ruled ignore on words that take the floor, which are kept: the agent is not interrupted, and they are answered once it is quiet",
+			"candidate", ruling.CandidateID, "participant", ready.Participant.ID, "text", ready.Text, "quiet", state.Quiet)
+		ruling.Disposition, ruling.Floor = harness.Respond, harness.Continue
+	}
+
 	queue := !state.Quiet && !overlapNoise(ready.Text) && ruling.Disposition != harness.Ignore &&
 		(state.Recovering || ruling.Floor != harness.Stop)
 	var resolved bool
@@ -933,6 +952,26 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 	switch {
 	case !state.Quiet && overlapNoise(ready.Text):
 		ignore = "a cough or other non-speech noise overlapping the reply, so the agent keeps talking"
+	case murmur:
+		// Heard, as the caller said it, and the next reply to them sees it; nothing is said
+		// to it alone.
+		shown, line := c.closeLine(ready.Participant.ID, ready.Text, true)
+		c.keepAside(ready.Participant.ID, ready.Text)
+		sendHeard(c.emitter, c.onHeard, Heard{
+			Participant: ready.Participant,
+			Text:        shown,
+			Language:    ready.Language,
+			LineID:      line,
+		})
+		return []Action{c.decide(Action{
+			Kind:        ActIgnore,
+			Reason:      "a murmur the floor let the agent talk through: heard, and kept for the next reply to see, as no turn of its own",
+			Candidate:   ready,
+			Participant: ready.Participant,
+			Text:        shown,
+			LatencyMs:   ruling.TookMs,
+			LineID:      line,
+		})}
 	case ruling.Disposition == harness.Ignore:
 		ignore = "this was background speech or meant for somebody else"
 	}
@@ -1690,6 +1729,25 @@ func joinOverlapping(held, more string) string {
 		}
 	}
 	return held + " " + more
+}
+
+// keepAside keeps words of participant's that the floor ruled were no turn of theirs, a
+// murmur over the agent or between turns, for the next reply to them to see (takeAside): the
+// newest missedWords of them, as a dropped reply's note carries.
+func (c *converse) keepAside(participantID, text string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.asides[participantID] = newestWords(strings.TrimSpace(c.asides[participantID]+" "+strings.TrimSpace(text)), missedWords)
+}
+
+// takeAside is what participant said that was kept for the next reply to them to see
+// (keepAside), taken: a reply sees it once. Empty when nothing was kept.
+func (c *converse) takeAside(participantID string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	aside := c.asides[participantID]
+	delete(c.asides, participantID)
+	return aside
 }
 
 // hold keeps a turn until the agent has stopped talking. Only one is kept: a caller who

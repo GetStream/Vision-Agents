@@ -728,6 +728,17 @@ when the transcriber is chorus-asr too, and otherwise from when the words last c
 Nothing acts on the tool the caller wants, or on `cannot`, and a tool's approval is
 untouched. Acting, a decision's `Ruler` is `heard`.
 
+The words always count. Floor control says when the agent speaks, never whether what the
+caller said reaches it. `ignore` on words that take the floor ("Just want to know the T-shirt
+count." over a reply) is the flow controller's queue: the agent is not interrupted, the words
+are heard at once and answered when the agent is quiet, now if it is. `ignore` on a murmur
+("yeah", "mm-hmm") is heard and kept for the next reply to the caller as context, not a turn
+of its own; a cough or a lone "uh" stays ignored. With another transcriber writing the words,
+the runs it had settled go out as a turn of their own when the floor steps aside or takes the
+turns back, a final that comes after the floor gave up waiting for it is the next turn's (its
+words past the ones the turn ended on), and words settled with no voice heard since are a
+turn of their own 700 ms later: no final it writes is dropped.
+
 ## Fallbacks
 
 - **Acting.** The model has a third of the flow controller's deadline for a pause, 1 s, and

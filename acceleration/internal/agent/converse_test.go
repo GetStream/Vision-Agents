@@ -2543,3 +2543,92 @@ func TestWhatSaysMoreThanAStop(t *testing.T) {
 		}
 	}
 }
+
+// floorIgnores is the chorus-asr floor's ruling of ignore on ready (Ruler Heard), made with
+// the agent in state.
+func (s *ConverseSuite) floorIgnores(ready candidate, state floor) []Action {
+	return s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Ignore, Floor: harness.Continue, Ruler: harness.Heard,
+	}, state)
+}
+
+// The floor rules on when the agent speaks, not on whether the caller's words count: its
+// ignore of words that take the floor, over the agent, is the queue. The agent is not
+// interrupted, the words are heard at once, and the turn is answered once the agent is quiet.
+func (s *ConverseSuite) TestTheFloorsIgnoreOfWordsOverTheAgentIsTheQueue() {
+	ready := s.settle("just want to know the t-shirt count", s.talking())
+	actions := s.floorIgnores(ready, s.talking())
+	s.Equal([]ActionKind{ActQueue}, kinds(actions))
+	s.eventually(func() bool { return len(s.heard()) == 1 }, "the words were never heard")
+	s.Equal("just want to know the t-shirt count", s.heard()[0].Text)
+	s.Equal(actions[0].LineID, s.heard()[0].LineID)
+
+	answer, waiting := s.converse.Waiting(s.quiet())
+	s.Require().True(waiting, "the turn was not answered once the agent was quiet")
+	s.Equal(ActAnswer, answer.Kind)
+	s.Equal("just want to know the t-shirt count", answer.Text)
+	s.Empty(s.converse.takeAside(caller.ID), "a turn, not an aside")
+}
+
+// Its ignore of a murmur is heard, as the caller said it, and kept for the next reply to them
+// to see: context, and no turn of its own, so the agent says nothing to it once it is quiet.
+func (s *ConverseSuite) TestTheFloorsIgnoreOfAMurmurIsHeardAndKeptForTheNextReply() {
+	ready := s.settle("yeah", s.talking())
+	actions := s.floorIgnores(ready, s.talking())
+	s.Require().Equal([]ActionKind{ActIgnore}, kinds(actions))
+	s.NotEmpty(actions[0].LineID)
+	s.eventually(func() bool { return len(s.heard()) == 1 }, "the murmur was never heard")
+	s.Equal("yeah", s.heard()[0].Text)
+	s.Equal(actions[0].LineID, s.heard()[0].LineID)
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting, "a murmur is no turn of its own")
+
+	ready = s.settle("mm-hmm, okay", s.quiet())
+	s.Require().Equal([]ActionKind{ActIgnore}, kinds(s.floorIgnores(ready, s.quiet())))
+	s.eventually(func() bool { return len(s.heard()) == 2 }, "the second murmur was never heard")
+	s.Equal("yeah mm-hmm, okay", s.converse.takeAside(caller.ID), "kept for the next reply, in order")
+	s.Empty(s.converse.takeAside(caller.ID), "seen once")
+}
+
+// With the agent quiet there is nothing to interrupt and nothing to wait for: words that take
+// the floor are answered now.
+func (s *ConverseSuite) TestTheFloorsIgnoreOfWordsWithTheAgentQuietIsAnswered() {
+	ready := s.settle("yeah, zip is 46281", s.quiet())
+	actions := s.floorIgnores(ready, s.quiet())
+	s.Equal([]ActionKind{ActAnswer}, kinds(actions))
+	s.eventually(func() bool { return len(s.heard()) == 1 }, "the words were never heard")
+	s.Equal("yeah, zip is 46281", s.heard()[0].Text)
+}
+
+// A cough or a lone "uh" is no words: it stays ignored, and nothing is heard of it.
+func (s *ConverseSuite) TestTheFloorsIgnoreOfNoiseStaysIgnored() {
+	for _, noise := range []string{"uh", "(cough)"} {
+		s.Run(noise, func() {
+			s.build(DuplexOptions{})
+			ready := s.settle(noise, s.talking())
+			actions := s.floorIgnores(ready, s.talking())
+			s.Equal([]ActionKind{ActIgnore}, kinds(actions))
+			seen := s.seen
+			s.Never(func() bool { return countOf[Heard](seen()) > 0 }, 50*time.Millisecond, 5*time.Millisecond, "the noise was heard")
+			s.Empty(s.converse.takeAside(caller.ID))
+		})
+	}
+}
+
+// The default flow controller's ignore is as it was: the words are let go of, unheard, over
+// the agent or not.
+func (s *ConverseSuite) TestTheDefaultFlowControllersIgnoreStillLetsTheWordsGo() {
+	for _, state := range []floor{s.talking(), s.quiet()} {
+		s.build(DuplexOptions{})
+		ready := s.settle("just want to know the t-shirt count", state)
+		actions := s.converse.Ruled(harness.Decided{
+			CandidateID: ready.ID, Disposition: harness.Ignore, Floor: harness.Continue, Ruler: harness.Primary,
+		}, state)
+		s.Equal([]ActionKind{ActIgnore}, kinds(actions))
+		seen := s.seen
+		s.Never(func() bool { return countOf[Heard](seen()) > 0 }, 50*time.Millisecond, 5*time.Millisecond, "the words were heard")
+		_, waiting := s.converse.Waiting(s.quiet())
+		s.False(waiting)
+		s.Empty(s.converse.takeAside(caller.ID))
+	}
+}
