@@ -1,6 +1,7 @@
 import abc
 import asyncio
 import json
+import logging
 import time
 from dataclasses import dataclass
 from typing import (
@@ -32,8 +33,10 @@ from vision_agents.core.events.manager import EventManager
 
 from ..base import Component
 from ..utils.video_forwarder import VideoForwarder
-from .function_registry import FunctionRegistry
+from .function_registry import FunctionRegistry, ToolError
 from .llm_types import NormalizedToolCallItem, ToolSchema
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -323,8 +326,7 @@ class LLM(Component):
         start_time = time.perf_counter()
 
         async def _invoke():
-            fn = self.function_registry.get_callable(tc["name"])
-            return await fn(**args)
+            return await self.function_registry.call_function(tc["name"], args)
 
         try:
             # Send tool start event
@@ -380,7 +382,22 @@ class LLM(Component):
                 execution_time_ms=execution_time,
             )
 
-            return tc, {"error": str(e)}, e
+            return tc, {"error": self._error_for_model(tc["name"], e)}, e
+
+    def _error_for_model(self, tool_name: str, error: Exception) -> str:
+        """What the model is told about a failed tool call.
+
+        Only a ``ToolError`` carries a message meant for the model. Any other exception
+        may hold internal detail, so it is logged and the model is told the tool failed.
+        """
+        if isinstance(error, ToolError):
+            return str(error)
+        if isinstance(error, asyncio.TimeoutError):
+            return f"The tool '{tool_name}' timed out"
+        if self.function_registry.get_function(tool_name) is None:
+            return f"Function '{tool_name}' is not registered"
+        logger.exception("Tool '%s' failed", tool_name)
+        return f"The tool '{tool_name}' failed"
 
     async def _execute_tools(
         self,

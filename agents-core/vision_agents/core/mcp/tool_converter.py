@@ -1,9 +1,12 @@
 """Utility to convert MCP tools to function registry format."""
 
+import logging
 from typing import Any, Dict, Callable
 from mcp import types
 
 from ..llm.llm_types import ToolSchema
+
+logger = logging.getLogger(__name__)
 
 
 class MCPToolConverter:
@@ -90,10 +93,14 @@ class MCPToolConverter:
                         return str(result.content)
                 else:
                     return str(result)
-            except Exception as e:
-                # Return error information in a structured way
+            except Exception:
+                # The result goes to the model, and the exception may hold internal
+                # detail, so it is logged and the model is only told the tool failed.
+                logger.exception(
+                    "MCP tool '%s' on server %s failed", tool_name, server_index
+                )
                 return {
-                    "error": str(e),
+                    "error": f"The tool '{tool_name}' failed",
                     "tool": tool_name,
                     "server_index": server_index,
                 }
