@@ -669,6 +669,12 @@ namespace GetStream.VisionAgents.Models
     public partial class AgentConfig
     {
 
+        /// <summary>
+        /// The app's other text agents this one may hand work to, each as a tool. Absent when there are none.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("agents")]
+        public System.Collections.Generic.List<ChildAgent>? Agents { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("calls")]
         public AgentCalls? Calls { get; set; } = default!;
 
@@ -840,6 +846,12 @@ namespace GetStream.VisionAgents.Models
     public partial class AgentConfigPatch
     {
 
+        /// <summary>
+        /// Replaces the list whole. An empty list removes it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("agents")]
+        public System.Collections.Generic.List<ChildAgent>? Agents { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("calls")]
         public AgentCalls? Calls { get; set; } = default!;
 
@@ -1004,6 +1016,12 @@ namespace GetStream.VisionAgents.Models
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class AgentConfigRequest
     {
+
+        /// <summary>
+        /// The app's other text agents this one may hand work to, each offered to its model as a tool that takes one string, input, and answers with what that agent said last. Several called in one reply run at once, at most 8 at a time. Each runs as an incognito run of its own, on its own llm, instructions, connectors and sandbox, and its spend is added to the parent run's usage. Only a text agent has them, and an agent named here must be a text agent with no agents of its own and not this one. Omitted or null on an update, the list stored stays as it is; an empty list removes it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("agents")]
+        public System.Collections.Generic.List<ChildAgent>? Agents { get; set; } = default!;
 
         /// <summary>
         /// The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and press are on and end_call is off. On an update, a tool left out keeps its stored settings and a tool sent replaces its settings whole.
@@ -3801,6 +3819,48 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("user_name")]
         public string? UserName { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// Another of the app's text agents a text agent may hand work to, offered to its model as a tool.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ChildAgent
+    {
+
+        /// <summary>
+        /// The agent config to hand work to: one of the app's text agents, by name or id. It is stored, and read back, by name.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("config")]
+        public string Config { get; set; } = default!;
+
+        /// <summary>
+        /// What the model is told the agent does, which is the whole of how it decides when to call it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("description")]
+        public string? Description { get; set; } = default!;
+
+        /// <summary>
+        /// How long one call may take, two minutes when left out. A call never outlasts the run that made it: it gets this or what is left of the run, whichever is less. A call that runs out of time, or whose agent fails, is answered to the model as a failed tool call, and the run goes on.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("timeout_ms")]
+        public long? TimeoutMs { get; set; } = default!;
+
+        /// <summary>
+        /// The name the model calls it by, unique among the config's agents.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tool")]
+        public string Tool { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -11926,6 +11986,12 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
+        /// What the runs of the child agents it called spent, by the tool each was called by. Absent when it called none.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("children")]
+        public System.Collections.Generic.Dictionary<string, CallUsage>? Children { get; set; } = default!;
+
+        /// <summary>
         /// The last thing the agent said.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("final_text")]
@@ -11944,7 +12010,7 @@ namespace GetStream.VisionAgents.Models
         public string SessionId { get; set; } = default!;
 
         /// <summary>
-        /// What the run's model calls spent.
+        /// What the run's model calls spent, the runs of the child agents it called included.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("usage")]
         public CallUsage Usage { get; set; } = new CallUsage();
@@ -14802,6 +14868,12 @@ namespace GetStream.VisionAgents.Models
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class SyncAgentRequest
     {
+
+        /// <summary>
+        /// agent.yaml's agents: the app's other text agents this one may hand work to, each as a tool, by name. Sent, they replace the stored list whole, an empty list removing it; left out, the stored list stays. An agent named must already exist, so a directory is synced after the agents it names.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("agents")]
+        public System.Collections.Generic.List<ChildAgent>? Agents { get; set; } = default!;
 
         /// <summary>
         /// The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again.

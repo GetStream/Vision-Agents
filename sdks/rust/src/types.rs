@@ -474,6 +474,9 @@ pub struct AgentChatChannel {
 ///`AgentConfig`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct AgentConfig {
+    ///The app's other text agents this one may hand work to, each as a tool. Absent when there are none.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub agents: ::std::option::Option<::std::vec::Vec<ChildAgent>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub calls: ::std::option::Option<AgentCalls>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -567,6 +570,9 @@ pub struct AgentConfig {
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct AgentConfigPatch {
+    ///Replaces the list whole. An empty list removes it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub agents: ::std::option::Option<::std::vec::Vec<ChildAgent>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub calls: ::std::option::Option<AgentCalls>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -682,6 +688,9 @@ impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json:
 ///`AgentConfigRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct AgentConfigRequest {
+    ///The app's other text agents this one may hand work to, each offered to its model as a tool that takes one string, input, and answers with what that agent said last. Several called in one reply run at once, at most 8 at a time. Each runs as an incognito run of its own, on its own llm, instructions, connectors and sandbox, and its spend is added to the parent run's usage. Only a text agent has them, and an agent named here must be a text agent with no agents of its own and not this one. Omitted or null on an update, the list stored stays as it is; an empty list removes it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub agents: ::std::option::Option<::std::vec::Vec<ChildAgent>>,
     ///The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and press are on and end_call is off. On an update, a tool left out keeps its stored settings and a tool sent replaces its settings whole.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub calls: ::std::option::Option<AgentCalls>,
@@ -3073,6 +3082,20 @@ pub struct ChatTokenRequest {
     ///The name shown against anything they write. Defaults to the user id.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub user_name: ::std::option::Option<::std::string::String>,
+}
+///Another of the app's text agents a text agent may hand work to, offered to its model as a tool.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ChildAgent {
+    ///The agent config to hand work to: one of the app's text agents, by name or id. It is stored, and read back, by name.
+    pub config: ::std::string::String,
+    ///What the model is told the agent does, which is the whole of how it decides when to call it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub description: ::std::option::Option<::std::string::String>,
+    ///How long one call may take, two minutes when left out. A call never outlasts the run that made it: it gets this or what is left of the run, whichever is less. A call that runs out of time, or whose agent fails, is answered to the model as a failed tool call, and the run goes on.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub timeout_ms: ::std::option::Option<i64>,
+    ///The name the model calls it by, unique among the config's agents.
+    pub tool: ::std::string::String,
 }
 ///`ClaimGuestRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -9783,13 +9806,19 @@ pub struct RouterConfigRequest {
 ///`Run`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct Run {
+    ///What the runs of the child agents it called spent, by the tool each was called by. Absent when it called none.
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub children: ::std::collections::BTreeMap<::std::string::String, CallUsage>,
     ///The last thing the agent said.
     pub final_text: ::std::string::String,
     ///The provider/model routing picked to answer.
     pub model_route: ::std::string::String,
     ///The session the run held. It ended with the run, and being incognito, it cannot be read back.
     pub session_id: ::std::string::String,
-    ///What the run's model calls spent.
+    ///What the run's model calls spent, the runs of the child agents it called included.
     pub usage: CallUsage,
 }
 ///Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
@@ -12633,6 +12662,9 @@ pub struct SuspendTelephonyRequest {
 ///An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct SyncAgentRequest {
+    ///agent.yaml's agents: the app's other text agents this one may hand work to, each as a tool, by name. Sent, they replace the stored list whole, an empty list removing it; left out, the stored list stays. An agent named must already exist, so a directory is synced after the agents it names.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub agents: ::std::option::Option<::std::vec::Vec<ChildAgent>>,
     ///The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub base_change: ::std::option::Option<::std::string::String>,
