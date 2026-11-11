@@ -876,6 +876,29 @@ class TestSessions < LocalRouterTest
                  queries
   end
 
+  def test_sessions_are_queried_by_team_window_labels_and_order
+    queries = []
+    @router.on(:post, "/v1/agents/sessions/query") do |request|
+      queries << request.json
+      { "items" => [], "has_more" => false }
+    end
+    sessions = client.agent("docs").sessions
+
+    sessions.query(team: "finance", created_since: Time.utc(2026, 10, 1), created_before: Time.utc(2026, 11, 1),
+                   custom: { "ticket" => "4721" }, sort: "updated_at")
+    sessions.search("lisbon", created_since: Time.utc(2026, 10, 1), custom: {}, sort: "relevance")
+
+    assert_equal [{ "filter" => { "agent" => "docs", "team" => "finance",
+                                  "created_at" => { "$gte" => "2026-10-01T00:00:00.000Z",
+                                                    "$lt" => "2026-11-01T00:00:00.000Z" },
+                                  "custom" => { "ticket" => "4721" } },
+                    "sort" => [{ "field" => "updated_at" }] },
+                  { "filter" => { "agent" => "docs", "created_at" => { "$gte" => "2026-10-01T00:00:00.000Z" },
+                                  "text" => { "$q" => "lisbon" } },
+                    "sort" => [{ "field" => "relevance" }] }],
+                 queries
+  end
+
   def test_create_opens_a_written_conversation
     serve_session
 
