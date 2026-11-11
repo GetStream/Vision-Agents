@@ -10553,6 +10553,9 @@ pub struct Session {
     ///What a model made of the conversation, written a few seconds after it ended. A session nobody spoke in has none. Read by a backend only.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub summary: ::std::option::Option<::std::string::String>,
+    ///The team the session's usage is counted under: the team the caller's token was signed for, else the one the session was opened with, else its agent config's tags: team. Absent for a session counted under none.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub team: ::std::option::Option<::std::string::String>,
     ///The conversation is held in writing rather than on a call.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub text: ::std::option::Option<bool>,
@@ -10832,6 +10835,9 @@ pub struct SessionFilter {
     ///live or ended, as each session reports its state.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub state: ::std::option::Option<Equals>,
+    ///The team the session's usage is counted under. A caller whose token was signed for a team may only ask for that one.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub team: ::std::option::Option<Equals>,
     ///Full text over the title, description, project and agent name. Sorted by relevance, and not combined with project_id.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub text: ::std::option::Option<TextMatch>,

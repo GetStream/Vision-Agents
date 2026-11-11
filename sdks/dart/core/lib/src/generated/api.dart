@@ -1438,6 +1438,7 @@ final class Session {
     this.stt,
     this.subagent,
     this.summary,
+    this.team,
     this.text,
     this.title,
     this.tts,
@@ -1557,6 +1558,10 @@ final class Session {
         null => null,
         final Object value => _string(value, 'Session.summary'),
       },
+      team: switch (json['team']) {
+        null => null,
+        final Object value => _string(value, 'Session.team'),
+      },
       text: switch (json['text']) {
         null => null,
         final Object value => _bool(value, 'Session.text'),
@@ -1617,6 +1622,7 @@ final class Session {
   final String? stt;
   final String? subagent;
   final String? summary;
+  final String? team;
   final bool? text;
   final String? title;
   final String? tts;
@@ -1658,6 +1664,7 @@ final class Session {
     'stt': ?stt,
     'subagent': ?subagent,
     'summary': ?summary,
+    'team': ?team,
     'text': ?text,
     'title': ?title,
     'tts': ?tts,
@@ -1748,6 +1755,7 @@ final class SessionFilter {
     this.modality,
     this.projectId,
     this.state,
+    this.team,
     this.text,
     this.userId,
   });
@@ -1787,6 +1795,10 @@ final class SessionFilter {
         null => null,
         final Object value => value,
       },
+      team: switch (json['team']) {
+        null => null,
+        final Object value => value,
+      },
       text: switch (json['text']) {
         null => null,
         final Object value => TextMatch.fromJson(value),
@@ -1806,6 +1818,7 @@ final class SessionFilter {
   final Object? modality;
   final Object? projectId;
   final Object? state;
+  final Object? team;
   final TextMatch? text;
   final Object? userId;
 
@@ -1818,6 +1831,7 @@ final class SessionFilter {
     'modality': ?modality,
     'project_id': ?projectId,
     'state': ?state,
+    'team': ?team,
     if (text case final value?) 'text': value.toJson(),
     'user_id': ?userId,
   };

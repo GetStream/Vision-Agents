@@ -77,6 +77,8 @@ final readonly class Session
         public ?SessionVideo $video = null,
         // The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none.
         public ?string $voice = null,
+        // The team the session's usage is counted under: the team the caller's token was signed for, else the one the...
+        public ?string $team = null,
     ) {
     }
 
@@ -125,6 +127,7 @@ final readonly class Session
             usage: array_key_exists('usage', $data) && $data['usage'] !== null ? CallUsage::fromArray(Json::object($data, 'usage')) : null,
             video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
             voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
+            team: array_key_exists('team', $data) && $data['team'] !== null ? Json::string($data, 'team') : null,
         );
     }
 
@@ -236,6 +239,9 @@ final readonly class Session
         }
         if ($this->voice !== null) {
             $out['voice'] = $this->voice;
+        }
+        if ($this->team !== null) {
+            $out['team'] = $this->team;
         }
         return $out;
     }

@@ -17,11 +17,13 @@ final class SessionFilter: Sendable, Codable, JSONEncodable {
     let projectId: String?
     /// live or ended, as each session reports its state.
     let state: String?
+    /// The team the session's usage is counted under. A caller whose token was signed for a team may only ask for that one.
+    let team: String?
     let text: TextMatch?
     /// Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for.
     let userId: String?
 
-    init(agent: String? = nil, agentId: String? = nil, configId: String? = nil, createdAt: TimeRange? = nil, custom: [String: String]? = nil, modality: String? = nil, projectId: String? = nil, state: String? = nil, text: TextMatch? = nil, userId: String? = nil) {
+    init(agent: String? = nil, agentId: String? = nil, configId: String? = nil, createdAt: TimeRange? = nil, custom: [String: String]? = nil, modality: String? = nil, projectId: String? = nil, state: String? = nil, team: String? = nil, text: TextMatch? = nil, userId: String? = nil) {
         self.agent = agent
         self.agentId = agentId
         self.configId = configId
@@ -30,6 +32,7 @@ final class SessionFilter: Sendable, Codable, JSONEncodable {
         self.modality = modality
         self.projectId = projectId
         self.state = state
+        self.team = team
         self.text = text
         self.userId = userId
     }
@@ -44,6 +47,7 @@ final class SessionFilter: Sendable, Codable, JSONEncodable {
         self.modality = try container.decodeIfPresent(String.self, forKey: .modality)
         self.projectId = try container.decodeIfPresent(String.self, forKey: .projectId)
         self.state = try container.decodeIfPresent(String.self, forKey: .state)
+        self.team = try container.decodeIfPresent(String.self, forKey: .team)
         self.text = try container.decodeIfPresent(TextMatch.self, forKey: .text)
         self.userId = try container.decodeIfPresent(String.self, forKey: .userId)
     }
@@ -58,6 +62,7 @@ final class SessionFilter: Sendable, Codable, JSONEncodable {
         try container.encodeIfPresent(modality, forKey: .modality)
         try container.encodeIfPresent(projectId, forKey: .projectId)
         try container.encodeIfPresent(state, forKey: .state)
+        try container.encodeIfPresent(team, forKey: .team)
         try container.encodeIfPresent(text, forKey: .text)
         try container.encodeIfPresent(userId, forKey: .userId)
     }
@@ -74,6 +79,7 @@ extension SessionFilter: Hashable {
         lhs.modality == rhs.modality &&
         lhs.projectId == rhs.projectId &&
         lhs.state == rhs.state &&
+        lhs.team == rhs.team &&
         lhs.text == rhs.text &&
         lhs.userId == rhs.userId
     }
@@ -87,6 +93,7 @@ extension SessionFilter: Hashable {
         hasher.combine(modality)
         hasher.combine(projectId)
         hasher.combine(state)
+        hasher.combine(team)
         hasher.combine(text)
         hasher.combine(userId)
     }

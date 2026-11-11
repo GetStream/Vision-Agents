@@ -47,6 +47,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param modality 
  * @param projectId 
  * @param state 
+ * @param team 
  * @param text 
  * @param userId 
  */
@@ -78,6 +79,9 @@ internal data class SessionFilter (
 
     @SerialName(value = "state")
     val state: Equals? = null,
+
+    @SerialName(value = "team")
+    val team: Equals? = null,
 
     @SerialName(value = "text")
     val text: TextMatch? = null,

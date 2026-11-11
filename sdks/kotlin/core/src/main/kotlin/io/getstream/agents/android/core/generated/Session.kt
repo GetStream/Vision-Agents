@@ -79,6 +79,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param stt The provider and model transcribing, once somebody has been heard.
  * @param subagent The provider and model delegated work runs on.
  * @param summary What a model made of the conversation, written a few seconds after it ended. A session nobody spoke in has none. Read by a backend only.
+ * @param team The team the session's usage is counted under: the team the caller's token was signed for, else the one the session was opened with, else its agent config's tags: team. Absent for a session counted under none.
  * @param text The conversation is held in writing rather than on a call.
  * @param title 
  * @param tts The provider and model speaking.
@@ -206,6 +207,10 @@ internal data class Session (
     /* What a model made of the conversation, written a few seconds after it ended. A session nobody spoke in has none. Read by a backend only. */
     @SerialName(value = "summary")
     val summary: kotlin.String? = null,
+
+    /* The team the session's usage is counted under: the team the caller's token was signed for, else the one the session was opened with, else its agent config's tags: team. Absent for a session counted under none. */
+    @SerialName(value = "team")
+    val team: kotlin.String? = null,
 
     /* The conversation is held in writing rather than on a call. */
     @SerialName(value = "text")
