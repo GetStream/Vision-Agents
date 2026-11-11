@@ -40,9 +40,11 @@ override removed.
   the way Swift's did, so the two SDKs stay one shape.
 - `chat` depends on `stream_chat`, which is pure Dart, so it is tested in `dart:stable` like
   `core`. Import it with a prefix (`as stream`): it exports a `TokenProvider` of its own.
-- Stream's packages are pinned to exact versions (`stream_video_flutter: 1.6.0`,
-  `stream_chat: 10.4.0`). Bumping them is a deliberate change: read the changelog,
-  rerun the rtc tests, and check the APIs used (listed below) in the new source.
+- Stream's packages take a caret range from a tested floor (`stream_video_flutter: ^1.6.0`,
+  `stream_chat: ^10.4.0`), as Swift's `from:` and JavaScript's `^` do: a published package
+  pinned to one version would refuse every app on another patch. Raising a floor is a
+  deliberate change: read the changelog, rerun the rtc tests, and check the APIs used (listed
+  below) in the new source. The examples pin exact versions, as apps may.
 - `pubspec.lock` is gitignored: a library leaves resolving to the app.
 
 Stream Video's singleton: use `StreamVideo.create`, never the `StreamVideo(...)` factory, which

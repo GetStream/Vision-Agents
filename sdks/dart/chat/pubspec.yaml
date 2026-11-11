@@ -14,7 +14,7 @@ dependencies:
   # A hosted constraint, resolved to ../core in this repository by pubspec_overrides.yaml.
   stream_agents_core: ^0.1.0
   # Pure Dart, so this package is too, and the ui package's Flutter half stays optional.
-  stream_chat: 10.4.0
+  stream_chat: ^10.4.0
 
 dev_dependencies:
   lints: ^6.1.0

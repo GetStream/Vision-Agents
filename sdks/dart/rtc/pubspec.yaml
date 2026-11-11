@@ -16,7 +16,7 @@ dependencies:
     sdk: flutter
   # A hosted constraint, resolved to ../core in this repository by pubspec_overrides.yaml.
   stream_agents_core: ^0.1.0
-  stream_video_flutter: 1.6.0
+  stream_video_flutter: ^1.6.0
   # Makes the camera's pictures into the JPEGs the agent is sent, in pure Dart.
   image: ^4.12.0
 

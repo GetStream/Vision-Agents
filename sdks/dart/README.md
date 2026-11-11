@@ -9,8 +9,8 @@ itself, as the Swift SDK leaves them to `StreamChatAI`;
 | Package | pub name | Depends on | What it is |
 | --- | --- | --- | --- |
 | `core/` | `stream_agents_core` | `http`, `web_socket` | The generated client, the session socket, and the conversation state |
-| `chat/` | `stream_agents_chat` | `core`, `stream_chat` 10.4.0 | The Stream Chat channel a conversation is kept in, on one shared client |
-| `rtc/` | `stream_agents_rtc` | `core`, `stream_video_flutter` 1.6.0 | Joining the call, so the conversation can be spoken |
+| `chat/` | `stream_agents_chat` | `core`, `stream_chat` ^10.4.0 | The Stream Chat channel a conversation is kept in, on one shared client |
+| `rtc/` | `stream_agents_rtc` | `core`, `stream_video_flutter` ^1.6.0 | Joining the call, so the conversation can be spoken |
 
 They are three packages rather than one pub workspace. A workspace resolves as one, so a
 Flutter member would make the pure-Dart core unresolvable without the Flutter SDK. The others
