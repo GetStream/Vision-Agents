@@ -63,6 +63,11 @@ export interface SessionQuery {
   state?: Schemas["SessionState"];
   /** Only the ones created with this agent id, which names their transcript channel. */
   agentId?: string;
+  /**
+   * Only the ones whose usage is counted under this team. A token signed for a team may only
+   * ask for that one.
+   */
+  team?: string;
   /** Only the ones created at or after this moment. */
   createdSince?: Date;
   /** Only the ones created before this moment. */
@@ -246,6 +251,7 @@ export class Sessions {
         ...(query.modality ? { modality: query.modality } : {}),
         ...(query.state ? { state: query.state } : {}),
         ...(query.agentId ? { agent_id: query.agentId } : {}),
+        ...(query.team ? { team: query.team } : {}),
         ...(query.createdSince || query.createdBefore
           ? {
               created_at: {

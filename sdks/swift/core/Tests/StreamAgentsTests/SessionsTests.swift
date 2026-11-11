@@ -202,7 +202,7 @@ import Testing
             ])
     }
 
-    @Test func aQueryNarrowsByWhenLabelsAndOrder() async throws {
+    @Test func aQueryNarrowsByWhenLabelsTeamAndOrder() async throws {
         let server = try SessionServer(
             answer: .init(
                 status: 200, headers: ["Content-Type": "application/json"],
@@ -212,6 +212,7 @@ import Testing
         var query = SessionQuery()
         query.createdSince = Date(timeIntervalSince1970: 1_790_000_000)
         query.custom = ["ticket": "T-7"]
+        query.team = "finance"
         query.sort = .updatedAt
 
         _ = try await agents.agent("myagent").sessions.search("refund", query)
@@ -221,7 +222,8 @@ import Testing
             body["filter"]
                 == .dictionary([
                     "agent": .string("myagent"), "created_at": .dictionary(["$gte": .string("2026-09-21T14:13:20.000Z")]),
-                    "custom": .dictionary(["ticket": .string("T-7")]), "text": .dictionary(["$q": .string("refund")]),
+                    "custom": .dictionary(["ticket": .string("T-7")]), "team": .string("finance"),
+                    "text": .dictionary(["$q": .string("refund")]),
                 ]))
         #expect(body["sort"] == .array([.dictionary(["field": .string("updated_at")])]))
     }

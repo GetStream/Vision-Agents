@@ -198,6 +198,8 @@ public data class SessionQuery(
     val custom: Map<String, String> = emptyMap(),
     /** The order. Omitted is most recently active first, or best match first for a search. */
     val sort: Sort? = null,
+    /** Only those whose usage is counted under this team. */
+    val team: String? = null,
 ) {
     /** An order to list in. Every one is descending: the router offers no ascending one. */
     public enum class Sort {
@@ -226,6 +228,7 @@ public data class SessionQuery(
                 },
             ),
             state = equals(state?.name?.lowercase()),
+            team = equals(team),
             text = text.ifEmpty { null }?.let(::TextMatch),
         ),
         limit = limit?.toLong(),

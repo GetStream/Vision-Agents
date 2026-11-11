@@ -335,7 +335,7 @@ class VisionAgentsTest {
     }
 
     @Test
-    fun `listing by date, labels and order sends the range, the pairs and the field to sort by`() = runTest {
+    fun `listing by date, labels, team and order sends the range, the pairs, the team and the field to sort by`() = runTest {
         router.answer = { Reply(200, EMPTY_PAGE) }
 
         agents.sessions.query(
@@ -344,6 +344,7 @@ class VisionAgentsTest {
                 createdBefore = Instant.parse("2026-10-27T12:30:00.5Z"),
                 custom = mapOf("ticket" to "4721"),
                 sort = SessionQuery.Sort.UpdatedAt,
+                team = "finance",
             ),
         )
         agents.sessions.query(SessionQuery(createdBefore = Instant.parse("2026-10-27T00:00:00Z")))
@@ -352,7 +353,7 @@ class VisionAgentsTest {
         val (filtered, before, searched) = router.requests.map { it.body }
         assertEquals(
             """{"filter":{"created_at":{"${'$'}gte":"2026-10-20T00:00:00Z","${'$'}lt":"2026-10-27T12:30:00.500Z"},""" +
-                """"custom":{"ticket":"4721"}},"sort":[{"field":"updated_at"}]}""",
+                """"custom":{"ticket":"4721"},"team":{"${'$'}eq":"finance"}},"sort":[{"field":"updated_at"}]}""",
             filtered,
         )
         assertEquals("""{"filter":{"created_at":{"${'$'}lt":"2026-10-27T00:00:00Z"}}}""", before)

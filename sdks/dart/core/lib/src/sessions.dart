@@ -108,6 +108,7 @@ final class Sessions {
       userId: _named(query.userId),
       modality: query.modality?.name,
       state: query.state?.name,
+      team: _named(query.team),
       createdAt: query.createdSince == null && query.createdBefore == null
           ? null
           : api.TimeRange(gte: query.createdSince, lt: query.createdBefore),

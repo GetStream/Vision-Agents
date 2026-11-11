@@ -59,6 +59,7 @@ final class Session {
     this.title = '',
     this.description = '',
     this.projectId = '',
+    this.team = '',
     this.custom = const {},
     this.incognito = false,
     this.forkedFrom = '',
@@ -105,6 +106,9 @@ final class Session {
   final String title;
   final String description;
   final String projectId;
+
+  /// The team the session's usage is counted under. Empty for none.
+  final String team;
 
   /// The caller's own, handed back untouched.
   final Map<String, Object?> custom;
@@ -490,6 +494,7 @@ final class SessionQuery {
     this.createdBefore,
     this.custom = const {},
     this.sort,
+    this.team,
   });
 
   /// Only those opened against this agent name.
@@ -528,6 +533,9 @@ final class SessionQuery {
 
   /// The order. Omitted is most recently active first, or best match first for a search.
   final SessionSort? sort;
+
+  /// Only those whose usage is counted under this team.
+  final String? team;
 }
 
 /// An order to list conversations in. Every one is descending: the router offers no ascending

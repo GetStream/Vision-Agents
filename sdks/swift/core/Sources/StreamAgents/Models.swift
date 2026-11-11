@@ -19,6 +19,8 @@ public struct Session: Sendable, Hashable, Identifiable {
     /// The Stream Chat channel a text session is kept in. Empty for one kept nowhere.
     public let conversationID: String
     public let projectID: String
+    /// The team the session's usage is counted under. Empty for none.
+    public let team: String
     public let title: String
     public let description: String
     /// The caller's own labels.
@@ -50,6 +52,7 @@ public struct Session: Sendable, Hashable, Identifiable {
         modality = Modality(rawValue: schema.modality.rawValue) ?? .unknown
         conversationID = schema.conversationId ?? ""
         projectID = schema.projectId ?? ""
+        team = schema.team ?? ""
         title = schema.title ?? ""
         description = schema.description ?? ""
         custom = schema.custom ?? [:]
@@ -113,6 +116,8 @@ public struct SessionQuery: Sendable, Hashable {
     public var state: Session.State?
     /// Only the ones created with this agent id.
     public var agentID: String?
+    /// Only the ones whose usage is counted under this team.
+    public var team: String?
     /// Only the ones started at or after this.
     public var createdSince: Date?
     /// Only the ones started before this.
