@@ -255,16 +255,28 @@ final class AgentSession {
   /// after this if it should not.
   Future<void> rewind(String responseId) => responses.rewind(responseId);
 
-  /// Renames or relabels this conversation, and returns [session] as it now is.
+  /// Renames, relabels, pins or unpins this conversation, and returns [session] as it now is.
   ///
   /// A field left null is left as it is. [custom] replaces the labels whole, and an empty map
-  /// clears them.
+  /// clears them. [pinned] true pins it and false unpins it.
   Future<Session> update({
     String? title,
     String? description,
     Map<String, Object?>? custom,
-  }) async =>
-      _session = await _sessions.update(id, title: title, description: description, custom: custom);
+    bool? pinned,
+  }) async => _session = await _sessions.update(
+    id,
+    title: title,
+    description: description,
+    custom: custom,
+    pinned: pinned,
+  );
+
+  /// Pins this conversation, and returns [session] as it now is, with [Session.pinnedAt] set.
+  Future<Session> pin() => update(pinned: true);
+
+  /// Unpins this conversation, and returns [session] as it now is.
+  Future<Session> unpin() => update(pinned: false);
 
   /// Continues this conversation as a new session, leaving this one as it was.
   ///

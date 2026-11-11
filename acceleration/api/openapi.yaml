@@ -4877,13 +4877,35 @@ components:
     Equals:
       description: 'Matches one value exactly: "value" is short for {"$eq": "value"}.'
       oneOf:
-        - type: string
+        - minLength: 1
+          type: string
         - additionalProperties: false
           properties:
             $eq:
+              minLength: 1
               type: string
           required:
             - $eq
+          type: object
+    EqualsOrIn:
+      description: 'Matches one value exactly, written "value" or {"$eq": "value"}, or any of up to 50 values, written {"$in": ["a", "b"]}. An object holds one of $eq and $in.'
+      oneOf:
+        - minLength: 1
+          type: string
+        - additionalProperties: false
+          maxProperties: 1
+          minProperties: 1
+          properties:
+            $eq:
+              minLength: 1
+              type: string
+            $in:
+              items:
+                minLength: 1
+                type: string
+              maxItems: 50
+              minItems: 1
+              type: array
           type: object
     ErrorDetail:
       properties:
@@ -8036,6 +8058,36 @@ components:
         - has_more
         - items
       type: object
+    ReviewScoreMatch:
+      description: 'Matches a review score from 1 to 5: a number, which is short for $eq, or an object of $eq, $gt, $gte, $lt and $lte, every one of which has to hold.'
+      oneOf:
+        - maximum: 5
+          minimum: 1
+          type: integer
+        - additionalProperties: false
+          minProperties: 1
+          properties:
+            $eq:
+              maximum: 5
+              minimum: 1
+              type: integer
+            $gt:
+              maximum: 5
+              minimum: 1
+              type: integer
+            $gte:
+              maximum: 5
+              minimum: 1
+              type: integer
+            $lt:
+              maximum: 5
+              minimum: 1
+              type: integer
+            $lte:
+              maximum: 5
+              minimum: 1
+              type: integer
+          type: object
     ReviewUseCaseRequest:
       properties:
         decision:
@@ -8682,6 +8734,10 @@ components:
           $ref: '#/components/schemas/SessionMode'
         model_overwrites:
           $ref: '#/components/schemas/ModelOverwrites'
+        pinned_at:
+          description: When the session was pinned. Absent for one that is not pinned.
+          format: date-time
+          type: string
         project_id:
           type: string
         review_notes:
@@ -8818,42 +8874,37 @@ components:
       type: string
     SessionFilter:
       additionalProperties: false
-      description: Which sessions to list. A field not listed here is refused rather than ignored.
+      description: Which sessions to list. The keys of one object are ANDed. $and and $or each take 1 to 10 filters and nest up to 3 deep; a whole filter holds at most 30 field conditions. An empty filter lists every session the caller may see. Any other key, and any other operator, is refused with a 400 that names it and lists the fields that can be filtered.
       properties:
+        $and:
+          description: Every one of these filters holds.
+          items:
+            $ref: '#/components/schemas/SessionFilter'
+          maxItems: 10
+          minItems: 1
+          type: array
+        $or:
+          description: At least one of these filters holds. It chooses among the sessions the caller may see and never adds to them. text and user_id are refused inside it.
+          items:
+            $ref: '#/components/schemas/SessionFilter'
+          maxItems: 10
+          minItems: 1
+          type: array
         agent:
           $ref: '#/components/schemas/Equals'
           description: The agent name the session was opened against.
-        agent_id:
-          $ref: '#/components/schemas/Equals'
-          description: The agent id the session was created with, which names its transcript channel.
-        config_id:
-          $ref: '#/components/schemas/Equals'
-          description: The agent config the session ran under. Empty for a session that spelled itself out.
-        created_at:
-          $ref: '#/components/schemas/TimeRange'
-          description: When the session started.
-        custom:
-          additionalProperties:
-            type: string
-          description: The session's custom object holds every one of these pairs, which is how a caller finds again what it labelled.
-          type: object
-        modality:
-          $ref: '#/components/schemas/Equals'
-          description: 'text, voice or video: how the user took part.'
         project_id:
-          $ref: '#/components/schemas/Equals'
-        state:
-          $ref: '#/components/schemas/Equals'
-          description: live or ended, as each session reports its state.
-        team:
-          $ref: '#/components/schemas/Equals'
-          description: The team the session's usage is counted under. A caller whose token was signed for a team may only ask for that one.
+          $ref: '#/components/schemas/EqualsOrIn'
+          description: The project the session belongs to.
+        review_score:
+          $ref: '#/components/schemas/ReviewScoreMatch'
+          description: The score the review gave the conversation. A session with no review matches no condition on it. Only a server-side caller may use it.
         text:
           $ref: '#/components/schemas/TextMatch'
-          description: Full text over the title, description, project and agent name. Sorted by relevance, and not combined with project_id.
+          description: Full text over the title, description, project and agent name, sorted by relevance. Once per filter, at its top level or in a top-level $and, and never inside $or.
         user_id:
           $ref: '#/components/schemas/Equals'
-          description: 'Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for.'
+          description: 'Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for. Only at the top level of the filter or in a top-level $and.'
       type: object
     SessionMemory:
       description: Who the session's memories are about. Without a user id nothing is recalled or stored, which is the case for a call with nobody identified on it.
@@ -8932,10 +8983,10 @@ components:
           minimum: 1
           type: integer
         sort:
-          description: Omitted is updated_at, or relevance for a text search.
+          description: 'Omitted is last_message_at descending, or relevance for a text search. One of: last_message_at; pinned, then last_message_at, which lists the pinned sessions first; review_score, for a server-side caller; relevance, for a text search and nothing else.'
           items:
             $ref: '#/components/schemas/SessionSort'
-          maxItems: 1
+          maxItems: 2
           nullable: true
           type: array
       type: object
@@ -9000,9 +9051,10 @@ components:
       properties:
         direction:
           default: -1
-          description: -1, descending. Ascending is not offered.
+          description: -1 is descending and 1 ascending. pinned and relevance only sort descending.
           enum:
             - -1
+            - 1
           format: int64
           type: integer
         field:
@@ -9011,9 +9063,11 @@ components:
         - field
       type: object
     SessionSortField:
-      description: updated_at is the most recently active first. relevance is the best match first, and only sorts a text search.
+      description: 'last_message_at is when the agent last answered, or when the session began if it has not. pinned lists the pinned sessions first: it sorts descending only, comes first, and is followed by last_message_at, descending when left out. review_score is the review''s score, sessions without one last either way, and is a server-side caller''s only. relevance is the best match first, and is the one sort of a text search.'
       enum:
-        - updated_at
+        - last_message_at
+        - pinned
+        - review_score
         - relevance
       type: string
     SessionState:
@@ -10414,6 +10468,7 @@ components:
       type: object
     TextMatch:
       additionalProperties: false
+      description: A full-text match, Stream's $q.
       properties:
         $q:
           description: Quoted phrases and bare words both work, and punctuation is taken rather than refused.
@@ -10428,18 +10483,6 @@ components:
         - low-latency
         - high-quality
       type: string
-    TimeRange:
-      additionalProperties: false
-      properties:
-        $gte:
-          description: At or after this RFC3339 time.
-          format: date-time
-          type: string
-        $lt:
-          description: Strictly before this RFC3339 time.
-          format: date-time
-          type: string
-      type: object
     TimelineEntry:
       properties:
         audio_out_ms:
@@ -11062,7 +11105,7 @@ components:
           type: string
       type: object
     UpdateSessionRequest:
-      description: What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller.
+      description: What to change about one session. A field left out is left as it is. Title, description, custom and pinned can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller.
       properties:
         custom:
           additionalProperties: {}
@@ -11075,6 +11118,9 @@ components:
           type: string
         max_output_tokens:
           type: integer
+        pinned:
+          description: true pins the session and false unpins it. Pinning one that is already pinned keeps the time it was first pinned. A pin changes nothing else about the session, its place in a last_message_at sort included.
+          type: boolean
         sts:
           description: A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
           type: string
@@ -18158,7 +18204,7 @@ paths:
       description: |-
         Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 
-        An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
+        An end user's device may change a session's title, description and custom, and pin or unpin it, so a person can tidy up their own conversations. `pinned` sets the session's `pinned_at`, which a query sorted by `pinned` lists first; it moves nothing else, and an incognito session, which nothing records, cannot be pinned: 400. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 
         A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 
@@ -19112,15 +19158,47 @@ paths:
   /v1/agents/sessions/query:
     post:
       description: |-
-        Three queries are supported, each over the sessions still running and the ones that ended:
+        Lists the caller's sessions, the ones still running and the ones that ended, narrowed by a filter and in the order of a sort.
 
-        - every session, sorted by `updated_at`
-        - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
-        - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+        A filter is an object of fields. The keys of one object are ANDed, and `$and` and `$or` each take a list of filters, so conditions combine and nest:
 
-        `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `team`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+        - `project_id`: a value, `{"$eq": value}` or `{"$in": [values]}`
+        - `agent`: a value or `{"$eq": value}`, the agent name the session was opened against
+        - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
+        - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
+        - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
 
-        The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+        Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
+
+        Every session, pinned first:
+
+        ```json
+        {"sort": [{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": -1}]}
+        ```
+
+        One agent's sessions in either of two projects:
+
+        ```json
+        {"filter": {"agent": "support", "$or": [{"project_id": "health"}, {"project_id": "billing"}]}}
+        ```
+
+        A search within one project:
+
+        ```json
+        {"filter": {"text": {"$q": "refund"}, "project_id": "billing"}}
+        ```
+
+        A backend's badly reviewed sessions and everything in two projects, the lowest score first:
+
+        ```json
+        {"filter": {"$or": [{"review_score": {"$lte": 2}}, {"project_id": {"$in": ["vip", "pilot"]}}]}, "sort": [{"field": "review_score", "direction": 1}]}
+        ```
+
+        `sort` is `last_message_at` (the default, descending: when the agent last answered, or when the session began), `pinned` followed by `last_message_at`, `review_score` for a server-side caller, with the sessions nobody reviewed last, or `relevance`, which is how a `text` search is sorted and the only way it is. A session is pinned and unpinned by updating it.
+
+        A backend gets its customer's sessions; an end user gets their own, whatever the filter says: an `$or` chooses among the sessions the caller may see and never adds to them. An anonymous caller who named nobody gets none.
+
+        The search reads what a person named the conversation, not what was said in it. Pages are followed by `next_cursor`, sent back with the same filter and sort. There is no total: counting every conversation costs more than the page.
       operationId: querySessions
       requestBody:
         content:

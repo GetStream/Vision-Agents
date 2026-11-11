@@ -32,6 +32,7 @@ Session sessionOf(api.Session wire) => Session(
   createdAt: wire.createdAt,
   closedAt: wire.closedAt,
   lastResponseAt: wire.lastResponseAt,
+  pinnedAt: wire.pinnedAt,
 );
 
 AgentResponse responseOf(api.AgentResponse wire) => AgentResponse(

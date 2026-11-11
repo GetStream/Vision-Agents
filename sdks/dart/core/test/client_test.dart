@@ -317,89 +317,6 @@ void main() {
       ]);
     });
 
-    test("an agent's sessions are opened against it and queried by it, a page at a time", () async {
-      router
-        ..answer('POST /v1/agents/sessions', Answer(201, sessionJson()))
-        ..answer(
-          'POST /v1/agents/sessions/query',
-          Answer(200, pageJson([sessionJson()], nextCursor: 'c2')),
-        );
-      final docs = agents.agent('docs');
-
-      await docs.sessions.create();
-      final page = await docs.sessions.query(
-        const SessionQuery(
-          agentId: 'a1',
-          modality: SessionModality.voice,
-          state: SessionState.ended,
-          limit: 10,
-          cursor: 'c1',
-        ),
-      );
-
-      expect(router.last('POST /v1/agents/sessions').json, {'agent': 'docs'});
-      expect(router.last('POST /v1/agents/sessions/query').json, {
-        'filter': {'agent': 'docs', 'agent_id': 'a1', 'modality': 'voice', 'state': 'ended'},
-        'limit': 10,
-        'cursor': 'c1',
-      });
-      expect(page.items.single.id, 's1');
-      expect(page.hasMore, isTrue);
-      expect(page.nextCursor, 'c2');
-    });
-
-    test(
-      'narrows a query to when a conversation started, its team and its labels, in the order asked',
-      () async {
-        router.answer('POST /v1/agents/sessions/query', Answer(200, pageJson([])));
-
-        await agents.sessions.query(
-          SessionQuery(
-            createdSince: DateTime.utc(2026, 10, 1),
-            createdBefore: DateTime.utc(2026, 10, 8),
-            custom: const {'topic': 'billing'},
-            sort: SessionSort.updatedAt,
-            team: 'finance',
-          ),
-        );
-        final ranged = router.last('POST /v1/agents/sessions/query').json;
-        await agents.sessions.search(
-          'refund',
-          SessionQuery(createdSince: DateTime.utc(2026, 10, 1), sort: SessionSort.relevance),
-        );
-
-        expect(ranged, {
-          'filter': {
-            'created_at': {r'$gte': '2026-10-01T00:00:00.000Z', r'$lt': '2026-10-08T00:00:00.000Z'},
-            'custom': {'topic': 'billing'},
-            'team': 'finance',
-          },
-          'sort': [
-            {'field': 'updated_at'},
-          ],
-        });
-        expect(router.last('POST /v1/agents/sessions/query').json, {
-          'filter': {
-            'created_at': {r'$gte': '2026-10-01T00:00:00.000Z'},
-            'text': {r'$q': 'refund'},
-          },
-          'sort': [
-            {'field': 'relevance'},
-          ],
-        });
-      },
-    );
-
-    test('a query with nothing to narrow it sends no filter', () async {
-      router.answer('POST /v1/agents/sessions/query', Answer(200, pageJson([])));
-
-      final page = await agents.sessions.search('');
-
-      expect(router.last('POST /v1/agents/sessions/query').json, <String, Object?>{});
-      expect(page.items, isEmpty);
-      expect(page.nextCursor, isNull);
-    });
-
     test('naming a config by id does not also send the agent it is scoped to', () async {
       router.answer('POST /v1/agents/sessions', Answer(201, sessionJson()));
 
@@ -408,24 +325,365 @@ void main() {
       expect(router.last('POST /v1/agents/sessions').json, {'config_id': 'c2'});
     });
 
-    test('searches by the words a conversation was titled with', () async {
+    group('querying sessions', () {
+      const route = 'POST /v1/agents/sessions/query';
+
+      setUp(() => router.answer(route, Answer(200, pageJson([]))));
+
+      Object? sent() => router.last(route).json;
+
+      test("an agent's sessions are opened against it and queried by it alone", () async {
+        router.answer('POST /v1/agents/sessions', Answer(201, sessionJson()));
+        final docs = agents.agent('docs');
+
+        await docs.sessions.create();
+        await docs.sessions.query();
+
+        expect(router.last('POST /v1/agents/sessions').json, {'agent': 'docs'});
+        expect(sent(), {
+          'filter': {'agent': 'docs'},
+        });
+      });
+
+      test('a query with nothing to narrow it sends no filter', () async {
+        final page = await agents.sessions.search('');
+
+        expect(sent(), <String, Object?>{});
+        expect(page.items, isEmpty);
+        expect(page.nextCursor, isNull);
+      });
+
+      test('narrows to a project', () async {
+        await agents.agent('docs').sessions.query(filter: {'project_id': 'a'});
+
+        expect(sent(), {
+          'filter': {'agent': 'docs', 'project_id': 'a'},
+        });
+      });
+
+      test(
+        'narrows to either of two projects, the agent beside the \$or and not around it',
+        () async {
+          await agents
+              .agent('docs')
+              .sessions
+              .query(
+                filter: {
+                  r'$or': [
+                    {'project_id': 'a'},
+                    {'project_id': 'b'},
+                  ],
+                },
+                sort: const [
+                  SessionSort(field: 'pinned'),
+                  SessionSort(field: 'last_message_at'),
+                ],
+                limit: 20,
+                cursor: null,
+              );
+
+          expect(sent(), {
+            'filter': {
+              r'$or': [
+                {'project_id': 'a'},
+                {'project_id': 'b'},
+              ],
+              'agent': 'docs',
+            },
+            'sort': [
+              {'direction': -1, 'field': 'pinned'},
+              {'direction': -1, 'field': 'last_message_at'},
+            ],
+            'limit': 20,
+          });
+        },
+      );
+
+      test('sends a nested \$and and \$or as written', () async {
+        await agents
+            .agent('docs')
+            .sessions
+            .query(
+              filter: {
+                r'$and': [
+                  {
+                    'text': {r'$q': 'refund'},
+                  },
+                  {
+                    r'$or': [
+                      {
+                        'project_id': {r'$eq': 'a'},
+                      },
+                      {
+                        r'$and': [
+                          {'project_id': 'b'},
+                          {
+                            'agent': {r'$eq': 'docs'},
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            );
+
+        expect(sent(), {
+          'filter': {
+            r'$and': [
+              {
+                'text': {r'$q': 'refund'},
+              },
+              {
+                r'$or': [
+                  {
+                    'project_id': {r'$eq': 'a'},
+                  },
+                  {
+                    r'$and': [
+                      {'project_id': 'b'},
+                      {
+                        'agent': {r'$eq': 'docs'},
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+            'agent': 'docs',
+          },
+        });
+      });
+
+      test('narrows to any of several projects with \$in', () async {
+        await agents.sessions.query(
+          filter: {
+            'project_id': {
+              r'$in': ['a', 'b', 'c'],
+            },
+          },
+        );
+
+        expect(sent(), {
+          'filter': {
+            'project_id': {
+              r'$in': ['a', 'b', 'c'],
+            },
+          },
+        });
+      });
+
+      test("an agent's own sessions stay that agent's, whatever the filter names", () async {
+        await agents.agent('docs').sessions.query(filter: {'agent': 'billing', 'project_id': 'a'});
+
+        expect(sent(), {
+          'filter': {'agent': 'docs', 'project_id': 'a'},
+        });
+      });
+
+      test('searches by the words a conversation was titled with, within a project', () async {
+        router.answer(route, Answer(200, pageJson([sessionJson(id: 's2')])));
+
+        final found = await agents
+            .agent('docs')
+            .sessions
+            .search("o'brien billing", filter: {'project_id': 'a'}, limit: 5, cursor: 'c1');
+
+        expect(found.items.single.id, 's2');
+        expect(sent(), {
+          'filter': {
+            'agent': 'docs',
+            'project_id': 'a',
+            'text': {r'$q': "o'brien billing"},
+          },
+          'limit': 5,
+          'cursor': 'c1',
+        });
+      });
+
+      test('a search refuses a filter that already has text', () async {
+        expect(
+          () => agents.sessions.search(
+            'refund',
+            filter: {
+              'text': {r'$q': 'billing'},
+            },
+          ),
+          throwsArgumentError,
+        );
+        expect(
+          () => agents.sessions.search(
+            'refund',
+            filter: {
+              r'$and': [
+                {
+                  'text': {r'$q': 'billing'},
+                },
+              ],
+            },
+          ),
+          throwsArgumentError,
+        );
+        expect(router.arrived, isEmpty);
+      });
+
+      test('sends each order a device may ask for', () async {
+        final sorts = <List<SessionSort>, List<Map<String, Object?>>>{
+          const [SessionSort(field: 'last_message_at')]: [
+            {'direction': -1, 'field': 'last_message_at'},
+          ],
+          const [SessionSort(field: 'last_message_at', direction: 1)]: [
+            {'direction': 1, 'field': 'last_message_at'},
+          ],
+          const [SessionSort(field: 'pinned')]: [
+            {'direction': -1, 'field': 'pinned'},
+          ],
+          const [
+            SessionSort(field: 'pinned'),
+            SessionSort(field: 'last_message_at', direction: 1),
+          ]: [
+            {'direction': -1, 'field': 'pinned'},
+            {'direction': 1, 'field': 'last_message_at'},
+          ],
+        };
+
+        for (final MapEntry(key: sort, value: wire) in sorts.entries) {
+          await agents.sessions.query(sort: sort);
+          expect(sent(), {'sort': wire});
+        }
+
+        await agents.sessions.query(
+          filter: {
+            'text': {r'$q': 'refund'},
+          },
+          sort: const [SessionSort(field: 'relevance')],
+        );
+        expect(sent(), {
+          'filter': {
+            'text': {r'$q': 'refund'},
+          },
+          'sort': [
+            {'direction': -1, 'field': 'relevance'},
+          ],
+        });
+      });
+
+      test('pages with the cursor of the page before', () async {
+        router.answerInTurn(route, [
+          Answer(200, pageJson([sessionJson()], nextCursor: 'c2')),
+          Answer(200, pageJson([sessionJson(id: 's2')])),
+        ]);
+        const sort = [SessionSort(field: 'pinned')];
+
+        final first = await agents.sessions.query(sort: sort, limit: 1);
+        final second = await agents.sessions.query(sort: sort, limit: 1, cursor: first.nextCursor);
+
+        expect(first.items.single.id, 's1');
+        expect(first.hasMore, isTrue);
+        expect(first.nextCursor, 'c2');
+        expect(sent(), {
+          'sort': [
+            {'direction': -1, 'field': 'pinned'},
+          ],
+          'limit': 1,
+          'cursor': 'c2',
+        });
+        expect(second.items.single.id, 's2');
+        expect(second.hasMore, isFalse);
+        expect(second.nextCursor, isNull);
+      });
+
+      test('refuses what only a backend may filter or order by, before sending anything', () async {
+        final refused = <Map<String, Object?>>[
+          {'review_score': 5},
+          {'user_id': 'jlahey'},
+          {
+            r'$and': [
+              {
+                r'$or': [
+                  {'project_id': 'a'},
+                  {
+                    'review_score': {r'$gte': 4},
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            r'$and': [
+              {'user_id': 'jlahey'},
+            ],
+          },
+        ];
+
+        for (final filter in refused) {
+          expect(() => agents.sessions.query(filter: filter), throwsArgumentError);
+          expect(() => agents.sessions.search('refund', filter: filter), throwsArgumentError);
+        }
+        expect(
+          () => agents.sessions.query(sort: const [SessionSort(field: 'review_score')]),
+          throwsArgumentError,
+        );
+        expect(router.arrived, isEmpty);
+      });
+
+      test('refuses a field sessions are no longer filtered on, rather than dropping it', () async {
+        for (final field in ['state', 'modality', 'agent_id', 'config_id', 'team', 'created_at']) {
+          expect(() => agents.sessions.query(filter: {field: 'x'}), throwsArgumentError);
+        }
+        expect(
+          () => agents.sessions.query(
+            filter: {
+              r'$or': {'project_id': 'a'},
+            },
+          ),
+          throwsArgumentError,
+        );
+        expect(() => agents.sessions.query(filter: {'text': 'refund'}), throwsArgumentError);
+        expect(router.arrived, isEmpty);
+      });
+    });
+
+    test('pins and unpins a conversation, and reads when it was pinned', () async {
+      router.answerInTurn('PATCH /v1/agents/sessions/s1', [
+        Answer(200, {...sessionJson(), 'pinned_at': '2026-11-11T10:00:00.5Z'}),
+        Answer(200, sessionJson()),
+        Answer(200, {...sessionJson(), 'title': 'Billing', 'pinned_at': '2026-11-11T10:00:01Z'}),
+      ]);
+
+      final pinned = await agents.sessions.pin('s1');
+      final pin = router.last('PATCH /v1/agents/sessions/s1').json;
+      final unpinned = await agents.sessions.unpin('s1');
+      final unpin = router.last('PATCH /v1/agents/sessions/s1').json;
+      final both = await agents.sessions.update('s1', title: 'Billing', pinned: true);
+
+      expect(pin, {'pinned': true});
+      expect(pinned.pinnedAt, DateTime.utc(2026, 11, 11, 10, 0, 0, 500));
+      expect(unpin, {'pinned': false});
+      expect(unpinned.pinnedAt, isNull);
+      expect(router.last('PATCH /v1/agents/sessions/s1').json, {
+        'title': 'Billing',
+        'pinned': true,
+      });
+      expect(both.pinnedAt, DateTime.utc(2026, 11, 11, 10, 0, 1));
+    });
+
+    test('reads which of a page of conversations are pinned', () async {
       router.answer(
         'POST /v1/agents/sessions/query',
-        Answer(200, pageJson([sessionJson(id: 's2')])),
+        Answer(
+          200,
+          pageJson([
+            {...sessionJson(), 'pinned_at': '2026-11-11T10:00:00Z'},
+            sessionJson(id: 's2'),
+          ]),
+        ),
       );
 
-      final found = await agents.sessions.search(
-        "o'brien billing",
-        const SessionQuery(state: SessionState.live),
-      );
+      final page = await agents.sessions.query(sort: const [SessionSort(field: 'pinned')]);
 
-      expect(found.items.single.id, 's2');
-      expect(router.last('POST /v1/agents/sessions/query').json, {
-        'filter': {
-          'state': 'live',
-          'text': {r'$q': "o'brien billing"},
-        },
-      });
+      expect(page.items.first.pinnedAt, DateTime.utc(2026, 11, 11, 10));
+      expect(page.items.last.pinnedAt, isNull);
     });
 
     test('stopping keeps the conversation and deleting takes it away', () async {

@@ -277,56 +277,257 @@ public sealed class ClientTests
 
         var listed = await client.Agent("support").Sessions.QueryAsync(new SessionQuery
         {
-            UserId = "u1",
-            State = "live",
-            AgentId = "jean",
-            Modality = "text",
+            Filter = new() { ["user_id"] = "u1", ["project_id"] = "docs" },
             Limit = 10,
             Cursor = "c1",
         }, cancel);
-        var found = await client.Sessions.SearchAsync("billing", new SessionQuery { UserId = "u1" }, cancel);
+        var found = await client.Sessions.SearchAsync("billing", new() { ["user_id"] = "u1" }, cancellationToken: cancel);
         var read = await client.Sessions.GetAsync("s1", cancel);
 
         Assert.Equal(("s1", true, "c2"), (Assert.Single(listed.Items).Id, listed.HasMore, listed.NextCursor));
         Assert.Equal(("s2", false), (Assert.Single(found.Items).Id, found.HasMore));
         Assert.False(read.Live);
-        var bodies = router.To("POST", "/v1/agents/sessions/query").Select(seen => seen.Body!.AsObject()).ToList();
-        Assert.Equal(["cursor", "filter", "limit"], bodies[0].Select(pair => pair.Key).Order());
-        Assert.Equal(("c1", 10), (bodies[0].Text("cursor"), bodies[0]["limit"]!.GetValue<int>()));
-        Assert.Equal("""{"agent":"support","agent_id":"jean","modality":"text","state":"live","user_id":"u1"}""",
-            bodies[0]["filter"]!.ToJsonString());
-        Assert.Equal("""{"text":{"$q":"billing"},"user_id":"u1"}""", bodies[1]["filter"]!.ToJsonString());
+        var bodies = Queries(router);
+        Assert.Equal("""{"filter":{"user_id":"u1","project_id":"docs","agent":"support"},"limit":10,"cursor":"c1"}""", bodies[0]);
+        Assert.Equal("""{"filter":{"user_id":"u1","text":{"$q":"billing"}}}""", bodies[1]);
     }
 
     [Fact]
-    public async Task ASessionQueryNarrowsByTeamWindowLabelsAndOrder()
+    public async Task ASessionQueryWithNoFilterSendsOnlyTheAgent()
     {
         await using var router = await TestRouter.StartAsync();
-        router.On("POST", "/v1/agents/sessions/query", 200, Page(false, null));
+        router.On("POST", "/v1/agents/sessions/query", 200, Page());
         using var client = Fixtures.Client(router);
         var cancel = TestContext.Current.CancellationToken;
 
-        await client.Agent("support").Sessions.QueryAsync(new SessionQuery
-        {
-            Team = "finance",
-            CreatedSince = new DateTimeOffset(2026, 10, 1, 2, 0, 0, TimeSpan.FromHours(2)),
-            CreatedBefore = new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero),
-            Custom = new Dictionary<string, string> { ["ticket"] = "4721" },
-            Sort = "updated_at",
-        }, cancel);
-        await client.Sessions.SearchAsync("lisbon", new SessionQuery { CreatedSince = new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero), Sort = "relevance" }, cancel);
+        await client.Agent("support").Sessions.QueryAsync(cancellationToken: cancel);
+        await client.Agent("support").Sessions.QueryAsync(new SessionQuery { Filter = new() }, cancel);
+        await client.Sessions.QueryAsync(cancellationToken: cancel);
 
-        var bodies = router.To("POST", "/v1/agents/sessions/query").Select(seen => seen.Body!.AsObject()).ToList();
-        var listed = bodies[0]["filter"]!.AsObject();
-        Assert.Equal(["agent", "created_at", "custom", "team"], listed.Select(pair => pair.Key).Order());
-        Assert.Equal(("support", "finance", "4721"), (listed.Text("agent"), listed.Text("team"), listed["custom"]!.AsObject().Text("ticket")));
-        Assert.Equal(("2026-10-01T00:00:00+00:00", "2026-11-01T00:00:00+00:00"),
-            (listed["created_at"]!.AsObject().Text("$gte"), listed["created_at"]!.AsObject().Text("$lt")));
-        Assert.Equal("""[{"field":"updated_at"}]""", bodies[0]["sort"]!.ToJsonString());
-        var searched = bodies[1]["filter"]!.AsObject();
-        Assert.Equal(["created_at", "text"], searched.Select(pair => pair.Key).Order());
-        Assert.Equal("2026-10-01T00:00:00+00:00", searched["created_at"]!.AsObject().Text("$gte"));
-        Assert.Equal("""[{"field":"relevance"}]""", bodies[1]["sort"]!.ToJsonString());
+        Assert.Equal(["""{"filter":{"agent":"support"}}""", """{"filter":{"agent":"support"}}""", "{}"], Queries(router));
+    }
+
+    [Fact]
+    public async Task ASessionFilterIsSentAsItWasWritten()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sessions/query", 200, Page());
+        using var client = Fixtures.Client(router);
+        var sessions = client.Agent("support").Sessions;
+        var cancel = TestContext.Current.CancellationToken;
+
+        await sessions.QueryAsync(new SessionQuery { Filter = new() { ["project_id"] = "docs" } }, cancel);
+        await sessions.QueryAsync(new SessionQuery
+        {
+            Filter = new()
+            {
+                ["$or"] = new[]
+                {
+                    new Dictionary<string, object?> { ["project_id"] = "docs" },
+                    new Dictionary<string, object?> { ["project_id"] = "billing" },
+                },
+            },
+        }, cancel);
+        await sessions.QueryAsync(new SessionQuery
+        {
+            Filter = new()
+            {
+                ["$and"] = new object[]
+                {
+                    new Dictionary<string, object?> { ["user_id"] = new Dictionary<string, object?> { ["$eq"] = "u1" } },
+                    new Dictionary<string, object?>
+                    {
+                        ["$or"] = new object[]
+                        {
+                            new Dictionary<string, object?> { ["project_id"] = "docs" },
+                            new Dictionary<string, object?> { ["review_score"] = new Dictionary<string, object?> { ["$gte"] = 4 } },
+                        },
+                    },
+                },
+            },
+        }, cancel);
+        await sessions.QueryAsync(new SessionQuery
+        {
+            Filter = new() { ["project_id"] = new Dictionary<string, object?> { ["$in"] = new[] { "docs", "billing" } } },
+        }, cancel);
+
+        Assert.Equal(
+        [
+            """{"filter":{"project_id":"docs","agent":"support"}}""",
+            """{"filter":{"$or":[{"project_id":"docs"},{"project_id":"billing"}],"agent":"support"}}""",
+            """{"filter":{"$and":[{"user_id":{"$eq":"u1"}},{"$or":[{"project_id":"docs"},{"review_score":{"$gte":4}}]}],"agent":"support"}}""",
+            """{"filter":{"project_id":{"$in":["docs","billing"]},"agent":"support"}}""",
+        ], Queries(router));
+    }
+
+    [Fact]
+    public async Task AnAgentsQueryIsNarrowedToThatAgentWhateverTheFilterNames()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sessions/query", 200, Page());
+        using var client = Fixtures.Client(router);
+        var cancel = TestContext.Current.CancellationToken;
+        var filter = new Dictionary<string, object?> { ["agent"] = "sales", ["project_id"] = "docs" };
+
+        await client.Agent("support").Sessions.QueryAsync(new SessionQuery { Filter = filter }, cancel);
+        await client.Sessions.QueryAsync(new SessionQuery { Filter = filter }, cancel);
+
+        Assert.Equal(
+        [
+            """{"filter":{"agent":"support","project_id":"docs"}}""",
+            """{"filter":{"agent":"sales","project_id":"docs"}}""",
+        ], Queries(router));
+        Assert.Equal("sales", filter["agent"]);
+    }
+
+    [Fact]
+    public async Task ASessionFilterAndOrderCanGoByReviewScore()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sessions/query", 200, Page());
+        using var client = Fixtures.Client(router);
+        var sessions = client.Agent("support").Sessions;
+        var cancel = TestContext.Current.CancellationToken;
+
+        await sessions.QueryAsync(new SessionQuery { Filter = new() { ["review_score"] = 5 } }, cancel);
+        await sessions.QueryAsync(new SessionQuery
+        {
+            Filter = new() { ["review_score"] = new Dictionary<string, object?> { ["$gte"] = 2, ["$lt"] = 4 } },
+            Sort = [new SessionSort("review_score", 1)],
+        }, cancel);
+
+        Assert.Equal(
+        [
+            """{"filter":{"review_score":5,"agent":"support"}}""",
+            """{"filter":{"review_score":{"$gte":2,"$lt":4},"agent":"support"},"sort":[{"field":"review_score","direction":1}]}""",
+        ], Queries(router));
+    }
+
+    [Fact]
+    public async Task ASessionQueryIsSentInEachOrder()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sessions/query", 200, Page());
+        using var client = Fixtures.Client(router);
+        var sessions = client.Agent("support").Sessions;
+        var cancel = TestContext.Current.CancellationToken;
+
+        foreach (IReadOnlyList<SessionSort> sort in new SessionSort[][]
+        {
+            [new("last_message_at")],
+            [new("last_message_at", -1)],
+            [new("last_message_at", 1)],
+            [new("pinned")],
+            [new("pinned", -1), new("last_message_at", 1)],
+            [new("review_score", -1)],
+            [],
+        })
+        {
+            await sessions.QueryAsync(new SessionQuery { Sort = sort }, cancel);
+        }
+        await sessions.QueryAsync(new SessionQuery
+        {
+            Filter = new() { ["text"] = new Dictionary<string, object?> { ["$q"] = "billing" } },
+            Sort = [new SessionSort("relevance", -1)],
+        }, cancel);
+
+        const string agent = """{"filter":{"agent":"support"}""";
+        Assert.Equal(
+        [
+            agent + ""","sort":[{"field":"last_message_at"}]}""",
+            agent + ""","sort":[{"field":"last_message_at","direction":-1}]}""",
+            agent + ""","sort":[{"field":"last_message_at","direction":1}]}""",
+            agent + ""","sort":[{"field":"pinned"}]}""",
+            agent + ""","sort":[{"field":"pinned","direction":-1},{"field":"last_message_at","direction":1}]}""",
+            agent + ""","sort":[{"field":"review_score","direction":-1}]}""",
+            agent + "}",
+            """{"filter":{"text":{"$q":"billing"},"agent":"support"},"sort":[{"field":"relevance","direction":-1}]}""",
+        ], Queries(router));
+    }
+
+    [Fact]
+    public async Task ASessionQueryPagesWithTheCursorOfThePageBefore()
+    {
+        await using var router = await TestRouter.StartAsync();
+        var queried = 0;
+        router.On("POST", "/v1/agents/sessions/query", _ => new Reply(200, ++queried == 1
+            ? Page(true, "c2", Fixtures.Session("s1"))
+            : Page(false, null, Fixtures.Session("s2"))));
+        using var client = Fixtures.Client(router);
+        var sessions = client.Agent("support").Sessions;
+        var cancel = TestContext.Current.CancellationToken;
+        var query = new SessionQuery
+        {
+            Filter = new() { ["project_id"] = "docs" },
+            Sort = [new SessionSort("pinned"), new SessionSort("last_message_at")],
+            Limit = 1,
+        };
+
+        var first = await sessions.QueryAsync(query, cancel);
+        var second = await sessions.QueryAsync(query with { Cursor = first.NextCursor }, cancel);
+
+        Assert.Equal(("s1", true, "c2"), (Assert.Single(first.Items).Id, first.HasMore, first.NextCursor));
+        Assert.Equal(("s2", false, null), (Assert.Single(second.Items).Id, second.HasMore, second.NextCursor));
+        const string page = """{"filter":{"project_id":"docs","agent":"support"},"sort":[{"field":"pinned"},{"field":"last_message_at"}],"limit":1""";
+        Assert.Equal([page + "}", page + ""","cursor":"c2"}"""], Queries(router));
+    }
+
+    [Fact]
+    public async Task ASearchSetsTheTextBesideTheFilterAndTakesNoOrder()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sessions/query", 200, Page());
+        using var client = Fixtures.Client(router);
+        var cancel = TestContext.Current.CancellationToken;
+        var filter = new Dictionary<string, object?> { ["project_id"] = "docs" };
+
+        await client.Agent("support").Sessions.SearchAsync("lisbon", filter, limit: 20, cursor: "c1", cancellationToken: cancel);
+        await client.Sessions.SearchAsync("lisbon", cancellationToken: cancel);
+        await Assert.ThrowsAsync<ArgumentException>(() => client.Sessions.SearchAsync("lisbon",
+            new() { ["text"] = new Dictionary<string, object?> { ["$q"] = "porto" } }, cancellationToken: cancel));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.Sessions.SearchAsync(" ", cancellationToken: cancel));
+
+        Assert.Equal(
+        [
+            """{"filter":{"project_id":"docs","agent":"support","text":{"$q":"lisbon"}},"limit":20,"cursor":"c1"}""",
+            """{"filter":{"text":{"$q":"lisbon"}}}""",
+        ], Queries(router));
+        Assert.Equal(["project_id"], filter.Keys);
+    }
+
+    [Fact]
+    public async Task ASessionIsPinnedAndUnpinnedAndSaysWhenItWas()
+    {
+        await using var router = await TestRouter.StartAsync();
+        const string pinned = """{"id":"s1","call_type":"default","call_id":"","pinned_at":"2026-11-10T09:30:00Z"}""";
+        var patched = 0;
+        router.On("PATCH", "/v1/agents/sessions/s1", _ => new Reply(200, ++patched % 2 == 1
+            ? System.Text.Json.Nodes.JsonNode.Parse(pinned)
+            : Fixtures.Session("s1")));
+        router.On("GET", "/v1/agents/sessions/s1", 200, System.Text.Json.Nodes.JsonNode.Parse(pinned)!);
+        router.On("POST", "/v1/agents/sessions/query", 200, Page(false, null, System.Text.Json.Nodes.JsonNode.Parse(pinned)!, Fixtures.Session("s2")));
+        router.On("POST", "/v1/agents/sessions/s1/stop", 204);
+        using var client = Fixtures.Client(router);
+        var cancel = TestContext.Current.CancellationToken;
+        var at = new DateTimeOffset(2026, 11, 10, 9, 30, 0, TimeSpan.Zero);
+
+        var byId = await client.Sessions.PinAsync("s1", cancel);
+        var unpinnedById = await client.Sessions.UnpinAsync("s1", cancel);
+        await using var session = await client.Sessions.GetAsync("s1", cancel);
+        var byHandle = await session.PinAsync(cancel);
+        var unpinnedByHandle = await session.UnpinAsync(cancel);
+        var updated = await client.Sessions.UpdateAsync("s1", new UpdateSessionRequest { Pinned = true, Title = "Pricing" }, cancel);
+        var listed = await client.Sessions.QueryAsync(cancellationToken: cancel);
+
+        Assert.Equal(
+        [
+            """{"pinned":true}""", """{"pinned":false}""", """{"pinned":true}""", """{"pinned":false}""",
+            """{"pinned":true,"title":"Pricing"}""",
+        ], router.To("PATCH", "/v1/agents/sessions/s1").Select(seen => seen.Body!.ToJsonString()));
+        Assert.Equal((at, at, at, at), (byId.PinnedAt, byHandle.PinnedAt, updated.PinnedAt, session.PinnedAt));
+        Assert.Null(unpinnedById.PinnedAt);
+        Assert.Null(unpinnedByHandle.PinnedAt);
+        Assert.Equal([at, null], listed.Items.Select(each => each.PinnedAt));
     }
 
     [Fact]
@@ -533,6 +734,10 @@ public sealed class ClientTests
     // tests running side by side do not see each other's.
     private static Func<string, string?> Env(Dictionary<string, string> pairs) =>
         name => pairs.GetValueOrDefault(name);
+
+    /// <summary>Every session query the router was sent, each as the JSON it arrived as.</summary>
+    private static List<string> Queries(TestRouter router) =>
+        [.. router.To("POST", "/v1/agents/sessions/query").Select(seen => seen.Body!.ToJsonString())];
 
     private static object Page(bool hasMore = false, string? next = null, params object[] items) =>
         new { items, has_more = hasMore, next_cursor = next };

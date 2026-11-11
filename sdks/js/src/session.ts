@@ -416,18 +416,34 @@ export class Session {
   }
 
   /**
-   * Changes this session alone: its title, description, custom labels, models or voice.
+   * Changes this session alone: its title, description, custom labels, whether it is pinned,
+   * its models or its voice.
    *
-   * Server side only. The agent config it started from is untouched and a field left out is
-   * left as it is. A session that ended can still be renamed and relabelled; the rest needs
-   * it running and takes over from its next turn, so a reply being spoken finishes on what it
-   * started with. A target that does not route is refused and the conversation carries on.
+   * A person's device may change the title, description and custom labels and pin or unpin
+   * the session; the models and the voice are server side only. The agent config it started
+   * from is untouched and a field left out is left as it is. A session that ended can still be
+   * renamed, relabelled and pinned; the rest needs it running and takes over from its next
+   * turn, so a reply being spoken finishes on what it started with. A target that does not
+   * route is refused and the conversation carries on.
    */
   update(changes: Schemas["UpdateSessionRequest"]): Promise<Schemas["Session"]> {
     return this.client.patch("/v1/agents/sessions/{id}", {
       path: { id: this.id },
       body: changes,
     });
+  }
+
+  /**
+   * Pins this conversation, which a query sorted by `pinned` lists first, and answers it with
+   * its `pinned_at`. It moves nothing else. See `sessions.pin`.
+   */
+  pin(): Promise<Schemas["Session"]> {
+    return this.update({ pinned: true });
+  }
+
+  /** Unpins this conversation, and answers it without a `pinned_at`. */
+  unpin(): Promise<Schemas["Session"]> {
+    return this.update({ pinned: false });
   }
 
   /**

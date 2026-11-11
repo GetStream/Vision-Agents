@@ -126,9 +126,9 @@ class LiveTest {
         val found = agents.sessions.search(title)
 
         assertTrue(found.items.any { it.id == session.id })
-        assertTrue(agents.sessions.query(SessionQuery(limit = 50)).items.any { it.id == session.id })
+        assertTrue(agents.sessions.query(limit = 50).items.any { it.id == session.id })
         agents.sessions.delete(session.id)
-        assertTrue(agents.sessions.query(SessionQuery(limit = 50)).items.none { it.id == session.id })
+        assertTrue(agents.sessions.query(limit = 50).items.none { it.id == session.id })
     }
 
     @Test
@@ -139,7 +139,7 @@ class LiveTest {
         assertEquals("Renamed", agents.sessions.get(chat.id).title)
         chat.close()
         assertEquals("Ended", agents.sessions.update(chat.id, title = "Ended").title)
-        assertEquals("Ended", agents.sessions.query(SessionQuery(limit = 50)).items.single { it.id == chat.id }.title)
+        assertEquals("Ended", agents.sessions.query(limit = 50).items.single { it.id == chat.id }.title)
         agents.sessions.delete(chat.id)
     }
 
