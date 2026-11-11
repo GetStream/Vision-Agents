@@ -100,6 +100,9 @@ type Query struct {
 	AgentID string
 	// ConfigID narrows to the sessions one agent config ran.
 	ConfigID string
+	// Team narrows to the sessions whose usage is counted under this team. A token signed for
+	// a team may only ask for that one.
+	Team string
 	// Custom narrows to the sessions whose custom object holds every one of these pairs,
 	// which is how a caller finds again what it labelled.
 	Custom map[string]string
@@ -107,6 +110,10 @@ type Query struct {
 	// before not, so two windows that meet share no session.
 	CreatedAfter  time.Time
 	CreatedBefore time.Time
+	// Sort is the order, always newest first: acceleration.UpdatedAt, by when each last
+	// changed, or acceleration.Relevance, by how well it matches a search. Empty is the
+	// router's own, which is UpdatedAt for Query and Relevance for Search.
+	Sort acceleration.SessionSortField
 	// Limit is up to 200. Zero is 25.
 	Limit int
 	// Cursor is the NextCursor of the page before, with the same filters. Empty is the
@@ -341,6 +348,7 @@ func (s *Sessions) queryOf(text string, query Query) acceleration.SessionQuery {
 		State:     equals(query.State),
 		AgentId:   equals(query.AgentID),
 		ConfigId:  equals(query.ConfigID),
+		Team:      equals(query.Team),
 	}
 	if len(query.Custom) > 0 {
 		custom := query.Custom
@@ -352,11 +360,15 @@ func (s *Sessions) queryOf(text string, query Query) acceleration.SessionQuery {
 	if text != "" {
 		filter.Text = &acceleration.TextMatch{Q: text}
 	}
-	return acceleration.SessionQuery{
+	sent := acceleration.SessionQuery{
 		Filter: &filter,
 		Limit:  pointer(int64(query.Limit)),
 		Cursor: pointer(query.Cursor),
 	}
+	if query.Sort != "" {
+		sent.Sort = &[]acceleration.SessionSort{{Field: query.Sort}}
+	}
+	return sent
 }
 
 // timeRangeOf is the window the two bounds name, or nil when neither was given.

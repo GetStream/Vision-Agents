@@ -93,6 +93,8 @@ func (c *Client) SetUser(userID, token string) (*Client, error) {
 	backend := c.backend
 	backend.UserID = userID
 	backend.Token = token
+	// The token carries the user's team and categories, which this client's are not.
+	backend.Team, backend.UsageCategories = "", nil
 	resolved, err := backend.Resolve()
 	if err != nil {
 		return nil, err
