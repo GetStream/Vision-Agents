@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -35,6 +36,39 @@ func TestABackendNamesATeamOrTheOneItsTokenWasSignedFor(t *testing.T) {
 	failure, refused = refuseSessionRequest(backendAsking(), CreateSessionRequest{Team: new("fin:ance")})
 	require.True(t, refused)
 	require.Equal(t, ErrorTypeInvalidRequest, failure.Type)
+}
+
+func TestATokenSignedForATeamListsOnlyThatTeam(t *testing.T) {
+	finance := Equals("finance")
+	asking := SessionQuery{Filter: &SessionFilter{Team: &finance}}
+
+	query, err := sessionQueryOf(backendAsking(), asking)
+	require.NoError(t, err)
+	require.Equal(t, "finance", query.filter.Team)
+	_, err = sessionQueryOf(backendAsking("team:finance"), asking)
+	require.NoError(t, err, "the team its token names")
+
+	_, err = sessionQueryOf(backendAsking("team:sales"), asking)
+	require.ErrorContains(t, err, `the team "sales" the token was signed for`)
+
+	query, err = sessionQueryOf(backendAsking("team:sales"), SessionQuery{})
+	require.NoError(t, err)
+	require.Empty(t, query.filter.Team, "a token's team does not narrow a query that names none")
+}
+
+func TestASessionReportsTheTeamItsUsageIsCountedUnder(t *testing.T) {
+	var rendered Session
+	describe(&rendered, session.Spec{Team: "sales", Attribution: routing.Attribution{UsageCategories: []string{"team:finance"}}})
+	require.Equal(t, new("finance"), rendered.Team, "the token's team, which the session is counted under")
+
+	stored := Session{}
+	mergeStored(&stored, &store.AgentSession{Team: "finance"})
+	require.Equal(t, new("finance"), stored.Team)
+
+	none := Session{}
+	describe(&none, session.Spec{})
+	mergeStored(&none, &store.AgentSession{})
+	require.Nil(t, none.Team, "a session counted under no team reports none")
 }
 
 func TestASessionsTeamIsItsRequestsOverItsConfigsTag(t *testing.T) {

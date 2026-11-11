@@ -1922,8 +1922,11 @@ type AgentSession struct {
 	// from its row keeps them; one from before they were kept has no key.
 	APIKey          string   `bun:"api_key,notnull"`
 	UsageCategories []string `bun:"usage_categories,array,nullzero"`
-	Title           string   `bun:"title,notnull"`
-	Description     string   `bun:"description,notnull"`
+	// Team is the team in UsageCategories, a column of its own so a list narrowed to one team
+	// reads an index. Empty for a session counted under none. It never changes.
+	Team        string `bun:"team,notnull"`
+	Title       string `bun:"title,notnull"`
+	Description string `bun:"description,notnull"`
 	// Project is what the conversation belongs to, a column as well as a cost tag so a
 	// list grouped by project needs no JSON unpacking.
 	Project string `bun:"project,notnull"`
@@ -2009,6 +2012,8 @@ type SessionFilter struct {
 	CallerKinds []string
 	// State is SessionRunning or SessionClosed.
 	State string
+	// Team is the team the session's usage is counted under.
+	Team string
 	// Custom matches sessions whose custom object contains every one of these pairs, which
 	// is what makes custom worth writing: a caller that labelled a session can find it
 	// again by the label.

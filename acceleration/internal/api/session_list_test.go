@@ -219,6 +219,21 @@ func (s *SessionListSuite) TestAConfigNarrowsTheListToTheSessionsItRan() {
 	s.Equal(config.Id, *listed[0].ConfigId)
 }
 
+func (s *SessionListSuite) TestATeamNarrowsTheList() {
+	counted := textSession(nil)
+	counted.Team = new("finance")
+	wanted := s.serverClient.createSession(counted)
+	s.serverClient.createSession(textSession(nil))
+	s.Require().NotNil(wanted.Team)
+	s.Equal("finance", *wanted.Team)
+
+	equals := Equals("finance")
+	listed := s.serverClient.querySessions(SessionQuery{Filter: &SessionFilter{Team: &equals}}).Items
+	s.Require().Equal([]string{wanted.Id}, ids(listed))
+	s.Require().NotNil(listed[0].Team)
+	s.Equal("finance", *listed[0].Team)
+}
+
 func (s *SessionListSuite) TestALabelNarrowsTheListToTheSessionsCarryingAllOfIt() {
 	tested := textSession(nil)
 	tested.Custom = &map[string]any{"origin": "test", "suite": "checkout"}

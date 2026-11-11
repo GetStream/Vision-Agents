@@ -524,6 +524,9 @@ func narrowSessions(query *bun.SelectQuery, filter SessionFilter) *bun.SelectQue
 	if filter.State != "" {
 		query = query.Where("state = ?", filter.State)
 	}
+	if filter.Team != "" {
+		query = query.Where("team = ?", filter.Team)
+	}
 	if len(filter.Custom) > 0 {
 		// Containment rather than a key at a time, so the GIN index on custom is usable
 		// and a caller asking for two labels gets the sessions carrying both. The index is
