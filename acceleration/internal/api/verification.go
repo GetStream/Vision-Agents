@@ -205,6 +205,8 @@ func (s *Server) manageGetVerificationRequest(ctx context.Context, request *mana
 	if entry != nil {
 		sent := verificationRequestOf(entry.VerificationRequest)
 		answer.Request, answer.Tier = &sent, entry.Tier
+	} else if answer.Tier, err = s.store.TierOf(ctx, request.OrganizationId); err != nil {
+		return nil, err
 	}
 	return &managedVerificationResponse{Body: answer}, nil
 }

@@ -208,8 +208,16 @@ func (s *VerificationSuite) TestStaffListNewestFirstAndPagesWithoutRepeats() {
 	seen := map[string]int{}
 	var walk []string
 	cursor := ""
+	wanted := func() bool {
+		for _, organization := range organizations {
+			if seen[organization] == 0 {
+				return false
+			}
+		}
+		return true
+	}
 	for pages := 1; ; pages++ {
-		s.Require().LessOrEqual(pages, 50, "the walk does not end")
+		s.Require().LessOrEqual(pages, 50, "the three requests are not found")
 		query := url.Values{"limit": {"2"}, "cursor": {cursor}}
 		var page VerificationRequestPage
 		status, payload := s.staff.call(http.MethodGet, "/v1/manage/verification-requests?"+query.Encode(), nil)
@@ -219,10 +227,10 @@ func (s *VerificationSuite) TestStaffListNewestFirstAndPagesWithoutRepeats() {
 			seen[entry.OrganizationId]++
 			walk = append(walk, entry.OrganizationId)
 		}
-		if !page.HasMore {
-			s.Nil(page.NextCursor)
+		if wanted() {
 			break
 		}
+		s.True(page.HasMore, "a page walked before the end says more follow")
 		s.Require().NotNil(page.NextCursor)
 		cursor = *page.NextCursor
 	}
@@ -267,6 +275,14 @@ func (s *VerificationSuite) TestStaffSeeNoTierForAnOrganizationNeverSeenWithOne(
 	s.Equal("", single.Tier)
 }
 
+func (s *VerificationSuite) TestStaffSeeTheTierOfAnOrganizationThatSentNothing() {
+	s.Require().NoError(s.store.SetOrganizationTier(context.Background(), s.organization(), "verified", time.Now()))
+
+	single, _ := s.staffRead(s.organization())
+	s.Nil(single.Request)
+	s.Equal("verified", single.Tier)
+}
+
 func (s *VerificationSuite) TestStaffReadAnOrganizationThatSentNothing() {
 	single, raw := s.staffRead(s.utils.uuid())
 	s.Nil(single.Request)
@@ -280,7 +296,7 @@ func (s *VerificationSuite) TestTheStaffPathsNeedTheManageKey() {
 		"/v1/manage/organizations/" + s.organization() + "/verification-request",
 	} {
 		status := s.serverClient.do(http.MethodGet, path, nil, nil)
-		s.Contains([]int{http.StatusUnauthorized, http.StatusForbidden}, status, path)
+		s.Equal(http.StatusUnauthorized, status, path)
 	}
 }
 
