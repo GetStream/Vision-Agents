@@ -170,12 +170,22 @@ func (s *Server) At(at time.Time) {
 	s.db.now = func() time.Time { return at }
 }
 
-// Channel returns what an agent channel was created with, and whether it exists at all.
+// Channel returns what a channel was created with, and whether it exists at all. Like every
+// accessor here it takes a cid, or an agent channel's id alone (cidOf).
 func (s *Server) Channel(id string) (map[string]any, bool) {
 	s.db.mu.Lock()
 	defer s.db.mu.Unlock()
-	data, ok := s.db.channels[id]
+	data, ok := s.db.channels[cidOf(id)]
 	return data, ok
+}
+
+// cidOf is the cid a test names a channel by: a cid as it is, or an agent channel's id alone.
+// Channels are held by cid, as Chat holds them: one id under two types is two channels.
+func cidOf(id string) string {
+	if strings.Contains(id, ":") {
+		return id
+	}
+	return "agent:" + id
 }
 
 // SetApp says what the app is from now on. Every server starts as app 1 holding the agent
@@ -294,7 +304,7 @@ func (s *Server) Members(id string) []string {
 	s.db.mu.Lock()
 	defer s.db.mu.Unlock()
 	var ids []string
-	members, _ := s.db.channels[id]["members"].([]any)
+	members, _ := s.db.channels[cidOf(id)]["members"].([]any)
 	for _, member := range members {
 		if named, ok := member.(map[string]any); ok {
 			if userID, ok := named["user_id"].(string); ok {
@@ -496,7 +506,7 @@ func (s *Server) Messages(id string) []string {
 	s.db.mu.Lock()
 	defer s.db.mu.Unlock()
 	var texts []string
-	for _, message := range s.db.messagesIn(id) {
+	for _, message := range s.db.messagesIn(cidOf(id)) {
 		text, _ := message["text"].(string)
 		texts = append(texts, text)
 	}
@@ -509,7 +519,7 @@ func (s *Server) Stored(id string) []map[string]any {
 	s.db.mu.Lock()
 	defer s.db.mu.Unlock()
 	var stored []map[string]any
-	for _, message := range s.db.messagesIn(id) {
+	for _, message := range s.db.messagesIn(cidOf(id)) {
 		stored = append(stored, maps.Clone(message))
 	}
 	return stored
@@ -538,7 +548,7 @@ func (s *Server) Events(id string) []map[string]any {
 	s.db.mu.Lock()
 	defer s.db.mu.Unlock()
 	var sent []map[string]any
-	for _, event := range s.db.events[id] {
+	for _, event := range s.db.events[cidOf(id)] {
 		sent = append(sent, maps.Clone(event))
 	}
 	return sent
@@ -637,13 +647,11 @@ func numberTimes(hook json.RawMessage) json.RawMessage {
 	return append(out, '}')
 }
 
-// messagesIn returns a channel's messages in the order they were written. Channels are held
-// by id alone, so a message of any channel type is its id's.
-func (db *store) messagesIn(id string) []map[string]any {
+// messagesIn returns the messages of the channel cid in the order they were written.
+func (db *store) messagesIn(cid string) []map[string]any {
 	messages := []map[string]any{}
 	for _, mid := range db.order {
-		cid, _ := db.messages[mid]["cid"].(string)
-		if _, channel, _ := strings.Cut(cid, ":"); channel == id {
+		if written, _ := db.messages[mid]["cid"].(string); written == cid {
 			messages = append(messages, db.messages[mid])
 		}
 	}
@@ -726,9 +734,10 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 	result := map[string]any{}
 	switch {
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/event"):
-		id := parts[len(parts)-2]
+		// The path is .../channels/<type>/<id>/event.
+		cid := parts[len(parts)-3] + ":" + parts[len(parts)-2]
 		event, _ := body["event"].(map[string]any)
-		db.events[id] = append(db.events[id], event)
+		db.events[cid] = append(db.events[cid], event)
 		result["event"] = event
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/api/v2/app"):
 		db.appReads++
@@ -947,24 +956,25 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		result["users"] = written
-	case r.Method == http.MethodPatch && len(parts) >= 2 && parts[len(parts)-2] == "agent":
-		// A partial update sets the fields it names on the channel.
-		id := parts[len(parts)-1]
-		data, exists := db.channels[id]
+	case r.Method == http.MethodPatch && len(parts) >= 3 && parts[len(parts)-3] == "channels":
+		// A partial update sets the fields it names on the channel. The path is
+		// .../channels/<type>/<id>.
+		cid := parts[len(parts)-2] + ":" + parts[len(parts)-1]
+		data, exists := db.channels[cid]
 		if !exists {
-			refuse(w, "channel "+id+" does not exist")
+			refuse(w, "channel "+cid+" does not exist")
 			return
 		}
 		set, _ := body["set"].(map[string]any)
 		maps.Copy(data, set)
 		result["channel"] = data
-	case r.Method == http.MethodPost && len(parts) >= 2 && parts[len(parts)-2] == "agent":
+	case r.Method == http.MethodPost && len(parts) >= 3 && parts[len(parts)-3] == "channels":
 		// An update adds the members it names to the channel, which is how a reader comes
 		// to be able to watch it, and removes the user ids it names.
-		id := parts[len(parts)-1]
-		data, exists := db.channels[id]
+		cid := parts[len(parts)-2] + ":" + parts[len(parts)-1]
+		data, exists := db.channels[cid]
 		if !exists {
-			refuse(w, "channel "+id+" does not exist")
+			refuse(w, "channel "+cid+" does not exist")
 			return
 		}
 		added, _ := body["add_members"].([]any)
@@ -981,16 +991,16 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		channels := []map[string]any{}
 		filter, _ := body["filter_conditions"].(map[string]any)
 		if cid, ok := filter["cid"].(string); ok {
-			id := strings.TrimPrefix(cid, "agent:")
-			if data, exists := db.channels[id]; exists && strings.HasPrefix(cid, "agent:") {
+			if data, exists := db.channels[cid]; exists {
 				channels = append(channels, map[string]any{
-					"channel": data, "members": data["members"], "messages": db.messagesIn(id),
+					"channel": data, "members": data["members"], "messages": db.messagesIn(cid),
 				})
 			}
 		}
 		result["channels"] = channels
 	case strings.HasSuffix(r.URL.Path, "/query"):
-		id := parts[len(parts)-2]
+		// The path is .../channels/<type>/<id>/query.
+		id := parts[len(parts)-3] + ":" + parts[len(parts)-2]
 		_, exists := db.channels[id]
 		data, carries := body["data"].(map[string]any)
 		// The agent channel type refuses a server-side create without a creator, so a

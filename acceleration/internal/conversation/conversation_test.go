@@ -273,11 +273,11 @@ func TestAConversationIsHeldOnlyOnAnAgentChannel(t *testing.T) {
 	_, id, _ := strings.Cut(c.CID(), ":")
 	_, err = s.CommandForCaller(t.Context(), "customer", "artist", c.CID(), "", "teapot-command")
 	require.NoError(t, err, "the control: the command is found in its own channel")
-	require.True(t, Openable(c.CID()))
+	require.True(t, Openable(t.Context(), c.CID()))
 	require.True(t, SessionCommandChannel("agent", id, map[string]any{TriggerField: SessionCommandTrigger}))
 
 	for _, cid := range []string{"messaging:" + id, "agentx:" + id, ":" + id, id} {
-		require.False(t, Openable(cid), cid)
+		require.False(t, Openable(t.Context(), cid), cid)
 		require.Error(t, s.Describe(t.Context(), "customer", cid, "Teapots", ""), cid)
 		_, err = s.CommandForCaller(t.Context(), "customer", "artist", cid, "", "teapot-command")
 		require.ErrorIs(t, err, ErrCommandNotFound, cid)

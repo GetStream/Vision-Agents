@@ -561,6 +561,10 @@ type AgentConfig struct {
 	// is still the first choice; nil falls back only among LLM's own candidates.
 	LLMFallbacks []string `bun:"llm_fallbacks,type:jsonb"`
 
+	// Agents are the app's other text agents this one may hand work to, each offered to its
+	// model as a tool. Only a text agent has them, and none of them has any of its own.
+	Agents []ChildAgent `bun:"agents,type:jsonb"`
+
 	// GreetingMode is GreetingExact, said word for word, or GreetingVariation, which the
 	// model rewords on every call.
 	GreetingMode string `bun:"greeting_mode,notnull"`
@@ -586,6 +590,11 @@ type AgentConfig struct {
 	// Channels are the lines this agent answers on outside a Stream Chat channel: a
 	// WhatsApp number, a number to text, an iMessage line.
 	Channels AgentChannels `bun:"channels,type:jsonb,notnull"`
+	// ChatChannels are the Stream Chat channel types of the customer's own app this agent
+	// answers in besides agent channels, such as a team's group channels
+	// (20261222120000_agent_config_chat_channels.sql). Empty, as every config starts, answers
+	// in agent channels alone.
+	ChatChannels []ChatChannel `bun:"chat_channels,type:jsonb"`
 	// Scheduling is whether the agent may schedule tasks for its users, and the
 	// defaults those tasks take. The zero value is off.
 	Scheduling AgentScheduling `bun:"scheduling,type:jsonb,notnull"`
@@ -651,6 +660,19 @@ type AgentConfig struct {
 // cards and their summaries: on (EpisodeCards) or record (EpisodeCardsRecord).
 func (c AgentConfig) WritesCards() bool {
 	return c.EpisodeCards || c.EpisodeCardsRecord
+}
+
+// ChildAgent is another of the app's text agents a text agent may hand work to, as it is
+// stored in agent_configs.agents.
+type ChildAgent struct {
+	// Config is the name of the agent config the child runs from, in the same app.
+	Config string `json:"config"`
+	// Tool is the name the parent's model calls the child by.
+	Tool string `json:"tool"`
+	// Description is what the parent's model is told the child does.
+	Description string `json:"description,omitempty"`
+	// TimeoutMs is how long one call to the child may take. Zero is the default.
+	TimeoutMs int `json:"timeout_ms,omitempty"`
 }
 
 // ConnectorBinding is one connector an agent config may call tools of, as it is stored in
@@ -942,6 +964,14 @@ type AgentChannels struct {
 	IMessage *ChannelLine `json:"imessage,omitempty"`
 	// Identity is how a sender becomes an end user: phone or link. Empty is phone.
 	Identity string `json:"identity,omitempty"`
+}
+
+// ChatChannel is one Stream Chat channel type an agent config answers in, stored in
+// agent_configs.chat_channels. An object rather than the type's name alone, so how the agent
+// answers in channels of the type can be said beside it.
+type ChatChannel struct {
+	// Type is the channel type's name, as Stream Chat names it in a cid (type:id).
+	Type string `json:"type"`
 }
 
 // AgentScheduling is an agent config's scheduled-task settings, stored in

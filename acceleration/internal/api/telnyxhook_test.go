@@ -27,7 +27,9 @@ type TelnyxHookSuite struct {
 	RouterSuite
 	private ed25519.PrivateKey
 	logged  *lockedLog
-	e164    string
+	// since is how much of logged had been written when the current test started.
+	since int
+	e164  string
 }
 
 func TestTelnyxHookSuite(t *testing.T) {
@@ -46,6 +48,7 @@ func (s *TelnyxHookSuite) SetupSuite() {
 }
 
 func (s *TelnyxHookSuite) SetupTest() {
+	s.since = len(s.logged.String())
 	s.useApp(s.data.createApp())
 	s.e164 = s.utils.number()
 }
@@ -90,8 +93,27 @@ func (s *TelnyxHookSuite) TestACallToANumberNobodyHoldsIsHungUp() {
 	s.Equal(http.StatusOK, status)
 	s.Equal("application/xml", contentType)
 	s.Contains(body, "<Response><Hangup/></Response>")
-	s.True(s.loggedLine(number, "unknown, released or not attached"))
-	s.False(s.loggedLine(number, "attach the number again"), "there is nothing to attach again")
+	s.True(s.loggedLine(masked(number), "unknown, released or not attached"))
+	s.False(s.loggedLine(masked(number), "attach the number again"), "there is nothing to attach again")
+}
+
+func (s *TelnyxHookSuite) TestNoLogLineOfAHungUpCallHoldsTheNumber() {
+	number := s.utils.number()
+	form := s.call(number)
+	form.Set("CallSid", "v3:ai1627")
+
+	status, _, body := s.deliver(form, true)
+
+	s.Equal(http.StatusOK, status)
+	s.Contains(body, "<Hangup/>")
+	s.True(s.loggedLine("unknown, released or not attached", masked(number), "call_sid=v3:ai1627"))
+	s.NotContains(s.logged.String(), strings.TrimPrefix(number, "+"))
+	s.NotContains(s.logged.String(), strings.TrimPrefix(form.Get("From"), "+"))
+}
+
+// masked is how the log names a +1 number: its country code and last 2 digits.
+func masked(number string) string {
+	return "+1•••" + number[len(number)-2:]
 }
 
 // Dev and hosted routers share one Telnyx account and so one signing key: a call for the
@@ -129,15 +151,15 @@ func (s *TelnyxHookSuite) TestWithoutAConfiguredTeXMLApplicationNoCallIsAnswered
 func (s *TelnyxHookSuite) TestWithoutAKeyringACallSaysWhatToSet() {
 	s.attach(s.e164, "sip:"+s.e164+"@trunk.sip.example.test", "trunk-user", "trunk-password")
 	sealed := s.router.phone
-	s.router.phone = s.telephonySealedBy(nil, nil, slog.New(slog.NewTextHandler(s.logged, nil)))
+	s.router.phone = s.telephonySealedBy(nil, nil, slog.New(slog.NewTextHandler(s.logged, &slog.HandlerOptions{ReplaceAttr: store.RedactLogAttr})))
 	defer func() { s.router.phone = sealed }()
 
 	status, _, body := s.deliver(s.call(s.e164), true)
 
 	s.Equal(http.StatusOK, status)
 	s.Contains(body, "<Response><Hangup/></Response>")
-	s.True(s.loggedLine(s.e164, "no key to open trunk passwords", "ROUTER_AUTH_KEK"))
-	s.False(s.loggedLine(s.e164, "attached before its trunk was kept"), "the key is what is missing")
+	s.True(s.loggedLine(masked(s.e164), "no key to open trunk passwords", "ROUTER_AUTH_KEK"))
+	s.False(s.loggedLine(masked(s.e164), "attached before its trunk was kept"), "the key is what is missing")
 }
 
 func (s *TelnyxHookSuite) TestANumberAttachedBeforeItsTrunkWasKeptIsHungUpAndSaysWhatToDo() {
@@ -147,12 +169,16 @@ func (s *TelnyxHookSuite) TestANumberAttachedBeforeItsTrunkWasKeptIsHungUpAndSay
 
 	s.Equal(http.StatusOK, status)
 	s.Contains(body, "<Hangup/>")
-	s.True(s.loggedLine(s.e164, "attach the number again"), "the log says what to do about this number")
+	s.True(s.loggedLine(masked(s.e164), "attach the number again"), "the log says what to do about this number")
 }
+
+// thisTest is what the current test logged, so a line another test logged for a number
+// that masks the same way is not read as this test's.
+func (s *TelnyxHookSuite) thisTest() string { return s.logged.String()[s.since:] }
 
 // loggedLine reports whether one line of the log holds every part.
 func (s *TelnyxHookSuite) loggedLine(parts ...string) bool {
-	for _, line := range strings.Split(s.logged.String(), "\n") {
+	for _, line := range strings.Split(s.thisTest(), "\n") {
 		found := true
 		for _, part := range parts {
 			found = found && strings.Contains(line, part)

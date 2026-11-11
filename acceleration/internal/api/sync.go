@@ -46,6 +46,7 @@ type SyncAgentRequest struct {
 	PluginEvents      *[]map[string]any          `json:"plugin_events,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
 	McpServers        *[]map[string]any          `json:"mcp_servers,omitempty" deprecated:"true" doc:"No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing."`
 	Channels          *AgentChannels             `json:"channels,omitempty" doc:"Lines this agent answers on besides Stream Chat, each a number the app connected."`
+	ChatChannels      *[]AgentChatChannel        `json:"chat_channels,omitempty" maxItems:"16" doc:"agent.yaml's chat_channels: the Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels, as AgentConfigRequest's chat_channels names them, with the same rules. Sent, they replace the stored list whole, an empty list removing it. Left out, the stored list stays."`
 	Connectors        *[]AgentConnectorBinding   `json:"connectors,omitempty" maxItems:"64" doc:"The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone."`
 	LeftOutConnectors *[]LeftOutConnector        `json:"left_out_connectors,omitempty" maxItems:"64" doc:"The connectors agent.yaml names that the client left out of connectors, because the app has no connection by the id or label they name. Stored as sent and served on the config, so the dashboard can say what the agent is missing. A non-empty list is refused without connectors: a sync that sends connectors replaces the stored ones with these, or with none when this is left out, and a sync that sends neither leaves them alone. At most 64, as connectors."`
 	Keyterms          *[]string                  `json:"keyterms,omitempty"`
@@ -55,6 +56,7 @@ type SyncAgentRequest struct {
 	// SandboxOptions is how the sandbox is built. Left out keeps what is stored.
 	SandboxOptions *SandboxOptions    `json:"sandbox_options,omitempty"`
 	Tags           *map[string]string `json:"tags,omitempty"`
+	Agents         *[]ChildAgent      `json:"agents,omitempty" maxItems:"16" doc:"agent.yaml's agents: the app's other text agents this one may hand work to, each as a tool, by name. Sent, they replace the stored list whole, an empty list removing it; left out, the stored list stays. An agent named must already exist, so a directory is synced after the agents it names."`
 	Tools          *AgentTools        `json:"tools,omitempty" doc:"How connector tools are offered. A setting left out keeps what is stored."`
 	Calls          *AgentCalls        `json:"calls,omitempty" doc:"The tools an agent on a phone call is offered: end the call, press keys, transfer. A tool left out keeps what is stored; a tool sent replaces its settings whole."`
 	Scheduling     *AgentScheduling   `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. A setting left out keeps what is stored."`
@@ -291,6 +293,15 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok := s.liveSTTComplaint(config, existing.STT); !ok {
 		return nil, invalidRequest(message)
 	}
+	var prior *store.AgentConfig
+	if found {
+		prior = &existing
+	}
+	if message, ok, err := s.childAgentsComplaint(ctx, customerID, &config, prior); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, stored); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -301,10 +312,6 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	regional.KnowledgeNamespace = ""
 	if knows {
 		regional.KnowledgeNamespace = name
-	}
-	var prior *store.AgentConfig
-	if found {
-		prior = &existing
 	}
 	if message, ok, err := s.regionComplaint(ctx, regional, prior); err != nil {
 		return nil, err
@@ -457,6 +464,9 @@ func syncComplaint(ctx context.Context, body SyncAgentRequest) (string, bool) {
 	if complaint, ok := connectorBindingsComplaint(body.Connectors); !ok {
 		return complaint, false
 	}
+	if complaint, ok := chatChannelsComplaint(body.ChatChannels); !ok {
+		return complaint, false
+	}
 	if complaint, ok := sandboxOptionsComplaint(body.SandboxOptions); !ok {
 		return complaint, false
 	}
@@ -592,6 +602,9 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	if body.Channels != nil {
 		config.Channels = channelsOf(body.Channels)
 	}
+	if body.ChatChannels != nil {
+		config.ChatChannels = chatChannelsOf(body.ChatChannels)
+	}
 	if body.Keyterms != nil {
 		config.Keyterms = keytermsOf(body.Keyterms)
 	}
@@ -608,6 +621,9 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	}
 	if body.Tags != nil {
 		config.Tags = *body.Tags
+	}
+	if body.Agents != nil {
+		config.Agents = childAgentsOf(body.Agents)
 	}
 }
 

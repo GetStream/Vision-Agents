@@ -186,10 +186,10 @@ func (c *Conversation) ActedOn(ctx context.Context, action map[string]any) strin
 		return ""
 	}
 	c.mu.Lock()
-	cid := c.data.CID
+	cid, agentID := c.data.CID, c.data.Agent
 	c.mu.Unlock()
 	message := found.Data.Message
-	if message.Cid != cid {
+	if message.Cid != cid || !writtenByAgent(cid, agentID, message.User.ID) {
 		return ""
 	}
 	stored, err := messageFromWire(message.ID, message.Text, message.Custom)

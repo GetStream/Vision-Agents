@@ -217,12 +217,13 @@ func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
 		}
 		// Every message in the app arrives here; only one written to an agent is worth
 		// recording as delivered.
-		if addressed(event) && s.awaitingOwnApp(r.Context(), origin, eventType) {
+		written := s.addressedIn(r.Context(), origin, event)
+		if written && s.awaitingOwnApp(r.Context(), origin, eventType) {
 			// Stream retries, and by then the deployment will know which app is its own.
 			writeStreamWaiting(w)
 			return
 		}
-		if addressed(event) && s.acting(r.Context(), origin, eventType, payload) {
+		if written && s.acting(r.Context(), origin, eventType, payload) {
 			origin.handOver = s.replayed(r, payload)
 			s.routeArrivingMessage(r.Context(), origin, event)
 		}
@@ -242,10 +243,11 @@ func chatHookAttribution(customerID string, event messageEvent) routing.Attribut
 	return attribution
 }
 
-// addressed reports whether a message is one somebody wrote to an agent.
+// addressed reports whether a message is one somebody wrote to an agent in an agent channel.
 //
 // Three things it is not. A message outside an agent's own channel: every message in the app
-// is delivered here, and a team's channel has nothing on the other end of it. A message
+// is delivered here, and a team's channel has nothing on the other end of it, unless an agent
+// config answers in channels of its type (addressedIn). A message
 // carrying a source: everything the agent stores does, whether it is speech it answered as
 // it was said or its own reply, and answering either is the agent talking to itself, the
 // voice recording it shows on a person's message included. And a message with no text, photo
@@ -257,7 +259,13 @@ func addressed(event messageEvent) bool {
 	if conversation.SessionCommandChannel(event.ChannelType, event.ChannelID, event.ChannelCustom) {
 		return false
 	}
-	if event.ChannelType != chatlog.ChannelType || event.ChannelID == "" {
+	return event.ChannelType == chatlog.ChannelType && answerable(event)
+}
+
+// answerable is addressed past the channel's type: a message with text, a photo or a voice
+// recording, in a channel named, that nothing the agent stores is.
+func answerable(event messageEvent) bool {
+	if event.ChannelID == "" {
 		return false
 	}
 	if _, recorded := event.recording(); event.Message.Text == "" && len(event.photos()) == 0 && !recorded {
@@ -272,6 +280,11 @@ func addressed(event messageEvent) bool {
 // The session may be running on another node, which origin hands the message to. settled is
 // false when nothing took the message and a later try may: the queue's worker tries again.
 func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, event messageEvent) (settled bool) {
+	// A channel of a type an agent config answers in is the customer's own, which the Router
+	// answers itself, as a thread channel: no worker and no session of an agent channel is told.
+	if event.ChannelType != chatlog.ChannelType {
+		return s.answerChatChannel(ctx, origin, event)
+	}
 	// A thread channel holds an external thread, such as a Slack thread, which the Router
 	// answers itself: nobody watches it to hand the message to a worker.
 	thread, linked, err := s.linkedThread(ctx, origin, event.ChannelID)

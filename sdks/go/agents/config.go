@@ -261,6 +261,13 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 		}
 		body.Channels = &declared
 	}
+	if settings.ChatChannels != nil {
+		named := make([]acceleration.AgentChatChannel, 0, len(*settings.ChatChannels))
+		for _, channel := range *settings.ChatChannels {
+			named = append(named, acceleration.AgentChatChannel{Type: channel.Type})
+		}
+		body.ChatChannels = &named
+	}
 	if settings.Scheduling != nil {
 		declared := acceleration.AgentScheduling{
 			Enabled:         settings.Scheduling.Enabled,
@@ -283,6 +290,19 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 	if len(settings.Tags) > 0 {
 		tags := maps.Clone(settings.Tags)
 		body.Tags = &tags
+	}
+	if settings.Agents != nil {
+		agents := make([]acceleration.ChildAgent, 0, len(*settings.Agents))
+		for _, child := range *settings.Agents {
+			declared := acceleration.ChildAgent{Config: child.Config, Tool: child.Tool}
+			setString(&declared.Description, child.Description)
+			if child.TimeoutMs > 0 {
+				timeout := int64(child.TimeoutMs)
+				declared.TimeoutMs = &timeout
+			}
+			agents = append(agents, declared)
+		}
+		body.Agents = &agents
 	}
 	if settings.Video != nil {
 		body.Video = &acceleration.SessionVideo{MaxFrames: &settings.Video.MaxFrames}

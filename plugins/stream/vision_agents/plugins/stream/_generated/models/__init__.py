@@ -6,8 +6,12 @@ from .account_balance_warning_source import AccountBalanceWarningSource
 from .account_status import AccountStatus
 from .activity_area import ActivityArea
 from .activity_bucket import ActivityBucket
+from .activity_ending import ActivityEnding
 from .activity_granularity import ActivityGranularity
+from .activity_latency import ActivityLatency
 from .activity_meter import ActivityMeter
+from .activity_session import ActivitySession
+from .activity_sessions import ActivitySessions
 from .activity_step import ActivityStep
 from .add_contacts_request import AddContactsRequest
 from .add_contacts_response import AddContactsResponse
@@ -16,6 +20,7 @@ from .add_trunk_number_request_tags import AddTrunkNumberRequestTags
 from .agent_calls import AgentCalls
 from .agent_changes import AgentChanges
 from .agent_channels import AgentChannels
+from .agent_chat_channel import AgentChatChannel
 from .agent_config import AgentConfig
 from .agent_config_patch import AgentConfigPatch
 from .agent_config_patch_mcp_servers_item import AgentConfigPatchMcpServersItem
@@ -127,6 +132,7 @@ from .channel_line_request import ChannelLineRequest
 from .channel_link import ChannelLink
 from .chat_token import ChatToken
 from .chat_token_request import ChatTokenRequest
+from .child_agent import ChildAgent
 from .claim_guest_request import ClaimGuestRequest
 from .claim_guest_result import ClaimGuestResult
 from .classify_answer import ClassifyAnswer
@@ -444,6 +450,7 @@ from .route import Route
 from .router_config import RouterConfig
 from .router_config_request import RouterConfigRequest
 from .run import Run
+from .run_children import RunChildren
 from .sandbox import Sandbox
 from .sandbox_limits import SandboxLimits
 from .sandbox_limits_network import SandboxLimitsNetwork
@@ -636,8 +643,12 @@ __all__ = (
     "AccountStatus",
     "ActivityArea",
     "ActivityBucket",
+    "ActivityEnding",
     "ActivityGranularity",
+    "ActivityLatency",
     "ActivityMeter",
+    "ActivitySession",
+    "ActivitySessions",
     "ActivityStep",
     "AddContactsRequest",
     "AddContactsResponse",
@@ -646,6 +657,7 @@ __all__ = (
     "AgentCalls",
     "AgentChanges",
     "AgentChannels",
+    "AgentChatChannel",
     "AgentConfig",
     "AgentConfigPatch",
     "AgentConfigPatchMcpServersItem",
@@ -753,6 +765,7 @@ __all__ = (
     "ChannelLink",
     "ChatToken",
     "ChatTokenRequest",
+    "ChildAgent",
     "ClaimGuestRequest",
     "ClaimGuestResult",
     "ClassifyAnswer",
@@ -1068,6 +1081,7 @@ __all__ = (
     "RouterConfig",
     "RouterConfigRequest",
     "Run",
+    "RunChildren",
     "Sandbox",
     "SandboxLimits",
     "SandboxLimitsNetwork",

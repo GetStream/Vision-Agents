@@ -67,6 +67,12 @@ final readonly class AgentConfig
         // Where a response goes, in order, when llm fails it. Absent when there are none.
         /** @var list<string>|null */
         public ?array $llmFallbacks = null,
+        // The Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels. Abs...
+        /** @var list<AgentChatChannel>|null */
+        public ?array $chatChannels = null,
+        // The app's other text agents this one may hand work to, each as a tool. Absent when there are none.
+        /** @var list<ChildAgent>|null */
+        public ?array $agents = null,
     ) {
     }
 
@@ -115,6 +121,8 @@ final readonly class AgentConfig
             visibleTools: array_key_exists('visible_tools', $data) && $data['visible_tools'] !== null ? Json::strings($data, 'visible_tools') : null,
             voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
             llmFallbacks: array_key_exists('llm_fallbacks', $data) && $data['llm_fallbacks'] !== null ? Json::strings($data, 'llm_fallbacks') : null,
+            chatChannels: array_key_exists('chat_channels', $data) && $data['chat_channels'] !== null ? array_map(AgentChatChannel::fromArray(...), Json::objects($data, 'chat_channels')) : null,
+            agents: array_key_exists('agents', $data) && $data['agents'] !== null ? array_map(ChildAgent::fromArray(...), Json::objects($data, 'agents')) : null,
         );
     }
 
@@ -230,6 +238,12 @@ final readonly class AgentConfig
         }
         if ($this->llmFallbacks !== null) {
             $out['llm_fallbacks'] = $this->llmFallbacks;
+        }
+        if ($this->chatChannels !== null) {
+            $out['chat_channels'] = array_map(static fn (AgentChatChannel $each): array => $each->toArray(), $this->chatChannels);
+        }
+        if ($this->agents !== null) {
+            $out['agents'] = array_map(static fn (ChildAgent $each): array => $each->toArray(), $this->agents);
         }
         return $out;
     }

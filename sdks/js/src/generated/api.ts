@@ -1813,6 +1813,7 @@ export type paths = {
          * @description Runs an agent config as a headless text session on one input, waits until the agent has nothing left to do, and answers with the last thing it said. The session is incognito and ends with the request, so nothing is kept and no run sees another's input.
          *     The instructions are the caller's, trusted, and added to the config's for this run alone. A config whose role is agent_moderator is then told the answer format the chat review worker parses, after both, so no edit to the agent can change it.
          *     The input is handed to the agent as JSON data, never as instructions.
+         *     The agents a text config names are tools of the run: each call runs that agent on its input as an incognito run of its own, given its own timeout or what is left of this run, whichever is less, and several called in one reply run at once, at most 8 at a time. A call that fails or runs out of time is a failed tool call the agent answers around, not a failed run. What they spend is in usage, and by tool in children. They take none of the app's run slots: this run's covers them.
          *     Images, at most 8, go with the input in the order sent, so the input can refer to them by their place in the list. The agent's vision skill looks at them, or its conversation model when that can see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request. The router fetches each URL before the run starts, from public hosts only, and hands the model the bytes it fetched, so no run answers without seeing an image it was given: one that does not answer 200 within 15 seconds, is over 5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable naming the image, which retrying the same image does not fix.
          *     A config that does not start a session, or that cannot see a run's images, is a 400 invalid_config, which retrying does not fix, an input or tool result the prompt injection screen refused a 400 prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403 budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with Retry-After, a model that failed or said nothing a 503 model_failed, and a run that outlasts its timeout a 504.
          */
@@ -4420,12 +4421,45 @@ export type components = {
              */
             readonly voice_minutes: number;
         };
+        readonly ActivityEnding: {
+            /** @description Why they ended. Absent for the sessions that ended with no reason kept, as before reasons were. */
+            readonly end_reason?: components["schemas"]["SessionEndReason"];
+            /**
+             * Format: int64
+             * @description How many ended so.
+             */
+            readonly sessions: number;
+        };
         /**
          * @description Separate from Granularity, and coarser, because distinct users cannot be summed: a month of them is who came back rather than the sum of its days.
          * @default daily
          * @enum {string}
          */
         readonly ActivityGranularity: "daily" | "monthly";
+        readonly ActivityLatency: {
+            /** @description The leg: stt_latency, the speech-to-text vendor's decode of the transcript that settled the turn; llm_ttft, asking the model to its first token; tts_ttfb, the first sentence sent to its first audio; roundtrip, the settled transcript to the first audio published. */
+            readonly leg: string;
+            /**
+             * Format: double
+             * @description The median, in milliseconds. Absent when no turn had the leg.
+             */
+            readonly p50_ms?: number | null;
+            /**
+             * Format: double
+             * @description The 95th percentile, in milliseconds. Absent when no turn had the leg.
+             */
+            readonly p95_ms?: number | null;
+            /**
+             * Format: double
+             * @description The 99th percentile, in milliseconds. Absent when no turn had the leg.
+             */
+            readonly p99_ms?: number | null;
+            /**
+             * Format: int64
+             * @description How many turns the leg was counted for.
+             */
+            readonly turns: number;
+        };
         readonly ActivityMeter: {
             /**
              * Format: int64
@@ -4464,6 +4498,44 @@ export type components = {
              * @description How many requests. Runtime and sandbox are time, not requests, and read 0.
              */
             readonly requests: number;
+        };
+        readonly ActivitySession: {
+            /** @description The name of the agent config it was opened with. */
+            readonly agent_name: string;
+            /** @description The app it was opened in. */
+            readonly app_id: string;
+            /**
+             * Format: date-time
+             * @description When it ended. Absent while it runs.
+             */
+            readonly closed_at?: string;
+            /**
+             * Format: date-time
+             * @description When it was opened.
+             */
+            readonly created_at: string;
+            /** @description Why it ended. Absent while it runs, and for one that ended with no reason kept. */
+            readonly end_reason?: components["schemas"]["SessionEndReason"];
+            /** @description The session. */
+            readonly id: string;
+            /** @description text, voice or video. */
+            readonly modality: string;
+        };
+        readonly ActivitySessions: {
+            /** @description How many of them ended for each reason, by reason, the ones with no reason kept first. */
+            readonly ended: readonly components["schemas"]["ActivityEnding"][] | null;
+            /** @description The 20 opened last, newest first. */
+            readonly latest: readonly components["schemas"]["ActivitySession"][] | null;
+            /**
+             * Format: int64
+             * @description How many sessions were opened, running ones included.
+             */
+            readonly opened: number;
+            /**
+             * Format: int64
+             * @description How many of them have not ended.
+             */
+            readonly running: number;
         };
         /**
          * @description The furthest an organization got: none, dashboard_reads, agent_setup, conversations, then steady_use, which is conversations or model calls answered on three UTC days or more. A step counts only answered requests: an area whose every request was refused was tried, not reached.
@@ -4519,9 +4591,20 @@ export type components = {
             readonly sms?: components["schemas"]["ChannelLineRequest"];
             readonly whatsapp?: components["schemas"]["ChannelLineRequest"];
         };
+        readonly AgentChatChannel: {
+            /**
+             * @description The channel type's name, as it comes before the colon in a channel's cid.
+             * @example callouts
+             */
+            readonly type: string;
+        };
         readonly AgentConfig: {
+            /** @description The app's other text agents this one may hand work to, each as a tool. Absent when there are none. */
+            readonly agents?: readonly components["schemas"]["ChildAgent"][];
             readonly calls?: components["schemas"]["AgentCalls"];
             readonly channels?: components["schemas"]["AgentChannels"];
+            /** @description The Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels. Absent when there are none. */
+            readonly chat_channels?: readonly components["schemas"]["AgentChatChannel"][];
             /** @description The bindings exactly as they were written. Absent when there are none. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             /** Format: date-time */
@@ -4579,8 +4662,12 @@ export type components = {
         };
         /** @description What changes about an agent config. A field left out keeps what is stored, and an unknown one is refused rather than ignored. */
         readonly AgentConfigPatch: {
+            /** @description Replaces the list whole. An empty list removes it. */
+            readonly agents?: readonly components["schemas"]["ChildAgent"][];
             readonly calls?: components["schemas"]["AgentCalls"];
             readonly channels?: components["schemas"]["AgentChannels"];
+            /** @description Replaces the list whole. An empty list removes it. */
+            readonly chat_channels?: readonly components["schemas"]["AgentChatChannel"][];
             /** @description The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
@@ -4649,10 +4736,14 @@ export type components = {
             readonly voice?: string;
         };
         readonly AgentConfigRequest: {
+            /** @description The app's other text agents this one may hand work to, each offered to its model as a tool that takes one string, input, and answers with what that agent said last. Several called in one reply run at once, at most 8 at a time. Each runs as an incognito run of its own, on its own llm, instructions, connectors and sandbox, and its spend is added to the parent run's usage. Only a text agent has them, and an agent named here must be a text agent with no agents of its own and not this one. Omitted or null on an update, the list stored stays as it is; an empty list removes it. */
+            readonly agents?: readonly components["schemas"]["ChildAgent"][];
             /** @description The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and press are on and end_call is off. On an update, a tool left out keeps its stored settings and a tool sent replaces its settings whole. */
             readonly calls?: components["schemas"]["AgentCalls"];
             /** @description Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels. */
             readonly channels?: components["schemas"]["AgentChannels"];
+            /** @description Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels, such as the type the app's group channels are made with. A message in a channel of a type named here is answered by the router's own session in that channel, under this agent, and the reply is written there as the Stream user whose id is this config's id. Who answers comes from this list alone, never from the channel's custom data, and the oldest config naming a type answers in it. Only a message in the app's own Stream app is answered: the router's shared app answers no type named here. The type's grants must not let a user, guest or member make, change or join a channel of it, or let a user or guest read one they are not a member of; members writing in it is expected. A type whose grants do, or that the app does not have, is not answered. agent is answered already and cannot be named, and each type is named once. Left out on an update, the stored list stays; an empty list removes it. */
+            readonly chat_channels?: readonly components["schemas"]["AgentChatChannel"][];
             /** @description The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
@@ -5678,6 +5769,20 @@ export type components = {
             /** @description The name shown against anything they write. Defaults to the user id. */
             readonly user_name?: string;
         };
+        /** @description Another of the app's text agents a text agent may hand work to, offered to its model as a tool. */
+        readonly ChildAgent: {
+            /** @description The agent config to hand work to: one of the app's text agents, by name or id. It is stored, and read back, by name. */
+            readonly config: string;
+            /** @description What the model is told the agent does, which is the whole of how it decides when to call it. */
+            readonly description?: string;
+            /**
+             * Format: int64
+             * @description How long one call may take, two minutes when left out. A call never outlasts the run that made it: it gets this or what is left of the run, whichever is less. A call that runs out of time, or whose agent fails, is answered to the model as a failed tool call, and the run goes on.
+             */
+            readonly timeout_ms?: number;
+            /** @description The name the model calls it by, unique among the config's agents. */
+            readonly tool: string;
+        };
         readonly ClaimGuestRequest: {
             readonly guest_id: string;
             /** @description The account the guest turned out to be. */
@@ -6696,7 +6801,7 @@ export type components = {
             /** @description Starts with custom_, which no built-in does, so a custom definition never stands in for one. Creating an id that exists stores the next revision, unless the newest already says the same. */
             readonly id: string;
             readonly name: string;
-            /** @description How a connection may authenticate. Each must be a scheme this deployment has. */
+            /** @description How a connection may authenticate. Each must be a scheme this deployment has, except oauth2_client_credentials, which a custom connector cannot use: it needs a token endpoint a custom connector cannot set. */
             readonly schemes: readonly string[] | null;
             /** @description The scopes a consent asks for, each an RFC 6749 scope token. */
             readonly scopes?: readonly string[] | null;
@@ -8040,10 +8145,14 @@ export type components = {
              * @description When the last request of any area arrived, absent when none did.
              */
             readonly last_seen?: string;
+            /** @description How long the turns of the organization's apps took, every agent summed, one item per leg: stt_latency, llm_ttft, tts_ttfb, then roundtrip. Turns are kept by the hour they started in, so they count the whole hour since falls in. The percentiles are read off bins 5% wide, so they are within 5% of the true ones. */
+            readonly latency: readonly components["schemas"]["ActivityLatency"][] | null;
             /** @description What the organization's apps' work came to, by modality, from the shards listed in shards. */
             readonly meters: readonly components["schemas"]["ActivityMeter"][] | null;
             /** @description The organization. */
             readonly organization_id: string;
+            /** @description The sessions the organization's apps opened from since on, from the shards listed in shards. */
+            readonly sessions: components["schemas"]["ActivitySessions"];
             /** @description The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them. */
             readonly shards: readonly string[] | null;
             /**
@@ -8903,13 +9012,17 @@ export type components = {
             readonly tts?: components["schemas"]["TtsOptions"];
         };
         readonly Run: {
+            /** @description What the runs of the child agents it called spent, by the tool each was called by. Absent when it called none. */
+            readonly children?: {
+                readonly [key: string]: components["schemas"]["CallUsage"];
+            };
             /** @description The last thing the agent said. */
             readonly final_text: string;
             /** @description The provider/model routing picked to answer. */
             readonly model_route: string;
             /** @description The session the run held. It ended with the run, and being incognito, it cannot be read back. */
             readonly session_id: string;
-            /** @description What the run's model calls spent. */
+            /** @description What the run's model calls spent, the runs of the child agents it called included. */
             readonly usage: components["schemas"]["CallUsage"];
         };
         /**
@@ -10052,12 +10165,16 @@ export type components = {
         };
         /** @description An agent directory as it is on disk. Everything after the simulations is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it. */
         readonly SyncAgentRequest: {
+            /** @description agent.yaml's agents: the app's other text agents this one may hand work to, each as a tool, by name. Sent, they replace the stored list whole, an empty list removing it; left out, the stored list stays. An agent named must already exist, so a directory is synced after the agents it names. */
+            readonly agents?: readonly components["schemas"]["ChildAgent"][];
             /** @description The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again. */
             readonly base_change?: string;
             /** @description The tools an agent on a phone call is offered: end the call, press keys, transfer. A tool left out keeps what is stored; a tool sent replaces its settings whole. */
             readonly calls?: components["schemas"]["AgentCalls"];
             /** @description Lines this agent answers on besides Stream Chat, each a number the app connected. */
             readonly channels?: components["schemas"]["AgentChannels"];
+            /** @description agent.yaml's chat_channels: the Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels, as AgentConfigRequest's chat_channels names them, with the same rules. Sent, they replace the stored list whole, an empty list removing it. Left out, the stored list stays. */
+            readonly chat_channels?: readonly components["schemas"]["AgentChatChannel"][];
             /** @description Refuse the sync, with unsynced_changes, when somebody has changed one of the settings it would write since the last sync -- in the dashboard, say. A client that asks for this shows the person what changed (GET /v1/agents/configs/{id}/changes) and syncs again with base_change once they have decided. Omitted, the sync writes over whatever is there, which is what a process syncing on startup wants. */
             readonly check_changes?: boolean;
             /** @description The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone. */

@@ -84,6 +84,12 @@ final readonly class AgentConfigRequest
         // Where a response goes when llm fails it, in order: each a provider/model, a capability shortcut or one of y...
         /** @var list<string>|null */
         public ?array $llmFallbacks = null,
+        // Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels, such as...
+        /** @var list<AgentChatChannel>|null */
+        public ?array $chatChannels = null,
+        // The app's other text agents this one may hand work to, each offered to its model as a tool that takes one s...
+        /** @var list<ChildAgent>|null */
+        public ?array $agents = null,
     ) {
     }
 
@@ -130,6 +136,8 @@ final readonly class AgentConfigRequest
             visibleTools: array_key_exists('visible_tools', $data) && $data['visible_tools'] !== null ? Json::strings($data, 'visible_tools') : null,
             voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
             llmFallbacks: array_key_exists('llm_fallbacks', $data) && $data['llm_fallbacks'] !== null ? Json::strings($data, 'llm_fallbacks') : null,
+            chatChannels: array_key_exists('chat_channels', $data) && $data['chat_channels'] !== null ? array_map(AgentChatChannel::fromArray(...), Json::objects($data, 'chat_channels')) : null,
+            agents: array_key_exists('agents', $data) && $data['agents'] !== null ? array_map(ChildAgent::fromArray(...), Json::objects($data, 'agents')) : null,
         );
     }
 
@@ -249,6 +257,12 @@ final readonly class AgentConfigRequest
         }
         if ($this->llmFallbacks !== null) {
             $out['llm_fallbacks'] = $this->llmFallbacks;
+        }
+        if ($this->chatChannels !== null) {
+            $out['chat_channels'] = array_map(static fn (AgentChatChannel $each): array => $each->toArray(), $this->chatChannels);
+        }
+        if ($this->agents !== null) {
+            $out['agents'] = array_map(static fn (ChildAgent $each): array => $each->toArray(), $this->agents);
         }
         return $out;
     }

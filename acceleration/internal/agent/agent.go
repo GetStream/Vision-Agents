@@ -465,6 +465,9 @@ type Agent struct {
 	// held is the reply a voice replacing a lost one is to say, and what of it that voice
 	// has still to be sent. Nil while no voice is replaced or it has been sent all of it.
 	held *heldReply
+	// releasing lets a reply held for a caller's lone greeting go out once they no longer
+	// hold the floor. A drop or the call's end stops it.
+	releasing *time.Timer
 	// saying is the reply as the caller has heard it so far, so a controller ruling on
 	// words that overlap it can tell a correction from the line echoing back. It is the
 	// spoken text as it streams, or the whole phrase for a greeting or a murmur.
@@ -1491,6 +1494,9 @@ func (a *Agent) close() error {
 	a.mu.Lock()
 	a.closed = true
 	cancel := a.cancel
+	if a.releasing != nil {
+		a.releasing.Stop()
+	}
 	a.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -2053,6 +2059,19 @@ func (a *Agent) perform(action Action) {
 		a.dropSpeculations()
 		a.stopTools()
 		a.interrupt(action.Participant, action.Interruption)
+
+	case ActHoldUnheard:
+		if !a.holdUnheard(action.TurnID) {
+			a.converse.wentOnUnheard(action.Participant.ID)
+			a.dropUnheard(action.Participant, action.TurnID, interruption{cause: causeUnheard, words: action.Text})
+			return
+		}
+		// The greeting can settle before the hold is made, as the cadence is read apart from
+		// the transcript, and then nothing else would let the reply go.
+		a.releaseUnheard(action.TurnID, time.Now().Add(callerHold))
+
+	case ActReleaseUnheard:
+		a.releaseUnheard(action.TurnID, action.At)
 
 	case ActShorten:
 		a.shorten(action.Participant, action.TurnID, action.Interruption)
@@ -4071,6 +4090,57 @@ func (a *Agent) dropUnheard(participant stt.Participant, turnID string, why inte
 		"gap_ms", time.Since(stale.decidedAt).Milliseconds(), "sent_to_voice", sent)
 }
 
+// letGoLocked lets go of the reply held, none of which will be sent. Agent.mu must be held.
+func (a *Agent) letGoLocked() {
+	a.unsentLocked(a.held)
+	a.held = nil
+	if a.releasing != nil {
+		a.releasing.Stop()
+	}
+}
+
+// holdUnheard keeps an unheard reply from the voice while the caller's lone greeting may
+// still grow into more, and reports whether it is held. Text already at the voice cannot be
+// pulled back, and a reply held for a lost voice is that voice's to go on with.
+func (a *Agent) holdUnheard(turnID string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.held != nil && a.held.greeting && a.held.turnID == turnID {
+		return true
+	}
+	if a.unheard.turnID != turnID || a.speakingTurn != turnID || a.held != nil || a.turns.sentToVoice(turnID) {
+		return false
+	}
+	a.held = &heldReply{turnID: turnID, written: !a.generating, greeting: true}
+	return true
+}
+
+// releaseUnheard lets a reply held for a caller's lone greeting go out at the time given, or
+// later if it was already to go out later, unless it was let go of by then.
+func (a *Agent) releaseUnheard(turnID string, at time.Time) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	held := a.held
+	if a.closed || held == nil || !held.greeting || held.turnID != turnID {
+		return
+	}
+	if at.Before(held.releaseAt) {
+		at = held.releaseAt
+	}
+	held.releaseAt = at
+	if a.releasing != nil {
+		a.releasing.Stop()
+	}
+	a.releasing = time.AfterFunc(time.Until(at), func() {
+		a.mu.Lock()
+		voice, gone := a.tts, a.held != held
+		a.mu.Unlock()
+		if !gone {
+			a.sayAgain(voice, held)
+		}
+	})
+}
+
 // interrupt abandons the reply being spoken because a participant started talking.
 func (a *Agent) interrupt(participant stt.Participant, why interruption) {
 	a.abandonReply(participant, nil, why)
@@ -4099,6 +4169,11 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 	// none of it was heard.
 	outstanding := a.generating || a.audioOutstandingLocked(turnID) || a.heldLocked(turnID)
 	a.abandoned[turnID] = struct{}{}
+	// A reply held for a lone greeting is never released once abandoned, and what it holds
+	// was counted as being said.
+	if a.heldLocked(turnID) && a.held.greeting {
+		a.letGoLocked()
+	}
 	// Acting on chorus-asr, giving the caller the floor silences everything the agent is
 	// saying (README, "The loop's contract"), and the turn it is on may not be all of it: it
 	// takes a turn of its own, to say what a tool came back with, while the reply before is

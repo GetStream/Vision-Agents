@@ -6,10 +6,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -45,9 +47,17 @@ func (s *AgentSuite) TestAReplyTheCallerSaidMoreOverBeforeHearingAnyIsDropped() 
 	two := s.answering("two")
 	close(release)
 	s.mutters(nash, "Hey,")
+	s.eventually(func() bool { return s.holding(two) }, "the reply was never held for the greeting")
+	s.model.writes(two, "Which two do you mean?")
+	// Written text the drop lands ahead of is counted as being said and never finishes.
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return s.agent.heldLocked(two) && len(s.agent.held.unsaid) > 0
+	}, "the reply written was never held")
+	s.mutters(nash, "Hey. Can you help")
 
 	s.eventually(func() bool { return s.model.abandoned(two) }, "the reply to two kept going")
-	s.model.writes(two, "Which two do you mean?")
 	s.synthesises(two)
 	s.says(nash, "Hey. Can you help me find after school care for the kids?")
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the newer words were never answered")
@@ -68,6 +78,547 @@ func (s *AgentSuite) TestAReplyTheCallerSaidMoreOverBeforeHearingAnyIsDropped() 
 	s.Equal("nash", logged[0]["participant"])
 	s.Equal(false, logged[0]["sent_to_voice"])
 	s.Contains(logged[0], "gap_ms")
+}
+
+func (s *AgentSuite) TestAHeldReplyDroppedIsLoggedAsNeverSentToTheVoice() {
+	s.logs = &logLines{}
+	s.join(true)
+	two := s.answering("two")
+
+	s.mutters(nash, "Hey,")
+	s.eventually(func() bool { return s.holding(two) }, "the reply was never held for the greeting")
+	s.model.writes(two, "Which two do you mean?")
+	s.mutters(nash, "Hey. Can you help")
+
+	s.eventually(func() bool { return s.model.abandoned(two) }, "the reply to two kept going")
+	logged := s.dropLogged()
+	s.Require().Len(logged, 1)
+	s.Equal(false, logged[0]["sent_to_voice"])
+}
+
+// Session 01a15c2c, with the request arriving as revisions after "Hey,".
+func (s *AgentSuite) TestALoneGreetingThatGrowsIntoARequestDropsTheUnheardReply() {
+	s.join(true)
+	dropped := testutil.ToFloat64(staleReplies)
+	two := s.answering("two")
+
+	s.mutters(nash, "Hey,")
+	s.eventually(func() bool { return countOf[Hearing](s.reported()) == 2 }, "the greeting was never heard")
+	s.model.writes(two, "Which two do you mean?")
+	s.mutters(nash, "Hey. Can you help")
+
+	s.eventually(func() bool { return s.model.abandoned(two) }, "the reply to two kept going")
+	edge := s.edge
+	s.Never(func() bool { return len(edge.heard()) > 0 }, 100*time.Millisecond, 5*time.Millisecond,
+		"none of the dropped reply may go out")
+	s.oneDropSince(dropped)
+}
+
+// A reply written in full and held for a greeting that grows was passing on an answer the
+// caller never heard: dropping it leaves that answer owed.
+func (s *AgentSuite) TestAnAnswerAHeldReplyWasPassingOnIsStillOwedOnceItIsDropped() {
+	s.delegates()
+	s.join(true)
+	s.model.reply = nil
+	s.model.replyOn = map[int][]string{1: {`Let me check. <ask skill="think">15% of 84.20</ask>`}}
+	s.subagent.reply = nil
+	dropped := testutil.ToFloat64(staleReplies)
+	s.speak(nash)
+	s.says(nash, "what is 15% of 84.20")
+	s.eventually(func() bool {
+		requests := s.subagent.requests()
+		return len(requests) > 0 && s.subagent.script(requests[0].ID) != nil
+	}, "nothing was handed over")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the first reply never finished")
+	// The caller talking keeps the answer for the reply to them.
+	s.mutters(nash, "and two")
+	taskID := s.subagent.requests()[0].ID
+	s.subagent.writes(taskID, "It is 12.63.")
+	s.subagent.finishes(taskID)
+	s.eventually(func() bool { return countOf[TaskSettled](s.reported()) == 1 }, "the task never settled")
+	s.says(nash, "and two")
+	// The reply that handed the work over can be followed by one of its own before this one.
+	var answer llm.ResponseParams
+	s.eventually(func() bool { answer = s.requestAnswering("and two"); return answer.ID != "" }, "the caller was never answered")
+	two := answer.ID
+	s.Require().Contains(shown(answer), "It is 12.63.", "the reply to the caller never carried the answer")
+
+	s.greetedOver(two, s.mutters, "Hey,")
+	s.model.writes(two, "That comes to 12.63.")
+	s.model.finishes(two)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 }, "the held reply was never written")
+	s.mutters(nash, "Hey. And three")
+	s.oneDropSince(dropped)
+	s.says(nash, "Hey. And three")
+
+	s.eventually(func() bool { answer = s.requestAnswering("Hey. And three"); return answer.ID != "" },
+		"the newer words were never answered")
+	s.Contains(shown(answer), "talked over your last reply passing this on",
+		"the answer the dropped reply was passing on is owed with the reply to what the caller said")
+}
+
+// requestAnswering is the model request whose newest input is words, if there is one yet.
+func (s *AgentSuite) requestAnswering(words string) llm.ResponseParams {
+	for _, request := range s.model.requests() {
+		if input := harness.WithoutNotes(request.Input); len(input) > 0 && input[len(input)-1].Content == words {
+			return request
+		}
+	}
+	return llm.ResponseParams{}
+}
+
+func (s *AgentSuite) TestALoneGreetingFromAnotherCallerDoesNotHoldTheReply() {
+	s.join(true)
+	s.flow.then = []string{`{"disposition":"wait","floor":"continue"}`}
+	dropped := testutil.ToFloat64(staleReplies)
+	two := s.answering("two")
+	bob := stt.Participant{ID: "bob"}
+	s.speak(bob)
+
+	s.mutters(bob, "Hello")
+	s.eventually(func() bool { return countOf[Hearing](s.reported()) == 2 }, "the other caller was never heard")
+	s.model.writes(two, "Two of what?")
+	s.model.finishes(two)
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply was held over another caller's greeting")
+	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
+}
+
+func (s *AgentSuite) TestALoneGreetingKeepsTheUnheardReplyUntilItGrows() {
+	s.join(true)
+	dropped := testutil.ToFloat64(staleReplies)
+	two := s.answering("two")
+
+	s.mutters(nash, "Hey,")
+
+	s.eventually(func() bool { return countOf[Hearing](s.reported()) == 2 }, "the greeting was never heard")
+	s.eventually(func() bool { return s.holding(two) }, "the reply was never held")
+	s.model.writes(two, "Which two do you mean?")
+	model, voice, edge := s.model, s.voice, s.edge
+	s.Never(func() bool { return model.abandoned(two) || len(voice.spoken()) > 0 || len(edge.heard()) > 0 },
+		200*time.Millisecond, 5*time.Millisecond,
+		"a lone greeting may be all the caller says, so the reply answering them is kept, and kept from the voice")
+	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
+}
+
+// A greeting the hold is refused for, because the reply already reached the voice, is
+// dropped as any more words are: the caller went on, and the controller is told so.
+func (s *AgentSuite) TestALoneGreetingAfterTheReplyReachedTheVoiceDropsItAsBefore() {
+	s.join(true)
+	s.voice.silent = true
+	dropped := testutil.ToFloat64(staleReplies)
+	two := s.answering("two")
+	s.model.writes(two, "Which two do you mean?")
+	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "the reply never reached the voice")
+
+	s.mutters(nash, "Hey,")
+
+	s.eventually(func() bool { return s.model.abandoned(two) }, "the reply the voice had was held")
+	s.oneDropSince(dropped)
+	s.says(nash, "Hey, are you there")
+	s.eventually(func() bool { return len(s.flow.requests()) == 2 }, "what the caller went on to say was never ruled on")
+	s.Contains(harness.WithoutNotes(s.flow.requests()[1].Input)[0].Content, "giving one thought in parts",
+		"the caller went on before hearing the reply, as with any other drop")
+}
+
+// holding reports whether the agent keeps a turn's reply from the voice.
+func (s *AgentSuite) holding(turnID string) bool {
+	s.agent.mu.Lock()
+	defer s.agent.mu.Unlock()
+	return s.agent.heldLocked(turnID)
+}
+
+func (s *AgentSuite) TestALoneGreetingRevisedStillHoldsTheUnheardReply() {
+	s.join(true)
+	dropped := testutil.ToFloat64(staleReplies)
+	two := s.answering("two")
+
+	s.mutters(nash, "Hey,")
+	s.mutters(nash, "Hello")
+
+	s.eventually(func() bool { return countOf[Hearing](s.reported()) == 3 }, "the revised greeting was never heard")
+	model := s.model
+	s.Never(func() bool { return model.abandoned(two) }, 200*time.Millisecond, 5*time.Millisecond,
+		"the reply already held for the greeting is not dropped when the greeting is revised")
+	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
+}
+
+// voicedTimes is how many times text was sent to the voice.
+func (s *AgentSuite) voicedTimes(text string) int {
+	return strings.Count(s.voiced(), text)
+}
+
+// voiced is all the text sent to the voice, in the order it was sent.
+func (s *AgentSuite) voiced() string {
+	var sent strings.Builder
+	for _, request := range s.voice.spoken() {
+		sent.WriteString(request.Text)
+	}
+	return sent.String()
+}
+
+// greetedOver has the caller greet before hearing any of the reply to turnID, and waits for
+// the reply to be held for it.
+func (s *AgentSuite) greetedOver(turnID string, greet func(stt.Participant, string), greeting string) {
+	greet(nash, greeting)
+	s.eventually(func() bool { return s.holding(turnID) }, "the reply was never held for the greeting")
+}
+
+// The caller said "Hello?" again while the reply to it was
+// being written, and it was dropped every time.
+func (s *AgentSuite) TestALoneGreetingLetsTheHeldReplyGoOutOnceItSettles() {
+	greets := map[string]func(stt.Participant, string){"partial": s.mutters, "final": s.says}
+	for _, greeting := range []string{"Hello.", "Hello?", "Hey", "Hello? Hello?", "Hello, hello?", "Hey hey"} {
+		for mode, greet := range greets {
+			s.Run(greeting+" "+mode, func() {
+				s.join(true)
+				dropped := testutil.ToFloat64(staleReplies)
+				turn := s.answering("Hello? Hello. Hello.")
+
+				s.greetedOver(turn, greet, greeting)
+				s.model.writes(turn, "Hi, yes, I can hear you.")
+
+				s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply held for the greeting never went out")
+				s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
+				s.Equal(1, s.voicedTimes("Hi, yes, I can hear you."))
+			})
+		}
+	}
+}
+
+// A transcriber that numbers its utterances sends the same words in a new one as new words,
+// not as it restating the ones answered.
+func (s *AgentSuite) TestTheSameGreetingInANewUtteranceLetsTheHeldReplyGoOut() {
+	s.join(true)
+	dropped := testutil.ToFloat64(staleReplies)
+	s.model.reply = nil
+	s.speak(nash)
+	s.ears.emitter.Send(stt.Transcript{Participant: nash, Mode: stt.ModeFinal, Text: "Hello?", Language: "en", Confidence: 1, Utterance: 1})
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the reply was never asked for")
+	turn := s.model.requests()[0].ID
+
+	s.greetedOver(turn, func(participant stt.Participant, text string) {
+		s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeReplacement, Text: text, Language: "en", Utterance: 2})
+	}, "Hello?")
+	s.model.writes(turn, "Hi, yes, I can hear you.")
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply held for the greeting never went out")
+	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
+}
+
+// Words that stopped changing for the cadence's gap may still be the start of more: the
+// caller holds the floor until callerHold after they last changed.
+func (s *AgentSuite) TestAHeldReplyIsNotLetGoBeforeTheCallerHoldPasses() {
+	s.join(true)
+	turn := s.answering("Hello? Hello. Hello.")
+
+	s.greetedOver(turn, s.mutters, "Hello?")
+	s.model.writes(turn, "Hi, yes, I can hear you.")
+
+	edge := s.edge
+	s.Never(func() bool { return len(edge.heard()) > 0 }, time.Second, 5*time.Millisecond,
+		"the reply went out while the caller may still have been talking")
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply held for the greeting never went out")
+}
+
+// The greeting's settling can be dealt with before the hold for it is made, as the
+// transcript and the cadence are read apart: the hold is then made with nothing left to
+// settle, and still ends.
+func (s *AgentSuite) TestAHoldMadeAfterItsGreetingSettledStillLetsTheReplyGoOut() {
+	s.join(true)
+	turn := s.answering("Hello? Hello. Hello.")
+
+	s.agent.perform(Action{Kind: ActHoldUnheard, Participant: nash, TurnID: turn, Text: "Hello?"})
+	s.Require().True(s.holding(turn), "the reply was never held")
+	s.model.writes(turn, "Hi, yes, I can hear you.")
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply held with no greeting left to settle never went out")
+	s.Equal(1, s.voicedTimes("Hi, yes, I can hear you."))
+}
+
+// Every ruling the controller could give on the greeting breaks the held reply: stop cuts
+// it, continue answers the greeting a second time, wait lets it go and may cut it.
+func (s *AgentSuite) TestTheControllerIsNotAskedAboutAGreetingAHeldReplyAnswers() {
+	for _, floor := range []string{"stop", "wait", "continue"} {
+		s.Run(floor, func() {
+			s.join(true)
+			s.flow.then = []string{`{"disposition":"respond","floor":"` + floor + `"}`}
+			dropped := testutil.ToFloat64(staleReplies)
+			turn := s.answering("Hello? Hello. Hello.")
+
+			s.greetedOver(turn, s.says, "Hello.")
+			s.model.writes(turn, "Hi, yes, I can hear you.")
+
+			s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply held for the greeting never went out")
+			s.Len(s.flow.requests(), 1, "the controller was asked about the greeting")
+			s.Len(s.model.requests(), 1, "the greeting was answered again")
+			s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
+			s.Equal(1, s.voicedTimes("Hi, yes, I can hear you."))
+		})
+	}
+}
+
+// Session 01a15c2c with "Hey," settling before the request: the reply to "two" would have
+// started 400 ms after it, over the caller.
+func (s *AgentSuite) TestAGreetingThatSettlesThenGrowsDropsTheHeldReply() {
+	s.join(true)
+	dropped := testutil.ToFloat64(staleReplies)
+	two := s.answering("two")
+
+	s.greetedOver(two, s.mutters, "Hey,")
+	s.model.writes(two, "Which two do you mean?")
+	s.eventually(func() bool { return countOf[Heard](s.reported()) == 2 }, "the greeting never settled")
+	s.Len(s.flow.requests(), 1, "the greeting was put to the controller")
+	s.mutters(nash, "Hey. Can you help")
+
+	s.eventually(func() bool { return s.model.abandoned(two) }, "the reply to two kept going")
+	edge := s.edge
+	s.Never(func() bool { return len(edge.heard()) > 0 }, callerHold, 5*time.Millisecond,
+		"none of the dropped reply may go out")
+	s.oneDropSince(dropped)
+}
+
+func (s *AgentSuite) TestAMurmurAfterAHeldGreetingKeepsTheHold() {
+	s.join(true)
+	dropped := testutil.ToFloat64(staleReplies)
+	turn := s.answering("Hello? Hello. Hello.")
+
+	s.greetedOver(turn, s.mutters, "Hello.")
+	s.mutters(nash, "Hello. mm")
+	s.model.writes(turn, "Hi, yes, I can hear you.")
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply held for the greeting never went out")
+	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
+	s.Equal(1, s.voicedTimes("Hi, yes, I can hear you."))
+}
+
+func (s *AgentSuite) TestARepliesWordsWrittenAfterTheReleaseFollowInOrder() {
+	s.join(true)
+	turn := s.answering("Hello? Hello. Hello.")
+
+	s.greetedOver(turn, s.mutters, "Hello?")
+	s.model.writes(turn, "Hi, yes, I can hear you. ")
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply held for the greeting never went out")
+	s.model.writes(turn, "How can I help?")
+	s.model.finishes(turn)
+
+	s.eventually(func() bool { return s.voicedTimes("How can I help?") == 1 }, "the rest of the reply never reached the voice")
+	s.Equal(1, s.voicedTimes("Hi, yes, I can hear you."))
+	s.Less(strings.Index(s.voiced(), "Hi, yes, I can hear you."), strings.Index(s.voiced(), "How can I help?"))
+}
+
+// A reply held for a voice replacing a lost one is that voice's to go on with: a lone greeting
+// over it drops it as any more words do, rather than holding it a second time.
+func (s *AgentSuite) TestALoneGreetingWhileAVoiceIsLostDropsItAsBefore() {
+	s.join(true)
+	s.replacement = newStubTTS(true)
+	started, release := make(chan struct{}), make(chan struct{})
+	s.replacement.startStarted, s.replacement.startRelease = started, release
+	defer close(release)
+	dropped := testutil.ToFloat64(staleReplies)
+	two := s.answering("two")
+	s.voice.emitter.Send(tts.Error{Provider: "stub", Model: "stub-tts", Err: errors.New("quota exceeded"), Fatal: true})
+	<-started
+
+	s.mutters(nash, "Hey,")
+
+	s.eventually(func() bool { return s.model.abandoned(two) }, "the reply held for the next voice was held again")
+	s.oneDropSince(dropped)
+}
+
+// The hold is the voice's that lost it no more than it is the greeting's: losing the voice
+// while a reply is held for a lone greeting drops it, as a greeting over a reply held for a
+// lost voice does, rather than have the next voice say it while the greeting may still grow.
+func (s *AgentSuite) TestAVoiceLostWhileAReplyIsHeldForAGreetingDropsIt() {
+	s.join(true)
+	s.replacement = newStubTTS(true)
+	dropped := testutil.ToFloat64(staleReplies)
+	turn := s.answering("Hello? Hello. Hello.")
+	s.greetedOver(turn, s.mutters, "Hello?")
+	s.model.writes(turn, "Hi, yes, I can hear you.")
+
+	s.voice.emitter.Send(tts.Error{Provider: "stub", Model: "stub-tts", Err: errors.New("quota exceeded"), Fatal: true})
+
+	s.eventually(func() bool { return s.model.abandoned(turn) }, "the reply held for the greeting went on in the next voice")
+	s.oneDropSince(dropped)
+	replacement, edge := s.replacement, s.edge
+	s.Never(func() bool { return len(replacement.spoken()) > 0 || len(edge.heard()) > 0 }, callerHold+200*time.Millisecond,
+		5*time.Millisecond, "the dropped reply went out in the next voice")
+}
+
+// Acting on chorus-asr, the floor model rules on the greeting too, and a stop on it would cut
+// the reply that answers it.
+func (s *AgentSuite) TestTheFloorModelStoppingOnAHeldGreetingLeavesTheReply() {
+	s.actsOnChorusASR()
+	s.join(true)
+	dropped := testutil.ToFloat64(staleReplies)
+	turn := s.answering("Hello? Hello. Hello.")
+	s.eventually(s.agent.actsOnChorusASR, "chorus-asr never heard the caller")
+	s.greetedOver(turn, s.mutters, "Hello?")
+
+	stop := audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Stop}},
+		Words: "Hello?", Speaking: true, Overheard: true, Began: time.Now(), AudioMs: 700, WordsMs: 100}
+	pauseAsker{s.agent}.Overheard(nash, stop)
+	s.model.writes(turn, "Hi, yes, I can hear you.")
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply held for the greeting never went out")
+	s.False(s.model.abandoned(turn), "the stop on the greeting cut the reply")
+	s.Equal(1, s.voicedTimes("Hi, yes, I can hear you."))
+	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
+}
+
+func (s *AgentSuite) TestACallEndingWhileAReplyIsHeldSendsNothing() {
+	s.join(true)
+	turn := s.answering("Hello? Hello. Hello.")
+	s.greetedOver(turn, s.mutters, "Hello?")
+	s.model.writes(turn, "Hi, yes, I can hear you.")
+	s.eventually(func() bool { return countOf[Heard](s.reported()) == 2 }, "the greeting never settled")
+
+	s.Require().NoError(s.agent.Close())
+
+	voice, edge := s.voice, s.edge
+	s.Never(func() bool { return len(voice.spoken()) > 0 || len(edge.heard()) > 0 }, callerHold+200*time.Millisecond,
+		5*time.Millisecond, "the held reply went out after the call ended")
+}
+
+// The release can be sending the held reply when the call ends: what it had still to send
+// stays unsent.
+func (s *AgentSuite) TestACallEndingWhileAHeldReplyGoesOutSendsNoMore() {
+	s.join(false)
+	turn := s.answering("Hello? Hello. Hello.")
+	s.greetedOver(turn, s.mutters, "Hello?")
+	synthesizing, release := make(chan struct{}), make(chan struct{})
+	s.voice.mu.Lock()
+	s.voice.synthesizing, s.voice.synthesisRelease = synthesizing, release
+	s.voice.mu.Unlock()
+	released := sync.OnceFunc(func() { close(release) })
+	defer released()
+	s.model.writes(turn, "Hi, yes, I can hear you. How can I help?")
+	s.model.finishes(turn)
+	s.eventually(func() bool {
+		select {
+		case <-synthesizing:
+			return true
+		default:
+			return false
+		}
+	}, "the held reply never went out")
+
+	closed := make(chan error, 1)
+	go func() { closed <- s.agent.Close() }()
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return s.agent.closed
+	}, "the call never ended")
+	released()
+
+	s.Require().NoError(<-closed)
+	// Read through a copy: Never's last check can run once the next test has set s.voice.
+	voice := s.voice
+	s.Never(func() bool {
+		var sent strings.Builder
+		for _, request := range voice.spoken() {
+			sent.WriteString(request.Text)
+		}
+		return strings.Contains(sent.String(), "How can I help?")
+	}, 200*time.Millisecond, 5*time.Millisecond, "the rest of the held reply was sent after the call ended")
+}
+
+// A stop over the agent ruled on the greeting's own utterance would set the greeting aside
+// as the stop's words, and the reply held for it would be released by nothing.
+func (s *AgentSuite) TestAGreetingAStopWasRuledOnStillLetsTheHeldReplyGoOut() {
+	s.join(true)
+	dropped := testutil.ToFloat64(staleReplies)
+	turn := s.answering("Hello? Hello. Hello.")
+	s.greetedOver(turn, func(participant stt.Participant, text string) {
+		s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeReplacement, Text: text, Language: "en", Utterance: 2})
+	}, "Hello?")
+	s.agent.converse.mu.Lock()
+	s.agent.converse.stops[nash.ID] = stoppedOn{utterance: 2, words: "Hello?"}
+	s.agent.converse.mu.Unlock()
+	s.model.writes(turn, "Hi, yes, I can hear you.")
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply held for the greeting never went out")
+	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
+	s.Equal(1, s.voicedTimes("Hi, yes, I can hear you."))
+}
+
+// A reply that ends with nothing said leaves nothing for the greeting's settling to release:
+// the hold has to end then all the same, or it is held for a reply long gone.
+func (s *AgentSuite) TestAHeldReplyThatEndsWithNothingSaidIsLetGoOfOnceTheGreetingSettles() {
+	s.join(true)
+	turn := s.answering("Hello? Hello. Hello.")
+	s.greetedOver(turn, s.mutters, "Hello?")
+
+	s.model.finishes(turn)
+
+	s.eventually(func() bool { return countOf[Heard](s.reported()) == 2 }, "the greeting never settled")
+	s.eventually(func() bool { return !s.holding(turn) }, "the reply ended with nothing said is held still")
+}
+
+// Any other stop of the reply lets go of what is held for the greeting: kept, it is counted
+// as being said and the next reply is ruled as if the agent were still talking.
+func (s *AgentSuite) TestAHeldReplyStoppedAnotherWayIsLetGoOf() {
+	s.join(true)
+	turn := s.answering("Hello? Hello. Hello.")
+	s.greetedOver(turn, s.mutters, "Hello?")
+	s.model.writes(turn, "Hi, yes, I can hear you.")
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return s.agent.utterances > 0
+	}, "the held reply was never counted as being said")
+
+	s.agent.interrupt(stt.Participant{ID: "bob"}, interruption{cause: causeTalking})
+
+	s.False(s.holding(turn), "the stopped reply is held still")
+	s.False(s.agent.floor().Talking, "what was held is counted as being said")
+}
+
+// A reply stopped before the greeting over it is dealt with is no longer the agent's to say.
+func (s *AgentSuite) TestAGreetingOverAReplyAlreadyStoppedHoldsNothing() {
+	s.join(true)
+	turn := s.answering("Hello? Hello. Hello.")
+	s.agent.interrupt(stt.Participant{ID: "bob"}, interruption{cause: causeTalking})
+
+	s.agent.perform(Action{Kind: ActHoldUnheard, Participant: nash, TurnID: turn, Text: "Hello?"})
+
+	s.False(s.holding(turn), "a reply already stopped was held")
+}
+
+// A reply let go of after a greeting went to the voice: dropped then, the log says so.
+func (s *AgentSuite) TestAReleasedReplyDroppedIsLoggedAsSentToTheVoice() {
+	s.logs = &logLines{}
+	s.join(true)
+	s.voice.silent = true
+	turn := s.answering("Hello? Hello. Hello.")
+	s.greetedOver(turn, s.mutters, "Hello?")
+	s.model.writes(turn, "Hi, yes, I can hear you.")
+	s.eventually(func() bool { return s.voicedTimes("Hi, yes, I can hear you.") == 1 }, "the held reply never reached the voice")
+
+	s.mutters(nash, "Hello? Can you help me")
+
+	s.eventually(func() bool { return s.model.abandoned(turn) }, "the reply was not dropped")
+	logged := s.dropLogged()
+	s.Require().Len(logged, 1)
+	s.Equal(true, logged[0]["sent_to_voice"])
+}
+
+// The hold is the caller's time, not the voice's: the voice's part of the turn starts when the
+// reply is let go to it.
+func (s *AgentSuite) TestAHeldReplysVoiceTimeLeavesOutTheHold() {
+	s.join(true)
+	turn := s.answering("Hello? Hello. Hello.")
+	s.greetedOver(turn, s.mutters, "Hello?")
+	s.model.writes(turn, "Hi, yes, I can hear you.")
+	s.model.finishes(turn)
+
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never measured")
+	measured, _ := firstOf[Turn](s.reported())
+	half := float64(callerHold.Milliseconds()) / 2
+	s.Less(measured.TTSToAudioMs, half, "the voice's time took in the hold")
+	s.Greater(measured.TextToTTSMs, half, "the hold was left out of the turn")
 }
 
 func (s *AgentSuite) TestAReplyStartedBeforeTheRulingIsDroppedTheSameWay() {

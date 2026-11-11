@@ -848,7 +848,7 @@ func (s *ChatLogSuite) TestEveryWriteNamesTheChannelsType() {
 			want + "/standup/query", want + "/standup/query", want + "/standup/message",
 			want + "/standup/event", want + "/standup/message", want + "/standup/event",
 		}, named, given)
-		stored := chat.Stored("standup")
+		stored := chat.Stored(want + ":standup")
 		s.Require().Len(stored, 2, "what was said and the artifact's card: %s", given)
 		for _, message := range stored {
 			s.Equal(want+":standup", message["cid"], given)

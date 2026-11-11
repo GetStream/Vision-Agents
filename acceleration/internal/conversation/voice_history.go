@@ -75,11 +75,17 @@ func messageFromVoice(wire getstream.MessageResponse, voiceAgent string) (Messag
 // user content. Its photos are kept as Files, which history tells the model were sent
 // (entryOf) without handing them over again: the reply to the message saw them.
 func messageFromThread(wire getstream.MessageResponse, thread bool) (Message, bool) {
-	if !thread || wire.DeletedAt != nil || wire.CreatedAt.Time == nil || wire.ID == "" || len(wire.ID) > 128 ||
-		wire.User.ID == "" {
+	if _, sourced := wire.Custom["source"]; !thread || sourced {
 		return Message{}, false
 	}
-	if _, sourced := wire.Custom["source"]; sourced {
+	return messageFromPerson(wire)
+}
+
+// messageFromPerson reads a message as a person's, its author's, whatever custom data it
+// carries: in a channel of a type other than agent, every message not written as the agent
+// (writtenByAgent).
+func messageFromPerson(wire getstream.MessageResponse) (Message, bool) {
+	if wire.DeletedAt != nil || wire.CreatedAt.Time == nil || wire.ID == "" || len(wire.ID) > 128 || wire.User.ID == "" {
 		return Message{}, false
 	}
 	m := Message{ID: wire.ID, Role: "user", Text: wire.Text, State: "completed", Saved: true,

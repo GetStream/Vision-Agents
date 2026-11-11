@@ -533,6 +533,13 @@ const reopenHoldMost = 10 * time.Minute
 // answered, so a message sent with no socket attached still gets its reply, and then ends
 // the way any conversation does once nobody is watching.
 func (s *Server) sessionToAnswer(ctx context.Context, id string) (*session.Session, func(), error) {
+	return s.carryOn(ctx, id, refusedRequest)
+}
+
+// carryOn is sessionToAnswer, with refuse turning the error of a session that could not be carried
+// on into the answer: refusedRequest for a request; a scheduled task's delivery keeps the refusal
+// itself, to tell money that may not be paid from money that could not be checked (unpaid).
+func (s *Server) carryOn(ctx context.Context, id string, refuse func(error) error) (*session.Session, func(), error) {
 	found, failure := s.session(ctx, id)
 	var spec session.Spec
 	switch {
@@ -569,7 +576,7 @@ func (s *Server) sessionToAnswer(ctx context.Context, id string) (*session.Sessi
 		return nil, nil, err
 	}
 	if err != nil {
-		return nil, nil, refusedRequest(err)
+		return nil, nil, refuse(err)
 	}
 	events, detach := reopened.Watch()
 	return reopened, func() { go holdUntilAnswered(reopened, events, detach) }, nil
@@ -972,10 +979,7 @@ func mergeStored(rendered *Session, row *store.AgentSession) {
 		rendered.ModelOverwrites = modelOverwritesFor(row.ModelOverwrites)
 	}
 	rendered.ClosedAt = row.ClosedAt
-	if row.EndReason != "" {
-		reason := SessionEndReason(row.EndReason)
-		rendered.EndReason = &reason
-	}
+	rendered.EndReason = endReasonOf(row.EndReason)
 	if info, known := session.EndReason(row.EndReason).Info(); known {
 		fault, stage := SessionEndFault(info.Fault), SessionEndStage(info.Stage)
 		rendered.EndFault, rendered.EndStage = &fault, &stage

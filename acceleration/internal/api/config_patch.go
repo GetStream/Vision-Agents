@@ -23,6 +23,7 @@ type AgentConfigPatch struct {
 	Voice              *string                  `json:"voice,omitempty" doc:"The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead."`
 	Llm                *string                  `json:"llm,omitempty"`
 	LlmFallbacks       *[]string                `json:"llm_fallbacks,omitempty" maxItems:"5" doc:"Replaces the list whole. An empty list removes it."`
+	Agents             *[]ChildAgent            `json:"agents,omitempty" maxItems:"16" doc:"Replaces the list whole. An empty list removes it."`
 	Subagent           *string                  `json:"subagent,omitempty" doc:"Only a voice agent names one. Switching an agent to text drops it."`
 	Search             *string                  `json:"search,omitempty"`
 	Instructions       *string                  `json:"instructions,omitempty"`
@@ -34,6 +35,7 @@ type AgentConfigPatch struct {
 	McpServers         *[]map[string]any        `json:"mcp_servers,omitempty" deprecated:"true" doc:"No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing."`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" maxItems:"64" doc:"The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out."`
 	Channels           *AgentChannels           `json:"channels,omitempty"`
+	ChatChannels       *[]AgentChatChannel      `json:"chat_channels,omitempty" maxItems:"16" doc:"Replaces the list whole. An empty list removes it."`
 	Keyterms           *[]string                `json:"keyterms,omitempty"`
 	VisibleTools       *[]string                `json:"visible_tools,omitempty" maxItems:"64" doc:"Tools whose steps end users see on a persistent conversation's replies, as tool names or path.Match patterns such as athena_*. Only a step's name, status and timing are shown, never its arguments or result. A shown tool whose result is exactly {\"status\":\"answered\",\"citations\":[...]} also adds those citations to the reply's sources. An empty list shows search and web_search."`
 	KnowledgeNamespace *string                  `json:"knowledge_namespace,omitempty"`
@@ -162,6 +164,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		VisibleTools:   patch.VisibleTools,
 		Connectors:     patch.Connectors,
 		Dispatch:       patch.Dispatch,
+		ChatChannels:   patch.ChatChannels,
 	}); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -187,6 +190,9 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if patch.LlmFallbacks != nil {
 		config.LLMFallbacks = fallbacksOf(patch.LlmFallbacks)
 	}
+	if patch.Agents != nil {
+		config.Agents = childAgentsOf(patch.Agents)
+	}
 	config.Subagent = override(config.Subagent, patch.Subagent)
 	config.Search = override(config.Search, patch.Search)
 	config.Instructions = override(config.Instructions, patch.Instructions)
@@ -201,6 +207,9 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	}
 	if patch.Channels != nil {
 		config.Channels = channelsOf(patch.Channels)
+	}
+	if patch.ChatChannels != nil {
+		config.ChatChannels = chatChannelsOf(patch.ChatChannels)
 	}
 	if patch.Keyterms != nil {
 		config.Keyterms = keytermsOf(patch.Keyterms)
@@ -277,6 +286,11 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		return nil, invalidRequest(message)
 	}
 	if message, ok := s.llmFallbacksComplaint(config, original.LLMFallbacks); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok, err := s.childAgentsComplaint(ctx, customerID, &config, &original); err != nil {
+		return nil, err
+	} else if !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, was); !ok {

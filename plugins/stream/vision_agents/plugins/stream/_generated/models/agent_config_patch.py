@@ -16,6 +16,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.agent_calls import AgentCalls
     from ..models.agent_channels import AgentChannels
+    from ..models.agent_chat_channel import AgentChatChannel
     from ..models.agent_config_patch_mcp_servers_item import (
         AgentConfigPatchMcpServersItem,
     )
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     from ..models.agent_review import AgentReview
     from ..models.agent_scheduling import AgentScheduling
     from ..models.agent_tools import AgentTools
+    from ..models.child_agent import ChildAgent
     from ..models.floor_control import FloorControl
     from ..models.greeting import Greeting
     from ..models.resume_history import ResumeHistory
@@ -124,6 +126,8 @@ class AgentConfigPatch:
                 one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own
                 voice name instead.
             llm_fallbacks (list[str] | Unset): Replaces the list whole. An empty list removes it.
+            chat_channels (list[AgentChatChannel] | Unset): Replaces the list whole. An empty list removes it.
+            agents (list[ChildAgent] | Unset): Replaces the list whole. An empty list removes it.
     """
 
     calls: AgentCalls | Unset = UNSET
@@ -163,6 +167,8 @@ class AgentConfigPatch:
     visible_tools: list[str] | Unset = UNSET
     voice: str | Unset = UNSET
     llm_fallbacks: list[str] | Unset = UNSET
+    chat_channels: list[AgentChatChannel] | Unset = UNSET
+    agents: list[ChildAgent] | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.agent_config_patch_plugins_item_type_1 import (
@@ -309,6 +315,20 @@ class AgentConfigPatch:
         if not isinstance(self.llm_fallbacks, Unset):
             llm_fallbacks = self.llm_fallbacks
 
+        chat_channels: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.chat_channels, Unset):
+            chat_channels = []
+            for chat_channels_item_data in self.chat_channels:
+                chat_channels_item = chat_channels_item_data.to_dict()
+                chat_channels.append(chat_channels_item)
+
+        agents: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.agents, Unset):
+            agents = []
+            for agents_item_data in self.agents:
+                agents_item = agents_item_data.to_dict()
+                agents.append(agents_item)
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
@@ -386,6 +406,10 @@ class AgentConfigPatch:
             field_dict["voice"] = voice
         if llm_fallbacks is not UNSET:
             field_dict["llm_fallbacks"] = llm_fallbacks
+        if chat_channels is not UNSET:
+            field_dict["chat_channels"] = chat_channels
+        if agents is not UNSET:
+            field_dict["agents"] = agents
 
         return field_dict
 
@@ -393,6 +417,7 @@ class AgentConfigPatch:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.agent_calls import AgentCalls
         from ..models.agent_channels import AgentChannels
+        from ..models.agent_chat_channel import AgentChatChannel
         from ..models.agent_config_patch_mcp_servers_item import (
             AgentConfigPatchMcpServersItem,
         )
@@ -408,6 +433,7 @@ class AgentConfigPatch:
         from ..models.agent_review import AgentReview
         from ..models.agent_scheduling import AgentScheduling
         from ..models.agent_tools import AgentTools
+        from ..models.child_agent import ChildAgent
         from ..models.floor_control import FloorControl
         from ..models.greeting import Greeting
         from ..models.resume_history import ResumeHistory
@@ -622,6 +648,24 @@ class AgentConfigPatch:
 
         llm_fallbacks = cast(list[str], d.pop("llm_fallbacks", UNSET))
 
+        _chat_channels = d.pop("chat_channels", UNSET)
+        chat_channels: list[AgentChatChannel] | Unset = UNSET
+        if _chat_channels is not UNSET:
+            chat_channels = []
+            for chat_channels_item_data in _chat_channels:
+                chat_channels_item = AgentChatChannel.from_dict(chat_channels_item_data)
+
+                chat_channels.append(chat_channels_item)
+
+        _agents = d.pop("agents", UNSET)
+        agents: list[ChildAgent] | Unset = UNSET
+        if _agents is not UNSET:
+            agents = []
+            for agents_item_data in _agents:
+                agents_item = ChildAgent.from_dict(agents_item_data)
+
+                agents.append(agents_item)
+
         agent_config_patch = cls(
             calls=calls,
             channels=channels,
@@ -660,6 +704,8 @@ class AgentConfigPatch:
             visible_tools=visible_tools,
             voice=voice,
             llm_fallbacks=llm_fallbacks,
+            chat_channels=chat_channels,
+            agents=agents,
         )
 
         return agent_config_patch
