@@ -549,6 +549,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### Kotlin: the reply model failing ends the agent's turn
+
+`Conversation.reduce` in the Kotlin SDK sets `state` to `Idle` for an `error` event whose `context` is `llm` or `sts` while the agent is `Responding` or `Working`, and keeps `failure`. Before, only `failure` was set, so a reply that failed with no `responded` after it left an app showing the agent thinking. An error from anything else, a tool, the voice or the transcriber, still leaves `state` as it was, and an `Ended` conversation stays ended.
+
 ### A custom connector cannot list oauth2_client_credentials
 
 `POST /v1/agents/connectors` answers 400 when `schemes` of a custom connector contains `oauth2_client_credentials`. That scheme reads its token URL from `endpoints.token`, which a custom connector has no way to set, so such a definition could be saved and never connected. Built-in connectors (Salesforce) are unchanged; a custom connector already stored keeps what it has (AI-3155).

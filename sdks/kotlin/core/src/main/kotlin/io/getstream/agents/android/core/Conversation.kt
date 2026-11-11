@@ -104,7 +104,11 @@ public data class Conversation(
 
             AgentEvent.Kind.Interrupted -> copy(state = State.Idle)
 
-            AgentEvent.Kind.Error -> copy(failure = event.errorText)
+            // The model writing the reply failing is the end of that reply, which may never be
+            // reported as responded. Anything else that fails, a tool, the voice or the
+            // transcriber, leaves the reply going, and the agent doing what it was doing.
+            AgentEvent.Kind.Error ->
+                copy(failure = event.errorText, state = if (endsTurn(event)) State.Idle else state)
 
             AgentEvent.Kind.Left -> copy(state = State.Ended)
 
@@ -113,6 +117,15 @@ public data class Conversation(
 
     private val working: List<String>
         get() = (state as? State.Working)?.skills.orEmpty()
+
+    /** Whether an error ends the agent's turn in flight: it is the reply model's, and there is one. */
+    private fun endsTurn(event: AgentEvent): Boolean =
+        (state == State.Responding || state is State.Working) && event.string("context") in replyModels
+
+    private companion object {
+        /** The `context` of an error from the model writing the reply, as text or as speech. */
+        val replyModels = setOf("llm", "sts")
+    }
 
     /**
      * Changes the agent turn this event belongs to, starting one if the router sent text for a
