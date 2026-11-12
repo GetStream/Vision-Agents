@@ -167,6 +167,7 @@
     {"modality":"phone","provider":"plivo","model":"dial","region":"us","free":true},
     {"modality":"phone","provider":"telnyx","model":"call_minutes","region":"us","when":{"direction":"outbound","country":"US"},"rates":{"call_seconds":{"usd":0.007,"per":60,"increment":60}}},
     {"modality":"phone","provider":"telnyx","model":"call_minutes","region":"us","when":{"direction":"inbound","country":"US"},"rates":{"call_seconds":{"usd":0.0052,"per":60,"increment":60}}},
+    {"modality":"phone","provider":"telnyx","model":"call_minutes","region":"us","when":{"direction":"outbound","country":"CA"},"rates":{"call_seconds":{"usd":0.022,"per":60,"increment":60}}},
     {"modality":"phone","provider":"twilio","model":"call_minutes","region":"us","when":{"direction":"outbound","country":"US"},"rates":{"call_seconds":{"usd":0.018,"per":60,"increment":60}}},
     {"modality":"phone","provider":"twilio","model":"call_minutes","region":"us","when":{"direction":"outbound","country":"CA"},"rates":{"call_seconds":{"usd":0.018,"per":60,"increment":60}}},
     {"modality":"phone","provider":"twilio","model":"call_minutes","region":"us","when":{"direction":"inbound","country":"US"},"rates":{"call_seconds":{"usd":0.0125,"per":60,"increment":60}}},

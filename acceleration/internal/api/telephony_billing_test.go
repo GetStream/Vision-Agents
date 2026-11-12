@@ -393,25 +393,15 @@ func (s *TelephonyBillingSuite) TestALegOfACountryWithNoRateIsBillableWorkWithNo
 }
 
 func (s *TelephonyBillingSuite) TestAPlacedTwilioCallToTheUSIsPriced() {
-	s.placedTwilioCallIsPriced("+14155550123", "US")
+	s.placedCallIsPriced("twilio", "+14155550123", "US")
 }
 
 func (s *TelephonyBillingSuite) TestAPlacedTwilioCallToCanadaIsPriced() {
-	s.placedTwilioCallIsPriced("+12365550123", "CA")
+	s.placedCallIsPriced("twilio", "+12365550123", "CA")
 }
 
-func (s *telephonyBilling) placedTwilioCallIsPriced(remote, country string) {
-	callID := s.placedLegOn("twilio", remote, routing.Attribution{APIKey: s.app.key})
-	s.Require().Equal(http.StatusOK, s.participant("joined", callID, "sip-"+remote, "phone-1"))
-	s.clock.advance(61 * time.Second)
-	s.Require().Equal(http.StatusOK, s.endAt(callID))
-
-	row := s.phoneRows(phone.ModelCallMinutes, 1)[store.Outbound]
-	s.Equal("twilio", row.Provider)
-	s.Equal(country, row.Attributes["country"])
-	s.NotZero(row.CostMicros)
-	s.Equal(s.vendorPriced("twilio", phone.ModelCallMinutes, map[string]string{"direction": "outbound", "country": country},
-		pricing.Quantities{pricing.CallSeconds: 61}), row.CostMicros, "two started minutes")
+func (s *TelephonyBillingSuite) TestAPlacedTelnyxCallToCanadaIsPriced() {
+	s.placedCallIsPriced("telnyx", "+12365550123", "CA")
 }
 
 func (s *TelephonyBillingSuite) TestAnInboundTwilioCallToACanadianNumberIsPriced() {
@@ -589,6 +579,22 @@ func (s *telephonyBilling) attachedOn(vendor, country, e164 string) (store.Phone
 		TrunkID: "trunk-" + s.utils.uuid(), CallType: "default", CallID: callID,
 	}))
 	return number, callID
+}
+
+// placedCallIsPriced is a call placed to remote on the vendor given, answered for 61 seconds,
+// and the row its minutes are billed on.
+func (s *telephonyBilling) placedCallIsPriced(vendor, remote, country string) {
+	callID := s.placedLegOn(vendor, remote, routing.Attribution{APIKey: s.app.key})
+	s.Require().Equal(http.StatusOK, s.participant("joined", callID, "sip-"+remote, "phone-1"))
+	s.clock.advance(61 * time.Second)
+	s.Require().Equal(http.StatusOK, s.endAt(callID))
+
+	row := s.phoneRows(phone.ModelCallMinutes, 1)[store.Outbound]
+	s.Equal(vendor, row.Provider)
+	s.Equal(country, row.Attributes["country"])
+	s.NotZero(row.CostMicros)
+	s.Equal(s.vendorPriced(vendor, phone.ModelCallMinutes, map[string]string{"direction": "outbound", "country": country},
+		pricing.Quantities{pricing.CallSeconds: 61}), row.CostMicros, "two started minutes")
 }
 
 // placedLeg is a call placed to remote, ringing, as the phone service records one the vendor
