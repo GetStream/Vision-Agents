@@ -11,6 +11,7 @@ import {
   type AgentTransportRequest,
 } from "../src/chat.js";
 import { Client, Session, supportBranchOf, type SupportBranch } from "../src/index.js";
+import { messageField } from "../src/message-field.js";
 import { TestRouter } from "./router.js";
 import { QUERY_PATH, arrive, channelPage, chatClient, chatMessage, rewind, until, update, type TestChat } from "./stream-chat.js";
 
@@ -19,6 +20,8 @@ interface Shown {
   readonly id: string;
   readonly text: unknown;
   readonly place: SupportBranch | undefined;
+  /** The message a copy sent again was made of, which the controller never takes for a reply. */
+  readonly resentFrom: unknown;
 }
 
 class Feed implements AgentTransportFeed<Shown> {
@@ -149,6 +152,7 @@ describe("agentChatTransport, branching", () => {
         id: message.id,
         text: (message as { text?: unknown }).text,
         place: supportBranchOf(message),
+        resentFrom: messageField(message, "resent_from"),
       }),
     });
     const feed = new Feed();
@@ -385,6 +389,24 @@ describe("agentChatTransport, branching", () => {
     );
   });
 
+  it("keeps what a version's message was sent again from when it shows the version", async () => {
+    const { transport, feed } = await connected();
+    router.serve("GET", "/v1/agents/sessions/sess_1/responses/resp_1/branch", {
+      body: {
+        active: false,
+        items: [
+          copied("q1", 3, mark("resp_1", "question", 1, 1)),
+          copied("r1", 4, { ...mark("resp_1", "reply", 1, 3, "resp_1"), ai_generated: true, resent_from: "r1_first" }, "agent"),
+        ],
+        has_more: false,
+      },
+    });
+
+    await transport.switchBranch(feed.find("r2"), "previous");
+
+    assert.equal(feed.find("r1").resentFrom, "r1_first", "else the controller could take it for a reply");
+  });
+
   it("keeps showing a version over the channel's newer messages", async () => {
     const { streamChat, transport, feed } = await connected();
     await transport.switchBranch(feed.find("r2"), "previous");
@@ -406,6 +428,7 @@ describe("agentChatTransport, branching", () => {
 
     assert.deepEqual(writes(), ["/v1/agents/sessions/sess_1/responses/resp_1/activate", responsesPath]);
     assert.deepEqual(feed.ids, ["q0", "r0", "c_q1", "c_r1"], "the version, sent again");
+    assert.equal(feed.find("c_r1").resentFrom, "r1", "a copy from Chat says what it copies");
     const asked = router.requestsTo("POST", responsesPath)[0]?.body as Record<string, unknown>;
     assert.equal(asked["text"], "And Porto?");
     assert.equal(asked["request_id"], "ctl_ask");
