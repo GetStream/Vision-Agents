@@ -2,6 +2,10 @@
 
 ## Features
 
+### Python: an `authorize` hook on tool calls
+
+`FunctionRegistry(authorize=...)`, or `llm.function_registry.authorize = ...`, takes an async callable that runs before every tool call with the function's name, its arguments and the `ToolCallContext`. Raise `ToolCallRefused("...")` to stop the call; the function does not run and the model is told the message.
+
 ### A child agent takes a budget of tool rounds
 
 `ChildAgent` (an agent config's `agents`, and agent.yaml's `agents:`) gains `max_tool_rounds`: the reply to a tool result, counted since the child was handed its input, at which it is offered no more tools and made to answer. Zero or left out is the default of 8, as before, and a negative number never withdraws them, as `max_tool_rounds` on `createSession` does. A child that chains many lookups, such as a reviewer reading through a diff, no longer has to answer after 8.
@@ -509,6 +513,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 `GET /v1/agents/connections/{id}/tools` gives each tool `read_only`: true when, in the connector's latest revision, every source lists it in `read_only_tools` or says it sends nothing out (`outbound: false`); false when the connector is gone. A binding may grant such a tool by name beside a sensitive connector such as Nessy without `require_approval`; the config save refuses any other tool there unless `require_approval` holds it. It is the same rule the save checks, so an admin can preselect the tools that only read without guessing from their names: Linear's `list_issues` is `read_only`, its `search_documentation` and `save_issue` are not (AI-2788).
 
 ## Breaking Changes
+
+### Python: tool calls run by a local model are checked, and a tool's exception text stays out of the model's context
+
+A tool call from a model run in this process (every LLM and realtime plugin, and `stream.STS`) now goes through `FunctionRegistry.call_function`, so its arguments are held to the function's signature as a hosted call's already were. A call with a missing or wrongly typed argument is refused, and the model is told which argument is wrong. When a function raises, the exception is logged and the model is told only that the tool failed; before, it was sent the exception text. To send a message to the model on purpose, raise `ToolError("...")`. The MCP tool wrapper follows the same rule. `ToolArgumentsError` is now a `ToolError`.
 
 ### A tool is handed its ToolCallContext as an argument
 

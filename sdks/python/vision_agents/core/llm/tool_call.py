@@ -11,6 +11,18 @@ class CallNotHeld(RuntimeError):
     """The call was stopped before `disallow_interruptions` could keep it going."""
 
 
+class ToolError(Exception):
+    """A tool call failed in a way the model should hear about.
+
+    The message is returned to the model as the call's error. Any other exception a
+    function raises is logged, and the model is only told that the tool failed.
+    """
+
+
+class ToolCallRefused(ToolError):
+    """An `authorize` callable refused a call."""
+
+
 class ToolLine(Protocol):
     """How a running call reaches the session it runs for.
 

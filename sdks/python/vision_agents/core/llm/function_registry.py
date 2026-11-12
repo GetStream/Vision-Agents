@@ -7,7 +7,16 @@ from __future__ import annotations
 import functools
 import inspect
 import re
-from typing import Any, Callable, Dict, List, Optional, Type, get_type_hints
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Type,
+    get_type_hints,
+)
 from dataclasses import dataclass, field
 
 from .llm_types import ToolSchema
@@ -79,8 +88,20 @@ class _ExplicitSchemaFunction:
 class FunctionRegistry:
     """Registry for managing available functions that can be called by LLMs."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        authorize: Optional[
+            Callable[[str, Dict[str, Any], Optional[ToolCallContext]], Awaitable[None]]
+        ] = None,
+    ):
+        """
+        Args:
+            authorize: Optional async callable run before every call with the function's
+                name, its arguments and the call it runs for. Raise `ToolCallRefused` to
+                stop the call; its message is what the model is told.
+        """
         self.functions: Dict[str, FunctionDefinition | _ExplicitSchemaFunction] = {}
+        self.authorize = authorize
 
     def register(
         self,
@@ -252,12 +273,17 @@ class FunctionRegistry:
 
         Raises:
             KeyError: If the function is not registered.
+            ToolCallRefused: If `authorize` refused the call.
             TypeError: If the arguments don't match the function signature.
         """
         if name not in self.functions:
             raise KeyError(f"Function '{name}' is not registered")
 
         func_def = self.functions[name]
+
+        if self.authorize is not None:
+            await self.authorize(name, arguments, tool_call_context)
+
         function = self.get_callable(name, tool_call_context)
 
         # For explicit schema functions, just call directly (validation is external)
