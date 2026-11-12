@@ -1990,7 +1990,7 @@ func (s *Service) HangUpUnanswered(ctx context.Context, customerID, callID strin
 		return nil
 	}
 	if err != nil {
-		return err
+		return fmt.Errorf("phone: read the call to hang up: %w", err)
 	}
 	if call.AnsweredAt != nil || call.EndedAt != nil || call.Outcome != "" || call.VendorCallID == "" {
 		return nil
@@ -2006,6 +2006,8 @@ func (s *Service) HangUpUnanswered(ctx context.Context, customerID, callID strin
 	if err := hanger.HangUp(ctx, call.VendorCallID); err != nil {
 		return err
 	}
-	_, err = s.outcomes.Canceled(ctx, call.Key)
-	return err
+	if _, err := s.outcomes.Canceled(ctx, call.Key); err != nil {
+		return fmt.Errorf("phone: keep a hung-up call canceled: %w", err)
+	}
+	return nil
 }

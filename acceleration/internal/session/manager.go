@@ -1822,7 +1822,7 @@ func (m *Manager) hangUpRinging(created *Session, spec Spec) {
 		ctx, cancel := context.WithTimeout(context.Background(), hangUpTimeout)
 		defer cancel()
 		if err := m.options.Phone.HangUpUnanswered(ctx, spec.CustomerID, spec.CallID); err != nil {
-			m.logger.Warn("could not hang up the call its session left ringing", "session", created.id, "error", err)
+			m.logger.Warn("could not hang up the call its session left ringing", "session", created.id, "call", spec.CallID, "customer", spec.CustomerID, "error", err)
 		}
 	}()
 }
