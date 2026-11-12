@@ -131,7 +131,6 @@ The router makes chorus-asr available, and each agent opts in to it.
 | `ROUTER_CHORUS_ASR_INTERIMS` | `on` (default), which has the transcriber write the words so far while the caller talks ([Live words](#live-words)); or `off`, for a server short of transcription lanes, where the words come at the turn's end |
 | `ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT` | How long the router waits for a ruling while the caller talks over the agent, as a duration: `250ms` (default) up to `450ms`, and at least `100ms`. The router refuses to start outside that. A ruling that comes later is not acted on, and the flow controller rules instead ([Fallbacks](#fallbacks)). The checks of a pause keep their 1 s whatever it says. Set it from the server's round trip ([The wait over the agent](#the-wait-over-the-agent)) |
 | `ROUTER_FLOOR_CONTROL_DEFAULT` | What controls the floor of an agent that chose no `floor_control`: empty (default) or `flow-controller`, the flow controller; or `stream/chorus-asr`, chorus-asr at the server's default point, for every such agent on the router ([The router's default](#the-routers-default-router_floor_control_default)). Without `ROUTER_CHORUS_ASR_URL` the router warns once at start and the flow controller rules; no session is refused for it |
-| `ROUTER_FLOOR_CONTROL_DEFAULT_LANGUAGES` | Narrows `ROUTER_FLOOR_CONTROL_DEFAULT` to the agents whose every language is listed: a comma-separated list of BCP 47 codes matched by primary subtag (`en` takes `en-US` and `en-GB`), for a model released in some languages first. Empty (default), every agent. An agent naming no language counts as English. An agent's own choice is untouched. A code of another shape refuses to start |
 
 `cmd/router` and `cmd/agent` read these the same way (`audiofloor.Open`); `cmd/agent`'s one
 agent opts in with `-floor-control stream/chorus-asr`, and reads no default.
@@ -242,20 +241,11 @@ and `ROUTER_CHORUS_ASR_MODE`, which once changed both, is not back. On a router 
 `ROUTER_CHORUS_ASR_URL` the default is warned of once at start and the flow controller rules;
 no session is refused for it.
 
-`ROUTER_FLOOR_CONTROL_DEFAULT_LANGUAGES` narrows the default to the agents whose every language
-is listed, for a model released in some languages first: BCP 47 codes, matched by primary
-subtag, so `en` takes a session's `en-US` and `en-GB`. An agent whose session names no language
-counts as English, which the router's transcribers and chorus-asr fall back to for one, so it
-has the default when `en` is listed and not otherwise. An agent's own choice is untouched by
-the list.
-
 | Router default | Agent chose | Floor |
 | --- | --- | --- |
 | empty or `flow-controller` | none, or `{}` | flow controller |
 | `stream/chorus-asr`, with a server | none, or `{}` | chorus-asr, server's default point |
 | `stream/chorus-asr`, no server | none, or `{}` | flow controller, one warning at start |
-| `stream/chorus-asr` for `en`, with a server | none; session languages `en-US`, or none | chorus-asr, server's default point |
-| `stream/chorus-asr` for `en`, with a server | none; session languages `es`, or `en` and `es` | flow controller |
 | any | `{model: stream/chorus-asr, max_wait_ms: N}` | chorus-asr at N, as today (refused without a server) |
 | any | `{model: flow-controller}` | flow controller |
 

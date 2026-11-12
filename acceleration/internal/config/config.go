@@ -436,14 +436,6 @@ type Agent struct {
 	// floor control's model alone, not a mode: which transcriber writes the words does not
 	// change, and agent.chorus_asr_mode, which once did both, is not back.
 	FloorControlDefault string `koanf:"floor_control_default"`
-	// FloorControlDefaultLanguages narrows FloorControlDefault to the agents whose every
-	// language is one of these, BCP 47 tags matched by primary subtag (en takes en-US and
-	// en-GB too), for a model released in some languages first. Empty, the default, is every
-	// agent. An agent whose session names no language counts as English, which is what the
-	// router's transcribers and chorus-asr fall back to for one: it has the default when en
-	// is listed, and not otherwise. An agent's own choice is untouched by the list. A code
-	// that is not a BCP 47 tag refuses to start.
-	FloorControlDefaultLanguages []string `koanf:"floor_control_default_languages"`
 }
 
 // Connectors is whether agents may reach the customer's accounts elsewhere.
@@ -630,12 +622,10 @@ var variables = map[string]string{
 	"episodes.idle_after":       "ROUTER_EPISODES_IDLE_AFTER",
 	"models.private_endpoints":  "ROUTER_MODELS_PRIVATE_ENDPOINTS",
 
-	"agent.chorus_asr_overlap_timeout": "ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT",
-	"agent.floor_control_default":      "ROUTER_FLOOR_CONTROL_DEFAULT",
-
-	"agent.floor_control_default_languages": "ROUTER_FLOOR_CONTROL_DEFAULT_LANGUAGES",
-	"connectors.proxy_calls_per_minute":     "ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE",
-	"runs.concurrent_per_app":               "ROUTER_RUNS_CONCURRENT_PER_APP",
+	"agent.chorus_asr_overlap_timeout":  "ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT",
+	"agent.floor_control_default":       "ROUTER_FLOOR_CONTROL_DEFAULT",
+	"connectors.proxy_calls_per_minute": "ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE",
+	"runs.concurrent_per_app":           "ROUTER_RUNS_CONCURRENT_PER_APP",
 
 	"sandbox.enabled":               "ROUTER_SANDBOX_ENABLED",
 	"sandbox.recipients":            "ROUTER_SANDBOX_RECIPIENTS",
@@ -675,11 +665,7 @@ var variables = map[string]string{
 }
 
 // lists are the settings written as a comma-separated variable and as a sequence in YAML.
-var lists = map[string]bool{"trusted_proxies": true, "chat.inbound_keys": true, "agent.floor_control_default_languages": true}
-
-// languageTag is the shape of a BCP 47 tag agent.floor_control_default_languages lists: a
-// primary subtag of two or three letters, and any subtags after it.
-var languageTag = regexp.MustCompile(`^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$`)
+var lists = map[string]bool{"trusted_proxies": true, "chat.inbound_keys": true}
 
 // pairs are the settings written as a comma-separated variable of name=value and as a
 // mapping in YAML.
@@ -891,12 +877,6 @@ func (c Config) validate() error {
 	default:
 		return fmt.Errorf("config: agent.floor_control_default (ROUTER_FLOOR_CONTROL_DEFAULT) is %s, or %s or empty for the flow controller, got %q",
 			floorControlChorusASR, floorControlFlowController, c.Agent.FloorControlDefault)
-	}
-	for _, code := range c.Agent.FloorControlDefaultLanguages {
-		if !languageTag.MatchString(code) {
-			return fmt.Errorf("config: agent.floor_control_default_languages (ROUTER_FLOOR_CONTROL_DEFAULT_LANGUAGES) is a comma-separated list "+
-				"of BCP 47 language codes, such as en or en-US, got %q", code)
-		}
 	}
 	switch c.Stream.Tenancy {
 	case "", TenancyDeployment:

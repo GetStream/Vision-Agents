@@ -107,12 +107,11 @@ type ManagerOptions struct {
 	// its own floor control says (Spec.FloorControl), or FloorControlDefault where it chose
 	// none. Without one no session asks about turns.
 	AudioFloor *audiofloor.Client
-	// FloorDefault is what controls the floor of an agent that chose no floor control of its
-	// own, and the languages it is for (config.Agent.FloorControlDefault and
-	// FloorControlDefaultLanguages): empty, the flow controller, or store.FloorControlChorusASR,
-	// chorus-asr at the server's default point when AudioFloor is set, and nothing when it is
-	// not (FloorControlOf). An agent's own choice wins.
-	FloorDefault FloorDefault
+	// FloorControlDefault is what controls the floor of an agent that chose no floor control
+	// of its own (config.Agent.FloorControlDefault): empty, the flow controller, or
+	// store.FloorControlChorusASR, chorus-asr at the server's default point when AudioFloor
+	// is set, and nothing when it is not (FloorControlOf). An agent's own choice wins.
+	FloorControlDefault string
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
 	// SpeculativeReplies has every agent start its reply before the flow controller has
@@ -278,7 +277,7 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 	}
 	// Once, here, rather than for each session it would have ruled: the router runs, and the
 	// flow controller rules every floor that chose nothing, as it would with no default.
-	if options.FloorDefault.Model == store.FloorControlChorusASR && options.AudioFloor == nil {
+	if options.FloorControlDefault == store.FloorControlChorusASR && options.AudioFloor == nil {
 		options.Logger.Warn("agent.floor_control_default (ROUTER_FLOOR_CONTROL_DEFAULT) is stream/chorus-asr, and this router has " +
 			"no chorus-asr server (ROUTER_CHORUS_ASR_URL): the flow controller rules the floor of every agent that chose none")
 	}

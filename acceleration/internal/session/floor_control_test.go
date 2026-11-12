@@ -14,7 +14,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -93,31 +92,12 @@ func (c *chorusASR) toldAbout(instructions string) bool {
 	return false
 }
 
-// floorLanguages are the languages a floor test's routers speak, which routing holds a
-// session's language hints to, lowercase as routing reads them: English, American English and
-// Spanish.
-var floorLanguages = []string{"en", "en-us", "es"}
-
-// speaking widens a stub config so that its providers and aliases speak floorLanguages.
-func speaking(config routing.ModalityConfig) routing.ModalityConfig {
-	for i := range config.Providers {
-		config.Providers[i].Languages = floorLanguages
-	}
-	for name, alias := range config.Aliases {
-		alias.Languages = floorLanguages
-		config.Aliases[name] = alias
-	}
-	return config
-}
-
 // floorManager is a manager over the suite's stub models with client as its chorus-asr
 // server, and routerDefault as what an agent that chose no floor control gets. Each listener
-// has a transcriber of its own, handed to the test as it is opened, and each agent a voice and
-// models of its own, so that sessions running at once each hear and speak only on their own
-// call; every router speaks floorLanguages.
-func (s *SessionSuite) floorManager(client *audiofloor.Client, routerDefault FloorDefault) (*Manager, chan *pausingEars) {
+// has a transcriber of its own, handed to the test as it is opened, and each agent a voice of
+// its own, so that sessions running at once each hear and speak only on their own call.
+func (s *SessionSuite) floorManager(client *audiofloor.Client, routerDefault string) (*Manager, chan *pausingEars) {
 	s.manages()
-	logger := slog.New(slog.DiscardHandler)
 	opened := make(chan *pausingEars, 8)
 	transcription := sttrouter.NewRegistry()
 	transcription.Register("stub", func(routing.Spec) (stt.STT, error) {
@@ -125,24 +105,17 @@ func (s *SessionSuite) floorManager(client *audiofloor.Client, routerDefault Flo
 		opened <- ears
 		return ears, nil
 	})
-	transcriber, err := sttrouter.New(sttrouter.Options{Config: speaking(stubConfig()), Registry: transcription, Logger: logger})
+	transcriber, err := sttrouter.New(sttrouter.Options{Config: stubConfig(), Registry: transcription, Logger: slog.New(slog.DiscardHandler)})
 	s.Require().NoError(err)
 	s.T().Cleanup(transcriber.Close)
-	reasoning := llmrouter.NewRegistry()
-	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) {
-		return &stubLLM{reply: "Sure.", sees: s.model.sees}, nil
-	})
-	reasoner, err := llmrouter.New(llmrouter.Options{Config: speaking(s.thinking()), Registry: reasoning, Logger: logger})
-	s.Require().NoError(err)
-	s.T().Cleanup(reasoner.Close)
 	voices := ttsrouter.NewRegistry()
 	voices.Register("stub", func(routing.Spec) (tts.TTS, error) { return &stubTTS{emitter: tts.NewEmitter(64)}, nil })
-	speaker, err := ttsrouter.New(ttsrouter.Options{Config: speaking(stubConfig()), Registry: voices, Logger: logger})
+	speaker, err := ttsrouter.New(ttsrouter.Options{Config: stubConfig(), Registry: voices, Logger: slog.New(slog.DiscardHandler)})
 	s.Require().NoError(err)
 	s.T().Cleanup(speaker.Close)
 	manager, err := NewManager(ManagerOptions{
-		LLM: reasoner, STT: transcriber, TTS: speaker, Edge: s.manager.options.Edge,
-		AudioFloor: client, FloorDefault: routerDefault, Logger: logger,
+		LLM: s.manager.options.LLM, STT: transcriber, TTS: speaker, Edge: s.manager.options.Edge,
+		AudioFloor: client, FloorControlDefault: routerDefault, Logger: slog.New(slog.DiscardHandler),
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = manager.Shutdown() })
@@ -166,12 +139,11 @@ type floorCall struct {
 	ears    *pausingEars
 }
 
-// floorSession opens a voice session told instructions, choosing floor control, whose callers
-// speak languages, or name none.
-func (s *SessionSuite) floorSession(manager *Manager, instructions string, chosen store.FloorControl, languages ...string) *floorCall {
+// floorSession opens a voice session told instructions, choosing floor control.
+func (s *SessionSuite) floorSession(manager *Manager, instructions string, chosen store.FloorControl) *floorCall {
 	edges := len(s.edges)
 	created, err := manager.Create(s.ctx, Spec{
-		CallID: "call-" + instructions, CustomerID: "acme", Instructions: instructions, FloorControl: chosen, LanguageHints: languages,
+		CallID: "call-" + instructions, CustomerID: "acme", Instructions: instructions, FloorControl: chosen,
 		LLMTarget: "en-low-latency", STTTarget: "en-low-latency", TTSTarget: "en-low-latency",
 	})
 	s.Require().NoError(err)
@@ -205,7 +177,7 @@ func (s *SessionSuite) callerAsks(call *floorCall, opened chan *pausingEars, wor
 // controller all the same.
 func (s *SessionSuite) TestEachSessionOnARouterRunsByItsOwnFloorControl() {
 	server, client := newChorusASR(s)
-	manager, opened := s.floorManager(client, FloorDefault{})
+	manager, opened := s.floorManager(client, "")
 
 	acting := s.floorSession(manager, "You sell ferry tickets.", store.FloorControl{Model: store.FloorControlChorusASR, MaxWaitMs: 1400})
 	unset := s.floorSession(manager, "You book clinic visits.", store.FloorControl{})
@@ -223,7 +195,7 @@ func (s *SessionSuite) TestEachSessionOnARouterRunsByItsOwnFloorControl() {
 // A session that chose chorus-asr on a router with no chorus-asr server, as a config written
 // on another router may have, asks nothing, and is answered by its flow controller.
 func (s *SessionSuite) TestAFloorControlWithNoServerIsTheFlowControllers() {
-	manager, opened := s.floorManager(nil, FloorDefault{})
+	manager, opened := s.floorManager(nil, "")
 	acting := s.floorSession(manager, "You sell ferry tickets.", store.FloorControl{Model: store.FloorControlChorusASR})
 	s.callerAsks(acting, opened, "Two tickets to Bilbao, please.")
 	s.False(acting.ears.asked.Load())
@@ -232,55 +204,37 @@ func (s *SessionSuite) TestAFloorControlWithNoServerIsTheFlowControllers() {
 // What controls a session's floor is its agent's own choice, whatever the router's default,
 // and the router's default where it chose none: chorus-asr at the server's default point on a
 // router with a server, and the flow controller on one without, as with no default. The
-// opt-out is the flow controller everywhere, and asks nothing; an empty choice is none. A
-// default for some languages is for the agents whose every language is listed, by primary
-// subtag; an agent naming none counts as English.
+// opt-out is the flow controller everywhere, and asks nothing; an empty choice is none.
 func (s *SessionSuite) TestTheFloorIsTheAgentsChoiceElseTheRoutersDefault() {
 	none, flow := store.FloorControl{}, store.FloorControl{Model: store.FloorControlFlowController}
 	chorus, waiting := store.FloorControl{Model: store.FloorControlChorusASR}, store.FloorControl{Model: store.FloorControlChorusASR, MaxWaitMs: 1400}
-	every, flowDefault := FloorDefault{Model: store.FloorControlChorusASR}, FloorDefault{Model: store.FloorControlFlowController}
-	english, iberian := FloorDefault{Model: store.FloorControlChorusASR, Languages: []string{"en"}}, FloorDefault{Model: store.FloorControlChorusASR, Languages: []string{"es-ES", "PT"}}
 	for _, row := range []struct {
-		name      string
-		chosen    store.FloorControl
-		languages []string
-		d         FloorDefault
-		served    bool
-		ruling    store.FloorControl
+		name          string
+		chosen        store.FloorControl
+		routerDefault string
+		served        bool
+		ruling        store.FloorControl
 	}{
-		{"none, no default", none, nil, FloorDefault{}, true, none},
-		{"none, no default, no server", none, nil, FloorDefault{}, false, none},
-		{"none, flow-controller default", none, nil, flowDefault, true, none},
-		{"none, chorus-asr default", none, nil, every, true, chorus},
-		{"none, chorus-asr default, no server", none, nil, every, false, none},
-		{"opt-out, no default", flow, nil, FloorDefault{}, true, none},
-		{"opt-out, chorus-asr default", flow, nil, every, true, none},
-		{"opt-out, chorus-asr default, no server", flow, nil, every, false, none},
-		{"chorus-asr, no default", chorus, nil, FloorDefault{}, true, chorus},
-		{"chorus-asr, chorus-asr default", chorus, nil, every, true, chorus},
-		{"chorus-asr with a wait, chorus-asr default", waiting, nil, every, true, waiting},
-		{"chorus-asr with a wait, no default", waiting, nil, FloorDefault{}, true, waiting},
-		{"chorus-asr, no server", chorus, nil, every, false, chorus},
-		// The languages the default is for.
-		{"spanish agent, default for every language", none, []string{"es"}, every, true, chorus},
-		{"english agent, default for en", none, []string{"en"}, english, true, chorus},
-		{"en-US agent, default for en", none, []string{"en-US"}, english, true, chorus},
-		{"EN_GB agent, default for en", none, []string{"EN_GB"}, english, true, chorus},
-		{"no language, default for en", none, nil, english, true, chorus},
-		{"no language, default for es and pt", none, nil, iberian, true, none},
-		{"spanish agent, default for en", none, []string{"es"}, english, true, none},
-		{"en and es agent, default for en", none, []string{"en", "es"}, english, true, none},
-		{"es-MX and pt-BR agent, default for es-ES and PT", none, []string{"es-MX", "pt-BR"}, iberian, true, chorus},
-		{"english agent, default for en, no server", none, []string{"en"}, english, false, none},
-		{"spanish agent chose chorus-asr, default for en", waiting, []string{"es"}, english, true, waiting},
-		{"english agent opted out, default for en", flow, []string{"en"}, english, true, none},
+		{"none, no default", none, "", true, none},
+		{"none, no default, no server", none, "", false, none},
+		{"none, flow-controller default", none, store.FloorControlFlowController, true, none},
+		{"none, chorus-asr default", none, store.FloorControlChorusASR, true, chorus},
+		{"none, chorus-asr default, no server", none, store.FloorControlChorusASR, false, none},
+		{"opt-out, no default", flow, "", true, none},
+		{"opt-out, chorus-asr default", flow, store.FloorControlChorusASR, true, none},
+		{"opt-out, chorus-asr default, no server", flow, store.FloorControlChorusASR, false, none},
+		{"chorus-asr, no default", chorus, "", true, chorus},
+		{"chorus-asr, chorus-asr default", chorus, store.FloorControlChorusASR, true, chorus},
+		{"chorus-asr with a wait, chorus-asr default", waiting, store.FloorControlChorusASR, true, waiting},
+		{"chorus-asr with a wait, no default", waiting, "", true, waiting},
+		{"chorus-asr, no server", chorus, store.FloorControlChorusASR, false, chorus},
 	} {
-		s.Equal(row.ruling, FloorControlOf(row.chosen, row.languages, row.d, row.served), row.name)
+		s.Equal(row.ruling, FloorControlOf(row.chosen, row.routerDefault, row.served), row.name)
 	}
 	s.Equal(audiofloor.Off, FloorModeOf(flow), "the opt-out asks nothing")
 	s.Equal(audiofloor.Off, FloorModeOf(none))
-	s.Equal(audiofloor.Act, FloorModeOf(FloorControlOf(none, nil, every, true)))
-	s.Equal(audiofloor.EndOfTurn{}, EndOfTurnOf(FloorControlOf(none, nil, every, true)), "the default is the server's default point")
+	s.Equal(audiofloor.Act, FloorModeOf(FloorControlOf(none, store.FloorControlChorusASR, true)))
+	s.Equal(audiofloor.EndOfTurn{}, EndOfTurnOf(FloorControlOf(none, store.FloorControlChorusASR, true)), "the default is the server's default point")
 }
 
 // A router that defaults every agent to chorus-asr puts the turns of a session that chose
@@ -289,7 +243,7 @@ func (s *SessionSuite) TestTheFloorIsTheAgentsChoiceElseTheRoutersDefault() {
 // the server.
 func (s *SessionSuite) TestTheRoutersDefaultRulesEveryFloorThatChoseNone() {
 	server, client := newChorusASR(s)
-	manager, opened := s.floorManager(client, FloorDefault{Model: store.FloorControlChorusASR})
+	manager, opened := s.floorManager(client, store.FloorControlChorusASR)
 
 	unset := s.floorSession(manager, "You book clinic visits.", store.FloorControl{})
 	optedOut := s.floorSession(manager, "You sell garden tools.", store.FloorControl{Model: store.FloorControlFlowController})
@@ -306,35 +260,11 @@ func (s *SessionSuite) TestTheRoutersDefaultRulesEveryFloorThatChoseNone() {
 	s.False(optedOut.ears.asked.Load(), "its transcriber asks on behalf of no agent")
 }
 
-// A router whose default is for English alone puts the turns of an English session that chose
-// nothing to the server, and not a Spanish one's, nor a bilingual one's; a Spanish agent that
-// chose chorus-asr for itself is as it was.
-func (s *SessionSuite) TestTheRoutersDefaultIsForTheLanguagesListed() {
-	server, client := newChorusASR(s)
-	manager, opened := s.floorManager(client, FloorDefault{Model: store.FloorControlChorusASR, Languages: []string{"en"}})
-
-	english := s.floorSession(manager, "You book clinic visits.", store.FloorControl{}, "en-US")
-	spanish := s.floorSession(manager, "You sell garden tools.", store.FloorControl{}, "es")
-	bilingual := s.floorSession(manager, "You rent bicycles.", store.FloorControl{}, "en", "es")
-	acting := s.floorSession(manager, "You sell ferry tickets.", store.FloorControl{Model: store.FloorControlChorusASR}, "es")
-
-	s.callerAsks(english, opened, "Can I see a doctor on Friday?")
-	s.callerAsks(spanish, opened, "Tiene una pala?")
-	s.callerAsks(bilingual, opened, "Una bici para dos dias, please.")
-	s.callerAsks(acting, opened, "Dos billetes a Bilbao, por favor.")
-
-	s.Equal(1, server.asked("You book clinic visits."), "the English session that chose nothing is the router's default, chorus-asr")
-	s.False(server.toldAbout("You sell garden tools."), "nothing of the Spanish session reached chorus-asr")
-	s.False(spanish.ears.asked.Load())
-	s.False(server.toldAbout("You rent bicycles."), "nor of the bilingual one's")
-	s.Equal(1, server.asked("You sell ferry tickets."), "the Spanish session that chose chorus-asr is as it was")
-}
-
 // The default asks nothing of a router with no chorus-asr server: the router warns once as
 // the manager is built, not per session, and a session that chose nothing is the flow
 // controller's.
 func (s *SessionSuite) TestTheRoutersDefaultAsksNothingWithoutAServer() {
-	manager, opened := s.floorManager(nil, FloorDefault{Model: store.FloorControlChorusASR})
+	manager, opened := s.floorManager(nil, store.FloorControlChorusASR)
 	unset := s.floorSession(manager, "You book clinic visits.", store.FloorControl{})
 	s.callerAsks(unset, opened, "Can I see a doctor on Friday?")
 	s.False(unset.ears.asked.Load())
@@ -342,7 +272,7 @@ func (s *SessionSuite) TestTheRoutersDefaultAsksNothingWithoutAServer() {
 	var said bytes.Buffer
 	warned, err := NewManager(ManagerOptions{
 		LLM: s.manager.options.LLM, Edge: s.manager.options.Edge,
-		FloorDefault: FloorDefault{Model: store.FloorControlChorusASR}, Logger: slog.New(slog.NewTextHandler(&said, nil)),
+		FloorControlDefault: store.FloorControlChorusASR, Logger: slog.New(slog.NewTextHandler(&said, nil)),
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = warned.Shutdown() })
@@ -352,7 +282,7 @@ func (s *SessionSuite) TestTheRoutersDefaultAsksNothingWithoutAServer() {
 	said.Reset()
 	quiet, err := NewManager(ManagerOptions{
 		LLM: s.manager.options.LLM, Edge: s.manager.options.Edge,
-		FloorDefault: FloorDefault{Model: store.FloorControlChorusASR}, AudioFloor: audiofloor.New("http://floor:8080", audiofloor.Opus, nil),
+		FloorControlDefault: store.FloorControlChorusASR, AudioFloor: audiofloor.New("http://floor:8080", audiofloor.Opus, nil),
 		Logger: slog.New(slog.NewTextHandler(&said, nil)),
 	})
 	s.Require().NoError(err)
