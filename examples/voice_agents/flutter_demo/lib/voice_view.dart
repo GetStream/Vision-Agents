@@ -84,7 +84,11 @@ class _VoiceViewState extends State<VoiceView> {
   // Who is talking and how loud, or null while nobody is. This comes from the audio rather
   // than the session: a reply is written before it is spoken and is done before the agent
   // stops talking, and the person is transcribed only after they have started.
-  Heard? _heard;
+  final _heard = ValueNotifier<Heard?>(null);
+  final _caption = ValueNotifier<({Caption? caption, bool isVisible})>((
+    caption: null,
+    isVisible: false,
+  ));
   var _whoIsTalking = WhoIsTalking();
   var _captions = Captions();
   Timer? _meter;
@@ -104,6 +108,8 @@ class _VoiceViewState extends State<VoiceView> {
   void dispose() {
     final voice = _voice;
     _reset();
+    _heard.dispose();
+    _caption.dispose();
     if (voice != null) unawaited(_leaveQuietly(voice));
     super.dispose();
   }
@@ -185,8 +191,6 @@ class _VoiceViewState extends State<VoiceView> {
       now: now,
     );
 
-    final caption = _captions.caption;
-    final captionIsVisible = _captions.isVisible;
     _captions.update(
       turn: voice.session.turns.lastOrNull,
       agentIsAudible: agentIsAudible,
@@ -197,11 +201,11 @@ class _VoiceViewState extends State<VoiceView> {
       now: now,
       elapsed: elapsed,
     );
-    if (heard != _heard ||
-        caption != _captions.caption ||
-        captionIsVisible != _captions.isVisible) {
-      setState(() => _heard = heard);
-    }
+    _heard.value = heard;
+    _caption.value = (
+      caption: _captions.caption,
+      isVisible: _captions.isVisible,
+    );
   }
 
   void _handleConversation(Conversation conversation) {
@@ -256,26 +260,17 @@ class _VoiceViewState extends State<VoiceView> {
     _subscriptions.clear();
     _meter?.cancel();
     _meter = null;
-    _heard = null;
+    _heard.value = null;
+    _caption.value = (caption: null, isVisible: false);
     _whoIsTalking = WhoIsTalking();
     _captions = Captions();
   }
 
   bool get _inCall => _voice?.state.value.call != null;
 
-  ({AIVoiceAgentState state, String status}) get _presence => voicePresence(
-    isStarting: _starting,
-    session: _voice?.session.state,
-    isJoined: _inCall,
-    heard: _heard,
-  );
-
   @override
   Widget build(BuildContext context) {
     final voice = _voice;
-    final presence = _presence;
-    final level = _heard?.level;
-    final colors = _heard?.isPerson ?? false ? _personColors : _agentColors;
     final scheme = context.streamColorScheme;
     final text = context.streamTextTheme;
     final request = voice?.session.approvals.value.firstOrNull;
@@ -284,36 +279,62 @@ class _VoiceViewState extends State<VoiceView> {
       child: Column(
         children: [
           const Spacer(),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 320, maxHeight: 320),
-            child: AspectRatio(
-              aspectRatio: 1,
-              child: switch (widget.style) {
-                VoiceStyle.orb => AIVoiceGlowView(
-                  state: presence.state,
-                  colors: colors,
-                  audioLevel: level,
-                ),
-                VoiceStyle.wave => AIVoiceWaveView(
-                  state: presence.state,
-                  colors: colors,
-                  audioLevel: level,
-                ),
-              },
-            ),
-          ),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 200),
-            child: Text(
-              presence.status,
-              key: ValueKey(presence.status),
-              style: text.bodyEmphasis.copyWith(color: scheme.textSecondary),
-            ),
+          ValueListenableBuilder(
+            valueListenable: _heard,
+            builder: (context, heard, _) {
+              final presence = voicePresence(
+                isStarting: _starting,
+                session: voice?.session.state,
+                isJoined: _inCall,
+                heard: heard,
+              );
+              final level = heard?.level;
+              final colors = heard?.isPerson ?? false
+                  ? _personColors
+                  : _agentColors;
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      maxWidth: 320,
+                      maxHeight: 320,
+                    ),
+                    child: AspectRatio(
+                      aspectRatio: 1,
+                      child: switch (widget.style) {
+                        VoiceStyle.orb => AIVoiceGlowView(
+                          state: presence.state,
+                          colors: colors,
+                          audioLevel: level,
+                        ),
+                        VoiceStyle.wave => AIVoiceWaveView(
+                          state: presence.state,
+                          colors: colors,
+                          audioLevel: level,
+                        ),
+                      },
+                    ),
+                  ),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 200),
+                    child: Text(
+                      presence.status,
+                      key: ValueKey(presence.status),
+                      style: text.bodyEmphasis.copyWith(
+                        color: scheme.textSecondary,
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
           const Spacer(),
-          CaptionView(
-            caption: _captions.caption,
-            isVisible: _captions.isVisible,
+          ValueListenableBuilder(
+            valueListenable: _caption,
+            builder: (context, shown, _) =>
+                CaptionView(caption: shown.caption, isVisible: shown.isVisible),
           ),
           if (voice != null && request != null)
             Padding(

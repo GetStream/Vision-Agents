@@ -287,7 +287,7 @@ final class VoiceSession {
         userToken: credentials.token,
         // Asked when the token expires, which it does an hour in. Asking the agents' token
         // provider again is what keeps a long call from dropping.
-        tokenLoader: (_) async => (await backend.streamCredentials()).token,
+        tokenLoader: (_) async => (await backend.streamCredentials(refresh: true)).token,
       ),
       disconnect: (client) => client.dispose(),
     );

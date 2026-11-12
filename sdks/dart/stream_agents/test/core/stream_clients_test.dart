@@ -33,15 +33,39 @@ Backend _signedIn(String user) => Backend(
 
 void main() {
   group('Stream clients', () {
-    test('the key, the user and a fresh token are what Stream connects with', () async {
+    test('the token is asked for once, and again only on a refresh', () async {
       var asked = 0;
       final backend = Backend(apiKey: 'key', userId: 'john', token: () async => 'token-${++asked}');
 
       final first = await backend.streamCredentials();
       final again = await backend.streamCredentials();
+      final refreshed = await backend.streamCredentials(refresh: true);
 
       expect([first.apiKey, first.userId, first.token], ['key', 'john', 'token-1']);
-      expect(again.token, 'token-2');
+      expect(again.token, 'token-1');
+      expect(refreshed.token, 'token-2');
+    });
+
+    test('two clients refreshing at once fetch one token', () async {
+      var asked = 0;
+      final backend = Backend(
+        apiKey: 'key',
+        userId: 'john',
+        token: () async {
+          final count = ++asked;
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+          return 'token-$count';
+        },
+      );
+      await backend.streamCredentials();
+
+      final [chat, video] = await Future.wait([
+        backend.streamCredentials(refresh: true),
+        backend.streamCredentials(refresh: true),
+      ]);
+
+      expect([chat.token, video.token], ['token-2', 'token-2']);
+      expect(asked, 2);
     });
 
     test('refuses without a Stream key or a user, before asking for anything', () {

@@ -104,48 +104,106 @@ void main() {
       expect(request.header('Authorization'), isNull);
     });
 
-    test('presents a token with the api key, asking the provider each time', () async {
-      router.answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));
+    test('presents a token with the api key, asking the provider once while it holds', () async {
+      router
+        ..answer('POST /v1/agents/sessions', Answer(201, sessionJson()))
+        ..answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));
+      var asked = 0;
+      final keyed = StreamAgents(
+        url: router.url,
+        apiKey: 'key',
+        token: () async {
+          final count = ++asked;
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+          return 'token-$count';
+        },
+      );
+      addTearDown(keyed.close);
+
+      // Concurrent requests and a socket handshake share one fetch.
+      await Future.wait([keyed.sessions.get('s1'), keyed.sessions.get('s1')]);
+      final chat = await keyed.chat();
+      addTearDown(chat.close);
+
+      expect(asked, 1);
+      final request = router.last('GET /v1/agents/sessions/s1');
+      expect(request.query['api_key'], 'key');
+      expect(request.header('X-Api-Key'), isNull);
+      expect(request.header('Authorization'), 'Bearer token-1');
+      expect(request.header('Stream-Auth-Type'), 'jwt');
+      expect(request.header('X-Customer-Id'), isNull);
+      expect(router.upgrades.single.query['token'], 'token-1');
+    });
+
+    test('asks for a fresh token once after a 401, and stops on a second 401', () async {
       var asked = 0;
       final keyed = StreamAgents(
         url: router.url,
         apiKey: 'key',
         token: () async => 'token-${++asked}',
       );
+      addTearDown(keyed.close);
 
+      router.answerInTurn('GET /v1/agents/sessions/s1', [
+        Answer(401, errorJson('authentication', 'token_expired', 'expired')),
+        Answer(200, sessionJson()),
+      ]);
       await keyed.sessions.get('s1');
-      await keyed.sessions.get('s1');
-      keyed.close();
+      expect(asked, 2);
+      expect(router.last('GET /v1/agents/sessions/s1').header('Authorization'), 'Bearer token-2');
 
-      final request = router.last('GET /v1/agents/sessions/s1');
-      expect(request.query['api_key'], 'key');
-      expect(request.header('X-Api-Key'), isNull);
-      expect(request.header('Authorization'), 'Bearer token-2');
-      expect(request.header('Stream-Auth-Type'), 'jwt');
-      expect(request.header('X-Customer-Id'), isNull);
+      router.answer(
+        'GET /v1/agents/sessions/s1',
+        Answer(401, errorJson('authentication', 'bad', 'bad')),
+      );
+      await expectLater(
+        keyed.sessions.get('s1'),
+        throwsA(isA<RouterException>().having((e) => e.status, 'status', 401)),
+      );
+      expect(asked, 3);
+    });
+
+    test('a token provider that throws is asked again next time', () async {
+      router.answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));
+      var tries = 0;
+      final keyed = StreamAgents(
+        url: router.url,
+        apiKey: 'key',
+        token: () async => ++tries == 1 ? throw StateError('offline') : 'token-2',
+      );
+      addTearDown(keyed.close);
+
+      await expectLater(keyed.sessions.get('s1'), throwsStateError);
+      await keyed.sessions.get('s1');
+
+      expect(tries, 2);
+      expect(router.last('GET /v1/agents/sessions/s1').header('Authorization'), 'Bearer token-2');
     });
 
     test(
       "a key beside a customer id is Stream's, and the router is reached by customer id",
       () async {
         router.answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));
+        var asked = 0;
         final local = StreamAgents(
           url: router.url,
           customerId: 'acme',
           apiKey: 'stream-key',
           userId: 'jlahey',
-          token: () async => 'token-for-jlahey',
+          token: () async => 'token-${++asked}',
         );
+        addTearDown(local.close);
 
         await local.sessions.get('s1');
-        local.close();
 
+        expect(asked, 0);
         final request = router.last('GET /v1/agents/sessions/s1');
         expect(request.header('X-Customer-Id'), 'acme');
         expect(request.header('X-Stream-User-Id'), 'jlahey');
         expect(request.query['api_key'], isNull);
         expect(request.header('Authorization'), isNull);
         expect((await local.backend.streamCredentials()).apiKey, 'stream-key');
+        expect(asked, 1);
       },
     );
 

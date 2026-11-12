@@ -67,9 +67,8 @@ what a Stream Video app needs.
 ### Create the client
 
 Create one `StreamAgents` per signed-in user and reuse it. The token is a Stream user token
-from your backend, signed with your Stream secret. `token` is a function the SDK calls each time
-it needs one, for every request to the router and when Stream Chat or Stream Video need a fresh
-one, so cache the token in it rather than asking your backend each time.
+from your backend, signed with your Stream secret. `token` is asked once, then again after a 401
+or when Stream Chat or Stream Video say the token expired.
 
 ```dart
 import 'package:stream_agents/stream_agents.dart';
