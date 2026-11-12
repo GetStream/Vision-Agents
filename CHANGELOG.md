@@ -14,6 +14,18 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 `deepgram.TTS` now streams Flux TTS on `wss://api.deepgram.com/v2/speak` and defaults to `flux-haley-en`. Aura model strings (`aura-*`) are rejected with `ValueError`. Call sites that passed an Aura voice must switch to a Flux model (`flux-{voice}-en`). See the [Flux voice catalog](https://developers.deepgram.com/docs/flux-tts/voices).
 
+### Runner HTTP API: closed by default
+
+The HTTP server started by `Runner.serve` (`agent.py serve`) no longer ships open defaults.
+
+- **Hosts other than loopback need auth.** `serve` raises `ValueError` before binding when the host is not a loopback address (`--host 0.0.0.0`, for example) and any of `can_start_session`, `can_close_session`, `can_view_session` or `can_view_metrics` in `ServeOptions` is unset. `127.0.0.1` works as before with no setup. A `fast_api` app you pass yourself is not checked.
+- **Session caps.** `AgentLauncher` now defaults to `max_concurrent_sessions=10`, `max_sessions_per_call=1` and `max_session_duration_seconds=3600`; all three were unlimited. A second agent on the same call gets a 429, and a session is closed after an hour, in `run` mode too. Pass `None` for no limit.
+- **Call ids and types.** `call_id` in the URL and `call_type` in the body must match `^[A-Za-z0-9_-]{1,64}$`; anything else gets a 422.
+- **CORS.** `cors_allow_origins` defaults to no origins and `cors_allow_credentials` to `False` (were `*` and `True`). A browser client needs its origin listed in `cors_allow_origins`.
+- **API docs.** `/docs`, `/redoc` and `/openapi.json` are off. Set `docs_url`, `redoc_url` and `openapi_url` in `ServeOptions` to serve them.
+
+Projects made by `vision-agents init`, and examples 07 and 08, now check `Authorization: Bearer <token>` against the `AGENT_API_TOKEN` environment variable on every session request, and refuse all of them while it is unset.
+
 ## New Features
 
 ### `gemini` plugin: Gemini 3.8 Live and Extended Thinking (#647)

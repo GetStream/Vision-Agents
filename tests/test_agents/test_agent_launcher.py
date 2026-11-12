@@ -179,8 +179,8 @@ class TestAgentLauncher:
             # Start the launcher internals
             async with launcher:
                 # Launch a couple of idle agents
-                session1 = await launcher.start_session(call_id="call")
-                session2 = await launcher.start_session(call_id="call")
+                session1 = await launcher.start_session(call_id="call1")
+                session2 = await launcher.start_session(call_id="call2")
                 # Sleep 2s to let the launcher clean up the agents
                 await asyncio.sleep(2)
 
@@ -210,8 +210,8 @@ class TestAgentLauncher:
             # Start the launcher internals
             async with launcher:
                 # Launch a couple of active agents (idle_for=0)
-                session1 = await launcher.start_session(call_id="call")
-                session2 = await launcher.start_session(call_id="call")
+                session1 = await launcher.start_session(call_id="call1")
+                session2 = await launcher.start_session(call_id="call2")
                 # Sleep 2s to let the launcher clean up the agents
                 await asyncio.sleep(2)
 
@@ -342,9 +342,9 @@ class TestAgentLauncher:
 
         launcher = AgentLauncher(create_agent=create_agent, join_call=join_call)
         async with launcher:
-            session1 = await launcher.start_session(call_id="test", call_type="default")
-            session2 = await launcher.start_session(call_id="test", call_type="default")
-            session3 = await launcher.start_session(call_id="test", call_type="default")
+            session1 = await launcher.start_session(call_id="id-1", call_type="default")
+            session2 = await launcher.start_session(call_id="id-2", call_type="default")
+            session3 = await launcher.start_session(call_id="id-3", call_type="default")
 
         # Sessions must be stopped when the launcher context manager exits
         assert session1.finished

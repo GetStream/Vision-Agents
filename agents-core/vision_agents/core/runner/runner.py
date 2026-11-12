@@ -1,4 +1,5 @@
 import asyncio
+import ipaddress
 import logging
 import os
 import sys
@@ -24,7 +25,7 @@ from .http.dependencies import (
     can_view_metrics,
     can_view_session,
 )
-from .http.options import ServeOptions
+from .http.options import ServeOptions, allow_all
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,16 @@ _SPLASH = """\
 ░█░█░▀█▀░█▀▀░▀█▀░█▀█░█▀█░░░█▀█░█▀▀░█▀▀░█▀█░▀█▀░█▀▀
 ░▀▄▀░░█░░▀▀█░░█░░█░█░█░█░░░█▀█░█░█░█▀▀░█░█░░█░░▀▀█
 ░░▀░░▀▀▀░▀▀▀░▀▀▀░▀▀▀░▀░▀░░░▀░▀░▀▀▀░▀▀▀░▀░▀░░▀░░▀▀▀"""
+
+
+def _is_loopback(host: str) -> bool:
+    """Return True if the host is a loopback address."""
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _print_splash() -> None:
@@ -202,7 +213,27 @@ class Runner:
             agents_log_level: Logging level for agent-related logs.
             http_log_level: Logging level for FastAPI and uvicorn logs.
             debug: Enable asyncio debug mode.
+
+        Raises:
+            ValueError: If the host is not a loopback address and any of the
+                `can_*` options in `ServeOptions` is not set.
         """
+        options = self._serve_options
+        if not options.fast_api and not _is_loopback(host):
+            hooks = {
+                "can_start_session": options.can_start_session,
+                "can_close_session": options.can_close_session,
+                "can_view_session": options.can_view_session,
+                "can_view_metrics": options.can_view_metrics,
+            }
+            unset = [name for name, hook in hooks.items() if hook is allow_all]
+            if unset:
+                raise ValueError(
+                    f"Refusing to serve on host {host!r}: anyone who can reach it "
+                    f"could start and manage agent sessions. Set {', '.join(unset)} "
+                    f"in ServeOptions, or serve on 127.0.0.1."
+                )
+
         # Configure loggers if they're not already configured
         configure_sdk_logger(
             level=getattr(logging, agents_log_level.upper(), logging.INFO)
@@ -232,7 +263,12 @@ class Runner:
         Returns:
             Configured FastAPI application instance.
         """
-        app = FastAPI(lifespan=lifespan)
+        app = FastAPI(
+            lifespan=lifespan,
+            docs_url=options.docs_url,
+            redoc_url=options.redoc_url,
+            openapi_url=options.openapi_url,
+        )
         app.state.launcher = self._launcher
         app.state.options = self._serve_options
 

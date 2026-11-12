@@ -17,10 +17,17 @@ class ServeOptions(pydantic_settings.BaseSettings):
             other configuration will be applied to it.
             Use it to completely override the API with your own.
 
-        cors_allow_origins: CORS allow origins.
+        cors_allow_origins: CORS allow origins. No origin is allowed by default.
         cors_allow_methods: CORS allow methods.
         cors_allow_headers: CORS allow headers.
-        cors_allow_credentials: CORS allow credentials.
+        cors_allow_credentials: CORS allow credentials. Off by default.
+
+        docs_url: path of the Swagger UI. Off by default; needs ``openapi_url``.
+        redoc_url: path of the ReDoc page. Off by default; needs ``openapi_url``.
+        openapi_url: path of the OpenAPI schema. Off by default.
+
+        The four ``can_*`` callables allow every request by default.
+        ``Runner.serve`` refuses a host other than loopback until all four are set.
 
         can_start_session: a callable to verify if the user can start a new session.
             Receives ``call_id`` from the URL path. Can request additional
@@ -37,10 +44,13 @@ class ServeOptions(pydantic_settings.BaseSettings):
     """
 
     fast_api: Optional[FastAPI] = None
-    cors_allow_origins: Iterable[str] = ("*",)
+    cors_allow_origins: Iterable[str] = ()
     cors_allow_methods: Iterable[str] = ("*",)
     cors_allow_headers: Iterable[str] = ("*",)
-    cors_allow_credentials: bool = True
+    cors_allow_credentials: bool = False
+    docs_url: Optional[str] = None
+    redoc_url: Optional[str] = None
+    openapi_url: Optional[str] = None
     can_start_session: Callable = allow_all
     can_close_session: Callable = allow_all
     can_view_session: Callable = allow_all

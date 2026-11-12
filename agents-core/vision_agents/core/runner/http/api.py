@@ -1,8 +1,9 @@
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Path, status
 from fastapi.responses import Response
 from vision_agents.core import AgentLauncher
 from vision_agents.core.agents.exceptions import (
@@ -18,6 +19,7 @@ from .dependencies import (
     get_launcher,
 )
 from .models import (
+    CALL_NAME_PATTERN,
     GetAgentSessionMetricsResponse,
     GetAgentSessionResponse,
     StartSessionRequest,
@@ -42,6 +44,8 @@ async def lifespan(app: FastAPI):
 
 
 router = APIRouter()
+
+CallId = Annotated[str, Path(pattern=CALL_NAME_PATTERN)]
 
 
 @router.post(
@@ -80,7 +84,7 @@ router = APIRouter()
     dependencies=[Depends(can_start_session)],
 )
 async def start_session(
-    call_id: str,
+    call_id: CallId,
     request: StartSessionRequest,
     launcher: AgentLauncher = Depends(get_launcher),
 ) -> StartSessionResponse:
@@ -130,7 +134,7 @@ async def _close_session(launcher: AgentLauncher, call_id: str, session_id: str)
     dependencies=[Depends(can_close_session)],
 )
 async def close_session(
-    call_id: str,
+    call_id: CallId,
     session_id: str,
     launcher: AgentLauncher = Depends(get_launcher),
 ) -> Response:
@@ -151,7 +155,7 @@ async def close_session(
     dependencies=[Depends(can_close_session)],
 )
 async def close_session_beacon(
-    call_id: str,
+    call_id: CallId,
     session_id: str,
     launcher: AgentLauncher = Depends(get_launcher),
 ) -> Response:
@@ -171,7 +175,7 @@ async def close_session_beacon(
     dependencies=[Depends(can_view_session)],
 )
 async def get_session_info(
-    call_id: str,
+    call_id: CallId,
     session_id: str,
     launcher: AgentLauncher = Depends(get_launcher),
 ) -> GetAgentSessionResponse:
@@ -198,7 +202,7 @@ async def get_session_info(
     dependencies=[Depends(can_view_metrics)],
 )
 async def get_session_metrics(
-    call_id: str,
+    call_id: CallId,
     session_id: str,
     launcher: AgentLauncher = Depends(get_launcher),
 ) -> GetAgentSessionMetricsResponse:

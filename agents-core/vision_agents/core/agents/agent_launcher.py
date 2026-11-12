@@ -104,9 +104,9 @@ class AgentLauncher:
         create_agent: Callable[..., "Agent" | Coroutine[Any, Any, "Agent"]],
         join_call: Callable[["Agent", str, str], Coroutine],
         agent_idle_timeout: float = 60.0,
-        max_concurrent_sessions: Optional[int] = None,
-        max_sessions_per_call: Optional[int] = None,
-        max_session_duration_seconds: Optional[float] = None,
+        max_concurrent_sessions: Optional[int] = 10,
+        max_sessions_per_call: Optional[int] = 1,
+        max_session_duration_seconds: Optional[float] = 3600.0,
         maintenance_interval: float = 5.0,
         registry: "SessionRegistry | None" = None,
     ):
@@ -120,11 +120,12 @@ class AgentLauncher:
                 before being automatically closed. Default is 60.0 seconds.
                 Set to 0 to disable idle timeout (agents won't leave until the call ends).
             max_concurrent_sessions: Maximum number of concurrent sessions allowed across
-                all calls. Default is None (unlimited).
+                all calls. Default is 10. Pass None for no limit.
             max_sessions_per_call: Maximum number of sessions allowed per call_id.
-                Default is None (unlimited).
+                Default is 1. Pass None for no limit.
             max_session_duration_seconds: Maximum duration in seconds for a session
-                before it is automatically closed. Default is None (unlimited).
+                before it is automatically closed. Default is 3600.0 seconds.
+                Pass None for no limit.
             maintenance_interval: Interval in seconds between maintenance cycles
                 (session cleanup and metrics flush). Default is 5.0 seconds.
             registry: Optional SessionRegistry for multi-node session management.

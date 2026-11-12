@@ -11,6 +11,8 @@ Copy the .env.example and fill in the required variables:
 cp .env.example .env
 ```
 
+Set `AGENT_API_TOKEN` to a long random value. The container serves on `0.0.0.0`, so the session API only accepts requests that carry it as `Authorization: Bearer <token>`. With Helm, set `secrets.agentApiToken`.
+
 Run the example locally to verify everything works:
 
 ```bash
