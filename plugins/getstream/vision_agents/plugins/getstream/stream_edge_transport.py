@@ -590,7 +590,8 @@ class StreamEdge(EdgeTransport[StreamCall]):
         }
 
         url = f"{base_url}{call.id}?{urlencode(params)}"
-        logger.info(f"🌐 Opening browser to: {url}")
+        # The query string carries the API key and a user token, so it stays out of the logs.
+        logger.info(f"🌐 Opening browser to: {base_url}{call.id}")
 
         try:
             # Run webbrowser.open in a separate thread to avoid blocking the event loop
@@ -598,6 +599,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
             logger.info("✅ Browser opened successfully!")
         except Exception as e:
             logger.error(f"❌ Failed to open browser: {e}")
-            logger.warning(f"Please manually open this URL: {url}")
+            # Printed, not logged: the developer needs the full link, and logs must not hold its token.
+            print(f"Please manually open this URL: {url}")
 
         return url

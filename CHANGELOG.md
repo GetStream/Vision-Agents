@@ -30,6 +30,10 @@ Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) 
 
 ## Bug Fixes
 
+### Demo link token and phone numbers kept out of logs
+
+The demo join link was logged with its API key and a one-hour user token in the query string; it is now logged without the query string, and printed to the terminal in full only when the browser fails to open. `twilio.TwilioCallRegistry` logs the caller and called numbers masked down to their last four digits.
+
 ### `deepgram` plugin: Flux STT handles typed `TurnInfo` from SDK 7.7 (#633)
 
 `deepgram-sdk` 7.7 delivers listen v2 `TurnInfo` as typed objects instead of dicts. The STT handler now accepts both, so transcripts and turn events are emitted and the unexpected-message warning spam is gone.
