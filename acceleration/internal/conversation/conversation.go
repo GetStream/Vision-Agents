@@ -11,6 +11,7 @@ import (
 	"maps"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -224,7 +225,12 @@ type known struct {
 	customer, cid string
 }
 type Conversation struct {
-	mu      sync.Mutex
+	mu sync.Mutex
+	// sendMu is held across each stored write flush sends, from reading the head of Pending to
+	// taking it off, and by anything else that takes ops off Pending: mu is released while
+	// Stream is asked, so without it a write taken off meanwhile would make flush take off the
+	// one after it instead, unsent. Taken before mu, never under it.
+	sendMu  sync.Mutex
 	service *Service
 	data    ledger
 	active  bool
@@ -2127,65 +2133,93 @@ func (c *Conversation) flush() bool {
 	c.service.flushing.Add(1)
 	defer c.service.flushing.Add(-1)
 	for {
-		c.mu.Lock()
-		if len(c.data.Pending) == 0 {
-			c.mu.Unlock()
-			return true
-		}
-		op := c.data.Pending[0]
-		visible := c.data.VisibleTools
-		c.mu.Unlock()
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		err := c.send(ctx, op, false, visible)
-		cancel()
-		c.mu.Lock()
-		// A parked conversation tells only its session, which a recovered one has none of, so
-		// parking and unparking are logged: once each, rather than on every retry.
-		if parked(err) && c.parkedUntil.IsZero() {
-			c.service.logger.Warn("parked a conversation whose Stream app cannot be written",
-				"customer", c.data.Customer, "cid", c.data.CID, "stream_app", c.data.StreamApp, "reason", err)
-		} else if !parked(err) && !c.parkedUntil.IsZero() {
-			c.service.logger.Info("unparked a conversation whose Stream app can be written again",
-				"customer", c.data.Customer, "cid", c.data.CID, "stream_app", c.data.StreamApp)
-			c.parkedUntil = time.Time{}
-		}
+		c.sendMu.Lock()
+		more, finished, err := c.flushOne()
+		c.sendMu.Unlock()
 		if err != nil {
-			// An app out of reach keeps every write held and waits, rather than having
-			// them delivered anywhere else.
-			if parked(err) {
-				c.parkedUntil = time.Now().Add(parkedRetry)
-			}
-			if c.data.Current != nil {
-				c.data.Current.Error = "Stream Chat write failed; retry queued"
-				c.publish(*c.data.Current)
-			}
-			c.mu.Unlock()
 			return false
 		}
-		c.data.Pending = c.data.Pending[1:]
-		if op.Create {
-			c.created[op.Message.ID] = true
+		if !more {
+			return true
 		}
-		op.Message.Saved = true
-		if c.data.Current != nil && c.data.Current.ID == op.Message.ID {
-			if sameSnapshot(*c.data.Current, op.Message) {
-				c.data.Current.Saved = true
-				c.data.Current.Error = ""
-			}
-			if op.Message.FinishedAt != nil {
-				c.publish(*c.data.Current)
-			}
-		} else {
-			c.publish(op.Message)
-		}
-		finished, isFinished := c.finishedReply(op)
-		c.mu.Unlock()
 		// The hook is read without the service's lock, so a write never waits on another
-		// conversation opening.
-		if fn := c.service.finished.Load(); isFinished && fn != nil {
-			(*fn)(finished)
+		// conversation opening, and run without sendMu, so a rewind never waits on it.
+		if fn := c.service.finished.Load(); finished != nil && fn != nil {
+			(*fn)(*finished)
 		}
 	}
+}
+
+// dropPending takes every write of a message in ids off Pending, unsent. It waits for a write
+// being sent to be taken off first, so the write it drops is never the one after it.
+func (c *Conversation) dropPending(ids map[string]bool) {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.data.Pending = slices.DeleteFunc(c.data.Pending, func(op operation) bool { return ids[op.Message.ID] })
+}
+
+// flushOne writes the head of Pending to Stream and takes it off, and says whether there was
+// one, and the finished reply it stored, if it did (OnFinishedReply). Call it with sendMu held.
+func (c *Conversation) flushOne() (bool, *FinishedReply, error) {
+	c.mu.Lock()
+	if len(c.data.Pending) == 0 {
+		c.mu.Unlock()
+		return false, nil, nil
+	}
+	op := c.data.Pending[0]
+	visible := c.data.VisibleTools
+	c.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	err := c.send(ctx, op, false, visible)
+	cancel()
+	c.mu.Lock()
+	// A parked conversation tells only its session, which a recovered one has none of, so
+	// parking and unparking are logged: once each, rather than on every retry.
+	if parked(err) && c.parkedUntil.IsZero() {
+		c.service.logger.Warn("parked a conversation whose Stream app cannot be written",
+			"customer", c.data.Customer, "cid", c.data.CID, "stream_app", c.data.StreamApp, "reason", err)
+	} else if !parked(err) && !c.parkedUntil.IsZero() {
+		c.service.logger.Info("unparked a conversation whose Stream app can be written again",
+			"customer", c.data.Customer, "cid", c.data.CID, "stream_app", c.data.StreamApp)
+		c.parkedUntil = time.Time{}
+	}
+	if err != nil {
+		// An app out of reach keeps every write held and waits, rather than having
+		// them delivered anywhere else.
+		if parked(err) {
+			c.parkedUntil = time.Now().Add(parkedRetry)
+		}
+		if c.data.Current != nil {
+			c.data.Current.Error = "Stream Chat write failed; retry queued"
+			c.publish(*c.data.Current)
+		}
+		c.mu.Unlock()
+		return true, nil, err
+	}
+	c.data.Pending = c.data.Pending[1:]
+	if op.Create {
+		c.created[op.Message.ID] = true
+	}
+	op.Message.Saved = true
+	if c.data.Current != nil && c.data.Current.ID == op.Message.ID {
+		if sameSnapshot(*c.data.Current, op.Message) {
+			c.data.Current.Saved = true
+			c.data.Current.Error = ""
+		}
+		if op.Message.FinishedAt != nil {
+			c.publish(*c.data.Current)
+		}
+	} else {
+		c.publish(op.Message)
+	}
+	finished, isFinished := c.finishedReply(op)
+	c.mu.Unlock()
+	if !isFinished {
+		return true, nil, nil
+	}
+	return true, &finished, nil
 }
 
 // finishedReply is the reply a write just stored, when it is the final text of a completed
