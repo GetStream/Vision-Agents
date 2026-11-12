@@ -286,6 +286,13 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 	if found.Question == "" {
 		return Branched{}, stack.Wrap(&persistent.BranchesUnsupportedError{Reason: persistent.UnsupportedUnmarked})
 	}
+	if !edit && len(found.QuestionImages) > 0 {
+		// The photos are asked about again: a model that cannot see them is refused before
+		// anything is hidden.
+		if err := s.current().CheckTurn(asked, true); err != nil {
+			return Branched{}, stack.Wrap(err)
+		}
+	}
 	turn, err := s.replacing(ctx, replaced, edit)
 	if err != nil {
 		return Branched{}, err
@@ -316,12 +323,20 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 	s.turnsMu.Unlock()
 	history, _ := s.persisted.HistoryOf(reading, outcome.Page)
 	prompt := text
+	var images []llm.ImagePart
 	if !edit {
 		// The question is asked of the model again, so it is not in the history it is handed.
 		prompt = replaced.Said
 		if n := len(history); n > 0 && history[n-1].Role == llm.User {
 			prompt = history[n-1].Content
 			history = history[:n-1]
+		}
+		// Its photos are shown to the model again with it, as they were the first time; the
+		// history's note that they were sent stands for them only once they were seen.
+		if question, ok := lastQuestion(outcome.Page); ok {
+			if images = persistent.Images(question); len(images) > 0 {
+				prompt = question.Text
+			}
 		}
 	}
 	s.carryOnFrom(history)
@@ -354,7 +369,7 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 	branched.Index, branched.Count = max(place.Index, 1), max(place.Count, 1)
 
 	s.claim(turn)
-	turnID, err := s.current().RespondTo(ctx, prompt, nil, asked)
+	turnID, err := s.current().RespondTo(ctx, prompt, images, asked)
 	if err != nil {
 		s.unclaim()
 		s.persisted.Cancel()
@@ -370,6 +385,17 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 		s.carryQuestionDocuments(ctx, replaced.ID, branched.ResponseID)
 	}
 	return branched, nil
+}
+
+// lastQuestion is the newest person's message of page, the question a regenerate answers
+// again.
+func lastQuestion(page persistent.Page) (persistent.Message, bool) {
+	for i := len(page.Messages) - 1; i >= 0; i-- {
+		if page.Messages[i].Role == "user" {
+			return page.Messages[i], true
+		}
+	}
+	return persistent.Message{}, false
 }
 
 // checkSettled refuses a turn while a switch the session began is left unfinished, but the

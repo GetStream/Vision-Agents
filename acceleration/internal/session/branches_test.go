@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -34,22 +35,35 @@ import (
 )
 
 // answeringLLM answers every question with a numbered answer to it, so a question answered
-// again reads differently from its first answer.
+// again reads differently from its first answer. One that sees takes photos, and keeps the
+// URLs of those each question it answered was asked with.
 type answeringLLM struct {
 	mu       sync.Mutex
 	answered int
+	sees     bool
+	shown    [][]string
 }
 
 func (a *answeringLLM) Start(context.Context) error { return nil }
 
 func (a *answeringLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	asked := ""
+	var shown []string
 	for _, message := range params.Input {
 		if message.Role == llm.User {
 			asked = message.Content
+			shown = nil
+			for _, part := range message.Parts {
+				if part.Image != nil {
+					shown = append(shown, part.Image.URL)
+				} else if part.Text != "" && asked == "" {
+					asked = part.Text
+				}
+			}
 		}
 	}
 	a.mu.Lock()
+	a.shown = append(a.shown, shown)
 	a.answered++
 	reply := fmt.Sprintf("Answer %d to %s", a.answered, asked)
 	a.mu.Unlock()
@@ -59,10 +73,24 @@ func (a *answeringLLM) Create(_ context.Context, params llm.ResponseParams) (*ll
 	return script.Stream(), nil
 }
 
-func (a *answeringLLM) Provider() string               { return "stub" }
-func (a *answeringLLM) Model() string                  { return "stub-llm" }
-func (a *answeringLLM) Capabilities() llm.Capabilities { return llm.Capabilities{} }
-func (a *answeringLLM) Close() error                   { return nil }
+func (a *answeringLLM) Provider() string { return "stub" }
+func (a *answeringLLM) Model() string    { return "stub-llm" }
+func (a *answeringLLM) Capabilities() llm.Capabilities {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.sees {
+		return llm.Capabilities{InputModalities: []string{llm.ModalityImage}}
+	}
+	return llm.Capabilities{}
+}
+
+// photosShown are the URLs of the photos each question answered was asked with, oldest first.
+func (a *answeringLLM) photosShown() [][]string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return slices.Clone(a.shown)
+}
+func (a *answeringLLM) Close() error { return nil }
 
 // BranchesSuite regenerates, edits and brings back the turns of conversations kept in Chat,
 // in memory, with their responses in Postgres.
@@ -75,6 +103,10 @@ type BranchesSuite struct {
 	service  *persistent.Service
 	manager  *Manager
 	memory   *stubMemory
+	// sees has the conversation's model take photos, and answering is that model once a
+	// session opened it.
+	sees      bool
+	answering *answeringLLM
 }
 
 func TestBranchesSuite(t *testing.T) {
@@ -117,7 +149,8 @@ func (s *BranchesSuite) SetupTest() {
 		defer opened.Unlock()
 		if !conversing["first"] {
 			conversing["first"] = true
-			return &answeringLLM{}, nil
+			s.answering = &answeringLLM{sees: s.sees}
+			return s.answering, nil
 		}
 		return &stubLLM{reply: "Sure."}, nil
 	})
@@ -694,4 +727,67 @@ func (s *BranchesSuite) TestAnEditRetriedAfterChatHidItsQuestionCarriesOnItsSwit
 	s.Equal([]string{"Is it raining?", "Answer 1 to Is it raining?", "And on Sunday?", "Answer 3 to And on Sunday?"}, s.texts(session))
 	s.Equal(s.texts(session), history(session))
 	s.Equal(first, s.response(session, branched.ResponseID).ParentResponseID)
+}
+
+// A regenerated question that came with a photo is asked again with it: the model sees what
+// it saw the first time, not a note that a photo was sent.
+func (s *BranchesSuite) TestARegeneratedQuestionIsAskedAgainWithItsPhotos() {
+	s.sees = true
+	session := s.opens()
+	s.asks(session, "Is it raining?")
+	photo := llm.ImagePart{MIME: "image/png", Data: []byte("\x89PNG fake")}
+	_, second, err := session.RespondCommand(s.ctx, uuid.NewString(), "What is in this photo?", "", []llm.ImagePart{photo}, options.LLM{})
+	s.Require().NoError(err)
+	s.settled(session)
+	uploaded := s.chat.Uploads()
+	s.Require().Len(uploaded, 1)
+
+	_, err = session.Regenerate(s.ctx, uuid.NewString(), second, options.LLM{})
+
+	s.Require().NoError(err)
+	s.settled(session)
+	shown := s.answering.photosShown()
+	s.Require().Len(shown, 3)
+	s.Len(shown[1], 1, "the question was asked with its photo")
+	s.Equal([]string{"https://cdn.fake/image/photo-1.png"}, shown[2], "and is asked again with it")
+	s.Equal("Answer 3 to What is in this photo?", s.texts(session)[3])
+}
+
+// A photo sent with no words is asked about again as it was the first time.
+func (s *BranchesSuite) TestARegeneratedPhotoSentAloneIsAskedAboutAgain() {
+	s.sees = true
+	session := s.opens()
+	photo := llm.ImagePart{MIME: "image/png", Data: []byte("\x89PNG fake")}
+	_, first, err := session.RespondCommand(s.ctx, uuid.NewString(), "", "", []llm.ImagePart{photo}, options.LLM{})
+	s.Require().NoError(err)
+	s.settled(session)
+
+	_, err = session.Regenerate(s.ctx, uuid.NewString(), first, options.LLM{})
+
+	s.Require().NoError(err)
+	s.settled(session)
+	shown := s.answering.photosShown()
+	s.Require().Len(shown, 2)
+	s.Equal([]string{"https://cdn.fake/image/photo-1.png"}, shown[1])
+}
+
+// A model that cannot see the photos a question was asked with refuses the regenerate before
+// anything is hidden.
+func (s *BranchesSuite) TestARegenerateOfAQuestionWithPhotosIsRefusedBeforeAnythingIsHiddenByAModelThatCannotSee() {
+	s.sees = true
+	session := s.opens()
+	photo := llm.ImagePart{MIME: "image/png", Data: []byte("\x89PNG fake")}
+	_, first, err := session.RespondCommand(s.ctx, uuid.NewString(), "What is in this photo?", "", []llm.ImagePart{photo}, options.LLM{})
+	s.Require().NoError(err)
+	s.settled(session)
+	before := s.texts(session)
+	s.answering.mu.Lock()
+	s.answering.sees = false
+	s.answering.mu.Unlock()
+
+	_, err = session.Regenerate(s.ctx, uuid.NewString(), first, options.LLM{})
+
+	s.Require().ErrorIs(err, agent.ErrCannotSeeImages)
+	s.Equal(before, s.texts(session))
+	s.Nil(s.response(session, first).RewoundAt)
 }

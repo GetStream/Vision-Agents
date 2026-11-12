@@ -1057,6 +1057,8 @@ type ResponseMessages struct {
 	// Question is the person's message the response answers, Reply the response's own. Either
 	// is empty when the channel does not show it: a reply that never landed has none.
 	Question, Reply string
+	// QuestionImages are the photos sent with Question (Images).
+	QuestionImages []llm.ImagePart
 }
 
 // maxScanPages bounds how far back a response's messages are looked for: Chat keeps at most
@@ -1080,6 +1082,7 @@ func (c *Conversation) ResponseMessages(ctx context.Context, responseID, questio
 		case role == "user" && (asking != "" && m.ID == asking ||
 			asking == "" && b != nil && (b.ResponseID == responseID || b.ResponseID == questionResponseID)):
 			found.Question = m.ID
+			found.QuestionImages = imagesIn(filesFromAttachments(m.Attachments))
 			// A reply is after its question, so nothing older is the response's.
 			return true
 		}
