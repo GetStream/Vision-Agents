@@ -589,6 +589,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A tool call's approval is no longer changed while its reply is being written to Chat
+
+Answering a held tool call's approval changed it in place on the reply, which the router could at the same moment be writing to the Chat channel or sending to the conversation's socket. The queued write and the update now each keep their own copy of the approval, so neither is encoded while it changes (AI-3198).
+
 ### Kotlin: the reply model failing ends the agent's turn, and a failure lasts until the agent works again
 
 `Conversation.reduce` in the Kotlin SDK sets `state` to `Idle` for an `error` event whose `context` is `llm` or `sts` while the agent is `Responding` or `Working`, and keeps `failure`. Before, only `failure` was set, so a reply that failed with no `responded` after it left an app showing the agent thinking. An error from anything else, a tool, the voice or the transcriber, still leaves `state` as it was, and an `Ended` conversation stays ended. `failure` is now cleared when the agent next hears, starts answering or speaks (`heard`, `responding`, `spoke`), as the JavaScript SDK's is; before, it stayed for the rest of the conversation.

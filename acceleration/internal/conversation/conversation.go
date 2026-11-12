@@ -1974,7 +1974,7 @@ func (c *Conversation) finish(state string) {
 func (c *Conversation) publish(m Message) {
 	if c.emit != nil {
 		m.Tools = append([]Tool{}, m.Tools...)
-		m.Parts = append([]Part{}, m.Parts...)
+		m.Parts = clonedParts(m.Parts)
 		m.Sources = append([]Source{}, m.Sources...)
 		m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 		m.Files = append([]sandbox.Attachment{}, m.Files...)
@@ -1991,7 +1991,7 @@ func (c *Conversation) StreamApp() int64 {
 }
 func (c *Conversation) enqueue(m Message, create bool) {
 	m.Tools = append([]Tool{}, m.Tools...)
-	m.Parts = append([]Part{}, m.Parts...)
+	m.Parts = clonedParts(m.Parts)
 	m.Sources = append([]Source{}, m.Sources...)
 	m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 	m.Files = append([]sandbox.Attachment{}, m.Files...)
