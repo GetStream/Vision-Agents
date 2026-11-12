@@ -1,18 +1,17 @@
 // A conversation with an agent, in writing and then out loud.
 //
-// It is an app's lib/main.dart. Run that app with the Stream API key, a user and that user's
-// token, which your backend signs with the Stream secret:
+// Drop this into an app's lib/main.dart. By default it reaches a local router on port 8080 and
+// swift_demo's token server (`go run ./backend`) on port 8099; pass --dart-define=STREAM_API_KEY
+// to enable the voice call.
 //
-//     flutter run --dart-define=STREAM_API_KEY=... \
-//       --dart-define=STREAM_USER_ID=... --dart-define=STREAM_TOKEN=...
-//
-// The conversation is rendered as plain text here. A real app shows it with Stream Chat's AI
-// components, stream_chat_flutter_ai; examples/voice_agents/flutter_demo in the Vision-Agents
-// repository is that app.
+// The conversation is rendered as plain text here. For the full app built with Stream Chat's AI
+// components (stream_chat_flutter_ai), see examples/voice_agents/flutter_demo.
 import 'dart:async';
+import 'dart:convert';
 
 // ignore: deprecated_member_use
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:stream_agents/stream_agents.dart';
 
 void main() => runApp(const MaterialApp(home: Example()));
@@ -25,43 +24,65 @@ class Example extends StatefulWidget {
 }
 
 class _ExampleState extends State<Example> {
-  // The screen's own, so leaving it closes everything it opened.
+  static const _userId = 'demo-caller';
+  static const _apiKey = String.fromEnvironment('STREAM_API_KEY');
+  static final _routerUrl = Uri.parse(
+    const String.fromEnvironment('ROUTER_URL', defaultValue: 'http://localhost:8080'),
+  );
+  static final _backendUrl = Uri.parse(
+    const String.fromEnvironment('BACKEND_URL', defaultValue: 'http://localhost:8099'),
+  );
+
   final _agents = StreamAgents(
-    apiKey: const String.fromEnvironment('STREAM_API_KEY'),
-    userId: const String.fromEnvironment('STREAM_USER_ID'),
-    token: () async => const String.fromEnvironment('STREAM_TOKEN'),
+    url: _routerUrl,
+    customerId: 'examples',
+    apiKey: _apiKey,
+    userId: _userId,
+    token: _streamToken,
   );
   AgentSession? _chat;
   VoiceSession? _voice;
-  StreamSubscription<Connection>? _voiceEnded;
   bool _busy = false;
 
+  static Future<String> _streamToken() async {
+    final response = await http
+        .post(
+          _backendUrl.resolve('/stream-token'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'user_id': _userId}),
+        )
+        .timeout(const Duration(seconds: 15));
+    if (response.statusCode != 200) {
+      throw StateError('the backend did not mint a Stream token (${response.statusCode})');
+    }
+    return (jsonDecode(response.body) as Map<String, Object?>)['token']! as String;
+  }
+
   Future<void> _ask() => _once(() async {
-    final chat = _chat ?? await _agents.agent('support').chat();
+    final chat = _chat ?? await _agents.agent('swift_demo').chat();
     if (!mounted) {
       return chat.close();
     }
     setState(() => _chat = chat);
-    await chat.responses.create('What are your opening hours?');
+    await chat.responses.create('Where is order A-1042?');
   });
 
   Future<void> _talk() => _once(() async {
-    final voice = await VoiceSession.start(_agents, agent: 'support');
+    final voice = await VoiceSession.start(_agents, agent: 'swift_demo');
     if (!mounted) {
       return voice.end();
     }
-    // Hanging up, or the agent ending the conversation, stops the session: back to text.
-    _voiceEnded = voice.session.connection.stream.listen((connection) {
-      if (connection is Disconnected) {
-        _voiceEnded?.cancel();
-        unawaited(voice.leave());
-        setState(() => _voice = null);
-      }
-    });
     setState(() => _voice = voice);
+    unawaited(
+      voice.session.connection.stream.firstWhere((c) => c is Disconnected).then((_) {
+        unawaited(voice.leave());
+        if (mounted && identical(_voice, voice)) {
+          setState(() => _voice = null);
+        }
+      }),
+    );
   });
 
-  /// Runs [action] unless one is running, so a second tap opens no second session.
   Future<void> _once(Future<void> Function() action) async {
     if (_busy) {
       return;
@@ -78,10 +99,8 @@ class _ExampleState extends State<Example> {
 
   @override
   void dispose() {
-    _voiceEnded?.cancel();
     final chat = _chat;
     final voice = _voice;
-    // The sessions first, then the clients they ran on.
     unawaited(() async {
       await chat?.close();
       await voice?.leave();
@@ -94,7 +113,6 @@ class _ExampleState extends State<Example> {
   @override
   Widget build(BuildContext context) {
     final voice = _voice;
-    // While talking, what is said; otherwise what was written.
     final session = voice?.session ?? _chat;
     return Scaffold(
       body: SafeArea(
@@ -103,7 +121,6 @@ class _ExampleState extends State<Example> {
             Expanded(
               child: session == null
                   ? const Center(child: Text('Ask the agent something'))
-                  // The transcript as it is now, and again each time it changes.
                   : StreamBuilder<Conversation>(
                       stream: session.conversation.stream,
                       initialData: session.conversation.value,
@@ -115,13 +132,12 @@ class _ExampleState extends State<Example> {
                       ),
                     ),
             ),
-            // Joins the call when it is first built: mute, camera and hang up.
             if (voice != null) VoiceCallView(voice: voice),
             OverflowBar(
               children: [
                 TextButton(onPressed: _busy ? null : _ask, child: const Text('Ask')),
                 TextButton(
-                  onPressed: _busy || voice != null ? null : _talk,
+                  onPressed: _busy || voice != null || _apiKey.isEmpty ? null : _talk,
                   child: const Text('Talk'),
                 ),
               ],
