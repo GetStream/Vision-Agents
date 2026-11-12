@@ -2390,7 +2390,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "ErrorDetail" => {
-          properties: %w[code doc_url message type].freeze,
+          properties: %w[code doc_url limit message type].freeze,
           required: %w[message type code doc_url].freeze, open: false
         }.freeze,
         "ErrorResponse" => {

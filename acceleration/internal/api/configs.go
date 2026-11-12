@@ -197,8 +197,8 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	} else if !ok {
 		return nil, invalidRequest(message)
 	}
-	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, nil); !ok {
-		return nil, invalidRequest(message)
+	if failure, refused := s.sandboxLimitsComplaint(ctx, customerID, config, nil); refused {
+		return nil, failure
 	}
 	if message, ok, err := s.regionComplaint(ctx, config, nil); err != nil {
 		return nil, err
@@ -362,8 +362,8 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	} else if !ok {
 		return nil, invalidRequest(message)
 	}
-	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, sandboxOfConfig(existing)); !ok {
-		return nil, invalidRequest(message)
+	if failure, refused := s.sandboxLimitsComplaint(ctx, customerID, config, sandboxOfConfig(existing)); refused {
+		return nil, failure
 	}
 	if message, ok, err := s.regionComplaint(ctx, config, &existing); err != nil {
 		return nil, err
@@ -972,20 +972,21 @@ func (s *Server) sandboxBindingsComplaint(ctx context.Context, customerID string
 // than finding the session without its sandbox. was is the sandbox the config had before this
 // save, nil for a new config: a sandbox the save leaves as it was is not refused, so a config
 // stored before its organization's limits tightened stays editable, and its sessions still run
-// without the sandbox. Limits that cannot be read now refuse nothing here.
-func (s *Server) sandboxLimitsComplaint(ctx context.Context, customerID string, config store.AgentConfig, was *savedSandbox) (string, bool) {
+// without the sandbox. Limits that cannot be read now refuse nothing here. The refusal is a
+// tier_limit_reached naming the limit.
+func (s *Server) sandboxLimitsComplaint(ctx context.Context, customerID string, config store.AgentConfig, was *savedSandbox) (APIError, bool) {
 	if config.Sandbox == "" || s.policies == nil {
-		return "", true
+		return APIError{}, false
 	}
 	now := sandboxOfConfig(config)
 	if was != nil && reflect.DeepEqual(*was, *now) {
-		return "", true
+		return APIError{}, false
 	}
 	err := s.policies.SandboxAllowed(ctx, routing.Owner{CustomerID: customerID}, now.ask)
 	if err == nil || policy.Transient(err) {
-		return "", true
+		return APIError{}, false
 	}
-	return err.Error(), false
+	return APIError{Type: ErrorTypeInvalidRequest, Code: codeTierLimitReached, Message: err.Error(), Limit: policy.SandboxLimit(err)}, true
 }
 
 // savedSandbox is the sandbox a config's sessions ask for, copied from the config.
