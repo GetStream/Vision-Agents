@@ -15,8 +15,10 @@ Inside it, three areas are kept apart:
 
 Each area has a barrel (`core.dart`, `chat.dart`, `rtc.dart`), and `lib/stream_agents.dart`, the
 only public library, exports the three. chat and rtc reach core only through its barrel and
-never each other, core imports nothing from Flutter or Stream, and each test imports only its
-own area. `test/area_boundaries_test.dart` fails on a file that breaks one of those rules.
+never each other, core and chat import only what an allowlist names, so neither picks up Flutter,
+and each test imports only its own area and the barrels it reaches. Core's and chat's tests
+import no Flutter. `test/area_boundaries_test.dart` fails on a file that breaks one of those
+rules.
 
 Until it is on pub.dev, an app depends on it by git:
 
@@ -134,8 +136,9 @@ does not answer, so a video worker in your backend can. The agent needs the `vis
 the call a subagent to run it on.
 
 Stream Video has no Dart hook on the frames a call sends, so each picture is a screenshot of the
-local camera track at the camera's full size, scaled and re-encoded before it is sent. The
-pictures come from just after the question, not before it.
+local camera track at the camera's full size, scaled and re-encoded before it is sent. The Swift,
+Kotlin and JS SDKs keep the last few seconds of frames, so theirs can come from just before the
+question; here they come from just after it.
 
 ### A connector's sign-in
 

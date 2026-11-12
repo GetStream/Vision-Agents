@@ -4,6 +4,13 @@ First release of `stream_agents`, the Flutter client for Stream Agents. It holds
 `stream_agents_core`, `stream_agents_chat` and `stream_agents_rtc`, with the same API, behind one
 import: `package:stream_agents/stream_agents.dart`.
 
+🔄 Changed
+
+- It is a Flutter package, so a CLI or a server-side Dart process, which could use
+  `stream_agents_core` and `stream_agents_chat`, cannot use it.
+- An app gets `stream_chat` and `stream_video_flutter` with it whether it writes or talks, so
+  both must resolve beside the app's own dependencies.
+
 ✅ Added
 
 - `StreamAgents` - the client for one user: opens a written or spoken conversation with an agent

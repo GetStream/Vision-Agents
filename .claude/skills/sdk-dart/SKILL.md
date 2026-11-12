@@ -26,14 +26,16 @@ lib/src/rtc   joining the call over Stream Video                  -> core
 Each area is self-contained: `lib/src/<area>` and `test/<area>` hold all of it, and the only way
 in from another area is one import. `test/area_boundaries_test.dart` enforces it:
 
-1. `core` imports nothing from `chat` or `rtc`, and nothing from Flutter, `dart:io`,
-   `stream_chat`, `stream_video_flutter` or `image`.
+1. `core` imports only its own files, `dart:async`, `collection`, `convert`, `math`,
+   `typed_data`, `http`, `meta` and `web_socket`: an allowlist, so a dependency added for `rtc`
+   cannot slip in. `chat` adds `stream_chat` and `core`'s barrel to that list.
 2. `chat` and `rtc` reach `core` only, never each other.
 3. Across areas, only through the area's barrel (`package:stream_agents/src/core/core.dart`);
    inside one, relative imports.
 4. `stream_chat` is `chat`'s alone; `stream_video_flutter` and `image` are `rtc`'s.
-5. A test under `test/<area>` imports its own area (barrel or internals) or
-   `package:stream_agents/stream_agents.dart`, never another area.
+5. A test under `test/<area>` imports its own area (barrel or internals), the barrels its area
+   reaches, or, in `rtc` only, `package:stream_agents/stream_agents.dart`. `test/core` and
+   `test/chat` import no Flutter. Every test but the boundary test is under an area.
 
 `lib/stream_agents.dart` is the only public library and exports the three barrels. A new public
 type goes in its area's barrel.
@@ -244,7 +246,13 @@ never on a call happening.
 Wait on a condition with a deadline (`_until`), never a fixed sleep.
 
 CI is [`client-sdks.yml`](../../../.github/workflows/client-sdks.yml), on any change under
-`sdks/dart` or to the spec: one Flutter job with the checks and tests below.
+`sdks/dart`, `flutter_demo`, `flutter_assistant` or the spec: one Flutter job with the checks and
+tests below, then `flutter analyze` and `flutter test` in both examples against the package as
+it is in the checkout.
+
+Flutter 3.50 deprecates `package:flutter/material.dart`. Each import of it carries
+`// ignore: deprecated_member_use` rather than a global ignore, so any other deprecation still
+fails the analyzer.
 
 Docker only, pub's cache in the named volume `va-dart-pub`:
 
@@ -257,6 +265,13 @@ docker run --rm -v "$PWD":/repo -v va-dart-pub:/pub-cache -e PUB_CACHE=/pub-cach
   -e VISION_AGENTS_URL=http://host.docker.internal:8080 -e VISION_AGENTS_CUSTOMER_ID=examples \
   -e VISION_AGENTS_AGENT=simple_voice_ai -w /repo/sdks/dart/stream_agents ghcr.io/cirruslabs/flutter:3.44.0 flutter test -t live
 ```
+
+## Releasing
+
+`flutter pub publish` from `sdks/dart/stream_agents`, after the CI dry run passes. The first
+release of `stream_agents` also discontinues `stream_agents_core`, `stream_agents_chat` and
+`stream_agents_rtc` on pub.dev, each with `stream_agents` as its replacement (the package's
+admin page, "Mark as discontinued"), so an app on 0.1.0 is pointed at the one package.
 
 ## Reviewing a change
 

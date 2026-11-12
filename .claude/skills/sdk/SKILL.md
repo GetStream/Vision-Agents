@@ -188,9 +188,9 @@ What each ships:
   components (`StreamChatAI`).
 * Kotlin: one module, `core` (`io.getstream.agents.android.core`), with voice and chat in it. Its views
   are Stream Chat's AI components (`stream-chat-android-ai-compose`).
-* Dart: `core` (state and API), `rtc` (voice and video over Stream Video) and `chat` (the conversation's
-  Stream Chat channel). Its views are Stream Chat's AI components (`stream_chat_flutter_ai`), composed in
-  `examples/voice_agents/flutter_demo`.
+* Dart: one Flutter package, `stream_agents`, with core (state and API), chat (the conversation's Stream
+  Chat channel) and rtc (voice and video over Stream Video) kept apart inside it. Its views are Stream
+  Chat's AI components (`stream_chat_flutter_ai`), composed in `examples/voice_agents/flutter_demo`.
 
 Swift, Kotlin and Dart generate only the operations the spec marks `x-client-accessible`: each generator audits
 its list against the spec, and posture tests check what the generated client can reach. JS types every
