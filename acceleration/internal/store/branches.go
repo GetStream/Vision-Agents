@@ -89,7 +89,8 @@ func SiblingPosition(siblings []AgentResponse, response AgentResponse, of string
 
 // BranchTail returns the path from one of a session's responses down to the newest response
 // under it, that response first and the newest last. A response with nothing under it is a
-// path of itself.
+// path of itself. The rows carry their place in the tree and their status, not what was
+// said: Said, Error and FinishedAt are empty.
 func (s *Store) BranchTail(ctx context.Context, customerID, sessionID, fromResponseID string) ([]AgentResponse, error) {
 	if customerID == "" || sessionID == "" || fromResponseID == "" {
 		return nil, stack.Wrap(errors.New("store: a customer, a session and a response id are required"))
