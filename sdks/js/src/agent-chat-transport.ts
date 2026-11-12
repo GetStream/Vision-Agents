@@ -1,5 +1,9 @@
 import type { AgentActivity, AgentChat, AgentChatMessage } from "./agent-chat.js";
+import { branchErrorOf, onRewound, supportBranchOf, type BranchErrorCode, type RewoundTo } from "./branches.js";
+import type { Schemas } from "./client.js";
+import { messageField } from "./message-field.js";
 import type { ImageSource, UIAction } from "./responses.js";
+import type { Session } from "./session.js";
 
 /**
  * The shapes Stream's AI components take for a conversation's transport: `AIConversationController`
@@ -22,9 +26,14 @@ export interface AgentTransportFeed<Message> {
 }
 
 /** What the person asks of the agent. */
-export interface AgentTransportRequest {
+export interface AgentTransportRequest<Message = unknown> {
   /** `message`, `regenerate` or `edit`, or a kind of the app's own, sent like a message. */
   kind: string;
+  /**
+   * For a `regenerate`, the reply to answer again; for an `edit`, the person's message to ask
+   * differently. A `regenerate` without one retries a question the agent couldn't answer.
+   */
+  message?: Message | undefined;
   /** An id for the person's message, which a retry keeps. */
   messageId: string;
   text: string;
@@ -39,10 +48,41 @@ export interface AgentTransportRequest {
 /** How the conversation reaches the agent. */
 export interface AgentTransport<Message> {
   connect(feed: AgentTransportFeed<Message>): () => void;
-  send(request: AgentTransportRequest): Promise<void>;
+  send(request: AgentTransportRequest<Message>): Promise<void>;
   stop(): Promise<void>;
   loadOlderMessages(): Promise<void>;
+  /**
+   * Shows the alternative before or after `message`, the ‹ i/n › of its `branch`. Present, it
+   * has the controller offer regenerate on every reply and edit on every person's message.
+   */
+  switchBranch?: (message: Message, to: "previous" | "next") => Promise<void>;
 }
+
+/**
+ * Why a regenerate, an edit, a question or a ‹ i/n › switch couldn't go through, in words to
+ * show the person. `cause` is the router's error, when it was one.
+ */
+export class AgentBranchError extends Error {
+  /**
+   * The router's code, or `not_branchable` for a message without a place among alternatives:
+   * one from before branches, one typed during a call, or one somebody else wrote.
+   */
+  readonly code: BranchErrorCode | "not_branchable";
+
+  constructor(code: BranchErrorCode | "not_branchable", cause?: unknown) {
+    super(BRANCH_ERROR_TEXT[code], cause === undefined ? undefined : { cause });
+    this.name = "AgentBranchError";
+    this.code = code;
+  }
+}
+
+const BRANCH_ERROR_TEXT: Record<BranchErrorCode | "not_branchable", string> = {
+  not_branchable:
+    "This message is from before replies could be regenerated or edited, or was written during a call, so it can't be branched",
+  branch_limit_reached: "This conversation can't be regenerated or edited any more: continue in a new chat",
+  branch_too_long: "This version of the conversation is too long to continue from: continue in a new chat",
+  branch_unavailable: "This version of the conversation is no longer available",
+};
 
 /** The ids of the states Stream Chat's AI indicator reports, which the AI components read. */
 export const AGENT_ACTIVITY_STATES = {
@@ -80,26 +120,134 @@ export interface AgentChatTransportOptions<M extends AgentChatMessage, Message> 
  * channel `chat` reads, what the agent is doing from the session's socket, and asking through the
  * session, which records the question in the channel and answers it there.
  *
- * The router keeps a conversation in Chat and can't rewind it, so give the controller
- * `actions: { edit: false, regenerate: false }`. A `regenerate` then only comes from retrying a
- * question the agent couldn't answer, and is asked again as a new question; an `edit` is refused.
+ * It branches. A `regenerate` of a reply answers its question again and an `edit` of the
+ * person's message asks it differently, both beside the earlier version, which Chat hides and
+ * the router keeps; the hidden messages drop out of the feed as soon as the router answers.
+ * `switchBranch` shows another version, ‹ i/n ›, from the router's copy without writing to
+ * Chat; asking anything while one is shown, or regenerating or editing a message of it, first
+ * makes it the conversation again (`responses.activate`). A `channel.rewound`, or the message the
+ * versions part at leaving the channel, goes back to the channel's own.
+ *
+ * Only messages the router marked with `support_branch` can be branched: one from before
+ * branches, or typed during a call, is refused with an `AgentBranchError` (`not_branchable`), as
+ * are the router's `branch_limit_reached`, `branch_too_long` and `branch_unavailable`. A
+ * `regenerate` with no message retries a question the agent couldn't answer, asked again.
  *
  * ```ts
  * const conversation = new AIConversationController({
  *   transport: agentChatTransport(chat, { adapt: (message, reasoningText) => fromStreamMessage(message, { reasoningText }) }),
- *   actions: { edit: false, regenerate: false },
  * });
  * ```
  */
 export function agentChatTransport<M extends AgentChatMessage, Message>(
   chat: AgentChat<M>,
   options: AgentChatTransportOptions<M, Message>,
-): AgentTransport<Message> {
+): Required<AgentTransport<Message>> {
   const reasoningText = (messageId: string, stepId: string) => chat.reasoning.get(messageId, stepId);
   const workingText = options.workingText ?? defaultWorkingText;
   // What the latest question went out with, which asking it again keeps: its photos, what the
   // person did in a reply's UI, and how long the model may think.
   let lastAsked: { text: string; images: ImageSource[]; uiAction: UIAction | undefined; reasoningEffort: string | undefined } | undefined;
+  // The other version of the conversation shown in place of the channel's, from a message on.
+  let overlay: Overlay<M> | undefined;
+  // Bumped by each switch, so one that finishes after a later one shows nothing.
+  let switches = 0;
+  // What a regenerate, an edit or an activation of this device hid. The channel drops them too,
+  // but stream-chat 9 says nothing when it does, so the feed would show them until its next event.
+  // A hidden message never comes back under its id: one brought back is sent again as a new one.
+  const hidden = new Set<string>();
+  // Each connection's way back from the messages it fed to the Stream messages they were made of.
+  const sources = new Set<(message: Message) => M | undefined>();
+  // Each connection's feed, told again when the view changes outside the channel.
+  const refreshes = new Set<() => void>();
+  const refresh = () => {
+    for (const again of [...refreshes]) {
+      again();
+    }
+  };
+
+  /** The channel's messages without what this device hid. */
+  const visible = (): readonly M[] => {
+    const { messages } = chat.state.getLatestValue();
+    return hidden.size > 0 ? messages.filter((message) => !hidden.has(message.id)) : messages;
+  };
+
+  /** What the conversation shows: the channel's messages, or another version from where they part. */
+  const shown = (messages: readonly M[]): readonly M[] => {
+    const kept = hidden.size > 0 ? messages.filter((message) => !hidden.has(message.id)) : messages;
+    if (!overlay) {
+      return kept;
+    }
+    const fork = kept.findIndex((message) => message.id === overlay?.forkId);
+    if (fork < 0) {
+      // The message the versions part at left the channel: the conversation changed under it.
+      overlay = undefined;
+      return kept;
+    }
+    return [...kept.slice(0, fork), ...overlay.items];
+  };
+
+  /** The Stream message a message the controller holds was made of. */
+  const sourceOf = (message: Message | undefined): M | undefined => {
+    if (message === undefined) {
+      return undefined;
+    }
+    for (const lookup of sources) {
+      const source = lookup(message);
+      if (source) {
+        return source;
+      }
+    }
+    // A message the app made itself, from the same id.
+    const id = typeof message === "object" && message !== null ? (message as { id?: unknown }).id : undefined;
+    return typeof id === "string" ? shown(chat.state.getLatestValue().messages).find((one) => one.id === id) : undefined;
+  };
+
+  /**
+   * Runs a regenerate, an edit or an activation, and drops from the feed what it hid of the
+   * messages shown before it went, at once, as the session drops them from the channel.
+   */
+  const rewinding = async (run: () => Promise<RewoundTo | undefined>): Promise<void> => {
+    const before = visible();
+    let to: RewoundTo | undefined;
+    try {
+      to = await run();
+    } catch (error) {
+      throw branchError(error);
+    }
+    const at = to ? before.findIndex((message) => message.id === to.message_id) : -1;
+    if (to && at >= 0) {
+      for (const message of before.slice(to.inclusive ? at : at + 1)) {
+        hidden.add(message.id);
+      }
+    }
+    refresh();
+  };
+
+  /** Makes the version shown the conversation again, before anything is asked on it. */
+  const activate = async (session: Session, viewed: Overlay<M>): Promise<void> => {
+    await rewinding(async () => (await session.responses.activate(viewed.leafResponseId)).rewound_to);
+    if (overlay === viewed) {
+      overlay = undefined;
+    }
+    refresh();
+  };
+
+  /** Leaves the version shown for the channel's own, before branching off a message of it. */
+  const leaveOverlayFor = async (session: Session, source: M): Promise<void> => {
+    const viewed = overlay;
+    if (!viewed) {
+      return;
+    }
+    if (viewed.items.includes(source)) {
+      // The router refuses to branch off a response that is not on the conversation.
+      await activate(session, viewed);
+      return;
+    }
+    overlay = undefined;
+    refresh();
+  };
+
   return {
     connect(feed) {
       // The same message for each Stream message that didn't change, so only the messages an
@@ -113,13 +261,61 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
         }
         return made;
       };
+      let fed = new Map<Message, M>();
+      const lookup = (message: Message) => fed.get(message);
+      const render = (messages: readonly M[]) => {
+        const next = new Map<Message, M>();
+        const made = shown(messages).map((message) => {
+          const one = adapt(message);
+          next.set(one, message);
+          return one;
+        });
+        fed = next;
+        feed.updateMessages(made);
+      };
+      const again = () => {
+        if (feed.isConnected) {
+          render(chat.state.getLatestValue().messages);
+        }
+      };
+      sources.add(lookup);
+      refreshes.add(again);
+      // A rewind of the channel, from any device, shows the channel's own version again.
+      let followed: Session | undefined;
+      let unfollow: (() => void) | undefined;
+      let disconnected = false;
+      const follow = (session: Session | undefined) => {
+        if (session === followed) {
+          return;
+        }
+        followed = session;
+        unfollow?.();
+        unfollow = undefined;
+        session
+          ?.chat()
+          .then(({ client, channel }) => {
+            const cid = (channel as { cid?: unknown } | null)?.cid;
+            if (disconnected || followed !== session || typeof cid !== "string") {
+              return;
+            }
+            unfollow = onRewound(client, cid, () => {
+              if (overlay) {
+                overlay = undefined;
+                refresh();
+              }
+            });
+          })
+          // Without the channel there is nothing shown to rewind.
+          .catch(() => undefined);
+      };
       let previous:
         | { messages: readonly M[]; reasoningVersion: number; activity: AgentActivity | undefined; hasOlderMessages: boolean }
         | undefined;
-      return chat.state.subscribe((state) => {
+      const stop = chat.state.subscribe((state) => {
         if (!feed.isConnected) {
           return;
         }
+        follow(state.session);
         const thought = previous !== undefined && previous.reasoningVersion !== state.reasoningVersion;
         if (thought) {
           // More of a reply's thinking arrived: that reply alone is shown afresh.
@@ -131,7 +327,7 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
           }
         }
         if (previous?.messages !== state.messages || thought) {
-          feed.updateMessages(state.messages.map(adapt));
+          render(state.messages);
         }
         if (previous?.hasOlderMessages !== state.hasOlderMessages) {
           feed.updateHasOlderMessages(state.hasOlderMessages);
@@ -146,15 +342,19 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
           hasOlderMessages: state.hasOlderMessages,
         };
       });
+      return () => {
+        disconnected = true;
+        stop();
+        unfollow?.();
+        sources.delete(lookup);
+        refreshes.delete(again);
+      };
     },
     async send(request) {
-      if (request.kind === "edit") {
-        throw new Error("The agent can't edit a message it was sent: give the conversation actions: { edit: false }");
-      }
-      if (request.kind === "regenerate") {
-        // Asked again as a new question, under a new request id: under the original one, the
-        // router would take it for the question it already answered. It keeps what the question
-        // went out with, which a regenerate doesn't carry.
+      if (request.kind === "regenerate" && request.message === undefined) {
+        // A question the agent couldn't answer, asked again as a new question under a new request
+        // id: under the original one, the router would take it for the question it already
+        // answered. It keeps what the question went out with, which a regenerate doesn't carry.
         const again = lastAsked?.text === request.text ? lastAsked : undefined;
         const reasoningEffort = options.reasoningEffort?.(request.chatOption) ?? again?.reasoningEffort;
         await chat.send(request.text, {
@@ -164,9 +364,39 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
         });
         return;
       }
+      if (request.kind === "regenerate" || request.kind === "edit") {
+        const source = sourceOf(request.message);
+        const place = source ? supportBranchOf(source) : undefined;
+        if (!source || !place) {
+          throw new AgentBranchError("not_branchable");
+        }
+        const session = await chat.use();
+        await leaveOverlayFor(session, source);
+        const reasoningEffort = options.reasoningEffort?.(request.chatOption);
+        const effort = reasoningEffort ? { reasoningEffort } : {};
+        await rewinding(async () => {
+          const created =
+            request.kind === "edit"
+              ? await session.responses.edit(place.responseId, request.text, {
+                  ...effort,
+                  // The new question is stored under it, so it replaces the one on its way. The
+                  // edited message's own id is taken already.
+                  ...(request.messageId && request.messageId !== source.id ? { requestId: request.messageId } : {}),
+                })
+              : // A fresh request id: the controller's names the reply's question, already answered.
+                await session.responses.regenerate(place.responseId, effort);
+          return created.created.rewound_to;
+        });
+        return;
+      }
       const images = await imagesOf(request.attachments, options.images);
       const reasoningEffort = options.reasoningEffort?.(request.chatOption);
       const uiAction = uiActionOf(request.custom);
+      const viewed = overlay;
+      if (viewed) {
+        // Asked on the version shown, which the agent answers from only once it is the conversation.
+        await activate(await chat.use(), viewed);
+      }
       lastAsked = { text: request.text, images, uiAction, reasoningEffort };
       await chat.send(request.text, {
         ...(images.length > 0 ? { images } : {}),
@@ -175,9 +405,126 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
         requestId: request.messageId,
       });
     },
+    async switchBranch(message, to) {
+      const source = sourceOf(message);
+      const place = source ? supportBranchOf(source) : undefined;
+      if (!source || !place) {
+        throw new AgentBranchError("not_branchable");
+      }
+      const switching = ++switches;
+      const session = await chat.session();
+      const siblings: Schemas["ResponseSibling"][] = [];
+      try {
+        for await (const sibling of session.responses.unwindSiblings(place.responseId, { of: place.of })) {
+          siblings.push(sibling);
+        }
+      } catch (error) {
+        throw branchError(error);
+      }
+      // Where the message stands now, which its mark, written when it was, may not say.
+      const self = place.of === "question" ? place.questionResponseId || place.responseId : place.responseId;
+      const index = siblings.find((sibling) => sibling.id === self)?.index ?? place.index;
+      const target = siblings.find((sibling) => sibling.index === index + (to === "next" ? 1 : -1));
+      if (!target || switching !== switches) {
+        return;
+      }
+      if (target.active) {
+        overlay = undefined;
+        refresh();
+        return;
+      }
+      const read: Schemas["BranchMessage"][] = [];
+      try {
+        for await (const item of session.responses.unwindBranch(target.id)) {
+          read.push(item);
+        }
+      } catch (error) {
+        throw branchError(error);
+      }
+      if (switching !== switches) {
+        return;
+      }
+      const first = read[0];
+      if (!first) {
+        // It became the conversation while it was read.
+        overlay = undefined;
+        refresh();
+        return;
+      }
+      const channel = visible();
+      const forkId = forkOf(channel, first.id, overlay, source);
+      if (forkId === undefined) {
+        throw new Error("The message isn't in the conversation shown");
+      }
+      const items = read.map((item) => streamMessageOf(item, channel[0]) as unknown as M);
+      const leaf = items.findLast((item) => supportBranchOf(item) !== undefined);
+      overlay = { forkId, items, leafResponseId: (leaf && supportBranchOf(leaf)?.responseId) || target.id };
+      refresh();
+    },
     stop: () => chat.stop(),
     loadOlderMessages: () => chat.loadOlderMessages(),
   };
+}
+
+/** Another version of the conversation, shown in place of the channel's from one message on. */
+interface Overlay<M> {
+  /** The channel's message the versions part at: it and everything after are not shown. */
+  readonly forkId: string;
+  /** The version's messages from there, as the router copied them, made Stream messages. */
+  readonly items: readonly M[];
+  /** Its newest response, which bringing it back ends at. */
+  readonly leafResponseId: string;
+}
+
+/**
+ * The channel's message a branch read back parts from the channel at. The router's copy starts
+ * where the branch leaves the conversation, which can be at a message the channel still shows,
+ * such as the question of a regenerated reply, under its id or a copy's. Otherwise it parts at
+ * the message switched from, or where the version shown parts, for a message of that version.
+ */
+function forkOf<M extends AgentChatMessage>(
+  channel: readonly M[],
+  firstId: string,
+  overlay: Overlay<M> | undefined,
+  source: M,
+): string | undefined {
+  const shared = channel.find((message) => message.id === firstId || messageField(message, "resent_from") === firstId);
+  if (shared) {
+    return shared.id;
+  }
+  if (overlay?.items.includes(source)) {
+    return overlay.forkId;
+  }
+  return channel.some((message) => message.id === source.id) ? source.id : undefined;
+}
+
+/**
+ * A message of a branch read back, as the channel's own messages are: the app's fields top
+ * level and times as Dates in stream-chat 9; under `custom` and in nanoseconds in 10, which
+ * `like`, one of the channel's messages, shows by its `created_at`.
+ */
+function streamMessageOf(item: Schemas["BranchMessage"], like: object | undefined): AgentChatMessage & Record<string, unknown> {
+  const at = Date.parse(item.created_at);
+  const cid = (like as { cid?: unknown } | undefined)?.cid;
+  const common = {
+    id: item.id,
+    text: item.text,
+    type: "regular",
+    status: "received",
+    attachments: [...item.attachments],
+    user: { id: item.user_id },
+    ...(typeof cid === "string" ? { cid } : {}),
+  };
+  if (typeof (like as { created_at?: unknown } | undefined)?.created_at === "number") {
+    return { ...common, custom: { ...item.custom }, created_at: at * 1e6, updated_at: at * 1e6 };
+  }
+  return { ...item.custom, ...common, created_at: new Date(at), updated_at: new Date(at) };
+}
+
+/** A router refusal of a branch in the person's words, or the error as it was. */
+function branchError(error: unknown): unknown {
+  const code = branchErrorOf(error);
+  return code ? new AgentBranchError(code, error) : error;
 }
 
 function defaultWorkingText(skills: readonly string[]): string | undefined {

@@ -611,7 +611,6 @@ const conversation = new AIConversationController({
   transport: agentChatTransport(chat, {
     adapt: (message, reasoningText) => fromStreamMessage(message, { reasoningText }),
   }),
-  actions: { edit: false, regenerate: false }, // the transport doesn't branch yet: see "Regenerate and edit"
 });
 ```
 
@@ -627,6 +626,34 @@ with no text of the router's, so the components show their own. `chat.state` has
 `StateStore` from `@stream-io/state-store`, so `useStateStore(chat.state, selector)` reads it.
 It reads the channel with stream-chat 9 or 10, whichever `session.chat()` opens it on.
 
+**Regenerate, edit and ‹ i/n ›.** The transport has `switchBranch`, so the controller offers
+regenerate on every reply and edit on every message of the person's, and shows ‹ i/n › from each
+message's `branch`, which `adapt` reads from the router's `support_branch` mark. A regenerate
+calls `responses.regenerate` and an edit `responses.edit` on the response the message belongs to
+(see "Regenerate and edit" below), and what they hid leaves the conversation as soon as the
+router answers, before the new reply arrives. `switchBranch` shows another version: it reads it
+with `responses.branch` and shows it in place of the channel's messages from where the two part,
+writing nothing to Chat and telling the model nothing. Going back to the version the
+conversation is on shows the channel's own messages again, and so does a `channel.rewound`, or
+the message the versions part at leaving the channel. New messages in the channel keep the
+version shown on screen. Asking anything while another version is shown, or regenerating or
+editing one of its messages, first brings it back with `responses.activate`, so the agent
+answers from what the person sees.
+
+A refusal is an `AgentBranchError` whose message is for the person and whose `code` says which:
+
+- `not_branchable`: a turn from before branches, or typed while the agent was on a call, carries
+  no mark, and neither regenerates, edits nor pages. Nothing is sent.
+- `branch_limit_reached`: the conversation used its 100 edit and regenerate points. Asking and
+  paging still work.
+- `branch_too_long`: the version shown has more than 100 messages to send again, so it can be
+  looked at but not continued; it stays on screen.
+- `branch_unavailable`: a memory truncate deleted the router's copy of that version.
+
+A version brought back is sent again as new messages, with new ids, and memories made on a
+version the person left are kept: the rest of what to tell the person is under "Regenerate and
+edit".
+
 Make one per conversation and close it when the person leaves it. In React, make the chat and
 the controller in an effect and let them go in its cleanup, so StrictMode's second mount makes
 fresh ones rather than reusing closed ones:
@@ -636,7 +663,6 @@ useEffect(() => {
   const chat = new AgentChat({ sessionId, open });
   const conversation = new AIConversationController({
     transport: agentChatTransport(chat, { adapt }),
-    actions: { edit: false, regenerate: false },
   });
   setScreen({ chat, conversation });
   return () => {

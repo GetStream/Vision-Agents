@@ -15,9 +15,8 @@ import {
   type SessionEvent,
   type ToolCallContext,
 } from "../src/index.js";
-import { StreamChat } from "stream-chat";
-
 import { TestRouter, type Connection } from "./router.js";
+import { QUERY_PATH, arrive, channelPage, chatClient, chatMessage, heldIds, rewind, until, watch } from "./stream-chat.js";
 
 describe("Socket", () => {
   let router: TestRouter;
@@ -1290,56 +1289,22 @@ describe("Regenerate, edit and branches", () => {
   }
 
   /** A top-level Chat message, written `second` seconds into 2026. */
-  function message(id: string, second: number): Record<string, unknown> {
-    const at = new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
-    return { id, text: id, type: "regular", user: { id: "john" }, created_at: at, updated_at: at };
-  }
-
-  /** What a channel query answers with these messages. */
-  function channelPage(messages: Record<string, unknown>[]): { body: unknown } {
-    return {
-      body: {
-        channel: { id: "support-1", type: "agent", cid: "agent:support-1", config: {} },
-        members: [],
-        messages,
-        duration: "1ms",
-      },
-    };
-  }
+  const message = (id: string, second: number) => chatMessage(id, second);
 
   /**
-   * A real stream-chat 9 client, reading Chat from the test router and connected as john
-   * without a socket: what is under test is what its channel state holds, and that its query
-   * merges rather than replaces.
+   * The session with its channel open and holding `messages`, read by a real stream-chat client
+   * (9, or 10 in CI's js-stream-chat-10 job) from the test router: what is under test is what its
+   * channel state holds, and that 9's query merges rather than replaces.
    */
-  async function chatClient(): Promise<StreamChat> {
-    const chat = new StreamChat("key", { baseURL: router.url });
-    chat.userID = "john";
-    chat.user = { id: "john" };
-    const claims = Buffer.from(JSON.stringify({ user_id: "john" })).toString("base64url");
-    await chat.tokenManager.setTokenOrProvider(`eyJhbGciOiJIUzI1NiJ9.${claims}.sig`, { id: "john" });
-    return chat;
-  }
-
-  /** The session with its channel open and holding `messages`. */
   async function loaded(messages: Record<string, unknown>[]) {
-    const chat = await chatClient();
-    api.use({ chat });
+    const chat = await chatClient(router.url);
+    api.use({ chat: chat as never });
     const session = await opened();
     const { channel } = await session.chat();
-    router.serve("POST", "/channels/agent/support-1/query", channelPage(messages));
-    const held = channel as ReturnType<StreamChat["channel"]>;
-    await held.query();
-    const ids = () => held.state.messages.map((one) => one.id);
-    return { chat, session, channel: held, ids };
-  }
-
-  /** Waits for something the SDK does after an event, without a fixed sleep. */
-  async function until(done: () => boolean): Promise<void> {
-    for (let tries = 0; !done(); tries++) {
-      assert.ok(tries < 500, "never happened");
-      await new Promise((resolve) => setTimeout(resolve, 2));
-    }
+    router.serve("POST", QUERY_PATH, channelPage(messages));
+    await watch(channel);
+    const ids = () => heldIds(channel);
+    return { chat, session, channel, ids };
   }
 
   it("regenerates and edits as a question that replaces an earlier response, under a request id", async () => {
@@ -1463,17 +1428,13 @@ describe("Regenerate, edit and branches", () => {
   it("drops what a rewind hid from the channel at once, then reads the channel again", async () => {
     const { chat, session, ids } = await loaded([message("m1", 1), message("m2", 2), message("m3", 3), message("m4", 4)]);
     let heldWhenRead: string[] | undefined;
-    router.serve("POST", "/channels/agent/support-1/query", () => {
+    router.serve("POST", QUERY_PATH, () => {
       heldWhenRead = ids();
       // Read just after the rewind, Chat can still return what it hid, beside what came since.
       return channelPage([message("m1", 1), message("m2", 2), message("m3", 3), message("m4", 4), message("m5", 6)]);
     });
 
-    chat.dispatchEvent({
-      type: "channel.rewound",
-      cid: "agent:support-1",
-      rewind: { id: "rw_1", message_id: "m1", inclusive: false, created_at: new Date(Date.UTC(2026, 0, 1, 0, 0, 5)).toISOString() },
-    } as never);
+    rewind(chat, "m1", false, 5);
 
     assert.deepEqual(ids(), ["m1"], "dropped before anything was read");
     await until(() => ids().includes("m5"));
@@ -1484,24 +1445,24 @@ describe("Regenerate, edit and branches", () => {
 
   it("drops the rewound-to message too when the rewind was inclusive, as an edit's is", async () => {
     const { chat, session, ids } = await loaded([message("m1", 1), message("m2", 2), message("m3", 3), message("m4", 4)]);
-    router.serve("POST", "/channels/agent/support-1/query", channelPage([message("m1", 1), message("m2", 2)]));
+    router.serve("POST", QUERY_PATH, channelPage([message("m1", 1), message("m2", 2)]));
 
     chat.dispatchEvent({
       type: "notification.channel_rewound",
       cid: "agent:support-1",
       rewind: { id: "rw_1", message_id: "m3", inclusive: true, created_at: new Date(Date.UTC(2026, 0, 1, 0, 0, 5)).toISOString() },
-    } as never);
+    });
 
     assert.deepEqual(ids(), ["m1", "m2"]);
-    await until(() => router.requestsTo("POST", "/channels/agent/support-1/query").length === 2);
+    await until(() => router.requestsTo("POST", QUERY_PATH).length === 2);
     await session.close();
   });
 
   it("prunes what a regenerate hid as soon as it answers, keeping what arrived while it was asked", async () => {
-    const { channel, session, ids } = await loaded([message("m1", 1), message("m2", 2), message("m3", 3), message("m4", 4)]);
+    const { chat, session, ids } = await loaded([message("m1", 1), message("m2", 2), message("m3", 3), message("m4", 4)]);
     router.serve("POST", "/v1/agents/sessions/sess_1/responses", () => {
       // The new answer's message.new can beat the HTTP answer.
-      channel.state.addMessageSorted(message("m5", 6) as never);
+      arrive(chat, message("m5", 6));
       return {
         status: 202,
         body: {
@@ -1517,7 +1478,7 @@ describe("Regenerate, edit and branches", () => {
     await session.responses.regenerate("resp_1");
 
     assert.deepEqual(ids(), ["m1", "m5"], "never the old answer beside the new one");
-    assert.equal(router.requestsTo("POST", "/channels/agent/support-1/query").length, 1, "the event reads it again, not this");
+    assert.equal(router.requestsTo("POST", QUERY_PATH).length, 1, "the event reads it again, not this");
     await session.close();
   });
 
@@ -1525,24 +1486,16 @@ describe("Regenerate, edit and branches", () => {
     const { chat, session, ids } = await loaded([message("m1", 1), message("m2", 2)]);
 
     await session.close();
-    chat.dispatchEvent({
-      type: "channel.rewound",
-      cid: "agent:support-1",
-      rewind: { id: "rw_1", message_id: "m1", inclusive: false, created_at: "2026-01-01T00:00:05Z" },
-    } as never);
+    rewind(chat, "m1", false, 5);
 
     assert.deepEqual(ids(), ["m1", "m2"]);
-    assert.equal(router.requestsTo("POST", "/channels/agent/support-1/query").length, 1);
+    assert.equal(router.requestsTo("POST", QUERY_PATH).length, 1);
   });
 
   it("leaves another channel's rewind alone", async () => {
     const { chat, session, ids } = await loaded([message("m1", 1), message("m2", 2)]);
 
-    chat.dispatchEvent({
-      type: "channel.rewound",
-      cid: "agent:somebody-else",
-      rewind: { id: "rw_1", message_id: "m1", inclusive: false, created_at: "2026-01-01T00:00:05Z" },
-    } as never);
+    rewind(chat, "m1", false, 5, "agent:somebody-else");
 
     assert.deepEqual(ids(), ["m1", "m2"]);
     await session.close();

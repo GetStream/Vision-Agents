@@ -131,6 +131,19 @@ const REWOUND_EVENTS = ["channel.rewound", "notification.channel_rewound"] as co
  * Returns undefined for a client that delivers no events, such as an app's stand-in.
  */
 export function followRewinds(client: unknown, channel: unknown, cid: string): (() => void) | undefined {
+  return onRewound(client, cid, (event) => void rewound(channel, event));
+}
+
+/**
+ * Calls `handler` with each rewind Chat makes of the channel `cid`, as a watcher or as a member
+ * who is not watching hears it, until the returned function is called. Undefined for a client
+ * that delivers no events.
+ */
+export function onRewound(
+  client: unknown,
+  cid: string,
+  handler: (event: Record<string, unknown>) => void,
+): (() => void) | undefined {
   if (typeof (client as Partial<EventSource> | null)?.on !== "function") {
     return undefined;
   }
@@ -138,7 +151,7 @@ export function followRewinds(client: unknown, channel: unknown, cid: string): (
   const subscriptions = REWOUND_EVENTS.map((type) =>
     source.on(type, (event) => {
       if (cidOf(event) === cid) {
-        void rewound(channel, event);
+        handler(event);
       }
     }),
   );
@@ -191,17 +204,30 @@ async function rewound(channel: unknown, event: Record<string, unknown>): Promis
     // what is held cannot be trusted, and the read below is all that is shown.
     reset(channel);
   }
-  if (!loaded || typeof (channel as { query?: unknown } | null)?.query !== "function") {
+  const read = readAgain(channel);
+  if (!loaded || !read) {
     return;
   }
   try {
-    await (channel as { query(): Promise<unknown> }).query();
+    await read();
   } catch {
     // The messages are already dropped; the next read fills the window in.
     return;
   }
   // A read just after a rewind can still return what it hid, and the read merges it back.
   prune(channel, { ...hidden, from });
+}
+
+/**
+ * What reads the channel's latest messages again: `reload` in stream-chat 10, whose `query`
+ * places no messages, and `query` in 9, which merges them into what is held.
+ */
+function readAgain(channel: unknown): (() => Promise<unknown>) | undefined {
+  const held = channel as { reload?: unknown; query?: unknown } | null;
+  if (paginatorOf(channel) && typeof held?.reload === "function") {
+    return () => (held as { reload(): Promise<unknown> }).reload();
+  }
+  return typeof held?.query === "function" ? () => (held as { query(): Promise<unknown> }).query() : undefined;
 }
 
 /**
@@ -223,9 +249,16 @@ function prune(channel: unknown, hidden: Hidden): number | undefined {
   return from;
 }
 
-/** stream-chat 10 keeps a channel's messages in its paginator. */
+/**
+ * stream-chat 10 keeps a channel's messages in its paginator, which publishes `items` at most
+ * every 500 ms unless flushed.
+ */
 interface PaginatedChannel {
-  messagePaginator: { readonly items?: readonly unknown[]; removeItem(params: { id: string }): unknown };
+  messagePaginator: {
+    readonly items?: readonly unknown[];
+    removeItem(params: { id: string }): unknown;
+    flushState?(): void;
+  };
 }
 
 /** stream-chat 9 keeps them in message sets: the latest, and any a jump loaded. */
@@ -245,13 +278,15 @@ function held(channel: unknown): Held[] {
       return;
     }
     const { id, created_at: createdAt } = message as { id?: unknown; created_at?: unknown };
-    const at = createdAt instanceof Date ? createdAt.getTime() : typeof createdAt === "string" ? Date.parse(createdAt) : NaN;
+    const at = millisecondsOf(createdAt);
     if (typeof id === "string" && Number.isFinite(at)) {
       found.push({ id, at });
     }
   };
   const paginator = paginatorOf(channel);
   if (paginator) {
+    // What a rewind or a read changed a moment ago may not be published yet.
+    paginator.flushState?.();
     for (const message of paginator.items ?? []) {
       add(message);
     }
@@ -263,6 +298,21 @@ function held(channel: unknown): Held[] {
     }
   }
   return found;
+}
+
+/**
+ * A message's `created_at` in milliseconds: a Date in stream-chat 9, unix nanoseconds in 10, or
+ * the string either was given. NaN for anything else.
+ */
+function millisecondsOf(at: unknown): number {
+  if (at instanceof Date) {
+    return at.getTime();
+  }
+  if (typeof at === "string") {
+    return Date.parse(at);
+  }
+  // Nanoseconds since 1970 pass 1e14 in 1973; milliseconds do not until the year 5138.
+  return typeof at === "number" ? (at > 1e14 ? at / 1e6 : at) : NaN;
 }
 
 function remove(channel: unknown, messages: readonly Held[]): void {
@@ -280,6 +330,8 @@ function remove(channel: unknown, messages: readonly Held[]): void {
       }
     });
   }
+  // Shown at once, rather than after the paginator's throttle, beside the answer that replaced them.
+  paginator?.flushState?.();
 }
 
 /** Forgets every message held, for the next read to fill in. */

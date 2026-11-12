@@ -10,6 +10,8 @@ Three new operations, open to devices and to the session's owner alone: `listRes
 
 Go has `Responses.Regenerate`, `Edit`, `Siblings`, `Branch` and `Activate` (`sdks/go/client/responses.go`) (AI-3198).
 
+JavaScript has `responses.regenerate`, `edit`, `siblings`, `branch` and `activate`, with `branchErrorOf` and `supportBranchOf`; a session drops what a rewind hid from its channel, and `agentChatTransport` regenerates, edits and pages ‹ i/n › (`switchBranch`) for `AIConversationController` (AI-3198).
+
 ### The router reaches Gemini Decision 1
 
 `gemini/gemini-decision-1` is a decision model on Google's Decisions API, read with `GOOGLE_API_KEY` like the other Gemini models. It answers the same noul, choice and score questions, at $0.10 per million input tokens and nothing for output. It is in the fast tier with every other decision model, and the guardrail route still prefers Jev.

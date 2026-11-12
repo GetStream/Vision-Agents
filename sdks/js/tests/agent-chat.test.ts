@@ -615,7 +615,7 @@ describe("agentChatTransport", () => {
     return { chat, channel, session, transport, feed, disconnect };
   }
 
-  const request = (patch: Partial<AgentTransportRequest> = {}): AgentTransportRequest => ({
+  const request = (patch: Partial<AgentTransportRequest<string>> = {}): AgentTransportRequest<string> => ({
     kind: "message",
     messageId: "m1",
     text: "Plan a weekend in Ohrid",
@@ -708,13 +708,13 @@ describe("agentChatTransport", () => {
     assert.deepEqual(session.asked.at(-1)?.options, { images: [{ url: "data:image/png;base64,AA" }], uiAction });
   });
 
-  it("asks a regenerate again as a new question, and refuses an edit", async () => {
+  it("asks a regenerate with no message again as a new question, and refuses an edit of no message", async () => {
     const { session, transport } = await connected();
 
     await transport.send(request({ kind: "regenerate", messageId: "m2" }));
     assert.deepEqual(session.asked.at(-1)?.options, {});
 
-    await assert.rejects(transport.send(request({ kind: "edit" })), /edit/);
+    await assert.rejects(transport.send(request({ kind: "edit" })), (error: unknown) => (error as { code?: unknown }).code === "not_branchable");
   });
 
   it("refuses photos it has no way to read", async () => {
