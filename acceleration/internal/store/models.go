@@ -2078,6 +2078,9 @@ type AgentResponse struct {
 	// RewoundAt is when a rewind went back past this turn, which takes it out of the
 	// conversation without pretending it was never said.
 	RewoundAt *time.Time `bun:"rewound_at"`
+	// ChatMessageID is the Stream Chat message carrying the turn's answer, in a
+	// conversation kept in Chat: what a rewind to this turn rewinds the channel to.
+	ChatMessageID string `bun:"chat_message_id,notnull"`
 }
 
 // Exchange is one turn as a model is given it again: what was asked and what was answered.

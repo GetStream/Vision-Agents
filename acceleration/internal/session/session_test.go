@@ -1214,6 +1214,17 @@ type recordedTurns struct {
 	exchanges []store.Exchange
 	// documents are the files kept, each under the turn it was sent with.
 	documents []store.ConversationDocument
+	// chatMessages is the Stream Chat message each response's answer was written to.
+	chatMessages map[string]string
+}
+
+func (r *recordedTurns) ResponseChatMessage(_ context.Context, _, _, responseID string) (string, error) {
+	for _, exchange := range r.exchanges {
+		if exchange.ResponseID == responseID {
+			return r.chatMessages[responseID], nil
+		}
+	}
+	return "", store.ErrUnknownResponse
 }
 
 func (r *recordedTurns) Exchanges(_ context.Context, _, _, upTo string) ([]store.Exchange, error) {

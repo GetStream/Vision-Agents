@@ -38,6 +38,8 @@ type store struct {
 	made     map[string]map[string]any
 	rules    map[string]map[string]any
 	order    []string
+	// rewound are the messages a channel rewind hid, which no read returns again.
+	rewound map[string]bool
 	now      func() time.Time
 	app      App
 	appReads int
@@ -651,11 +653,21 @@ func numberTimes(hook json.RawMessage) json.RawMessage {
 func (db *store) messagesIn(cid string) []map[string]any {
 	messages := []map[string]any{}
 	for _, mid := range db.order {
+		if db.rewound[mid] {
+			continue
+		}
 		if written, _ := db.messages[mid]["cid"].(string); written == cid {
 			messages = append(messages, db.messages[mid])
 		}
 	}
 	return messages
+}
+
+// Rewound reports whether a channel rewind hid the message.
+func (s *Server) Rewound(id string) bool {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	return s.db.rewound[id]
 }
 
 // Uploads are the files stored on channels so far, in the order they came.
@@ -956,6 +968,38 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		result["users"] = written
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/rewind"):
+		// A rewind hides every message after message_id from every read, as Chat's does,
+		// once the newest visible message is the one the caller expected; otherwise it is
+		// Chat's rewind_conflict. The path is .../channels/<type>/<id>/rewind.
+		cid := parts[len(parts)-3] + ":" + parts[len(parts)-2]
+		target, _ := body["message_id"].(string)
+		expected, _ := body["expected_last_message_id"].(string)
+		visible := db.messagesIn(cid)
+		at := slices.IndexFunc(visible, func(m map[string]any) bool { return m["id"] == target })
+		switch {
+		case at < 0:
+			refuse(w, "Message with id "+target+" doesn't exist")
+			return
+		case len(visible) == 0 || visible[len(visible)-1]["id"] != expected:
+			last, _ := visible[len(visible)-1]["id"].(string)
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 125, "message": "the channel has newer messages", "StatusCode": http.StatusConflict,
+				"exception_fields": map[string]string{"last_message_id": last},
+			})
+			return
+		case at == len(visible)-1:
+			refuse(w, "nothing to rewind")
+			return
+		}
+		if db.rewound == nil {
+			db.rewound = map[string]bool{}
+		}
+		for _, m := range visible[at+1:] {
+			db.rewound[m["id"].(string)] = true
+		}
+		result["rewind"] = map[string]any{"message_id": target, "hidden_count_at_rewind": len(visible) - at - 1}
 	case r.Method == http.MethodPatch && len(parts) >= 3 && parts[len(parts)-3] == "channels":
 		// A partial update sets the fields it names on the channel. The path is
 		// .../channels/<type>/<id>.

@@ -1141,30 +1141,52 @@ type Recorded interface {
 	Exchanges(ctx context.Context, customerID, sessionID, upTo string) ([]store.Exchange, error)
 	RewindResponses(ctx context.Context, customerID, sessionID, kept string, at time.Time) error
 	ConversationDocuments(ctx context.Context, customerID string, scope store.DocumentScope) ([]store.ConversationDocument, error)
+	// ResponseChatMessage is the Stream Chat message a response's answer was written to,
+	// which a conversation kept in Chat is rewound to.
+	ResponseChatMessage(ctx context.Context, customerID, sessionID, responseID string) (string, error)
 }
 
 // Rewind carries the conversation on from the end of a response, as though nothing after it
 // had been said. The reply being spoken is abandoned and the model's history is rebuilt from
 // what was recorded up to that response.
 //
-// A persistent conversation is refused because its transcript lives in Chat, and reopening
-// it would bring the rewound turns back; forking it at the response is what keeps both. A
-// native model is refused because it holds its own context, which this cannot reach.
+// A persistent conversation's transcript lives in Chat, so its channel is rewound to the
+// message carrying the response's answer first: every later message is hidden from every
+// read, and reopening the conversation does not bring the rewound turns back. A shared,
+// dispatched or thread conversation is refused, because other sessions and people write to
+// its channel and a rewind would hide what they said too. A native model is refused because
+// it holds its own context, which this cannot reach.
 func (s *Session) Rewind(ctx context.Context, recorded Recorded, responseID string) error {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
+	spec := s.Spec()
 	switch {
 	case s.records == nil:
 		return stack.Wrap(fmt.Errorf("%w: nothing was recorded to go back to", ErrCannotRewind))
-	case s.Spec().Native():
+	case spec.Native():
 		return stack.Wrap(fmt.Errorf("%w: a speech-to-speech model keeps its own context", ErrCannotRewind))
-	case s.persisted != nil:
-		return stack.Wrap(fmt.Errorf("%w: a persistent conversation keeps its transcript in Chat; fork it at the response instead", ErrCannotRewind))
+	case s.persisted != nil && (spec.Shared() || spec.Dispatched || s.persisted.Threaded()):
+		return stack.Wrap(fmt.Errorf("%w: others write to this conversation's channel; fork it at the response instead", ErrCannotRewind))
 	}
 
 	s.current().Interrupt()
+	if s.persisted != nil {
+		s.persisted.Interrupt()
+	}
 	if err := s.records.Flush(ctx); err != nil {
 		return stack.Wrap(err)
+	}
+	if s.persisted != nil {
+		messageID, err := recorded.ResponseChatMessage(ctx, s.spec.CustomerID, s.id, responseID)
+		if err != nil {
+			return stack.Wrap(err)
+		}
+		if messageID == "" {
+			return stack.Wrap(fmt.Errorf("%w: that response has no Chat message to go back to; it was recorded before rewind could reach Chat", ErrCannotRewind))
+		}
+		if err := s.persisted.Rewind(ctx, messageID); err != nil {
+			return stack.Wrap(err)
+		}
 	}
 	exchanges, err := recorded.Exchanges(ctx, s.spec.CustomerID, s.id, responseID)
 	if err != nil {
@@ -1950,6 +1972,7 @@ func (s *Session) write(event Event) {
 		// The turn id is what the reply's transcript message is written under, which is how
 		// a resumed conversation finds the tool calls behind it.
 		s.item(typed.TurnID, kind, typed.Text, "", map[string]any{"turn_id": typed.TurnID})
+		s.answeredIn(typed.TurnID)
 		if !typed.PendingWork {
 			s.endTurn(typed.TurnID, store.ResponseCompleted, "")
 		}
@@ -2021,6 +2044,27 @@ func (s *Session) continueTurn(turnID, continues string) bool {
 		s.turns[turnID] = held
 	}
 	return open
+}
+
+// answeredIn records the Stream Chat message a reply was written to, against the response
+// its turn is recorded as, which is what a rewind to the response rewinds the channel to. A
+// reply that continues an earlier turn is written to a message of its own, so it replaces
+// the earlier one: the turn's answer ends there.
+func (s *Session) answeredIn(turnID string) {
+	if s.persisted == nil {
+		return
+	}
+	messageID, bound := s.persisted.MessageForTurn(turnID)
+	if !bound {
+		return
+	}
+	s.turnsMu.Lock()
+	turn, open := s.turns[turnID]
+	s.turnsMu.Unlock()
+	if !open {
+		return
+	}
+	s.records.AnsweredIn(turn.id, messageID)
 }
 
 // item queues one thing that happened, against whichever response the turn is being

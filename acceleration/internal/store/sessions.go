@@ -1054,6 +1054,49 @@ func (s *Store) RewindResponses(ctx context.Context, customerID, sessionID, kept
 	return nil
 }
 
+// AnsweredIn records the Stream Chat message a turn's answer was written to. A reply that
+// continues the turn after its tools or delegated work writes a later message, which then
+// replaces the earlier one: a rewind to the turn keeps everything the turn said.
+func (s *Store) AnsweredIn(ctx context.Context, id, chatMessageID string) error {
+	if id == "" || chatMessageID == "" {
+		return stack.Wrap(errors.New("store: a response id and a chat message id are required"))
+	}
+	_, err := s.shard.NewUpdate().Model((*AgentResponse)(nil)).
+		Set("chat_message_id = ?", chatMessageID).
+		Where("id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: answered in: %w", err))
+	}
+	return nil
+}
+
+// ResponseChatMessage is the Stream Chat message a response's answer was written to, empty
+// when it wrote none or was recorded before the message was kept. A response of another
+// session or customer is not found.
+func (s *Store) ResponseChatMessage(ctx context.Context, customerID, sessionID, responseID string) (string, error) {
+	if customerID == "" || sessionID == "" || responseID == "" {
+		return "", stack.Wrap(errors.New("store: a customer, a session and a response id are required"))
+	}
+	response, err := whicheverShard(ctx, s, func(ctx context.Context, db bun.IDB) (AgentResponse, error) {
+		var response AgentResponse
+		err := db.NewSelect().Model(&response).Column("id", "chat_message_id").
+			Where("id = ?", responseID).
+			Where("customer_id = ?", customerID).
+			Where("session_id = ?", sessionID).
+			Where("rewound_at IS NULL").
+			Scan(ctx)
+		return response, err
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", stack.Wrap(ErrUnknownResponse)
+	}
+	if err != nil {
+		return "", stack.Wrap(fmt.Errorf("store: response chat message: %w", err))
+	}
+	return response.ChatMessageID, nil
+}
+
 // RecordUser stores an end user this app was seen acting for.
 func (s *Store) RecordUser(ctx context.Context, user *User) error {
 	if user.ID == "" {
