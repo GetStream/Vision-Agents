@@ -48,7 +48,7 @@ final class Backend {
          apiKey,
          userId,
          token,
-         token == null ? null : _Tokens(token),
+         token == null ? null : _TokenCache(token),
          _StreamClients(),
        );
 
@@ -58,7 +58,7 @@ final class Backend {
     this.apiKey,
     this.userId,
     this.token,
-    this._tokens,
+    this._tokenCache,
     this._clients,
   ) {
     if (customerId.isEmpty && apiKey.isEmpty) {
@@ -101,7 +101,7 @@ final class Backend {
   final TokenProvider? token;
 
   /// What [token] answered, kept for every copy that asks with the same provider.
-  final _Tokens? _tokens;
+  final _TokenCache? _tokenCache;
 
   final _StreamClients _clients;
 
@@ -120,7 +120,7 @@ final class Backend {
     apiKey,
     userId,
     token ?? this.token,
-    token == null ? _tokens : _Tokens(token),
+    token == null ? _tokenCache : _TokenCache(token),
     _clients,
   );
 
@@ -135,11 +135,11 @@ final class Backend {
   /// a retry after a 401 is for. It would not by customer id, where the router is never shown
   /// the token, nor with no provider at all.
   bool expireToken([String? refused]) {
-    final tokens = _tokens;
-    if (_byCustomer || tokens == null) {
+    final cache = _tokenCache;
+    if (_byCustomer || cache == null) {
       return false;
     }
-    tokens.expire(refused);
+    cache.expire(refused);
     return true;
   }
 
@@ -214,7 +214,7 @@ final class Backend {
   Future<StreamCredentials> streamCredentials({bool refresh = false}) async {
     _requireStreamIdentity();
     if (refresh) {
-      _tokens!.refresh();
+      _tokenCache!.refresh();
     }
     return StreamCredentials(apiKey: apiKey, userId: userId, token: await _token());
   }
@@ -279,13 +279,13 @@ final class Backend {
   String _key(String kind) => '$kind:$apiKey:$userId';
 
   Future<String> _token() {
-    final tokens = _tokens;
-    if (tokens == null) {
+    final cache = _tokenCache;
+    if (cache == null) {
       throw ArgumentError(
         'an apiKey needs a token to go with it: pass token, or use withUser or withGuest',
       );
     }
-    return tokens.get();
+    return cache.get();
   }
 
   void _requireStreamIdentity() {
@@ -302,8 +302,8 @@ final class Backend {
 }
 
 /// The token one provider answered, and the fetch under way, if any.
-final class _Tokens {
-  _Tokens(this.provider);
+final class _TokenCache {
+  _TokenCache(this.provider);
 
   final TokenProvider provider;
   String? _fetched;
