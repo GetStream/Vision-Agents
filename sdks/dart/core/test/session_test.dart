@@ -74,6 +74,31 @@ void main() {
       keyed.close();
     });
 
+    test(
+      'leaves the credentials out of the error a refused socket raises, since errors end up in logs',
+      () async {
+        router
+          ..answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()))
+          ..refuseSockets = true;
+        var asked = 0;
+        final keyed = VisionAgents(
+          url: router.url,
+          apiKey: 'vak_live_x',
+          token: () async => 'token-for-jim-${++asked}',
+        );
+
+        final raised = await keyed
+            .attach('s1')
+            .then<Object>((_) => fail('opened'), onError: (Object e) => e);
+        keyed.close();
+
+        expect(raised, isA<TransportException>());
+        expect('$raised', contains('/v1/agents/sessions/s1/events'), reason: 'still says where');
+        expect('$raised', isNot(contains('token-for-jim')));
+        expect('$raised', isNot(matches(RegExp('vak_live_x|api_key|token='))));
+      },
+    );
+
     test('does not dial a refused socket again when the router is never shown a token', () async {
       router
         ..answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()))

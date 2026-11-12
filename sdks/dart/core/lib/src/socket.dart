@@ -34,8 +34,11 @@ final class SessionSocket {
     final WebSocket socket;
     try {
       socket = await WebSocket.connect(uri);
-    } on WebSocketException catch (error) {
-      throw TransportException(error);
+    } on Exception catch (error) {
+      // What went wrong is kept, and where. The query is not: it carries the credentials, and
+      // errors end up in logs.
+      final message = error is WebSocketException ? error.message : '$error';
+      throw TransportException(WebSocketException(message.replaceAll(_query, '')));
     }
     _socket = socket;
     return _read(socket);
@@ -90,3 +93,6 @@ final class SessionSocket {
     }
   }
 }
+
+/// A URL's query and fragment as an error message quotes them.
+final _query = RegExp(r'''\?[^\s'"]*''');
