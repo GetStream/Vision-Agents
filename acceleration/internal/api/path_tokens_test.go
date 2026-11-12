@@ -3,6 +3,7 @@
 package api
 
 import (
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -120,6 +121,34 @@ func (s *PathTokensSuite) TestATokenSentWithAMethodTheRouteDoesNotServeIsStillTa
 
 	s.requireLogged("path=/v1/phone/status/{token}")
 	s.NotContains(s.logged.String(), token)
+}
+
+func (s *PathTokensSuite) TestATokenPatternIsPreferredOverAnotherMethodsPattern() {
+	// The real routes never put a token-less pattern for the same path under another method.
+	routes := chi.NewRouter()
+	routes.Get("/v1/phone/{kind}/{id}", func(http.ResponseWriter, *http.Request) {})
+	routes.Post("/v1/phone/status/{token}", func(http.ResponseWriter, *http.Request) {})
+	token := s.utils.uuid()
+
+	path := loggedPath(routes, httptest.NewRequest(http.MethodPut, "/v1/phone/status/"+token, nil))
+
+	s.Equal("/v1/phone/status/{token}", path)
+}
+
+func (s *PathTokensSuite) TestAPanickingTokenRouteIsLoggedWithItsTokenTakenOut() {
+	routes := chi.NewRouter()
+	routes.Post("/v1/phone/status/{token}", func(http.ResponseWriter, *http.Request) { panic("boom") })
+	logged := &lockedLog{}
+	server := &Server{logger: slog.New(slog.NewTextHandler(logged, nil))}
+	token := s.utils.uuid()
+
+	s.Panics(func() {
+		withTrace(routes, server.withRequestLog(routes, routes)).ServeHTTP(httptest.NewRecorder(),
+			httptest.NewRequest(http.MethodPost, "/v1/phone/status/"+token, nil))
+	})
+
+	s.Contains(logged.String(), "path=/v1/phone/status/{token}")
+	s.NotContains(logged.String(), token)
 }
 
 func (s *PathTokensSuite) TestAnEncodedTokenIsTakenOut() {
