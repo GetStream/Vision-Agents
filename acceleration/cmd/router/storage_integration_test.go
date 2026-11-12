@@ -15,6 +15,7 @@ import (
 
 	"github.com/getsentry/sentry-go"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/alerts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
@@ -23,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/server"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
 )
 
@@ -102,10 +104,11 @@ func (s *UsageCommandsSuite) TestAJobShipsItsEventsUnderAJobSourceTheEventLagLea
 	usagetest.Empty(s.T(), service.Ledger)
 	s.settings.Usage = config.Usage{URL: service.URL, Token: service.Token}
 	s.deploymentApps("app-1")
-	server := turbopuffertest.Start(s.T())
-	server.Holds("app-1__docs", 2_000_000_000)
+	turbo := turbopuffertest.Start(s.T())
+	turbo.Holds("app-1__docs", 2_000_000_000)
 
-	_, err := s.runStorage(server, storageHour, slog.New(slog.DiscardHandler))
+	_, lagBefore := alerts.Above(server.EventLag, 600)
+	_, err := s.runStorage(turbo, storageHour, slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 
 	s.Eventually(func() bool {
@@ -118,6 +121,8 @@ func (s *UsageCommandsSuite) TestAJobShipsItsEventsUnderAJobSourceTheEventLagLea
 	host, _ := os.Hostname()
 	s.Equal(routing.JobSource(cmp.Or(s.settings.Shard, routing.Unsharded), host), source)
 	s.True(strings.HasPrefix(source, "job/"), source)
+	_, lagAfter := alerts.Above(server.EventLag, 600)
+	s.Equal(lagBefore, lagAfter, "a job's row, dated to the hour it bills, is not observed as a router's event lag")
 }
 
 // keptKeys are the keys customers keep, by customer, provider and region.

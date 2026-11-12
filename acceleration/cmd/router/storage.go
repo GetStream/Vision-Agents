@@ -101,7 +101,7 @@ func storageHourOf(text string, now time.Time) (time.Time, error) {
 // the policies saying whose app each row's organization is and its tier. The writer ships under
 // a job source, job/<shard>/<host>: the rows are dated to the period they bill, so they are not
 // a router's event lag. stop drains the writer; what it has not shipped by then, the routers'
-// sweeper ships.
+// sweeper ships, under its own router/<shard>/<host> source, so those rows do count in the lag.
 func jobRecorder(ctx context.Context, settings config.Config, pgStore *store.Store, modality routing.Modality,
 	logger *slog.Logger) (*routing.Recorder, func(), error) {
 	usageClient, err := newUsageClient(settings, pgStore, logger)
