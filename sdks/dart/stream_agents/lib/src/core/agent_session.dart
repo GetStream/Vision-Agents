@@ -116,6 +116,7 @@ final class AgentSession {
   StreamSubscription<AgentEvent>? _pump;
   Future<void>? _starting;
   Future<void>? _closing;
+  bool _detached = false;
 
   /// What the router holds this session by, which addresses it and its socket.
   String get id => session.id;
@@ -325,16 +326,19 @@ final class AgentSession {
       } on SocketClosedException {
         await _stop();
       }
-    } else if (_connection.value case NotStarted() || Disconnected(failure: _?)) {
+    } else if (_detached || _connection.value is NotStarted || failure != null) {
       await _stop();
     }
     await _hangUp();
   }
 
   /// Closes this device's socket and leaves the session running on the router, for a
-  /// conversation followed here that somebody else started.
+  /// conversation followed here that somebody else started. [close] still stops it.
   @internal
-  Future<void> detach() => _hangUp();
+  Future<void> detach() {
+    _detached = true;
+    return _hangUp();
+  }
 
   /// Deletes this conversation, stopping it if it is running: its turns and what it taught
   /// memory go with it.

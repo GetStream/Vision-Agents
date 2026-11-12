@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'voice_session.dart';
 
 /// The controls for a spoken conversation: mute, camera, and hang up. Joins the call when it
-/// is first built.
+/// is first built, and joins again when handed another voice session.
 ///
 /// It draws no transcript. Showing what was said is the UI package's job, over the same
 /// `session` the voice session holds, so a host can put the two together however it likes.
@@ -12,6 +12,9 @@ class VoiceCallView extends StatefulWidget {
   const VoiceCallView({super.key, required this.voice, this.camera = false});
 
   final VoiceSession voice;
+
+  /// Whether the camera is joined with and offered as a control. Turned false, the camera is
+  /// turned off.
   final bool camera;
 
   @override
@@ -26,6 +29,16 @@ class _VoiceCallViewState extends State<VoiceCallView> {
   }
 
   @override
+  void didUpdateWidget(VoiceCallView old) {
+    super.didUpdateWidget(old);
+    if (!identical(widget.voice, old.voice)) {
+      widget.voice.join(camera: widget.camera);
+    } else if (old.camera && !widget.camera && widget.voice.state.value.isCameraEnabled) {
+      widget.voice.setCameraEnabled(false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final voice = widget.voice;
@@ -35,6 +48,11 @@ class _VoiceCallViewState extends State<VoiceCallView> {
       builder: (context, snapshot) {
         final state = snapshot.data!;
         final joined = state.isJoined;
+        final status = state.isJoining
+            ? 'joining'
+            : state.isEnded
+            ? 'call ended'
+            : null;
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -44,9 +62,9 @@ class _VoiceCallViewState extends State<VoiceCallView> {
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.error),
               )
-            else if (!joined)
+            else if (status != null)
               Text(
-                'joining',
+                status,
                 style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.outline),
               ),
             const SizedBox(height: 16),
@@ -71,7 +89,7 @@ class _VoiceCallViewState extends State<VoiceCallView> {
                   tooltip: 'Hang up',
                   iconSize: 28,
                   style: IconButton.styleFrom(backgroundColor: Colors.red),
-                  onPressed: voice.end,
+                  onPressed: state.isEnded ? null : voice.end,
                   icon: const Icon(Icons.call_end),
                 ),
               ],
