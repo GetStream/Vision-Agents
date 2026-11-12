@@ -122,7 +122,7 @@ final class Backend {
       apiKey,
       userId,
       provider,
-      token == null && userId == this.userId
+      (token == null || token == this.token) && userId == this.userId
           ? _tokenCache
           : (provider == null ? null : _TokenCache(provider)),
       _clients,
@@ -332,6 +332,9 @@ final class _TokenCache {
     if (_fetched case final token? when !_expiresSoon(token)) {
       return Future.value(token);
     }
+    // One about to expire is being replaced, so a refusal of it arriving meanwhile leaves the
+    // fetch of its replacement alone.
+    _fetched = null;
     return _fetching ??= _fetch();
   }
 
@@ -351,9 +354,9 @@ final class _TokenCache {
 
   Future<String> _fetch() {
     late final Future<String> fetching;
-    // Kept only if nothing expired the token while it was fetched: otherwise it is the one
-    // that was just refused.
-    fetching = Future(provider).then(
+    // Kept only if nothing expired it while it was fetched. `sync` so a provider that answers
+    // at once does so without waiting for a timer, which a test's fake clock never fires.
+    fetching = Future.sync(provider).then(
       (token) {
         if (identical(_fetching, fetching)) {
           _fetched = token;

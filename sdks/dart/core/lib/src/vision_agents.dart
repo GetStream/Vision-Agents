@@ -176,11 +176,11 @@ final class VisionAgents {
     );
     try {
       await session.start();
-    } on AgentsException {
+    } catch (_) {
       // The agent is in the conversation whether or not anybody here can follow it, so it is
       // stopped rather than left holding a call nobody is listening to.
       try {
-        await sessions.stop(session.id);
+        await session.close();
       } catch (_) {
         // Reporting why the socket did not open matters more than this, which can fail for
         // the same reason, such as no token to be had.

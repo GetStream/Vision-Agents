@@ -245,6 +245,7 @@ void main() {
 
           await keyed.sessions.get('s1');
           await keyed.withUser('jlahey').sessions.get('s1');
+          await keyed.withUser('jlahey', token: counting).sessions.get('s1');
           await keyed
               .withUser('jlahey', token: () async => 'other-${++otherAsked}')
               .sessions
@@ -255,10 +256,72 @@ void main() {
           expect(router.arrived.map((request) => request.header('Authorization')), [
             'Bearer token-1',
             'Bearer token-1',
+            'Bearer token-1',
             'Bearer other-1',
           ]);
         },
       );
+
+      test(
+        'keeps fetching the replacement of a token about to expire when that token is refused',
+        () async {
+          final claims = base64Url.encode(
+            utf8.encode(jsonEncode({'exp': DateTime.now().millisecondsSinceEpoch ~/ 1000 + 10})),
+          );
+          final expiring = 'header.${claims.replaceAll('=', '')}.signature';
+          final replacement = Completer<String>();
+          final backend = Backend(
+            url: router.url,
+            apiKey: 'key',
+            token: () => ++asked == 1 ? Future.value(expiring) : replacement.future,
+          );
+
+          await backend.headers();
+          final replacing = backend.headers();
+          // A request that went out with the expiring token is refused while it is replaced.
+          backend.expireToken(expiring);
+          replacement.complete('token-2');
+
+          expect((await replacing)['Authorization'], 'Bearer token-2');
+          expect((await backend.headers())['Authorization'], 'Bearer token-2');
+          expect(asked, 2);
+        },
+      );
+
+      test('drops a fetch that was overtaken by a refusal', () async {
+        final fetches = [Completer<String>(), Completer<String>()];
+        final backend = Backend(
+          url: router.url,
+          apiKey: 'key',
+          token: () => fetches[asked++].future,
+        );
+
+        final stale = backend.headers();
+        backend.expireToken();
+        final fresh = backend.headers();
+        fetches[1].complete('token-2');
+        await fresh;
+        fetches[0].complete('token-1');
+        await stale;
+
+        expect((await backend.headers())['Authorization'], 'Bearer token-2');
+        expect(asked, 2);
+      });
+
+      test('answers at once, with no timer, when the provider does', () async {
+        final backend = Backend(url: router.url, apiKey: 'key', token: () async => 'token-1');
+
+        // A widget test's fake clock never fires a timer it is not told to.
+        final headers = await runZoned(
+          backend.headers,
+          zoneSpecification: ZoneSpecification(
+            createTimer: (self, parent, zone, duration, callback) =>
+                throw StateError('the token was fetched behind a timer'),
+          ),
+        );
+
+        expect(headers['Authorization'], 'Bearer token-1');
+      });
 
       test('keeps a token whose expiry is further out than a date can hold', () async {
         router.answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));

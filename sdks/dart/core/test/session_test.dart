@@ -111,7 +111,8 @@ void main() {
         token: () async => ++asked == 2 ? throw StateError('backend down') : 'token-$asked',
       );
 
-      await expectLater(keyed.chat(), throwsA(isA<TransportException>()));
+      // Thrown as the provider threw it, as a request asking for a token would.
+      await expectLater(keyed.chat(), throwsStateError);
       keyed.close();
 
       expect(router.last('POST /v1/agents/sessions/s1/stop').method, 'POST');
@@ -125,13 +126,116 @@ void main() {
         final keyed = VisionAgents(
           url: router.url,
           apiKey: 'key',
-          token: () async => ++asked == 1 ? 'token-1' : throw StateError('backend down'),
+          token: () async => ++asked == 1 ? 'token-1' : throw StateError('down for call $asked'),
         );
 
+        // Stopping the agent asks for a token too, and fails as call 3: call 2 is the reason.
         await expectLater(
           keyed.chat(),
-          throwsA(isA<TransportException>().having((error) => error.cause, 'cause', isStateError)),
+          throwsA(isA<StateError>().having((e) => e.message, 'message', 'down for call 2')),
         );
+        keyed.close();
+      },
+    );
+
+    test('a session that could not start stays over, and closing it stops its agent', () async {
+      router.answer('POST /v1/agents/sessions/s1/stop', const Answer(204));
+      var asked = 0;
+      final keyed = VisionAgents(
+        url: router.url,
+        apiKey: 'key',
+        token: () async => ++asked == 1 ? throw StateError('backend down') : 'token-$asked',
+      );
+      final session = AgentSession(
+        Session(id: 's1', createdAt: DateTime.utc(2026)),
+        backend: keyed.backend,
+        sessions: keyed.sessions,
+      );
+
+      await expectLater(session.start(), throwsStateError);
+      expect(session.failure, isA<TransportException>());
+      await session.start();
+      await session.close();
+      await session.close();
+      keyed.close();
+
+      expect(router.upgrades, isEmpty, reason: 'starting again opens nothing');
+      expect(router.arrived.where((r) => r.path == '/v1/agents/sessions/s1/stop'), hasLength(1));
+    });
+
+    test('closing a session deleted before it started stops nothing', () async {
+      router.answer('DELETE /v1/agents/sessions/s1', const Answer(204));
+      final session = AgentSession(
+        Session(id: 's1', createdAt: DateTime.utc(2026)),
+        backend: agents.backend,
+        sessions: agents.sessions,
+      );
+
+      await session.delete();
+      await session.close();
+
+      expect(router.arrived.map((r) => '${r.method} ${r.path}'), ['DELETE /v1/agents/sessions/s1']);
+    });
+
+    test('a session closed while its socket dials is not dialled again', () async {
+      router
+        ..answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()))
+        ..answer('POST /v1/agents/sessions/s1/stop', const Answer(204))
+        ..refuseSocketsWhere = ((query) => query['token'] == 'token-1')
+        ..holdUpgrades = Completer<void>();
+      var asked = 0;
+      final keyed = VisionAgents(
+        url: router.url,
+        apiKey: 'key',
+        token: () async => 'token-${++asked}',
+      );
+      final session = AgentSession(
+        await keyed.sessions.get('s1'),
+        backend: keyed.backend,
+        sessions: keyed.sessions,
+      );
+
+      final starting = session.start();
+      await until(() => router.upgrades.isNotEmpty);
+      await session.close();
+      router.holdUpgrades!.complete();
+      await expectLater(starting, throwsA(isA<TransportException>()));
+      keyed.close();
+
+      expect(router.upgrades, hasLength(1));
+      expect(asked, 1, reason: 'no token is asked for a session already closed');
+    });
+
+    test(
+      'a late refusal of an older token dials again with the newer one, asking nothing',
+      () async {
+        router
+          ..answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()))
+          ..refuseSocketsWhere = ((query) => query['token'] == 'token-1')
+          ..holdUpgrades = Completer<void>();
+        var asked = 0;
+        final keyed = VisionAgents(
+          url: router.url,
+          apiKey: 'key',
+          token: () async => 'token-${++asked}',
+        );
+        final session = AgentSession(
+          await keyed.sessions.get('s1'),
+          backend: keyed.backend,
+          sessions: keyed.sessions,
+        );
+
+        final starting = session.start();
+        await until(() => router.upgrades.isNotEmpty);
+        // A request refused meanwhile has fetched token-2 already.
+        keyed.backend.expireToken('token-1');
+        await keyed.backend.headers();
+        router.holdUpgrades!.complete();
+        await starting;
+
+        expect(router.upgrades.map((upgrade) => upgrade.query['token']), ['token-1', 'token-2']);
+        expect(asked, 2);
+        await session.close();
         keyed.close();
       },
     );

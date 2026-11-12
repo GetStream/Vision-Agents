@@ -77,6 +77,9 @@ final class TestRouter {
   /// carrying a token the router no longer takes.
   bool Function(Map<String, String> query)? refuseSocketsWhere;
 
+  /// Holds every socket upgrade until it completes, so a test can act while one is dialling.
+  Completer<void>? holdUpgrades;
+
   /// The socket the SDK opened [index]th, once it has.
   Future<TestSocket> socket([int index = 0]) async {
     await until(() => _open.length > index);
@@ -99,6 +102,7 @@ final class TestRouter {
 
     if (WebSocketTransformer.isUpgradeRequest(request)) {
       upgrades.add(seen);
+      await holdUpgrades?.future;
       if (refuseSockets || (refuseSocketsWhere?.call(seen.query) ?? false)) {
         request.response
           ..statusCode = 404
