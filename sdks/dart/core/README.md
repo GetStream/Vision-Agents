@@ -9,6 +9,7 @@
 **Quick Links**
 
 - [Register](https://dashboard.getstream.io/signup/) to get an API key for Stream
+- [Agent Skills](https://getstream.io/agent-skills/) to build with Stream from your AI coding agent
 
 ## Overview
 
