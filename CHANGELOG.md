@@ -6,6 +6,10 @@
 
 `ChildAgent` (an agent config's `agents`, and agent.yaml's `agents:`) gains `max_tool_rounds`: the reply to a tool result, counted since the child was handed its input, at which it is offered no more tools and made to answer. Zero or left out is the default of 8, as before, and a negative number never withdraws them, as `max_tool_rounds` on `createSession` does. A child that chains many lookups, such as a reviewer reading through a diff, no longer has to answer after 8.
 
+### Python: local model plugins take a `revision`, and Vogent's model is pinned
+
+`huggingface.TransformersLLM`, `TransformersVLM` and `TransformersDetectionProcessor` take a `revision` argument (a commit hash, tag or branch) and pass it to every `from_pretrained` call. `moondream.LocalVLM` and `LocalDetectionProcessor` take `revision` too. `vogent.TurnDetection` loads `vogent/Vogent-Turn-80M` at a pinned commit; before, it followed the `main` branch.
+
 ### The router reaches Gemini Decision 1
 
 `gemini/gemini-decision-1` is a decision model on Google's Decisions API, read with `GOOGLE_API_KEY` like the other Gemini models. It answers the same noul, choice and score questions, at $0.10 per million input tokens and nothing for output. It is in the fast tier with every other decision model, and the guardrail route still prefers Jev.
@@ -520,6 +524,12 @@ A tool function that needs the call it runs for (who asked, its id, `update`, `s
 - PHP: a callable that takes two arguments, or a `ToolCallContext` first, gets `(ToolCallContext $toolCallContext, array $args)`; one that takes one gets `(array $args)`.
 - Rust: `register_with_tool_call_context` hands its function `(tool_call_context: ToolCallContext, arguments)`.
 - C#: the overloads that take the context are `(ToolCallContext toolCallContext, arguments, cancellationToken)`.
+
+### Python: remote code is off by default in `huggingface`, and Moondream needs a pinned revision
+
+`huggingface.TransformersVLM` now defaults to `trust_remote_code=False` (was `True`), the same as `TransformersLLM`. Models that `transformers` supports natively, such as LLaVA, Qwen2-VL and SmolVLM2, load as before. A VLM whose repo ships its own model code no longer loads with the defaults; opt in and pin the repo to a commit with the new `revision` argument: `TransformersVLM(model="org/model", trust_remote_code=True, revision="<commit hash>")`.
+
+`moondream.LocalVLM` and `moondream.LocalDetectionProcessor` always run code from the model repo. The default model, `moondream/moondream3-preview`, is now loaded at a pinned commit. A custom `model_name` with no `revision` raises `ValueError`: pass `revision="<commit hash>"`.
 
 ### A worker cannot host tools for an agent the app does not have
 
