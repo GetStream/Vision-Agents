@@ -728,6 +728,20 @@ when the transcriber is chorus-asr too, and otherwise from when the words last c
 Nothing acts on the tool the caller wants, or on `cannot`, and a tool's approval is
 untouched. Acting, a decision's `Ruler` is `heard`.
 
+The words always count. Floor control says when the agent speaks, never whether what the
+caller said reaches it. `ignore` with words, over the agent or not, says they were no turn
+for the agent: a murmur ("yeah", "mm-hmm"), a voice in the room, a radio, or a caller's aside
+("Yeah, zip is 46281." over a reply). They are heard, and kept for the next reply to the
+caller, which is told they may be someone else and uses them only where they fit, a line the
+agent says of its own accord included; the agent is not interrupted, and nothing is answered
+on their own account: a caller's line the model took for background is answered with their
+next turn, and the model's ignores are its training's to get right. A cough or a lone "uh"
+stays ignored. With another transcriber writing the words,
+the runs it had settled go out as a turn of their own when the floor steps aside or takes the
+turns back, a final that comes after the floor gave up waiting for it is the next turn's (its
+words past the ones the turn ended on), and words settled with no voice heard since are a
+turn of their own 700 ms later: no final it writes is dropped.
+
 ## Fallbacks
 
 - **Acting.** The model has a third of the flow controller's deadline for a pause, 1 s, and
