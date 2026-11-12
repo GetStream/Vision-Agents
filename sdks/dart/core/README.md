@@ -10,12 +10,14 @@
 
 - [Register](https://dashboard.getstream.io/signup/) to get an API key for Stream
 
-## Changelog
-
-Check out the [changelog on pub.dev](https://pub.dev/packages/stream_agents_core/changelog) to
-see the latest changes in the package.
-
 ## Overview
+
+Stream Agents runs AI agents in Stream's backend. An agent is set up there, with its
+instructions, tools and knowledge, and the backend does the rest: it runs the model, and on a
+call it joins, listens, answers and speaks. An app opens a conversation with an agent, in
+writing or out loud, and shows it to the person. These packages are the app's side, for Dart
+and Flutter: they connect the app to the agent and keep the conversation in sync. The model and
+the audio and video processing run in Stream's backend, not on the device.
 
 The agent runs in Stream's backend. This package is the client side of a conversation with it:
 the API client, the session socket, and the conversation as state an app can render. It ships
