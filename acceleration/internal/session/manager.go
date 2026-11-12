@@ -1029,12 +1029,14 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	if m.closed {
 		m.mu.Unlock()
 		turnedAway = true
+		created.handedOver.Store(true)
 		fail()
 		return nil, stack.Wrap(errors.New("session: the manager is shut down"))
 	}
 	if held, raced := m.sessions[created.id]; raced && !replaces(spec, held) {
 		m.mu.Unlock()
 		turnedAway = true
+		created.handedOver.Store(true)
 		fail()
 		return nil, stack.Wrap(ErrSessionExists)
 	}
@@ -1145,6 +1147,7 @@ func (m *Manager) supersede(spec Spec) {
 	for _, found := range left {
 		m.logger.Info("ending the session this agent left behind in the call",
 			"session", found.id, "call", spec.CallID, "user", spec.UserID)
+		found.handedOver.Store(true)
 		if err := found.Close(); err != nil {
 			m.logger.Warn("the session left behind did not end cleanly",
 				"session", found.id, "error", err)
@@ -1810,7 +1813,7 @@ func (m *Manager) leaveVoicemail(found *Session, spec Spec, message string) {
 // which would otherwise ring on with no agent to answer it. In the background, so a slow
 // vendor holds up neither the rest of the close nor a shutdown closing the next session.
 func (m *Manager) hangUpRinging(created *Session, spec Spec) {
-	if created.CallerJoined() {
+	if created.CallerJoined() || created.handedOver.Load() {
 		return
 	}
 	m.ended.Add(1)

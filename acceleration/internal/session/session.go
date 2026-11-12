@@ -328,6 +328,8 @@ type Session struct {
 	// halted is set by a router shutting down, whose ending leaves the reply being written
 	// interrupted rather than cancelled.
 	halted atomic.Bool
+	// handedOver is set on a session whose call another session serves, which must not hang it up.
+	handedOver atomic.Bool
 	// active is set while router_sessions_active counts the session: from the manager
 	// holding it until it has closed. agentLeft is set once its agent left the call by itself
 	// (consume). modelErred and replied are whether its model failed a turn and whether
