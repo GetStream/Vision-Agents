@@ -3,9 +3,9 @@ package vendorevent
 // VendorTelnyx is the vendor label of Telnyx's events.
 const VendorTelnyx = "telnyx"
 
-// telnyxLevels is every Telnyx event type the router names, with its level. A type Telnyx
-// documents with no string for its event_type (a deleted number, a requirement group's
-// status change) is not here: it is counted as Other until a delivery shows its name.
+// telnyxLevels is every Telnyx event type the router names, with its level. A deleted number
+// and a requirement group's status change are not here: the Telnyx docs give no event_type
+// for either, so they are counted as Other until a delivery shows their names.
 var telnyxLevels = map[string]Level{
 	// A port-out takes a number off the account, and the agent on it stops answering.
 	// https://developers.telnyx.com/docs/numbers/porting/port-out-notifications.md
