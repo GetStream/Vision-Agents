@@ -109,8 +109,9 @@ func TestAFloorControlTheSchemaRefusesIsRefusedWithoutIt(t *testing.T) {
 func TestAnUnsetFloorControlIsTheRoutersDefault(t *testing.T) {
 	require.Equal(t, audiofloor.Off, session.FloorModeOf(store.FloorControl{}))
 	require.Equal(t, audiofloor.Off, session.FloorModeOf(store.FloorControl{Model: store.FloorControlFlowController}))
-	require.Equal(t, audiofloor.Act, session.FloorModeOf(session.FloorControlOf(store.FloorControl{}, store.FloorControlChorusASR, true)))
-	require.Equal(t, audiofloor.Off, session.FloorModeOf(session.FloorControlOf(store.FloorControl{Model: store.FloorControlFlowController}, store.FloorControlChorusASR, true)))
+	defaulting := session.FloorDefault{Model: store.FloorControlChorusASR}
+	require.Equal(t, audiofloor.Act, session.FloorModeOf(session.FloorControlOf(store.FloorControl{}, nil, defaulting, true)))
+	require.Equal(t, audiofloor.Off, session.FloorModeOf(session.FloorControlOf(store.FloorControl{Model: store.FloorControlFlowController}, nil, defaulting, true)))
 	require.Equal(t, audiofloor.Act, session.FloorModeOf(chorusASR(0)))
 	require.Equal(t, audiofloor.EndOfTurn{MaxWaitMs: 800}, session.EndOfTurnOf(chorusASR(800)))
 	require.Equal(t, audiofloor.EndOfTurn{}, session.EndOfTurnOf(chorusASR(0)), "no wait is the server's default point")

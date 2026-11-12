@@ -2076,8 +2076,8 @@ func buildSessions(
 		Phone:      telephony,
 		// Off unless the deployment names a server and an agent opts in, or the deployment
 		// defaults every agent that chose none to it.
-		AudioFloor:          floor,
-		FloorControlDefault: settings.Agent.FloorControlDefault,
+		AudioFloor:   floor,
+		FloorDefault: session.FloorDefault{Model: settings.Agent.FloorControlDefault, Languages: settings.Agent.FloorControlDefaultLanguages},
 		// Off unless the deployment asks: a reply started before its ruling is paid for
 		// whether or not it is spoken.
 		SpeculativeReplies: settings.Agent.SpeculativeReplies,

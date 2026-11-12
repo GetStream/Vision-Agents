@@ -133,7 +133,7 @@ func (s *FloorControlSuite) TestAnOptOutIsStoredAndReadBackAsSent() {
 	stored, err := s.store.AgentConfig(context.Background(), s.customerID(), synced.Config.Id)
 	s.Require().NoError(err)
 	s.Equal(store.FloorControl{Model: store.FloorControlFlowController}, stored.FloorControl)
-	s.Equal(store.FloorControl{}, session.FloorControlOf(stored.FloorControl, store.FloorControlChorusASR, true), "and keeps the flow controller whatever the router's default")
+	s.Equal(store.FloorControl{}, session.FloorControlOf(stored.FloorControl, nil, session.FloorDefault{Model: store.FloorControlChorusASR}, true), "and keeps the flow controller whatever the router's default")
 	s.Equal(optedOut, s.syncFloor("opted-out", "v2", nil).Config.FloorControl, "left out, the opt-out stays")
 	s.Nil(s.syncFloor("opted-out", "v3", map[string]any{"floor_control": map[string]any{}}).Config.FloorControl, "empty is no choice again")
 

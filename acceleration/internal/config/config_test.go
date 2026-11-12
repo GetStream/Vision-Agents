@@ -904,6 +904,30 @@ func (s *ConfigSuite) TestTheFloorControlDefaultIsChorusASROrTheFlowController()
 	s.Contains(chorusASRModeRetired, "ROUTER_FLOOR_CONTROL_DEFAULT")
 }
 
+// The default is narrowed to the languages listed, BCP 47 tags, each as written: a code of
+// another shape refuses to start, naming the variable.
+func (s *ConfigSuite) TestTheFloorControlDefaultIsForTheLanguagesListed() {
+	settings, _, err := Load("")
+	s.Require().NoError(err)
+	s.Empty(settings.Agent.FloorControlDefaultLanguages)
+	for setting, listed := range map[string][]string{
+		"en":                    {"en"},
+		"en, es-ES,pt-BR, ":     {"en", "es-ES", "pt-BR"},
+		"EN-us,yue-Hant-HK,ast": {"EN-us", "yue-Hant-HK", "ast"},
+	} {
+		s.T().Setenv("ROUTER_FLOOR_CONTROL_DEFAULT_LANGUAGES", setting)
+		settings, _, err = Load("")
+		s.Require().NoError(err, setting)
+		s.Equal(listed, settings.Agent.FloorControlDefaultLanguages, setting)
+	}
+	for _, bad := range []string{"english", "e", "en US", "en-", "1n", "en_US", "en,*"} {
+		s.T().Setenv("ROUTER_FLOOR_CONTROL_DEFAULT_LANGUAGES", bad)
+		_, _, err = Load("")
+		s.Require().Error(err, bad)
+		s.ErrorContains(err, "agent.floor_control_default_languages (ROUTER_FLOOR_CONTROL_DEFAULT_LANGUAGES) is a comma-separated list of BCP 47 language codes", bad)
+	}
+}
+
 func (s *ConfigSuite) TestTheAudioFloorsAudioIsOpusOrPCM() {
 	s.T().Setenv("ROUTER_CHORUS_ASR_AUDIO", "mp3")
 	_, _, err := Load("")
