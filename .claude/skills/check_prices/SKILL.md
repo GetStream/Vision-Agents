@@ -51,6 +51,8 @@ Pages to start from. A subagent that finds one moved, or a provider missing, fix
 | `deepseek`, `baseten` | https://www.baseten.co/library/ (each model's page): the `deepseek` provider calls Baseten's Model APIs unless `DEEPSEEK_BASE_URL` names another endpoint, so DeepSeek's own prices do not apply |
 | `qwen` | https://www.alibabacloud.com/help/en/model-studio/model-pricing (International) |
 | `fish` | https://docs.fish.audio/developer-guide/models-pricing/pricing-and-rate-limits |
+| `telnyx` | https://telnyx.com/pricing/voice-api and https://telnyx.com/pricing/elastic-sip: `call_minutes` is the per-minute voice rate plus the SIP leg to the Stream trunk (Voice API $0.002 + Elastic SIP) |
+| `twilio` | https://www.twilio.com/en-us/voice/pricing/us (and `/ca`): `call_minutes` is the local per-minute rate plus the SIP interface |
 | `meta` (WhatsApp) | https://developers.facebook.com/documentation/business-messaging/whatsapp/pricing |
 | `exa` | https://exa.ai/pricing |
 | `tavily` | https://www.tavily.com/pricing |
