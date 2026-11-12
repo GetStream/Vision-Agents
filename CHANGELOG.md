@@ -5,6 +5,7 @@
 ### Python: an `authorize` hook on tool calls
 
 `FunctionRegistry(authorize=...)`, or `llm.function_registry.authorize = ...`, takes an async callable that runs before every tool call with the function's name, its arguments and the `ToolCallContext`. Raise `ToolCallRefused("...")` to stop the call; the function does not run and the model is told the message.
+
 ### A child agent takes a budget of tool rounds
 
 `ChildAgent` (an agent config's `agents`, and agent.yaml's `agents:`) gains `max_tool_rounds`: the reply to a tool result, counted since the child was handed its input, at which it is offered no more tools and made to answer. Zero or left out is the default of 8, as before, and a negative number never withdraws them, as `max_tool_rounds` on `createSession` does. A child that chains many lookups, such as a reviewer reading through a diff, no longer has to answer after 8.
