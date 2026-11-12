@@ -2,6 +2,10 @@
 
 ## Features
 
+### The router counts Telnyx account events
+
+`POST /v1/phone/hooks/telnyx/events` takes the account events Telnyx signs, such as a port-out or a number order, and counts each in `vendor_account_events_total{vendor,event,level}`, with one log line. A port-out or a reached messaging spend limit is `page`, a number order that did not succeed is `warn`, and the rest is `info`; a type the router does not name is counted as `other`. The route answers 404 while `TELNYX_PUBLIC_KEY` is unset, and 401 to an event Telnyx did not sign. (#1985)
+
 ### A child agent takes a budget of tool rounds
 
 `ChildAgent` (an agent config's `agents`, and agent.yaml's `agents:`) gains `max_tool_rounds`: the reply to a tool result, counted since the child was handed its input, at which it is offered no more tools and made to answer. Zero or left out is the default of 8, as before, and a negative number never withdraws them, as `max_tool_rounds` on `createSession` does. A child that chains many lookups, such as a reviewer reading through a diff, no longer has to answer after 8.
