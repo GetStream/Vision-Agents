@@ -140,6 +140,46 @@ func (s *PathTokensSuite) TestARouteWithoutATokenIsLoggedAsItWasSent() {
 	s.requireLogged("path=" + path)
 }
 
+func (s *PathTokensSuite) TestARouteWithAnEncodedSegmentIsLoggedDecodedAsBefore() {
+	s.unauthenticatedClient.do(http.MethodGet, "/v1/agents/sessions/a%2Fb/events", nil, nil)
+
+	s.requireLogged("path=/v1/agents/sessions/a/b/events")
+}
+
+func (s *PathTokensSuite) TestASpanOfAPanickingTokenRouteHoldsNoToken() {
+	routes := chi.NewRouter()
+	routes.Post("/v1/phone/status/{token}", func(http.ResponseWriter, *http.Request) { panic("boom") })
+	token := s.utils.uuid()
+	s.spans.Reset()
+
+	s.Panics(func() {
+		withTrace(routes, routes).ServeHTTP(httptest.NewRecorder(),
+			httptest.NewRequest(http.MethodPost, "/v1/phone/status/"+token, nil))
+	})
+
+	var path string
+	s.Require().Eventually(func() bool {
+		for _, span := range s.spans.Ended() {
+			if span.SpanKind() != trace.SpanKindServer {
+				continue
+			}
+			for _, attr := range span.Attributes() {
+				if attr.Key == "url.path" {
+					path = attr.Value.Emit()
+				}
+			}
+		}
+		return path != ""
+	}, 5*time.Second, 20*time.Millisecond)
+	s.Equal("/v1/phone/status/{token}", path)
+	for _, span := range s.spans.Ended() {
+		s.NotContains(span.Name(), token)
+		for _, attr := range span.Attributes() {
+			s.NotContains(attr.Value.Emit(), token, attr.Key)
+		}
+	}
+}
+
 // Not driven through the whole router: no token route of it can be made to panic from outside,
 // and a panic is the event that carries the request.
 func (s *PathTokensSuite) TestASentryEventFromATokenRouteHoldsNoToken() {
@@ -165,7 +205,11 @@ func (s *PathTokensSuite) TestASentryEventFromATokenRouteHoldsNoToken() {
 
 	events := transport.Events()
 	s.Require().NotEmpty(events)
+	var transactions int
 	for _, event := range events {
+		if event.Type == "transaction" {
+			transactions++
+		}
 		s.NotContains(event.Request.URL, token)
 		s.Contains(event.Request.URL, "/v1/phone/status/{token}")
 		s.NotContains(event.Transaction, token)
@@ -173,4 +217,5 @@ func (s *PathTokensSuite) TestASentryEventFromATokenRouteHoldsNoToken() {
 			s.NotContains(breadcrumb.Message, token)
 		}
 	}
+	s.NotZero(transactions, "no transaction event arrived")
 }

@@ -260,9 +260,10 @@ func redactOperatorText(key, text string) string {
 
 // RedactSentryEvent is a sentry BeforeSend that puts an event's message, its exceptions'
 // values, its breadcrumbs' messages, its tags, every string in its contexts, its request's URL
-// and query string and its transaction's name through RedactLogText: they are an error's text, which can echo the key a provider was sent, as a
-// usage alert's context does (internal/alerts). Phone numbers and caller ids in them are masked
-// with logMasks (logmask.go) too.
+// and query string and its transaction's name through RedactLogText: they are an error's text,
+// which can echo the key a provider was sent, as a usage alert's context does
+// (internal/alerts). Phone numbers and caller ids in them are masked with logMasks
+// (logmask.go) too.
 func RedactSentryEvent(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
 	event.Message = redactOperatorText("", event.Message)
 	for i := range event.Exception {

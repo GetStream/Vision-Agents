@@ -187,14 +187,20 @@ const tokenSegment = "{token}"
 // matches, or one a wildcard matches, is as sent.
 func loggedPath(routes *chi.Mux, r *http.Request) string {
 	pattern := chi.RouteContext(r.Context()).RoutePattern()
-	for _, method := range []string{r.Method, http.MethodGet, http.MethodPost, http.MethodPut,
-		http.MethodPatch, http.MethodDelete, http.MethodHead} {
-		if pattern != "" {
-			break
-		}
-		pattern = findRoute(routes, r, method)
-	}
 	if pattern == "" {
+		for _, method := range []string{r.Method, http.MethodGet, http.MethodPost, http.MethodPut,
+			http.MethodPatch, http.MethodDelete, http.MethodHead} {
+			found := findRoute(routes, r, method)
+			if pattern == "" {
+				pattern = found
+			}
+			if strings.Contains(found, tokenSegment) {
+				pattern = found
+				break
+			}
+		}
+	}
+	if !strings.Contains(pattern, tokenSegment) {
 		return r.URL.Path
 	}
 	raw := r.URL.RawPath

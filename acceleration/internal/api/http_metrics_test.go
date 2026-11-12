@@ -474,7 +474,7 @@ func (s *HTTPMetricsSuite) TestARequestAPeerHandedOverIsCountedOnlyWhereItArrive
 	path := s.prefix + "/sessions/" + rand.Text()
 
 	response := httptest.NewRecorder()
-	withTrace(s.mux, withMetrics(entry, entry)).ServeHTTP(response, httptest.NewRequestWithContext(ctx, http.MethodGet, path, nil))
+	withTrace(entry, withMetrics(entry, entry)).ServeHTTP(response, httptest.NewRequestWithContext(ctx, http.MethodGet, path, nil))
 
 	s.Equal(http.StatusOK, response.Code)
 	s.Equal(1.0, s.count(arrived, "2xx"))

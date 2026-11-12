@@ -945,13 +945,16 @@ func withTrace(mux *chi.Mux, next http.Handler) http.Handler {
 	traced := otelhttp.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		routes := chi.NewRouteContext()
 		r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, routes))
+		// Deferred: a panic skips what follows next, and otelhttp ends the span as it unwinds.
+		defer func() {
+			span := trace.SpanFromContext(r.Context())
+			if pattern := routes.RoutePattern(); pattern != "" {
+				span.SetName(r.Method + " " + pattern)
+			}
+			// otelhttp records the path as sent, which for a token route is the secret.
+			span.SetAttributes(attribute.String("url.path", loggedPath(mux, r)))
+		}()
 		next.ServeHTTP(w, r)
-		span := trace.SpanFromContext(r.Context())
-		if pattern := routes.RoutePattern(); pattern != "" {
-			span.SetName(r.Method + " " + pattern)
-		}
-		// otelhttp records the path as sent, which for a token route is the secret.
-		span.SetAttributes(attribute.String("url.path", loggedPath(mux, r)))
 	}), "router", otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
 		return r.Method
 	}))
