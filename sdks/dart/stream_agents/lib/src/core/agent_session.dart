@@ -364,8 +364,21 @@ final class AgentSession {
     }
   }
 
-  void _asked(String text) {
-    _conversation.value = _conversation.value.said(text.trim());
+  void Function() _asked(String text) {
+    final asked = _conversation.value.said(text.trim());
+    final id = asked.turns.last.id;
+    _conversation.value = asked;
+    return () {
+      final now = _conversation.value;
+      _conversation.value = Conversation(
+        turns: [
+          for (final turn in now.turns)
+            if (turn.id != id) turn,
+        ],
+        state: now.state,
+        failure: now.failure,
+      );
+    };
   }
 
   SessionSocket _held() {

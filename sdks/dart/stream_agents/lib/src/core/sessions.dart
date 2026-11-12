@@ -239,11 +239,11 @@ api.SessionSort _sortOf(SessionSort sort) {
 }
 
 /// The turns of a session being held here, which show each question in [asking] as it is
-/// asked.
+/// asked. What [asking] returns takes the question back, for one the router never took.
 Responses heldResponses(
   Sessions sessions,
   String id, {
-  required void Function(String text) asking,
+  required void Function() Function(String text) asking,
 }) => Responses._(sessions._operations, id, asking: asking);
 
 /// A conversation's turns, and what each was made of.
@@ -252,7 +252,7 @@ final class Responses {
 
   final api.Operations _operations;
   final String sessionId;
-  final void Function(String text)? _asking;
+  final void Function() Function(String text)? _asking;
 
   /// Asks the agent something and names the turn that answers it.
   ///
@@ -271,6 +271,9 @@ final class Responses {
   /// UI's format and the action (`name`), with what it carries (`payload`), at most 8 KB as
   /// JSON. Their message carries it, and the model is told it after the text. An empty one is
   /// not sent.
+  ///
+  /// A question the router did not take is taken back out of the conversation, and the
+  /// failure thrown.
   Future<AgentResponse> create(
     String text, {
     List<AgentImage> images = const [],
@@ -278,20 +281,25 @@ final class Responses {
     String? reasoningEffort,
     Map<String, Object?>? uiAction,
   }) async {
-    _asking?.call(text);
-    return responseOf(
-      await _operations.createResponse(
-        id: sessionId,
-        body: api.CreateResponseRequest(
-          text: text,
-          images: imagesOf(images),
-          maxOutputTokens: maxOutputTokens,
-          reasoningEffort: reasoningEffort,
-          requestId: _requestId(),
-          uiAction: uiAction == null || uiAction.isEmpty ? null : uiAction,
+    final takeBack = _asking?.call(text);
+    try {
+      return responseOf(
+        await _operations.createResponse(
+          id: sessionId,
+          body: api.CreateResponseRequest(
+            text: text,
+            images: imagesOf(images),
+            maxOutputTokens: maxOutputTokens,
+            reasoningEffort: reasoningEffort,
+            requestId: _requestId(),
+            uiAction: uiAction == null || uiAction.isEmpty ? null : uiAction,
+          ),
         ),
-      ),
-    );
+      );
+    } on Object {
+      takeBack?.call();
+      rethrow;
+    }
   }
 
   /// A page of the turns so far, oldest first. Ask again with the page's

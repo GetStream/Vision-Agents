@@ -72,6 +72,22 @@ void main() {
       await chat.close();
     });
 
+    test('takes a question back out of the transcript when the router refuses it', () async {
+      router.answer(
+        'POST /v1/agents/sessions/s1/responses',
+        Answer(429, errorJson('rate_limited', 'rate_limited', 'slow down')),
+      );
+      final chat = await agents.chat();
+
+      await expectLater(
+        chat.responses.create('What are your hours?'),
+        throwsA(isA<RouterException>().having((e) => e.status, 'status', 429)),
+      );
+
+      expect(chat.turns, isEmpty);
+      await chat.close();
+    });
+
     test('names each question with a fresh request id, one that shows an image too', () async {
       router.answer('POST /v1/agents/sessions/s1/responses', Answer(202, responseJson('r1')));
       final chat = await agents.chat();
