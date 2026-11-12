@@ -178,6 +178,30 @@ func (s *Session) Activate(ctx context.Context, responseID string) (Activated, e
 		RewoundTo: RewoundTo{MessageID: rewind.MessageID, Inclusive: rewind.Inclusive}}, nil
 }
 
+// BranchShown is what the branch of response responseID would show, read from tree without a
+// running session: the copies of its messages from where it leaves the conversation down to
+// the newest response under responseID, oldest first, each marked with its place among its
+// alternatives now, as an activation would send them again. A response on the conversation is
+// what the channel shows, so active is set and nothing is returned.
+func BranchShown(ctx context.Context, tree *store.Store, customerID, sessionID, responseID string) (active bool, shown []store.AgentBranchMessage, err error) {
+	target, err := tree.SessionResponse(ctx, customerID, sessionID, responseID)
+	if err != nil {
+		return false, nil, err
+	}
+	if target.RewoundAt == nil {
+		return true, nil, nil
+	}
+	if target.QuestionResponseID == "" {
+		return false, nil, stack.Wrap(&persistent.BranchesUnsupportedError{Reason: persistent.UnsupportedUnmarked})
+	}
+	top, tail, err := branchOf(ctx, tree, target)
+	if err != nil {
+		return false, nil, err
+	}
+	shown, err = chosenFor(ctx, tree, top, tail, false)
+	return false, shown, err
+}
+
 // branch is Regenerate, or Edit when edit is set.
 func (s *Session) branch(ctx context.Context, id, responseID, text, clientID string, edit bool, asked options.LLM) (Branched, error) {
 	s.commandMu.Lock()
