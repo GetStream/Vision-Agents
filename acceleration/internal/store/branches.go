@@ -351,6 +351,36 @@ func (s *Store) DeleteUserBranchMessages(ctx context.Context, appID, userID stri
 	return deleted, nil
 }
 
+// AbandonBranchSwitch forgets a switch whose rewind Chat refused: its row and the copies it
+// made, which are of messages still visible. A message an earlier switch hid is in no later
+// switch's copies, so none of those go with it.
+func (s *Store) AbandonBranchSwitch(ctx context.Context, customerID, sessionID, id string) error {
+	if customerID == "" || sessionID == "" || id == "" {
+		return stack.Wrap(errors.New("store: a customer, a session and a switch id are required"))
+	}
+	_, err := onEveryShard(ctx, s, func(ctx context.Context, db bun.IDB) (sql.Result, error) {
+		return db.NewDelete().Model((*AgentBranchMessage)(nil)).
+			Where("customer_id = ?", customerID).
+			Where("session_id = ?", sessionID).
+			Where("switch_id = ?", id).
+			Exec(ctx)
+	})
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: abandon branch switch: copies: %w", err))
+	}
+	_, err = onEveryShard(ctx, s, func(ctx context.Context, db bun.IDB) (sql.Result, error) {
+		return db.NewDelete().Model((*AgentBranchSwitch)(nil)).
+			Where("customer_id = ?", customerID).
+			Where("session_id = ?", sessionID).
+			Where("id = ?", id).
+			Exec(ctx)
+	})
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: abandon branch switch: %w", err))
+	}
+	return nil
+}
+
 // switchStates are a switch's states in the order it passes them.
 var switchStates = []string{SwitchSnapshotted, SwitchRewound, SwitchResending, SwitchDone}
 

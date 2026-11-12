@@ -336,6 +336,29 @@ func (s *StoreSuite) TestEachMessageSentAgainIsCounted() {
 	s.Equal([2]int{1, 2}, [2]int{first, second})
 }
 
+func (s *StoreSuite) TestAnAbandonedSwitchTakesOnlyItsOwnCopiesWithIt() {
+	s.opened("one", "app", s.base, nil)
+	s.switched(s.store, "earlier", s.base, s.base.Add(time.Minute), SwitchDone)
+	s.switched(s.store, "refused", s.base.Add(2*time.Minute), s.base.Add(3*time.Minute), "")
+	s.Require().NoError(s.store.SaveBranchMessages(s.ctx, []AgentBranchMessage{
+		hidden("m1", "second", "earlier", s.base, "hidden"),
+		hidden("m2", "third", "refused", s.base.Add(2*time.Minute), "still visible"),
+	}))
+
+	s.Require().NoError(s.store.AbandonBranchSwitch(s.ctx, "app", "one", "refused"))
+
+	left, err := s.store.BranchMessages(s.ctx, "app", "one", nil)
+	s.Require().NoError(err)
+	s.Require().Len(left, 1)
+	s.Equal("m1", left[0].OriginalMessageID)
+	unfinished, err := s.store.UnfinishedBranchSwitches(s.ctx, "app", "one")
+	s.Require().NoError(err)
+	s.Empty(unfinished)
+	count, err := s.store.MergedRangeCount(s.ctx, "app", "one")
+	s.Require().NoError(err)
+	s.Equal(1, count)
+}
+
 func (s *StoreSuite) TestUnfinishedSwitchesAreOldestFirst() {
 	s.opened("one", "app", s.base, nil)
 	s.switched(s.store, "later", s.base, s.base.Add(2*time.Minute), "")
