@@ -139,7 +139,7 @@ func (s *TelnyxEventsSuite) TestAStaleEventIsRefusedAndNotCounted() {
 func (s *TelnyxEventsSuite) TestASignedBodyThatIsNoEventIsRefusedAndNotCounted() {
 	before := accountEvents("telnyx", "other", "info")
 	for _, body := range []string{`not json`, `{}`, `{"data":{}}`, `{"data":{"event_type":""}}`,
-		`{"data":{"event_type":7}}`, `null`, `[]`} {
+		`{"data":{"event_type":7}}`, `{"data":{"event_type":"number.order","id":7}}`, `null`, `[]`} {
 		status, _ := s.deliver(body, s.signer(time.Now()))
 		s.Equal(http.StatusBadRequest, status, body)
 	}
