@@ -34,13 +34,13 @@ the app without publishing it. Stream Chat's AI components come from `stream-cha
 `main`, pinned to a commit, until they are released. To try the app against a branch of them,
 point it at a local checkout in a `pubspec_overrides.yaml` next to `pubspec.yaml`, which git
 ignores. Its `dependency_overrides` replace the ones in `pubspec.yaml`, so keep
-`vision_agents_core` there too:
+`stream_agents_core` there too:
 
 ```yaml
 dependency_overrides:
   stream_chat_flutter_ai:
     path: ../../../../stream-chat-flutter-ai/packages/stream_chat_flutter_ai
-  vision_agents_core:
+  stream_agents_core:
     path: ../../../sdks/dart/core
 ```
 

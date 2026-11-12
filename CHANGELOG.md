@@ -2,6 +2,29 @@
 
 ## Features
 
+### A child agent takes a budget of tool rounds
+
+`ChildAgent` (an agent config's `agents`, and agent.yaml's `agents:`) gains `max_tool_rounds`: the reply to a tool result, counted since the child was handed its input, at which it is offered no more tools and made to answer. Zero or left out is the default of 8, as before, and a negative number never withdraws them, as `max_tool_rounds` on `createSession` does. A child that chains many lookups, such as a reviewer reading through a diff, no longer has to answer after 8.
+
+### The router reaches Gemini Decision 1
+
+`gemini/gemini-decision-1` is a decision model on Google's Decisions API, read with `GOOGLE_API_KEY` like the other Gemini models. It answers the same noul, choice and score questions, at $0.10 per million input tokens and nothing for output. It is in the fast tier with every other decision model, and the guardrail route still prefers Jev.
+
+### JavaScript: AgentChat, a written conversation for Stream's AI components
+
+`@stream-io/stream-agents/chat` exports `AgentChat` and `agentChatTransport`. An app no longer writes its own state between a session and the AI components.
+
+- `AgentChat` holds a conversation in writing: the channel's messages (stream-chat 9 or 10), each reply's whole thinking, what the agent is doing (`thinking`, `working` with its skills, or `failed` when the model couldn't write the reply), and `send`, `stop` and `loadOlderMessages`.
+- It opens its session only when something needs it, and deletes a new conversation's session that was never asked anything.
+- `agentChatTransport` is the transport of an `AIConversationController` from `stream-chat-react-native`. It sends the controller's message id as the question's `requestId`, carries a generated-UI action as `custom.uiAction`, and asks a `regenerate` again as a new question.
+- `chat.state` has `StateStore`'s shape, for `useStateStore`. The package still has no runtime dependencies.
+
+### JavaScript: a tool caps how many of its calls run at once
+
+A tool takes `concurrency`, as Go's `tools.Concurrency(n)` does: at most that many calls to it run at once, and a call over the cap waits its turn, its timeout counting while it waits. A call waiting on its tool's cap holds none of the places other tools need. A call cancelled or timed out keeps its place until its function returns. The cap is kept in this process and is not sent to the router. A concurrency that is not a whole number of calls is refused when the tool is registered.
+
+**Behaviour change.** Every tool's calls together now run at most 16 at once, as in Go, where before there was no cap. `Dispatch.host` shares an agent's `tools` across every session it hosts, so a dispatch worker runs at most 16 tool calls at once across all its sessions. `agent.tools.setConcurrency(n)` raises or lowers that, as Go's `Registry.SetConcurrency` does, and calls already waiting take a place as soon as it allows.
+
 ### Session queries take `$and` / `$or` filters and a sort, and sessions can be pinned
 
 **Breaking.** `querySessions` (`POST /v1/agents/sessions/query`) filters on `project_id` (`$eq`, `$in`), `text` (`$q`), `review_score` (`$eq`, `$gt`, `$gte`, `$lt`, `$lte`; server side only), `agent` and `user_id` (server side only), combined with `$and` and `$or`: 1 to 10 filters each, nested at most 3 deep, 30 conditions in a filter. Any other key is a 400 that names it, which includes the filters taken before: `agent_id`, `config_id`, `modality`, `state`, `team`, `created_at` and `custom`. `text` and `user_id` go at the top level or directly in the top-level `$and`, never inside `$or`, and `text` may now be combined with `project_id`.
@@ -15,6 +38,9 @@ Every SDK takes the filter and the sort in place of its flat query fields, with 
 ### A session keeps the team its usage is counted under, and is found by it
 
 `Session` gains `team`: the team its usage is counted under, from the caller's token, else the session's `team`, else its agent config's `tags: team`. It is kept with the session from when it opens, so an ended session answers it too. `querySessions` takes `filter.team` (a bare value or `{"$eq": ...}`). A caller whose token is signed for a team may only ask for that team, and asking for another is refused with a 400. Sessions kept before this have their team filled in by the migration from the `team:` usage category they were counted under. Every SDK's session query now takes the same fields as JavaScript's: `team`, a created-at window (`$gte`/`$lt`), custom labels and an order.
+### A person sends a PDF or Word document with a question
+
+`createResponse` takes `files`: one PDF or Word document (DOCX or DOC), as a data URI of up to 8 MiB or a URL of up to 20 MiB. The router reads it as text before the turn starts, and the agent answers from it on that turn and every later one: the file goes ahead of the conversation on every reply, so summarising a long chat never drops it. A conversation the same person carries on or forks reads it again; one opened by anybody else, a backend included, never does. In a conversation kept in Stream Chat the person's message shows the file. Refused before any turn starts, and so never billed: over 100 pages, or more than 120,000 characters of text together with the conversation's other files (413 `document_too_large`); a file with a password, damaged or with no text (400 `document_unreadable`); anything but a PDF or Word document (415); a file and a voice note together; a file in a thread, in a channel others write in, or in a speech-to-speech session. Under an organization's prompt injection policy the file is screened once, in pieces, and one that reads as an injection or cannot be screened is refused rather than read. A page that is only a picture, a chart and a picture in a Word file are read through the models knowledge reads them with (`ocr-figures`), billed as OCR: at most 10 such reads a file, and a file with more than 10 scanned pages is refused (413). A deployment with no OCR leaves them unread, and the model is told which pages those are (AI-3197).
 
 ### Trial credit pays for usage but not phone numbers, and a sync that changed nothing costs nothing
 
@@ -513,6 +539,10 @@ The Swift SDK's product and module are `StreamAgents`, and its client is `Stream
 
 The Kotlin SDK's artifact is `io.getstream:stream-agents-android-core`, its package is `io.getstream.agents.android.core`, and its client is `StreamAgents`: `StreamAgents(backend)` where it was `VisionAgents(backend)`, with imports from `io.getstream.agents.android.core` where they were from `io.getstream.visionagents.android.core`. Nothing else in the API changed. The Gradle project is `stream-agents-kotlin`.
 
+### Dart: vision_agents_* are stream_agents_*
+
+The Dart packages are `stream_agents_core`, `stream_agents_chat` and `stream_agents_rtc`, and the client is `StreamAgents`: `StreamAgents(apiKey: ...)` where it was `VisionAgents(...)`, with imports from `package:stream_agents_core/stream_agents_core.dart`, `package:stream_agents_chat/stream_agents_chat.dart` and `package:stream_agents_rtc/stream_agents_rtc.dart`. Nothing else in the API changed. The live tests still read `VISION_AGENTS_*`, as every SDK's do (FLU-1245).
+
 ### The Go SDK's helpers take a Backend, not the generated client
 
 `agents.DefineAgent`, `agents.DefineSkills`, `agents.IngestKnowledge`, `agents.SubscribeKnowledgeURLs` and `stream.NewPhone` take a `stream.Backend` where they took the generated `*acceleration.ClientWithResponses`, so using them no longer means building the generated client first. `stream.NewPhone` now returns an error too, for a backend that does not resolve. `agents.Harness.VM` is `agents.Harness.Sandbox`, the name every other SDK and the docs use. Pass `stream.Backend{}` for the environment's router, or `api.Backend()` for a client's. `stream.Backend.Client()` and `agents.Agent.Client()` still hand out the generated client, for operations the SDK has no method for yet; its operation methods carry no compatibility promise (AI-1892).
@@ -577,6 +607,9 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### Demo link token and phone numbers kept out of logs
 
 The demo join link was logged with its API key and a one-hour user token in the query string; it is now logged without the query string, and printed to the terminal in full only when the browser fails to open. `Agent.answer` and `twilio.TwilioCallRegistry` log the caller and called numbers masked down to their last four digits.
+### Call minutes are priced for Twilio in the US and Canada, and for Telnyx calls to Canada
+
+Twilio is priced at $0.018 a minute outbound and $0.0125 inbound in both countries: its local rate plus the SIP leg to the Stream trunk. A Telnyx call placed to Canada is priced at $0.022 a minute. A database gets these with the next release's start, which adds the items it has never priced. Telnyx calls arriving on a Canadian number, other countries and toll-free numbers are not priced yet (#1965).
 
 ### Kotlin: the reply model failing ends the agent's turn, and a failure lasts until the agent works again
 

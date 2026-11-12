@@ -344,6 +344,29 @@ func deliveryReason(err error) string {
 	return scheduling.ReasonOf(err)
 }
 
+// overTier is a call or a text its organization's tier limits refuse, recorded as such. A day's
+// limit or the calls at once pass on their own, so it is tried again; a country never does, so it
+// is final. Any other error is returned as it is.
+func overTier(err error) error {
+	limit := dlc.TierLimit(err)
+	if limit == "" {
+		return err
+	}
+	return &scheduling.Failure{Reason: scheduling.ReasonTierLimit, Final: !dlc.RefusalResets(limit), Err: err}
+}
+
+// textUnreachable is the failure a run records for a text channel that would refuse the task's
+// words now (channels.Service.Reachable).
+func textUnreachable(err error) error {
+	switch {
+	case dlc.TierLimit(err) != "":
+		return overTier(err)
+	case errors.Is(err, channels.ErrUnreachable):
+		return undelivered(scheduling.ReasonUnreachable, err)
+	}
+	return unpaid(err)
+}
+
 // unpaid is a step the organization may not pay for as its run records it: under the refusal's own
 // code (deliveryReason), and final. The step is a text the gate refuses (dlc.ErrUnpaid), or any
 // refusal about money (moneyError), such as a session that cannot open or a text whose
@@ -394,10 +417,7 @@ func (s *Server) deliverOn(ctx context.Context, delivery scheduledDelivery, foun
 		// A send the channel would refuse is refused before the turn that
 		// writes it is paid for.
 		if err := s.reachableText(ctx, delivery, channel); err != nil {
-			if errors.Is(err, channels.ErrUnreachable) {
-				return "", "", undelivered(scheduling.ReasonUnreachable, err)
-			}
-			return "", "", unpaid(err)
+			return "", "", textUnreachable(err)
 		}
 		text, files, err := s.captureReply(ctx, found, delivery)
 		if err != nil {
@@ -1037,7 +1057,7 @@ func (s *Server) placeCall(ctx context.Context, delivery scheduledDelivery, foun
 		SessionID: sessionID,
 	})
 	if err != nil {
-		return session.Spec{}, unpaid(err)
+		return session.Spec{}, unpaid(overTier(err))
 	}
 	return callSpec(config, delivery, found.Spec().AgentID, placed, from, to), nil
 }

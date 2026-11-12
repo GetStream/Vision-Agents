@@ -3,6 +3,8 @@ import StreamCore
 
 final class CreateResponseRequest: Sendable, Codable, JSONEncodable {
     let audio: AudioSource?
+    /// A file to answer questions about: a PDF or a Word document. The router reads it as text before the turn starts, and the agent answers from it on this turn and on every turn of the conversation after it, including a conversation carried on later or forked by the same person. In a conversation kept in Stream Chat the person's message shows the file. At most 100 pages, and at most 120,000 characters of text together with the files the conversation already holds, or a quarter of what the model reads at once. Only in a person's own conversation: refused in a thread, in a channel others write in, in a session a worker opened for a channel's message, and by a speech-to-speech session. Not with a voice note. Refused before any turn starts when it cannot be read, is too large, or reads as a prompt injection under the organization's policy.
+    let files: [FileSource]?
     let images: [ImageSourcePayload]?
     /// Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's.
     let maxOutputTokens: Int?
@@ -17,8 +19,9 @@ final class CreateResponseRequest: Sendable, Codable, JSONEncodable {
     /// Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
     let videos: [VideoSource]?
 
-    init(audio: AudioSource? = nil, images: [ImageSourcePayload]? = nil, maxOutputTokens: Int? = nil, reasoningEffort: String? = nil, requestId: String? = nil, text: String, uiAction: [String: RawJSON]? = nil, videos: [VideoSource]? = nil) {
+    init(audio: AudioSource? = nil, files: [FileSource]? = nil, images: [ImageSourcePayload]? = nil, maxOutputTokens: Int? = nil, reasoningEffort: String? = nil, requestId: String? = nil, text: String, uiAction: [String: RawJSON]? = nil, videos: [VideoSource]? = nil) {
         self.audio = audio
+        self.files = files
         self.images = images
         self.maxOutputTokens = maxOutputTokens
         self.reasoningEffort = reasoningEffort
@@ -31,6 +34,7 @@ final class CreateResponseRequest: Sendable, Codable, JSONEncodable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: StringCodingKey.self)
         self.audio = try container.decodeIfPresent(AudioSource.self, forKey: .audio)
+        self.files = try container.decodeIfPresent([FileSource].self, forKey: .files)
         self.images = try container.decodeIfPresent([ImageSourcePayload].self, forKey: .images)
         self.maxOutputTokens = try container.decodeIfPresent(Int.self, forKey: .maxOutputTokens)
         self.reasoningEffort = try container.decodeIfPresent(String.self, forKey: .reasoningEffort)
@@ -43,6 +47,7 @@ final class CreateResponseRequest: Sendable, Codable, JSONEncodable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: StringCodingKey.self)
         try container.encodeIfPresent(audio, forKey: .audio)
+        try container.encodeIfPresent(files, forKey: .files)
         try container.encodeIfPresent(images, forKey: .images)
         try container.encodeIfPresent(maxOutputTokens, forKey: .maxOutputTokens)
         try container.encodeIfPresent(reasoningEffort, forKey: .reasoningEffort)
@@ -57,6 +62,7 @@ final class CreateResponseRequest: Sendable, Codable, JSONEncodable {
 extension CreateResponseRequest: Hashable {
     static func == (lhs: CreateResponseRequest, rhs: CreateResponseRequest) -> Bool {
         lhs.audio == rhs.audio &&
+        lhs.files == rhs.files &&
         lhs.images == rhs.images &&
         lhs.maxOutputTokens == rhs.maxOutputTokens &&
         lhs.reasoningEffort == rhs.reasoningEffort &&
@@ -68,6 +74,7 @@ extension CreateResponseRequest: Hashable {
 
     func hash(into hasher: inout Hasher) {
         hasher.combine(audio)
+        hasher.combine(files)
         hasher.combine(images)
         hasher.combine(maxOutputTokens)
         hasher.combine(reasoningEffort)

@@ -376,3 +376,21 @@ func (s *PolicySuite) TestASandboxRunningAlreadyIsGivenASlotPastTheCount() {
 	s.Require().NoError(err)
 	release()
 }
+
+func (s *PolicySuite) TestASandboxRefusalNamesTheLimitItIsOver() {
+	b := s.sandboxed()
+	tier := s.limited(b.tiers, usage.NetworkNone)
+	limits := s.sandboxLimits(tier)
+	s.on(b.Enforcer, tier.Name)
+
+	for limit, ask := range map[string]SandboxAsk{
+		"sandbox_network":   {Config: sandbox.Config{Network: true}},
+		"sandbox_cpu":       {Config: sandbox.Config{CPU: *limits.MaxCPU + 1}},
+		"sandbox_memory_gb": {Config: sandbox.Config{MemoryGB: *limits.MaxMemoryGB + 1}},
+		"sandbox_disk_gb":   {Config: sandbox.Config{DiskGB: *limits.MaxDiskGB + 1}},
+	} {
+		s.Equal(limit, SandboxLimit(s.sandboxAllowed(b.Enforcer, ask)), limit)
+	}
+	s.Empty(SandboxLimit(ErrSandboxLimit), "a refusal that names no limit")
+	s.Empty(SandboxLimit(nil))
+}

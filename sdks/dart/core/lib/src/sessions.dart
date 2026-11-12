@@ -10,7 +10,7 @@ const _itemPage = 200;
 /// Conversations: the ones being held and the ones that were.
 ///
 /// What comes back are rows rather than live handles, because reading a conversation back is
-/// not holding one and most of these are over. `VisionAgents.attach` follows one that is
+/// not holding one and most of these are over. `StreamAgents.attach` follows one that is
 /// still running.
 final class Sessions {
   Sessions(this._operations, {this.agent, String userId = ''}) : _userId = userId;

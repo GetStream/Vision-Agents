@@ -30,6 +30,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -804,12 +805,12 @@ func (s *Session) Durable() bool { return s.persisted != nil }
 // alone. notes are voice notes sent with it, shown on the person's message; text already holds
 // what they said.
 func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string, images []llm.ImagePart, asked options.LLM, notes ...persistent.VoiceNote) (persistent.CommandReceipt, string, error) {
-	return s.RespondCommandWithAction(ctx, id, text, clientID, images, asked, nil, notes...)
+	return s.RespondCommandWithAction(ctx, id, text, clientID, images, asked, nil, nil, notes...)
 }
 
 // RespondCommandWithAction is RespondCommand for a person's message that says what they did in
 // a reply's UI. Their message carries the action, and the model is told it after their words.
-func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, clientID string, images []llm.ImagePart, asked options.LLM, action map[string]any, notes ...persistent.VoiceNote) (persistent.CommandReceipt, string, error) {
+func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, clientID string, images []llm.ImagePart, asked options.LLM, action map[string]any, file *sandbox.File, notes ...persistent.VoiceNote) (persistent.CommandReceipt, string, error) {
 	// A worker's command on a channel it answers hands on what the person wrote there, photos
 	// and all, so only the reply is written, as Respond does (Spec.Dispatched).
 	handedOn := s.spec.Text && s.spec.Dispatched
@@ -826,7 +827,7 @@ func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, client
 	if !handedOn {
 		var err error
 		sent := slices.DeleteFunc(slices.Clone(images), func(image llm.ImagePart) bool { return image.Video })
-		if photos, err = s.photos(ctx, id, sent, notes); err != nil {
+		if photos, err = s.photos(ctx, id, sent, file, notes); err != nil {
 			return persistent.CommandReceipt{}, "", err
 		}
 	}
@@ -897,8 +898,8 @@ func (s *Session) reachesModel(id string) bool {
 // does, and a stop waits on that lock. A caller the conversation is not theirs uploads nothing
 // into it, and a retry of a command it already took (a client resending after a lost answer)
 // uploads nothing again.
-func (s *Session) photos(ctx context.Context, id string, images []llm.ImagePart, notes []persistent.VoiceNote) ([]persistent.Photo, error) {
-	if len(images)+len(notes) == 0 || s.persisted == nil {
+func (s *Session) photos(ctx context.Context, id string, images []llm.ImagePart, file *sandbox.File, notes []persistent.VoiceNote) ([]persistent.Photo, error) {
+	if len(images)+len(notes) == 0 && file == nil || s.persisted == nil {
 		return nil, nil
 	}
 	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
@@ -911,6 +912,9 @@ func (s *Session) photos(ctx context.Context, id string, images []llm.ImagePart,
 		}
 		for _, note := range notes {
 			photos = append(photos, note.Sent())
+		}
+		if file != nil {
+			photos = append(photos, persistent.DocumentSent(*file))
 		}
 		return photos, nil
 	}
@@ -925,8 +929,34 @@ func (s *Session) photos(ctx context.Context, id string, images []llm.ImagePart,
 		}
 		photos = append(photos, published)
 	}
+	if file != nil {
+		published, err := s.persisted.PublishDocument(ctx, *file)
+		if err != nil {
+			return nil, stack.Wrap(err)
+		}
+		photos = append(photos, published)
+	}
 	return photos, nil
 }
+
+// Taken reports whether the durable command id was taken already, so a request carrying it is
+// a retry that is answered with its receipt and never reaches the model.
+func (s *Session) Taken(id string) bool {
+	if s.persisted == nil || id == "" {
+		return false
+	}
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
+	_, err := s.persisted.Command(id)
+	return err == nil
+}
+
+// DocumentRoom is how much text, in runes, one more file sent to the session may hold
+// (agent.Agent.DocumentRoom).
+func (s *Session) DocumentRoom() int { return s.current().DocumentRoom() }
+
+// Documents are the files pinned in the session's conversation, oldest first.
+func (s *Session) Documents() []agent.Document { return s.current().Documents() }
 
 // chose keeps connectionID as the session's selection for the connector binding called name,
 // once a login in its conversation opened it: in the spec, so a fork of the live session
@@ -1110,6 +1140,7 @@ var ErrCannotRewind = errors.New("session: this conversation cannot be rewound")
 type Recorded interface {
 	Exchanges(ctx context.Context, customerID, sessionID, upTo string) ([]store.Exchange, error)
 	RewindResponses(ctx context.Context, customerID, sessionID, kept string, at time.Time) error
+	ConversationDocuments(ctx context.Context, customerID string, scope store.DocumentScope) ([]store.ConversationDocument, error)
 }
 
 // Rewind carries the conversation on from the end of a response, as though nothing after it
@@ -1139,10 +1170,18 @@ func (s *Session) Rewind(ctx context.Context, recorded Recorded, responseID stri
 	if err != nil {
 		return stack.Wrap(err)
 	}
+	// The files sent with the turns taken back go with them. They are read before anything
+	// is rewound, so a read that fails leaves the session as it was.
+	documents, err := recorded.ConversationDocuments(ctx, s.spec.CustomerID,
+		store.DocumentScope{ConversationID: s.spec.ConversationID, SessionID: s.id, Owner: s.spec.Caller.UserID, UntilResponse: responseID})
+	if err != nil {
+		return stack.Wrap(err)
+	}
 	if err := recorded.RewindResponses(ctx, s.spec.CustomerID, s.id, responseID, time.Now().UTC()); err != nil {
 		return stack.Wrap(err)
 	}
 	s.current().RestoreHistory(HistoryOf(exchanges))
+	s.current().ReplaceDocuments(pinnable(documents)...)
 	return nil
 }
 

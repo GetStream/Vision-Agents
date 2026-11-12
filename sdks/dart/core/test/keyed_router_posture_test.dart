@@ -13,7 +13,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:test/test.dart';
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents_core/stream_agents_core.dart';
 
 final _env = Platform.environment;
 final _key = _env['INTEGRATION_ROUTER_KEY'] ?? '';
@@ -32,13 +32,13 @@ String _sign(Map<String, Object?> claims) {
 }
 
 void main() {
-  late VisionAgents agents;
+  late StreamAgents agents;
 
   setUp(() {
     final id = 'dart-device-${DateTime.now().microsecondsSinceEpoch}';
     final exp = DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/ 1000;
     final token = _sign({'user_id': id, 'exp': exp});
-    agents = VisionAgents(url: _url, apiKey: _key, userId: id, token: () async => token);
+    agents = StreamAgents(url: _url, apiKey: _key, userId: id, token: () async => token);
   });
 
   tearDown(() => agents.close());

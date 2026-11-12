@@ -6,8 +6,8 @@ import 'package:flutter_demo/agent_chat.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stream_chat/stream_chat.dart' as stream;
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
-import 'package:vision_agents_chat/vision_agents_chat.dart';
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents_chat/stream_agents_chat.dart';
+import 'package:stream_agents_core/stream_agents_core.dart';
 
 void main() {
   test('describeWork names each skill in words', () {
@@ -225,12 +225,12 @@ void main() {
   );
   group('AgentChat', () {
     late _Router router;
-    late VisionAgents agents;
+    late StreamAgents agents;
     late AgentSession session;
 
     setUp(() async {
       router = await _Router.start();
-      agents = VisionAgents(url: router.url, customerId: 'acme', userId: 'ada');
+      agents = StreamAgents(url: router.url, customerId: 'acme', userId: 'ada');
       session = await agents.attach('s1');
     });
 

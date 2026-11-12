@@ -136,7 +136,7 @@ func (s *ChatInboundSuite) TestADeliverySignedWithTheOldKeyIsAnswered() {
 
 	s.Require().Equal(http.StatusOK, s.delivers(&s.RouterSuite, s.message(suiteStreamApp, s.config(s.customerID()), ""), s.previous))
 
-	s.True(s.reachesWorker(worker.Messages()))
+	s.True(s.handedOn(worker.Messages()))
 }
 
 func (s *ChatInboundSuite) TestARefusedDeliveryReachesNoWorker() {
@@ -185,7 +185,7 @@ func (s *ChatInboundSuite) TestADeliveryTakenBeforeTheRouterStoppedIsAnsweredOnc
 	s.Require().False(s.reachesWorker(worker.Messages()), "answered with no worker running")
 	s.answering(&s.RouterSuite)
 
-	s.True(s.reachesWorker(worker.Messages()), "the message taken before the stop was never answered")
+	s.True(s.handedOn(worker.Messages()), "the message taken before the stop was never answered")
 	s.False(s.reachesWorker(worker.Messages()), "one delivery is one answer")
 }
 
@@ -200,7 +200,7 @@ func (s *ChatInboundSuite) TestADeliveryMadeAgainIsAnsweredOnce() {
 	s.Equal(http.StatusOK, s.deliversTo(&s.RouterSuite, s.server.URL, body, signed))
 	s.Equal(http.StatusOK, s.deliversTo(&s.RouterSuite, s.server.URL, body, signed))
 
-	s.True(s.reachesWorker(worker.Messages()))
+	s.True(s.handedOn(worker.Messages()))
 	s.False(s.reachesWorker(worker.Messages()), "the delivery made again was answered too")
 	s.Equal(1, s.queued(&s.RouterSuite))
 }
@@ -211,7 +211,7 @@ func (s *ChatInboundSuite) TestADeliveryToAnIdleRouterIsAnsweredAtOnce() {
 	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 2})
 	defer release()
 	s.Require().Equal(http.StatusOK, s.delivers(&s.RouterSuite, s.message(suiteStreamApp, s.config(s.customerID()), ""), s.current))
-	s.Require().True(s.reachesWorker(worker.Messages()))
+	s.Require().True(s.handedOn(worker.Messages()))
 	s.Require().False(s.reachesWorker(worker.Messages()), "the worker is idle again")
 
 	s.Require().Equal(http.StatusOK, s.delivers(&s.RouterSuite, s.message(suiteStreamApp, s.config(s.customerID()), ""), s.current))
@@ -235,7 +235,7 @@ func (s *ChatInboundSuite) TestADeliveryThatCouldNotBeQueuedIsMadeAgainAndAnswer
 	s.False(s.reachesWorker(worker.Messages()))
 
 	s.Equal(http.StatusOK, s.deliversTo(&s.RouterSuite, s.server.URL, body, signed), "the delivery made again")
-	s.True(s.reachesWorker(worker.Messages()))
+	s.True(s.handedOn(worker.Messages()))
 }
 
 // While both are switched on, the webhook and the delivery carry the same message, whichever
@@ -248,7 +248,7 @@ func (s *ChatInboundSuite) TestAMessageTheWebhookBroughtIsNotQueuedWhenDelivered
 	s.Require().Equal(http.StatusOK, s.hooked(&s.RouterSuite, "/v1/chat/hooks/stream", body, suiteStreamSecret))
 	s.Equal(http.StatusOK, s.delivers(&s.RouterSuite, body, s.current))
 
-	s.True(s.reachesWorker(worker.Messages()))
+	s.True(s.handedOn(worker.Messages()))
 	s.False(s.reachesWorker(worker.Messages()), "the delivery is the message the webhook brought")
 	s.Zero(s.queued(&s.RouterSuite))
 }
@@ -261,7 +261,7 @@ func (s *ChatInboundSuite) TestTheWebhookOfAMessageDeliveredFirstIsNotActedOn() 
 	s.Require().Equal(http.StatusOK, s.delivers(&s.RouterSuite, body, s.current))
 	s.Equal(http.StatusOK, s.hooked(&s.RouterSuite, "/v1/chat/hooks/stream", body, suiteStreamSecret))
 
-	s.True(s.reachesWorker(worker.Messages()))
+	s.True(s.handedOn(worker.Messages()))
 	s.False(s.reachesWorker(worker.Messages()), "the webhook is the message the delivery brought")
 }
 
@@ -378,7 +378,7 @@ func (s *ChatInboundAppSuite) TestADeliveryInACustomersOwnAppIsAnsweredThere() {
 
 	s.Equal(http.StatusOK, s.delivers(&s.RouterSuite, s.message(s.appID(), s.config(s.customerID()), ""), s.current))
 
-	s.True(s.reachesWorker(worker.Messages()))
+	s.True(s.handedOn(worker.Messages()))
 }
 
 // A channel in this app naming another customer's config starts nobody's agent: the app the
@@ -409,7 +409,7 @@ func (s *ChatInboundAppSuite) TestAnUnpinnedCallOnTheSameChannelIsNotTheDelivery
 
 	s.Equal(http.StatusOK, s.delivers(&s.RouterSuite, s.message(s.appID(), s.config(s.customerID()), ""), s.current))
 
-	s.True(s.reachesWorker(own.Messages()))
+	s.True(s.handedOn(own.Messages()))
 	s.False(s.reachesWorker(somebodyElse.Messages()))
 }
 
@@ -428,7 +428,7 @@ func (s *ChatInboundAppSuite) TestTheWebhookAndADeliveryOfOneMessageAreAnsweredO
 
 	s.Equal(http.StatusOK, s.delivers(&s.RouterSuite, body, s.current))
 
-	s.True(s.reachesWorker(worker.Messages()))
+	s.True(s.handedOn(worker.Messages()))
 	s.False(s.reachesWorker(worker.Messages()), "the delivery is the message the webhook brought")
 }
 
@@ -445,7 +445,7 @@ func (s *ChatInboundAppSuite) TestTheWebhookOfAMessageDeliveredFirstIsNotActedOn
 	s.Require().NoError(response.Body.Close())
 	s.Equal(http.StatusOK, response.StatusCode)
 
-	s.True(s.reachesWorker(worker.Messages()))
+	s.True(s.handedOn(worker.Messages()))
 	s.False(s.reachesWorker(worker.Messages()), "the webhook is the message the delivery brought")
 }
 
@@ -651,12 +651,24 @@ func deliveredConfig(router *RouterSuite, customer string) string {
 	return config.ID
 }
 
-// reachesWorker reports whether a message reached a worker before a delivery would have.
+// reachesWorker reports whether a message reached a worker before a delivery would have. It
+// waits only dropped, so it says that nothing arrives; handedOn waits for one that should.
 func (d *chatInbounds) reachesWorker(messages <-chan dispatch.Message) bool {
 	select {
 	case <-messages:
 		return true
 	case <-time.After(dropped):
+		return false
+	}
+}
+
+// handedOn reports whether a message reached a worker within settleFor, as a delivery on a
+// loaded machine can take longer than dropped to arrive.
+func (d *chatInbounds) handedOn(messages <-chan dispatch.Message) bool {
+	select {
+	case <-messages:
+		return true
+	case <-time.After(settleFor):
 		return false
 	}
 }
