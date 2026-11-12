@@ -373,15 +373,19 @@ func (s *DocumentsSuite) asked(question string) llm.ResponseParams {
 }
 
 // sent sends request as as once the session takes it: a session answers one question at a
-// time, so the next waits for the one before it, as an SDK does.
+// time, so the next waits for the one before it, as an SDK does. Each call is let finish: one
+// that reads a file's charts can take longer than settleFor on a busy machine, and only the
+// waiting for the one before is bounded.
 func (s *DocumentsSuite) sent(as *testClient, opened Session, request CreateResponseRequest) (int, []byte) {
-	var status int
-	var payload []byte
-	s.Require().Eventually(func() bool {
-		status, payload = as.call(http.MethodPost, s.responses(opened), request)
-		return !strings.Contains(string(payload), "a response is already running")
-	}, settleFor, 50*time.Millisecond, "the session never took the question")
-	return status, payload
+	deadline := time.Now().Add(settleFor)
+	for {
+		status, payload := as.call(http.MethodPost, s.responses(opened), request)
+		if !strings.Contains(string(payload), "a response is already running") {
+			return status, payload
+		}
+		s.Require().True(time.Now().Before(deadline), "the session never took the question")
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // never checks that no model was asked question.
