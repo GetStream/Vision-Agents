@@ -151,6 +151,14 @@ Three ways to use it, each a short Go program in
 | [Decisions only](../../../examples/routers/chorus_asr_example/decide_only/main.go): another transcriber writes the words | `ROUTER_CHORUS_ASR_URL` | `floor_control: {model: stream/chorus-asr}`, any `stt` |
 | [Transcription only](../../../examples/routers/chorus_asr_example/transcribe_only/main.go): the words, through the router's STT | `ROUTER_CHORUS_ASR_URL` | a router config naming `stream/chorus-asr` |
 
+Languages are optional. An agent's language hints, when it has any, are the languages its
+callers speak: the server is told them when the agent is registered, and asked for the words
+so far in them, so that it can drop a room's voice in another language. With none, the router
+sends none and invents none: the agent is registered and ruled on all the same, its pauses
+asked about and its words written in whatever language the server heard, with nothing
+detected first. A tag the server's model does not speak is dropped by the server, not refused,
+and no agent is turned away from floor control over its languages.
+
 ### The wait over the agent
 
 The agent stops within 800 ms of the caller's first word over it ([The loop's
@@ -484,12 +492,13 @@ transcriber now shows the words so far while the caller talks, as interim transc
   utterance's first words at a pause, which the server had a whole phrase to tell, and
   words that come back in another, named otherwise or refused as one the callers don't
   speak (`noise: language`), are dropped (`foreign`), as are a pause's words in another
-  language, which wait for the final. With no languages declared no interim is asked for
-  before that language is known: asked to guess the language of a second of speech, the
-  server guessed differently from one interim to the next over somebody else talking in the
-  room, and a watcher saw the line switch script. With languages declared the words so far
-  are asked for in them until the utterance's language is known, and in it alone from then
-  on. The final is the model's, in whatever language it heard the turn.
+  language, which wait for the final. With languages declared the words so far are asked
+  for in them until the utterance's language is known, and in it alone from then on. With
+  none declared they are asked for in none, and the server writes what it heard: asked to
+  guess the language of a second of speech, the server has guessed differently from one
+  interim to the next over somebody else talking in the room, and an interim that switches
+  script on the words shown is dropped (`unstable`). The final is the model's, in whatever
+  language it heard the turn.
 - **The line never goes back.** An interim holds up no pause check, no decision and no
   final: it runs on a goroutine of its own, and one that answers after the final, or after
   newer words, is dropped (`late`). An interim of the next utterance waits for the last
@@ -855,10 +864,10 @@ never ended the utterance; the new one wrote both replacements and the final.
   writes the room's words into the caller's final. With the agent quiet it writes words
   only at pauses. It rewrites the whole utterance at each pause, ends one at 60 s if the
   caller never pauses, and drops a ninth request waiting on a slow server.
-- With no languages declared the words so far wait for the utterance's first pause, whose
-  words say what language it is in; an utterance with no pause in it shows none until its
-  final, and the language is the model's guess on that pause's words, which the whole
-  utterance's interims are then held to.
+- With no languages declared the words so far are the model's guess on a second or two of
+  speech until the utterance's first pause, whose words say what language it is in; the
+  language is the model's guess on that pause's words, which the rest of the utterance's
+  interims are then held to.
 - Checks over the agent cost a decision and the words every `interval_ms` while a caller
   is voiced over it, the agent's own echo included: a line with no echo cancellation costs
   that for as long as the agent talks, on the replay's TPU about three requests a second of

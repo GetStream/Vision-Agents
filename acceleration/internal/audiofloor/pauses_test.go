@@ -148,6 +148,31 @@ func (s *PausesSuite) counts() (decisions, withWords, transcripts int) {
 	return len(s.server.turns), s.server.withWords, len(s.server.audio) - len(s.server.turns)
 }
 
+// Languages are an add-on: an agent that names none is registered with none, not a guess,
+// and its pauses are asked about and its words written all the same, in whatever language
+// the server heard.
+func (s *PausesSuite) TestAnAgentWithNoLanguagesIsAskedAboutAsIs() {
+	s.languages = nil
+	s.reopen(time.Now)
+	s.transcriber.AskOnPauses(s.agent)
+	s.ending(0.999)
+	s.server.mu.Lock()
+	s.server.words, s.server.language = "Duas passagens para Bilbau, por favor.", "Portuguese"
+	s.server.mu.Unlock()
+	s.say(1000, true)
+	s.say(220, false)
+	end := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeFinal, end.Mode)
+	s.Equal("Duas passagens para Bilbau, por favor.", end.Text)
+	rulings := s.agent.rulings()
+	s.Require().Len(rulings, 1, "the pause was asked about")
+	s.Equal(harness.Decided{Disposition: harness.Respond, Floor: harness.Continue}, rulings[0].Ruling)
+	decisions, withWords, _ := s.counts()
+	s.Equal([2]int{1, 1}, [2]int{decisions, withWords})
+	s.Require().NotEmpty(s.server.registered)
+	s.Nil(s.server.registered[len(s.server.registered)-1].Languages, "registered with no languages, none invented")
+}
+
 // The first check of a pause, at the policy's first check counted from the voice's last
 // frame, is the one request the pause costs: the decision and the words of the whole
 // utterance in one pass. A turn it ends goes out as one final, its ruling handed over first.
