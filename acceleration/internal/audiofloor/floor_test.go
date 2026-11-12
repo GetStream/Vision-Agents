@@ -707,6 +707,12 @@ func (s *FloorSuite) TestAFloorThatTakesTheFloorBackSendsAFinalWrittenAsItSteppe
 	s.noCutWaiting()
 	s.transcriber.words.heard(stt.Transcript{Participant: stt.Participant{ID: "p"}, Mode: stt.ModeFinal, Utterance: 9,
 		Text: "Yeah, zip is 46281.", Provider: "stub", Model: "stub-1"})
+	// The floor takes the floor back because the server answered a probe: it rules again.
+	// Left failing, the next pause's check would fail, and the utterance end on the words
+	// alone at a later frame, which this test feeds none of.
+	s.server.mu.Lock()
+	s.server.failDecide = false
+	s.server.mu.Unlock()
 	s.transcriber.retake(stt.Participant{ID: "p"})
 
 	end := s.final()
@@ -717,6 +723,9 @@ func (s *FloorSuite) TestAFloorThatTakesTheFloorBackSendsAFinalWrittenAsItSteppe
 	s.True(s.writes(10, stt.ModeFinal, "Two tickets to Bilbao, please."), "the words are the floor's again")
 	s.say(220, false)
 	s.Equal("Two tickets to Bilbao, please.", s.final().Text, "only what was said since")
+	rulings := s.agent.rulings()
+	s.Require().NotEmpty(rulings)
+	s.True(rulings[len(rulings)-1].Ended, "a check's ruling ended it")
 }
 
 // A run whose final came after the floor gave up waiting for it, the utterance ended on its
