@@ -5,11 +5,43 @@ Function registry for managing available functions that can be called by LLMs.
 from __future__ import annotations
 
 import inspect
-from typing import Any, Callable, Dict, List, Optional, Type, Union, get_type_hints
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Type,
+    Union,
+    get_type_hints,
+)
 from dataclasses import dataclass
 from enum import Enum
 
+from pydantic import ConfigDict, TypeAdapter, ValidationError
+from pydantic.errors import PydanticSchemaGenerationError, PydanticUserError
+
 from .llm_types import ToolSchema
+
+# A number the model sends for a string, such as a zip code, is taken as its digits.
+_ARGUMENT_CONFIG = ConfigDict(coerce_numbers_to_str=True)
+
+
+class ToolError(Exception):
+    """A tool call failed in a way the model should hear about.
+
+    The message is returned to the model as the call's error. Any other exception a
+    function raises is logged, and the model is only told that the tool failed.
+    """
+
+
+class ToolArgumentsError(ToolError, TypeError):
+    """A call's arguments are not what its function takes."""
+
+
+class ToolCallRefused(ToolError):
+    """An ``authorize`` callable refused a call."""
 
 
 @dataclass
@@ -21,6 +53,7 @@ class FunctionParameter:
     description: Optional[str] = None
     required: bool = True
     default: Any = None
+    adapter: Optional[TypeAdapter] = None
 
 
 @dataclass
@@ -47,8 +80,18 @@ class _ExplicitSchemaFunction:
 class FunctionRegistry:
     """Registry for managing available functions that can be called by LLMs."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        authorize: Optional[Callable[[str, Dict[str, Any]], Awaitable[None]]] = None,
+    ):
+        """
+        Args:
+            authorize: Optional async callable run before every call with the function's
+                name and arguments. Raise ``ToolCallRefused`` to stop the call; its
+                message is what the model is told.
+        """
         self.functions: Dict[str, FunctionDefinition | _ExplicitSchemaFunction] = {}
+        self.authorize = authorize
 
     def register(
         self,
@@ -97,6 +140,12 @@ class FunctionRegistry:
             for param_name, param in sig.parameters.items():
                 if param_name == "self":
                     continue
+                # *args and **kwargs are not arguments the model fills in by name.
+                if param.kind in (
+                    inspect.Parameter.VAR_POSITIONAL,
+                    inspect.Parameter.VAR_KEYWORD,
+                ):
+                    continue
 
                 param_type = type_hints.get(param_name, type(None))
                 param_description = None
@@ -115,6 +164,9 @@ class FunctionRegistry:
                         required=param.default == inspect.Parameter.empty,
                         default=param.default
                         if param.default != inspect.Parameter.empty
+                        else None,
+                        adapter=_adapter_for(param_type)
+                        if param_name in type_hints
                         else None,
                     )
                 )
@@ -176,25 +228,45 @@ class FunctionRegistry:
 
         Raises:
             KeyError: If the function is not registered.
-            TypeError: If the arguments don't match the function signature.
+            ToolCallRefused: If ``authorize`` refused the call.
+            ToolArgumentsError: If the arguments don't match the function signature.
         """
         if name not in self.functions:
             raise KeyError(f"Function '{name}' is not registered")
 
         func_def = self.functions[name]
 
+        if self.authorize is not None:
+            await self.authorize(name, arguments)
+
         # For explicit schema functions, just call directly (validation is external)
         if isinstance(func_def, _ExplicitSchemaFunction):
             return await func_def.function(**arguments)
 
-        # Validate required parameters for introspected functions
+        # Validate the parameters of introspected functions. An argument the function
+        # does not declare is passed on as it came, for a function that takes **kwargs.
+        checked = dict(arguments)
         for param in func_def.parameters:
-            if param.required and param.name not in arguments:
-                raise TypeError(
-                    f"Missing required parameter '{param.name}' for function '{name}'"
+            if param.name not in arguments:
+                if param.required:
+                    raise ToolArgumentsError(
+                        f"Missing required parameter '{param.name}' for function '{name}'"
+                    )
+                continue
+            if param.adapter is None:
+                continue
+            try:
+                checked[param.name] = param.adapter.validate_python(
+                    arguments[param.name]
                 )
+            except ValidationError as invalid:
+                problems = "; ".join(error["msg"] for error in invalid.errors())
+                raise ToolArgumentsError(
+                    f"Invalid value for parameter '{param.name}' of function "
+                    f"'{name}': {problems}"
+                ) from None
 
-        return await func_def.function(**arguments)
+        return await func_def.function(**checked)
 
     def get_callable(self, name: str) -> Callable:
         """
@@ -281,6 +353,20 @@ class FunctionRegistry:
 
         # Default fallback
         return {"type": "string"}
+
+
+def _adapter_for(type_hint: Any) -> Optional[TypeAdapter]:
+    """A validator for an argument's type, or None for a type Pydantic cannot check."""
+    try:
+        return TypeAdapter(type_hint, config=_ARGUMENT_CONFIG)
+    except PydanticSchemaGenerationError:
+        return None
+    except PydanticUserError:
+        # A model or dataclass carries its own config and refuses another.
+        try:
+            return TypeAdapter(type_hint)
+        except PydanticSchemaGenerationError:
+            return None
 
 
 # Global registry instance

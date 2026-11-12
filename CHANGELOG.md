@@ -2,6 +2,10 @@
 
 ## Breaking Changes
 
+### Tool calls: arguments are checked, and a tool's exception text stays out of the model's context
+
+A tool call is now checked against the function's type hints before the function runs. A call with a missing or wrongly typed argument is refused, and the model is told which argument is wrong so it can correct the call. When a function raises, the exception is logged and the model is told only that the tool failed; before, it was sent the exception text. To send a message to the model on purpose, raise `ToolError("...")` from the function. The MCP tool wrapper follows the same rule. `*args` and `**kwargs` are no longer listed as arguments in a tool's schema; arguments a function does not declare are still passed to one that takes `**kwargs`.
+
 ### `gemini` plugin: Realtime defaults to `gemini-3.8-live` (#647)
 
 `gemini.Realtime` now defaults to `gemini-3.8-live` (was `gemini-3.1-flash-live-preview`). Pass `model=` explicitly to stay on an older Live model.
@@ -15,6 +19,10 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 `deepgram.TTS` now streams Flux TTS on `wss://api.deepgram.com/v2/speak` and defaults to `flux-haley-en`. Aura model strings (`aura-*`) are rejected with `ValueError`. Call sites that passed an Aura voice must switch to a Flux model (`flux-{voice}-en`). See the [Flux voice catalog](https://developers.deepgram.com/docs/flux-tts/voices).
 
 ## New Features
+
+### Tool calls: an `authorize` hook
+
+`FunctionRegistry(authorize=...)`, or `llm.function_registry.authorize = ...`, takes an async callable that runs before every tool call with the function's name and its arguments. Raise `ToolCallRefused("...")` to stop the call; the function does not run and the model is told the message.
 
 ### `gemini` plugin: Gemini 3.8 Live and Extended Thinking (#647)
 
