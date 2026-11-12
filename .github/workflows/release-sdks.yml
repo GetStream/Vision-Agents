@@ -1,0 +1,183 @@
+name: Release all SDKs
+
+# Starts every SDK's own release workflow on accelerate, waits for them and reports each one.
+# It publishes nothing itself: each registry trusts its SDK's workflow by file name, so the
+# releases stay separate runs of release-sdk-<sdk>.yml and this only presses their buttons.
+#
+# - By hand from accelerate: choose the SDKs, the part of each one's version to raise, and
+#   whether it is a dry run (the default).
+# - When a GitHub Release vX.Y.Z is published from a commit on accelerate: every SDK, for real,
+#   raising the part the release itself raised (v0.7.0 a minor, v0.7.1 a patch). release.yml
+#   publishes the Python packages from the same event, and the tag is the Swift package's
+#   version. A prerelease, or a release cut from another branch, starts nothing.
+#
+# Each SDK keeps its own version line, so "minor" raises .NET 0.2.0 to 0.3.0 and Ruby 0.1.0 to
+# 0.2.0. Two decide their version themselves and ignore the part: JS reads its `sdk-js` commits
+# and releases nothing when there are none, and Dart releases the version in its pubspec.yaml
+# files if that one is not out yet.
+#
+# Not started from here: Kotlin is published when a pull request raising its version merges
+# (publish-sdk-kotlin.yml), and Go is a copy of sdks/go on main with a tag (the sdk-go skill).
+# See the release-sdks skill.
+on:
+  release:
+    types: [ published ]
+  workflow_dispatch:
+    inputs:
+      sdks:
+        description: SDKs to release, comma separated (js, dotnet, ruby, rust, php, dart), or all
+        type: string
+        default: all
+      bump:
+        description: Part of each SDK's last version to raise
+        type: choice
+        options: [ patch, minor, major ]
+        default: patch
+      dry_run:
+        description: Run every release as a dry run, publishing and tagging nothing
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-sdks
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event_name == 'release' || github.ref == 'refs/heads/accelerate'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: write   # start the SDKs' workflows and read their runs
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Decide what to release
+        id: plan
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
+          SDKS: ${{ inputs.sdks }}
+          BUMP: ${{ inputs.bump }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          all="js dotnet ruby rust php dart"
+          nothing() {
+            echo "$1" >> "$GITHUB_STEP_SUMMARY"
+            echo "sdks=" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          if [ "$GITHUB_EVENT_NAME" = release ]; then
+            if [[ ! "$RELEASE_TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || [ "$PRERELEASE" = true ]; then
+              nothing "\`$RELEASE_TAG\` is a prerelease or not a vX.Y.Z release, so no SDK is released."
+            fi
+            # The SDKs are released from accelerate, so only a release of a commit on it counts.
+            # GITHUB_SHA is the tagged commit; "behind" is an ancestor of accelerate.
+            status=$(gh api "repos/$GH_REPO/compare/accelerate...$GITHUB_SHA" --jq .status)
+            if [ "$status" != behind ] && [ "$status" != identical ]; then
+              nothing "\`$RELEASE_TAG\` is not on accelerate, so no SDK is released."
+            fi
+            if [ "${BASH_REMATCH[3]}" != 0 ]; then
+              bump="patch"
+            elif [ "${BASH_REMATCH[2]}" != 0 ]; then
+              bump="minor"
+            else
+              bump="major"
+            fi
+            sdks=$all
+            dry_run=false
+          else
+            bump=$BUMP
+            dry_run=$DRY_RUN
+            sdks=$(echo "$SDKS" | tr ',' ' ' | xargs)
+            if [ "$sdks" = all ]; then sdks=$all; fi
+            for sdk in $sdks; do
+              case " $all " in
+                *" $sdk "*) ;;
+                *) echo "::error::$sdk is not one of: $all"; exit 1 ;;
+              esac
+            done
+            [ -n "$sdks" ] || { echo "::error::no SDK was named"; exit 1; }
+          fi
+          {
+            echo "sdks=$sdks"
+            echo "bump=$bump"
+            echo "dry_run=$dry_run"
+          } >> "$GITHUB_OUTPUT"
+
+      # A run has no handle until it exists, so each one is found as the workflow's first
+      # dispatched run on accelerate that was not there before.
+      - name: Start each SDK's release
+        if: steps.plan.outputs.sdks != ''
+        env:
+          SDKS: ${{ steps.plan.outputs.sdks }}
+          BUMP: ${{ steps.plan.outputs.bump }}
+          DRY_RUN: ${{ steps.plan.outputs.dry_run }}
+        run: |
+          set -uo pipefail
+          newest() {
+            gh api "repos/$GH_REPO/actions/workflows/$1/runs?event=workflow_dispatch&branch=accelerate&per_page=1" --jq '.workflow_runs[0].id // empty'
+          }
+          : > "$RUNNER_TEMP/runs"
+          for sdk in $SDKS; do
+            workflow="release-sdk-$sdk.yml"
+            case "$sdk" in
+              js|dart) fields=(-f "dry_run=$DRY_RUN") ;;
+              *) fields=(-f "bump=$BUMP" -f "dry_run=$DRY_RUN") ;;
+            esac
+            run=
+            if before=$(newest "$workflow") && gh workflow run "$workflow" --ref accelerate "${fields[@]}"; then
+              for _ in $(seq 1 30); do
+                sleep 4
+                found=$(newest "$workflow" || true)
+                if [ -n "$found" ] && [ "$found" != "$before" ]; then run=$found; break; fi
+              done
+            fi
+            echo "$sdk $run" >> "$RUNNER_TEMP/runs"
+          done
+
+      - name: Wait for them and report
+        if: steps.plan.outputs.sdks != ''
+        env:
+          BUMP: ${{ steps.plan.outputs.bump }}
+          DRY_RUN: ${{ steps.plan.outputs.dry_run }}
+        run: |
+          set -uo pipefail
+          failed=0
+          {
+            echo "### SDK releases$([ "$DRY_RUN" = true ] && echo ' (dry run)')"
+            echo "Raising each SDK's $BUMP version. Each run's own summary has its version and changes."
+            echo
+            echo "| SDK | Result | Run |"
+            echo "| --- | --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          while read -r sdk run; do
+            if [ -z "$run" ]; then
+              failed=1
+              echo "::error::release-sdk-$sdk.yml did not start"
+              echo "| $sdk | did not start | |" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+            conclusion=
+            while [ -z "$conclusion" ]; do
+              sleep 20
+              conclusion=$(gh api "repos/$GH_REPO/actions/runs/$run" --jq 'select(.status == "completed") | .conclusion' || true)
+            done
+            if [ "$conclusion" != success ]; then
+              failed=1
+              echo "::error::release-sdk-$sdk.yml: $conclusion"
+            fi
+            echo "| $sdk | $conclusion | $GITHUB_SERVER_URL/$GH_REPO/actions/runs/$run |" >> "$GITHUB_STEP_SUMMARY"
+          done < "$RUNNER_TEMP/runs"
+          {
+            echo
+            echo "Not started from here: Kotlin releases when a pull request raising \`version\` in sdks/kotlin/gradle.properties merges, Go is copied to main and tagged by hand, Swift's version is the \`v\` tag of a GitHub Release, which also publishes the Python packages."
+            echo "A Dart release is published by a second run of release-sdk-dart.yml, on its \`sdk-dart-v\` tag."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$failed"

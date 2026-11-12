@@ -28,7 +28,8 @@ price is three lockfiles and a local link: `chat` and `rtc` declare
 `vision_agents_core: ^x.y.z` as a hosted dependency, and a committed `pubspec_overrides.yaml`
 points it at `../core`. Pub never publishes that file and consumers never see it. Before
 releasing, publish `core` first and check the others resolve against the hosted version with the
-override removed.
+override removed. `.github/workflows/release-sdk-dart.yml` does both, for the version the three
+`pubspec.yaml` files share (see the `release-sdks` skill).
 
 - `core` has no Flutter import and no Stream dependency. `dart:io` stays out of `lib/` too, so
   it runs on the web: `package:http` and `package:web_socket` pick the platform themselves.

@@ -1,0 +1,97 @@
+name: Release Ruby SDK
+
+# Run by hand from accelerate, or started by release-sdks.yml with every other SDK. It raises the
+# last sdk-ruby-v* version by the chosen part, or takes the exact version typed in, tests and
+# builds that copy, pushes it to rubygems.org through trusted publishing, then tags the commit
+# sdk-ruby-v<version>. The version in version.rb is not maintained: the one released is written
+# into the gem that is built and nothing is committed back.
+# No GitHub Release: publishing one runs release.yml, which uploads the Python packages to PyPI.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Part of the last version to raise
+        type: choice
+        options: [ patch, minor, major ]
+        default: patch
+      version:
+        description: Exact version to release instead, such as 0.2.0
+        type: string
+        default: ''
+      dry_run:
+        description: Work out the version, test and build, without publishing or tagging
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-sdk-ruby
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/accelerate'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # push the release tag
+      id-token: write   # RubyGems trusted publishing (OIDC)
+    defaults:
+      run:
+        working-directory: sdks/ruby
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Every sdk-ruby-v* tag, for the last version.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./.github/actions/sdk-version
+        id: version
+        with:
+          sdk: ruby
+          package: getstream-vision-agents
+          path: sdks/ruby
+          bump: ${{ inputs.bump }}
+          version: ${{ inputs.version }}
+          dry-run: ${{ inputs.dry_run }}
+
+      # No dependency cache in a job that holds an OIDC token: a cache poisoned by another
+      # run would hand that token to whatever it planted.
+      - uses: ruby/setup-ruby@7f797815d8adceb1c412e7abefdd1ab4abc47a5f # v1.335.0
+        with:
+          ruby-version: '3.3'
+
+      - name: Install
+        run: bundle install
+
+      # The default task checks the generated spec table against the spec, then runs the tests.
+      - name: Check and test
+        run: bundle exec rake
+
+      - name: Build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          sed -i -E "s/VERSION = \".*\"/VERSION = \"$VERSION\"/" lib/getstream/vision_agents/version.rb
+          gem build getstream-vision-agents.gemspec --strict -o "$RUNNER_TEMP/getstream-vision-agents.gem"
+          built=$(gem specification "$RUNNER_TEMP/getstream-vision-agents.gem" version | sed -n 's/^version: //p')
+          [ "$built" = "$VERSION" ] || { echo "::error::built $built, not $VERSION"; exit 1; }
+
+      - uses: rubygems/configure-rubygems-credentials@dc5a8d8553e6ee01fc26761a49e99e733d17954a # v2.1.0
+        if: ${{ !inputs.dry_run }}
+
+      - name: Push
+        if: ${{ !inputs.dry_run }}
+        run: gem push "$RUNNER_TEMP/getstream-vision-agents.gem"
+
+      # After the push, so a failed push leaves no tag behind for the next bump to skip past.
+      - name: Tag
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git tag "sdk-ruby-v$VERSION" "$GITHUB_SHA"
+          git push "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" "sdk-ruby-v$VERSION"
