@@ -1,7 +1,8 @@
 ## 0.1.0
 
-First release of `stream_agents_core`, the Dart client for Stream Agents. Pure Dart, so it runs
-in Flutter on every platform, on the Dart VM and in a browser.
+First release of `stream_agents`, the Flutter client for Stream Agents. It holds what were
+`stream_agents_core`, `stream_agents_chat` and `stream_agents_rtc`, with the same API, behind one
+import: `package:stream_agents/stream_agents.dart`.
 
 ✅ Added
 
@@ -18,3 +19,20 @@ in Flutter on every platform, on the Dart VM and in a browser.
   and `session.declineLogin`.
 - `SessionOptions` - memory of the user across sessions, the time zone, incognito sessions and
   the other settings of a session.
+- `session.chat()` - the Stream Chat `Channel` a text or voice session is kept in, to render with
+  `stream_chat_flutter_ai` or read with `stream_chat`.
+- `agents.useChat(client)` - opens the channels on the app's own `StreamChatClient`. Without it,
+  the SDK connects one for the user and reuses it for that user's sessions, and
+  `agents.disconnect()` closes it.
+- `LiveReasoning` - puts an agent's reasoning back together, step by step, from the live
+  message updates.
+- `VoiceSession` - starts a spoken conversation (`VoiceSession.start`) or attaches to one already
+  running (`VoiceSession.attach`), and joins this device to the agent's call: `join`, `setMuted`,
+  `setCameraEnabled`, `leave` and `end`.
+- `VoiceCallView` - the call's controls: mute, camera and hang up.
+- `AgentVideoView` - the device camera with the agent's video inset beside it.
+- The agent can look through the camera: with the camera on, the session answers the agent's
+  vision skill with pictures of the call's video, taken when it asks.
+- `agents.useVideo(client)` - joins the calls on the app's own `StreamVideo`. Without it, the SDK
+  connects one for the user and reuses it for that user's calls, and `agents.disconnect()` closes
+  it.
