@@ -1,8 +1,11 @@
 import logging
+import os
+import secrets
 from typing import Any, Dict
 
 from dotenv import load_dotenv
-from vision_agents.core import Agent, AgentLauncher, Runner, User
+from fastapi import Header, HTTPException
+from vision_agents.core import Agent, AgentLauncher, Runner, ServeOptions, User
 from vision_agents.core.utils.examples import get_weather_by_location
 from vision_agents.plugins import deepgram, elevenlabs, gemini, getstream
 
@@ -51,7 +54,21 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         await agent.finish()
 
 
+def require_api_token(authorization: str = Header(default="")) -> None:
+    """Allow a request only if it carries `Authorization: Bearer $AGENT_API_TOKEN`."""
+    token = os.environ.get("AGENT_API_TOKEN", "")
+    expected = f"Bearer {token}".encode()
+    if not token or not secrets.compare_digest(authorization.encode(), expected):
+        raise HTTPException(status_code=401, detail="Invalid or missing API token")
+
+
 if __name__ == "__main__":
     Runner(
         AgentLauncher(create_agent=create_agent, join_call=join_call),
+        serve_options=ServeOptions(
+            can_start_session=require_api_token,
+            can_close_session=require_api_token,
+            can_view_session=require_api_token,
+            can_view_metrics=require_api_token,
+        ),
     ).cli()

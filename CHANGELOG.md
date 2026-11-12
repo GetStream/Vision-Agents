@@ -521,6 +521,18 @@ A tool function that needs the call it runs for (who asked, its id, `update`, `s
 - Rust: `register_with_tool_call_context` hands its function `(tool_call_context: ToolCallContext, arguments)`.
 - C#: the overloads that take the context are `(ToolCallContext toolCallContext, arguments, cancellationToken)`.
 
+### Python: the runner HTTP API is closed by default
+
+The HTTP server started by `Runner.serve` (`agent.py serve`) no longer ships open defaults.
+
+- **Hosts other than loopback need auth.** `serve` raises `ValueError` before binding when the host is not a loopback address (`--host 0.0.0.0`, for example) and any of `can_start_session`, `can_close_session`, `can_view_session` or `can_view_metrics` in `ServeOptions` is unset. `127.0.0.1` works as before with no setup. A `fast_api` app you pass yourself is not checked.
+- **Session caps.** `AgentLauncher` now defaults to `max_concurrent_sessions=10`, `max_sessions_per_call=1` and `max_session_duration_seconds=3600`; all three were unlimited. A second agent on the same call gets a 429, and a session is closed after an hour, in `run` mode too. Pass `None` for no limit.
+- **Call ids and types.** `call_id` in the URL and `call_type` in the body must match `^[A-Za-z0-9_-]{1,64}$`; anything else gets a 422.
+- **CORS.** `cors_allow_origins` defaults to no origins and `cors_allow_credentials` to `False` (were `*` and `True`). A browser client needs its origin listed in `cors_allow_origins`.
+- **API docs.** `/docs`, `/redoc` and `/openapi.json` are off. Set `docs_url`, `redoc_url` and `openapi_url` in `ServeOptions` to serve them.
+
+Projects made by `vision-agents init`, and examples 07 and 08, now check `Authorization: Bearer <token>` against the `AGENT_API_TOKEN` environment variable on every session request, and refuse all of them while it is unset.
+
 ### A worker cannot host tools for an agent the app does not have
 
 `host_tools` on `/v1/dispatch` is answered `hosting_refused` with `there is no agent called <name>` when the app has no agent config of that name. Sessions are only opened by a config's name, so such tools were never offered to anything while the worker looked healthy. The Go, Python and JavaScript SDKs already stop the worker on a refusal, so a misspelled `api.Agent("<name>")` now fails at start naming the agent; sync the agent before starting its worker. A router with no config store, or one that cannot read it at that moment, still takes the offer (AI-3132).
