@@ -22940,6 +22940,25 @@ paths:
           $ref: '#/components/responses/InternalError'
       security: []
       summary: Receive a Telnyx call
+  /v1/phone/hooks/telnyx/events:
+    post:
+      description: 'Where the Telnyx account''s notification channel sends account events, such as a port-out or a number order. Unauthenticated because Telnyx is not a customer: each event is checked against the account''s Ed25519 signature, then logged and counted in vendor_account_events_total by its type and level. A deployment with no Telnyx key answers 404, so nobody else can raise the count.'
+      operationId: receiveTelnyxEvent
+      responses:
+        "204":
+          description: The event is counted
+        "400":
+          description: The signed body is not a Telnyx event
+        "401":
+          description: The event is not signed by Telnyx
+        "404":
+          description: Telnyx events are not configured
+        "413":
+          description: The event is over 64 KiB
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security: []
+      summary: Receive a Telnyx account event
   /v1/phone/machine/{token}:
     post:
       description: 'Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.'

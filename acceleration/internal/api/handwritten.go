@@ -719,6 +719,25 @@ func documentHandWritten(api huma.API) {
 		},
 	})
 	document.AddOperation(&huma.Operation{
+		OperationID: "receiveTelnyxEvent",
+		Method:      http.MethodPost,
+		Path:        telnyxEventsHookPath,
+		Summary:     "Receive a Telnyx account event",
+		Description: "Where the Telnyx account's notification channel sends account events, such as a " +
+			"port-out or a number order. Unauthenticated because Telnyx is not a customer: each " +
+			"event is checked against the account's Ed25519 signature, then logged and counted in " +
+			"vendor_account_events_total by its type and level. A deployment with no Telnyx key " +
+			"answers 404, so nobody else can raise the count.",
+		Security: []map[string][]string{},
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The event is counted"},
+			"400": {Description: "The signed body is not a Telnyx event"},
+			"401": {Description: "The event is not signed by Telnyx"},
+			"404": {Description: "Telnyx events are not configured"},
+			"413": {Description: "The event is over 64 KiB"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
 		OperationID: "receiveChatDelivery",
 		Method:      http.MethodPost,
 		Path:        chatInboundPath,
