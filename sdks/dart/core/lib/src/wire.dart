@@ -39,24 +39,34 @@ final class HttpWire implements Wire {
     Object? body,
   }) async {
     final anonymously = operation == 'createGuestUser' && backend.anonymous;
-    final request = http.Request(method, backend.requestUri(path, query));
-    request.headers.addAll(
-      anonymously ? const {'Stream-Auth-Type': 'anonymous'} : await backend.headers(),
-    );
-    if (body != null) {
-      request.headers['Content-Type'] = 'application/json';
-      request.body = jsonEncode(body);
+    Future<(http.Response, String?)> attempt() async {
+      final headers = anonymously
+          ? const {'Stream-Auth-Type': 'anonymous'}
+          : await backend.headers();
+      final request = http.Request(method, backend.requestUri(path, query));
+      request.headers.addAll(headers);
+      if (body != null) {
+        request.headers['Content-Type'] = 'application/json';
+        request.body = jsonEncode(body);
+      }
+      try {
+        final response = await http.Response.fromStream(await client.send(request));
+        return (response, headers['Authorization']?.replaceFirst('Bearer ', ''));
+      } on http.ClientException catch (error) {
+        throw TransportException(error);
+      }
     }
 
-    final http.Response response;
-    try {
-      response = await http.Response.fromStream(await client.send(request));
-    } on http.ClientException catch (error) {
-      throw TransportException(error);
-    }
-
+    var (response, sent) = await attempt();
     if (anonymously && response.statusCode == 401) {
       throw StateError(_anonymousGuestRefused);
+    }
+    // A 401 is the token having expired more often than anything else, so the provider is
+    // asked for a fresh one and the request sent once more. Once: a second refusal is the
+    // token being wrong rather than old, and asking again would only ask the app's backend
+    // the same question in a loop.
+    if (response.statusCode == 401 && backend.expireToken(sent)) {
+      (response, sent) = await attempt();
     }
     if (response.statusCode < 200 || response.statusCode > 299) {
       throw _refusalOf(response, operation);

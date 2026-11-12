@@ -1,7 +1,11 @@
-/// Hands over the token to present, asked for on every request and socket handshake.
+import 'dart:convert';
+
+/// Hands over the token to present, from the app's backend.
 ///
-/// A function rather than a value so a long-lived client never wakes up holding an expired
-/// token. Caching one until it is about to expire is the provider's business.
+/// Asked once and its answer kept. It is asked again when the router refuses the token with a
+/// 401, when a session socket is refused, when the token is within a minute of the expiry it
+/// carries, and when Stream Chat or Stream Video say theirs expired. Requests that need a token
+/// while it is being fetched wait for the same fetch rather than asking again.
 typedef TokenProvider = Future<String> Function();
 
 /// What Stream's own Chat and Video clients connect with: the app's key, the user and their
@@ -38,9 +42,25 @@ final class Backend {
     String apiKey = '',
     String userId = '',
     TokenProvider? token,
-  }) : this._(url ?? defaultUrl, customerId, apiKey, userId, token, _StreamClients());
+  }) : this._(
+         url ?? defaultUrl,
+         customerId,
+         apiKey,
+         userId,
+         token,
+         token == null ? null : _Tokens(token),
+         _StreamClients(),
+       );
 
-  Backend._(this.url, this.customerId, this.apiKey, this.userId, this.token, this._clients) {
+  Backend._(
+    this.url,
+    this.customerId,
+    this.apiKey,
+    this.userId,
+    this.token,
+    this._tokens,
+    this._clients,
+  ) {
     if (customerId.isEmpty && apiKey.isEmpty) {
       throw ArgumentError('a backend needs a customerId or an apiKey');
     }
@@ -80,6 +100,9 @@ final class Backend {
 
   final TokenProvider? token;
 
+  /// What [token] answered, kept for every copy that asks with the same provider.
+  final _Tokens? _tokens;
+
   final _StreamClients _clients;
 
   bool get _byCustomer => customerId.isNotEmpty;
@@ -89,9 +112,36 @@ final class Backend {
   bool get anonymous => !_byCustomer && token == null;
 
   /// The same router, asked by somebody else. Shares this one's Stream clients, which are
-  /// kept per user.
-  Backend withUser(String userId, {TokenProvider? token}) =>
-      Backend._(url, customerId, apiKey, userId, token ?? this.token, _clients);
+  /// kept per user. A new [token] provider starts with no token kept; without one, the token
+  /// this one holds is shared.
+  Backend withUser(String userId, {TokenProvider? token}) => Backend._(
+    url,
+    customerId,
+    apiKey,
+    userId,
+    token ?? this.token,
+    token == null ? _tokens : _Tokens(token),
+    _clients,
+  );
+
+  /// Drops the token the provider last answered, so the next request asks it again.
+  ///
+  /// [refused] is the token the router turned down. Only that one is forgotten: when a newer
+  /// one is already held or being fetched, because another refused request got there first,
+  /// it is kept. Otherwise requests refused together would each throw away the token the one
+  /// before had fetched, and a refusal arriving late would throw away a good one.
+  ///
+  /// Answers whether a request sent again would carry a token asked for afresh, which is what
+  /// a retry after a 401 is for. It would not by customer id, where the router is never shown
+  /// the token, nor with no provider at all.
+  bool expireToken([String? refused]) {
+    final tokens = _tokens;
+    if (_byCustomer || tokens == null) {
+      return false;
+    }
+    tokens.expire(refused);
+    return true;
+  }
 
   /// What every request carries.
   ///
@@ -156,10 +206,17 @@ final class Backend {
     );
   }
 
-  /// The key, user and token Stream's own clients connect with, the token asked for afresh.
-  Future<StreamCredentials> streamCredentials() async {
+  /// The key, user and token Stream's own clients connect with.
+  ///
+  /// Stream's clients ask again only when the token they hold has expired, so the one kept
+  /// here is no answer to them: [refresh] asks the provider for a new one. A fetch already
+  /// under way is that new one, so it is waited for rather than started over.
+  Future<StreamCredentials> streamCredentials({bool refresh = false}) async {
     _requireStreamIdentity();
-    return StreamCredentials(apiKey: apiKey, userId: userId, token: await token!());
+    if (refresh) {
+      _tokens!.refresh();
+    }
+    return StreamCredentials(apiKey: apiKey, userId: userId, token: await _token());
   }
 
   /// Uses [client], the app's own Stream client of this [kind], rather than building one.
@@ -222,13 +279,13 @@ final class Backend {
   String _key(String kind) => '$kind:$apiKey:$userId';
 
   Future<String> _token() {
-    final token = this.token;
-    if (token == null) {
+    final tokens = _tokens;
+    if (tokens == null) {
       throw ArgumentError(
         'an apiKey needs a token to go with it: pass token, or use withUser or withGuest',
       );
     }
-    return token();
+    return tokens.get();
   }
 
   void _requireStreamIdentity() {
@@ -242,6 +299,83 @@ final class Backend {
       throw ArgumentError('Stream Chat and Video need the user\'s token: pass token');
     }
   }
+}
+
+/// The token one provider answered, and the fetch under way, if any.
+final class _Tokens {
+  _Tokens(this.provider);
+
+  final TokenProvider provider;
+  String? _fetched;
+  Future<String>? _fetching;
+
+  Future<String> get() {
+    if (_fetched case final token? when !_expiresSoon(token)) {
+      return Future.value(token);
+    }
+    return _fetching ??= _fetch();
+  }
+
+  void expire(String? refused) {
+    final newer = refused != null && (_fetched != null ? _fetched != refused : _fetching != null);
+    if (!newer) {
+      _fetched = null;
+      _fetching = null;
+    }
+  }
+
+  void refresh() {
+    if (_fetching == null) {
+      _fetched = null;
+    }
+  }
+
+  Future<String> _fetch() {
+    late final Future<String> fetching;
+    // Kept only if nothing expired the token while it was fetched: otherwise it is the one
+    // that was just refused.
+    fetching = Future(provider).then(
+      (token) {
+        if (identical(_fetching, fetching)) {
+          _fetched = token;
+          _fetching = null;
+        }
+        return token;
+      },
+      onError: (Object error, StackTrace stack) {
+        if (identical(_fetching, fetching)) {
+          _fetching = null;
+        }
+        Error.throwWithStackTrace(error, stack);
+      },
+    );
+    return fetching;
+  }
+}
+
+/// How long before the expiry a token carries it is fetched again rather than sent.
+const _expiryMargin = Duration(seconds: 60);
+
+/// Whether [token] says it expires within the margin.
+///
+/// Read rather than trusted: nothing is verified here, the point is only to not open a socket
+/// with a token the router is about to refuse, since a refused socket does not say why. A
+/// token that is not a JWT, or carries no expiry, never expires as far as this is concerned.
+bool _expiresSoon(String token) {
+  final parts = token.split('.');
+  if (parts.length != 3) {
+    return false;
+  }
+  try {
+    final claims = jsonDecode(utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))));
+    if (claims case {'exp': final num exp}) {
+      final expiry = DateTime.fromMillisecondsSinceEpoch((exp * 1000).round());
+      return expiry.difference(DateTime.now()) < _expiryMargin;
+    }
+  } on FormatException {
+    // Not a JWT this can read.
+  }
+  return false;
 }
 
 final class _StreamClients {

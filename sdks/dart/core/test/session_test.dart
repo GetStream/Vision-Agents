@@ -54,6 +54,35 @@ void main() {
       keyed.close();
     });
 
+    test('dials a refused socket once more with a fresh token', () async {
+      router
+        ..answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()))
+        ..refuseSocketsWhere = (query) => query['token'] == 'token-1';
+      var asked = 0;
+      final keyed = VisionAgents(
+        url: router.url,
+        apiKey: 'key',
+        token: () async => 'token-${++asked}',
+      );
+
+      final chat = await keyed.attach('s1');
+
+      expect(chat.isConnected, isTrue);
+      expect(router.upgrades.map((upgrade) => upgrade.query['token']), ['token-1', 'token-2']);
+      expect(asked, 2);
+      await chat.close();
+      keyed.close();
+    });
+
+    test('does not dial a refused socket again when the router is never shown a token', () async {
+      router
+        ..answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()))
+        ..refuseSockets = true;
+
+      await expectLater(agents.attach('s1'), throwsA(isA<TransportException>()));
+      expect(router.upgrades, hasLength(1));
+    });
+
     test('shows what was asked at once, and asks with a request rather than a frame', () async {
       router.answer(
         'POST /v1/agents/sessions/s1/responses',

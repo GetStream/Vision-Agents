@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:test/test.dart';
 import 'package:vision_agents_core/vision_agents_core.dart';
 
@@ -33,15 +35,38 @@ Backend _signedIn(String user) => Backend(
 
 void main() {
   group('Stream clients', () {
-    test('the key, the user and a fresh token are what Stream connects with', () async {
+    test('the key, the user and the kept token are what Stream connects with', () async {
       var asked = 0;
       final backend = Backend(apiKey: 'key', userId: 'john', token: () async => 'token-${++asked}');
 
       final first = await backend.streamCredentials();
       final again = await backend.streamCredentials();
+      final refreshed = await backend.streamCredentials(refresh: true);
 
       expect([first.apiKey, first.userId, first.token], ['key', 'john', 'token-1']);
-      expect(again.token, 'token-2');
+      expect(again.token, 'token-1');
+      expect(refreshed.token, 'token-2', reason: 'Stream asks again only once its token expired');
+      expect((await backend.headers())['Authorization'], 'Bearer token-2');
+    });
+
+    test('a refresh while a token is being fetched waits for that fetch', () async {
+      var asked = 0;
+      final fetched = Completer<String>();
+      final backend = Backend(
+        apiKey: 'key',
+        userId: 'john',
+        token: () {
+          asked++;
+          return fetched.future;
+        },
+      );
+
+      final first = backend.streamCredentials();
+      final refreshed = backend.streamCredentials(refresh: true);
+      fetched.complete('token-1');
+
+      expect([(await first).token, (await refreshed).token], ['token-1', 'token-1']);
+      expect(asked, 1);
     });
 
     test('refuses without a Stream key or a user, before asking for anything', () {

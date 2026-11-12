@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -34,7 +35,7 @@ void main() {
       expect(request.header('Authorization'), isNull);
     });
 
-    test('presents a token with the api key, asking the provider each time', () async {
+    test('presents a token with the api key, asking the provider once', () async {
       router.answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));
       var asked = 0;
       final keyed = VisionAgents(
@@ -43,16 +44,196 @@ void main() {
         token: () async => 'token-${++asked}',
       );
 
-      await keyed.sessions.get('s1');
-      await keyed.sessions.get('s1');
+      for (var i = 0; i < 3; i++) {
+        await keyed.sessions.get('s1');
+      }
       keyed.close();
 
+      expect(asked, 1);
+      expect(router.arrived.map((request) => request.header('Authorization')), [
+        'Bearer token-1',
+        'Bearer token-1',
+        'Bearer token-1',
+      ]);
       final request = router.last('GET /v1/agents/sessions/s1');
       expect(request.query['api_key'], 'key');
       expect(request.header('X-Api-Key'), isNull);
-      expect(request.header('Authorization'), 'Bearer token-2');
       expect(request.header('Stream-Auth-Type'), 'jwt');
       expect(request.header('X-Customer-Id'), isNull);
+    });
+
+    group('a token provider', () {
+      late int asked;
+      late TokenProvider counting;
+      late VisionAgents keyed;
+
+      setUp(() {
+        asked = 0;
+        counting = () async => 'token-${++asked}';
+        keyed = VisionAgents(url: router.url, apiKey: 'key', userId: 'jlahey', token: counting);
+      });
+
+      tearDown(() => keyed.close());
+
+      Answer refusing(Arrived request) => request.header('Authorization') == 'Bearer token-1'
+          ? Answer(401, errorJson('authentication', 'token_expired', 'token expired'))
+          : Answer(200, sessionJson());
+
+      test('is asked once by requests that need it at the same time', () async {
+        router.answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));
+        final fetched = Completer<String>();
+        final waiting = VisionAgents(
+          url: router.url,
+          apiKey: 'key',
+          token: () {
+            asked++;
+            return fetched.future;
+          },
+        );
+
+        final requests = Future.wait([for (var i = 0; i < 3; i++) waiting.sessions.get('s1')]);
+        await Future<void>.delayed(Duration.zero);
+        fetched.complete('token-1');
+        await requests;
+        waiting.close();
+
+        expect(asked, 1);
+      });
+
+      test('is asked again after a 401, and the request sent once more', () async {
+        router.answerBy('GET /v1/agents/sessions/s1', refusing);
+
+        final session = await keyed.sessions.get('s1');
+
+        expect(session.id, 's1');
+        expect(asked, 2);
+        expect(router.arrived.map((request) => request.header('Authorization')), [
+          'Bearer token-1',
+          'Bearer token-2',
+        ]);
+
+        // The fresh one is kept for what comes next.
+        await keyed.sessions.get('s1');
+        expect(asked, 2);
+      });
+
+      test('is not asked a third time when the fresh token is refused too', () async {
+        router.answer(
+          'POST /v1/agents/sessions',
+          Answer(401, errorJson('authentication', 'invalid_token', 'not a token of this app')),
+        );
+
+        await expectLater(
+          keyed.sessions.create(const SessionOptions(title: 'Plans')),
+          throwsA(isA<RouterException>().having((error) => error.status, 'status', 401)),
+        );
+        expect(asked, 2);
+        expect(router.arrived, hasLength(2));
+        expect(router.arrived[1].json, isNotNull, reason: 'the body is sent again');
+        expect(router.arrived[1].json, router.arrived[0].json);
+      });
+
+      test('does not retry a router that is never shown the token', () async {
+        // Reached by customer id, the token is for Stream's own clients, so a fresh one would
+        // send the very same request again.
+        router.answer('GET /v1/agents/sessions/s1', Answer(401, errorJson('a', 'b', 'c')));
+        final local = VisionAgents(
+          url: router.url,
+          customerId: 'acme',
+          apiKey: 'key',
+          userId: 'jlahey',
+          token: counting,
+        );
+
+        await expectLater(local.sessions.get('s1'), throwsA(isA<RouterException>()));
+        local.close();
+
+        expect(router.arrived, hasLength(1));
+        expect(asked, 0);
+      });
+
+      test('is asked again before a socket is opened with a token about to expire', () async {
+        String jwt(Duration expiresIn) {
+          final exp = DateTime.now().add(expiresIn).millisecondsSinceEpoch ~/ 1000;
+          final claims = base64Url.encode(utf8.encode(jsonEncode({'exp': exp})));
+          return 'header.${claims.replaceAll('=', '')}.signature';
+        }
+
+        final tokens = [jwt(const Duration(seconds: 10)), jwt(const Duration(hours: 1))];
+        final backend = Backend(url: router.url, apiKey: 'key', token: () async => tokens[asked++]);
+
+        await backend.headers();
+        final uri = await backend.socketUri('/v1/agents/sessions/s1/events');
+
+        expect(asked, 2, reason: 'the first expires within the margin');
+        expect(uri.queryParameters['token'], tokens[1]);
+        await backend.headers();
+        expect(asked, 2, reason: 'the second is kept');
+      });
+
+      test(
+        'is asked once more, not once per request, when requests are refused together',
+        () async {
+          router.answerBy('GET /v1/agents/sessions/s1', refusing);
+          await keyed.backend.headers();
+
+          final sessions = await Future.wait([
+            for (var i = 0; i < 4; i++) keyed.sessions.get('s1'),
+          ]);
+
+          expect(sessions, hasLength(4));
+          expect(asked, 2, reason: 'token-1, then one token-2 for every retry');
+        },
+      );
+
+      test('keeps a newer token when a refusal of an older one arrives late', () async {
+        await keyed.backend.headers();
+        expect(keyed.backend.expireToken('token-1'), isTrue);
+        expect((await keyed.backend.headers())['Authorization'], 'Bearer token-2');
+
+        // A request sent with token-1 before the refresh is refused only now.
+        expect(keyed.backend.expireToken('token-1'), isTrue, reason: 'the retry goes with token-2');
+        expect((await keyed.backend.headers())['Authorization'], 'Bearer token-2');
+        expect(asked, 2);
+      });
+
+      test('is asked again after a fetch that failed', () async {
+        router.answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));
+        final flaky = VisionAgents(
+          url: router.url,
+          apiKey: 'key',
+          token: () async => ++asked == 1 ? throw StateError('backend down') : 'token-$asked',
+        );
+
+        await expectLater(flaky.sessions.get('s1'), throwsStateError);
+        await flaky.sessions.get('s1');
+        flaky.close();
+
+        expect(router.last('GET /v1/agents/sessions/s1').header('Authorization'), 'Bearer token-2');
+      });
+
+      test(
+        'is shared by a copy for another user, and not by one with a provider of its own',
+        () async {
+          router.answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));
+          var otherAsked = 0;
+
+          await keyed.sessions.get('s1');
+          await keyed.withUser('ada').sessions.get('s1');
+          await keyed
+              .withUser('bob', token: () async => 'other-${++otherAsked}')
+              .sessions
+              .get('s1');
+
+          expect(asked, 1);
+          expect(otherAsked, 1);
+          expect(router.arrived.map((request) => request.header('Authorization')), [
+            'Bearer token-1',
+            'Bearer token-1',
+            'Bearer other-1',
+          ]);
+        },
+      );
     });
 
     test(

@@ -98,7 +98,7 @@ Future<stream.StreamChatClient> _connect(Backend backend, StreamCredentials cred
   String? unused = credentials.token;
   try {
     await client.connectUserWithProvider(stream.User(id: credentials.userId), (_) async {
-      final token = unused ?? (await backend.streamCredentials()).token;
+      final token = unused ?? (await backend.streamCredentials(refresh: true)).token;
       unused = null;
       return token;
     });

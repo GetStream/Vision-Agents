@@ -48,6 +48,7 @@ final class TestRouter {
   final HttpServer _server;
   final Map<String, Answer> _answers = {};
   final Map<String, List<Answer>> _inTurn = {};
+  final Map<String, Answer Function(Arrived request)> _answering = {};
   final List<Arrived> arrived = [];
 
   /// The socket upgrades that arrived, oldest first.
@@ -63,9 +64,18 @@ final class TestRouter {
   void answerInTurn(String route, List<Answer> answers) =>
       _inTurn.putIfAbsent(route, () => []).addAll(answers);
 
+  /// Answers `METHOD /path` with what [answer] makes of each request, such as a 401 for one
+  /// token and not another.
+  void answerBy(String route, Answer Function(Arrived request) answer) =>
+      _answering[route] = answer;
+
   /// Answers every socket upgrade with a 404 envelope, the way a router that lost the
   /// session would.
   bool refuseSockets = false;
+
+  /// Answers a socket upgrade whose query this holds for with the same refusal, such as one
+  /// carrying a token the router no longer takes.
+  bool Function(Map<String, String> query)? refuseSocketsWhere;
 
   /// The socket the SDK opened [index]th, once it has.
   Future<TestSocket> socket([int index = 0]) async {
@@ -89,7 +99,7 @@ final class TestRouter {
 
     if (WebSocketTransformer.isUpgradeRequest(request)) {
       upgrades.add(seen);
-      if (refuseSockets) {
+      if (refuseSockets || (refuseSocketsWhere?.call(seen.query) ?? false)) {
         request.response
           ..statusCode = 404
           ..headers.contentType = ContentType.json
@@ -107,7 +117,9 @@ final class TestRouter {
     final queued = _inTurn[route];
     final answer = queued != null && queued.isNotEmpty
         ? queued.removeAt(0)
-        : _answers[route] ?? Answer(404, errorJson('not_found', 'not_found', 'no route'));
+        : _answering[route]?.call(seen) ??
+              _answers[route] ??
+              Answer(404, errorJson('not_found', 'not_found', 'no route'));
     request.response.statusCode = answer.status;
     answer.headers.forEach(request.response.headers.set);
     if (answer.body != null) {

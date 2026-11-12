@@ -62,7 +62,9 @@ Stream is set up once. The key, the user and the token are what the router, Stre
 Stream Video all connect with. Nothing connects up front: the first session to ask for `chat()`
 or `join()` builds the client, and every session after it shares that one, so the user is one
 connection and one presence to Stream however many conversations are open. The token function
-is asked again when Stream's token expires, an hour in. Leaving a call or closing a session
+is asked once and its answer kept, not once per request. It is asked again when the router
+answers 401 or refuses a session socket, when the token is within a minute of the expiry it
+carries, and when Stream's token expires, an hour in. Leaving a call or closing a session
 disconnects nothing; `agents.disconnect()` does.
 
 An app that already has a `StreamChatClient` or a `StreamVideo` hands it over, connected as the

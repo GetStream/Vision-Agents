@@ -147,19 +147,30 @@ final class AgentSession {
     if (_socket != null) {
       return;
     }
-    final socket = SessionSocket(
-      await _backend.socketUri('/v1/agents/sessions/${Uri.encodeComponent(id)}/events', {
-        // Decisions arrive several times a second and are for somebody watching a call, not
-        // for an app holding one.
-        'decisions': 'false',
-        if (interim) 'interim': 'true',
-      }),
-    );
-    _socket = socket;
+    final path = '/v1/agents/sessions/${Uri.encodeComponent(id)}/events';
+    final query = {
+      // Decisions arrive several times a second and are for somebody watching a call, not
+      // for an app holding one.
+      'decisions': 'false',
+      if (interim) 'interim': 'true',
+    };
+    final uri = await _backend.socketUri(path, query);
+    var socket = _socket = SessionSocket(uri);
 
-    final Stream<AgentEvent> events;
+    Stream<AgentEvent> events;
     try {
-      events = await socket.open();
+      try {
+        events = await socket.open();
+      } on TransportException {
+        // A refused upgrade does not say why, so a token the router no longer takes looks
+        // like any other refusal: the provider is asked for a fresh one and the socket
+        // dialled once more. Once, for the reason a request is retried once.
+        if (!_backend.expireToken(uri.queryParameters['token'])) {
+          rethrow;
+        }
+        socket = _socket = SessionSocket(await _backend.socketUri(path, query));
+        events = await socket.open();
+      }
     } on AgentsException catch (error) {
       _stopped(error);
       rethrow;
