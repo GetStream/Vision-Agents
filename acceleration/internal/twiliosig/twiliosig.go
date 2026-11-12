@@ -32,16 +32,58 @@ func CheckAuthToken(token string) error {
 }
 
 // Verify checks the signature of a request to fullURL, the URL exactly as Twilio called it with
-// its query string, carrying the POST parameters params.
+// its query string, carrying the POST parameters params. Twilio may have signed the URL with its
+// scheme's default port added or removed, so those two forms match as well; no other port is
+// ever added or removed.
 func Verify(token, fullURL string, params url.Values, signature string) error {
 	// HMAC takes an empty key, and anyone can sign with that.
 	if token == "" {
 		return errors.New("no Twilio auth token to check the request against")
 	}
-	if !hmac.Equal([]byte(Sign(token, fullURL, params)), []byte(signature)) {
+	signed := false
+	for _, candidate := range signedURLs(fullURL) {
+		if hmac.Equal([]byte(Sign(token, candidate, params)), []byte(signature)) {
+			signed = true
+		}
+	}
+	if !signed {
 		return errors.New("the request is not signed by Twilio")
 	}
 	return nil
+}
+
+// signedURLs is fullURL, then fullURL with its scheme's default port added when it has no port,
+// or removed when it is that port. Twilio's SDKs try the same forms "since sig generation on back
+// end is inconsistent": twilio-python twilio/request_validator.py validate (add_port,
+// remove_port), twilio-go client/request_validator.go ValidateWithAlgorithm, twilio-node
+// src/webhooks/webhooks.ts validateRequest.
+func signedURLs(fullURL string) []string {
+	urls := []string{fullURL}
+	u, err := url.Parse(fullURL)
+	if err != nil {
+		return urls
+	}
+	var defaultPort string
+	switch u.Scheme {
+	case "https":
+		defaultPort = "443"
+	case "http":
+		defaultPort = "80"
+	default:
+		return urls
+	}
+	host := "//" + u.Host
+	if !strings.HasPrefix(strings.TrimPrefix(fullURL, u.Scheme+":"), host) {
+		return urls
+	}
+	switch u.Port() {
+	case "":
+		host2 := host + ":" + defaultPort
+		urls = append(urls, strings.Replace(fullURL, host, host2, 1))
+	case defaultPort:
+		urls = append(urls, strings.Replace(fullURL, host, strings.TrimSuffix(host, ":"+defaultPort), 1))
+	}
+	return urls
 }
 
 // Sign is the signature Twilio sends: the URL, then each parameter's name and value with the

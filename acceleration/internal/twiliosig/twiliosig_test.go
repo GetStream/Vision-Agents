@@ -106,6 +106,18 @@ func (s *SignatureSuite) TestASignatureIsComparedAsSent() {
 	}
 }
 
+// Twilio may sign the URL with its scheme's default port added or removed. The signatures were
+// computed with python3 hmac, outside this package. A port other than the default is never added
+// or removed.
+func (s *SignatureSuite) TestTheDefaultPortMayBeAddedOrRemoved() {
+	const withPort = "https://mycompany.com:443/myapp.php?foo=1&bar=2"
+
+	s.NoError(Verify(sdkToken, sdkURL, s.params, "S+063oyEnxXwjXm6e8xGRp5y6jU="), "signed with :443, called without")
+	s.NoError(Verify(sdkToken, withPort, s.params, sdkSig), "signed without :443, called with")
+	s.Error(Verify(sdkToken, "https://mycompany.com:8443/myapp.php?foo=1&bar=2", s.params, sdkSig), "a non-default port is not stripped")
+	s.Error(Verify(sdkToken, sdkURL, s.params, "qXmXTn46nE2BzIX2mElesF0OUiA="), "no other port is added")
+}
+
 // Anyone can sign with an empty key, so an unset token must verify nothing.
 func (s *SignatureSuite) TestWithoutATokenNothingPasses() {
 	s.Error(Verify("", sdkURL, s.params, Sign("", sdkURL, s.params)))
