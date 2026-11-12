@@ -1060,6 +1060,11 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		if _, ok := message["custom"].(map[string]any); !ok {
 			message["custom"] = map[string]any{}
 		}
+		// skip_push is a field of the send, not of the message; it is kept on the message so a
+		// test can read what it was sent with.
+		if skip, _ := body["skip_push"].(bool); skip {
+			message["skip_push"] = true
+		}
 		db.messages[id] = message
 		result["message"] = db.messages[id]
 	case strings.Contains(r.URL.Path, "/messages/") && r.Method == http.MethodGet && db.hidden(db.messages[parts[len(parts)-1]]):
@@ -1087,7 +1092,15 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		// is deliberately not stored: only the durable update is history.
 		if id == "ephemeral" {
 			id = parts[len(parts)-2]
-		} else if r.Method == http.MethodPut {
+		}
+		// Chat answers an update of a rewound message as one of a message it does not have.
+		// The status and wording are unverified.
+		if db.hidden(db.messages[id]) {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 16, "message": "message " + id + " does not exist", "StatusCode": http.StatusNotFound})
+			return
+		}
+		if r.Method == http.MethodPut && parts[len(parts)-1] != "ephemeral" {
 			if author, _ := body["user_id"].(string); db.knownAuthors && db.users[author] == nil {
 				refuse(w, "UpdateMessagePartial failed with error: \"the user "+author+" does not exist\"")
 				return
