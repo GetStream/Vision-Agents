@@ -1,5 +1,6 @@
 import 'dart:async';
 
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:stream_core_flutter/core.dart';
 import 'package:intl/intl.dart';

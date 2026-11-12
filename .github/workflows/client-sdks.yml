@@ -9,6 +9,8 @@ on:
       - 'sdks/swift/**'
       - 'Package.swift'
       - 'sdks/dart/**'
+      - 'examples/voice_agents/flutter_demo/**'
+      - 'examples/voice_agents/flutter_assistant/**'
       - 'examples/voice_agents/swift_demo/app/**'
       - 'examples/voice_agents/android_demo/**'
       - 'examples/voice_agents/android_assistant/**'
@@ -21,6 +23,8 @@ on:
       - 'sdks/swift/**'
       - 'Package.swift'
       - 'sdks/dart/**'
+      - 'examples/voice_agents/flutter_demo/**'
+      - 'examples/voice_agents/flutter_assistant/**'
       - 'examples/voice_agents/swift_demo/app/**'
       - 'examples/voice_agents/android_demo/**'
       - 'examples/voice_agents/android_assistant/**'
@@ -56,6 +60,8 @@ jobs:
               - '.github/workflows/client-sdks.yml'
             dart:
               - 'sdks/dart/**'
+              - 'examples/voice_agents/flutter_demo/**'
+              - 'examples/voice_agents/flutter_assistant/**'
               - 'acceleration/api/openapi.yaml'
               - '.github/workflows/client-sdks.yml'
             swift:
@@ -135,6 +141,21 @@ jobs:
           dart run tool/generate.dart --check
           flutter test
           flutter pub publish --dry-run
+
+      # Against stream_agents as it is in this checkout, through a path dependency.
+      - name: Check and test flutter_demo
+        working-directory: examples/voice_agents/flutter_demo
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
+
+      - name: Check and test flutter_assistant
+        working-directory: examples/voice_agents/flutter_assistant
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
 
   swift:
     needs: changes

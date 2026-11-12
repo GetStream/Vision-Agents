@@ -1,3 +1,4 @@
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:stream_video_flutter/stream_video_flutter.dart' as video;
 
