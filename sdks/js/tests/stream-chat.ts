@@ -46,6 +46,8 @@ export async function chatClient(url: string): Promise<TestChat> {
   if (!chat10) {
     chat["userID"] = "john";
   }
+  // Each asks whether another user's arriving message is muted, which throws without a socket.
+  chat["userMuteStatus"] = () => false;
   const claims = Buffer.from(JSON.stringify({ user_id: "john" })).toString("base64url");
   const tokens = chat["tokenManager"] as { setTokenOrProvider(token: string, user: { id: string }): Promise<void> };
   await tokens.setTokenOrProvider(`eyJhbGciOiJIUzI1NiJ9.${claims}.sig`, { id: "john" });

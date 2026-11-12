@@ -234,9 +234,50 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
     refresh();
   };
 
+  /**
+   * Waits until the channel holds `count` messages sent again that `before` did not have. The
+   * controller takes a finished message arriving after `send` resolved for the new reply, so the
+   * copies an activation sends again have to be in the feed before it resolves.
+   */
+  const resentArrived = async (before: ReadonlySet<string>, count: number): Promise<void> => {
+    const arrived = (messages: readonly M[]) =>
+      messages.filter((message) => !before.has(message.id) && messageField(message, "resent_from") !== undefined).length >= count;
+    let unsubscribe: (() => void) | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const done = await new Promise<boolean>((resolve) => {
+      // The router has written the copies to Chat before it answers, so only the socket is left
+      // to bring them: well under a second. Three bound a slow socket without holding the person's
+      // question long when it dropped them; the read below brings them then.
+      timer = setTimeout(() => resolve(false), RESENT_TIMEOUT_MS);
+      unsubscribe = chat.state.subscribe((state) => {
+        if (arrived(state.messages)) {
+          resolve(true);
+        }
+      });
+    });
+    clearTimeout(timer);
+    unsubscribe?.();
+    if (!done) {
+      try {
+        await chat.readLatest();
+      } catch {
+        // What is asked does not wait on the copies: they show with the channel's next read.
+      }
+    }
+  };
+
   /** Makes the version shown the conversation again, before anything is asked on it. */
   const activate = async (session: Session, viewed: Overlay<M>): Promise<void> => {
-    await rewinding(async () => (await session.responses.activate(viewed.leafResponseId)).rewound_to);
+    const before = new Set(chat.state.getLatestValue().messages.map((message) => message.id));
+    let resent = 0;
+    await rewinding(async () => {
+      const activated = await session.responses.activate(viewed.leafResponseId);
+      resent = activated.resent;
+      return activated.rewound_to;
+    });
+    if (resent > 0) {
+      await resentArrived(before, resent);
+    }
     if (overlay === viewed) {
       overlay = undefined;
     }
@@ -494,6 +535,9 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
     loadOlderMessages: () => chat.loadOlderMessages(),
   };
 }
+
+/** How long an activation waits for the copies it sent again to arrive, before reading the channel. */
+const RESENT_TIMEOUT_MS = 3000;
 
 /**
  * The response an edit of the person's message goes through: the one whose reply is shown after

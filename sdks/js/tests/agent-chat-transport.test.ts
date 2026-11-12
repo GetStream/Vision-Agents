@@ -190,6 +190,24 @@ describe("agentChatTransport, branching", () => {
       .filter((one) => one.method === "POST" && one.path !== QUERY_PATH && one.path !== "/v1/agents/sessions")
       .map((one) => one.path);
 
+  /**
+   * What activating the first regeneration of the second reply answers, the copies it sends
+   * again arriving `after` milliseconds later, or never.
+   */
+  function activating(streamChat: TestChat, after: number | undefined) {
+    const copies = [
+      chatMessage("c_q1", 10, { ...mark("resp_1", "question", 1, 1), resent_from: "q1" }),
+      chatMessage("c_r1", 11, { ...mark("resp_1", "reply", 1, 3), ai_generated: true, resent_from: "r1" }, "agent"),
+    ];
+    router.serve("POST", "/v1/agents/sessions/sess_1/responses/resp_1/activate", () => {
+      if (after !== undefined) {
+        setTimeout(() => copies.forEach((copy) => arrive(streamChat, copy)), after);
+      }
+      return { body: { leaf_response_id: "resp_1", already_active: false, resent: 2, rewound_to: { message_id: "r0", inclusive: false } } };
+    });
+    return copies;
+  }
+
   it("regenerates a reply through its response, dropping what it hid at once", async () => {
     const { transport, feed } = await connected();
     router.serve("POST", responsesPath, answering({ message_id: "q1", inclusive: false }));
@@ -332,17 +350,15 @@ describe("agentChatTransport, branching", () => {
   });
 
   it("brings the version shown back before asking anything on it", async () => {
-    const { transport, feed } = await connected();
-    router.serve("POST", "/v1/agents/sessions/sess_1/responses/resp_1/activate", {
-      body: { leaf_response_id: "resp_1", already_active: false, resent: 2, rewound_to: { message_id: "r0", inclusive: false } },
-    });
+    const { streamChat, transport, feed } = await connected();
+    activating(streamChat as TestChat, 0);
     router.serve("POST", responsesPath, answering(undefined));
     await transport.switchBranch(feed.find("r2"), "previous");
 
     await transport.send(request({ text: "And Porto?", messageId: "ctl_ask" }));
 
     assert.deepEqual(writes(), ["/v1/agents/sessions/sess_1/responses/resp_1/activate", responsesPath]);
-    assert.deepEqual(feed.ids, ["q0", "r0"], "the channel's own, until the version is sent again");
+    assert.deepEqual(feed.ids, ["q0", "r0", "c_q1", "c_r1"], "the version, sent again");
     const asked = router.requestsTo("POST", responsesPath)[0]?.body as Record<string, unknown>;
     assert.equal(asked["text"], "And Porto?");
     assert.equal(asked["request_id"], "ctl_ask");
@@ -373,10 +389,38 @@ describe("agentChatTransport, branching", () => {
     assert.deepEqual(writes(), [responsesPath], "nothing to bring back: no other version was shown when it was sent");
   });
 
+  it("has the copies an activation sent again in the feed before what is asked resolves", async () => {
+    const { streamChat, transport, feed } = await connected();
+    // Chat's socket brings the copies a while after the router answered.
+    activating(streamChat as TestChat, 100);
+    router.serve("POST", responsesPath, answering(undefined));
+    await transport.switchBranch(feed.find("r2"), "previous");
+
+    await transport.send(request({ text: "And Porto?", messageId: "ctl_ask" }));
+
+    assert.deepEqual(feed.ids, ["q0", "r0", "c_q1", "c_r1"], "else the controller takes a finished copy for the reply");
+  });
+
+  it("reads the channel again when the copies an activation sent again never come", async () => {
+    const { streamChat, transport, feed } = await connected();
+    const copies = activating(streamChat as TestChat, undefined);
+    router.serve("POST", responsesPath, answering(undefined));
+    await transport.switchBranch(feed.find("r2"), "previous");
+    router.serve("POST", QUERY_PATH, channelPage([q0, r0, ...copies]));
+
+    await transport.send(request({ text: "And Porto?", messageId: "ctl_ask" }));
+
+    assert.equal(router.requestsTo("POST", QUERY_PATH).length, 2, "read again once the wait ran out");
+    await until(() => feed.ids.join() === "q0,r0,c_q1,c_r1", `shows ${feed.ids.join()}`);
+    assert.deepEqual(writes(), ["/v1/agents/sessions/sess_1/responses/resp_1/activate", responsesPath]);
+  });
+
   it("brings the version shown back before regenerating a reply of it", async () => {
-    const { transport, feed } = await connected();
-    router.serve("POST", "/v1/agents/sessions/sess_1/responses/resp_3/activate", {
-      body: { leaf_response_id: "resp_3", already_active: false, resent: 2, rewound_to: { message_id: "r0", inclusive: false } },
+    const { streamChat, transport, feed } = await connected();
+    router.serve("POST", "/v1/agents/sessions/sess_1/responses/resp_3/activate", () => {
+      arrive(streamChat, chatMessage("c_q1", 10, { ...mark("resp_1", "question", 1, 1), resent_from: "q1" }));
+      arrive(streamChat, chatMessage("c_r3", 11, { ...mark("resp_3", "reply", 3, 3, "resp_1"), resent_from: "r3" }, "agent"));
+      return { body: { leaf_response_id: "resp_3", already_active: false, resent: 2, rewound_to: { message_id: "r0", inclusive: false } } };
     });
     router.serve("POST", responsesPath, answering(undefined));
     await transport.switchBranch(feed.find("r2"), "next");
