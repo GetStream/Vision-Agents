@@ -57,15 +57,19 @@ file_search_store: gemini.FileSearchStore | None = None  # For Gemini
 rag = None  # For TurboPuffer
 
 app = FastAPI()
-# Trust proxy headers from ngrok so Twilio signature validation works (https vs http)
-app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])
+# Trust proxy headers from ngrok so Twilio signature validation works (https vs http).
+# Only the hosts in FORWARDED_ALLOW_IPS are trusted, by default this machine.
+app.add_middleware(
+    ProxyHeadersMiddleware,
+    trusted_hosts=os.environ.get("FORWARDED_ALLOW_IPS", "127.0.0.1,::1"),
+)
 call_registry = twilio.TwilioCallRegistry()
 
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Unhandled exception: {exc}\n{traceback.format_exc()}")
-    return JSONResponse(status_code=500, content={"detail": str(exc)})
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 @app.post("/twilio/voice")
@@ -74,24 +78,13 @@ async def twilio_voice_webhook(
     data: twilio.CallWebhookInput = Depends(twilio.CallWebhookInput.as_form),
 ):
     """Twilio call webhook. Validates signature and starts the media stream."""
-    logger.info(
-        f"📞 Call from {data.caller} ({data.caller_city or 'unknown location'})"
-    )
+    logger.info(f"📞 Call from ***{data.caller[-4:]}")
     call_id = str(uuid.uuid4())
 
     async def prepare_call():
         agent = await create_agent()
 
-        phone_number = data.from_number or "unknown"
-        sanitized_number = (
-            phone_number.replace("+", "")
-            .replace(" ", "")
-            .replace("(", "")
-            .replace(")", "")
-        )
-        phone_user = User(
-            name=f"Call from {phone_number}", id=f"phone-{sanitized_number}"
-        )
+        phone_user = User(name=f"Inbound call {call_id[:8]}", id=f"phone-{call_id}")
         await agent.edge.create_users([phone_user])
 
         stream_call = await agent.create_call("default", call_id=call_id)
@@ -109,7 +102,7 @@ async def media_stream(websocket: WebSocket, call_id: str, token: str):
     """Receive real-time audio stream from Twilio."""
     twilio_call = call_registry.validate(call_id, token)
 
-    logger.info(f"🔗 Media stream connected for {twilio_call.caller}")
+    logger.info(f"🔗 Media stream connected for call {call_id}")
 
     twilio_stream = twilio.TwilioMediaStream(websocket)
     await twilio_stream.accept()
@@ -126,6 +119,9 @@ async def media_stream(websocket: WebSocket, call_id: str, token: str):
         await twilio.attach_phone_to_call(stream_call, twilio_stream, phone_user.id)
 
         async with agent.join(stream_call, participant_wait_timeout=0):
+            await agent.say(
+                "Hi, you're talking to an AI assistant, and this call is transcribed."
+            )
             await agent.simple_response(
                 text="Greet the caller warmly and ask what kind of app they're building. Use your knowledge base to provide relevant product recommendations."
             )

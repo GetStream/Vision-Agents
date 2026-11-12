@@ -27,7 +27,7 @@ async def create_agent() -> Agent:
     return Agent(
         edge=getstream.Edge(),
         agent_user=User(id="ai-agent", name="AI Assistant"),
-        instructions="Speak english. Keep your replies short. You're calling a restaurant and want to make a dinner reservation. for 4, today between 18:00 or 19:00 pm. ideally 18:30",
+        instructions="Speak english. Keep your replies short. Start the call by saying that you are an AI assistant. You're calling a restaurant and want to make a dinner reservation. for 4, today between 18:00 or 19:00 pm. ideally 18:30",
         llm=gemini.Realtime(),
     )
 
@@ -62,7 +62,9 @@ async def initiate_outbound_call(from_number: str, to_number: str) -> str:
         to=to_number,
         from_=from_number,
     )
-    logger.info(f"📞 Initiated call {call_id} from {from_number} to {to_number}")
+    logger.info(
+        f"📞 Initiated call {call_id} from {from_number} to ***{to_number[-4:]}"
+    )
     return call_id
 
 

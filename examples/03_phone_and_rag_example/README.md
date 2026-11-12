@@ -77,9 +77,13 @@ cd 03_phone_and_rag_example
 RAG_BACKEND=gemini NGROK_URL=replaceme.ngrok-free.app uv run inbound_phone_and_rag_example.py
 ```
 
+The server trusts proxy headers (which Twilio signature validation needs behind NGROK) only from this machine.
+If your proxy runs on another host, set `FORWARDED_ALLOW_IPS` to its address.
+
 B. Call the number
 
 Call the number you've setup in Twilio and you'll end up talking to the agent.
+It starts by telling the caller that they are talking to an AI and that the call is transcribed.
 The agent will gladly tell you all about Stream's APIs for chat, video and voice.
 
 Note that there is some added latency during development if you're not running in US-east.
