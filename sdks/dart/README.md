@@ -58,11 +58,12 @@ running locally with nothing in front of it is reached by customer id instead:
 local router too.
 
 Stream is set up once. The key, the user and the token are what the router, Stream Chat and
-Stream Video all connect with. Nothing connects up front: the first session to ask for `chat()`
-or `join()` builds the client, and every session after it shares that one, so the user is one
-connection and one presence to Stream however many conversations are open. The token function
-is asked again when Stream's token expires, an hour in. Leaving a call or closing a session
-disconnects nothing; `agents.disconnect()` does.
+Stream Video all connect with. Nothing connects up front: the token is asked for once and shared
+across requests and sockets, the first session to ask for `chat()` or `join()` builds the client,
+and every session after it shares that one, so the user is one connection and one presence to
+Stream however many conversations are open. The token function is asked again after a 401 or when
+Stream's token expires, an hour in. Leaving a call or closing a session disconnects nothing;
+`agents.disconnect()` does.
 
 An app that already has a `StreamChatClient` or a `StreamVideo` hands it over, connected as the
 same user, and it is used instead of a second one and never disconnected here:

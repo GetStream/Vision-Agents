@@ -63,11 +63,14 @@ installs a process-wide instance and collides with a host that has its own.
 ## Stream is set up once
 
 The key, `userId` and token are the one identity for the router, Stream Chat and Stream Video.
-`Backend.shared(kind, open:, disconnect:)` holds one client per `kind:apiKey:userId`: sessions
-asking at once share one opening, one that failed to open is opened again, and `withUser` keeps
-the registry so another user gets their own. `Backend.give` holds the app's own client, which
-`StreamAgents.disconnect()` never touches; it closes only what `shared` built. Beside a
-`customerId` the key is Stream's alone and the router is reached by customer id.
+`Backend` fetches the token single-flighted once and reuses it across router requests, socket
+handshakes and Stream clients, refreshing only on an HTTP 401 (with a single retry) or
+`streamCredentials(refresh: true)`. `Backend.shared(kind, open:, disconnect:)` holds one client
+per `kind:apiKey:userId`: sessions asking at once share one opening, one that failed to open is
+opened again, and `withUser` keeps the registry so another user gets their own. `Backend.give`
+holds the app's own client, which `StreamAgents.disconnect()` never touches; it closes only what
+`shared` built. Beside a `customerId` the key is Stream's alone and the router is reached by
+customer id.
 
 - `chat`: `agents.useChat(client)` and `session.chat()`, which answers the
   conversation's `Channel`, unwatched. A session with no conversation is a `StateError`.

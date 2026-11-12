@@ -41,6 +41,49 @@ final class HttpWire implements Wire {
     Object? body,
   }) async {
     final anonymously = operation == 'createGuestUser' && backend.anonymous;
+    final encoded = body == null ? null : jsonEncode(body);
+    var response = await _attempt(
+      method,
+      path,
+      operation: operation,
+      query: query,
+      body: encoded,
+      anonymously: anonymously,
+    );
+    if (anonymously && response.statusCode == 401) {
+      throw StateError(_anonymousGuestRefused);
+    }
+    if (!anonymously && response.statusCode == 401 && expireBackendToken(backend)) {
+      response = await _attempt(
+        method,
+        path,
+        operation: operation,
+        query: query,
+        body: encoded,
+        anonymously: false,
+      );
+    }
+    if (response.statusCode < 200 || response.statusCode > 299) {
+      throw _refusalOf(response, operation);
+    }
+    if (response.bodyBytes.isEmpty) {
+      return null;
+    }
+    try {
+      return jsonDecode(utf8.decode(response.bodyBytes));
+    } on FormatException catch (error) {
+      throw UnreadableException('$operation answered with something other than JSON: $error');
+    }
+  }
+
+  Future<http.Response> _attempt(
+    String method,
+    String path, {
+    required String operation,
+    required Map<String, String?> query,
+    required String? body,
+    required bool anonymously,
+  }) async {
     // A redirect is answered as the refusal it is rather than followed, so the credential
     // never goes to another origin.
     final request = http.Request(method, backend.requestUri(path, query))..followRedirects = false;
@@ -49,12 +92,10 @@ final class HttpWire implements Wire {
     );
     if (body != null) {
       request.headers['Content-Type'] = 'application/json';
-      request.body = jsonEncode(body);
+      request.body = body;
     }
-
-    final http.Response response;
     try {
-      response = await () async {
+      return await () async {
         final streamed = await client.send(request);
         return http.Response.bytes(
           await _bodyOf(streamed, operation),
@@ -68,21 +109,6 @@ final class HttpWire implements Wire {
       throw TransportException(error);
     } on TimeoutException {
       throw TransportException('$operation got no answer within ${_answering.inSeconds} seconds');
-    }
-
-    if (anonymously && response.statusCode == 401) {
-      throw StateError(_anonymousGuestRefused);
-    }
-    if (response.statusCode < 200 || response.statusCode > 299) {
-      throw _refusalOf(response, operation);
-    }
-    if (response.bodyBytes.isEmpty) {
-      return null;
-    }
-    try {
-      return jsonDecode(utf8.decode(response.bodyBytes));
-    } on FormatException catch (error) {
-      throw UnreadableException('$operation answered with something other than JSON: $error');
     }
   }
 }

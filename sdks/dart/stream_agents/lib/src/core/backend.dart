@@ -1,7 +1,8 @@
-/// Hands over the token to present, asked for on every request and socket handshake.
+/// Hands over a token for the user, and a fresh one when asked again.
 ///
-/// A function rather than a value so a long-lived client never wakes up holding an expired
-/// token. Caching one until it is about to expire is the provider's business.
+/// A function rather than a string, because a token expires and a long conversation should
+/// not end when it does. It is asked once, then again after a 401 or when Stream says the
+/// one held has expired.
 typedef TokenProvider = Future<String> Function();
 
 /// What Stream's own Chat and Video clients connect with: the app's key, the user and their
@@ -82,6 +83,9 @@ final class Backend {
 
   final _StreamClients _clients;
 
+  Future<String>? _pendingToken;
+  bool _tokenFetched = false;
+
   bool get _byCustomer => customerId.isNotEmpty;
 
   /// Whether this holds the app's key and no token yet, which is how a guest is asked for
@@ -90,8 +94,15 @@ final class Backend {
 
   /// The same router, asked by somebody else. Shares this one's Stream clients, which are
   /// kept per user.
-  Backend withUser(String userId, {TokenProvider? token}) =>
-      Backend._(url, customerId, apiKey, userId, token ?? this.token, _clients);
+  Backend withUser(String userId, {TokenProvider? token}) {
+    final next = Backend._(url, customerId, apiKey, userId, token ?? this.token, _clients);
+    if (token == null && userId == this.userId) {
+      next
+        .._pendingToken = _pendingToken
+        .._tokenFetched = _tokenFetched;
+    }
+    return next;
+  }
 
   /// What every request carries.
   ///
@@ -156,10 +167,18 @@ final class Backend {
     );
   }
 
-  /// The key, user and token Stream's own clients connect with, the token asked for afresh.
-  Future<StreamCredentials> streamCredentials() async {
+  /// The key, user and token Stream's own clients connect with.
+  ///
+  /// [refresh] is for a token the caller was told has expired: the one held is dropped and
+  /// the provider asked again, unless a fresh one is already on its way, so two clients
+  /// refreshing at once fetch one token.
+  Future<StreamCredentials> streamCredentials({bool refresh = false}) async {
     _requireStreamIdentity();
-    return StreamCredentials(apiKey: apiKey, userId: userId, token: await token!());
+    if (refresh && _tokenFetched) {
+      _pendingToken = null;
+      _tokenFetched = false;
+    }
+    return StreamCredentials(apiKey: apiKey, userId: userId, token: await _token());
   }
 
   /// Uses [client], the app's own Stream client of this [kind], rather than building one.
@@ -229,14 +248,43 @@ final class Backend {
 
   String _key(String kind) => '$kind:$apiKey:$userId';
 
-  Future<String> _token() {
-    final token = this.token;
-    if (token == null) {
+  Future<String> _token() async {
+    if (_pendingToken case final pending?) {
+      return pending;
+    }
+    final provider = token;
+    if (provider == null) {
       throw ArgumentError(
         'an apiKey needs a token to go with it: pass token, or use withUser or withGuest',
       );
     }
-    return token();
+    final pending = Future<String>(provider);
+    _pendingToken = pending;
+    _tokenFetched = false;
+    try {
+      final minted = await pending;
+      if (identical(_pendingToken, pending)) {
+        _tokenFetched = true;
+      }
+      return minted;
+    } catch (_) {
+      // A token that could not be had is asked for again next time, not remembered.
+      if (identical(_pendingToken, pending)) {
+        _pendingToken = null;
+      }
+      rethrow;
+    }
+  }
+
+  bool _expireToken() {
+    if (_byCustomer || token == null) {
+      return false;
+    }
+    if (_tokenFetched) {
+      _pendingToken = null;
+      _tokenFetched = false;
+    }
+    return true;
   }
 
   void _requireStreamIdentity() {
@@ -267,6 +315,10 @@ final class _Built {
   /// handed a client being disconnected.
   bool disconnected = false;
 }
+
+/// Drops the token [backend] holds, so the next request asks the provider again, and says
+/// whether there is a provider to ask.
+bool expireBackendToken(Backend backend) => backend._expireToken();
 
 String _join(String base, String path) =>
     base.endsWith('/') ? '${base.substring(0, base.length - 1)}$path' : '$base$path';

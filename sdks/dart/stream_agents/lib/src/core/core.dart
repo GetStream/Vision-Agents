@@ -6,7 +6,7 @@ library;
 
 export 'agent_event.dart';
 export 'agent_session.dart' hide CameraHandler, CameraPicture;
-export 'backend.dart';
+export 'backend.dart' hide expireBackendToken;
 export 'command.dart';
 export 'conversation.dart';
 export 'errors.dart' hide withoutCredentials;
