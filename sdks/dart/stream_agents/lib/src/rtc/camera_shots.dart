@@ -46,11 +46,14 @@ final class CameraShots {
     final generation = _generation;
     final stopped = _stopped.future;
     final pictures = <CameraPicture>[];
+    // Each picture is encoded while the next is taken, one at a time, so a slow encoder
+    // neither stretches the time between pictures nor runs several at once.
+    var encoded = Future<void>.value();
     Future<void>? next;
     for (var taken = 0; taken < limit; taken += 1) {
       // The first picture is asked for at once, with nothing awaited before it.
       if (next != null) {
-        await next;
+        await Future.any([next, stopped]);
       }
       if (taken + 1 < limit) {
         next = Future<void>.delayed(between);
@@ -62,15 +65,29 @@ final class CameraShots {
       // Stamped when asked rather than when it arrives: the picture is the next frame the
       // camera gives.
       final capturedAt = DateTime.now();
+      final Uint8List? picture;
       try {
-        final picture = await Future.any([_take(shot), stopped.then((_) => null)]);
-        if (picture != null && generation == _generation) {
-          pictures.add((jpeg: await _encode(picture), capturedAt: capturedAt));
-        }
+        picture = await Future.any([_take(shot), stopped.then((_) => null)]);
       } catch (_) {
         // A picture not taken, for whatever reason the platform had, is one picture fewer.
+        continue;
+      }
+      if (picture case final picture? when generation == _generation) {
+        final previous = encoded;
+        encoded = () async {
+          await previous;
+          if (generation != _generation) {
+            return;
+          }
+          try {
+            pictures.add((jpeg: await _encode(picture), capturedAt: capturedAt));
+          } catch (_) {
+            // Something that is not a picture is left out.
+          }
+        }();
       }
     }
+    await Future.any([encoded, stopped]);
     // What a camera turned off showed is not for the agent.
     return generation == _generation ? pictures : const [];
   }

@@ -276,11 +276,15 @@ String _localId() =>
 String _text(Object? value) => value is String ? value : '';
 
 bool _same<T>(List<T> a, List<T> b) {
+  if (identical(a, b)) {
+    return true;
+  }
   if (a.length != b.length) {
     return false;
   }
-  for (var i = 0; i < a.length; i++) {
-    if (a[i] != b[i]) {
+  // From the end: what streams in changes the last turn.
+  for (var i = a.length - 1; i >= 0; i--) {
+    if (!identical(a[i], b[i]) && a[i] != b[i]) {
       return false;
     }
   }

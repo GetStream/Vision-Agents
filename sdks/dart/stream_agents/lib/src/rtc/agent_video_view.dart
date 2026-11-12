@@ -26,15 +26,18 @@ class AgentVideoView extends StatelessWidget {
       if (call == null) {
         return const _Waiting();
       }
-      return StreamBuilder<video.CallState>(
-        stream: call.state.valueStream,
-        initialData: call.state.value,
+      _Shown shown(video.CallState participants) => (
+        // The camera being on is what this device decided, true from the moment it was
+        // turned on rather than once a track has been negotiated and reported back.
+        local: state.isCameraEnabled ? participants.localParticipant : null,
+        remote: _remoteVideo(participants.otherParticipants),
+      );
+      // Only the two participants shown: the call's state changes with everyone's audio level.
+      return StreamBuilder<_Shown>(
+        stream: call.state.valueStream.map(shown).distinct(),
+        initialData: shown(call.state.value),
         builder: (context, snapshot) {
-          final participants = snapshot.data!;
-          // The camera being on is what this device decided, true from the moment it was
-          // turned on rather than once a track has been negotiated and reported back.
-          final local = state.isCameraEnabled ? participants.localParticipant : null;
-          final remote = _remoteVideo(participants.otherParticipants);
+          final (:local, :remote) = snapshot.data!;
           if (local != null) {
             return Stack(
               fit: StackFit.expand,
@@ -65,6 +68,7 @@ class AgentVideoView extends StatelessWidget {
 
   Widget _render(video.Call call, video.CallParticipantState participant) =>
       video.StreamVideoRenderer(
+        key: ValueKey(participant.uniqueParticipantKey),
         call: call,
         participant: participant,
         videoTrackType: video.SfuTrackType.video,
@@ -88,6 +92,8 @@ class AgentVideoView extends StatelessWidget {
     return null;
   }
 }
+
+typedef _Shown = ({video.CallParticipantState? local, video.CallParticipantState? remote});
 
 class _Waiting extends StatelessWidget {
   const _Waiting();

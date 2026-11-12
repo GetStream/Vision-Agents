@@ -197,6 +197,8 @@ String? _text(Object? value) => value is String && value.isNotEmpty ? value : nu
 /// when it needs none, and an offset rather than Z when the host is not on UTC. Dart keeps
 /// microseconds, so digits past the sixth are dropped rather than refused.
 DateTime? parseRouterDate(String value) {
-  final trimmed = value.replaceFirstMapped(RegExp(r'(\.\d{6})\d+'), (match) => match.group(1)!);
+  final trimmed = value.replaceFirstMapped(_pastMicroseconds, (match) => match.group(1)!);
   return DateTime.tryParse(trimmed);
 }
+
+final _pastMicroseconds = RegExp(r'(\.\d{6})\d+');

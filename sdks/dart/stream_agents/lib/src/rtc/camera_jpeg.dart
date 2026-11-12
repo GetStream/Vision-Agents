@@ -20,10 +20,8 @@ const _quality = 70;
 Uint8List _jpegOf(Uint8List picture) {
   // Only the two formats Stream Video gives, so an app does not compile in every decoder
   // `package:image` has. Checked first: decoding a PNG as a JPEG throws.
-  final jpeg = image.JpegDecoder();
-  final decoded = jpeg.isValidFile(picture)
-      ? jpeg.decode(picture)
-      : image.PngDecoder().decode(picture);
+  final isJpeg = picture.length > 1 && picture[0] == 0xFF && picture[1] == 0xD8;
+  final decoded = isJpeg ? image.JpegDecoder().decode(picture) : image.PngDecoder().decode(picture);
   if (decoded == null) {
     throw const FormatException('not a picture the camera could have taken');
   }

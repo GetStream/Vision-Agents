@@ -81,6 +81,67 @@ void main() {
       expect(picture.jpeg, [9, 1]);
     });
 
+    test('takes the next picture on time while the last is encoded, encoding one at a time', () {
+      fakeAsync((async) {
+        var asking = 0;
+        final encoding = <Completer<Uint8List>>[];
+        final shots = CameraShots(camera(() async => Uint8List.fromList([asking += 1])), (picture) {
+          final encoded = Completer<Uint8List>();
+          encoding.add(encoded);
+          return encoded.future.then((prefix) => Uint8List.fromList([...prefix, ...picture]));
+        });
+        List<CameraPicture>? looked;
+
+        shots.look(asked, 3).then((pictures) => looked = pictures);
+        async.elapse(CameraShots.between * 2);
+
+        expect(asking, 3);
+        expect(encoding, hasLength(1));
+
+        for (var i = 0; i < 3; i++) {
+          encoding[i].complete(Uint8List.fromList([9]));
+          async.flushMicrotasks();
+        }
+
+        expect(jpegsOf(looked!), [
+          [9, 1],
+          [9, 2],
+          [9, 3],
+        ]);
+      });
+    });
+
+    test('comes back with nothing at once when stopped while encoding', () {
+      fakeAsync((async) {
+        final shots = CameraShots(
+          camera(() async => Uint8List.fromList([1])),
+          (_) => Completer<Uint8List>().future,
+        );
+        List<CameraPicture>? looked;
+
+        shots.look(asked, 1).then((pictures) => looked = pictures);
+        async.flushMicrotasks();
+        shots.stop();
+        async.flushMicrotasks();
+
+        expect(looked, isEmpty);
+      });
+    });
+
+    test('comes back with nothing at once when stopped between pictures', () {
+      fakeAsync((async) {
+        final shots = CameraShots(camera(() async => Uint8List.fromList([1])), asTaken);
+        List<CameraPicture>? looked;
+
+        shots.look(asked, 3).then((pictures) => looked = pictures);
+        async.flushMicrotasks();
+        shots.stop();
+        async.flushMicrotasks();
+
+        expect(looked, isEmpty);
+      });
+    });
+
     test('has nothing while there is no camera sending video', () async {
       final shots = CameraShots(() => null, asTaken);
 

@@ -375,9 +375,7 @@ Future<Session> openSession(Sessions sessions, SessionOptions options, {required
 String? _named(String? name) => name == null || name.isEmpty ? null : name;
 
 /// A fresh request id: 32 hex digits, within what the router accepts.
-String _requestId() {
-  final random = Random.secure();
-  return [
-    for (var i = 0; i < 16; i++) random.nextInt(256).toRadixString(16).padLeft(2, '0'),
-  ].join();
-}
+String _requestId() =>
+    [for (var i = 0; i < 16; i++) _random.nextInt(256).toRadixString(16).padLeft(2, '0')].join();
+
+final _random = Random.secure();

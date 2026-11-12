@@ -586,7 +586,7 @@ final class ToolApprovalRequest {
 
   /// The model's own words for why it wants the call, from the argument the approval names,
   /// or the empty string.
-  String get reason => switch (approval.reasonArgument) {
+  late final String reason = switch (approval.reasonArgument) {
     final name? => switch (call.argumentValues[name]) {
       final String text => text,
       _ => '',

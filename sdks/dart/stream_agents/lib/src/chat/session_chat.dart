@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:stream_chat/stream_chat.dart' as stream;
 import 'package:stream_agents/src/core/core.dart';
 
@@ -80,14 +82,20 @@ final class LiveReasoning {
   /// and is kept after a paragraph break rather than run on.
   void _add(String text, int offset, ({String message, String step}) key) {
     final held = _steps[key] ?? (text: '', end: 0);
-    final runes = text.runes;
-    final end = offset + runes.length;
+    final heldRunes = max(0, held.end - offset);
+    var runes = 0;
+    var fresh = text.length;
+    for (final iterator = text.runes.iterator; iterator.moveNext(); runes++) {
+      if (runes == heldRunes) {
+        fresh = iterator.rawIndex;
+      }
+    }
+    final end = offset + runes;
     if (end <= held.end) {
       return;
     }
     final gap = offset > held.end && held.text.isNotEmpty ? '\n\n' : '';
-    final fresh = String.fromCharCodes(runes.skip(held.end > offset ? held.end - offset : 0));
-    _steps[key] = (text: '${held.text}$gap$fresh', end: end);
+    _steps[key] = (text: '${held.text}$gap${text.substring(fresh)}', end: end);
   }
 }
 

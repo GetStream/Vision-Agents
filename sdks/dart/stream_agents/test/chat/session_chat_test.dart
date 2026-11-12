@@ -127,6 +127,14 @@ void main() {
       expect(reasoning[(message: 'reply', step: 'r1')], 'café 🌸 bloom');
     });
 
+    test('a window repeating thinking with emoji in it adds only what follows', () {
+      window('🌸 one 🌼', 0);
+
+      window('🌼 two', 6);
+
+      expect(reasoning[(message: 'reply', step: 'r1')], '🌸 one 🌼 two');
+    });
+
     // Every reply numbers its steps from `r1`, so a later reply's first round is not the
     // earlier one's, whether it thinks for less or for more.
     test('each reply keeps the thinking of its own steps', () {
