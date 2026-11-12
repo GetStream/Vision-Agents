@@ -12,6 +12,8 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.6.0
+  # Material's widgets, moved out of the Flutter framework in 3.47.
+  material_ui: any
   # The microphone, asked for before a call on Android. iOS asks by itself when the call
   # first uses it.
   permission_handler: ^12.0.3
