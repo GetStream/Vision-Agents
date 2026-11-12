@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -45,14 +46,20 @@ func Concurrency(calls int) Option {
 // placeholder is one {argument} in an approval question.
 var placeholder = regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 
-// NeedsApproval has the router ask a voice caller before each call runs, such as
-// "Book flight {flight_id}?", with each {argument} filled in from the call. The caller
-// answers out loud, and has 15 seconds from the end of the question: only a yes runs the
-// function, on the call's own id and with Call.Approved set, and its Timeout starts then. A
-// speech-to-speech model asks in its own voice, and may say the question close to as written.
+// NeedsApproval has a person allow each call before it runs, asked with question, such as
+// "Book flight {flight_id}?", with each {argument} filled in from the call.
 //
-// It is asked on voice calls only. In writing, the question travels with the tool for the app
-// to show, as the session's approval, and the call is run as it comes.
+// On a voice call the router asks the caller out loud. They have 15 seconds from the end of
+// the question, and only a yes sends the call here, on its own id and with Call.Approved
+// set; its Timeout starts then. A speech-to-speech model asks in its own voice, and may say
+// the question close to as written.
+//
+// In writing nobody is asked out loud, so the call is held where it would run. A session
+// hands it over as a tool_call event and runs it only once AnswerApproval allows it; a
+// call that is declined, or never answered, does not run. A dispatch worker has nobody to
+// ask, so it refuses a call that arrives without the caller's yes.
+//
+// Only a call a socket delivers is held. Registry.Call and Registry.Run ask nobody.
 func NeedsApproval(question string) Option {
 	return func(function *Function) error {
 		question = strings.TrimSpace(question)
@@ -66,6 +73,21 @@ func NeedsApproval(question string) Option {
 			}
 		}
 		function.Approval = question
+		return nil
+	}
+}
+
+// Authorize decides whether each call may run, before its arguments are checked and before
+// the function does. It is where to ask who Call.User is and what they may do: the model
+// asks for whatever the conversation talked it into. An error refuses the call, which never
+// runs. The model is told only that the call was refused, unless the error is a UserError,
+// whose message it is told.
+func Authorize(allow func(ctx context.Context, call Call) error) Option {
+	return func(function *Function) error {
+		if allow == nil {
+			return fmt.Errorf("an authorization needs a function to ask")
+		}
+		function.authorize = allow
 		return nil
 	}
 }

@@ -486,7 +486,7 @@ func TestAToolThatFailsSaysSoRatherThanLeavingTheModelWaiting(t *testing.T) {
 
 	select {
 	case frame := <-answered:
-		if frame["error"] != "the orders database is down" {
+		if frame["error"] != "the tool failed" {
 			t.Fatalf("the model was sent %v, and would wait forever for a result", frame)
 		}
 	case <-time.After(5 * time.Second):

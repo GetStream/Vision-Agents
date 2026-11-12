@@ -280,6 +280,15 @@ func (d *Dispatch) runHosted(ctx context.Context, frame Frame) {
 		d.tell(Frame{"type": "tool_result", "tool_call_id": id, "id": id, "error": "this worker does not run " + name})
 		return
 	}
+	// The router asks a voice caller and says so. In writing it asks nobody, and a worker
+	// has no person of its own to ask, so a call nobody allowed is not run.
+	if asksFirst(functions, name) != "" && !frame.Bool("approved") {
+		d.logger.Warn("refused a hosted tool that asks first: nobody allowed the call",
+			"tool", name, "session", frame.String("session_id"))
+		d.tell(Frame{"type": "tool_result", "tool_call_id": id, "id": id,
+			"error": name + " asks a person before it runs, and nobody has allowed this call"})
+		return
+	}
 
 	d.logger.Info("running a hosted tool", "tool", name, "session", frame.String("session_id"))
 	d.running.Add(1)
@@ -294,7 +303,7 @@ func (d *Dispatch) runHosted(ctx context.Context, frame Frame) {
 		output, err := functions.Run(line, toolCallContextOf(frame, ""), name, frame.String("arguments"))
 		if err != nil {
 			d.logger.Error("a hosted tool failed", "tool", name, "error", err)
-			result["error"] = err.Error()
+			result["error"] = failureSaid(err)
 		} else {
 			result["output"] = output.Wire()
 		}
