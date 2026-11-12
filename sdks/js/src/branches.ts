@@ -53,6 +53,10 @@ export interface SupportBranch {
  * The `support_branch` mark of a Stream Chat message, or undefined for a message without one:
  * one somebody else wrote, one from before branches, or one typed during a call.
  *
+ * The router leaves `of`, `index` and `count` out of the mark of a message with no
+ * alternatives, which is 1 of 1, a reply or a question by who wrote it (`support_runtime.role`);
+ * a place it cannot read is 1 of 1 too, as the router reads it.
+ *
  * For an app rendering ‹ i/n › without the React components, whose `fromStreamMessage` reads
  * the same mark. It takes a message from stream-chat 9 or 10, or a `BranchMessage` that
  * `responses.branch` read back.
@@ -63,24 +67,37 @@ export function supportBranchOf(message: object): SupportBranch | undefined {
     return undefined;
   }
   const field = (key: string): unknown => (mark as Record<string, unknown>)[key];
+  const responseId = field("response_id");
+  if (typeof responseId !== "string" || !responseId) {
+    return undefined;
+  }
   const of = field("of");
   const index = field("index");
   const count = field("count");
-  const responseId = field("response_id");
-  if ((of !== "reply" && of !== "question") || typeof index !== "number" || typeof count !== "number" ||
-    typeof responseId !== "string" || !responseId) {
+  const placed =
+    (of === "reply" || of === "question") && typeof index === "number" && typeof count === "number" &&
+    index >= 1 && index <= count;
+  const alone = placed ? undefined : roleOf(message);
+  if (!placed && !alone) {
     return undefined;
   }
   const parent = field("parent_response_id");
   const question = field("question_response_id");
   return {
-    of,
-    index,
-    count,
+    of: placed ? of : (alone as "reply" | "question"),
+    index: placed ? index : 1,
+    count: placed ? count : 1,
     responseId,
     parentResponseId: typeof parent === "string" ? parent : "",
     questionResponseId: typeof question === "string" ? question : "",
   };
+}
+
+/** reply for a message of the agent's, question for one of the person's, by `support_runtime.role`. */
+function roleOf(message: object): "reply" | "question" | undefined {
+  const runtime = messageField(message, "support_runtime");
+  const role = typeof runtime === "object" && runtime !== null ? (runtime as Record<string, unknown>)["role"] : undefined;
+  return role === "assistant" ? "reply" : role === "user" ? "question" : undefined;
 }
 
 /** What a chat client delivers events with: `StreamChat.on`, in 9 and 10. */

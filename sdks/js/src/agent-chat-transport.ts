@@ -1,5 +1,12 @@
 import type { AgentActivity, AgentChat, AgentChatMessage } from "./agent-chat.js";
-import { branchErrorOf, onRewound, supportBranchOf, type BranchErrorCode, type RewoundTo } from "./branches.js";
+import {
+  branchErrorOf,
+  onRewound,
+  supportBranchOf,
+  type BranchErrorCode,
+  type RewoundTo,
+  type SupportBranch,
+} from "./branches.js";
 import type { Schemas } from "./client.js";
 import { messageField } from "./message-field.js";
 import type { ImageSource, UIAction } from "./responses.js";
@@ -370,6 +377,8 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
         if (!source || !place) {
           throw new AgentBranchError("not_branchable");
         }
+        const responseId =
+          request.kind === "edit" ? answeringOf(shown(chat.state.getLatestValue().messages), source, place) : place.responseId;
         const session = await chat.use();
         await leaveOverlayFor(session, source);
         const reasoningEffort = options.reasoningEffort?.(request.chatOption);
@@ -377,14 +386,14 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
         await rewinding(async () => {
           const created =
             request.kind === "edit"
-              ? await session.responses.edit(place.responseId, request.text, {
+              ? await session.responses.edit(responseId, request.text, {
                   ...effort,
                   // The new question is stored under it, so it replaces the one on its way. The
                   // edited message's own id is taken already.
                   ...(request.messageId && request.messageId !== source.id ? { requestId: request.messageId } : {}),
                 })
               : // A fresh request id: the controller's names the reply's question, already answered.
-                await session.responses.regenerate(place.responseId, effort);
+                await session.responses.regenerate(responseId, effort);
           return created.created.rewound_to;
         });
         return;
@@ -464,6 +473,27 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
     stop: () => chat.stop(),
     loadOlderMessages: () => chat.loadOlderMessages(),
   };
+}
+
+/**
+ * The response an edit of the person's message goes through: the one whose reply is shown after
+ * it, answering the same question. The question keeps the mark of the response that first
+ * answered it, which regenerating the reply hides, and the router edits only through a response
+ * on the conversation. The question's own when no reply to it is shown.
+ */
+function answeringOf<M extends AgentChatMessage>(shown: readonly M[], question: M, place: SupportBranch): string {
+  const asked = place.questionResponseId || place.responseId;
+  const at = shown.indexOf(question);
+  for (const message of at < 0 ? [] : shown.slice(at + 1)) {
+    const mark = supportBranchOf(message);
+    if (mark?.of === "question") {
+      break;
+    }
+    if (mark?.of === "reply" && (mark.questionResponseId || mark.responseId) === asked) {
+      return mark.responseId;
+    }
+  }
+  return place.responseId;
 }
 
 /** Another version of the conversation, shown in place of the channel's from one message on. */

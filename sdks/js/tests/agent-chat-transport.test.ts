@@ -39,10 +39,15 @@ class Feed implements AgentTransportFeed<Shown> {
   }
 }
 
-/** Where a message stands among its alternatives, as the router marks it. */
+/**
+ * What the router writes on a message: where it stands among its alternatives, and who wrote it.
+ * A message with no alternatives has no `of`, `index` or `count`.
+ */
 function mark(responseId: string, of: "reply" | "question", index: number, count: number, question = responseId) {
+  const place = count > 1 ? { of, index, count } : {};
   return {
-    support_branch: { response_id: responseId, question_response_id: question, parent_response_id: "", of, index, count },
+    support_branch: { response_id: responseId, question_response_id: question, parent_response_id: "", ...place },
+    support_runtime: { role: of === "reply" ? "assistant" : "user" },
   };
 }
 
@@ -185,23 +190,42 @@ describe("agentChatTransport, branching", () => {
       .filter((one) => one.method === "POST" && one.path !== QUERY_PATH && one.path !== "/v1/agents/sessions")
       .map((one) => one.path);
 
-  it("regenerates a reply and edits a question through their response, dropping what they hid at once", async () => {
+  it("regenerates a reply through its response, dropping what it hid at once", async () => {
     const { transport, feed } = await connected();
-    router.serve("POST", responsesPath, (_, calls) =>
-      answering(calls === 0 ? { message_id: "q1", inclusive: false } : { message_id: "q1", inclusive: true }),
-    );
+    router.serve("POST", responsesPath, answering({ message_id: "q1", inclusive: false }));
 
     await transport.send(request({ kind: "regenerate", message: feed.find("r2"), messageId: "ctl_regen" }));
+
     assert.deepEqual(feed.ids, ["q0", "r0", "q1"], "the old answer is gone before the new one arrives");
+    const regenerate = router.requestsTo("POST", responsesPath)[0]?.body as Record<string, unknown>;
+    assert.equal(regenerate["text"], "");
+    assert.equal(regenerate["replaces"], "resp_2");
+    assert.notEqual(regenerate["request_id"], "ctl_regen", "under the controller's id the router takes it as answered");
+  });
+
+  it("regenerates a reply with no alternatives yet, whose mark has no place", async () => {
+    const { transport, feed } = await connected();
+    router.serve("POST", responsesPath, answering({ message_id: "q0", inclusive: false }));
+
+    await transport.send(request({ kind: "regenerate", message: feed.find("r0") }));
+
+    assert.equal((router.requestsTo("POST", responsesPath)[0]?.body as Record<string, unknown>)["replaces"], "resp_0");
+    assert.deepEqual(feed.ids, ["q0"]);
+  });
+
+  it("edits a question through the response on the conversation that answers it", async () => {
+    const { transport, feed } = await connected();
+    router.serve("POST", responsesPath, answering({ message_id: "q1", inclusive: true }));
 
     await transport.send(request({ kind: "edit", message: feed.find("q1"), messageId: "ctl_edit", text: "Rome instead" }));
-    assert.deepEqual(feed.ids, ["q0", "r0"]);
 
-    const [regenerate, edit] = router.requestsTo("POST", responsesPath).map((one) => one.body as Record<string, unknown>);
-    assert.equal(regenerate?.["text"], "");
-    assert.equal(regenerate?.["replaces"], "resp_2");
-    assert.notEqual(regenerate?.["request_id"], "ctl_regen", "under the controller's id the router takes it as answered");
-    assert.deepEqual(edit, { text: "Rome instead", replaces: "resp_1", request_id: "ctl_edit" });
+    // q1 keeps the mark of resp_1, whose reply was regenerated away: the router edits through resp_2.
+    assert.deepEqual(router.requestsTo("POST", responsesPath)[0]?.body, {
+      text: "Rome instead",
+      replaces: "resp_2",
+      request_id: "ctl_edit",
+    });
+    assert.deepEqual(feed.ids, ["q0", "r0"]);
   });
 
   it("refuses a message from before branches, before asking the router anything", async () => {
@@ -240,6 +264,40 @@ describe("agentChatTransport, branching", () => {
     await transport.switchBranch(feed.find("r3"), "previous");
     assert.deepEqual(feed.ids, ["q0", "r0", "q1", "r2"]);
     assert.deepEqual(writes(), [], "showing a version writes nothing");
+  });
+
+  it("pages through a question's edits from where the edit parts, and back", async () => {
+    const qe = chatMessage("qe", 7, mark("resp_5", "question", 2, 2));
+    const re = chatMessage("re", 8, { ...mark("resp_5", "reply", 1, 1), ai_generated: true }, "agent");
+    const { transport, feed } = await connected([q0, r0, qe, re]);
+    const edits = {
+      body: {
+        items: [
+          { id: "resp_1", created_at: at(3), active: false, index: 1, said: "q1" },
+          { id: "resp_5", created_at: at(7), active: true, index: 2, said: "qe" },
+        ],
+        has_more: false,
+      },
+    };
+    router.serve("GET", "/v1/agents/sessions/sess_1/responses/resp_5/siblings", edits);
+    router.serve("GET", "/v1/agents/sessions/sess_1/responses/resp_1/siblings", edits);
+    router.serve("GET", "/v1/agents/sessions/sess_1/responses/resp_1/branch", {
+      body: {
+        active: false,
+        items: [
+          copied("q1", 3, mark("resp_1", "question", 1, 2)),
+          copied("r1", 4, { ...mark("resp_1", "reply", 1, 1), ai_generated: true }, "agent"),
+        ],
+        has_more: false,
+      },
+    });
+
+    await transport.switchBranch(feed.find("qe"), "previous");
+    assert.deepEqual(feed.ids, ["q0", "r0", "q1", "r1"], "the edited question and its answer in place of the edit's");
+    assert.equal(router.requestsTo("GET", "/v1/agents/sessions/sess_1/responses/resp_5/siblings")[0]?.query.get("of"), "question");
+
+    await transport.switchBranch(feed.find("q1"), "next");
+    assert.deepEqual(feed.ids, ["q0", "r0", "qe", "re"]);
   });
 
   it("keeps showing a version over the channel's newer messages", async () => {

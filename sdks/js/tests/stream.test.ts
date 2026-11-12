@@ -126,6 +126,20 @@ describe("a message's place among its alternatives", () => {
     assert.equal(supportBranchOf({ id: "m1", support_branch: { ...mark, index: "2" } }), undefined);
   });
 
+  it("is 1 of 1 for a mark with no place, a reply or a question by who wrote it", () => {
+    const { of: _, index: __, count: ___, ...alone } = mark;
+    assert.deepEqual(supportBranchOf({ support_branch: alone, support_runtime: { role: "assistant" } }), {
+      ...expected,
+      index: 1,
+      count: 1,
+    });
+    assert.equal(
+      supportBranchOf({ custom: { support_branch: alone, support_runtime: { role: "user" } } })?.of,
+      "question",
+    );
+    assert.equal(supportBranchOf({ support_branch: alone }), undefined, "nobody to tell which it is");
+  });
+
   it("names no parent for a conversation's first response", () => {
     const { parent_response_id: _, question_response_id: __, ...first } = mark;
     assert.deepEqual(supportBranchOf({ support_branch: first }), {
