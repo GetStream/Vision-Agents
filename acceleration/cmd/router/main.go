@@ -102,6 +102,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/inworld"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/twiliosig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/users"
 	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
@@ -1382,6 +1383,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 				"TELNYX_CONNECTION_ID is set", "setting", "TELNYX_CONNECTION_ID")
 		}
 	}
+	// A token that cannot be Twilio's is refused at start, as an unreadable chat inbound key is.
+	if err := twiliosig.CheckAuthToken(settings.Twilio.WebhookAuthToken); err != nil {
+		return err
+	}
 	logger.Info("management API, /v1/manage", "on", settings.Auth.ManageKey != "", "setting", "ROUTER_AUTH_MANAGE_KEY")
 
 	documents := api.NewDocumentReader(extract.Options{Logger: logger})
@@ -1413,6 +1418,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		HookSecret:            settings.Stream.APISecret,
 		TelnyxPublicKey:       telnyxPublicKey,
 		ChatInboundKeys:       chatInboundKeys,
+		TwilioAuthToken:       settings.Twilio.WebhookAuthToken,
 		TelnyxConnectionID:    settings.Telnyx.ConnectionID,
 		Simulations:           simulations,
 		DLC:                   registrations,
