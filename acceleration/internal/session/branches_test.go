@@ -504,3 +504,112 @@ func (s *BranchesSuite) TestAReopenedSessionCarriesOnFromTheBranchItWasLeftOn() 
 	s.Equal(second, s.response(reopened, third).ParentResponseID)
 	s.Equal(s.texts(reopened), history(reopened))
 }
+
+// asksWithDocument asks text of the session with a file, as the API sends one: pinned for the
+// turn, and kept under the response it was sent with.
+func (s *BranchesSuite) asksWithDocument(session *Session, text, name string) string {
+	document := agent.Document{ID: store.NewID(), Name: name, Pages: 1, Text: "the text of " + name}
+	responseID := s.asksIn(agent.WithDocument(s.ctx, document), session, text)
+	spec := session.Spec()
+	s.Require().NoError(s.store.AddConversationDocument(s.ctx, &store.ConversationDocument{
+		ID: document.ID, CustomerID: s.customer, OwnerUserID: spec.Caller.UserID, SessionID: session.ID(),
+		ConversationID: spec.ConversationID, ResponseID: responseID, Name: name, Pages: 1, SHA256: "digest", Markdown: document.Text,
+	}))
+	return responseID
+}
+
+// asksIn is asks on ctx.
+func (s *BranchesSuite) asksIn(ctx context.Context, session *Session, text string) string {
+	_, responseID, err := session.RespondCommand(ctx, uuid.NewString(), text, "", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.Require().NotEmpty(responseID)
+	s.settled(session)
+	return responseID
+}
+
+// pinned are the names of the files pinned in the session's conversation, oldest first.
+func pinned(session *Session) []string {
+	var names []string
+	for _, document := range session.Documents() {
+		names = append(names, document.Name)
+	}
+	return names
+}
+
+// reopens the session's conversation after closing it, as employee-1 carrying on later.
+func (s *BranchesSuite) reopens(session *Session) *Session {
+	spec := session.Spec()
+	s.Require().NoError(session.Close())
+	reopened, err := s.manager.Create(s.ctx, Spec{
+		ID: spec.ID, CustomerID: s.customer, Text: true, PersistConversation: true,
+		ConversationID: spec.ConversationID, Reopened: session.CreatedAt(), LLMTarget: "en-low-latency",
+		Caller: routing.Caller{UserID: "employee-1"},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = reopened.Close() })
+	return reopened
+}
+
+// The question a regenerate answers again keeps the file sent with it, now and once the
+// conversation is reopened, though the response it was sent with is off the conversation.
+func (s *BranchesSuite) TestARegeneratedQuestionKeepsItsDocument() {
+	session := s.opens()
+	s.asks(session, "Is it raining?")
+	second := s.asksWithDocument(session, "What does the lease say?", "lease.pdf")
+	s.Require().Equal([]string{"lease.pdf"}, pinned(session))
+
+	branched, err := session.Regenerate(s.ctx, uuid.NewString(), second, options.LLM{})
+	s.Require().NoError(err)
+	s.settled(session)
+	s.Require().NotEmpty(branched.ResponseID)
+
+	s.Equal([]string{"lease.pdf"}, pinned(session))
+	reopened := s.reopens(session)
+	s.Equal([]string{"lease.pdf"}, pinned(reopened), "a reopen reads the regenerated turn's copy")
+}
+
+// An edit replaces the question and the file sent with it, which stays with the branch it
+// left and comes back with it.
+func (s *BranchesSuite) TestAnEditedQuestionsDocumentStaysWithItsBranch() {
+	session := s.opens()
+	s.asks(session, "Is it raining?")
+	second := s.asksWithDocument(session, "What does the lease say?", "lease.pdf")
+
+	_, err := session.Edit(s.ctx, uuid.NewString(), second, "And the deposit?", "", options.LLM{})
+	s.Require().NoError(err)
+	s.settled(session)
+	s.Empty(pinned(session), "the edited question came with no file")
+
+	_, err = session.Activate(s.ctx, second)
+	s.Require().NoError(err)
+	s.Require().Eventually(func() bool { return !s.service.Writing() }, 5*time.Second, 5*time.Millisecond)
+	s.Equal([]string{"lease.pdf"}, pinned(session))
+	reopened := s.reopens(session)
+	s.Equal([]string{"lease.pdf"}, pinned(reopened))
+}
+
+// Activating a branch pins the files its turns were sent with, and activating away from it
+// takes them back.
+func (s *BranchesSuite) TestActivatingABranchPinsTheDocumentsOfItsTurns() {
+	session := s.opens()
+	s.asks(session, "Is it raining?")
+	second := s.asks(session, "And tomorrow?")
+	edited, err := session.Edit(s.ctx, uuid.NewString(), second, "And on Sunday?", "", options.LLM{})
+	s.Require().NoError(err)
+	s.settled(session)
+	third := s.asksWithDocument(session, "What does the forecast say?", "forecast.pdf")
+	written := func() {
+		s.Require().Eventually(func() bool { return !s.service.Writing() }, 5*time.Second, 5*time.Millisecond)
+	}
+
+	_, err = session.Activate(s.ctx, second)
+	s.Require().NoError(err)
+	written()
+	s.Empty(pinned(session), "the branch brought back was sent no file")
+
+	activated, err := session.Activate(s.ctx, edited.ResponseID)
+	s.Require().NoError(err)
+	written()
+	s.Equal(third, activated.LeafResponseID)
+	s.Equal([]string{"forecast.pdf"}, pinned(session))
+}

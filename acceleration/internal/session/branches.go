@@ -80,7 +80,8 @@ type Activated struct {
 // Regenerate answers the question of response responseID again, as a new response beside it,
 // under the request id: the reply and everything after it are hidden in Chat and kept as a
 // branch. The replaced response must be on the conversation. A retry of a request already
-// taken is answered with its receipt.
+// taken is answered with its receipt. The files sent with the question are kept under the new
+// response as well.
 func (s *Session) Regenerate(ctx context.Context, id, responseID string, asked options.LLM) (Branched, error) {
 	return s.branch(ctx, id, responseID, "", "", false, asked)
 }
@@ -88,6 +89,8 @@ func (s *Session) Regenerate(ctx context.Context, id, responseID string, asked o
 // Edit asks text in place of the question of response responseID, as a new question beside
 // it, under the request id: the question, its reply and everything after them are hidden in
 // Chat and kept as a branch. clientID names the install it came from, as RespondCommand's.
+// The files sent with the replaced question are not carried to the new one: they stay with
+// the branch it leaves, and come back when that branch is activated.
 func (s *Session) Edit(ctx context.Context, id, responseID, text, clientID string, asked options.LLM) (Branched, error) {
 	return s.branch(ctx, id, responseID, text, clientID, true, asked)
 }
@@ -173,6 +176,7 @@ func (s *Session) Activate(ctx context.Context, responseID string) (Activated, e
 	s.turnsMu.Unlock()
 	history, _ := s.persisted.HistoryOf(reading, outcome.Page)
 	s.carryOnFrom(history)
+	s.pinActivatedDocuments(ctx)
 	s.countRanges(ctx, store.SwitchActivate)
 	return Activated{LeafResponseID: leaf, Resent: len(outcome.Resent),
 		RewoundTo: RewoundTo{MessageID: rewind.MessageID, Inclusive: rewind.Inclusive}}, nil
@@ -254,6 +258,10 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 	if err != nil {
 		return Branched{}, err
 	}
+	documents, err := s.branchDocuments(ctx, replaced, edit)
+	if err != nil {
+		return Branched{}, err
+	}
 	rewind := persistent.RewindTarget{SwitchID: switchID(s.id, id), Kind: store.SwitchRegenerate, TargetResponseID: replaced.ID,
 		MessageID: found.Question, Inclusive: edit}
 	if edit {
@@ -304,6 +312,7 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 		}
 	}
 	s.carryOnFrom(history)
+	s.current().ReplaceDocuments(pinnable(documents)...)
 	branched := Branched{CommandReceipt: receipt, ParentResponseID: turn.ParentResponseID, QuestionResponseID: turn.QuestionResponseID,
 		RewoundTo: RewoundTo{MessageID: rewind.MessageID, Inclusive: rewind.Inclusive}, Rewound: outcome.Rewound}
 	place := turn.Reply
@@ -326,7 +335,63 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 		return branched, nil
 	}
 	branched.ResponseID = s.openAskedTurn(turnID, prompt)
+	if !edit && branched.ResponseID != "" {
+		s.carryQuestionDocuments(ctx, replaced.ID, branched.ResponseID)
+	}
 	return branched, nil
+}
+
+// documentScope is the session's conversation whose documents are read, for the person it is
+// with, up to the turn until: all of them when it is empty.
+func (s *Session) documentScope(until string) store.DocumentScope {
+	return store.DocumentScope{ConversationID: s.spec.ConversationID, SessionID: s.id, Owner: s.spec.Caller.UserID, UntilResponse: until}
+}
+
+// branchDocuments are the documents the conversation holds once replaced is answered again or
+// asked differently. They are read before anything is rewound, so a read that fails leaves the
+// session as it was. A regenerate keeps the question, and the files sent with it. An edit
+// replaces the question, so the files sent with it stay with the branch it leaves, and come
+// back only when that branch is activated.
+func (s *Session) branchDocuments(ctx context.Context, replaced store.AgentResponse, edit bool) ([]store.ConversationDocument, error) {
+	until := replaced.ID
+	if edit {
+		until = replaced.ParentResponseID
+	}
+	documents, err := s.tree.ConversationDocuments(ctx, s.spec.CustomerID, s.documentScope(until))
+	if err != nil || until != "" {
+		return documents, err
+	}
+	// An edit of the session's first question: no file came with a turn of this session before
+	// it. An empty UntilResponse reads them all.
+	return slices.DeleteFunc(documents, func(document store.ConversationDocument) bool {
+		return document.SessionID == s.id && document.ResponseID != ""
+	}), nil
+}
+
+// carryQuestionDocuments keeps the files sent with the question a regenerate answers again
+// under the new response as well, so a reopen, which reads only the conversation's turns,
+// still finds them: the replaced response holding them is off it now. A copy rather than a
+// move, so activating the replaced response's branch finds its own. One that cannot be kept
+// leaves the turn answered and says so in the log, as keepDocument does.
+func (s *Session) carryQuestionDocuments(ctx context.Context, replacedID, responseID string) {
+	// The turn is running whether or not the caller is still there to hear it started.
+	err := s.tree.CopyResponseDocuments(context.WithoutCancel(ctx), s.spec.CustomerID, s.id, replacedID, responseID)
+	if err != nil {
+		s.logger.Error("could not keep the files of a regenerated question", "session", s.id, "response", responseID, "error", err)
+	}
+}
+
+// pinActivatedDocuments pins the documents of the branch an activation brought back in place of
+// the ones pinned before. They can only be read once the branch is on the conversation, which
+// is after Chat was changed, so a read that fails leaves the session without the conversation's
+// files rather than with the abandoned branch's, and says so in the log, as an opening session
+// does.
+func (s *Session) pinActivatedDocuments(ctx context.Context) {
+	documents, err := s.tree.ConversationDocuments(ctx, s.spec.CustomerID, s.documentScope(""))
+	if err != nil {
+		s.logger.Error("could not read the documents of an activated branch", "session", s.id, "error", err)
+	}
+	s.current().ReplaceDocuments(pinnable(documents)...)
 }
 
 // refuseBranches refuses what cannot switch branches, before anything is stopped: a
