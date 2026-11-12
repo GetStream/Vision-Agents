@@ -14,7 +14,14 @@ class _Router {
       if (WebSocketTransformer.isUpgradeRequest(request)) {
         final socket = await WebSocketTransformer.upgrade(request);
         _sockets.add(socket);
-        socket.listen((frame) => commands.add(jsonDecode('$frame') as Map<String, Object?>));
+        socket.listen((frame) {
+          final command = jsonDecode('$frame') as Map<String, Object?>;
+          commands.add(command);
+          // As the real router does once the session has ended.
+          if (command['type'] == 'close') {
+            socket.close(1000, 'the session ended');
+          }
+        });
         return;
       }
       final body = await utf8.decodeStream(request);

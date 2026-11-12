@@ -984,6 +984,93 @@ void main() {
       expect(chat.connection.value, const Disconnected());
     });
 
+    test('closing keeps reading until the router hangs up', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+      socket.onClose = () async {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        socket.send('{"type":"left","at":"2026-09-24T15:54:56Z"}');
+        await socket.close(1000, 'the session ended');
+      };
+      final seen = chat.events().map((event) => event.type).toList();
+
+      await chat.close();
+
+      expect(await seen, ['left']);
+      expect(chat.failure, isNull);
+    });
+
+    test('closing gives up waiting on a router that never hangs up', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+      socket.onClose = () async {};
+      final watch = Stopwatch()..start();
+
+      await chat.close();
+
+      expect(watch.elapsed, greaterThanOrEqualTo(const Duration(seconds: 5)));
+      await socket.done;
+      expect(chat.connection.value, const Disconnected());
+    });
+
+    test('closing a session whose socket dropped stops it with a request', () async {
+      router.answer('POST /v1/agents/sessions/s1/stop', const Answer(204));
+      final chat = await agents.chat();
+      final socket = await router.socket();
+      await socket.close(4000, 'draining');
+      await until(() => chat.connection.value is Disconnected);
+
+      await chat.close();
+
+      expect(router.last('POST /v1/agents/sessions/s1/stop').method, 'POST');
+    });
+
+    test('closing a session the router no longer has is not a failure', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+      await socket.close(4000, 'draining');
+      await until(() => chat.connection.value is Disconnected);
+
+      await chat.close();
+
+      expect(router.last('POST /v1/agents/sessions/s1/stop').method, 'POST');
+    });
+
+    group('an unstarted session', () {
+      late AgentSession chat;
+
+      setUp(() {
+        chat = AgentSession(
+          Session(id: 's1', createdAt: DateTime.utc(2026)),
+          backend: agents.backend,
+          sessions: agents.sessions,
+        );
+      });
+
+      test('started twice at once opens one socket', () async {
+        await Future.wait([chat.start(), chat.start()]);
+        await router.socket();
+        await pumpEventQueue();
+
+        expect(router.upgrades, hasLength(1));
+        expect(chat.isConnected, isTrue);
+        await chat.close();
+      });
+
+      test('closed while starting opens no socket and stays closed', () async {
+        router.answer('POST /v1/agents/sessions/s1/stop', const Answer(204));
+
+        final started = chat.start();
+        await chat.close();
+        await started;
+        await pumpEventQueue();
+
+        expect(router.upgrades, isEmpty);
+        expect(chat.connection.value, const Disconnected());
+        expect(router.last('POST /v1/agents/sessions/s1/stop').method, 'POST');
+      });
+    });
+
     test(
       'a session whose socket cannot open is stopped rather than left holding the agent',
       () async {

@@ -38,6 +38,11 @@ final class SessionSocket {
       throw TransportException(error);
     }
     _socket = socket;
+    // Closed while it was connecting.
+    if (_closing) {
+      await _closeQuietly(socket);
+      return const Stream.empty();
+    }
     return _read(socket);
   }
 
@@ -61,8 +66,14 @@ final class SessionSocket {
       return;
     }
     _closing = true;
+    if (_socket case final socket?) {
+      await _closeQuietly(socket);
+    }
+  }
+
+  Future<void> _closeQuietly(WebSocket socket) async {
     try {
-      await _socket?.close(1000, 'closed by the client');
+      await socket.close(1000, 'closed by the client');
     } on WebSocketConnectionClosed {
       // Already gone, which is what closing wanted.
     }

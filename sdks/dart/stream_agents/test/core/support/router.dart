@@ -121,11 +121,19 @@ final class TestRouter {
 /// One socket the SDK opened, from the router's end.
 final class TestSocket {
   TestSocket(this._socket) {
-    _socket.listen(
-      (message) => _received.add(jsonDecode(message as String) as Map<String, Object?>),
-      onDone: () => _done.complete(),
-    );
+    onClose = () => close(1000, 'the session ended');
+    _socket.listen((message) {
+      final frame = jsonDecode(message as String) as Map<String, Object?>;
+      _received.add(frame);
+      if (frame['type'] == 'close') {
+        unawaited(onClose());
+      }
+    }, onDone: () => _done.complete());
   }
+
+  /// What the router does on a `close` frame: by default, hangs up at once, as the real one
+  /// does once the session has ended.
+  late Future<void> Function() onClose;
 
   final WebSocket _socket;
   final _received = StreamController<Map<String, Object?>>();

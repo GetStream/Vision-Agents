@@ -114,6 +114,8 @@ final class AgentSession {
   int _pictures = 0;
   SessionSocket? _socket;
   StreamSubscription<AgentEvent>? _pump;
+  Future<void>? _starting;
+  Future<void>? _closing;
 
   /// What the router holds this session by, which addresses it and its socket.
   String get id => session.id;
@@ -138,22 +140,30 @@ final class AgentSession {
     _ => null,
   };
 
-  /// Opens the socket and starts following the conversation. Calling it again does nothing.
+  /// Opens the socket and starts following the conversation. Calling it again, even while it
+  /// is opening, opens nothing more, and after [close] it opens nothing at all.
   ///
   /// Throws, and reports it on [connection], when the socket cannot be opened.
-  Future<void> start() async {
-    if (_socket != null) {
-      return;
-    }
-    final socket = SessionSocket(
-      await _backend.socketUri('/v1/agents/sessions/${Uri.encodeComponent(id)}/events', {
+  Future<void> start() => _starting ??= _start();
+
+  Future<void> _start() async {
+    final Uri uri;
+    try {
+      uri = await _backend.socketUri('/v1/agents/sessions/${Uri.encodeComponent(id)}/events', {
         // Decisions arrive several times a second and are for somebody watching a call, not
         // for an app holding one.
         'decisions': 'false',
         if (interim) 'interim': 'true',
-      }),
-    );
-    _socket = socket;
+      });
+    } on Object {
+      // Nothing was opened, so starting again may work.
+      _starting = null;
+      rethrow;
+    }
+    if (_closing != null) {
+      return;
+    }
+    final socket = _socket = SessionSocket(uri);
 
     final Stream<AgentEvent> events;
     try {
@@ -161,6 +171,10 @@ final class AgentSession {
     } on AgentsException catch (error) {
       _stopped(error);
       rethrow;
+    }
+    if (_closing != null) {
+      await socket.close();
+      return;
     }
     _connection.value = Connection.connected;
     _pump = events.listen(
@@ -289,22 +303,38 @@ final class AgentSession {
     interim: interim,
   );
 
-  /// Stops the session and closes the socket. Safe to call more than once.
+  /// Stops the session and closes the socket. Safe to call more than once, and while
+  /// [start] is still opening it.
+  ///
+  /// Over an open socket, the router is asked to stop and given up to 5 seconds to hang up
+  /// before this side closes: a socket closed straight after the frame can lose it behind a
+  /// proxy, leaving the agent running with nobody on it. A session never connected, or whose
+  /// socket dropped, is stopped with a request instead.
   ///
   /// What the conversation recorded and remembered is kept; [delete] takes it away.
-  Future<void> close() async {
+  Future<void> close() => _closing ??= _close();
+
+  Future<void> _close() async {
     final socket = _socket;
     if (isConnected && socket != null) {
       try {
         socket.send(const CloseCommand());
+        await _connection.stream
+            .firstWhere((connection) => connection is Disconnected)
+            .timeout(_routerHangsUp, onTimeout: () => Connection.connected);
       } on SocketClosedException {
-        // Gone already, which leaves the router to notice.
+        await _stop();
       }
-    } else if (_connection.value is NotStarted) {
-      await _sessions.stop(id);
+    } else if (_connection.value case NotStarted() || Disconnected(failure: _?)) {
+      await _stop();
     }
     await _hangUp();
   }
+
+  /// Closes this device's socket and leaves the session running on the router, for a
+  /// conversation followed here that somebody else started.
+  @internal
+  Future<void> detach() => _hangUp();
 
   /// Deletes this conversation, stopping it if it is running: its turns and what it taught
   /// memory go with it.
@@ -317,6 +347,17 @@ final class AgentSession {
     await _socket?.close();
     await _pump?.cancel();
     _stopped(null);
+  }
+
+  /// Stops the session on the router, which may have stopped it already.
+  Future<void> _stop() async {
+    try {
+      await _sessions.stop(id);
+    } on RouterException catch (error) {
+      if (error.status != 404) {
+        rethrow;
+      }
+    }
   }
 
   void _asked(String text) {
@@ -502,6 +543,9 @@ final class AgentSession {
 /// The tool the router asks for frames with. Answered by the session, never offered to the
 /// model as one of the app's tools.
 const _cameraTool = 'get_video_frames';
+
+/// How long [AgentSession.close] waits for the router to hang up after asking it to stop.
+const _routerHangsUp = Duration(seconds: 5);
 
 /// The most pictures one request for frames is answered with.
 const _mostPictures = 8;
