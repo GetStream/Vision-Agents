@@ -35,11 +35,11 @@ type store struct {
 	callMembers map[string][]string
 	// made are the bodies calls were created with, by "<type>:<id>", with the custom an
 	// update merged in.
-	made     map[string]map[string]any
-	rules    map[string]map[string]any
-	order    []string
+	made  map[string]map[string]any
+	rules map[string]map[string]any
+	order []string
 	// rewound are the messages a channel rewind hid, which no read returns again.
-	rewound map[string]bool
+	rewound  map[string]bool
 	now      func() time.Time
 	app      App
 	appReads int
