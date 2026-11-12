@@ -68,7 +68,7 @@ final class CallFailure implements Exception {
 /// is readable even before anybody is listening to it. That is [session], the same
 /// [AgentSession] a text conversation uses.
 final class VoiceSession {
-  VoiceSession._(this.session, {required bool createdLocally}) : _createdLocally = createdLocally;
+  VoiceSession._(this.session, {required this._createdLocally});
 
   /// Starts an agent on a new session's call and prepares to join it, so a person tapping
   /// "talk to the agent" needs no id from anywhere.

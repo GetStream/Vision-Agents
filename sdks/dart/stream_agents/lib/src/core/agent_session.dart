@@ -69,13 +69,11 @@ final class Disconnected extends Connection {
 final class AgentSession {
   AgentSession(
     Session session, {
-    required Backend backend,
-    required Sessions sessions,
+    required this._backend,
+    required this._sessions,
     List<AgentTool> tools = const [],
     this.interim = false,
   }) : _session = session,
-       _backend = backend,
-       _sessions = sessions,
        _tools = {for (final tool in tools.reversed) tool.name: tool};
 
   /// Where this conversation is held, and who is holding it.

@@ -13,7 +13,7 @@ const _itemPage = 200;
 /// not holding one and most of these are over. `StreamAgents.attach` follows one that is
 /// still running.
 final class Sessions {
-  Sessions(this._operations, {this.agent, String userId = ''}) : _userId = userId;
+  Sessions(this._operations, {this.agent, this._userId = ''});
 
   final api.Operations _operations;
 
@@ -248,8 +248,7 @@ Responses heldResponses(
 
 /// A conversation's turns, and what each was made of.
 final class Responses {
-  Responses._(this._operations, this.sessionId, {void Function(String text)? asking})
-    : _asking = asking;
+  Responses._(this._operations, this.sessionId, {this._asking});
 
   final api.Operations _operations;
   final String sessionId;
