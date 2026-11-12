@@ -629,6 +629,9 @@ The demo join link was logged with its API key and a one-hour user token in the 
 ### Call minutes are priced for Twilio in the US and Canada, and for Telnyx calls to Canada
 
 Twilio is priced at $0.018 a minute outbound and $0.0125 inbound in both countries: its local rate plus the SIP leg to the Stream trunk. A Telnyx call placed to Canada is priced at $0.022 a minute. A database gets these with the next release's start, which adds the items it has never priced. Telnyx calls arriving on a Canadian number, other countries and toll-free numbers are not priced yet (#1965).
+### A knowledge write that fails part way leaves a document you can see and delete
+
+Posted text is listed as `pending` while its passages are written, then `indexed`, or `failed` with an `error` when the write stops part way. Before, the row was saved only after every passage was written, so a failed write left passages that lookups still found and no document to delete them by. A failed document is fixed by posting it again or deleting it, and deleting removes every passage either version wrote. An uploaded file whose last read fails is now deleted whole too; before, the passages its failed write left behind stayed (AI-2198).
 
 ### Kotlin: the reply model failing ends the agent's turn, and a failure lasts until the agent works again
 
