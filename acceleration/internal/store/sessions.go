@@ -619,7 +619,8 @@ func (s *Store) PinSession(ctx context.Context, customerID, id string, pinned bo
 	return first, nil
 }
 
-// StartResponse records that the agent began a turn.
+// StartResponse records that the agent began a turn, with the response before it on its path
+// and the question it answers.
 func (s *Store) StartResponse(ctx context.Context, response *AgentResponse) error {
 	if response.ID == "" || response.SessionID == "" {
 		return errors.New("store: a response and a session id are required")
@@ -632,6 +633,11 @@ func (s *Store) StartResponse(ctx context.Context, response *AgentResponse) erro
 	}
 	if response.Status == "" {
 		response.Status = ResponseRunning
+	}
+	// A response that answers no earlier question asks its own, which is also what tells it
+	// apart from a row written before branches were kept.
+	if response.QuestionResponseID == "" {
+		response.QuestionResponseID = response.ID
 	}
 	response.Said = SafeLogText(response.Said)
 
