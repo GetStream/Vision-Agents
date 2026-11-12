@@ -262,10 +262,18 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
     clearTimeout(timer);
     unsubscribe?.();
     if (!done) {
+      let gaveUp: ReturnType<typeof setTimeout> | undefined;
       try {
-        await chat.readLatest();
+        await Promise.race([
+          chat.readLatest(),
+          new Promise<void>((resolve) => {
+            gaveUp = setTimeout(resolve, READ_LATEST_TIMEOUT_MS);
+          }),
+        ]);
       } catch {
         // What is asked does not wait on the copies: they show with the channel's next read.
+      } finally {
+        clearTimeout(gaveUp);
       }
     }
   };
@@ -564,6 +572,13 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
 
 /** How long an activation waits for the copies it sent again to arrive, before reading the channel. */
 const RESENT_TIMEOUT_MS = 3000;
+
+/**
+ * How long that read may take before what is asked goes without it: stream-chat's own request
+ * timeout by default, so only a read that would hang anyway, as one waiting on a socket that
+ * never connects, is given up on. The read carries on, and shows what it brings when it lands.
+ */
+const READ_LATEST_TIMEOUT_MS = 3000;
 
 /**
  * The response an edit of the person's message goes through: the one whose reply is shown after

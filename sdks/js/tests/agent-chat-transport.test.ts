@@ -462,6 +462,18 @@ describe("agentChatTransport, branching", () => {
     assert.deepEqual(writes(), ["/v1/agents/sessions/sess_1/responses/resp_1/activate", responsesPath]);
   });
 
+  it("asks anyway when reading the channel again for the copies hangs", async () => {
+    const { streamChat, chat, transport, feed } = await connected();
+    activating(streamChat as TestChat, undefined);
+    router.serve("POST", responsesPath, answering(undefined));
+    await transport.switchBranch(feed.find("r2"), "previous");
+    chat.readLatest = () => new Promise<void>(() => {});
+
+    await transport.send(request({ text: "And Porto?", messageId: "ctl_ask" }));
+
+    assert.deepEqual(writes(), ["/v1/agents/sessions/sess_1/responses/resp_1/activate", responsesPath]);
+  });
+
   it("brings the version shown back before regenerating a reply of it", async () => {
     const { streamChat, transport, feed } = await connected();
     router.serve("POST", "/v1/agents/sessions/sess_1/responses/resp_3/activate", () => {
