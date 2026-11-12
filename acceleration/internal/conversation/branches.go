@@ -274,6 +274,15 @@ const (
 	// UnsupportedNotKept is a session whose conversation is not kept in Chat, which the
 	// session refuses with this error itself.
 	UnsupportedNotKept = "not_kept"
+	// UnsupportedCall is a session on a call, whose spoken turns a rewind would cut under the
+	// caller. The session refuses it.
+	UnsupportedCall = "call"
+	// UnsupportedNative is a session on a speech-to-speech model, which keeps its own context
+	// out of reach. The session refuses it.
+	UnsupportedNative = "native"
+	// UnsupportedUnmarked is a response whose messages carry no response id, as one written
+	// before branches were kept: there is nothing to find them by.
+	UnsupportedUnmarked = "unmarked"
 )
 
 // BranchesUnsupportedError is ErrBranchesUnsupported with the reason.
@@ -979,4 +988,141 @@ func toMap(v any) (map[string]any, error) {
 	}
 	var out map[string]any
 	return out, json.Unmarshal(encoded, &out)
+}
+
+// ResponseMessages are where a response's messages are in the channel as it shows now.
+type ResponseMessages struct {
+	// Question is the person's message the response answers, Reply the response's own. Either
+	// is empty when the channel does not show it: a reply that never landed has none.
+	Question, Reply string
+}
+
+// maxScanPages bounds how far back a response's messages are looked for: Chat keeps at most
+// 10,000 messages a reopen or a rewind reads anyway.
+const maxScanPages = 100
+
+// ResponseMessages finds the messages of responseID in the channel, newest first, by the
+// response id they carry (BranchField). A regenerated reply answers a question another
+// response asked, questionResponseID, whose message carries that one's id.
+func (c *Conversation) ResponseMessages(ctx context.Context, responseID, questionResponseID string) (ResponseMessages, error) {
+	var found ResponseMessages
+	asking := ""
+	err := c.scanBack(ctx, func(m getstream.MessageResponse) bool {
+		b := branchFrom(m.Custom[BranchField])
+		runtime, _ := m.Custom["support_runtime"].(map[string]any)
+		role, _ := runtime["role"].(string)
+		switch {
+		case found.Reply == "" && role == "assistant" && b != nil && b.ResponseID == responseID:
+			found.Reply = m.ID
+			asking, _ = runtime["question_id"].(string)
+		case role == "user" && (asking != "" && m.ID == asking ||
+			asking == "" && b != nil && (b.ResponseID == responseID || b.ResponseID == questionResponseID)):
+			found.Question = m.ID
+			// A reply is after its question, so nothing older is the response's.
+			return true
+		}
+		return false
+	})
+	return found, err
+}
+
+// AfterResponse is what the channel shows after a response, as it is now.
+type AfterResponse struct {
+	// Question is the person's message asked after the response, and QuestionResponseID the
+	// response that asked it (BranchField). Both are empty when none is shown.
+	Question, QuestionResponseID string
+	// Newest is the newest message the channel shows, empty for an empty channel.
+	Newest string
+}
+
+// QuestionAfter finds the newest person's message the channel shows that was asked after
+// parentResponseID, empty for the conversation's first, by the marks its messages carry.
+func (c *Conversation) QuestionAfter(ctx context.Context, parentResponseID string) (AfterResponse, error) {
+	var found AfterResponse
+	err := c.scanBack(ctx, func(m getstream.MessageResponse) bool {
+		if found.Newest == "" {
+			found.Newest = m.ID
+		}
+		b := branchFrom(m.Custom[BranchField])
+		runtime, _ := m.Custom["support_runtime"].(map[string]any)
+		if b == nil || runtime["role"] != "user" || b.ParentResponseID != parentResponseID {
+			return false
+		}
+		found.Question, found.QuestionResponseID = m.ID, b.ResponseID
+		return true
+	})
+	return found, err
+}
+
+// scanBack hands the messages the channel shows to visit, newest first, until it answers
+// true or the channel's oldest page is read.
+func (c *Conversation) scanBack(ctx context.Context, visit func(getstream.MessageResponse) bool) error {
+	client, err := c.chat(ctx)
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	hidden := maps.Clone(c.hidden)
+	cid := c.data.CID
+	c.mu.Unlock()
+	channelType, id := channelOf(cid)
+	reader := chatRewinder{client: client}
+	limit := tailPage
+	params := &getstream.MessagePaginationParams{Limit: &limit}
+	for range maxScanPages {
+		page, err := reader.page(ctx, channelType, id, params)
+		if err != nil {
+			return err
+		}
+		for i := len(page) - 1; i >= 0; i-- {
+			m := page[i]
+			if hidden[m.ID] || m.DeletedAt != nil || m.Type == "deleted" {
+				continue
+			}
+			if visit(m) {
+				return nil
+			}
+		}
+		if len(page) < tailPage {
+			return nil
+		}
+		oldest := page[0].ID
+		if params.IDLt != nil && *params.IDLt == oldest {
+			return nil
+		}
+		params = &getstream.MessagePaginationParams{Limit: &limit, IDLt: &oldest}
+	}
+	return nil
+}
+
+// HistoryOf is p as a model is handed it, the way Open hands the conversation back: tool
+// rounds come back when the ctx it was opened with asks for them (WithRestore).
+func (c *Conversation) HistoryOf(ctx context.Context, p Page) ([]llm.Message, bool) {
+	return restored(ctx, c.data.CID, p)
+}
+
+// Remarked is chosen with the marks of the messages named in marks, by original message id,
+// replaced: a branch sent again shows where each of its messages stands among their
+// alternatives now, not where they stood when they were hidden. A mark with no Of is 1 of 1.
+func Remarked(chosen []store.AgentBranchMessage, marks map[string]Branch) []store.AgentBranchMessage {
+	out := make([]store.AgentBranchMessage, 0, len(chosen))
+	for _, m := range chosen {
+		b, ok := marks[m.OriginalMessageID]
+		if !ok {
+			out = append(out, m)
+			continue
+		}
+		var held heldMessage
+		// Through JSON, so the copy the caller holds is not written under it.
+		encoded, _ := json.Marshal(m.Message)
+		_ = json.Unmarshal(encoded, &held)
+		if held.Custom == nil {
+			held.Custom = map[string]any{}
+		}
+		mark, _ := toMap(b)
+		held.Custom[BranchField] = mark
+		m.Message, _ = toMap(held)
+		out = append(out, m)
+	}
+	return out
 }
