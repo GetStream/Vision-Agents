@@ -37,6 +37,9 @@ const (
 // errorBodyLimit caps how much of a failed response is read into an error message.
 const errorBodyLimit = 2048
 
+// callEnded is Telnyx refusing a command for a call that is already over.
+const callEnded = "90018"
+
 // microsPerDollar converts Telnyx's dollar strings into the micros used everywhere else.
 const microsPerDollar = 1_000_000
 
@@ -626,9 +629,6 @@ type numberUpdate struct {
 }
 
 // playableDigits are the keys TeXML's <Play digits> takes, w being half a second's pause.
-// callEnded is Telnyx refusing a command for a call that is already over.
-const callEnded = "90018"
-
 const playableDigits = "0123456789*#w"
 
 // statusCallbackEvents are the call events Telnyx posts to a call's StatusCallback: "ringing"

@@ -918,3 +918,11 @@ func (s *TwilioSuite) TestARefusedHangUpIsAVendorError() {
 func (s *TwilioSuite) TestHangingUpWithoutACallIsRejected() {
 	s.ErrorContains(s.provider.HangUp(s.ctx, ""), "call to hang up")
 }
+
+func (s *TwilioSuite) TestACallThatEndedOnItsOwnIsNotCompletedAgain() {
+	forms := s.hangUps(`{"sid":"CA123","status":"no-answer"}`)
+
+	s.Require().NoError(s.provider.HangUp(s.ctx, "CA123"))
+
+	s.Len(*forms, 1)
+}

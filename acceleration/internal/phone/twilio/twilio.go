@@ -435,19 +435,22 @@ func (p *Provider) HangUp(ctx context.Context, vendorCallID string) error {
 	}
 	path := fmt.Sprintf("/2010-04-01/Accounts/%s/Calls/%s.json", p.accountSID, url.PathEscape(vendorCallID))
 
-	for _, status := range []string{"canceled", "completed"} {
-		var ended call
-		if err := p.post(ctx, path, url.Values{"Status": {status}}, &ended); err != nil {
-			if refused, ok := errors.AsType[*phone.VendorError](err); ok && refused.Code == callNotInProgress {
-				return nil
-			}
-			return err
-		}
-		if ended.Status == status {
-			return nil
-		}
+	var canceled call
+	if err := p.post(ctx, path, url.Values{"Status": {"canceled"}}, &canceled); err != nil {
+		return callOver(err)
 	}
-	return nil
+	if canceled.Status != "in-progress" {
+		return nil
+	}
+	return callOver(p.post(ctx, path, url.Values{"Status": {"completed"}}, nil))
+}
+
+// callOver reads Twilio's refusal of a call that has already ended as success.
+func callOver(err error) error {
+	if refused, ok := errors.AsType[*phone.VendorError](err); ok && refused.Code == callNotInProgress {
+		return nil
+	}
+	return err
 }
 
 // ReadStatus reads the form Twilio posts to a call's StatusCallback. A CallStatus that does
