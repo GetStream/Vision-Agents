@@ -2,6 +2,14 @@
 
 ## Features
 
+### Regenerate and edit in a conversation kept in Stream Chat, with branches
+
+`createResponse` takes `replaces`, an earlier response's id: with empty text its question is answered again, and with text the text is asked in its place. Chat hides the conversation from there on, and the router keeps what it hid as a branch. A `request_id` is required, and images, audio, videos and `ui_action` cannot go with `replaces`. The answer gains `parent_response_id`, `branch` (`{of, index, count}`, absent for 1 of 1) and `rewound_to` (`{message_id, inclusive}`), so the acting device drops the hidden messages at once.
+
+Three new operations, open to devices and to the session's owner alone: `listResponseSiblings` (`GET /v1/agents/sessions/{id}/responses/{response_id}/siblings?of=reply|question`, paged by cursor) lists a response's regenerations or the edits of its question, with each one's index and whether it is active; `getResponseBranch` (`GET .../branch`, paged) reads a hidden branch's messages as Chat showed them, and answers `active: true` with no items for the branch on the conversation; `activateResponse` (`POST .../activate`) brings a branch back, re-sending its messages with `skip_push` and `custom.resent_from`, and answers `already_active` when nothing changed. New error codes: `branch_limit_reached` (409: the conversation has used its 100 edit and regenerate points), `branch_too_long` (409: more than 100 messages to send again) and `branch_unavailable` (410: the branch's copies were deleted, as a memory truncate deletes them).
+
+Go has `Responses.Regenerate`, `Edit`, `Siblings`, `Branch` and `Activate` (`sdks/go/client/responses.go`). Every generated client CI checks is regenerated except .NET, PHP, Rust and Dart (see the `sdk` skill).
+
 ### The router reaches Gemini Decision 1
 
 `gemini/gemini-decision-1` is a decision model on Google's Decisions API, read with `GOOGLE_API_KEY` like the other Gemini models. It answers the same noul, choice and score questions, at $0.10 per million input tokens and nothing for output. It is in the fast tier with every other decision model, and the guardrail route still prefers Jev.
