@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/getsentry/sentry-go"
 	sentryhttp "github.com/getsentry/sentry-go/http"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
@@ -788,7 +789,7 @@ func (s *Server) Handler() http.Handler {
 	// WaitForDelivery is false because most of what is served here is a long-
 	// lived socket; blocking the handler's return on event delivery would hold
 	// the connection open past its use. The flush in cmd/router covers shutdown.
-	served := withSentry(withRequestID(withTrace(mux, withMetrics(mux, withTiming(withCORS(s.authMode,
+	served := withSentry(mux, withRequestID(withTrace(mux, withMetrics(mux, withTiming(withCORS(s.authMode,
 		s.onOwningNode(s.withCustomer(s.withCost(s.withRequestLog(mux, s.withQuota(s.withServerSide(handler))))))))))))
 	if s.directory == nil {
 		return served
@@ -799,11 +800,24 @@ func (s *Server) Handler() http.Handler {
 }
 
 // withSentry reports what goes wrong serving a request to Sentry.
-func withSentry(handler http.Handler) http.Handler {
+func withSentry(routes *chi.Mux, handler http.Handler) http.Handler {
 	return sentryhttp.New(sentryhttp.Options{
 		Repanic:         false,
 		WaitForDelivery: false,
-	}).Handle(handler)
+	}).Handle(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// sentryhttp has already put the raw URL on the scope and named the transaction with
+		// its path, and a token route's path is its secret.
+		if path := loggedPath(routes, r); path != r.URL.Path {
+			ctx := r.Context()
+			redacted := r.Clone(ctx)
+			redacted.URL.Path, redacted.URL.RawPath = path, ""
+			sentry.GetHubFromContext(ctx).Scope().SetRequest(redacted)
+			if transaction := sentry.TransactionFromContext(ctx); transaction != nil {
+				transaction.Name, transaction.Source = r.Method+" "+path, sentry.SourceRoute
+			}
+		}
+		handler.ServeHTTP(w, r)
+	}))
 }
 
 // withTiming reports how long the server itself spent, so a caller timing a call can tell

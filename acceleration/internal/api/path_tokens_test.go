@@ -4,15 +4,20 @@ package api
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/getsentry/sentry-go"
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/suite"
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // PathTokensSuite reads what the router's log and spans say of routes whose secret is in the path.
@@ -133,4 +138,39 @@ func (s *PathTokensSuite) TestARouteWithoutATokenIsLoggedAsItWasSent() {
 	s.unauthenticatedClient.do(http.MethodGet, path, nil, nil)
 
 	s.requireLogged("path=" + path)
+}
+
+// Not driven through the whole router: no token route of it can be made to panic from outside,
+// and a panic is the event that carries the request.
+func (s *PathTokensSuite) TestASentryEventFromATokenRouteHoldsNoToken() {
+	transport := &sentry.MockTransport{}
+	client, err := sentry.NewClient(sentry.ClientOptions{
+		Transport:        transport,
+		BeforeSend:       store.RedactSentryEvent,
+		EnableTracing:    true,
+		TracesSampleRate: 1,
+	})
+	s.Require().NoError(err)
+	hub := sentry.CurrentHub()
+	previous := hub.Client()
+	hub.BindClient(client)
+	s.T().Cleanup(func() { hub.BindClient(previous) })
+
+	routes := chi.NewRouter()
+	routes.Post("/v1/phone/status/{token}", func(http.ResponseWriter, *http.Request) { panic("boom") })
+	token := s.utils.uuid()
+	request := httptest.NewRequest(http.MethodPost, "/v1/phone/status/"+token, nil)
+	withSentry(routes, routes).ServeHTTP(httptest.NewRecorder(), request)
+	s.Require().True(sentry.Flush(5 * time.Second))
+
+	events := transport.Events()
+	s.Require().NotEmpty(events)
+	for _, event := range events {
+		s.NotContains(event.Request.URL, token)
+		s.Contains(event.Request.URL, "/v1/phone/status/{token}")
+		s.NotContains(event.Transaction, token)
+		for _, breadcrumb := range event.Breadcrumbs {
+			s.NotContains(breadcrumb.Message, token)
+		}
+	}
 }

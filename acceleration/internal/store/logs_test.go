@@ -497,6 +497,17 @@ func TestRedactSentryEventKeepsTheReasonAndNotTheKey(t *testing.T) {
 	}
 }
 
+func TestRedactSentryEventTakesTheKeyOutOfTheRequest(t *testing.T) {
+	event := RedactSentryEvent(&sentry.Event{
+		Request:     &sentry.Request{URL: "https://h/x?token=sk-secret123", QueryString: "token=sk-secret123&a=1"},
+		Transaction: "GET /x?key=sk-secret123",
+	}, nil)
+	require.NotContains(t, event.Request.URL, "sk-secret123")
+	require.NotContains(t, event.Request.QueryString, "sk-secret123")
+	require.NotContains(t, event.Transaction, "sk-secret123")
+	require.Contains(t, event.Request.QueryString, "a=1")
+}
+
 // A usage alert carries a provider's error in a context (internal/alerts), and a tag can name
 // what failed: every string in them is redacted, at any depth and in a value of any type, and
 // the reason before the key is kept.
