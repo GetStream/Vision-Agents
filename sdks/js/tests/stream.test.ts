@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { Client } from "../src/index.js";
+import { Client, supportBranchOf } from "../src/index.js";
 import { registerChat, type ChatClient, type ChatVersion } from "../src/stream.js";
 
 /** The user each chat client built here was connected as. */
@@ -90,5 +90,48 @@ describe("the user the built chat client connects as", () => {
     const user = { id: "jim", team: "blue" };
 
     assert.deepEqual(await connect(Chat10, user), user);
+  });
+});
+
+// The mark the router puts on each message it writes, read without the React components.
+describe("a message's place among its alternatives", () => {
+  const mark = {
+    response_id: "resp_2",
+    parent_response_id: "resp_1",
+    question_response_id: "resp_0",
+    of: "reply",
+    index: 2,
+    count: 3,
+  };
+  const expected = {
+    of: "reply",
+    index: 2,
+    count: 3,
+    responseId: "resp_2",
+    parentResponseId: "resp_1",
+    questionResponseId: "resp_0",
+  };
+
+  it("is read top level, where stream-chat 9 keeps the app's fields", () => {
+    assert.deepEqual(supportBranchOf({ id: "m1", text: "Lisbon", support_branch: mark }), expected);
+  });
+
+  it("is read under custom, where stream-chat 10 and a read-back branch keep them", () => {
+    assert.deepEqual(supportBranchOf({ id: "m1", custom: { support_branch: mark } }), expected);
+  });
+
+  it("is absent for a message with no mark or a garbled one", () => {
+    assert.equal(supportBranchOf({ id: "m1", text: "From before branches" }), undefined);
+    assert.equal(supportBranchOf({ id: "m1", support_branch: { ...mark, of: "sideways" } }), undefined);
+    assert.equal(supportBranchOf({ id: "m1", support_branch: { ...mark, index: "2" } }), undefined);
+  });
+
+  it("names no parent for a conversation's first response", () => {
+    const { parent_response_id: _, question_response_id: __, ...first } = mark;
+    assert.deepEqual(supportBranchOf({ support_branch: first }), {
+      ...expected,
+      parentResponseId: "",
+      questionResponseId: "",
+    });
   });
 });

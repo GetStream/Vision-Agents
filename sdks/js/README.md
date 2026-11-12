@@ -611,7 +611,7 @@ const conversation = new AIConversationController({
   transport: agentChatTransport(chat, {
     adapt: (message, reasoningText) => fromStreamMessage(message, { reasoningText }),
   }),
-  actions: { edit: false, regenerate: false }, // the router can't rewind a conversation
+  actions: { edit: false, regenerate: false }, // the transport doesn't branch yet: see "Regenerate and edit"
 });
 ```
 
@@ -712,9 +712,93 @@ const branch = await session.fork({ response_id: items[2].response_id, title: "a
 `rewind` takes a response, a response's id, or any item of one. The model forgets the later
 turns, and they drop out of what `responses` reads back. A text conversation is kept in
 Stream Chat unless it is incognito, and so cannot be rewound, since the channel would still
-hold the later turns: fork it at the
-response instead, which starts a new session carrying the history only that far. Both work
-from a browser as well as a server.
+hold the later turns: regenerate or edit it instead (below), or fork it at the response, which
+starts a new session carrying the history only that far. All of these work from a browser as
+well as a server.
+
+## Regenerate and edit
+
+In a conversation kept in Stream Chat, a reply can be answered again and a question asked
+differently without leaving the conversation. The earlier versions are kept as branches the
+person can page through, ‹ 1/2 › the way ChatGPT does it, all in the same session and channel.
+
+```ts
+const again = await session.responses.regenerate(reply);           // the same question, answered again
+const edited = await session.responses.edit(reply, "Rome instead"); // a new question in its place
+again.created.branch; // { of: "reply", index: 2, count: 2 }
+```
+
+Both take a response, its id, or any item of one, and `maxOutputTokens`, `reasoningEffort` and
+`requestId`; images and a UI action cannot go with them. Like `create` they go under a request
+id, a fresh one unless you name it, and return once the agent has started answering: the answer
+arrives as any other does, in the channel and through `session.events()`.
+
+The router hides the conversation from that point on in Chat, with Chat's rewind, and keeps
+what it hid. A regenerate hides the reply and everything after it; an edit hides the question
+too. The channel only ever shows the branch the person is on:
+
+```ts
+const page = await session.responses.siblings(reply, { of: "reply" }); // or "question" for edits
+for await (const sibling of session.responses.unwindSiblings(reply)) {
+  sibling.index; sibling.active; // the i of ‹ i/n ›, and whether the channel shows it
+}
+const other = page.items.find((sibling) => !sibling.active);
+if (other) {
+  const hidden = await session.responses.branch(other.id); // its messages, shaped as Chat's
+  await session.responses.activate(other.id);              // before asking anything on it
+}
+```
+
+`branch` only reads: show its messages in place of the channel's from where the two part, and
+nothing is written to Chat or told to the model. A response the channel already shows answers
+`active: true` and no items. To carry on from a branch that is not shown, `activate` it first:
+the router hides the shown one and sends the chosen one's messages again, and the model answers
+from it from then on. Activating what is already shown changes nothing, so it is safe to retry.
+
+Each message the router writes carries its place, `support_branch`, which `supportBranchOf`
+reads from a stream-chat 9 or 10 message, or from one `branch` read back, for a page drawing
+‹ i/n › without the React components:
+
+```ts
+import { supportBranchOf } from "@stream-io/stream-agents";
+
+const place = supportBranchOf(message); // { of, index, count, responseId, ... } or undefined
+```
+
+**The channel follows along.** Once `session.chat()` has opened the channel, the session drops
+what a regenerate, an edit or an activation hid from it as soon as the call returns, from the
+answer's `rewound_to`, so the device that asked never shows the old and the new answer
+together. Another device hears Chat's `channel.rewound` (or `notification.channel_rewound`, when
+it is a member not watching), and the session drops the hidden messages from the channel's state
+at once and then reads the channel again. Dropping comes first because stream-chat does not
+handle the event, and its `channel.query` adds what it reads to what the channel holds rather
+than replacing it, so reading again alone would never take anything away. This stops when the
+session is closed. An app showing the channel without this package needs its own handler.
+
+**What to tell the person.**
+
+- **At most 100 edit and regenerate points per conversation.** Chat keeps 100 separate hidden
+  stretches per channel. Regenerating the same reply again reuses its stretch, and editing an
+  earlier turn swallows the ones after it, so a normal conversation stays in single digits.
+  Past it, a regenerate or an edit is a `RouterError` with code `branch_limit_reached` (409):
+  continue in a new chat. Asking and reading still work, and paging through ‹ i/n › never counts.
+- **A branch of more than 100 messages cannot be brought back.** `activate` sends them again,
+  and past 100 it is refused with `branch_too_long` (409): continue in a new chat.
+- **A deleted branch is gone.** A memory truncate deletes the router's copies of hidden
+  branches; reading or activating one is then `branch_unavailable` (410).
+- **Brought-back messages are new messages.** They have new ids and times, fire `message.new`
+  again, and reach webhooks, the firehose and moderation as new. They are sent with `skip_push`
+  and carry `custom.resent_from`, the id of the message each copies, for a backend to dedupe on.
+- **Memories from abandoned branches are kept.** What the agent remembered on a branch the
+  person left can still be recalled; `session.deleteMemories()` is the only way to take it back.
+- **Some turns cannot be branched.** A turn answered before branches existed, or typed while the
+  agent was on a call, carries no mark and is refused. So are shared conversations, threads,
+  conversations a dispatch worker answers, a session while it is on a call, a speech-to-speech
+  model, and incognito sessions (nothing is kept to branch).
+- **Chat still counts what is hidden.** Hidden messages stay in a channel export and in
+  `message_count`, and for a moment after a rewind a read can still return what it hid.
+
+`branchErrorOf(error)` answers which of the three codes a failure is, or undefined.
 
 ## Sockets
 

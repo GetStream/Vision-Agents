@@ -593,7 +593,14 @@ function readerV9(channel: ChannelV9, pageSize: number, events: ReaderEvents): C
         if (event.type === "message.updated" && event.message) {
           events.updated(event.message);
         }
-        if (event.type === "message.new" || event.type === "message.updated" || event.type === "message.deleted") {
+        // A rewind is pruned from the state before the channel's listeners run (see followRewinds).
+        if (
+          event.type === "message.new" ||
+          event.type === "message.updated" ||
+          event.type === "message.deleted" ||
+          event.type === "channel.rewound" ||
+          event.type === "notification.channel_rewound"
+        ) {
           publish();
         }
       });
