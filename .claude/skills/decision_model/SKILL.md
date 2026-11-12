@@ -1,6 +1,6 @@
 ---
 name: decision_model
-description: What a decision model is in this repo, the contract one implements, the System One protocol every vendor here speaks, and how to add a vendor or a model to the decision_model router. Read before adding a decision model, a decision model vendor or a guardrail backend.
+description: What a decision model is in this repo, the contract one implements, the System One protocol most vendors here speak, and how to add a vendor or a model to the decision_model router. Read before adding a decision model, a decision model vendor or a guardrail backend.
 ---
 
 # Decision models
@@ -113,7 +113,15 @@ The answers come back keyed the same way, as `{"type", "noul" | "choice" | "scor
 `systemone.Client` speaks this and nothing else. Perplexity refuses any field it does not
 know, so the request carries `model`, `state` and `questions` and nothing more.
 
-OpenAI's own Decisions API (`POST /v1/decisions`, limited preview) is the one shape that
+Google's Decisions API is the one vendor here off System One, in
+[`internal/decisionmodel/gemini`](../../../acceleration/internal/decisionmodel/gemini/gemini.go).
+Its answers use System One's fields, but the state is `input` (a state with parts goes as
+its JSON text), a noul's criteria are `true_description` and `false_description`, the key is
+`x-goog-api-key`, usage is `total_input_tokens`, and the answer names no model. A yes or
+no probability is never below 0.01 or above 0.99, so a threshold outside that range never
+fires.
+
+OpenAI's own Decisions API (`POST /v1/decisions`, limited preview) is another shape that
 differs: `input` instead of `state`, questions and answers as arrays carrying `name`,
 `predicate` with `probability`, and `choices` and `levels` as objects. Reach GPT-6 Luna
 Decisions through OpenRouter, which translates it into System One. Write an `openai` vendor
@@ -126,6 +134,7 @@ only when there is a reason to skip OpenRouter, and do the translation inside th
 | `typesafe` | `api.typesafe.ai/v1/systemone` | `TYPESAFE_API_KEY` | `jev-latest` (the default route's pin) |
 | `openrouter` | `openrouter.ai/api/alpha/decisions` | `OPENROUTER_API_KEY` | `typesafe/jev-1.13`, `openai/gpt-6-luna-decisions`, `cloudflare/clef-flash`, `cloudflare/clef`, `respan/span-01-lite`, `liquid/d1`, `jaredpalmer/kev-4b`, `perplexity/pplx-decider-v1.1-27b`, `inception/mercury-decide`, `inception/mercury-decide:free` |
 | `perplexity` | `api.perplexity.ai/v1/decisions` | `PERPLEXITY_API_KEY` | `pplx-decider-v1.1-27b`, `pplx-decider-v1-27b` |
+| `gemini` | `generativelanguage.googleapis.com/v1beta/decisions` (not System One) | `GOOGLE_API_KEY` | `gemini-decision-1` |
 
 To see what OpenRouter currently serves, run
 `curl "https://openrouter.ai/api/v1/models?output_modalities=decisions"`. A model can be listed
@@ -143,7 +152,8 @@ How they are routed:
   are declared `realtime: false`, so a live route never lands on one, and they are priced with
   `free: true` in `prices/vendor.json` rather than no price. `TestEveryRoutedModelIsPriced`
   still catches a price that was forgotten.
-- **Data policy.** Only TypeSafe declares one. What happens to an OpenRouter request depends on
+- **Data policy.** Only TypeSafe and Gemini declare one (Gemini's retention is unspecified,
+  so a request asking for no retention skips it). What happens to an OpenRouter request depends on
   where OpenRouter forwards it, so its models declare none, and a customer who asks for a data
   policy is kept away from them.
 

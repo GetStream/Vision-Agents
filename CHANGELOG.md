@@ -2,6 +2,10 @@
 
 ## Features
 
+### The router reaches Gemini Decision 1
+
+`gemini/gemini-decision-1` is a decision model on Google's Decisions API, read with `GOOGLE_API_KEY` like the other Gemini models. It answers the same noul, choice and score questions, at $0.10 per million input tokens and nothing for output. It is in the fast tier with every other decision model, and the guardrail route still prefers Jev.
+
 ### JavaScript: AgentChat, a written conversation for Stream's AI components
 
 `@stream-io/stream-agents/chat` exports `AgentChat` and `agentChatTransport`. An app no longer writes its own state between a session and the AI components.
