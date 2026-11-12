@@ -151,9 +151,11 @@ func TestACallerWhoSaysTheAgentsWordsOverItKeepsThem(t *testing.T) {
 }
 
 // The agent's echo is its own around a caller's murmur, which is no sentence of theirs, and
-// up to the stop or the question they say after it. A run with a word misheard among its
-// first three is the echo once three of its words are heard right in a row: the replay's
-// echo written so far is the caller's, and the next words make it the agent's.
+// up to the stop or the question they say after it, and so is an echo whose first or last
+// word the model wrote wrong, a word on its own next to the agent's: the gate's echo lines
+// wrote "signed" for "sunny" and "wind" for "in the afternoon". A run with a word misheard
+// among its first three is the echo once three of its words are heard right in a row: the
+// replay's echo written so far is the caller's, and the next words make it the agent's.
 func TestTheEchoAroundACallersMurmurIsTheAgents(t *testing.T) {
 	for _, c := range []struct {
 		heard, left string
@@ -162,6 +164,8 @@ func TestTheEchoAroundACallersMurmurIsTheAgents(t *testing.T) {
 		{"Okay. With a high of 24 degrees. Uh huh.", "Okay. Uh huh.", 7},
 		{"Tomorrow in Lisbon it will be sunny and warm. Uh huh. With a high of twenty four degrees. And in Porto?", "Uh huh. And in Porto?", 16},
 		{"Wait. Sunny and warm. Okay.", "Wait. Okay.", 3},
+		{"Signed and warm, with a high of twenty four degrees, a light breeze from the north wind.", "Signed wind.", 15},
+		{"And listen, it will be sunny and warm, with a high of twenty four degrees, a light breeze from the north wind.", "And listen, wind.", 19},
 		// The gate's: "and a clear and" heard right, "mild" misheard at the end.
 		{"And a clear and mighty.", "mighty.", 4},
 		{"Tomorrow and Lisbon", "Tomorrow and Lisbon", 0},
@@ -171,6 +175,17 @@ func TestTheEchoAroundACallersMurmurIsTheAgents(t *testing.T) {
 		require.Equal(t, c.left, left, "%q", c.heard)
 		require.Equal(t, c.echo, echo, "%q", c.heard)
 	}
+}
+
+// A limit: an echo whose ends the model wrote wrong two words or more at a time, both of
+// them, reads as the caller's own sentence around the agent's words, and is theirs whole.
+// The words alone can't tell it from a caller reading the reply back; the replay's echo
+// lines never wrote one.
+func TestAnEchoMisheardAtBothEndsIsTakenForTheCallers(t *testing.T) {
+	heard := "Tomorrow, and listen, it will be sunny and warm, with a high of twenty four degrees, a light breeze from the north in the after noon."
+	left, echo := echoed(heard, replayReply)
+	require.Equal(t, heard, left)
+	require.Zero(t, echo)
 }
 
 // Only chorus-asr's words are weighed, and only those heard while the agent spoke or just

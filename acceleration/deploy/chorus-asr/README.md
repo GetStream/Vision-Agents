@@ -759,9 +759,9 @@ untouched. Acting, a decision's `Ruler` is `heard`.
   near enough (a quarter of them may be heard wrong, one at a time), with at least three of
   them heard right in a row as it said them, when the audio the words are of came while the
   agent's voice was going out, or began within 800 ms of its last audible sample going out,
-  but for a run with words of the caller's own before and after it, more than a murmur,
-  which they said in their sentence: what is left, before, between and after the runs, is
-  the caller's, and an echo alone is nothing heard
+  but for a run with two or more words of the caller's own before it and after it, more
+  than a murmur, which they said in their sentence: what is left, before, between and after
+  the runs, is the caller's, and an echo alone is nothing heard
   (`router_agent_chorus_asr_echoes_total`). When the voice goes out is the edge's pace:
   each chunk from when it was queued, after what was queued ahead of it, for as long as it
   plays, and its silences, the padding after the last word included, carry no words;
@@ -882,17 +882,20 @@ never ended the utterance; the new one wrote both replacements and the final.
   voice is in the reply, by its speaking rate on the call, is off by up to a third (5th to
   95th percentile over 996 lines of a τ³-Voice bench), too rough to time a word by. An echo
   the model writes too far from what the agent said, or without three of its words heard
-  right in a row, is still the caller's, as is one between words of the caller's own, even
-  one that truly came back down the line. A caller who says three or more of the agent's
-  words in a row while it speaks, or in an utterance that began (300 ms before their voice)
-  within 800 ms of its last audible sample going out, loses them at the start or the end of
-  what they said so far, or next to a murmur: "Okay, the tablet order, please." over a reply
-  that says "the tablet order" is "Okay, please.", and "Just use the address from the tablet
-  order." loses all but "Just use" until "…for every—" is written. A word the model writes
-  with some of the agent's in it goes whole: "No, it's A-J-A-M-E-L." over a reply that
-  spelled "J-A-M-E-L" is "No, it's". One word of the caller's between two runs of the echo
-  reads as a word of the agent's misheard. Two or more words in a row are the caller's
-  wherever they fall, as "and in Porto" does inside the reply's echo.
+  right in a row, is still the caller's, as is one between two or more words of the caller's
+  own on each side, even one that truly came back down the line: an echo whose ends the model
+  wrote wrong two words at a time, "Tomorrow, and listen, it will be sunny … in the after
+  noon.", is taken whole for the caller's, where one word wrong at an end ("Signed and warm
+  …") is not. A caller who says three or more of the agent's words in a row while it speaks,
+  or in an utterance that began (300 ms before their voice) within 800 ms of its last audible
+  sample going out, loses them at the start or the end of what they said so far, or next to
+  a murmur or a lone word: "Okay, the tablet order, please." over a reply that says "the
+  tablet order" is "Okay, please.", and "Just use the address from the tablet order." loses
+  all but "Just use" until "…for every—" is written. A word the model writes with some of
+  the agent's in it goes whole: "No, it's A-J-A-M-E-L." over a reply that spelled
+  "J-A-M-E-L" is "No, it's". One word of the caller's between two runs of the echo reads as
+  a word of the agent's misheard. Two or more words in a row are the caller's wherever they
+  fall, as "and in Porto" does inside the reply's echo.
 - With unified replies the reply rules on its own words and no flow controller is asked,
   so acting has nothing to stand in for.
 - Without turns from the audio, a CPU decision over a full window, 373 ms here, does not fit

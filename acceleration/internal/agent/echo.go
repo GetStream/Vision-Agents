@@ -101,10 +101,12 @@ func (a *Agent) droppingEcho(transcript stt.Transcript, who string) (string, boo
 // of its words between them, are the caller's, however short, and end the run, which opens
 // and closes on the agent's words. A caller says the agent's words too, answering it with
 // them or reading back what it said, while it speaks, and the model writes no word's time to
-// tell them from the echo. A run with words of the caller's own before and after it, more than
-// a murmur (callersAround), is theirs: they said it in their sentence, as "Just use the address
-// from the tablet order for every—" over a reply that says "the address … on the tablet
-// order". A murmur over the echo is no sentence, and the echo around it is the agent's.
+// tell them from the echo. A run with words of the caller's own before and after it
+// (callersAround) is theirs: they said it in their sentence, as "Just use the address from
+// the tablet order for every—" over a reply that says "the address … on the tablet order".
+// A murmur over the echo is no sentence, and a word on its own next to the agent's is its
+// misheard, as the model writes the echo's first or last word ("Signed and warm" for "sunny
+// and warm"): the echo around either is the agent's.
 func echoed(text, reference string) (string, int) {
 	fields := strings.Fields(text)
 	var heard []string
@@ -131,7 +133,7 @@ func echoed(text, reference string) (string, int) {
 	drop := make([]bool, len(fields))
 	echo := 0
 	for i, run := range runs {
-		if callersAround(fields, field, runs, i) {
+		if callersAround(fields, field, at, runs, i) {
 			continue
 		}
 		for j := run[0]; j < run[1]; j++ {
@@ -152,10 +154,11 @@ func echoed(text, reference string) (string, int) {
 }
 
 // callersAround says the i'th of runs, the runs of the agent's words in a transcript's heard
-// words, each of field of fields, has words of the caller's own, more than a murmur
-// (moreThanMurmurs), both before it, back to the run before, and after it, up to the run
-// after.
-func callersAround(fields []string, field []int, runs [][2]int, i int) bool {
+// words, at in its line and each of field of fields, has words of the caller's own both before
+// it, back to the run before, and after it, up to the run after: two or more that are not the
+// agent's, as two words that are not its own end a run (callersNear), and more than a murmur
+// (moreThanMurmurs).
+func callersAround(fields []string, field []int, at []aligned, runs [][2]int, i int) bool {
 	before, after := 0, len(field)
 	if i > 0 {
 		before = runs[i-1][1]
@@ -163,13 +166,16 @@ func callersAround(fields []string, field []int, runs [][2]int, i int) bool {
 	if i+1 < len(runs) {
 		after = runs[i+1][0]
 	}
-	said := func(from, to int) string {
-		if from >= to {
-			return ""
+	own := func(from, to int) bool {
+		theirs := 0
+		for _, w := range at[from:to] {
+			if !w.same {
+				theirs++
+			}
 		}
-		return strings.Join(fields[field[from]:field[to-1]+1], " ")
+		return theirs >= 2 && moreThanMurmurs(strings.Join(fields[field[from]:field[to-1]+1], " "))
 	}
-	return moreThanMurmurs(said(before, runs[i][0])) && moreThanMurmurs(said(runs[i][1], after))
+	return own(before, runs[i][0]) && own(runs[i][1], after)
 }
 
 // moreThanMurmurs says text has a word in it that is not a murmur (murmurs), which a listener
