@@ -392,6 +392,26 @@ func (s *TelephonyBillingSuite) TestALegOfACountryWithNoRateIsBillableWorkWithNo
 	s.Zero(row.CostMicros, "unpriced, which raises the alarm rather than giving it away quietly")
 }
 
+func (s *TelephonyBillingSuite) TestAPlacedTwilioCallToTheUSIsPriced() {
+	s.placedCallIsPriced("twilio", "+14155550123", "US")
+}
+
+func (s *TelephonyBillingSuite) TestAPlacedTwilioCallToCanadaIsPriced() {
+	s.placedCallIsPriced("twilio", "+12365550123", "CA")
+}
+
+func (s *TelephonyBillingSuite) TestAPlacedTelnyxCallToCanadaIsPriced() {
+	s.placedCallIsPriced("telnyx", "+12365550123", "CA")
+}
+
+func (s *TelephonyBillingSuite) TestAnInboundTwilioCallToAUSNumberIsPriced() {
+	s.inboundCallIsPriced("twilio", "US", "+1415555"+digits(s.utils.uuid())[:4])
+}
+
+func (s *TelephonyBillingSuite) TestAnInboundTwilioCallToACanadianNumberIsPriced() {
+	s.inboundCallIsPriced("twilio", "CA", "+1604555"+digits(s.utils.uuid())[:4])
+}
+
 // TelephonySandboxBillingSuite is an app the 10DLC sandbox holds: its texts and minutes are
 // priced as usual and given away, until a use case of its is approved.
 type TelephonySandboxBillingSuite struct {
@@ -535,10 +555,16 @@ func (s *telephonyBilling) hook(path string, header http.Header, body []byte) in
 
 // attached is a Telnyx number of the app's in the US, attached to a call of its own.
 func (s *telephonyBilling) attached() (store.PhoneNumber, string) {
+	return s.attachedOn("telnyx", "US", "+1555"+digits(s.utils.uuid()))
+}
+
+// attachedOn is a number of the app's with the vendor and country given, attached to a call of
+// its own.
+func (s *telephonyBilling) attachedOn(vendor, country, e164 string) (store.PhoneNumber, string) {
 	ctx := context.Background()
 	callID := "phone-" + s.utils.uuid()
 	number := store.PhoneNumber{
-		E164: "+1555" + digits(s.utils.uuid()), Vendor: "telnyx", Country: "US", CustomerID: s.customerID(),
+		E164: e164, Vendor: vendor, Country: country, CustomerID: s.customerID(),
 		Tags: map[string]string{"line": "support"}, PurchasedAt: time.Now().UTC(),
 	}
 	s.Require().NoError(s.store.RecordNumber(ctx, &number))
@@ -548,12 +574,50 @@ func (s *telephonyBilling) attached() (store.PhoneNumber, string) {
 	return number, callID
 }
 
+// inboundCallIsPriced checks that a call arriving on the vendor's number of the country is
+// billed at the vendor list's inbound rate for the country.
+func (s *telephonyBilling) inboundCallIsPriced(vendor, country, e164 string) {
+	_, callID := s.attachedOn(vendor, country, e164)
+
+	s.Require().Equal(http.StatusOK, s.arriveAt(callID))
+	s.clock.advance(61 * time.Second)
+	s.Require().Equal(http.StatusOK, s.endAt(callID))
+
+	row := s.phoneRows(phone.ModelCallMinutes, 1)[store.Inbound]
+	s.Equal(vendor, row.Provider)
+	s.Equal(country, row.Attributes["country"])
+	s.NotZero(row.CostMicros)
+	s.Equal(s.vendorPriced(vendor, phone.ModelCallMinutes, map[string]string{"direction": "inbound", "country": country},
+		pricing.Quantities{pricing.CallSeconds: 120}), row.CostMicros, "61 seconds bill as two whole minutes")
+}
+
+// placedCallIsPriced checks that a call placed to remote on the vendor, answered for 61 seconds,
+// is billed at the vendor list's outbound rate for the country.
+func (s *telephonyBilling) placedCallIsPriced(vendor, remote, country string) {
+	callID := s.placedLegOn(vendor, remote, routing.Attribution{APIKey: s.app.key})
+	s.Require().Equal(http.StatusOK, s.participant("joined", callID, "sip-"+remote, "phone-1"))
+	s.clock.advance(61 * time.Second)
+	s.Require().Equal(http.StatusOK, s.endAt(callID))
+
+	row := s.phoneRows(phone.ModelCallMinutes, 1)[store.Outbound]
+	s.Equal(vendor, row.Provider)
+	s.Equal(country, row.Attributes["country"])
+	s.NotZero(row.CostMicros)
+	s.Equal(s.vendorPriced(vendor, phone.ModelCallMinutes, map[string]string{"direction": "outbound", "country": country},
+		pricing.Quantities{pricing.CallSeconds: 120}), row.CostMicros, "61 seconds bill as two whole minutes")
+}
+
 // placedLeg is a call placed to remote, ringing, as the phone service records one the vendor
 // took, and the call it rings into.
 func (s *telephonyBilling) placedLeg(remote string, attribution routing.Attribution) string {
+	return s.placedLegOn("telnyx", remote, attribution)
+}
+
+// placedLegOn is placedLeg on the vendor given.
+func (s *telephonyBilling) placedLegOn(vendor, remote string, attribution routing.Attribution) string {
 	callID := s.utils.uuid()
 	s.router.phone.OpenLeg(context.Background(), routing.Owner{CustomerID: s.customerID(), Attribution: attribution},
-		store.CallLeg{CallType: "default", CallID: callID, Vendor: "telnyx", Direction: store.Outbound,
+		store.CallLeg{CallType: "default", CallID: callID, Vendor: vendor, Direction: store.Outbound,
 			LocalNumber: "+15125550100", RemoteNumber: remote}, false)
 	return callID
 }
