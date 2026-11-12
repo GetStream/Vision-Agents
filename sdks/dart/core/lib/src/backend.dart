@@ -4,8 +4,9 @@ import 'dart:convert';
 ///
 /// Asked once and its answer kept. It is asked again when the router refuses the token with a
 /// 401, when a session socket is refused, when the token is within a minute of the expiry it
-/// carries, and when Stream Chat or Stream Video say theirs expired. Requests that need a token
-/// while it is being fetched wait for the same fetch rather than asking again.
+/// carries, when Stream Chat or Stream Video say theirs expired, and after
+/// `VisionAgents.disconnect()`, which is signing out. Requests that need a token while it is
+/// being fetched wait for the same fetch rather than asking again.
 typedef TokenProvider = Future<String> Function();
 
 /// What Stream's own Chat and Video clients connect with: the app's key, the user and their
@@ -279,8 +280,10 @@ final class Backend {
     }
   }
 
-  /// Disconnects every Stream client built here, for every user, and none the app gave.
+  /// Disconnects every Stream client built here, for every user, and none the app gave, and
+  /// forgets the token kept for this one: this is signing out.
   Future<void> disconnectStream() async {
+    _tokenCache?.expire(null);
     final built = [..._clients.built.values];
     _clients.built.clear();
     for (final entry in built) {

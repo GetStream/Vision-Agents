@@ -153,7 +153,8 @@ final class VisionAgents {
   Future<void> forgetGuest(GuestStore store) => store.clear();
 
   /// Disconnects the Stream Chat and Video clients built for sessions, and none the app
-  /// handed over. Leaving a call or closing a session disconnects nothing.
+  /// handed over, and forgets the token kept, so whoever signs in next is asked for afresh.
+  /// Leaving a call or closing a session disconnects nothing.
   Future<void> disconnect() => backend.disconnectStream();
 
   /// Closes the HTTP client, if this created it. Sessions close on their own.
@@ -180,7 +181,7 @@ final class VisionAgents {
       // The agent is in the conversation whether or not anybody here can follow it, so it is
       // stopped rather than left holding a call nobody is listening to.
       try {
-        await session.close();
+        await sessions.stop(session.id);
       } catch (_) {
         // Reporting why the socket did not open matters more than this, which can fail for
         // the same reason, such as no token to be had.

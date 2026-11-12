@@ -323,6 +323,27 @@ void main() {
         expect(headers['Authorization'], 'Bearer token-1');
       });
 
+      test('asks afresh after signing out, for whoever signs in next', () async {
+        router.answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));
+        var signedIn = 'alice';
+        final app = VisionAgents(
+          url: router.url,
+          apiKey: 'key',
+          token: () async => 'token-for-$signedIn',
+        );
+
+        await app.sessions.get('s1');
+        await app.disconnect();
+        signedIn = 'bob';
+        await app.sessions.get('s1');
+        app.close();
+
+        expect(
+          router.last('GET /v1/agents/sessions/s1').header('Authorization'),
+          'Bearer token-for-bob',
+        );
+      });
+
       test('keeps a token whose expiry is further out than a date can hold', () async {
         router.answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));
         final claims = base64Url.encode(utf8.encode(jsonEncode({'exp': 9999999999999})));

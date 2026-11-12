@@ -80,6 +80,10 @@ final class TestRouter {
   /// Holds every socket upgrade until it completes, so a test can act while one is dialling.
   Completer<void>? holdUpgrades;
 
+  /// Holds `METHOD /path` until the completer completes, so a test can act while a request
+  /// is in flight.
+  final Map<String, Completer<void>> hold = {};
+
   /// The socket the SDK opened [index]th, once it has.
   Future<TestSocket> socket([int index = 0]) async {
     await until(() => _open.length > index);
@@ -118,6 +122,7 @@ final class TestRouter {
 
     arrived.add(seen);
     final route = '${request.method} ${request.uri.path}';
+    await hold[route]?.future;
     final queued = _inTurn[route];
     final answer = queued != null && queued.isNotEmpty
         ? queued.removeAt(0)

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:test/test.dart';
@@ -138,13 +139,52 @@ void main() {
       },
     );
 
-    test('a session that could not start stays over, and closing it stops its agent', () async {
-      router.answer('POST /v1/agents/sessions/s1/stop', const Answer(204));
+    test(
+      'a session whose token could not be had is left unstarted, to start again or close',
+      () async {
+        router.answer('POST /v1/agents/sessions/s1/stop', const Answer(204));
+        // A client of its own each, so neither starts with a token kept.
+        final clients = <VisionAgents>[];
+        AgentSession downOnce() {
+          var asked = 0;
+          final keyed = VisionAgents(
+            url: router.url,
+            apiKey: 'key',
+            token: () async => ++asked == 1 ? throw StateError('backend down') : 'token-$asked',
+          );
+          clients.add(keyed);
+          return AgentSession(
+            Session(id: 's1', createdAt: DateTime.utc(2026)),
+            backend: keyed.backend,
+            sessions: keyed.sessions,
+          );
+        }
+
+        final retried = downOnce();
+        await expectLater(retried.start(), throwsStateError);
+        expect(retried.connection.value, isA<NotStarted>());
+        await retried.start();
+        expect(retried.isConnected, isTrue, reason: 'the backend is back');
+
+        final closed = downOnce();
+        await expectLater(closed.start(), throwsStateError);
+        await closed.close();
+
+        expect(router.arrived.where((r) => r.path == '/v1/agents/sessions/s1/stop'), hasLength(1));
+        await retried.close();
+        for (final client in clients) {
+          client.close();
+        }
+      },
+    );
+
+    test('a session whose token could not be had to dial again can be started again', () async {
+      router.refuseSocketsWhere = (query) => query['token'] == 'token-1';
       var asked = 0;
       final keyed = VisionAgents(
         url: router.url,
         apiKey: 'key',
-        token: () async => ++asked == 1 ? throw StateError('backend down') : 'token-$asked',
+        token: () async => ++asked == 2 ? throw StateError('backend down') : 'token-$asked',
       );
       final session = AgentSession(
         Session(id: 's1', createdAt: DateTime.utc(2026)),
@@ -153,14 +193,155 @@ void main() {
       );
 
       await expectLater(session.start(), throwsStateError);
-      expect(session.failure, isA<TransportException>());
       await session.start();
-      await session.close();
+
+      expect(session.isConnected, isTrue);
+      expect(router.upgrades.map((upgrade) => upgrade.query['token']), ['token-1', 'token-3']);
       await session.close();
       keyed.close();
+    });
 
-      expect(router.upgrades, isEmpty, reason: 'starting again opens nothing');
-      expect(router.arrived.where((r) => r.path == '/v1/agents/sessions/s1/stop'), hasLength(1));
+    test('closing again after a stop that failed stops the agent again', () async {
+      router.answerInTurn('POST /v1/agents/sessions/s1/stop', [
+        Answer(500, errorJson('internal', 'internal', 'try again')),
+        const Answer(204),
+      ]);
+      final session = AgentSession(
+        Session(id: 's1', createdAt: DateTime.utc(2026)),
+        backend: agents.backend,
+        sessions: agents.sessions,
+      );
+
+      await expectLater(session.close(), throwsA(isA<RouterException>()));
+      await session.close();
+
+      expect(router.arrived.where((r) => r.path == '/v1/agents/sessions/s1/stop'), hasLength(2));
+    });
+
+    test('closing after a delete that failed still stops the agent', () async {
+      router
+        ..answer(
+          'DELETE /v1/agents/sessions/s1',
+          Answer(500, errorJson('internal', 'internal', 'no')),
+        )
+        ..answer('POST /v1/agents/sessions/s1/stop', const Answer(204));
+      final session = AgentSession(
+        Session(id: 's1', createdAt: DateTime.utc(2026)),
+        backend: agents.backend,
+        sessions: agents.sessions,
+      );
+
+      await expectLater(session.delete(), throwsA(isA<RouterException>()));
+      await session.close();
+
+      expect(router.last('POST /v1/agents/sessions/s1/stop').method, 'POST');
+    });
+
+    test('starting a session already closed dials nothing', () async {
+      router.answer('POST /v1/agents/sessions/s1/stop', const Answer(204));
+      final session = AgentSession(
+        Session(id: 's1', createdAt: DateTime.utc(2026)),
+        backend: agents.backend,
+        sessions: agents.sessions,
+      );
+
+      await session.close();
+      await session.start();
+
+      expect(router.upgrades, isEmpty);
+    });
+
+    test(
+      'a session closed while its refused socket waits for the stop is not dialled again',
+      () async {
+        final stopping = Completer<void>();
+        router
+          ..answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()))
+          ..answer('POST /v1/agents/sessions/s1/stop', const Answer(204))
+          ..hold['POST /v1/agents/sessions/s1/stop'] = stopping
+          ..refuseSocketsWhere = ((query) => query['token'] == 'token-1')
+          ..holdUpgrades = Completer<void>();
+        var asked = 0;
+        final keyed = VisionAgents(
+          url: router.url,
+          apiKey: 'key',
+          token: () async => 'token-${++asked}',
+        );
+        final session = AgentSession(
+          await keyed.sessions.get('s1'),
+          backend: keyed.backend,
+          sessions: keyed.sessions,
+        );
+
+        final starting = session.start();
+        await until(() => router.upgrades.isNotEmpty);
+        final closing = session.close();
+        await until(() => router.arrived.any((r) => r.path == '/v1/agents/sessions/s1/stop'));
+        router.holdUpgrades!.complete();
+        await expectLater(starting, throwsA(isA<TransportException>()));
+        stopping.complete();
+        await closing;
+        keyed.close();
+
+        expect(router.upgrades, hasLength(1));
+        expect(asked, 1);
+      },
+    );
+
+    test(
+      'a session deleted while its refused socket waits for the delete is not dialled again',
+      () async {
+        final deleting = Completer<void>();
+        router
+          ..answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()))
+          ..answer('DELETE /v1/agents/sessions/s1', const Answer(204))
+          ..hold['DELETE /v1/agents/sessions/s1'] = deleting
+          ..refuseSocketsWhere = ((query) => query['token'] == 'token-1')
+          ..holdUpgrades = Completer<void>();
+        var asked = 0;
+        final keyed = VisionAgents(
+          url: router.url,
+          apiKey: 'key',
+          token: () async => 'token-${++asked}',
+        );
+        final session = AgentSession(
+          await keyed.sessions.get('s1'),
+          backend: keyed.backend,
+          sessions: keyed.sessions,
+        );
+
+        final starting = session.start();
+        final fails = expectLater(starting, throwsA(isA<TransportException>()));
+        await until(() => router.upgrades.isNotEmpty);
+        final removing = session.delete();
+        await until(() => router.arrived.any((r) => r.method == 'DELETE'));
+        router.holdUpgrades!.complete();
+        await fails;
+        deleting.complete();
+        await removing;
+        keyed.close();
+
+        expect(router.upgrades, hasLength(1));
+        expect(asked, 1);
+      },
+    );
+
+    test("an unreachable router's socket error is the platform's, as before", () async {
+      final nowhere = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final port = nowhere.port;
+      await nowhere.close();
+      final unreachable = VisionAgents(
+        url: Uri.parse('http://127.0.0.1:$port'),
+        customerId: 'acme',
+      );
+      final session = AgentSession(
+        Session(id: 's1', createdAt: DateTime.utc(2026)),
+        backend: unreachable.backend,
+        sessions: unreachable.sessions,
+      );
+
+      await expectLater(session.start(), throwsA(isA<SocketException>()));
+      unreachable.close();
     });
 
     test('closing a session deleted before it started stops nothing', () async {
@@ -240,41 +421,56 @@ void main() {
       },
     );
 
-    test('a session closed while its socket is dialled again leaves no socket open', () async {
-      router
-        ..answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()))
-        ..answer('POST /v1/agents/sessions/s1/stop', const Answer(204))
-        ..refuseSocketsWhere = (query) => query['token'] == 'token-1';
-      final second = Completer<String>();
-      var asked = 0;
-      final keyed = VisionAgents(
-        url: router.url,
-        apiKey: 'key',
-        token: () => ++asked == 1 ? Future.value('token-1') : second.future,
+    test(
+      'a session closed while waiting for the token to dial again is not dialled again',
+      () async {
+        router
+          ..answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()))
+          ..answer('POST /v1/agents/sessions/s1/stop', const Answer(204))
+          ..refuseSocketsWhere = (query) => query['token'] == 'token-1';
+        final second = Completer<String>();
+        var asked = 0;
+        final keyed = VisionAgents(
+          url: router.url,
+          apiKey: 'key',
+          token: () => ++asked == 1 ? Future.value('token-1') : second.future,
+        );
+        await keyed.backend.headers();
+        final session = AgentSession(
+          await keyed.sessions.get('s1'),
+          backend: keyed.backend,
+          sessions: keyed.sessions,
+        );
+
+        final starting = session.start();
+        final fails = expectLater(starting, throwsA(isA<TransportException>()));
+        await until(() => asked == 2);
+        final closing = session.close();
+        second.complete('token-2');
+        await closing;
+        await fails;
+        keyed.close();
+
+        expect(router.upgrades, hasLength(1));
+        expect(session.isConnected, isFalse);
+      },
+    );
+
+    test('a socket closed while it is being opened is closed once it opens', () async {
+      router.holdUpgrades = Completer<void>();
+      final socket = SessionSocket(
+        Uri.parse('ws://127.0.0.1:${router.url.port}/v1/agents/sessions/s1/events'),
       );
-      await keyed.backend.headers();
-      final session = AgentSession(
-        await keyed.sessions.get('s1'),
-        backend: keyed.backend,
-        sessions: keyed.sessions,
-      );
 
-      final seen = <Connection>[];
-      final watching = session.connection.stream.listen(seen.add);
+      final opening = socket.open();
+      await until(() => router.upgrades.isNotEmpty);
+      await socket.close();
+      router.holdUpgrades!.complete();
+      await opening;
 
-      final starting = session.start();
-      await until(() => asked == 2);
-      final closing = session.close();
-      second.complete('token-2');
-      await closing;
-      await starting;
-
-      await watching.cancel();
-      expect(seen.whereType<Connected>(), isEmpty, reason: 'closed is closed, even mid-dial');
-      final socket = await router.socket();
-      await socket.done;
-      expect(socket.closeCode, isNotNull);
-      keyed.close();
+      final far = await router.socket();
+      await far.done;
+      expect(far.closeCode, isNotNull);
     });
 
     test('does not dial a refused socket again when the router is never shown a token', () async {

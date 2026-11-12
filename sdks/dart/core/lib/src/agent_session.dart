@@ -116,10 +116,10 @@ final class AgentSession {
   int _pictures = 0;
   SessionSocket? _socket;
   StreamSubscription<AgentEvent>? _pump;
-  bool _started = false;
 
-  /// Whether closing stops the agent: until the socket opens, nothing else will.
-  bool _stopsOnClose = true;
+  /// Set the moment [close] or [delete] is called, so a socket being dialled is not dialled
+  /// again for a session nobody wants any more.
+  bool _closed = false;
 
   /// What the router holds this session by, which addresses it and its socket.
   String get id => session.id;
@@ -144,46 +144,22 @@ final class AgentSession {
     _ => null,
   };
 
-  /// Opens the socket and starts following the conversation. Calling it again does nothing,
-  /// also after it failed: a session that could not start is over, and [close] stops its
-  /// agent.
+  /// Opens the socket and starts following the conversation. Calling it again does nothing.
   ///
-  /// Throws, and reports it on [connection], when the socket cannot be opened.
+  /// Throws, and reports it on [connection], when the socket cannot be opened. A token the
+  /// provider could not hand over is thrown as the provider threw it, as a request does, and
+  /// leaves the session unstarted, so it can be started again.
   Future<void> start() async {
-    if (_started) {
+    if (_socket != null || _closed) {
       return;
     }
-    _started = true;
-    final path = '/v1/agents/sessions/${Uri.encodeComponent(id)}/events';
-    final query = {
-      // Decisions arrive several times a second and are for somebody watching a call, not
-      // for an app holding one.
-      'decisions': 'false',
-      if (interim) 'interim': 'true',
-    };
-    Stream<AgentEvent> events;
+    final Stream<AgentEvent> events;
     try {
-      final uri = await _backend.socketUri(path, query);
-      try {
-        events = await (_socket = SessionSocket(uri)).open();
-      } on TransportException {
-        // A refused upgrade does not say why, so a token the router no longer takes looks
-        // like any other refusal: the provider is asked for a fresh one and the socket
-        // dialled once more, unless the session was closed meanwhile. Once, for the reason a
-        // request is retried once.
-        if (_connection.value is Disconnected ||
-            !_backend.expireToken(uri.queryParameters['token'])) {
-          rethrow;
-        }
-        events = await (_socket = SessionSocket(await _backend.socketUri(path, query))).open();
-      }
-    } catch (error) {
-      // A token the provider could not hand over is thrown as the provider threw it, as a
-      // request does, and recorded as the reason the socket did not open.
-      _stopped(error is AgentsException ? error : TransportException(error));
+      events = await _dial();
+    } on AgentsException catch (error) {
+      _stopped(error);
       rethrow;
     }
-    _stopsOnClose = false;
     _connection.value = Connection.connected;
     _pump = events.listen(
       _apply,
@@ -315,6 +291,7 @@ final class AgentSession {
   ///
   /// What the conversation recorded and remembered is kept; [delete] takes it away.
   Future<void> close() async {
+    _closed = true;
     final socket = _socket;
     if (isConnected && socket != null) {
       try {
@@ -322,8 +299,7 @@ final class AgentSession {
       } on SocketClosedException {
         // Gone already, which leaves the router to notice.
       }
-    } else if (_stopsOnClose) {
-      _stopsOnClose = false;
+    } else if (_connection.value is NotStarted) {
       await _sessions.stop(id);
     }
     await _hangUp();
@@ -332,9 +308,41 @@ final class AgentSession {
   /// Deletes this conversation, stopping it if it is running: its turns and what it taught
   /// memory go with it.
   Future<void> delete() async {
-    _stopsOnClose = false;
+    _closed = true;
     await _sessions.delete(id);
     await _hangUp();
+  }
+
+  /// Opens the session's socket, and dials it once more with a fresh token when it is refused.
+  ///
+  /// A refused upgrade does not say why, so a token the router no longer takes looks like any
+  /// other refusal. Once, for the reason a request is retried once, and not for a session
+  /// closed meanwhile.
+  Future<Stream<AgentEvent>> _dial() async {
+    final path = '/v1/agents/sessions/${Uri.encodeComponent(id)}/events';
+    final query = {
+      // Decisions arrive several times a second and are for somebody watching a call, not
+      // for an app holding one.
+      'decisions': 'false',
+      if (interim) 'interim': 'true',
+    };
+    final uri = await _backend.socketUri(path, query);
+    final socket = _socket = SessionSocket(uri);
+    try {
+      return await socket.open();
+    } on TransportException {
+      if (_closed || !_backend.expireToken(uri.queryParameters['token'])) {
+        rethrow;
+      }
+      // No socket until the fresh token comes, as before the first dial: if it cannot be
+      // had, the session is left unstarted.
+      _socket = null;
+      final again = await _backend.socketUri(path, query);
+      if (_closed) {
+        rethrow;
+      }
+      return (_socket = SessionSocket(again)).open();
+    }
   }
 
   Future<void> _hangUp() async {
