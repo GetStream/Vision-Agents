@@ -1,4 +1,6 @@
 import asyncio
+import socket
+from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -85,6 +87,15 @@ async def test_client_factory():
                 yield client
 
     return factory
+
+
+@pytest.fixture()
+def busy_port() -> Iterator[int]:
+    """A port that is already taken on every interface, so nothing else can bind it."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("0.0.0.0", 0))
+        sock.listen()
+        yield sock.getsockname()[1]
 
 
 class TestRunnerServe:
@@ -492,3 +503,123 @@ class TestRunnerServe:
                 resp.json()["detail"]
                 == "Reached maximum number of sessions for this call"
             )
+
+    @pytest.mark.parametrize("host", ["0.0.0.0", "::", "", "192.168.1.10"])
+    def test_serve_refuses_non_loopback_host_with_default_hooks(
+        self, agent_launcher, busy_port, host
+    ) -> None:
+        runner = Runner(launcher=agent_launcher)
+
+        # The port is taken, so a server that tried to bind it would exit
+        # instead of raising ValueError.
+        with pytest.raises(ValueError, match="can_start_session"):
+            runner.serve(host=host, port=busy_port)
+
+    def test_serve_refuses_non_loopback_host_with_one_default_hook(
+        self, agent_launcher, busy_port
+    ) -> None:
+        def allow(call_id: str) -> None: ...
+
+        runner = Runner(
+            launcher=agent_launcher,
+            serve_options=ServeOptions(
+                can_start_session=allow,
+                can_close_session=allow,
+                can_view_session=allow,
+            ),
+        )
+
+        with pytest.raises(ValueError, match="can_view_metrics"):
+            runner.serve(host="0.0.0.0", port=busy_port)
+
+    @pytest.mark.parametrize("call_id", ["*", "a.b", "[a]bc", "a" * 65])
+    async def test_start_session_invalid_call_id_refused(
+        self, agent_launcher, test_client_factory, call_id
+    ) -> None:
+        runner = Runner(launcher=agent_launcher)
+
+        async with test_client_factory(runner) as client:
+            resp = await client.post(
+                f"/calls/{call_id}/sessions", json={"call_type": "default"}
+            )
+            assert resp.status_code == 422
+
+    async def test_start_session_invalid_call_type_refused(
+        self, agent_launcher, test_client_factory
+    ) -> None:
+        runner = Runner(launcher=agent_launcher)
+
+        async with test_client_factory(runner) as client:
+            resp = await client.post("/calls/test/sessions", json={"call_type": "*"})
+            assert resp.status_code == 422
+
+    async def test_start_session_second_session_on_call_refused_by_default(
+        self, agent_launcher, test_client_factory
+    ) -> None:
+        runner = Runner(launcher=agent_launcher)
+
+        async with test_client_factory(runner) as client:
+            resp = await client.post(
+                "/calls/test/sessions", json={"call_type": "default"}
+            )
+            assert resp.status_code == 201
+
+            resp = await client.post(
+                "/calls/test/sessions", json={"call_type": "default"}
+            )
+            assert resp.status_code == 429
+            assert (
+                resp.json()["detail"]
+                == "Reached maximum number of sessions for this call"
+            )
+
+    async def test_cors_allows_no_origin_by_default(
+        self, agent_launcher, test_client_factory
+    ) -> None:
+        runner = Runner(launcher=agent_launcher)
+
+        async with test_client_factory(runner) as client:
+            resp = await client.get(
+                "/health", headers={"Origin": "https://app.example"}
+            )
+            assert resp.status_code == 200
+            assert "access-control-allow-origin" not in resp.headers
+            assert "access-control-allow-credentials" not in resp.headers
+
+    async def test_cors_allows_configured_origin(
+        self, agent_launcher, test_client_factory
+    ) -> None:
+        runner = Runner(
+            launcher=agent_launcher,
+            serve_options=ServeOptions(cors_allow_origins=["https://app.example"]),
+        )
+
+        async with test_client_factory(runner) as client:
+            resp = await client.get(
+                "/health", headers={"Origin": "https://app.example"}
+            )
+            assert resp.headers["access-control-allow-origin"] == "https://app.example"
+
+    @pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
+    async def test_api_docs_off_by_default(
+        self, agent_launcher, test_client_factory, path
+    ) -> None:
+        runner = Runner(launcher=agent_launcher)
+
+        async with test_client_factory(runner) as client:
+            resp = await client.get(path)
+            assert resp.status_code == 404
+
+    async def test_api_docs_served_when_configured(
+        self, agent_launcher, test_client_factory
+    ) -> None:
+        runner = Runner(
+            launcher=agent_launcher,
+            serve_options=ServeOptions(docs_url="/docs", openapi_url="/openapi.json"),
+        )
+
+        async with test_client_factory(runner) as client:
+            resp = await client.get("/docs")
+            assert resp.status_code == 200
+            resp = await client.get("/openapi.json")
+            assert resp.status_code == 200

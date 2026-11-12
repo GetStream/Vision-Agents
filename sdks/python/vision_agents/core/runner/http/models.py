@@ -4,11 +4,18 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+# Letters, digits, "_" and "-" only: a call id or type is used in storage keys.
+CALL_NAME_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
+
 
 class StartSessionRequest(BaseModel):
     """Request body for joining a call."""
 
-    call_type: str = Field(default="agent", description="Type of the call to join")
+    call_type: str = Field(
+        default="agent",
+        description="Type of the call to join",
+        pattern=CALL_NAME_PATTERN,
+    )
 
 
 class StartSessionResponse(BaseModel):

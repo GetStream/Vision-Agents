@@ -18,6 +18,15 @@ Generated with `uvx vision-agents init`. See the docs at <https://visionagents.a
    uv run agent.py serve   # HTTP server
    ```
 
+   The HTTP server only accepts requests that carry the token set in `AGENT_API_TOKEN`:
+
+   ```bash
+   curl -X POST http://127.0.0.1:8000/calls/my-call/sessions \
+     -H "Authorization: Bearer $AGENT_API_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"call_type": "default"}'
+   ```
+
 4. Run the tests:
 
    ```bash

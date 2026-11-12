@@ -92,6 +92,8 @@ secrets:
   deepgramApiKey: ""
   streamApiKey: ""
   streamApiSecret: ""
+  # Clients of the agent HTTP API send it as "Authorization: Bearer <token>"
+  agentApiToken: ""
 
 # Use to schedule on specific node groups
 nodeSelector: {}
