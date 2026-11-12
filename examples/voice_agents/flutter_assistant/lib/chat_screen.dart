@@ -67,6 +67,9 @@ class _ChatScreenState extends State<ChatScreen> {
     actions: AIConversationActions.rate,
   );
 
+  /// What the screen is built from, merged once rather than on every build.
+  late final _shown = Listenable.merge([_conversation, _chat.failure, _chat.sessionFailure]);
+
   /// Why the conversation could not be opened, or null.
   String? _failure;
 
@@ -222,7 +225,7 @@ class _ChatScreenState extends State<ChatScreen> {
     return StreamComponentFactory(
       builders: _components,
       child: ListenableBuilder(
-        listenable: Listenable.merge([_conversation, _chat.failure, _chat.sessionFailure]),
+        listenable: _shown,
         builder: (context, _) {
           final activity = _conversation.activity;
           final isWelcoming =
