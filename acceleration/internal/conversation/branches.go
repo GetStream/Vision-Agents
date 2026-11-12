@@ -1179,11 +1179,14 @@ func (c *Conversation) HistoryOf(ctx context.Context, p Page) ([]llm.Message, bo
 // Remarked is chosen with the marks of the messages named in marks, by original message id,
 // replaced: a branch sent again shows where each of its messages stands among their
 // alternatives now, not where they stood when they were hidden. A mark with no Of is 1 of 1.
+// A message that carried no mark, as one a customer's backend wrote, is sent as it was: it is
+// kept with a response, but is no question or reply of it.
 func Remarked(chosen []store.AgentBranchMessage, marks map[string]Branch) []store.AgentBranchMessage {
 	out := make([]store.AgentBranchMessage, 0, len(chosen))
 	for _, m := range chosen {
 		b, ok := marks[m.OriginalMessageID]
-		if !ok {
+		custom, _ := m.Message["custom"].(map[string]any)
+		if _, marked := custom[BranchField]; !ok || !marked {
 			out = append(out, m)
 			continue
 		}
@@ -1191,9 +1194,6 @@ func Remarked(chosen []store.AgentBranchMessage, marks map[string]Branch) []stor
 		// Through JSON, so the copy the caller holds is not written under it.
 		encoded, _ := json.Marshal(m.Message)
 		_ = json.Unmarshal(encoded, &held)
-		if held.Custom == nil {
-			held.Custom = map[string]any{}
-		}
 		mark, _ := toMap(b)
 		held.Custom[BranchField] = mark
 		m.Message, _ = toMap(held)

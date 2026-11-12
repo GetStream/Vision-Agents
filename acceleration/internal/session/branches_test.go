@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
@@ -790,4 +791,29 @@ func (s *BranchesSuite) TestARegenerateOfAQuestionWithPhotosIsRefusedBeforeAnyth
 	s.Require().ErrorIs(err, agent.ErrCannotSeeImages)
 	s.Equal(before, s.texts(session))
 	s.Nil(s.response(session, first).RewoundAt)
+}
+
+// A message the customer's backend wrote into a turn comes back with the turn's branch as it
+// was written, with no place among the turn's alternatives: it is no reply of the agent's.
+func (s *BranchesSuite) TestABackendMessageInABranchComesBackUnmarked() {
+	session := s.opens()
+	s.asks(session, "Is it raining?")
+	second := s.asks(session, "And tomorrow?")
+	id, text, user := "backend-"+uuid.NewString(), "Your order shipped.", "backend"
+	_, err := s.chat.Client.Chat().SendMessage(s.ctx, "agent", session.ID(), &getstream.SendMessageRequest{
+		Message: getstream.MessageRequest{ID: &id, Text: &text, UserID: &user}})
+	s.Require().NoError(err)
+	_, err = session.Regenerate(s.ctx, uuid.NewString(), second, options.LLM{})
+	s.Require().NoError(err)
+	s.settled(session)
+
+	_, err = session.Activate(s.ctx, second)
+
+	s.Require().NoError(err)
+	s.Require().Eventually(func() bool { return !s.service.Writing() }, 5*time.Second, 5*time.Millisecond)
+	s.Equal([]string{"Is it raining?", "Answer 1 to Is it raining?", "And tomorrow?", "Answer 2 to And tomorrow?", "Your order shipped."}, s.texts(session))
+	onScreen := s.visible(session)
+	s.Equal(id, onScreen[4].custom[persistent.ResentFromField])
+	s.Nil(onScreen[4].custom[persistent.BranchField], "the backend never marked it")
+	s.Equal("reply", mark(onScreen[3])["of"], "the agent's reply carries its place")
 }
