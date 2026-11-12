@@ -2,10 +2,6 @@
 
 ## Features
 
-### Call minutes are priced for Twilio in the US and Canada, and for Telnyx calls to Canada
-
-Twilio is priced at $0.018 a minute outbound and $0.0125 inbound in both countries: its local rate plus the SIP leg to the Stream trunk. A Telnyx call placed to Canada is priced at $0.022 a minute. A database gets these with the next release's start, which adds the items it has never priced. Telnyx calls arriving on a Canadian number, other countries and toll-free numbers are not priced yet.
-
 ### The router reaches Gemini Decision 1
 
 `gemini/gemini-decision-1` is a decision model on Google's Decisions API, read with `GOOGLE_API_KEY` like the other Gemini models. It answers the same noul, choice and score questions, at $0.10 per million input tokens and nothing for output. It is in the fast tier with every other decision model, and the guardrail route still prefers Jev.
@@ -589,6 +585,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 `Folder.load`, and so `Agent.new(folder: "…")`, raise a `ConfigurationError` for a folder whose agent.yaml names `plugins:`, with an error that names the file and points to `connectors:`. An empty or null `plugins` still loads and sends nothing, as before. Folder sync no longer sends `plugins`, and the warning that plugins are deprecated is gone, as is the check that no name is under both `connectors` and `plugins`. Move each plugin to a `connectors:` entry (AI-2528).
 
 ## Bug Fixes
+
+### Call minutes are priced for Twilio in the US and Canada, and for Telnyx calls to Canada
+
+Twilio is priced at $0.018 a minute outbound and $0.0125 inbound in both countries: its local rate plus the SIP leg to the Stream trunk. A Telnyx call placed to Canada is priced at $0.022 a minute. A database gets these with the next release's start, which adds the items it has never priced. Telnyx calls arriving on a Canadian number, other countries and toll-free numbers are not priced yet (#1965).
 
 ### Kotlin: the reply model failing ends the agent's turn, and a failure lasts until the agent works again
 

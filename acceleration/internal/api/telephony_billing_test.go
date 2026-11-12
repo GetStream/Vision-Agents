@@ -588,7 +588,7 @@ func (s *telephonyBilling) inboundCallIsPriced(vendor, country, e164 string) {
 	s.Equal(country, row.Attributes["country"])
 	s.NotZero(row.CostMicros)
 	s.Equal(s.vendorPriced(vendor, phone.ModelCallMinutes, map[string]string{"direction": "inbound", "country": country},
-		pricing.Quantities{pricing.CallSeconds: 61}), row.CostMicros, "two started minutes")
+		pricing.Quantities{pricing.CallSeconds: 120}), row.CostMicros, "61 seconds bill as two whole minutes")
 }
 
 // placedCallIsPriced checks that a call placed to remote on the vendor, answered for 61 seconds,
@@ -604,7 +604,7 @@ func (s *telephonyBilling) placedCallIsPriced(vendor, remote, country string) {
 	s.Equal(country, row.Attributes["country"])
 	s.NotZero(row.CostMicros)
 	s.Equal(s.vendorPriced(vendor, phone.ModelCallMinutes, map[string]string{"direction": "outbound", "country": country},
-		pricing.Quantities{pricing.CallSeconds: 61}), row.CostMicros, "two started minutes")
+		pricing.Quantities{pricing.CallSeconds: 120}), row.CostMicros, "61 seconds bill as two whole minutes")
 }
 
 // placedLeg is a call placed to remote, ringing, as the phone service records one the vendor
