@@ -116,7 +116,7 @@ func (s *Session) Activate(ctx context.Context, responseID string) (Activated, e
 		s.turnsMu.Unlock()
 		return Activated{LeafResponseID: leaf, AlreadyActive: true}, nil
 	}
-	tail, err := s.tree.BranchTail(ctx, customer, s.id, target.ID)
+	top, tail, err := branchOf(ctx, s.tree, target)
 	if err != nil {
 		return Activated{}, err
 	}
@@ -125,14 +125,14 @@ func (s *Session) Activate(ctx context.Context, responseID string) (Activated, e
 	if err := s.records.Flush(ctx); err != nil {
 		return Activated{}, stack.Wrap(err)
 	}
-	after, err := s.persisted.QuestionAfter(ctx, target.ParentResponseID)
+	after, err := s.persisted.QuestionAfter(ctx, top.ParentResponseID)
 	if err != nil {
 		return Activated{}, err
 	}
 	rewind := persistent.RewindTarget{TargetResponseID: target.ID}
 	kept := false
 	switch {
-	case after.Question != "" && after.QuestionResponseID == target.QuestionResponseID:
+	case after.Question != "" && after.QuestionResponseID == top.QuestionResponseID:
 		// Another answer to the same question is shown: it goes, the question stays.
 		rewind.MessageID, kept = after.Question, true
 	case after.Question != "":
@@ -149,7 +149,7 @@ func (s *Session) Activate(ctx context.Context, responseID string) (Activated, e
 	if err != nil {
 		return Activated{}, err
 	}
-	chosen, err := chosenFor(ctx, s.tree, target, tail, kept)
+	chosen, err := chosenFor(ctx, s.tree, top, tail, kept)
 	if err != nil {
 		return Activated{}, err
 	}
@@ -426,6 +426,37 @@ func (s *Session) activationID(ctx context.Context, target string, kept bool) (s
 
 func keptQuestion(switchID string) bool { return strings.HasPrefix(switchID, keptQuestionPrefix) }
 
+// branchOf is the branch an activation of target brings back: top, the first of its responses
+// off the conversation, the one after the newest the conversation still has, and tail, the
+// path from top through target down to the newest response under target.
+func branchOf(ctx context.Context, tree *store.Store, target store.AgentResponse) (store.AgentResponse, []store.AgentResponse, error) {
+	customer, session := target.CustomerID, target.SessionID
+	var above []store.AgentResponse
+	top := target
+	// Each step is one response nearer the session's first, so a session's length bounds it;
+	// MaxResent bounds what could be sent again anyway.
+	for range persistent.MaxResent {
+		if top.ParentResponseID == "" {
+			break
+		}
+		parent, err := tree.SessionResponse(ctx, customer, session, top.ParentResponseID)
+		if err != nil {
+			return store.AgentResponse{}, nil, err
+		}
+		if parent.RewoundAt == nil {
+			break
+		}
+		above = append(above, parent)
+		top = parent
+	}
+	below, err := tree.BranchTail(ctx, customer, session, target.ID)
+	if err != nil {
+		return store.AgentResponse{}, nil, err
+	}
+	slices.Reverse(above)
+	return top, append(above, below...), nil
+}
+
 // chosenFor is what an activation of target sends again, oldest first: the copies of the
 // messages of every response on tail, the path from target down to its newest response, and
 // the question each one answers that another response asked. kept leaves out the question
@@ -572,11 +603,13 @@ func switchHooks(tree *store.Store) persistent.SwitchHooks {
 			if err != nil {
 				return nil, err
 			}
-			tail, err := tree.BranchTail(ctx, sw.CustomerID, sw.SessionID, target.ID)
+			// The responses are where they were when the switch began: they are moved once
+			// the branch is sent again (Switched).
+			top, tail, err := branchOf(ctx, tree, target)
 			if err != nil {
 				return nil, err
 			}
-			return chosenFor(ctx, tree, target, tail, keptQuestion(sw.ID))
+			return chosenFor(ctx, tree, top, tail, keptQuestion(sw.ID))
 		},
 		Switched: func(ctx context.Context, sw store.AgentBranchSwitch) error {
 			leaf := ""

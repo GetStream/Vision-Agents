@@ -389,6 +389,30 @@ func (s *BranchesSuite) TestActivatingAnEditedQuestionSendsBothMessagesAgainWith
 	s.Equal(map[string]any{"response_id": second, "parent_response_id": first, "question_response_id": second}, mark(onScreen[3]))
 }
 
+// Bringing back a response below the first one an edit hid brings back the branch from where
+// it left the conversation, not from that response.
+func (s *BranchesSuite) TestActivatingAResponseDeepInAHiddenBranchBringsBackTheWholeBranch() {
+	session := s.opens()
+	s.asks(session, "Is it raining?")
+	second := s.asks(session, "And tomorrow?")
+	third := s.asks(session, "And Sunday?")
+	_, err := session.Edit(s.ctx, uuid.NewString(), second, "And on Monday?", "", options.LLM{})
+	s.Require().NoError(err)
+	s.settled(session)
+
+	activated, err := session.Activate(s.ctx, third)
+	s.Require().NoError(err)
+	s.Require().Eventually(func() bool { return !s.service.Writing() }, 5*time.Second, 5*time.Millisecond)
+
+	s.Equal(third, activated.LeafResponseID)
+	s.Equal(4, activated.Resent)
+	s.Equal([]string{"Is it raining?", "Answer 1 to Is it raining?", "And tomorrow?", "Answer 2 to And tomorrow?",
+		"And Sunday?", "Answer 3 to And Sunday?"}, s.texts(session))
+	s.Equal(s.texts(session), history(session))
+	s.Nil(s.response(session, second).RewoundAt)
+	s.Nil(s.response(session, third).RewoundAt)
+}
+
 func (s *BranchesSuite) TestARegenerateOnACallIsRefused() {
 	session := s.opens()
 	first := s.asks(session, "Is it raining?")
