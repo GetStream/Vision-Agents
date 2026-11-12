@@ -3095,6 +3095,9 @@ pub struct ChildAgent {
     ///What the model is told the agent does, which is the whole of how it decides when to call it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub description: ::std::option::Option<::std::string::String>,
+    ///The reply to a tool result, counted since the agent was handed its input, that is offered no more tools and made to answer from what it has. Zero is the default of 8; a negative number never withdraws them, for an agent that chains many lookups.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub max_tool_rounds: ::std::option::Option<i64>,
     ///How long one call may take, two minutes when left out. A call never outlasts the run that made it: it gets this or what is left of the run, whichever is less. A call that runs out of time, or whose agent fails, is answered to the model as a failed tool call, and the run goes on.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub timeout_ms: ::std::option::Option<i64>,

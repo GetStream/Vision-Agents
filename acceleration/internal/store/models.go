@@ -673,6 +673,9 @@ type ChildAgent struct {
 	Description string `json:"description,omitempty"`
 	// TimeoutMs is how long one call to the child may take. Zero is the default.
 	TimeoutMs int `json:"timeout_ms,omitempty"`
+	// MaxToolRounds is the child's agent.Options.MaxToolRounds: zero is the default, negative
+	// is no limit.
+	MaxToolRounds int `json:"max_tool_rounds,omitempty"`
 }
 
 // ConnectorBinding is one connector an agent config may call tools of, as it is stored in

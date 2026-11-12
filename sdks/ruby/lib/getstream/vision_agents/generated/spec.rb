@@ -2078,7 +2078,7 @@ module GetStream
           required: %w[agent_id].freeze, open: false
         }.freeze,
         "ChildAgent" => {
-          properties: %w[config description timeout_ms tool].freeze,
+          properties: %w[config description max_tool_rounds timeout_ms tool].freeze,
           required: %w[config tool].freeze, open: false
         }.freeze,
         "ClaimGuestRequest" => {
