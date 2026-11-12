@@ -225,6 +225,18 @@ func (s *SeriesSuite) TestAnInboundCallMovesItsOwnSeries() {
 	s.Equal(want, s.series(s.vendor))
 }
 
+func (s *SeriesSuite) TestAnotherKeeperLeavesTheCountsOfTheFirst() {
+	before := s.series(otherVendor)["router_phone_call_outcomes_total outbound failed"]
+	s.keeper.count(context.Background(), Key{}, s.vendor, outbound, Failed, nil, time.Now())
+	s.keeper.count(context.Background(), Key{}, "raw-"+rand.Text(), outbound, Failed, nil, time.Now())
+
+	NewKeeper(nil, time.Now, []string{s.vendor}, slog.New(slog.DiscardHandler))
+	NewKeeper(nil, time.Now, nil, slog.New(slog.DiscardHandler))
+
+	s.Equal(1.0, s.series(s.vendor)["router_phone_call_outcomes_total outbound failed"])
+	s.Equal(before+1, s.series(otherVendor)["router_phone_call_outcomes_total outbound failed"])
+}
+
 func (s *SeriesSuite) TestAVendorTheKeeperDoesNotNameIsCountedAsOtherAndMakesNoSeries() {
 	raw := "raw-" + rand.Text()
 	before := s.series(otherVendor)["router_phone_call_outcomes_total outbound failed"]
