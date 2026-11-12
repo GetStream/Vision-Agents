@@ -123,6 +123,10 @@ func (e *Edge) CreateCall(ctx context.Context, call Call, createdBy User) (Call,
 
 // MonitorURL is a link a person can open to join a call from a browser and hear the agent.
 //
+// The link carries the API key and a token that joins the call as the user, in its query.
+// Hand it to the person who is to open it and keep it out of logs: whoever reads it can
+// join until the token expires.
+//
 // The token is minted here rather than fetched, so this makes no network calls: the
 // coordinator registers the browser as a user when it connects, the same way it does for
 // the agent.
