@@ -32,6 +32,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
@@ -787,7 +788,7 @@ func (s *Server) Handler() http.Handler {
 	// WaitForDelivery is false because most of what is served here is a long-
 	// lived socket; blocking the handler's return on event delivery would hold
 	// the connection open past its use. The flush in cmd/router covers shutdown.
-	served := withSentry(withRequestID(withTrace(withMetrics(mux, withTiming(withCORS(s.authMode,
+	served := withSentry(withRequestID(withTrace(mux, withMetrics(mux, withTiming(withCORS(s.authMode,
 		s.onOwningNode(s.withCustomer(s.withCost(s.withRequestLog(mux, s.withQuota(s.withServerSide(handler))))))))))))
 	if s.directory == nil {
 		return served
@@ -926,14 +927,17 @@ func (t *timedResponse) opening(body []byte) ([]byte, bool) {
 // one, and a span per session id is a trace nobody can group by. A route context is seeded
 // here so that the mux fills in the one this can read back; chi only makes its own when
 // there is none.
-func withTrace(next http.Handler) http.Handler {
+func withTrace(mux *chi.Mux, next http.Handler) http.Handler {
 	traced := otelhttp.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		routes := chi.NewRouteContext()
 		r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, routes))
 		next.ServeHTTP(w, r)
+		span := trace.SpanFromContext(r.Context())
 		if pattern := routes.RoutePattern(); pattern != "" {
-			trace.SpanFromContext(r.Context()).SetName(r.Method + " " + pattern)
+			span.SetName(r.Method + " " + pattern)
 		}
+		// otelhttp records the path as sent, which for a token route is the secret.
+		span.SetAttributes(attribute.String("url.path", loggedPath(mux, r)))
 	}), "router", otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
 		return r.Method
 	}))
