@@ -55,7 +55,7 @@ func (s *TelnyxEventsSuite) TestASignedPortOutIsCountedAtPageAndLogged() {
 
 	s.Equal(http.StatusNoContent, status)
 	s.Equal(1.0, accountEvents("telnyx", "portout.status_changed", "page")-before)
-	s.True(s.loggedLine("vendor=telnyx", "event=portout.status_changed", "level=page", "id="+id))
+	s.Positive(s.loggedLines("vendor=telnyx", "event=portout.status_changed", "level=page", "id="+id))
 }
 
 // A number order that did not succeed left numbers unbought; one that succeeded needs nobody.
@@ -70,6 +70,22 @@ func (s *TelnyxEventsSuite) TestANumberOrderIsCountedAtTheLevelItsStatusGives() 
 	s.Equal(http.StatusNoContent, bought)
 	s.Equal(1.0, accountEvents("telnyx", "number_order.complete", "warn")-warn)
 	s.Equal(1.0, accountEvents("telnyx", "number_order.complete", "info")-info)
+}
+
+// The port-in deletion and messaging events carry their fields at the top level, with no data
+// around them, as in https://developers.telnyx.com/docs/numbers/porting/port-in-notifications.md.
+func (s *TelnyxEventsSuite) TestAPortInEventWithItsFieldsAtTheTopLevelIsCounted() {
+	for _, eventType := range []string{"porting_order.deleted", "porting_order.messaging_changed"} {
+		id := rand.Text()
+		before := accountEvents("telnyx", eventType, "info")
+
+		status, _ := s.deliver(`{"id":"`+id+`","event_type":"`+eventType+`","occurred_at":"2023-01-01T00:00:00Z",`+
+			`"format":"v2","payload":{"id":"x","deleted_at":"2023-01-01T00:00:00Z"}}`, s.signer(time.Now()))
+
+		s.Equal(http.StatusNoContent, status, eventType)
+		s.Equal(1.0, accountEvents("telnyx", eventType, "info")-before, eventType)
+		s.Equal(1, s.loggedLines("event="+eventType, "level=info", "id="+id), eventType)
+	}
 }
 
 // Another event's status need not be a string, and it does not stop the event being counted.
@@ -94,7 +110,7 @@ func (s *TelnyxEventsSuite) TestATypeTheRouterDoesNotNameIsCountedAsOther() {
 	s.Equal(http.StatusNoContent, status)
 	s.Equal(1.0, accountEvents("telnyx", "other", "info")-before)
 	s.Zero(accountEvents("telnyx", eventType, "info"))
-	s.True(s.loggedLine("event=other", "event_type="+eventType))
+	s.Equal(1, s.loggedLines("event=other", "event_type="+eventType))
 }
 
 // The body as Telnyx signed it, with one byte of the signature changed.
@@ -135,15 +151,20 @@ func (s *TelnyxEventsSuite) TestAStaleEventIsRefusedAndNotCounted() {
 	s.Zero(accountEvents("telnyx", "portout.status_changed", "page") - before)
 }
 
-// Signed or not, a body that is no event names nothing to count.
+// Signed or not, a body that is no event names nothing to count. Each refusal is logged, so
+// a Telnyx shape the router does not read shows up, and the body, which may hold numbers, is not.
 func (s *TelnyxEventsSuite) TestASignedBodyThatIsNoEventIsRefusedAndNotCounted() {
 	before := accountEvents("telnyx", "other", "info")
-	for _, body := range []string{`not json`, `{}`, `{"data":{}}`, `{"data":{"event_type":""}}`,
-		`{"data":{"event_type":7}}`, `{"data":{"event_type":"number.order","id":7}}`, `null`, `[]`} {
+	bodies := []string{`not json`, `{}`, `{"data":{}}`, `{"data":{"event_type":""}}`,
+		`{"data":{"event_type":7}}`, `{"data":{"event_type":"number.order","id":7}}`,
+		`{"event_type":""}`, `{"event_type":7}`, `{"event_type":"number.order","id":7}`, `null`, `[]`}
+	for _, body := range bodies {
 		status, _ := s.deliver(body, s.signer(time.Now()))
 		s.Equal(http.StatusBadRequest, status, body)
 	}
 	s.Zero(accountEvents("telnyx", "other", "info") - before)
+	s.Equal(len(bodies), s.loggedLines("level=WARN", "refused a signed telnyx account event that is no event"))
+	s.NotContains(s.logged.String()[s.since:], "number.order")
 }
 
 func (s *TelnyxEventsSuite) TestAnEventOverTheLimitIsRefusedBeforeItIsRead() {
@@ -156,18 +177,19 @@ func (s *TelnyxEventsSuite) TestAnEventOverTheLimitIsRefusedBeforeItIsRead() {
 	s.Zero(accountEvents("telnyx", "other", "info") - before)
 }
 
-// loggedLine reports whether one line the current test logged holds every part.
-func (s *TelnyxEventsSuite) loggedLine(parts ...string) bool {
+// loggedLines counts the lines the current test logged that hold every part.
+func (s *TelnyxEventsSuite) loggedLines(parts ...string) int {
+	n := 0
 	for _, line := range strings.Split(s.logged.String()[s.since:], "\n") {
 		found := true
 		for _, part := range parts {
 			found = found && strings.Contains(line, part)
 		}
 		if found {
-			return true
+			n++
 		}
 	}
-	return false
+	return n
 }
 
 // signer signs a delivery as Telnyx does, over "{timestamp}|{body}", at the time given.
