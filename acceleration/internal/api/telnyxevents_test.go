@@ -58,7 +58,7 @@ func (s *TelnyxEventsSuite) TestASignedPortOutIsCountedAtPageAndLogged() {
 	s.True(s.loggedLine("vendor=telnyx", "event=portout.status_changed", "level=page", "id="+id))
 }
 
-// A number order that did not succeed left numbers unbought, which one that did not.
+// A number order that did not succeed left numbers unbought; one that succeeded needs nobody.
 func (s *TelnyxEventsSuite) TestANumberOrderIsCountedAtTheLevelItsStatusGives() {
 	warn := accountEvents("telnyx", "number_order.complete", "warn")
 	info := accountEvents("telnyx", "number_order.complete", "info")
@@ -97,7 +97,7 @@ func (s *TelnyxEventsSuite) TestATypeTheRouterDoesNotNameIsCountedAsOther() {
 	s.True(s.loggedLine("event=other", "event_type="+eventType))
 }
 
-// AC-1: the same body with one byte of the signature changed.
+// The body as Telnyx signed it, with one byte of the signature changed.
 func (s *TelnyxEventsSuite) TestAWronglySignedEventIsRefusedAndNotCounted() {
 	body := telnyxAccountEvent("portout.status_changed", rand.Text(), `{}`)
 	before := accountEvents("telnyx", "portout.status_changed", "page")
