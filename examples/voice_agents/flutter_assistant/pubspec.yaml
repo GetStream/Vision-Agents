@@ -26,6 +26,8 @@ dependencies:
   geolocator: ^14.1.2
   http: ^1.6.0
   intl: ^0.20.2
+  # Material's widgets, moved out of the Flutter framework in 3.47.
+  material_ui: any
   # The calendar, the camera and the microphone, asked for on Android the first time they are
   # needed. iOS asks by itself when they are first used.
   permission_handler: ^12.0.3

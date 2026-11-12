@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 
 /// A screen's whole content when there is nothing else to show: an icon, a title and a line

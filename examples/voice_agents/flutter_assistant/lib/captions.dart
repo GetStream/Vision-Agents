@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 import 'package:stream_agents_core/stream_agents_core.dart';
 
