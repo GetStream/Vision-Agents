@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/suite"
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -21,8 +22,10 @@ type PathTokensSuite struct {
 	spans  *tracetest.SpanRecorder
 }
 
+// Not parallel: the tracer provider is process-wide, and another suite installing its own
+// while this one builds its handler would take this suite's spans.
 func TestPathTokens(t *testing.T) {
-	runSuite(t, new(PathTokensSuite))
+	suite.Run(t, new(PathTokensSuite))
 }
 
 func (s *PathTokensSuite) SetupSuite() {
