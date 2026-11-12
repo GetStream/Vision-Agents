@@ -74,8 +74,11 @@ class ErrorDetail:
             is refused and the conversation is continued in a new chat; asking and reading are unaffected), branch_too_long
             (a 409: the branch an activation would bring back is more than 100 messages to send again, so it is continued in
             a new chat), branch_unavailable (a 410: the copies of a hidden branch were deleted, as a memory truncate deletes
-            them, so it can be neither read nor brought back), and <resource>_not_found for agent_config, call, campaign,
-            channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key,
+            them, so it can be neither read nor brought back), switch_unfinished (a 409: a regenerate, an edit or an
+            activation of the session failed after Stream Chat may have rewound, and finishing it still fails because Stream
+            Chat does not answer, so the session's questions, regenerates, edits and activations are refused meanwhile; try
+            again shortly: it clears by itself once Stream Chat answers), and <resource>_not_found for agent_config, call,
+            campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key,
             router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has
             invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does
             not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year
