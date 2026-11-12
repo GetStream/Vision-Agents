@@ -194,7 +194,10 @@ class _VoiceScreenState extends State<VoiceScreen> with WidgetsBindingObserver {
       _before = {for (final turn in _voice!.session.turns) turn.id};
       _participants = call.state.valueStream.listen((callState) {
         _person = callState.callParticipants.where((p) => p.isLocal).firstOrNull;
-        _agent = callState.callParticipants.where((p) => !p.isLocal).firstOrNull;
+        // The agent's video worker joins too, with no audio.
+        _agent = callState.callParticipants
+            .where((p) => !p.isLocal && p.isAudioEnabled)
+            .firstOrNull;
       });
       _lastTick = _clock.elapsed;
       _meter = Timer.periodic(const Duration(milliseconds: 33), (_) => _tick());

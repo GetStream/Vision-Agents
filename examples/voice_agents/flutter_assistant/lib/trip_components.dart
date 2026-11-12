@@ -196,10 +196,9 @@ abstract final class Wikipedia {
       '/api/rest_v1/page/summary/${title.replaceAll(' ', '_')}',
     );
     try {
-      final response = await http.get(
-        url,
-        headers: {'User-Agent': 'FlutterAssistant/1.0 (Stream Vision Agents example)'},
-      );
+      final response = await http
+          .get(url, headers: {'User-Agent': 'FlutterAssistant/1.0 (Stream Vision Agents example)'})
+          .timeout(const Duration(seconds: 10));
       if (response.statusCode != 200) return null;
       final json = jsonDecode(response.body) as Map<String, Object?>;
       final summary = (

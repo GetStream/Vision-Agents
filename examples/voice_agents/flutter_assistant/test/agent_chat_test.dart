@@ -459,6 +459,18 @@ void main() {
       chat.dispose();
     });
 
+    test('close lets go of the channel, before the session has closed', () async {
+      final chat = AgentChat('s1', sessions: sessions);
+      await chat.open();
+      final channel = sessions.opened!;
+
+      final closed = chat.close();
+
+      expect(channel.state, isNull);
+      await closed;
+      chat.dispose();
+    });
+
     test('close keeps a conversation from the list, used or not', () async {
       final chat = AgentChat('s1', sessions: sessions);
       await chat.open();
@@ -546,6 +558,9 @@ class _FakeSessions extends AgentSessions {
   final StreamAgents _agents;
   final _client = stream.StreamChatClient('key');
   stream.Channel? _channel;
+
+  /// The last channel a session was opened with.
+  stream.Channel? get opened => _channel;
 
   /// What was said in the conversation before it is opened.
   List<stream.Message> history = const [];

@@ -458,6 +458,10 @@ class AgentChat with AIConversationTransport<AgentMessage> {
     for (final subscription in _subscriptions) {
       unawaited(subscription.cancel());
     }
+    // Let go of before the session closes, which can take seconds: the client keeps a watched
+    // channel until it is disposed, and hands that one to the next chat on this conversation.
+    _channel?.dispose();
+    _channel = null;
     final session = _session;
     if (session == null) return;
     try {

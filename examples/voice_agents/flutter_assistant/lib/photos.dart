@@ -59,7 +59,8 @@ abstract final class Photos {
         quality: 70,
         keepExif: false,
       );
-    } on Exception {
+      // CompressError and UnsupportedError are Errors, not Exceptions.
+    } on Object {
       return null;
     }
   }

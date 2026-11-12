@@ -243,8 +243,12 @@ abstract final class DeviceTools {
     }
   }
 
-  /// One reading of where the phone is, within 15 seconds.
+  /// One reading of where the phone is, within 15 seconds, or one from the last minute.
   static Future<Position> _currentPosition() async {
+    // First: with location off, iOS reads the permission as refused.
+    if (!await Geolocator.isLocationServiceEnabled()) {
+      throw const ToolFailure('Location is turned off on the phone. It is in Settings.');
+    }
     // On Android, asked in turn with the calendar, since only one question shows at a time.
     if (!await Permissions.allOf([Permission.locationWhenInUse])) {
       throw const ToolFailure('They have not let Juno see where they are. It is in Settings.');
@@ -255,6 +259,10 @@ abstract final class DeviceTools {
     }
     if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
       throw const ToolFailure('They have not let Juno see where they are. It is in Settings.');
+    }
+    final last = await Geolocator.getLastKnownPosition();
+    if (last != null && DateTime.now().difference(last.timestamp) < const Duration(minutes: 1)) {
+      return last;
     }
     try {
       return await Geolocator.getCurrentPosition(

@@ -82,11 +82,13 @@ abstract final class Assistant {
 
   /// Asks the backend for a Stream user token, which opens the chat and joins the call.
   static Future<String> _streamToken() async {
-    final response = await http.post(
-      backendUrl.resolve('/stream-token'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'user_id': userId}),
-    );
+    final response = await http
+        .post(
+          backendUrl.resolve('/stream-token'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'user_id': userId}),
+        )
+        .timeout(const Duration(seconds: 15));
     if (response.statusCode != 200) {
       throw StateError('the backend would not mint a Stream token (${response.statusCode})');
     }
