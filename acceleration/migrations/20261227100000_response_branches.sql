@@ -17,7 +17,9 @@ BEGIN
 END $$;
 -- +goose StatementEnd
 
--- Built without stopping the writes of responses.
+-- Built without stopping the writes of responses. A build that fails leaves an invalid index
+-- that IF NOT EXISTS skips, and DROP INDEX CONCURRENTLY cannot run in the DO block that would
+-- check for one, so every Migrate drops and builds it again in Go (store.usageIndexes).
 CREATE INDEX CONCURRENTLY IF NOT EXISTS agent_responses_parent_idx
     ON agent_responses (session_id, parent_response_id);
 
