@@ -207,8 +207,8 @@ func (s *Server) branchResponse(ctx context.Context, id string, body *CreateResp
 		return nil, invalidRequest("replaces names the response to regenerate or edit")
 	case commandID == "":
 		return nil, invalidRequest("a request_id is required with replaces")
-	case body.Audio != nil || len(value(body.Images)) > 0 || len(value(body.Videos)) > 0 || body.UiAction != nil:
-		return nil, invalidRequest("a regenerate or an edit takes text alone: images, audio, videos and ui_action cannot go with replaces")
+	case body.Audio != nil || len(value(body.Images)) > 0 || len(value(body.Videos)) > 0 || len(value(body.Files)) > 0 || body.UiAction != nil:
+		return nil, invalidRequest("a regenerate or an edit takes text alone: images, audio, videos, files and ui_action cannot go with replaces")
 	}
 	found, sent, failure := s.sessionToAnswer(ctx, id)
 	if failure != nil {
@@ -603,7 +603,7 @@ type CreateResponseRequest struct {
 	Files           *[]FileSource   `json:"files,omitempty" doc:"A file to answer questions about: a PDF or a Word document. The router reads it as text before the turn starts, and the agent answers from it on this turn and on every turn of the conversation after it, including a conversation carried on later or forked by the same person. In a conversation kept in Stream Chat the person's message shows the file. At most 100 pages, and at most 120,000 characters of text together with the files the conversation already holds, or a quarter of what the model reads at once. Only in a person's own conversation: refused in a thread, in a channel others write in, in a session a worker opened for a channel's message, and by a speech-to-speech session. Not with a voice note. Refused before any turn starts when it cannot be read, is too large, or reads as a prompt injection under the organization's policy." maxItems:"1"`
 	Audio           *AudioSource    `json:"audio,omitempty" doc:"A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region."`
 	Images          *[]ImageSource  `json:"images,omitempty"`
-	Replaces        *string         `json:"replaces,omitempty" doc:"An earlier response of a conversation kept in Stream Chat to regenerate or edit. With no text its question is answered again; with text, the text is asked in its place. Requires request_id, and takes no images, audio, videos or ui_action."`
+	Replaces        *string         `json:"replaces,omitempty" doc:"An earlier response of a conversation kept in Stream Chat to regenerate or edit. With no text its question is answered again; with text, the text is asked in its place. Requires request_id, and takes no images, audio, videos, files or ui_action."`
 	MaxOutputTokens *int            `json:"max_output_tokens,omitempty" doc:"Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's." minimum:"1"`
 	ReasoningEffort *string         `json:"reasoning_effort,omitempty" doc:"How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's."`
 	Text            string          `json:"text" doc:"What to answer, as though it had been said. May be empty when images or audio carry the question. Images with no text are shown on the person's message in a session kept in Stream Chat, so they are then data URIs, at most 8, with or without a request_id."`

@@ -95,6 +95,19 @@ func (s *ResponseBranchesSuite) TestAPhotoCannotGoWithReplaces() {
 	s.Equal(http.StatusBadRequest, status)
 }
 
+func (s *ResponseBranchesSuite) TestAFileCannotGoWithReplaces() {
+	opened := s.opens(s.client)
+	second := s.asks(s.client, opened, "Is it raining?")
+	request := s.utils.uuid()
+
+	status, body := s.client.call(http.MethodPost, responsesPath(opened), CreateResponseRequest{
+		RequestId: &request, Replaces: &second, Files: &[]FileSource{{Url: "data:application/pdf;base64,JVBERi0xLjQK"}},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(body), "files")
+}
+
 func (s *ResponseBranchesSuite) TestReplacesNeedsARequestID() {
 	opened := s.opens(s.client)
 	second := s.asks(s.client, opened, "Is it raining?")
