@@ -1,10 +1,10 @@
 import Foundation
 import StreamCore
 
-final class SessionSort: Sendable, Codable, JSONEncodable {
-    /// -1, descending. Ascending is not offered.
+final class SessionSortPayload: Sendable, Codable, JSONEncodable {
+    /// -1 is descending and 1 ascending. pinned and relevance only sort descending.
     let direction: Int?
-    /// updated_at is the most recently active first. relevance is the best match first, and only sorts a text search.
+    /// last_message_at is when the agent last answered, or when the session began if it has not. pinned lists the pinned sessions first: it sorts descending only, comes first, and is followed by last_message_at, descending when left out. review_score is the review's score, sessions without one last either way, and is a server-side caller's only. relevance is the best match first, and is the one sort of a text search.
     let field: SessionSortField
 
     init(direction: Int? = nil, field: SessionSortField) {
@@ -26,8 +26,8 @@ final class SessionSort: Sendable, Codable, JSONEncodable {
 
 }
 
-extension SessionSort: Hashable {
-    static func == (lhs: SessionSort, rhs: SessionSort) -> Bool {
+extension SessionSortPayload: Hashable {
+    static func == (lhs: SessionSortPayload, rhs: SessionSortPayload) -> Bool {
         lhs.direction == rhs.direction &&
         lhs.field == rhs.field
     }

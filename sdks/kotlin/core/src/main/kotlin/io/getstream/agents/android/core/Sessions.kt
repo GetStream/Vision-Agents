@@ -1,10 +1,13 @@
 package io.getstream.agents.android.core
 
 import io.getstream.agents.android.core.generated.CreateSessionRequest
+import io.getstream.agents.android.core.generated.Equals
 import io.getstream.agents.android.core.generated.ForkSessionRequest
 import io.getstream.agents.android.core.generated.Session as SessionSchema
+import io.getstream.agents.android.core.generated.SessionFilter as FilterSchema
 import io.getstream.agents.android.core.generated.SessionPage
 import io.getstream.agents.android.core.generated.SessionQuery as QuerySchema
+import io.getstream.agents.android.core.generated.TextMatch
 import io.getstream.agents.android.core.generated.UpdateSessionRequest
 import io.ktor.http.HttpMethod
 import kotlinx.serialization.json.JsonObject
@@ -62,20 +65,34 @@ public class Sessions internal constructor(
     }
 
     /**
-     * A page of this caller's conversations, most recently active first, the ones that ended
-     * included. Pass its [Page.nextCursor] as [SessionQuery.cursor] for the next one.
+     * A page of this caller's conversations, the ones that ended included.
+     *
+     * [filter] narrows it and [sort] orders it: nothing is the most recent message first,
+     * `listOf(SessionSort(SessionSortField.Pinned), SessionSort(SessionSortField.LastMessageAt))`
+     * puts the pinned ones on top. [limit] is up to 200, and 25 when left out. Pass a page's
+     * [Page.nextCursor] as [cursor], with the same filter and sort, for the next one.
      */
-    public suspend fun query(query: SessionQuery = SessionQuery()): Page<Session> = page(scoped(query).schema(text = ""))
+    public suspend fun query(
+        filter: SessionFilter? = null,
+        sort: List<SessionSort> = emptyList(),
+        limit: Int? = null,
+        cursor: String? = null,
+    ): Page<Session> = page(sent(filter, text = ""), sort, limit, cursor)
 
     /**
      * Finds conversations by what they were called: their title, description, project and
-     * agent name, best match first. It pages the way [query] does.
+     * agent name, best match first. It narrows and pages the way [query] does, and takes no
+     * sort. A [filter] that already holds a [SessionFilter.Text] is refused.
      *
      * What was said is not searched. An empty [text] is the same as [query], so a search box
      * nobody has typed in yet shows a person their conversations rather than nothing.
      */
-    public suspend fun search(text: String, query: SessionQuery = SessionQuery()): Page<Session> =
-        page(scoped(query).schema(text))
+    public suspend fun search(
+        text: String,
+        filter: SessionFilter? = null,
+        limit: Int? = null,
+        cursor: String? = null,
+    ): Page<Session> = page(sent(filter, text), emptyList(), limit, cursor)
 
     /**
      * One session. Somebody else's is reported as not found, so this is not a way to find out
@@ -87,14 +104,16 @@ public class Sessions internal constructor(
     /**
      * Renames a session or relabels it, running or ended, and returns it as it now is. Null
      * leaves a field as it is; [custom] replaces the labels whole, and an empty one clears them.
+     * [pinned] pins it or unpins it, which moves it nowhere in the most-recent-message order.
      */
     public suspend fun update(
         id: String,
         title: String? = null,
         description: String? = null,
         custom: JsonObject? = null,
+        pinned: Boolean? = null,
     ): Session {
-        val request = UpdateSessionRequest(title = title, description = description, custom = custom)
+        val request = UpdateSessionRequest(title = title, description = description, custom = custom, pinned = pinned)
         val updated = backend.send(
             HttpMethod.Patch,
             listOf("v1", "agents", "sessions", id),
@@ -103,6 +122,15 @@ public class Sessions internal constructor(
         )!!
         return Session.of(updated)
     }
+
+    /**
+     * Pins a session, running or ended, and returns it with its [Session.pinnedAt]. Pinning one
+     * that is already pinned keeps the time it was first pinned.
+     */
+    public suspend fun pin(id: String): Session = update(id, pinned = true)
+
+    /** Unpins a session and returns it. Unpinning one that is not pinned does nothing. */
+    public suspend fun unpin(id: String): Session = update(id, pinned = false)
 
     /**
      * Has the agent join a session's call, `agent:<session id>`, and carry the conversation on
@@ -166,10 +194,29 @@ public class Sessions internal constructor(
     /** A session's turns: asking, reading back, and rewinding. */
     public fun responses(id: String): Responses = Responses(backend, id)
 
-    private fun scoped(query: SessionQuery): SessionQuery =
-        if (agent == null || query.agent != null) query else query.copy(agent = agent)
+    /**
+     * The filter that is sent: the caller's, with the words of a search and this handle's agent
+     * set beside its other top-level keys. It is not wrapped in an `$and`, because a text search
+     * has to stay at the top of the filter.
+     */
+    private fun sent(filter: SessionFilter?, text: String): FilterSchema {
+        var schema = filter?.schema() ?: FilterSchema()
+        if (text.isNotEmpty()) {
+            if (schema.text != null || schema.dollarAnd.orEmpty().any { it.text != null }) {
+                throw AgentsException.Configuration("a search sets the filter's text, so the filter cannot hold one too")
+            }
+            schema = schema.copy(text = TextMatch(text))
+        }
+        return if (agent.isNullOrEmpty()) schema else schema.copy(agent = Equals(agent))
+    }
 
-    private suspend fun page(request: QuerySchema): Page<Session> {
+    private suspend fun page(filter: FilterSchema, sort: List<SessionSort>, limit: Int?, cursor: String?): Page<Session> {
+        val request = QuerySchema(
+            filter = filter,
+            sort = sort.ifEmpty { null }?.map { it.schema() },
+            limit = limit?.toLong(),
+            cursor = cursor?.ifEmpty { null },
+        )
         val page = backend.post(
             listOf("v1", "agents", "sessions", "query"),
             QuerySchema.serializer(),

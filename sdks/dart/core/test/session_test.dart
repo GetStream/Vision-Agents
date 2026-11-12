@@ -1029,6 +1029,28 @@ void main() {
       await chat.close();
     });
 
+    test('pinning and unpinning refresh the session and keep the conversation open', () async {
+      router.answerInTurn('PATCH /v1/agents/sessions/s1', [
+        Answer(200, {...sessionJson(), 'pinned_at': '2026-11-11T10:00:00Z'}),
+        Answer(200, sessionJson()),
+      ]);
+      final chat = await agents.chat();
+
+      final pinned = await chat.pin();
+      final pin = router.last('PATCH /v1/agents/sessions/s1').json;
+      final during = chat.session.pinnedAt;
+      final unpinned = await chat.unpin();
+
+      expect(pin, {'pinned': true});
+      expect(pinned.pinnedAt, DateTime.utc(2026, 11, 11, 10));
+      expect(during, DateTime.utc(2026, 11, 11, 10));
+      expect(router.last('PATCH /v1/agents/sessions/s1').json, {'pinned': false});
+      expect(unpinned.pinnedAt, isNull);
+      expect(chat.session.pinnedAt, isNull);
+      expect(chat.isConnected, isTrue);
+      await chat.close();
+    });
+
     test('voice puts a written conversation on its call and takes it off again', () async {
       router
         ..answer(

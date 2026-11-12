@@ -60,10 +60,10 @@ Tool calls are answered by the session itself, whether or not anything is readin
 model is mid-sentence waiting. A tool that returns `Err` is reported to the model.
 
 A tool declared with `register_with_tool_call_context` says how the backend treats its calls,
-and is handed the call it runs for:
+and is handed the call it runs for, then the arguments:
 
 ```rust
-use vision_agents::{Error, ToolCall, types};
+use vision_agents::{Error, ToolCallContext, types};
 
 tools.register_with_tool_call_context(
     types::SessionTool {
@@ -75,7 +75,7 @@ tools.register_with_tool_call_context(
         approval: Some(types::SessionToolApproval { title: "Book flight {flight_id}?".into(), ..Default::default() }),
         ..Default::default()
     },
-    async |arguments, tool_call_context: ToolCall| {
+    async |tool_call_context: ToolCallContext, arguments| {
         tool_call_context.update("checking seats").await?;
         tool_call_context.disallow_interruptions().await?;
         let user = &tool_call_context.user.id;
@@ -309,27 +309,58 @@ session opened from the config runs it.
 ## Reading conversations back
 
 ```rust
-use vision_agents::Query;
+use serde_json::json;
+use vision_agents::{Query, types};
 
 let sessions = &api.agent("support").sessions;
-let page = sessions.query(Query { state: Some("live".into()), ..Default::default() }).await?;
+let page = sessions.query(Query::default()).await?;
 let next = sessions.query(Query { cursor: page.next_cursor.clone(), ..Default::default() }).await?;
-let found = sessions.search("pricing", Query::default()).await?;
-let october = sessions
+let found = sessions
+    .search("pricing", Query { filter: json!({"project_id": "web"}), ..Default::default() })
+    .await?;
+let apps = sessions
     .query(Query {
-        team: Some("finance".into()), // the team their usage is counted under
-        created_since: Some("2026-10-01T00:00:00Z".into()),
-        created_before: Some("2026-11-01T00:00:00Z".into()),
-        custom: [("ticket".into(), "4721".into())].into(),
-        sort: Some(types::SessionSortField::UpdatedAt),
+        filter: json!({"$or": [{"project_id": "web"}, {"project_id": "ios"}]}),
+        sort: vec![types::SessionSort { field: types::SessionSortField::Pinned, direction: None }],
+        limit: Some(50),
         ..Default::default()
     })
     .await?;
 ```
 
-Lists page by cursor: pass a page's `next_cursor` back, with the same filters, while
+The filter is the JSON the router takes, with its key names. The keys of one object are
+ANDed; `$and` and `$or` each take 1 to 10 filters and nest up to 3 deep.
+
+| Key            | Matches                                                                 |
+| -------------- | ----------------------------------------------------------------------- |
+| `project_id`   | `"p"`, `{"$eq": "p"}` or `{"$in": ["p", "q"]}` (up to 50)                 |
+| `text`         | `{"$q": "words"}`; `search` sets it. Once, never inside `$or`           |
+| `user_id`      | `"u"` or `{"$eq": "u"}`. Server side only, never inside `$or`           |
+| `review_score` | 1 to 5, or `{"$gte": 4}` with `$eq`, `$gt`, `$gte`, `$lt`, `$lte`. Server side only |
+| `agent`        | Always the agent the query is made from                                 |
+
+The router refuses any other key. The SDK only checks that the filter is an object and that
+a `search` filter has no `text` of its own.
+
+`sort` is a list of `types::SessionSort`. Empty is the most recently answered first, or the
+best match first for a search. Otherwise `LastMessageAt`; `Pinned`, optionally followed by
+`LastMessageAt`, for the pinned sessions first; `ReviewScore`, server side only; or
+`Relevance` for a search. A direction left `None` is descending, and
+`types::SessionSortDirection::try_from(1).ok()` is ascending.
+
+Lists page by cursor: pass a page's `next_cursor` back, with the same filter and sort, while
 `has_more` is true. `responses.list` and `items.list` page the same way; `items.all` reads
 every page.
+
+Pinning keeps a conversation at hand without moving it in the order of last answers. A
+pinned session carries `pinned_at`:
+
+```rust
+let pinned = session.pin().await?;                  // pinned.pinned_at is Some(..)
+session.unpin().await?;
+api.agent("support").sessions.pin(&session_id).await?;   // running or ended
+api.agent("support").sessions.unpin(&session_id).await?;
+```
 
 `close` stops a conversation and keeps what it recorded and remembered. Deleting is its own
 call:
@@ -372,7 +403,7 @@ api.agent("support").sessions.update(&session_id, &types::UpdateSessionRequest {
 }).await?;
 ```
 
-Title, description, custom, models and voice, in one call. It applies from the
+Title, description, custom, `pinned`, models and voice, in one call. It applies from the
 next turn; a field left `None` is left as it is.
 
 ## Simulations

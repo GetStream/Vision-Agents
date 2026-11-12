@@ -26,7 +26,7 @@ public struct SessionOptions: Sendable {
     public var title: String?
     public var description: String?
     public var projectID: String?
-    /// Your own labels, handed back untouched. `SessionQuery.custom` finds the session by them.
+    /// Your own labels, handed back untouched.
     public var custom: [String: RawJSON] = [:]
     /// What the agent opens the call with.
     public var greeting: Greeting?
@@ -279,7 +279,9 @@ public struct StreamAgents: Sendable {
     /// somebody else is not found, because reading one is reading a conversation.
     public func attach(sessionID: String, tools: [AgentTool] = []) async throws -> AgentSession {
         let session = try await sessions.get(sessionID)
-        return await AgentSession(backend: backend, session: session, tools: tools)
+        let attached = await AgentSession(backend: backend, session: session, tools: tools)
+        await attached.start()
+        return attached
     }
 
     /// Stops a session, which is how the agent leaves. What it recorded and remembered is
@@ -372,19 +374,35 @@ public struct Sessions: Sendable {
         return try await agents.chat(options)
     }
 
-    /// One page of this caller's conversations, most recently active first, the ones that
-    /// ended included. Pass the page's `nextCursor` as `query.cursor` for the next one.
+    /// One page of this caller's conversations, the ones that ended included: the ones
+    /// `filter` matches, in the order `sort` says, which is last answered first when it is nil.
+    /// `limit` is up to 200 and 25 when nil. Pass the page's `nextCursor` as `cursor` for the
+    /// next one, with the same filter and sort.
+    ///
+    /// ```swift
+    /// let page = try await agent.sessions.query(
+    ///     filter: .or([.projectID("a"), .projectID("b")]),
+    ///     sort: [.pinned, .lastMessageAt()], limit: 20)
+    /// ```
     ///
     /// Only ever this caller's own. The router owns a session by whoever opened it, so a
     /// device is never told about anybody else's conversation.
-    public func query(_ query: SessionQuery = SessionQuery()) async throws -> Page<Session> {
-        try await sessions(matching: nil, query)
+    public func query(
+        filter: SessionFilter? = nil, sort: [SessionSort]? = nil, limit: Int? = nil,
+        cursor: String? = nil
+    ) async throws -> Page<Session> {
+        try await sessions(
+            SessionQueryBody(filter: filter, agent: agent, sort: sort, limit: limit, cursor: cursor))
     }
 
     /// Finds conversations by their title, description, project and agent name, best match
-    /// first. What was said is not searched. It pages the way `query` does.
-    public func search(_ text: String, _ query: SessionQuery = SessionQuery()) async throws -> Page<Session> {
-        try await sessions(matching: text, query)
+    /// first, among the ones `filter` matches. What was said is not searched. It pages the way
+    /// `query` does, and takes no sort: a search is in order of relevance.
+    public func search(
+        _ text: String, filter: SessionFilter? = nil, limit: Int? = nil, cursor: String? = nil
+    ) async throws -> Page<Session> {
+        try await sessions(
+            SessionQueryBody(filter: filter, agent: agent, text: text, limit: limit, cursor: cursor))
     }
 
     /// One conversation, whether or not it is still being held.
@@ -392,15 +410,30 @@ public struct Sessions: Sendable {
         Session(try await agents.backend.call { try await $0.getSession(id: id) })
     }
 
-    /// Renames or relabels a conversation, running or ended. Nil leaves a field as it is, and
-    /// `custom` replaces the labels whole.
+    /// Renames, relabels, pins or unpins a conversation, running or ended. Nil leaves a field
+    /// as it is, `custom` replaces the labels whole, and `pinned` true pins it and false unpins.
     public func update(
         _ id: String, title: String? = nil, description: String? = nil,
-        custom: [String: RawJSON]? = nil
+        custom: [String: RawJSON]? = nil, pinned: Bool? = nil
     ) async throws -> Session {
-        let body = UpdateSessionRequest(custom: custom, description: description, title: title)
+        let body = UpdateSessionRequest(
+            custom: custom, description: description, pinned: pinned, title: title)
         return Session(
             try await agents.backend.call { try await $0.updateSession(id: id, updateSessionRequest: body) })
+    }
+
+    /// Pins a conversation, which `SessionSort.pinned` lists first. Its `pinnedAt` says when,
+    /// and pinning one already pinned keeps the time it was first pinned. A pin does not move
+    /// it in the last answered order.
+    @discardableResult
+    public func pin(_ id: String) async throws -> Session {
+        try await update(id, pinned: true)
+    }
+
+    /// Unpins a conversation. Unpinning one that is not pinned does nothing.
+    @discardableResult
+    public func unpin(_ id: String) async throws -> Session {
+        try await update(id, pinned: false)
     }
 
     /// Has the agent join a session's call, `agent:<session id>`, and carry the conversation on
@@ -429,31 +462,23 @@ public struct Sessions: Sendable {
         Responses(backend: agents.backend, sessionID: sessionID)
     }
 
-    private func sessions(matching text: String?, _ query: SessionQuery) async throws -> Page<Session> {
-        let body = SessionQueryPayload(
-            cursor: query.cursor,
-            filter: .init(
-                agent: equals(agent),
-                agentId: equals(query.agentID),
-                createdAt: query.createdSince == nil && query.createdBefore == nil
-                    ? nil : .init(gte: query.createdSince, lt: query.createdBefore),
-                custom: query.custom.isEmpty ? nil : query.custom,
-                modality: equals(query.modality?.rawValue),
-                projectId: equals(query.projectID),
-                state: equals(query.state?.rawValue),
-                team: equals(query.team),
-                text: text.map { .init(q: $0) }),
-            limit: query.limit,
-            sort: query.sort.map { [.init(field: .init(rawValue: $0.rawValue))] })
-        let page = try await agents.backend.call { try await $0.querySessions(sessionQueryPayload: body) }
+    private func sessions(_ body: SessionQueryBody) async throws -> Page<Session> {
+        let page = try await agents.backend.call { try await $0.querySessions(body: body) }
         return Page(
             items: page.items.map(Session.init), hasMore: page.hasMore, nextCursor: page.nextCursor)
     }
 }
 
-/// A filter field matching `value` exactly, or nil to leave the field out.
-private func equals(_ value: String?) -> String? {
-    value.flatMap { $0.isEmpty ? nil : $0 }
+extension DefaultAPI {
+    /// `querySessions` with the hand-written body, over the generated client's own request
+    /// path, so the credentials and the failure handling are the ones every other call gets.
+    func querySessions(body: SessionQueryBody) async throws -> SessionPage {
+        let request = try makeRequest(
+            uriPath: "/v1/agents/sessions/query", httpMethod: "POST", request: body)
+        return try await send(request: request) {
+            try self.jsonDecoder.decode(SessionPage.self, from: $0)
+        }
+    }
 }
 
 extension Backend {

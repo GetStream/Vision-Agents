@@ -9,33 +9,30 @@ namespace GetStream\VisionAgents\Generated;
 use GetStream\VisionAgents\Json;
 
 /**
- * Which sessions to list. A field not listed here is refused rather than ignored.
+ * Which sessions to list. The keys of one object are ANDed. $and and $or each take 1 to 10
+ * filters and nest up to 3 deep; a whole filter holds at most 30 field conditions. An empty
+ * filter lists every session the caller may see. Any other key, and any other operator, is
+ * refused with a 400 that names it and lists the fields that can be filtered.
  */
 final readonly class SessionFilter
 {
     public function __construct(
         // The agent name the session was opened against.
         public mixed $agent = null,
-        // The agent id the session was created with, which names its transcript channel.
-        public mixed $agentId = null,
-        // The agent config the session ran under. Empty for a session that spelled itself out.
-        public mixed $configId = null,
-        // When the session started.
-        public ?TimeRange $createdAt = null,
-        // The session's custom object holds every one of these pairs, which is how a caller finds again what it label...
-        /** @var array<string, string>|null */
-        public ?array $custom = null,
-        // text, voice or video: how the user took part.
-        public mixed $modality = null,
+        // The project the session belongs to.
         public mixed $projectId = null,
-        // live or ended, as each session reports its state.
-        public mixed $state = null,
-        // Full text over the title, description, project and agent name. Sorted by relevance, and not combined with p...
+        // Full text over the title, description, project and agent name, sorted by relevance. Once per filter, at its...
         public ?TextMatch $text = null,
         // Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever...
         public mixed $userId = null,
-        // The team the session's usage is counted under. A caller whose token was signed for a team may only ask for...
-        public mixed $team = null,
+        // Every one of these filters holds.
+        /** @var list<SessionFilter>|null */
+        public ?array $and = null,
+        // At least one of these filters holds. It chooses among the sessions the caller may see and never adds to the...
+        /** @var list<SessionFilter>|null */
+        public ?array $or = null,
+        // The score the review gave the conversation. A session with no review matches no condition on it. Only a ser...
+        public mixed $reviewScore = null,
     ) {
     }
 
@@ -46,16 +43,12 @@ final readonly class SessionFilter
     {
         return new self(
             agent: $data['agent'] ?? null,
-            agentId: $data['agent_id'] ?? null,
-            configId: $data['config_id'] ?? null,
-            createdAt: array_key_exists('created_at', $data) && $data['created_at'] !== null ? TimeRange::fromArray(Json::object($data, 'created_at')) : null,
-            custom: array_key_exists('custom', $data) && $data['custom'] !== null ? Json::stringMap($data, 'custom') : null,
-            modality: $data['modality'] ?? null,
             projectId: $data['project_id'] ?? null,
-            state: $data['state'] ?? null,
             text: array_key_exists('text', $data) && $data['text'] !== null ? TextMatch::fromArray(Json::object($data, 'text')) : null,
             userId: $data['user_id'] ?? null,
-            team: $data['team'] ?? null,
+            and: array_key_exists('$and', $data) && $data['$and'] !== null ? array_map(SessionFilter::fromArray(...), Json::objects($data, '$and')) : null,
+            or: array_key_exists('$or', $data) && $data['$or'] !== null ? array_map(SessionFilter::fromArray(...), Json::objects($data, '$or')) : null,
+            reviewScore: $data['review_score'] ?? null,
         );
     }
 
@@ -70,26 +63,8 @@ final readonly class SessionFilter
         if ($this->agent !== null) {
             $out['agent'] = $this->agent;
         }
-        if ($this->agentId !== null) {
-            $out['agent_id'] = $this->agentId;
-        }
-        if ($this->configId !== null) {
-            $out['config_id'] = $this->configId;
-        }
-        if ($this->createdAt !== null) {
-            $out['created_at'] = $this->createdAt->toArray();
-        }
-        if ($this->custom !== null) {
-            $out['custom'] = $this->custom;
-        }
-        if ($this->modality !== null) {
-            $out['modality'] = $this->modality;
-        }
         if ($this->projectId !== null) {
             $out['project_id'] = $this->projectId;
-        }
-        if ($this->state !== null) {
-            $out['state'] = $this->state;
         }
         if ($this->text !== null) {
             $out['text'] = $this->text->toArray();
@@ -97,8 +72,14 @@ final readonly class SessionFilter
         if ($this->userId !== null) {
             $out['user_id'] = $this->userId;
         }
-        if ($this->team !== null) {
-            $out['team'] = $this->team;
+        if ($this->and !== null) {
+            $out['$and'] = array_map(static fn (SessionFilter $each): array => $each->toArray(), $this->and);
+        }
+        if ($this->or !== null) {
+            $out['$or'] = array_map(static fn (SessionFilter $each): array => $each->toArray(), $this->or);
+        }
+        if ($this->reviewScore !== null) {
+            $out['review_score'] = $this->reviewScore;
         }
         return $out;
     }

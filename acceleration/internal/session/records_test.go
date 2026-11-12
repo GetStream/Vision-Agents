@@ -439,8 +439,77 @@ func (s *RecordSuite) TestMatchesLiveAnswersTheSameFiltersAsTheStore() {
 	s.False(matchesLive(live, store.SessionFilter{Modality: store.ModalityVideo}))
 
 	// A session nothing records sorts by when it began, the same as its cursor.
-	s.True(matchesLive(live, store.SessionFilter{Cursor: &store.SessionPosition{UpdatedAt: created, ID: "c"}}))
-	s.False(matchesLive(live, store.SessionFilter{Cursor: &store.SessionPosition{UpdatedAt: created, ID: "a"}}))
+	at := created.Truncate(time.Microsecond)
+	s.True(matchesLive(live, store.SessionFilter{Cursor: &store.SessionPosition{LastMessageAt: at, ID: "c"}}))
+	s.False(matchesLive(live, store.SessionFilter{Cursor: &store.SessionPosition{LastMessageAt: at, ID: "a"}}))
+	s.False(matchesLive(live, store.SessionFilter{Cursor: &store.SessionPosition{LastMessageAt: at, ID: "b"}}),
+		"the cursor's own session is not after it")
+
+	// Oldest first, the page after a cursor is what began later.
+	oldest := store.SessionOrder{Ascending: true}
+	s.True(matchesLive(live, store.SessionFilter{Order: oldest,
+		Cursor: &store.SessionPosition{LastMessageAt: at.Add(-time.Minute), ID: "z"}}))
+	s.False(matchesLive(live, store.SessionFilter{Order: oldest,
+		Cursor: &store.SessionPosition{LastMessageAt: at.Add(time.Minute), ID: "a"}}))
+	// Pinned first, a session nothing records is never pinned, so it is after every pinned one.
+	s.True(matchesLive(live, store.SessionFilter{Order: store.SessionOrder{PinnedFirst: true},
+		Cursor: &store.SessionPosition{LastMessageAt: at.Add(-time.Hour), ID: "a", Pinned: true}}))
+	// By score, it has none, so it is after every reviewed session and among the unreviewed
+	// by when it began.
+	scored := store.SessionOrder{By: store.SessionSortReviewScore}
+	s.True(matchesLive(live, store.SessionFilter{Order: scored,
+		Cursor: &store.SessionPosition{LastMessageAt: at.Add(-time.Hour), ID: "a", ReviewScore: new(1)}}))
+	s.False(matchesLive(live, store.SessionFilter{Order: scored,
+		Cursor: &store.SessionPosition{LastMessageAt: at.Add(-time.Hour), ID: "a"}}))
+}
+
+func (s *RecordSuite) TestMatchesLiveAppliesTheRequestsFilterInsideTheCallersOwn() {
+	live := &Session{
+		id:      "b",
+		created: time.Now(),
+		spec: Spec{
+			Caller:     routing.Caller{UserID: "jlahey"},
+			CallerKind: auth.KindAuthenticated,
+			AgentName:  "docs",
+			Project:    "Health",
+		},
+	}
+	where := func(expr store.SessionExpr) store.SessionFilter { return store.SessionFilter{Where: &expr} }
+	project, agent, user := store.SessionFieldProject, store.SessionFieldAgent, store.SessionFieldUser
+
+	s.True(matchesLive(live, where(store.SessionIs(project, "Health"))))
+	s.False(matchesLive(live, where(store.SessionIs(project, "Docs"))))
+	s.True(matchesLive(live, where(store.SessionIsOneOf(project, "Docs", "Health"))))
+	s.False(matchesLive(live, where(store.SessionIsOneOf(project, "Docs", "Billing"))))
+	s.True(matchesLive(live, where(store.SessionIs(agent, "docs"))))
+	s.False(matchesLive(live, where(store.SessionIs(agent, "sales"))))
+	s.True(matchesLive(live, where(store.SessionIs(user, "jlahey"))))
+	s.False(matchesLive(live, where(store.SessionIs(user, "randy"))))
+
+	s.True(matchesLive(live, where(store.AllOf(store.SessionIs(project, "Health"), store.SessionIs(agent, "docs")))))
+	s.False(matchesLive(live, where(store.AllOf(store.SessionIs(project, "Health"), store.SessionIs(agent, "sales")))))
+	s.True(matchesLive(live, where(store.AnyOf(store.SessionIs(project, "Docs"), store.SessionIs(agent, "docs")))))
+	s.False(matchesLive(live, where(store.AnyOf(store.SessionIs(project, "Docs"), store.SessionIs(agent, "sales")))))
+	s.True(matchesLive(live, where(store.AllOf(
+		store.SessionIs(agent, "docs"),
+		store.AnyOf(store.SessionIs(project, "Docs"), store.AllOf(store.SessionIs(project, "Health"), store.SessionIs(user, "jlahey"))),
+	))))
+	s.True(matchesLive(live, where(store.AllOf())), "nothing asked for holds for every session")
+	s.False(matchesLive(live, where(store.AnyOf())), "one of nothing holds for none")
+
+	// Nobody has reviewed a session that is still running, so no score condition holds, and
+	// an $or still finds it by its other branch.
+	s.False(matchesLive(live, where(store.ReviewScoreIs(store.SessionGte, 1))))
+	s.False(matchesLive(live, where(store.ReviewScoreIs(store.SessionLte, 5))))
+	s.True(matchesLive(live, where(store.AnyOf(store.ReviewScoreIs(store.SessionEq, 5), store.SessionIs(project, "Health")))))
+
+	// Who the caller may see is outside the request's filter: an $or that holds does not
+	// reach another user's session, nor one opened by a kind of caller they do not reach.
+	widen := store.AnyOf(store.SessionIs(project, "Health"), store.SessionIs(user, "jlahey"))
+	s.True(matchesLive(live, store.SessionFilter{UserID: "jlahey", Where: &widen}))
+	s.False(matchesLive(live, store.SessionFilter{UserID: "randy", Where: &widen}))
+	s.True(matchesLive(live, store.SessionFilter{UserID: "jlahey", CallerKinds: []string{"authenticated", "server"}, Where: &widen}))
+	s.False(matchesLive(live, store.SessionFilter{UserID: "jlahey", CallerKinds: []string{"anonymous"}, Where: &widen}))
 }
 
 func (s *RecordSuite) TestFramesOfTheUsersVideoMakeTheSessionAVideoOneOnce() {

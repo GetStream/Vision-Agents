@@ -32,7 +32,7 @@ class TestToolCall < Minitest::Test
   end
 
   def test_a_call_that_takes_longer_than_its_timeout_fails_and_is_stopped
-    tool_call_context = VA::ToolCall.new(id: "t1")
+    tool_call_context = VA::ToolCallContext.new(id: "t1")
     tools = VA::Tools.new.register("stuck", description: "Never finishes", timeout: 0.05) do
       sleep 1
       "never"
@@ -43,19 +43,21 @@ class TestToolCall < Minitest::Test
     assert tool_call_context.cancelled?
   end
 
-  def test_a_block_is_handed_its_call_and_a_one_argument_lambda_is_not
-    seen = nil
+  def test_a_block_of_two_is_handed_its_call_first_and_a_block_of_one_only_the_arguments
     tools = VA::Tools.new
-    tools.register("whoami", description: "Who asked") { |_args, tool_call_context| seen = tool_call_context.id }
-    tools.register("plain", description: "Takes arguments only", &->(args) { args["x"] })
+    tools.register("whoami", description: "Who asked") { |tool_call_context, args| "#{tool_call_context.id} #{args["x"]}" }
+    tools.register("plain", description: "Takes arguments only") { |args| args["x"] }
+    tools.register("lambda", description: "Takes arguments only", &->(args) { args["x"] })
+    tools.register("none", description: "Takes nothing") { "done" }
 
-    tools.call("whoami", "{}", VA::ToolCall.new(id: "t1"))
-    assert_equal "t1", seen
-    assert_equal "7", tools.call("plain", '{"x":"7"}')
+    assert_equal "t1 7", tools.call("whoami", '{"x":"7"}', VA::ToolCallContext.new(id: "t1"))
+    assert_equal "7", tools.call("plain", '{"x":"7"}', VA::ToolCallContext.new(id: "t1"))
+    assert_equal "7", tools.call("lambda", '{"x":"7"}')
+    assert_equal "done", tools.call("none", "{}")
   end
 
   def test_a_call_without_a_socket_does_nothing
-    tool_call_context = VA::ToolCall.new
+    tool_call_context = VA::ToolCallContext.new
 
     assert_nil tool_call_context.update("checking")
     assert_nil tool_call_context.say("One moment.")
@@ -65,7 +67,7 @@ class TestToolCall < Minitest::Test
 
   def test_a_call_reports_how_it_is_going_and_a_call_stopped_first_is_not_held
     sent = []
-    tool_call_context = VA::ToolCall.new(id: "t1", send: ->(frame) { sent << frame })
+    tool_call_context = VA::ToolCallContext.new(id: "t1", send: ->(frame) { sent << frame })
 
     tool_call_context.update("checking")
     tool_call_context.say("One moment.")

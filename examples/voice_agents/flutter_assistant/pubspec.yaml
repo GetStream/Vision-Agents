@@ -30,24 +30,20 @@ dependencies:
   # needed. iOS asks by itself when they are first used.
   permission_handler: ^12.0.3
   # Stream Chat's AI components: the conversation, its steps, the composer and the voice glow.
-  # Built on Stream's design system. Pinned to a main commit until a release is published.
+  # Built on Stream's design system. Pinned to the head of the AI parity features pull request (#90)
+  # until it is released.
   stream_chat_flutter_ai:
     git:
       url: https://github.com/GetStream/stream-chat-flutter-ai.git
-      ref: eefb10b90c3cef486cd03a9843ad428a2e6bc525
+      ref: 49b659bac899566aa8508b68733387b65fe923e8
       path: packages/stream_chat_flutter_ai
-  # The A2UI and OpenUI renderers for the UI the agent writes in its replies. Pinned to the
-  # OpenUI pull request's head (it holds the A2UI package too) until they are released.
+  # The A2UI renderer for the UI the agent writes in its replies. Pinned to the head of the
+  # AI parity features pull request (#90), like stream_chat_flutter_ai, until it is released.
   stream_chat_flutter_ai_a2ui:
     git:
       url: https://github.com/GetStream/stream-chat-flutter-ai.git
-      ref: eefb10b90c3cef486cd03a9843ad428a2e6bc525
+      ref: 49b659bac899566aa8508b68733387b65fe923e8
       path: packages/stream_chat_flutter_ai_a2ui
-  stream_chat_flutter_ai_openui:
-    git:
-      url: https://github.com/GetStream/stream-chat-flutter-ai.git
-      ref: eefb10b90c3cef486cd03a9843ad428a2e6bc525
-      path: packages/stream_chat_flutter_ai_openui
   # Stream's design system, which the AI components are built on: its widgets for the app's own
   # screens (app bar, buttons, sheets). The version stream_chat_flutter_ai uses.
   stream_core_flutter: ^0.5.3
@@ -70,7 +66,7 @@ dependency_overrides:
   stream_chat_flutter_ai:
     git:
       url: https://github.com/GetStream/stream-chat-flutter-ai.git
-      ref: eefb10b90c3cef486cd03a9843ad428a2e6bc525
+      ref: 49b659bac899566aa8508b68733387b65fe923e8
       path: packages/stream_chat_flutter_ai
 
 dev_dependencies:

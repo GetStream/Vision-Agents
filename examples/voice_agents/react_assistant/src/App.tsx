@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { formatMessage } from "stream-chat";
 import { Chat } from "stream-chat-react";
 
 import { Session, type Tools } from "@stream-io/stream-agents";
 import { VoiceSession } from "@stream-io/stream-agents/video";
 
-import { AgentChat, PAGE_SIZE } from "./agentChat";
 import { agents, Assistant, chatClient, sessions, signIn } from "./assistant";
 import { ChatScreen, type ChatScreenDeps } from "./chatScreen";
-import { ChatView } from "./ChatView";
+import { approverFor, ChatView } from "./ChatView";
 import { ConversationList, SidebarRail } from "./ConversationList";
 import { Conversations, displayTitle, type SessionRow } from "./conversations";
 import { messageOf } from "./errors";
@@ -82,7 +80,7 @@ function Assistant_() {
   // a new conversation getting its session keeps the screen it was started on.
   const [screen, setScreen] = useState(() => new ChatScreen(conversationInUrl(), deps, started));
   const { items } = useStore(conversations);
-  const { chat, isVoiceShown } = useStore(screen);
+  const { session, isVoiceShown } = useStore(screen);
 
   useEffect(() => {
     const leave = () => screen.leave();
@@ -114,14 +112,14 @@ function Assistant_() {
 
   useEffect(() => {
     // And once each reply is written, which is when a new conversation has its title.
-    if (!chat || !isListShown) return;
-    let wasAnswering = chat.isAnswering();
-    return chat.subscribe(() => {
-      const isAnswering = chat.isAnswering();
+    if (!isListShown) return;
+    let wasAnswering = false;
+    return screen.conversation.state.subscribe(({ status }) => {
+      const isAnswering = status === "submitted" || status === "streaming";
       if (wasAnswering && !isAnswering) void conversations.reload();
       wasAnswering = isAnswering;
     });
-  }, [chat, conversations, isListShown]);
+  }, [screen, conversations, isListShown]);
 
   useEffect(() => {
     if (!isMenuOpen) return;
@@ -225,7 +223,7 @@ function Assistant_() {
           <ChatView key={String(screenKey(screen))} screen={screen} />
           {/* Over the conversation in this pane on a wide window, over everything on a narrow one.
               Picking another conversation in the sidebar hangs up, as leaving this one does. */}
-          {isVoiceShown && chat && <VoiceMode chat={chat} screen={screen} />}
+          {isVoiceShown && session && <VoiceMode session={session} screen={screen} />}
         </main>
       </div>
     </div>
@@ -251,34 +249,30 @@ function screenDeps(tools: Tools): ChatScreenDeps {
   return {
     open: async (sessionId) => {
       if (!sessionId) {
-        const session = await agents.agent(Assistant.agentName).sessions.create({
+        return agents.agent(Assistant.agentName).sessions.create({
           // An overwrite rather than `llm`: the router keeps it on the session, so a conversation
           // carried on after it ended still runs on this model rather than the agent's own.
           modelOverwrites: { llm: Assistant.chatModel },
           returnUrl: Assistant.returnUrl,
           tools,
         });
-        return AgentChat.open(session);
       }
       try {
         // What `sessions.resume` does, with the row the messages may already have read.
-        return await AgentChat.open(await Session.watching(agents, await read(sessionId), { tools }));
+        return await Session.watching(agents, await read(sessionId), { tools });
       } finally {
         reading.delete(sessionId);
       }
     },
-    history: async (sessionId, conversationId) => {
+    channel: async (sessionId, conversationId) => {
       // The channel the session writes to, read as the page's user, who is a member of it. A
       // conversation opened from a link has only its id, so its session says which channel.
       const channelId = conversationId ?? (await read(sessionId)).conversation_id;
-      if (!channelId) return [];
+      if (!channelId) return undefined;
       const [type = "agent", ...rest] = channelId.split(":");
-      const channel = chatClient.channel(type, rest.join(":"));
-      // A query's messages are its answer only: stream-chat 10 keeps them out of the channel's list.
-      const { messages } = await channel.query({ messages: { limit: PAGE_SIZE }, watch: false });
-      return messages.map(formatMessage);
+      return chatClient.channel(type, rest.join(":"));
     },
-    remove: (sessionId) => sessions().delete(sessionId),
+    approver: approverFor,
     voiceOf: (session) => VoiceSession.of(session),
   };
 }

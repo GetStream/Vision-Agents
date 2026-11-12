@@ -38,29 +38,29 @@ public sealed class Tools
         bool interruptible = false,
         TimeSpan? timeout = null,
         string? approval = null) =>
-        Register<TArguments, TResult>(name, description, (arguments, _, cancellationToken) => function(arguments, cancellationToken),
+        Register<TArguments, TResult>(name, description, (_, arguments, cancellationToken) => function(arguments, cancellationToken),
             displayTitle, interruptible, timeout, approval);
 
     /// <summary>
     /// <see cref="Register{TArguments, TResult}(string, string, Func{TArguments, CancellationToken, Task{TResult}}, string?, bool, TimeSpan?, string?)"/>
-    /// for a function that is also handed its <see cref="ToolCall"/>: who it answers, and its
-    /// line back to them for updates and holds.
+    /// for a function that is handed its <see cref="ToolCallContext"/> first, then the arguments: who it
+    /// answers, and its line back to them for updates and holds.
     /// </summary>
     public Tools Register<TArguments, TResult>(
         string name,
         string description,
-        Func<TArguments, ToolCall, CancellationToken, Task<TResult>> function,
+        Func<ToolCallContext, TArguments, CancellationToken, Task<TResult>> function,
         string? displayTitle = null,
         bool interruptible = false,
         TimeSpan? timeout = null,
         string? approval = null)
     {
         var schema = Json.Options.GetJsonSchemaAsNode(typeof(TArguments));
-        return Register(name, description, schema as JsonObject ?? [], async (arguments, toolCallContext, cancellationToken) =>
+        return Register(name, description, schema as JsonObject ?? [], async (toolCallContext, arguments, cancellationToken) =>
         {
             var read = arguments.Deserialize<TArguments>(Json.Options)
                 ?? throw new ArgumentException($"{name} was called with no arguments");
-            return await function(read, toolCallContext, cancellationToken).ConfigureAwait(false);
+            return await function(toolCallContext, read, cancellationToken).ConfigureAwait(false);
         }, displayTitle, interruptible, timeout, approval);
     }
 
@@ -82,18 +82,18 @@ public sealed class Tools
         bool interruptible = false,
         TimeSpan? timeout = null,
         string? approval = null) =>
-        Register(name, description, parameters, (arguments, _, cancellationToken) => function(arguments, cancellationToken),
+        Register(name, description, parameters, (_, arguments, cancellationToken) => function(arguments, cancellationToken),
             displayTitle, interruptible, timeout, approval);
 
     /// <summary>
     /// <see cref="Register(string, string, JsonObject, Func{JsonElement, CancellationToken, Task{object?}}, string?, bool, TimeSpan?, string?)"/>
-    /// for a function that is also handed its <see cref="ToolCall"/>.
+    /// for a function that is handed its <see cref="ToolCallContext"/> first, then the arguments.
     /// </summary>
     public Tools Register(
         string name,
         string description,
         JsonObject parameters,
-        Func<JsonElement, ToolCall, CancellationToken, Task<object?>> function,
+        Func<ToolCallContext, JsonElement, CancellationToken, Task<object?>> function,
         string? displayTitle = null,
         bool interruptible = false,
         TimeSpan? timeout = null,
@@ -167,7 +167,7 @@ public sealed class Tools
     /// Arguments are an opaque JSON string on the wire; an empty one reads as no arguments.
     /// </remarks>
     /// <exception cref="TimeoutException">The call took longer than the tool's timeout.</exception>
-    internal async Task<string> CallAsync(string name, string arguments, CancellationToken cancellationToken, ToolCall? toolCallContext = null)
+    internal async Task<string> CallAsync(string name, string arguments, CancellationToken cancellationToken, ToolCallContext? toolCallContext = null)
     {
         Registered? found;
         lock (_lock)
@@ -183,7 +183,7 @@ public sealed class Tools
         object? output;
         if (found.Timeout is not { } timeout)
         {
-            output = await found.Function(parsed.RootElement.Clone(), toolCallContext ?? new ToolCall(), cancellationToken).ConfigureAwait(false);
+            output = await found.Function(toolCallContext ?? new ToolCallContext(), parsed.RootElement.Clone(), cancellationToken).ConfigureAwait(false);
         }
         else
         {
@@ -192,7 +192,7 @@ public sealed class Tools
             try
             {
                 // Waited on apart from the token too, for a function that never looks at it.
-                output = await found.Function(parsed.RootElement.Clone(), toolCallContext ?? new ToolCall(), bounded.Token)
+                output = await found.Function(toolCallContext ?? new ToolCallContext(), parsed.RootElement.Clone(), bounded.Token)
                     .WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception failure) when (failure is TimeoutException or OperationCanceledException
@@ -237,7 +237,7 @@ public sealed class Tools
     private sealed record Registered(
         string Description,
         JsonObject Parameters,
-        Func<JsonElement, ToolCall, CancellationToken, Task<object?>> Function,
+        Func<ToolCallContext, JsonElement, CancellationToken, Task<object?>> Function,
         string? DisplayTitle,
         bool Interruptible,
         TimeSpan? Timeout,

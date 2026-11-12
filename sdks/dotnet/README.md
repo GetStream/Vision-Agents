@@ -74,11 +74,11 @@ when it syncs, and every session under that config runs with it. The model asks 
 the session socket, this process runs it, and the answer or the exception goes back the same way.
 
 A tool can say how the backend treats its calls, and its function can take the call it runs
-for:
+for as its first argument:
 
 ```csharp
 agent.Tools.Register<Booking, string>("book_flight", "Book a flight for the caller",
-    async (booking, toolCallContext, cancellationToken) =>
+    async (toolCallContext, booking, cancellationToken) =>
     {
         await toolCallContext.UpdateAsync("checking seats", cancellationToken);
         await toolCallContext.DisallowInterruptionsAsync(cancellationToken);
@@ -236,17 +236,47 @@ var session = await api.Agent("docs").ChatAsync(new SessionOptions { Title = "Pr
 var items = await session.Responses.Items.AllAsync();
 var branch = await session.ForkAsync(new ForkOptions { ResponseId = items[2].ResponseId, Title = "asked again" });
 
-var found = await api.Sessions.SearchAsync("pricing", new SessionQuery { Limit = 20 });
-var live = await api.Sessions.QueryAsync(new SessionQuery { Agent = "docs", State = "live", Cursor = found.NextCursor });
-var october = await api.Sessions.QueryAsync(new SessionQuery
+var found = await api.Sessions.SearchAsync("pricing", new() { ["project_id"] = "docs" }, limit: 20);
+var mine = await api.Agent("docs").Sessions.QueryAsync(); // an agent's sessions are always only its own
+var either = await api.Sessions.QueryAsync(new SessionQuery
 {
-    Team = "finance", // the team their usage is counted under
-    CreatedSince = new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero),
-    CreatedBefore = new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero),
-    Custom = new Dictionary<string, string> { ["ticket"] = "4721" },
-    Sort = "updated_at",
+    Filter = new()
+    {
+        ["user_id"] = "ada", // server side only, like review_score
+        ["$or"] = new[]
+        {
+            new Dictionary<string, object?> { ["project_id"] = new Dictionary<string, object?> { ["$in"] = new[] { "docs", "billing" } } },
+            new Dictionary<string, object?> { ["review_score"] = new Dictionary<string, object?> { ["$gte"] = 4 } },
+        },
+    },
+    Sort = [new SessionSort("pinned"), new SessionSort("last_message_at")], // pinned first, then newest
+    Limit = 50,
 });
+var next = await api.Sessions.QueryAsync(new SessionQuery { Sort = [new SessionSort("pinned"), new SessionSort("last_message_at")], Limit = 50, Cursor = either.NextCursor });
+
+await api.Sessions.PinAsync(session.Id);  // or session.PinAsync(); UnpinAsync takes it back
 ```
+
+The filter is the router's own, written as a `Dictionary<string, object?>` with the wire's keys
+and sent as it is. The keys of one object are ANDed; `$and` and `$or` take 1 to 10 filters and
+nest up to 3 deep. Anything not in this table is refused with a 400.
+
+| Key            | Takes                                                                    | Where                                           |
+| -------------- | ------------------------------------------------------------------------ | ----------------------------------------------- |
+| `project_id`   | a string, `{"$eq": s}` or `{"$in": [up to 50]}`                          | anywhere                                        |
+| `agent`        | a string or `{"$eq": s}`                                                 | anywhere; `api.Agent(name).Sessions` sets it    |
+| `text`         | `{"$q": "words"}`, which `SearchAsync` sets                              | once, top level or top-level `$and`, not `$or`  |
+| `review_score` | 1 to 5, or `{"$eq"/"$gt"/"$gte"/"$lt"/"$lte": n}`; server side only      | anywhere                                        |
+| `user_id`      | a string or `{"$eq": s}`; server side only                               | top level or top-level `$and`                   |
+
+`Sort` is a list of `SessionSort(field, direction)`, direction -1 (the default) or 1. Left out
+it is `last_message_at`, newest first, or `relevance` for a search. The orders are
+`last_message_at`; `pinned`, alone or followed by `last_message_at`; `review_score`, server
+side only; and `relevance`, with a `text` only. `SearchAsync` takes no sort. A cursor only
+carries on the filter and sort it came from.
+
+A pinned session has a `PinnedAt`. Pinning does not move it in a `last_message_at` order; sort
+by `pinned` for that. `UpdateAsync(new UpdateSessionRequest { Pinned = true })` pins too.
 
 Lists come a page at a time: `Items`, and `NextCursor` while `HasMore`. A text conversation
 is kept in Stream Chat unless it is `Incognito`, which keeps nothing. One kept in Stream Chat

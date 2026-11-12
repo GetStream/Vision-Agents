@@ -1,7 +1,9 @@
 package client
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,7 +11,6 @@ import (
 	"net/http"
 	"slices"
 	"sync/atomic"
-	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
@@ -86,38 +87,60 @@ type SessionOptions struct {
 	Logger *slog.Logger
 }
 
-// Query is which of an agent's conversations to list.
+// Filter is which sessions to list, in the shape the router reads: a map of field keys and
+// $and / $or, sent as it is written. The keys of one map are ANDed; $and and $or take 1 to 10
+// filters and nest at most 3 deep. The fields, and nothing else:
+//
+//   - "project_id": a string, {"$eq": s} or {"$in": [up to 50 strings]}
+//   - "text": {"$q": "words"}, once, at the top level or directly in the top-level $and, and
+//     never inside $or. Sessions.Search writes it.
+//   - "review_score": an integer 1 to 5, or {"$eq" | "$gt" | "$gte" | "$lt" | "$lte": n},
+//     several of which all have to hold. Server side only.
+//   - "agent": set by Sessions.Query to the agent asked, whatever the caller wrote there.
+//   - "user_id": a string or {"$eq": s}, at the top level or directly in the top-level $and.
+//     Server side only.
+//
+// Anything else is refused by the router with a 400 that names it.
+//
+//	client.Filter{"$or": []client.Filter{{"project_id": "docs"}, {"project_id": "blog"}}}
+type Filter map[string]any
+
+// The fields a Sort orders by.
+const (
+	// SortLastMessageAt is when the agent last answered, or when the session began if it has
+	// not. Either direction. It is the order when no Sort is given.
+	SortLastMessageAt = "last_message_at"
+	// SortPinned lists the pinned sessions first. It sorts descending only, comes first, and
+	// may be followed by SortLastMessageAt in either direction.
+	SortPinned = "pinned"
+	// SortReviewScore is the review's score, sessions without one last either way. Server
+	// side only.
+	SortReviewScore = "review_score"
+	// SortRelevance is the best match first: the order of a text search, and only of one.
+	SortRelevance = "relevance"
+)
+
+// Sort is one field to order by.
+type Sort struct {
+	// Field is one of SortLastMessageAt, SortPinned, SortReviewScore and SortRelevance.
+	Field string `json:"field"`
+	// Direction is -1, descending, or 1, ascending. Zero leaves it to the router, which is
+	// descending.
+	Direction int `json:"direction,omitempty"`
+}
+
+// Query is which of an agent's conversations to list, in what order, and which page of them.
 type Query struct {
-	// ProjectID narrows to one project's. A search covers every project, so Search refuses it.
-	ProjectID string
-	// UserID narrows to one user's, which only a server-side caller may ask for.
-	UserID string
-	// Modality narrows to how the user took part: "text", "voice" or "video".
-	Modality string
-	// State narrows to the sessions still running, "live", or the ones over, "ended".
-	State string
-	// AgentID narrows to the sessions created with this agent id.
-	AgentID string
-	// ConfigID narrows to the sessions one agent config ran.
-	ConfigID string
-	// Team narrows to the sessions whose usage is counted under this team. A token signed for
-	// a team may only ask for that one.
-	Team string
-	// Custom narrows to the sessions whose custom object holds every one of these pairs,
-	// which is how a caller finds again what it labelled.
-	Custom map[string]string
-	// CreatedAfter and CreatedBefore bound when the session started, after inclusive and
-	// before not, so two windows that meet share no session.
-	CreatedAfter  time.Time
-	CreatedBefore time.Time
-	// Sort is the order, always newest first: acceleration.UpdatedAt, by when each last
-	// changed, or acceleration.Relevance, by how well it matches a search. Empty is the
-	// router's own, which is UpdatedAt for Query and Relevance for Search.
-	Sort acceleration.SessionSortField
+	// Filter narrows the list. Nil is every session of the agent the caller may see.
+	Filter Filter
+	// Sort is the order. Empty is the router's own: SortLastMessageAt descending. The orders
+	// it takes are one SortLastMessageAt; SortPinned alone or followed by SortLastMessageAt;
+	// and one SortReviewScore. Search takes none.
+	Sort []Sort
 	// Limit is up to 200. Zero is 25.
 	Limit int
-	// Cursor is the NextCursor of the page before, with the same filters. Empty is the
-	// first page.
+	// Cursor is the NextCursor of the page before, with the same filter and sort. Empty is
+	// the first page.
 	Cursor string
 }
 
@@ -168,46 +191,77 @@ func (s *Sessions) Resume(ctx context.Context, id string) (*Session, error) {
 	return newSession(s.client, s.agent, pipeline, got), nil
 }
 
-// Query returns a page of the agent's conversations, most recently updated first, the ones
-// that ended included. Pass the page's NextCursor as Query.Cursor for the next one.
+// Query returns a page of the agent's conversations, the ones that ended included: the one
+// that last had an answer first, unless Query.Sort says otherwise. Pass the page's NextCursor
+// as Query.Cursor for the next one.
+//
+// The filter is sent as written, with its top-level "agent" set to this agent.
 //
 // What comes back are the rows rather than live handles: reading a conversation back is not
 // the same as holding one, and most of these are over.
 func (s *Sessions) Query(ctx context.Context, query Query) (*acceleration.SessionPage, error) {
-	api, err := s.client.api()
-	if err != nil {
-		return nil, err
-	}
-
-	listed, err := api.QuerySessionsWithResponse(ctx, s.queryOf("", query))
-	if err != nil {
-		return nil, fmt.Errorf("client: listing the sessions of %s: %w", s.agent.name, err)
-	}
-	if listed.JSON200 == nil {
-		return nil, failure("listing the sessions of "+s.agent.name, listed.HTTPResponse, listed.Body)
-	}
-	return listed.JSON200, nil
+	return s.query(ctx, "listing", s.filterOf(query.Filter), query)
 }
 
 // Search finds a conversation by what it was called, best match first.
 //
 // It reads the title, the description and the opening question, which is what a person
 // remembers a conversation by. An incognito conversation is never found: nothing about it was
-// written down to search. It pages the same way Query does.
+// written down to search. It takes the same filter and pages the same way Query does, with
+// the phrase as the filter's top-level "text": a filter that already has one is refused, and
+// so is a Sort, because a search is ordered by relevance.
 func (s *Sessions) Search(ctx context.Context, text string, query Query) (*acceleration.SessionPage, error) {
+	if _, given := query.Filter["text"]; given {
+		return nil, errors.New(`client: the filter already has "text": Search writes it from the phrase`)
+	}
+	if len(query.Sort) > 0 {
+		return nil, errors.New("client: a search is ordered by relevance and takes no Sort")
+	}
+	filter := s.filterOf(query.Filter)
+	filter["text"] = map[string]any{"$q": text}
+	return s.query(ctx, "searching", filter, query)
+}
+
+// filterOf is the filter sent for this agent: the caller's top-level keys with "agent" set
+// to the agent's name.
+//
+// The keys are copied rather than wrapped in a new $and, because the router takes "text" and
+// "user_id" at the top level or directly in the top-level $and and nowhere deeper.
+func (s *Sessions) filterOf(given Filter) Filter {
+	filter := make(Filter, len(given)+2)
+	maps.Copy(filter, given)
+	filter["agent"] = s.agent.name
+	return filter
+}
+
+// sessionQuery is the body of a session query. The filter is a map rather than the generated
+// acceleration.SessionFilter so that it goes over exactly as the caller wrote it.
+type sessionQuery struct {
+	Filter Filter `json:"filter"`
+	Sort   []Sort `json:"sort,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
+	Cursor string `json:"cursor,omitempty"`
+}
+
+// query posts the one request the listing and the search share.
+func (s *Sessions) query(ctx context.Context, doing string, filter Filter, query Query) (*acceleration.SessionPage, error) {
 	api, err := s.client.api()
 	if err != nil {
 		return nil, err
 	}
 
-	found, err := api.QuerySessionsWithResponse(ctx, s.queryOf(text, query))
+	body, err := json.Marshal(sessionQuery{Filter: filter, Sort: query.Sort, Limit: query.Limit, Cursor: query.Cursor})
 	if err != nil {
-		return nil, fmt.Errorf("client: searching the sessions of %s: %w", s.agent.name, err)
+		return nil, fmt.Errorf("client: %s the sessions of %s: the filter does not encode: %w", doing, s.agent.name, err)
 	}
-	if found.JSON200 == nil {
-		return nil, failure("searching the sessions of "+s.agent.name, found.HTTPResponse, found.Body)
+	listed, err := api.QuerySessionsWithBodyWithResponse(ctx, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("client: %s the sessions of %s: %w", doing, s.agent.name, err)
 	}
-	return found.JSON200, nil
+	if listed.JSON200 == nil {
+		return nil, failure(doing+" the sessions of "+s.agent.name, listed.HTTPResponse, listed.Body)
+	}
+	return listed.JSON200, nil
 }
 
 // Get is one conversation, whether or not it is still being held.
@@ -247,6 +301,20 @@ func (s *Sessions) Update(ctx context.Context, id string, update SessionUpdate) 
 		return nil, failure("updating the session "+id, updated.HTTPResponse, updated.Body)
 	}
 	return updated.JSON200, nil
+}
+
+// Pin pins a conversation, so a Query sorted by SortPinned lists it first. Its PinnedAt says
+// when; pinning one that is already pinned keeps the time it was first pinned, and a pin does
+// not move it in the SortLastMessageAt order.
+func (s *Sessions) Pin(ctx context.Context, id string) (*acceleration.Session, error) {
+	pinned := true
+	return s.Update(ctx, id, SessionUpdate{Pinned: &pinned})
+}
+
+// Unpin takes the pin off a conversation, and its PinnedAt with it.
+func (s *Sessions) Unpin(ctx context.Context, id string) (*acceleration.Session, error) {
+	pinned := false
+	return s.Update(ctx, id, SessionUpdate{Pinned: &pinned})
 }
 
 // Delete deletes a conversation, running or ended: it is stopped, and its turns and what it
@@ -331,70 +399,6 @@ func (s *Sessions) requestOf(options SessionOptions) acceleration.CreateSessionR
 		request.ConnectorBindings = &chosen
 	}
 	return request
-}
-
-// queryOf renders the query the listing and the search share, narrowed to this agent. Text
-// makes it a search.
-//
-// One function rather than two, so the two cannot drift apart in what they honour: a filter
-// respected by one and forgotten by the other would be a surprise at best, and at worst a
-// list somebody reads another user's conversations out of.
-func (s *Sessions) queryOf(text string, query Query) acceleration.SessionQuery {
-	filter := acceleration.SessionFilter{
-		Agent:     equals(s.agent.name),
-		ProjectId: equals(query.ProjectID),
-		UserId:    equals(query.UserID),
-		Modality:  equals(query.Modality),
-		State:     equals(query.State),
-		AgentId:   equals(query.AgentID),
-		ConfigId:  equals(query.ConfigID),
-		Team:      equals(query.Team),
-	}
-	if len(query.Custom) > 0 {
-		custom := query.Custom
-		filter.Custom = &custom
-	}
-	if window := timeRangeOf(query.CreatedAfter, query.CreatedBefore); window != nil {
-		filter.CreatedAt = window
-	}
-	if text != "" {
-		filter.Text = &acceleration.TextMatch{Q: text}
-	}
-	sent := acceleration.SessionQuery{
-		Filter: &filter,
-		Limit:  pointer(int64(query.Limit)),
-		Cursor: pointer(query.Cursor),
-	}
-	if query.Sort != "" {
-		sent.Sort = &[]acceleration.SessionSort{{Field: query.Sort}}
-	}
-	return sent
-}
-
-// timeRangeOf is the window the two bounds name, or nil when neither was given.
-func timeRangeOf(after, before time.Time) *acceleration.TimeRange {
-	if after.IsZero() && before.IsZero() {
-		return nil
-	}
-	window := &acceleration.TimeRange{}
-	if !after.IsZero() {
-		window.Gte = &after
-	}
-	if !before.IsZero() {
-		window.Lt = &before
-	}
-	return window
-}
-
-// equals is a filter field matching value exactly, or nil to leave the field out.
-func equals(value string) *acceleration.Equals {
-	if value == "" {
-		return nil
-	}
-	var matched acceleration.Equals
-	// A string always encodes.
-	_ = matched.FromEquals0(value)
-	return &matched
 }
 
 // Session is one conversation being held in the backend.
@@ -512,13 +516,24 @@ func (s *Session) DeleteMemories(ctx context.Context) error {
 
 // SessionUpdate is what to change about a session. A nil field is left as it is; an empty
 // Sts makes the session a cascade again, and an empty Voice returns to the provider's
-// default. The id, the call and incognito cannot change.
+// default. Pinned pins the session when true and unpins it when false. The id, the call and
+// incognito cannot change.
 type SessionUpdate = acceleration.UpdateSessionRequest
 
-// Update changes this session: its title, description, custom labels, models
-// or voice. See Sessions.Update.
+// Update changes this session: its title, description, custom labels, models,
+// voice or pin. See Sessions.Update.
 func (s *Session) Update(ctx context.Context, update SessionUpdate) (*acceleration.Session, error) {
 	return s.agent.Sessions.Update(ctx, s.ID(), update)
+}
+
+// Pin pins this session. See Sessions.Pin.
+func (s *Session) Pin(ctx context.Context) (*acceleration.Session, error) {
+	return s.agent.Sessions.Pin(ctx, s.ID())
+}
+
+// Unpin takes the pin off this session. See Sessions.Unpin.
+func (s *Session) Unpin(ctx context.Context) (*acceleration.Session, error) {
+	return s.agent.Sessions.Unpin(ctx, s.ID())
 }
 
 // ForkOptions is what to change about a conversation while continuing it.

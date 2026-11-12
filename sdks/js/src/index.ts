@@ -67,7 +67,11 @@ export { USD, type Amount } from "./usd.js";
 export {
   Sessions,
   type CreateSessionOptions,
+  type SessionFilter,
   type SessionQuery,
+  type SessionSearch,
+  type SessionSort,
+  type SessionSortField,
   type SessionSpec,
 } from "./sessions.js";
 
@@ -113,7 +117,7 @@ export {
 
 export {
   CallNotHeldError,
-  ToolCall,
+  ToolCallContext,
   ToolOutput,
   type ToolOutputPart,
   Tools,

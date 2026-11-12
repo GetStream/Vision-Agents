@@ -2,8 +2,10 @@ from enum import StrEnum
 
 
 class SessionSortField(StrEnum):
+    LAST_MESSAGE_AT = "last_message_at"
+    PINNED = "pinned"
     RELEVANCE = "relevance"
-    UPDATED_AT = "updated_at"
+    REVIEW_SCORE = "review_score"
 
     def __str__(self) -> str:
         return str(self.value)

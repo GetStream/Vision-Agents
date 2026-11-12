@@ -216,19 +216,35 @@ final guest = await agents.guestUser(name: 'Ada', store: yourGuestStore);
 final asGuest = agents.withGuest(guest);
 
 final found = await asGuest.sessions.search('refund');
-final live = await asGuest.agent('support').sessions.query(
-  const SessionQuery(state: SessionState.live, limit: 20),
+final support = asGuest.agent('support').sessions;
+
+// The router's own filter, as it goes on the wire: project_id, agent, text, $and and $or.
+final pinnedFirst = await support.query(
+  filter: {
+    r'$or': [
+      {'project_id': 'billing'},
+      {'project_id': 'returns'},
+    ],
+  },
+  sort: const [SessionSort(field: 'pinned'), SessionSort(field: 'last_message_at')],
+  limit: 20,
 );
-final more = await asGuest.agent('support').sessions.query(
-  SessionQuery(state: SessionState.live, limit: 20, cursor: live.nextCursor),
+final more = await support.query(
+  filter: {
+    r'$or': [
+      {'project_id': 'billing'},
+      {'project_id': 'returns'},
+    ],
+  },
+  sort: const [SessionSort(field: 'pinned'), SessionSort(field: 'last_message_at')],
+  limit: 20,
+  cursor: pinnedFirst.nextCursor,
 );
-final thisWeek = await agents.sessions.query(
-  SessionQuery(
-    createdSince: DateTime.now().subtract(const Duration(days: 7)),
-    custom: {'topic': 'billing'},
-    sort: SessionSort.updatedAt,
-  ),
-);
+final refunds = await support.search('refund', filter: {'project_id': 'billing'});
+
+final pinned = await asGuest.sessions.pin(found.items.first.id); // pinned.pinnedAt is set
+await asGuest.sessions.unpin(pinned.id);
+await chat.pin(); // a session being held pins itself, as does chat.update(pinned: true)
 
 // The router comes from the client; what it routes to lives in the "healthcare" config.
 final answer = await agents.router(config: 'healthcare').search('perioperative antibiotic guidance');
@@ -243,6 +259,13 @@ until it expires, then comes back as the same guest with the refresh secret kept
 works once, so the store keeps what each answer hands back; one lost or already spent gets a new
 guest. Lists come a page at a time: ask again with the page's `nextCursor`, which is
 null on the last one.
+
+A query is ordered by when the agent last answered, newest first, unless `sort` says otherwise:
+`last_message_at` either way, `pinned` to list the pinned conversations first (alone, or followed
+by `last_message_at`), or `relevance` when the filter has `text`. A cursor only continues the
+filter and sort it came from. Filtering on `review_score` or `user_id` and sorting by
+`review_score` are a backend's: here they throw an `ArgumentError` before anything is sent, as
+does a key the router would refuse.
 
 ## What is deliberately not here
 

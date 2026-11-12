@@ -2007,7 +2007,7 @@ export type paths = {
          * Change a session
          * @description Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
          *
-         *     An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
+         *     An end user's device may change a session's title, description and custom, and pin or unpin it, so a person can tidy up their own conversations. `pinned` sets the session's `pinned_at`, which a query sorted by `pinned` lists first; it moves nothing else, and an incognito session, which nothing records, cannot be pinned: 400. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
          *
          *     A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
          *
@@ -2368,15 +2368,47 @@ export type paths = {
         readonly put?: never;
         /**
          * List or search the caller's sessions
-         * @description Three queries are supported, each over the sessions still running and the ones that ended:
+         * @description Lists the caller's sessions, the ones still running and the ones that ended, narrowed by a filter and in the order of a sort.
          *
-         *     - every session, sorted by `updated_at`
-         *     - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
-         *     - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+         *     A filter is an object of fields. The keys of one object are ANDed, and `$and` and `$or` each take a list of filters, so conditions combine and nest:
          *
-         *     `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `team`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+         *     - `project_id`: a value, `{"$eq": value}` or `{"$in": [values]}`
+         *     - `agent`: a value or `{"$eq": value}`, the agent name the session was opened against
+         *     - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
+         *     - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
+         *     - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
          *
-         *     The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+         *     Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
+         *
+         *     Every session, pinned first:
+         *
+         *     ```json
+         *     {"sort": [{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": -1}]}
+         *     ```
+         *
+         *     One agent's sessions in either of two projects:
+         *
+         *     ```json
+         *     {"filter": {"agent": "support", "$or": [{"project_id": "health"}, {"project_id": "billing"}]}}
+         *     ```
+         *
+         *     A search within one project:
+         *
+         *     ```json
+         *     {"filter": {"text": {"$q": "refund"}, "project_id": "billing"}}
+         *     ```
+         *
+         *     A backend's badly reviewed sessions and everything in two projects, the lowest score first:
+         *
+         *     ```json
+         *     {"filter": {"$or": [{"review_score": {"$lte": 2}}, {"project_id": {"$in": ["vip", "pilot"]}}]}, "sort": [{"field": "review_score", "direction": 1}]}
+         *     ```
+         *
+         *     `sort` is `last_message_at` (the default, descending: when the agent last answered, or when the session began), `pinned` followed by `last_message_at`, `review_score` for a server-side caller, with the sessions nobody reviewed last, or `relevance`, which is how a `text` search is sorted and the only way it is. A session is pinned and unpinned by updating it.
+         *
+         *     A backend gets its customer's sessions; an end user gets their own, whatever the filter says: an `$or` chooses among the sessions the caller may see and never adds to them. An anonymous caller who named nobody gets none.
+         *
+         *     The search reads what a person named the conversation, not what was said in it. Pages are followed by `next_cursor`, sent back with the same filter and sort. There is no total: counting every conversation costs more than the page.
          */
         readonly post: operations["querySessions"];
         readonly delete?: never;
@@ -7094,6 +7126,11 @@ export type components = {
         readonly Equals: string | {
             readonly $eq: string;
         };
+        /** @description Matches one value exactly, written "value" or {"$eq": "value"}, or any of up to 50 values, written {"$in": ["a", "b"]}. An object holds one of $eq and $in. */
+        readonly EqualsOrIn: string | {
+            readonly $eq?: string;
+            readonly $in?: readonly string[];
+        };
         readonly ErrorDetail: {
             /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), tier_limit_reached (the organization's tier limits refuse the work, and limit says which: a 403 for a call or a transfer, to a country the tier does not reach, past its minutes or recipients of the day, or past its calls at once; a 400 for an agent config whose sandbox is bigger or more open than the organization's sandbox limits allow. The message names the tier and the limit), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
             readonly code: string;
@@ -8956,6 +8993,14 @@ export type components = {
             /** @description Pass as `cursor` for the next page. Absent on the last one. */
             readonly next_cursor?: string;
         };
+        /** @description Matches a review score from 1 to 5: a number, which is short for $eq, or an object of $eq, $gt, $gte, $lt and $lte, every one of which has to hold. */
+        readonly ReviewScoreMatch: number | {
+            readonly $eq?: number;
+            readonly $gt?: number;
+            readonly $gte?: number;
+            readonly $lt?: number;
+            readonly $lte?: number;
+        };
         readonly ReviewUseCaseRequest: {
             readonly decision: components["schemas"]["ReviewDecision"];
             /** @description What the app should change, or why it was rejected. Required unless approving. */
@@ -9337,6 +9382,11 @@ export type components = {
             readonly modality: components["schemas"]["SessionModality"];
             readonly mode?: components["schemas"]["SessionMode"];
             readonly model_overwrites?: components["schemas"]["ModelOverwrites"];
+            /**
+             * Format: date-time
+             * @description When the session was pinned. Absent for one that is not pinned.
+             */
+            readonly pinned_at?: string;
             readonly project_id?: string;
             /** @description Why the review scored the conversation as it did. Read by a backend only. */
             readonly review_notes?: string;
@@ -9413,30 +9463,21 @@ export type components = {
          * @enum {string}
          */
         readonly SessionEndStage: "ringing" | "conversation";
-        /** @description Which sessions to list. A field not listed here is refused rather than ignored. */
+        /** @description Which sessions to list. The keys of one object are ANDed. $and and $or each take 1 to 10 filters and nest up to 3 deep; a whole filter holds at most 30 field conditions. An empty filter lists every session the caller may see. Any other key, and any other operator, is refused with a 400 that names it and lists the fields that can be filtered. */
         readonly SessionFilter: {
+            /** @description Every one of these filters holds. */
+            readonly $and?: readonly components["schemas"]["SessionFilter"][];
+            /** @description At least one of these filters holds. It chooses among the sessions the caller may see and never adds to them. text and user_id are refused inside it. */
+            readonly $or?: readonly components["schemas"]["SessionFilter"][];
             /** @description The agent name the session was opened against. */
             readonly agent?: components["schemas"]["Equals"];
-            /** @description The agent id the session was created with, which names its transcript channel. */
-            readonly agent_id?: components["schemas"]["Equals"];
-            /** @description The agent config the session ran under. Empty for a session that spelled itself out. */
-            readonly config_id?: components["schemas"]["Equals"];
-            /** @description When the session started. */
-            readonly created_at?: components["schemas"]["TimeRange"];
-            /** @description The session's custom object holds every one of these pairs, which is how a caller finds again what it labelled. */
-            readonly custom?: {
-                readonly [key: string]: string;
-            };
-            /** @description text, voice or video: how the user took part. */
-            readonly modality?: components["schemas"]["Equals"];
-            readonly project_id?: components["schemas"]["Equals"];
-            /** @description live or ended, as each session reports its state. */
-            readonly state?: components["schemas"]["Equals"];
-            /** @description The team the session's usage is counted under. A caller whose token was signed for a team may only ask for that one. */
-            readonly team?: components["schemas"]["Equals"];
-            /** @description Full text over the title, description, project and agent name. Sorted by relevance, and not combined with project_id. */
+            /** @description The project the session belongs to. */
+            readonly project_id?: components["schemas"]["EqualsOrIn"];
+            /** @description The score the review gave the conversation. A session with no review matches no condition on it. Only a server-side caller may use it. */
+            readonly review_score?: components["schemas"]["ReviewScoreMatch"];
+            /** @description Full text over the title, description, project and agent name, sorted by relevance. Once per filter, at its top level or in a top-level $and, and never inside $or. */
             readonly text?: components["schemas"]["TextMatch"];
-            /** @description Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for. */
+            /** @description Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for. Only at the top level of the filter or in a top-level $and. */
             readonly user_id?: components["schemas"]["Equals"];
         };
         /** @description Who the session's memories are about. Without a user id nothing is recalled or stored, which is the case for a call with nobody identified on it. */
@@ -9486,7 +9527,7 @@ export type components = {
              * @description Up to 200. Omitted is 25.
              */
             readonly limit?: number;
-            /** @description Omitted is updated_at, or relevance for a text search. */
+            /** @description Omitted is last_message_at descending, or relevance for a text search. One of: last_message_at; pinned, then last_message_at, which lists the pinned sessions first; review_score, for a server-side caller; relevance, for a text search and nothing else. */
             readonly sort?: readonly components["schemas"]["SessionSort"][] | null;
         };
         readonly SessionRespondCommand: {
@@ -9518,18 +9559,18 @@ export type components = {
         readonly SessionSort: {
             /**
              * Format: int64
-             * @description -1, descending. Ascending is not offered.
+             * @description -1 is descending and 1 ascending. pinned and relevance only sort descending.
              * @default -1
              * @enum {integer}
              */
-            readonly direction?: -1;
+            readonly direction?: -1 | 1;
             readonly field: components["schemas"]["SessionSortField"];
         };
         /**
-         * @description updated_at is the most recently active first. relevance is the best match first, and only sorts a text search.
+         * @description last_message_at is when the agent last answered, or when the session began if it has not. pinned lists the pinned sessions first: it sorts descending only, comes first, and is followed by last_message_at, descending when left out. review_score is the review's score, sessions without one last either way, and is a server-side caller's only. relevance is the best match first, and is the one sort of a text search.
          * @enum {string}
          */
-        readonly SessionSortField: "updated_at" | "relevance";
+        readonly SessionSortField: "last_message_at" | "pinned" | "review_score" | "relevance";
         /**
          * @description Whether the agent is still in the call.
          * @enum {string}
@@ -10358,6 +10399,7 @@ export type components = {
             /** @enum {string} */
             readonly type: "text";
         };
+        /** @description A full-text match, Stream's $q. */
         readonly TextMatch: {
             /** @description Quoted phrases and bare words both work, and punctuation is taken rather than refused. */
             readonly $q: string;
@@ -10449,18 +10491,6 @@ export type components = {
              */
             readonly tts_ttfb_ms?: number | null;
             readonly turn_id: string;
-        };
-        readonly TimeRange: {
-            /**
-             * Format: date-time
-             * @description At or after this RFC3339 time.
-             */
-            readonly $gte?: string;
-            /**
-             * Format: date-time
-             * @description Strictly before this RFC3339 time.
-             */
-            readonly $lt?: string;
         };
         /** @description A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself. For a connector call whose binding sets require_approval, the answer decides whether the router sends it, and names tool_call_id and request_id; turn_id may be left out. */
         readonly ToolApprovalCommand: {
@@ -10794,7 +10824,7 @@ export type components = {
             /** @description A short name the user will recognise. */
             readonly title?: string;
         };
-        /** @description What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller. */
+        /** @description What to change about one session. A field left out is left as it is. Title, description, custom and pinned can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller. */
         readonly UpdateSessionRequest: {
             /** @description Replaces the caller's labels whole. An empty object clears them. */
             readonly custom?: {
@@ -10804,6 +10834,8 @@ export type components = {
             /** @description The conversation model, a provider/model or a capability shortcut. */
             readonly llm?: string;
             readonly max_output_tokens?: number;
+            /** @description true pins the session and false unpins it. Pinning one that is already pinned keeps the time it was first pinned. A pin changes nothing else about the session, its place in a last_message_at sort included. */
+            readonly pinned?: boolean;
             /** @description A speech-to-speech target, which makes the session native. Empty makes it a cascade again. */
             readonly sts?: string;
             readonly stt?: string;

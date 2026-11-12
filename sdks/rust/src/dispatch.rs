@@ -19,7 +19,7 @@ use crate::responses::{AgentResponse, Responses};
 use crate::session::Session;
 use crate::sessions::AgentRef;
 use crate::socket::{Frame, Incoming, SocketSender};
-use crate::tool_call::{Holds, Line, ToolCall, to_run};
+use crate::tool_call::{Holds, Line, ToolCallContext, to_run};
 use crate::tools::Tools;
 use crate::types;
 
@@ -511,7 +511,7 @@ impl Dispatch {
                         holds: holds.clone(),
                         key: key.clone(),
                     };
-                    let tool_call_context = ToolCall::of(&frame, "", line);
+                    let tool_call_context = ToolCallContext::of(&frame, "", line);
                     let (tools, arguments) =
                         (offer.tools.clone(), frame.text("arguments").to_string());
                     // Spawned here rather than in the task below, so a tool_cancel read next finds it.

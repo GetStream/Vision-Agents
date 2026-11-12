@@ -51,47 +51,101 @@ export interface SessionSpec
 /** Opening a session, plus how it is watched. */
 export interface CreateSessionOptions extends SessionSpec, SessionOptions {}
 
-/** Which of an agent's old conversations to list. */
+/**
+ * Which of an agent's old conversations to list, as the wire spells it: the keys of one object
+ * are ANDed, and `$and` and `$or` each take 1 to 10 filters and nest up to 3 deep. These are
+ * all the fields there are; the router refuses any other key with a 400.
+ *
+ * ```ts
+ * const filter: SessionFilter = {
+ *   $or: [{ project_id: "health" }, { project_id: "billing" }],
+ * };
+ * ```
+ *
+ * One package serves a page and a server, so `review_score` and `user_id` are typed here for
+ * both; only a server-side caller may use them.
+ */
+export interface SessionFilter {
+  /** Every one of these filters holds. */
+  $and?: readonly SessionFilter[];
+  /**
+   * At least one of these filters holds. It chooses among the sessions the caller may see and
+   * never adds to them. `text` and `user_id` are refused inside it.
+   */
+  $or?: readonly SessionFilter[];
+  /**
+   * The agent name the session was opened against. A query through `agent.sessions` always
+   * sets the top-level one to its own agent, whatever is put here.
+   */
+  agent?: string | { readonly $eq: string };
+  /** The project the session belongs to: one, as a string or `$eq`, or any of up to 50 as `$in`. */
+  project_id?: string | { readonly $eq: string } | { readonly $in: readonly string[] };
+  /**
+   * Server side only: the score from 1 to 5 the review gave the conversation, as a number or
+   * as `$eq`, `$gt`, `$gte`, `$lt` and `$lte`, every one of which has to hold. A session nobody
+   * reviewed matches none. A device asking for it is refused.
+   */
+  review_score?:
+    | number
+    | {
+        readonly $eq?: number;
+        readonly $gt?: number;
+        readonly $gte?: number;
+        readonly $lt?: number;
+        readonly $lte?: number;
+      };
+  /**
+   * Full text over the title, description, project and agent name, which `sessions.search`
+   * sets. Once per filter, at its top level or in a top-level `$and`, and never inside `$or`.
+   */
+  text?: { readonly $q: string };
+  /**
+   * Server side only: whose sessions to list. An end user's token is already narrowed to their
+   * own. Only at the top level of the filter or in a top-level `$and`.
+   */
+  user_id?: string | { readonly $eq: string };
+}
+
+/**
+ * What a query can be ordered by. `last_message_at` is when the agent last answered, or when
+ * the session began. `pinned` lists the pinned sessions first, descending only. `relevance` is
+ * the order of a text search and nothing else. `review_score` is server side only.
+ */
+export type SessionSortField = Schemas["SessionSortField"];
+
+/**
+ * One step of a query's order. `direction` is -1 for descending, which it is when left out,
+ * or 1 for ascending.
+ *
+ * The orders the router takes: `[{ field: "last_message_at" }]`; `[{ field: "pinned" }]`,
+ * alone or followed by `last_message_at`; `[{ field: "review_score" }]`, server side only;
+ * and `[{ field: "relevance" }]`, only with a `text` filter.
+ */
+export interface SessionSort {
+  field: SessionSortField;
+  direction?: -1 | 1;
+}
+
+/** Which of an agent's old conversations to list, in what order, a page at a time. */
 export interface SessionQuery {
-  /** Only this project's. A search covers every project, so the router refuses it on one. */
-  projectId?: string;
-  /** Only this user's, which only a backend may ask for: a token is already narrowed. */
-  userId?: string;
-  /** How the user took part. Omitted is every way. */
-  modality?: Schemas["SessionModality"];
-  /** `live` or `ended`. Omitted is both. */
-  state?: Schemas["SessionState"];
-  /** Only the ones created with this agent id, which names their transcript channel. */
-  agentId?: string;
-  /**
-   * Only the ones whose usage is counted under this team. A token signed for a team may only
-   * ask for that one.
-   */
-  team?: string;
-  /** Only the ones created at or after this moment. */
-  createdSince?: Date;
-  /** Only the ones created before this moment. */
-  createdBefore?: Date;
-  /** Only the ones whose `custom` labels hold every one of these pairs. */
-  custom?: Record<string, string>;
-  /**
-   * The order, always newest first: by when each last changed, or for `search` by how well it
-   * matches. Omitted is the router's own, which is `updated_at` for a query and `relevance`
-   * for a search.
-   */
-  sort?: Schemas["SessionSortField"];
+  /** Which sessions. Omitted is every one of the agent's the caller may see. */
+  filter?: SessionFilter;
+  /** The order. Omitted is `last_message_at`, newest first. */
+  sort?: readonly SessionSort[];
   /** Up to 200. Omitted is 25. */
   limit?: number;
-  /** The `next_cursor` of the page before, sent with the same filters. */
+  /** The `next_cursor` of the page before, sent with the same filter and sort. */
   cursor?: string;
 }
+
+/** A search's filter and paging. It takes no sort: a search is ordered by relevance. */
+export type SessionSearch = Omit<SessionQuery, "sort">;
 
 /**
  * An agent's conversations: the one being held and the ones that were.
  *
- * `query` filters and pages; `search` reads the words a caller titled and described their
- * conversations with. Two methods rather than one that does both, because a filter and a
- * phrase combine by narrowing and there is no sensible ranking of an empty phrase.
+ * `query` filters, sorts and pages; `search` reads the words a caller titled and described
+ * their conversations with, best match first, narrowed by the same filter.
  */
 export class Sessions {
   private readonly client: Client;
@@ -138,25 +192,46 @@ export class Sessions {
   }
 
   /**
-   * The agent's conversations, newest first, the ones that ended included.
+   * The agent's conversations, the ones that ended included: by default the one the agent
+   * answered last comes first.
+   *
+   * ```ts
+   * const page = await agent.sessions.query({
+   *   filter: { $or: [{ project_id: "health" }, { project_id: "billing" }] },
+   *   sort: [{ field: "pinned" }, { field: "last_message_at" }],
+   * });
+   * ```
    *
    * What comes back are the rows rather than live handles: reading a conversation back is
    * not the same as holding one, and most of these are over. `responses` reads the turns of
-   * one, and `resume` carries one on.
+   * one, and `resume` carries one on. A `cursor` is only good with the sort it came from.
    */
   query(query: SessionQuery = {}): Promise<Schemas["SessionPage"]> {
-    return this.client.post("/v1/agents/sessions/query", { body: this.queryOf("", query) });
+    return this.client.post("/v1/agents/sessions/query", { body: this.queryOf(query) });
   }
 
   /**
    * Finds a conversation by what it was called, best match first.
    *
-   * It reads the title, the description and the opening question, which is what a person
-   * remembers a conversation by. Nothing about an incognito session is searchable, because
-   * nothing about it was written down.
+   * It reads the title, the description, the project and the agent name. The filter narrows
+   * it as it narrows a query, and must not carry a `text` of its own. Nothing about an
+   * incognito session is searchable, because nothing about it was written down.
    */
-  search(text: string, query: SessionQuery = {}): Promise<Schemas["SessionPage"]> {
-    return this.client.post("/v1/agents/sessions/query", { body: this.queryOf(text, query) });
+  async search(text: string, search: SessionSearch = {}): Promise<Schemas["SessionPage"]> {
+    if (search.filter?.text !== undefined) {
+      throw new ConfigurationError("search sets the filter's text itself: leave text out of the filter");
+    }
+    if ("sort" in search && (search as SessionQuery).sort !== undefined) {
+      throw new ConfigurationError("search takes no sort: a text search is ordered by relevance");
+    }
+    const { filter, limit, cursor } = search;
+    return this.client.post("/v1/agents/sessions/query", {
+      body: this.queryOf({
+        filter: { ...filter, text: { $q: text } },
+        ...(limit === undefined ? {} : { limit }),
+        ...(cursor === undefined ? {} : { cursor }),
+      }),
+    });
   }
 
   /**
@@ -176,12 +251,27 @@ export class Sessions {
   }
 
   /**
-   * Renames or relabels a conversation this process is not holding, running or ended, and
-   * answers it as it now is. A field left out is left as it is; `custom` replaces the labels
-   * whole. `session.update` does the same for one that is held.
+   * Renames, relabels, pins or unpins a conversation this process is not holding, running or
+   * ended, and answers it as it now is. A field left out is left as it is; `custom` replaces
+   * the labels whole; `pinned` sets or clears its `pinned_at`. `session.update` does the same
+   * for one that is held.
    */
   update(id: string, changes: Schemas["UpdateSessionRequest"]): Promise<Schemas["Session"]> {
     return this.client.patch("/v1/agents/sessions/{id}", { path: { id }, body: changes });
+  }
+
+  /**
+   * Pins a conversation, which a query sorted by `pinned` lists first, and answers it with
+   * its `pinned_at`. It moves nothing else, and one already pinned keeps the time it was first
+   * pinned. A person may pin their own; an incognito session cannot be pinned.
+   */
+  pin(id: string): Promise<Schemas["Session"]> {
+    return this.update(id, { pinned: true });
+  }
+
+  /** Unpins a conversation, and answers it without a `pinned_at`. */
+  unpin(id: string): Promise<Schemas["Session"]> {
+    return this.update(id, { pinned: false });
   }
 
   /**
@@ -241,30 +331,15 @@ export class Sessions {
     return memoryFor(this.client, memory);
   }
 
-  /** The query as the wire spells it, with the agent's own name always in it. */
-  private queryOf(text: string, query: SessionQuery): Schemas["SessionQuery"] {
+  /**
+   * The query as it is sent, with the agent's own name always the filter's top-level `agent`.
+   * The caller's filter is copied rather than wrapped in an `$and`, because `text` and
+   * `user_id` have to stay at the top level.
+   */
+  private queryOf(query: SessionQuery): Schemas["SessionQuery"] {
     return {
-      filter: {
-        agent: this.agent,
-        ...(query.projectId ? { project_id: query.projectId } : {}),
-        ...(query.userId ? { user_id: query.userId } : {}),
-        ...(query.modality ? { modality: query.modality } : {}),
-        ...(query.state ? { state: query.state } : {}),
-        ...(query.agentId ? { agent_id: query.agentId } : {}),
-        ...(query.team ? { team: query.team } : {}),
-        ...(query.createdSince || query.createdBefore
-          ? {
-              created_at: {
-                ...(query.createdSince ? { $gte: query.createdSince.toISOString() } : {}),
-                ...(query.createdBefore ? { $lt: query.createdBefore.toISOString() } : {}),
-              },
-            }
-          : {}),
-        ...(query.custom && Object.keys(query.custom).length > 0 ? { custom: query.custom } : {}),
-        ...(text ? { text: { $q: text } } : {}),
-      },
-      // One field and no direction: newest first is the only order there is.
-      ...(query.sort ? { sort: [{ field: query.sort }] } : {}),
+      filter: { ...query.filter, agent: this.agent },
+      ...(query.sort ? { sort: query.sort } : {}),
       ...(query.limit ? { limit: query.limit } : {}),
       ...(query.cursor ? { cursor: query.cursor } : {}),
     };

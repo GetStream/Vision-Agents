@@ -5,7 +5,7 @@ use std::time::Duration;
 use axum::http::Method;
 use serde_json::json;
 use support::{Server, item, response, session};
-use vision_agents::{Error, Session, ToolCall, Tools, WatchOptions, types};
+use vision_agents::{Error, Query, Session, ToolCallContext, Tools, WatchOptions, types};
 
 fn weather() -> Tools {
     let tools = Tools::new();
@@ -565,9 +565,9 @@ async fn an_agents_conversations_are_listed_searched_and_opened_by_name() {
 
     let page = agent
         .sessions
-        .query(vision_agents::Query {
-            project_id: Some("p".into()),
-            state: Some("live".into()),
+        .query(Query {
+            filter: json!({"project_id": "p"}),
+            limit: Some(50),
             cursor: Some("c1".into()),
             ..Default::default()
         })
@@ -606,7 +606,7 @@ async fn an_agents_conversations_are_listed_searched_and_opened_by_name() {
     assert_eq!(
         queries,
         [
-            json!({"filter": {"agent": "docs", "project_id": "p", "state": "live"}, "cursor": "c1"}),
+            json!({"filter": {"agent": "docs", "project_id": "p"}, "limit": 50, "cursor": "c1"}),
             json!({"filter": {"agent": "docs", "text": {"$q": "pricing"}}}),
         ]
     );
@@ -616,64 +616,276 @@ async fn an_agents_conversations_are_listed_searched_and_opened_by_name() {
     );
 }
 
-#[tokio::test]
-async fn a_query_narrows_by_team_window_labels_and_order() {
-    let server = Server::start().await;
+/// The bodies the router saw for the session query, in the order they were sent.
+fn queries(server: &Server) -> Vec<serde_json::Value> {
+    server
+        .requests(Method::POST, "/v1/agents/sessions/query")
+        .into_iter()
+        .map(|seen| seen.body)
+        .collect()
+}
+
+fn empty_page(server: &Server) {
     server.route(
         Method::POST,
         "/v1/agents/sessions/query",
         200,
         json!({"items": [], "has_more": false}),
     );
-    let agent = server.client().agent("docs");
+}
 
-    agent
-        .sessions
-        .query(vision_agents::Query {
-            team: Some("finance".into()),
-            created_since: Some("2026-10-01T00:00:00Z".into()),
-            created_before: Some("2026-11-01T00:00:00Z".into()),
-            custom: [("ticket".to_string(), "4721".to_string())].into(),
-            sort: Some(types::SessionSortField::UpdatedAt),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    agent
-        .sessions
+fn sorted(field: types::SessionSortField, direction: Option<i64>) -> types::SessionSort {
+    types::SessionSort {
+        field,
+        direction: direction.map(|direction| direction.try_into().unwrap()),
+    }
+}
+
+#[tokio::test]
+async fn a_query_sends_the_filter_as_written_narrowed_to_the_agent() {
+    let server = Server::start().await;
+    empty_page(&server);
+    let sessions = server.client().agent("docs").sessions;
+
+    let filters = [
+        serde_json::Value::Null,
+        json!({}),
+        json!({"project_id": "p"}),
+        json!({"$or": [{"project_id": "web"}, {"project_id": "ios"}]}),
+        json!({"$and": [
+            {"user_id": "u1"},
+            {"$or": [{"project_id": "web"}, {"project_id": {"$eq": "ios"}}]},
+        ]}),
+        json!({"project_id": {"$in": ["web", "ios"]}}),
+        json!({"review_score": {"$gte": 4, "$lt": 5}, "user_id": {"$eq": "u1"}}),
+        json!({"review_score": 5}),
+        json!({"agent": "someone-else", "project_id": "p"}),
+    ];
+    for filter in filters {
+        sessions
+            .query(Query {
+                filter,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(
+        queries(&server),
+        [
+            json!({"filter": {"agent": "docs"}}),
+            json!({"filter": {"agent": "docs"}}),
+            json!({"filter": {"agent": "docs", "project_id": "p"}}),
+            json!({"filter": {
+                "agent": "docs",
+                "$or": [{"project_id": "web"}, {"project_id": "ios"}],
+            }}),
+            json!({"filter": {
+                "agent": "docs",
+                "$and": [
+                    {"user_id": "u1"},
+                    {"$or": [{"project_id": "web"}, {"project_id": {"$eq": "ios"}}]},
+                ],
+            }}),
+            json!({"filter": {"agent": "docs", "project_id": {"$in": ["web", "ios"]}}}),
+            json!({"filter": {
+                "agent": "docs",
+                "review_score": {"$gte": 4, "$lt": 5},
+                "user_id": {"$eq": "u1"},
+            }}),
+            json!({"filter": {"agent": "docs", "review_score": 5}}),
+            json!({"filter": {"agent": "docs", "project_id": "p"}}),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_query_sends_each_sort() {
+    use types::SessionSortField::{LastMessageAt, Pinned, Relevance, ReviewScore};
+    let server = Server::start().await;
+    empty_page(&server);
+    let sessions = server.client().agent("docs").sessions;
+
+    let sorts = [
+        vec![sorted(LastMessageAt, None)],
+        vec![sorted(LastMessageAt, Some(1))],
+        vec![sorted(Pinned, None)],
+        vec![sorted(Pinned, Some(-1)), sorted(LastMessageAt, Some(1))],
+        vec![sorted(ReviewScore, Some(-1))],
+        vec![sorted(ReviewScore, Some(1))],
+    ];
+    for sort in sorts {
+        sessions
+            .query(Query {
+                sort,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+    }
+    sessions
         .search(
             "lisbon",
-            vision_agents::Query {
-                created_since: Some("2026-10-01T00:00:00Z".into()),
-                sort: Some(types::SessionSortField::Relevance),
+            Query {
+                sort: vec![sorted(Relevance, Some(-1))],
                 ..Default::default()
             },
         )
         .await
         .unwrap();
 
-    let queries: Vec<_> = server
-        .requests(Method::POST, "/v1/agents/sessions/query")
-        .into_iter()
-        .map(|seen| seen.body)
-        .collect();
+    let agent = json!({"agent": "docs"});
     assert_eq!(
-        queries,
+        queries(&server),
         [
+            json!({"filter": agent, "sort": [{"field": "last_message_at"}]}),
+            json!({"filter": agent, "sort": [{"field": "last_message_at", "direction": 1}]}),
+            json!({"filter": agent, "sort": [{"field": "pinned"}]}),
+            json!({"filter": agent, "sort": [
+                {"field": "pinned", "direction": -1},
+                {"field": "last_message_at", "direction": 1},
+            ]}),
+            json!({"filter": agent, "sort": [{"field": "review_score", "direction": -1}]}),
+            json!({"filter": agent, "sort": [{"field": "review_score", "direction": 1}]}),
             json!({
-                "filter": {
-                    "agent": "docs",
-                    "team": "finance",
-                    "created_at": {"$gte": "2026-10-01T00:00:00Z", "$lt": "2026-11-01T00:00:00Z"},
-                    "custom": {"ticket": "4721"},
-                },
-                "sort": [{"field": "updated_at"}],
-            }),
-            json!({
-                "filter": {"agent": "docs", "created_at": {"$gte": "2026-10-01T00:00:00Z"}, "text": {"$q": "lisbon"}},
-                "sort": [{"field": "relevance"}],
+                "filter": {"agent": "docs", "text": {"$q": "lisbon"}},
+                "sort": [{"field": "relevance", "direction": -1}],
             }),
         ]
+    );
+}
+
+#[tokio::test]
+async fn a_search_takes_the_filter_and_pages_like_a_query() {
+    let server = Server::start().await;
+    server.route(
+        Method::POST,
+        "/v1/agents/sessions/query",
+        200,
+        json!({"items": [session("s1")], "has_more": true, "next_cursor": "c2"}),
+    );
+    let sessions = server.client().agent("docs").sessions;
+
+    let first = sessions
+        .search(
+            "pricing",
+            Query {
+                filter: json!({"project_id": "p"}),
+                limit: Some(10),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    sessions
+        .search(
+            "pricing",
+            Query {
+                filter: json!({"project_id": "p"}),
+                limit: Some(10),
+                cursor: first.next_cursor.clone(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    assert!(first.has_more);
+    let filter = json!({"agent": "docs", "project_id": "p", "text": {"$q": "pricing"}});
+    assert_eq!(
+        queries(&server),
+        [
+            json!({"filter": filter, "limit": 10}),
+            json!({"filter": filter, "limit": 10, "cursor": "c2"}),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_filter_the_router_could_not_read_is_refused_before_a_request() {
+    let server = Server::start().await;
+    let sessions = server.client().agent("docs").sessions;
+
+    let not_an_object = sessions
+        .query(Query {
+            filter: json!(["project_id", "p"]),
+            ..Default::default()
+        })
+        .await;
+    let two_texts = sessions
+        .search(
+            "pricing",
+            Query {
+                filter: json!({"text": {"$q": "plans"}}),
+                ..Default::default()
+            },
+        )
+        .await;
+
+    assert!(matches!(not_an_object, Err(Error::Configuration(_))));
+    assert!(matches!(two_texts, Err(Error::Configuration(_))));
+    assert!(server.seen().is_empty());
+}
+
+#[tokio::test]
+async fn a_session_is_pinned_and_unpinned_and_says_when() {
+    let server = Server::start().await;
+    let (chat, _socket) = open(&server, weather()).await;
+    let mut pinned = session("s9");
+    pinned["pinned_at"] = json!("2026-11-11T09:00:00Z");
+    server.route(
+        Method::POST,
+        "/v1/agents/sessions/query",
+        200,
+        json!({"items": [pinned, session("s8")], "has_more": false}),
+    );
+    server.route(Method::PATCH, "/v1/agents/sessions/s9", 200, pinned.clone());
+    server.route(Method::PATCH, "/v1/agents/sessions/s1", 200, session("s1"));
+    let sessions = server.client().agent("jean").sessions;
+
+    let by_id = sessions.pin("s9").await.unwrap();
+    sessions.unpin("s9").await.unwrap();
+    sessions
+        .update(
+            "s9",
+            &types::UpdateSessionRequest {
+                pinned: Some(true),
+                title: Some("Pricing".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    chat.pin().await.unwrap();
+    let unpinned = chat.unpin().await.unwrap();
+    let page = sessions.query(Query::default()).await.unwrap();
+
+    assert_eq!(by_id.pinned_at.as_deref(), Some("2026-11-11T09:00:00Z"));
+    assert_eq!(unpinned.pinned_at, None);
+    assert_eq!(
+        page.items[0].pinned_at.as_deref(),
+        Some("2026-11-11T09:00:00Z")
+    );
+    assert_eq!(page.items[1].pinned_at, None);
+    let bodies = |path: &str| -> Vec<_> {
+        server
+            .requests(Method::PATCH, path)
+            .into_iter()
+            .map(|seen| seen.body)
+            .collect()
+    };
+    assert_eq!(
+        bodies("/v1/agents/sessions/s9"),
+        [
+            json!({"pinned": true}),
+            json!({"pinned": false}),
+            json!({"pinned": true, "title": "Pricing"}),
+        ]
+    );
+    assert_eq!(
+        bodies("/v1/agents/sessions/s1"),
+        [json!({"pinned": true}), json!({"pinned": false})]
     );
 }
 
@@ -783,11 +995,14 @@ fn tool(name: &str) -> types::SessionTool {
 fn holding() -> Tools {
     let tools = Tools::new();
     tools
-        .register_with_tool_call_context(tool("pay"), |_, tool_call_context: ToolCall| async move {
-            tool_call_context.disallow_interruptions().await?;
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            Ok::<_, Error>("paid")
-        })
+        .register_with_tool_call_context(
+            tool("pay"),
+            |tool_call_context: ToolCallContext, _| async move {
+                tool_call_context.disallow_interruptions().await?;
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                Ok::<_, Error>("paid")
+            },
+        )
         .unwrap();
     tools.register("fast", "Does not take long", json!({}), |_| async {
         Ok::<_, String>("done")
@@ -800,7 +1015,7 @@ async fn a_function_is_told_who_its_call_answers_and_can_say_how_it_is_going() {
     let server = Server::start().await;
     let tools = Tools::new();
     tools
-        .register_with_tool_call_context(tool("book"), |_, tool_call_context: ToolCall| async move {
+        .register_with_tool_call_context(tool("book"), |tool_call_context: ToolCallContext, _| async move {
             tool_call_context.update("Looking at flights")
                 .await
                 .map_err(|error| error.to_string())?;

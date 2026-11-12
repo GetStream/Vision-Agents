@@ -193,6 +193,7 @@ func (s *Server) getSession(ctx context.Context, request *getSessionRequest) (*g
 	var rendered Session
 	if found.Live != nil {
 		rendered = sessionOf(ctx, found.Live)
+		rendered.PinnedAt = s.livePinnedAt(ctx, found.Live)
 	} else {
 		rendered = storedSessionOf(*found.Stored)
 	}
@@ -992,6 +993,7 @@ func mergeStored(rendered *Session, row *store.AgentSession) {
 		rendered.EndFault, rendered.EndStage = &fault, &stage
 	}
 	rendered.LastResponseAt = row.LastResponseAt
+	rendered.PinnedAt = row.PinnedAt
 }
 
 // SessionEndReason is why a session ended: a session.EndReasons value a row can keep.
