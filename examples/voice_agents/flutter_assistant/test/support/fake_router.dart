@@ -48,7 +48,13 @@ final class FakeRouter {
     if (WebSocketTransformer.isUpgradeRequest(request)) {
       final socket = await WebSocketTransformer.upgrade(request);
       // Read, which also lets the socket notice the app closing its end.
-      socket.listen((message) => said.add('$message'), onError: (_) {});
+      socket.listen((message) {
+        said.add('$message');
+        // As the router does once a session is told to close, which the app waits for.
+        if (message is String && (jsonDecode(message) as Map<String, Object?>)['type'] == 'close') {
+          unawaited(socket.close(1000, 'the session ended'));
+        }
+      }, onError: (_) {});
       _sockets.add(socket);
       return;
     }

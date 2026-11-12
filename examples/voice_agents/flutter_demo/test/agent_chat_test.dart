@@ -421,9 +421,14 @@ class _Router {
 /// The session's events socket, from the router's end.
 class _Socket {
   _Socket(this._socket) {
-    _socket.listen(
-      (frame) => _frames.add(jsonDecode('$frame') as Map<String, Object?>),
-    );
+    _socket.listen((frame) {
+      final decoded = jsonDecode('$frame') as Map<String, Object?>;
+      _frames.add(decoded);
+      // As the router does once a session is told to close, which the app waits for.
+      if (decoded['type'] == 'close') {
+        unawaited(_socket.close(1000, 'the session ended'));
+      }
+    });
   }
 
   final WebSocket _socket;
