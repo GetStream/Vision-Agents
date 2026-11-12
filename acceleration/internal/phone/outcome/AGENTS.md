@@ -6,6 +6,9 @@ and the phone's join and leave into its stored outcome: `completed`, `busy`, `no
 `failed`, `canceled` or `unknown`. The API and billing read those values: add to them, never
 change one.
 
+`canceled` is also stored when the router hangs up a call its session left ringing
+(`Keeper.Canceled`), decided as a vendor's final report: the first one kept wins.
+
 ## The metric
 
 `router_phone_call_outcomes_total{vendor, direction, outcome}` (`metric.go`) counts each call

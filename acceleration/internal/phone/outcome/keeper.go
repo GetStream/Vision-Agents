@@ -85,6 +85,16 @@ func (k *Keeper) Reported(ctx context.Context, token string, report Report) (Cal
 	return call, nil
 }
 
+// Canceled is the router hanging up the call before anyone answered. It is decided as a
+// vendor's final report is, so whichever of the two came first is kept.
+func (k *Keeper) Canceled(ctx context.Context, key Key) (Call, error) {
+	_, call, err := k.decide(ctx, where(key), event{kind: reportedEvent, reported: Canceled, at: k.now()})
+	if err != nil {
+		return Call{}, asUnknown(err)
+	}
+	return call, nil
+}
+
 // Answered is the call's phone joining the Stream call at at. A leg with no row, a transfer's
 // or an inbound call's, is nothing to keep.
 func (k *Keeper) Answered(ctx context.Context, key Key, at time.Time) error {
