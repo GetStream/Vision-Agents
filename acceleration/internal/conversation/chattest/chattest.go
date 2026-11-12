@@ -73,6 +73,8 @@ type store struct {
 	uploads []Upload
 	// events are the events sent to each channel, by channel id, in the order they came.
 	events map[string][]map[string]any
+	// rewind is what the channel rewind endpoint holds and is steered by; see rewind.go.
+	rewind rewindState
 }
 
 // Upload is one file stored on a channel: the channel's type and id, which endpoint took it
@@ -733,6 +735,14 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(r.URL.Path, "/")
 	result := map[string]any{}
 	switch {
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/rewind"):
+		// The path is .../channels/<type>/<id>/rewind.
+		status, answer := db.rewindChannel(parts[len(parts)-3], parts[len(parts)-2], body)
+		if status != http.StatusCreated {
+			w.WriteHeader(status)
+		}
+		_ = json.NewEncoder(w).Encode(answer)
+		return
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/event"):
 		// The path is .../channels/<type>/<id>/event.
 		cid := parts[len(parts)-3] + ":" + parts[len(parts)-2]
@@ -993,7 +1003,7 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		if cid, ok := filter["cid"].(string); ok {
 			if data, exists := db.channels[cid]; exists {
 				channels = append(channels, map[string]any{
-					"channel": data, "members": data["members"], "messages": db.messagesIn(cid),
+					"channel": data, "members": data["members"], "messages": db.visibleIn(cid),
 				})
 			}
 		}
@@ -1024,7 +1034,7 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			result["channel"] = channel
 		}
 		result["members"] = db.channels[id]["members"]
-		result["messages"] = db.messagesIn(id)
+		result["messages"] = db.pageAfter(id, body)
 	case strings.HasSuffix(r.URL.Path, "/message"):
 		message := body["message"].(map[string]any)
 		id, _ := message["id"].(string)
@@ -1042,7 +1052,7 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		db.order = append(db.order, id)
 		// The path is .../channels/<type>/<id>/message.
 		message["cid"] = parts[len(parts)-3] + ":" + parts[len(parts)-2]
-		message["created_at"] = db.now().UnixNano()
+		message["created_at"] = db.afterHiddenRanges(message["cid"].(string), db.now()).UnixNano()
 		// Chat answers with the author it resolved the id to, which is how a reader
 		// learns who spoke: a stored message carries a user, not a user id. A user
 		// nobody named comes back named after their own id.
@@ -1052,6 +1062,11 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		db.messages[id] = message
 		result["message"] = db.messages[id]
+	case strings.Contains(r.URL.Path, "/messages/") && r.Method == http.MethodGet && db.hidden(db.messages[parts[len(parts)-1]]):
+		// Chat answers a read by id of a rewound message as one of a message it does not have.
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 16, "message": "message " + parts[len(parts)-1] + " does not exist", "StatusCode": http.StatusNotFound})
+		return
 	case strings.Contains(r.URL.Path, "/messages/") && r.Method == http.MethodDelete:
 		id := parts[len(parts)-1]
 		result["message"] = db.messages[id]
