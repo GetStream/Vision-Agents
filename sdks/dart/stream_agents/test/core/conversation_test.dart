@@ -110,6 +110,31 @@ void main() {
       expect(conversation.state, const Working(['recall']));
     });
 
+    test('a task settling after the turn finished leaves the agent idle', () {
+      final conversation = const Conversation()
+          .apply(frame('{"type":"delegated","task_id":"k1","skill":"think"}'))
+          .apply(frame('{"type":"responded","turn_id":"t1","text":"Done."}'))
+          .apply(frame('{"type":"task_cancelled","task_id":"k1","skill":"think"}'));
+
+      expect(conversation.state, ConversationState.idle);
+    });
+
+    test('a task settling after the agent left keeps the conversation over', () {
+      final conversation = const Conversation()
+          .apply(frame('{"type":"left","at":"2026-09-02T17:05:00Z"}'))
+          .apply(frame('{"type":"task_settled","task_id":"k1","skill":"think"}'));
+
+      expect(conversation.state, ConversationState.ended);
+    });
+
+    test('typing with spaces around it is not shown twice when the router echoes it', () {
+      final conversation = const Conversation()
+          .said('what are your hours')
+          .apply(frame('{"type":"heard","participant":{},"text":"what are your hours\\n"}'));
+
+      expect(conversation.turns, hasLength(1));
+    });
+
     test('the conversation ends when the agent leaves', () {
       final conversation = const Conversation().apply(
         frame('{"type":"left","at":"2026-09-02T17:05:00Z"}'),
@@ -124,6 +149,24 @@ void main() {
       );
 
       expect(conversation.failure, 'the voice is unknown');
+    });
+
+    test('a failure is cleared once the conversation moves on to a new turn', () {
+      const failed = Conversation(failure: 'the voice is unknown');
+
+      expect(failed.apply(frame('{"type":"responding","turn_id":"t2"}')).failure, isNull);
+      expect(
+        failed.apply(frame('{"type":"heard","participant":{},"text":"try again"}')).failure,
+        isNull,
+      );
+      expect(
+        failed.said('try again').apply(frame('{"type":"heard","text":"try again"}')).failure,
+        isNull,
+      );
+      expect(
+        failed.apply(frame('{"type":"response_delta","turn_id":"t1","text":"."}')).failure,
+        'the voice is unknown',
+      );
     });
 
     test('an event this SDK has never heard of changes nothing', () {

@@ -149,7 +149,9 @@ final class Conversation {
         // A text session echoes what was typed, which is already here. A call transcribes
         // what was spoken, which is the first anyone hears of it.
         if (_matchesLastParticipantTurn(event.text)) {
-          return withState(ConversationState.idle);
+          return failure == null
+              ? withState(ConversationState.idle)
+              : _with(state: ConversationState.idle, failure: null);
         }
         return _with(
           turns: [
@@ -162,6 +164,7 @@ final class Conversation {
             ),
           ],
           state: ConversationState.idle,
+          failure: null,
         );
 
       case AgentEventKind.hearing:
@@ -174,6 +177,7 @@ final class Conversation {
             Turn(id: event.turnId, speaker: Speaker.agent, text: '', at: now),
           ],
           state: ConversationState.responding,
+          failure: null,
         );
 
       case AgentEventKind.responseDelta:
@@ -196,6 +200,10 @@ final class Conversation {
         return _with(state: Working([..._working, _text(event['skill'])]));
 
       case AgentEventKind.taskSettled || AgentEventKind.taskCancelled:
+        // A task settling after the turn finished, or the conversation ended, changes nothing.
+        if (state is! Working) {
+          return this;
+        }
         final left = [..._working]..remove(_text(event['skill']));
         return _with(state: left.isEmpty ? ConversationState.responding : Working(left));
 
@@ -218,8 +226,9 @@ final class Conversation {
     _ => const [],
   };
 
+  /// What was typed is shown trimmed, so the echo is compared trimmed too.
   bool _matchesLastParticipantTurn(String text) =>
-      turns.isNotEmpty && !turns.last.speaker.isAgent && turns.last.text == text;
+      turns.isNotEmpty && !turns.last.speaker.isAgent && turns.last.text == text.trim();
 
   /// Changes the agent turn this event belongs to, starting one if the router sent a delta
   /// for a turn we never saw begin.
@@ -238,11 +247,11 @@ final class Conversation {
     return _with(turns: changed);
   }
 
-  Conversation _with({List<Turn>? turns, ConversationState? state, String? failure}) =>
+  Conversation _with({List<Turn>? turns, ConversationState? state, Object? failure = _keep}) =>
       Conversation(
         turns: turns ?? this.turns,
         state: state ?? this.state,
-        failure: failure ?? this.failure,
+        failure: identical(failure, _keep) ? this.failure : failure as String?,
       );
 
   @override
@@ -255,6 +264,9 @@ final class Conversation {
   @override
   int get hashCode => Object.hash(Object.hashAll(turns), state, failure);
 }
+
+/// Leaves [Conversation.failure] as it is, where null clears it.
+const _keep = Object();
 
 final _random = Random();
 
