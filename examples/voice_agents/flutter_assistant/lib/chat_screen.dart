@@ -1,12 +1,11 @@
 import 'dart:async';
-import 'dart:io' show File;
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 import 'package:stream_core_flutter/core.dart';
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents_core/stream_agents_core.dart';
 
 import 'agent_chat.dart';
 import 'assistant.dart';
@@ -18,7 +17,8 @@ import 'voice_screen.dart';
 /// A new conversation opens its session as its first message is typed, since opening one takes
 /// seconds, and deletes it again if it is left unsent, so opening the app or tapping New chat
 /// leaves nothing in the list. A conversation from the list is followed again by its id, and
-/// one that ended carries on when it is next asked something.
+/// one that ended carries on when it is next asked something. It takes no question until what
+/// was said in it has arrived.
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key, required this.sessionId, required this.onStarted});
 
@@ -42,39 +42,39 @@ class _ChatScreenState extends State<ChatScreen> {
   ];
 
   static final _thinkHarder = ChatOption(
-    id: 'think_harder',
+    id: AgentChat.thinkHarder,
     text: 'Think harder',
     description: 'More time to reason before answering',
     // Core has no thinking glyph; its bolt reads as "more effort".
     icon: StreamIcons().bolt,
   );
 
-  AgentChat? _chat;
+  /// The conversation's session and channel, opened when the conversation first needs them.
+  ///
+  /// A question that could not be asked goes back to the composer.
+  late final _chat = AgentChat(widget.sessionId, composer: _composer);
+
+  final _composer = ChatComposerController(chatOptions: [_thinkHarder], maxAttachments: 10);
+
+  /// What the conversation shows and what the person does in it. Replies are rated on this
+  /// phone only, since the router takes no ratings yet, and are not written again or edited:
+  /// the router keeps the conversation in Chat and cannot rewind it.
+  late final _conversation = AIConversation(
+    transport: _chat,
+    composer: _composer,
+    approver: _approver,
+    actions: AIConversationActions.rate,
+  );
+
+  /// Why the conversation could not be opened, or null.
   String? _failure;
-
-  /// What the person just asked, shown at once with its photos until Stream's copy of their
-  /// message arrives and takes its place: opening a conversation, uploading its photos and
-  /// writing the message take seconds together.
-  _Asked? _asking;
-
-  /// The session being opened, so asking while it opens waits for it rather than opening a
-  /// second one.
-  Future<AgentChat?>? _opening;
 
   /// Whether the list has been told about this new conversation.
   var _announced = false;
 
-  /// A new conversation's session, opened while the person wrote their first message and not
-  /// used yet.
-  ///
-  /// Leaving without using it deletes it, so it is not left in the list.
-  String? _unused;
-
   /// How tall the composer floating over the bottom of the conversation is, which the
   /// conversation keeps its latest message clear of.
   var _barHeight = 0.0;
-
-  final _composer = ChatComposerController(chatOptions: [_thinkHarder], maxAttachments: 10);
 
   /// The answers to the tools that ask first, and to the sign-ins the agent's connectors wait
   /// for, as the person signed in here.
@@ -84,32 +84,28 @@ class _ChatScreenState extends State<ChatScreen> {
   late final _approver = AIToolApprover(
     identity: const AIClientIdentity(userId: Assistant.userId),
     decide: (call, decision) async {
-      final chat = _openChat();
+      final session = _openSession();
       // The session drops an answer to a call it is not waiting on, such as one asked before
       // the app was last closed, which would leave the card saying it was sent.
-      if (!chat.session.approvals.value.any((request) => request.id == call.id)) {
+      if (!session.approvals.value.any((request) => request.id == call.id)) {
         throw StateError('This question is no longer waiting for an answer.');
       }
-      chat.session.decide(call.id, allowed: decision == AIToolApprovalDecision.allowed);
+      session.decide(call.id, allowed: decision == AIToolApprovalDecision.allowed);
     },
     authorizer: AIToolAuthorizer(
       connect: (call, url) => SignIn.open(url),
-      decline: (call) async => _openChat().session.declineLogin(call.id),
+      decline: (call) async => _openSession().declineLogin(call.id),
     ),
   );
 
-  /// Stream's components: what the person can do under each finished reply, and the composer
-  /// with the way into voice mode beside the message box. Its button and its field float over
-  /// the conversation, so they are frosted rather than filled.
+  /// Stream's components: the composer with the way into voice mode beside the message box.
+  /// Its button and its field float over the conversation, so they are frosted rather than
+  /// filled.
   ///
   /// Made once, since new builders rebuild every component that reads them.
   late final _components = StreamComponentBuilders(
     extensions: streamAIComponentBuilders(
-      replyActions: _replyActions,
-      composerLeading: (context, props) => _Frosted(
-        shape: const CircleBorder(),
-        child: ComposerAttachmentButton(props: props),
-      ),
+      composerLeading: (context, props) => _AddButton(props: props),
       composerInput: (context, props) => _Frosted(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.all(context.streamRadius.xxxl)),
         child: ChatComposerInput(props: props),
@@ -127,271 +123,190 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _composer.addListener(_draftChanged);
+    _conversation.addListener(_conversationChanged);
+    _chat.usedSessionId.addListener(_usedChanged);
     if (widget.sessionId != null) _open();
   }
 
   @override
   void dispose() {
-    _composer
-      ..removeListener(_draftChanged)
+    _composer.removeListener(_draftChanged);
+    _conversation
+      ..removeListener(_conversationChanged)
       ..dispose();
+    _composer.dispose();
     _approver.dispose();
-    final chat = _chat;
-    chat?.removeListener(_chatChanged);
-    unawaited(_leave(chat, _unused));
+    _chat.usedSessionId.removeListener(_usedChanged);
+    unawaited(_leave(_chat));
     super.dispose();
   }
 
-  /// The conversation's chat, for answering what it asks.
+  /// The conversation's session, for answering what it asks.
   ///
   /// Throws a [StateError] while the conversation is not open.
-  AgentChat _openChat() {
-    final chat = _chat;
-    if (chat == null) {
+  AgentSession _openSession() {
+    final session = _chat.session;
+    if (session == null) {
       throw StateError('The conversation is not open yet. Try again in a moment.');
     }
-    return chat;
+    return session;
   }
 
-  /// Closes [chat], and deletes [unused], a session that was opened but never used.
-  ///
-  /// The delete is tried whether or not the close went through.
-  static Future<void> _leave(AgentChat? chat, String? unused) async {
-    if (chat != null) {
-      try {
-        await chat.close();
-      } on Object catch (error) {
-        debugPrint('Closing the conversation failed: $error');
-      }
-      chat.dispose();
-    }
-    if (unused == null) return;
+  /// Closes [chat], which deletes a new conversation's session that was never used.
+  static Future<void> _leave(AgentChat chat) async {
     try {
-      await Assistant.sessions.delete(unused);
-    } on Object {
-      // Left in the list, where the person can delete it.
+      await chat.close();
+    } on Object catch (error) {
+      debugPrint('Closing the conversation failed: $error');
     }
+    chat.dispose();
   }
 
   /// Opens a new conversation's session as its first message is written rather than once it
   /// is sent, since opening one takes seconds.
   void _draftChanged() {
-    if (widget.sessionId != null) return;
-    if (_chat != null || _opening != null) return;
+    if (widget.sessionId != null || _chat.session != null) return;
     // After a failed open the next one waits for the question to be sent, rather than each
     // keystroke opening, failing and deleting another session.
     if (_failure != null) return;
     if (_composer.text.isEmpty) return;
-    _open().then((chat) {
-      if (chat != null && !_announced) _unused = chat.session.id;
-    });
+    _open();
   }
 
-  void _chatChanged() {
-    final chat = _chat!;
-    _composer.isGenerating = chat.isAnswering;
-    final asked = _asking;
-    final after = asked?.after;
-    setState(() {
-      if (after != null && chat.personMessageCount > after) _asking = null;
-    });
+  /// A question asked again after a failed open clears what that said.
+  void _conversationChanged() {
+    if (_failure != null && _conversation.status.isAnswering) setState(() => _failure = null);
   }
 
-  /// The conversation's chat, starting a session for a new one.
-  Future<AgentChat?> _open() async {
-    if (_chat case final chat?) return chat;
-    if (_opening case final opening?) return opening;
-    final opening = _opening = _start();
-    final opened = await opening;
-    _opening = null;
-    return opened;
+  /// Tells the list about a new conversation once it is used, written or talked to.
+  void _usedChanged() {
+    final used = _chat.usedSessionId.value;
+    if (widget.sessionId != null || _announced || used == null) return;
+    _announced = true;
+    widget.onStarted(used);
   }
 
-  /// Carries on the conversation's session, or starts one for a new conversation, and opens
-  /// its channel.
-  Future<AgentChat?> _start() async {
-    _failure = null;
-    final sessionId = widget.sessionId;
-    AgentSession? session;
+  /// The conversation's session, opened if it is not yet, and marked used when [use]. Says
+  /// why when it cannot be opened.
+  Future<AgentSession?> _open({bool use = false}) async {
+    if (_failure != null) setState(() => _failure = null);
     try {
-      session = sessionId != null
-          ? await Assistant.agents.attach(sessionId, tools: Assistant.tools)
-          : await Assistant.agents
-                .agent(Assistant.agentName)
-                .chat(
-                  SessionOptions(
-                    llm: Assistant.chatModel,
-                    tools: Assistant.tools,
-                    returnUrl: Assistant.returnUrl,
-                  ),
-                );
-      final chat = await AgentChat.open(session);
-      if (!mounted) {
-        await _leave(chat, sessionId == null ? session.id : null);
-        return null;
-      }
-      chat.addListener(_chatChanged);
-      setState(() => _chat = chat);
-      return chat;
+      final session = await (use ? _chat.use() : _chat.open());
+      // A conversation from the list takes questions from here on.
+      if (mounted) setState(() {});
+      return session;
+    } on AIConversationCancelledException {
+      // Left while it opened.
+      return null;
     } on Object catch (error) {
-      // A session that opened but whose channel did not is let go of, and a new one deleted,
-      // so asking again does not leave another socket open and another conversation listed.
-      if (session != null) unawaited(_discard(session, isNew: sessionId == null));
       if (mounted) setState(() => _failure = '$error');
       return null;
     }
   }
 
-  static Future<void> _discard(AgentSession session, {required bool isNew}) async {
-    try {
-      await session.close();
-    } on Object catch (error) {
-      debugPrint('Closing the session failed: $error');
-    }
-    if (!isNew) return;
-    try {
-      await Assistant.sessions.delete(session.id);
-    } on Object {
-      // Left in the list, where the person can delete it.
-    }
-  }
-
-  Future<void> _send(String text, {List<XFile> photos = const [], bool thinkHarder = false}) async {
-    final asked = _Asked(text, photos);
-    setState(() => _asking = asked);
-    final chat = await _open();
-    if (chat == null) {
-      if (mounted && identical(_asking, asked)) {
-        setState(() => _asking = null);
-        _restore(text, photos, thinkHarder: thinkHarder);
-      }
-      return;
-    }
-    asked.after = chat.personMessageCount;
-    _markUsed(chat);
-    await chat.ask(text, photos: photos, thinkHarder: thinkHarder);
-    if (mounted && chat.failure != null && identical(_asking, asked)) {
-      setState(() => _asking = null);
-      _restore(text, photos, thinkHarder: thinkHarder);
-    }
-  }
-
-  /// Puts a question that could not be asked back in the composer, which emptied as it was
-  /// sent, unless something new has been written there since.
-  void _restore(String text, List<XFile> photos, {required bool thinkHarder}) {
-    if (_composer.hasContent) return;
-    _composer.textEditingController.text = text;
-    _composer.addAttachments(photos);
-    if (thinkHarder) _composer.selectChatOption(_thinkHarder);
-  }
-
   /// Switches to voice mode on this conversation, starting a session for a new one.
   Future<void> _talk() async {
-    final chat = await _open();
-    if (chat == null || !mounted) return;
-    _markUsed(chat);
+    final session = await _open(use: true);
+    if (session == null || !mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         fullscreenDialog: true,
-        builder: (context) => VoiceScreen(chat: chat),
-      ),
-    );
-  }
-
-  /// Tells the list about a new conversation once it is used, written or talked to.
-  void _markUsed(AgentChat chat) {
-    _unused = null;
-    if (widget.sessionId != null || _announced) return;
-    _announced = true;
-    widget.onStarted(chat.session.id);
-  }
-
-  /// What the person can do under a finished reply: copy it, share it and rate it.
-  ///
-  /// Asking for a reply again needs the router to replace one, which it does not yet.
-  Widget _replyActions(BuildContext context, AIReplyActionsProps props) {
-    final chat = _chat!;
-    // Read here, from the chat, so the thumbs change as soon as the rating does.
-    return ListenableBuilder(
-      listenable: chat,
-      builder: (context, _) => AIReplyActionsView(
-        text: props.text,
-        actions: AIReplyActions(
-          rating: chat.ratings[props.message.id],
-          onRate: (rating) => chat.rate(props.message.id, rating),
-        ),
+        builder: (context) => VoiceScreen(session: session),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final chat = _chat;
-    final workingOn = chat?.workingOn;
-    final isWelcoming = (chat?.messages.isEmpty ?? true) && _asking == null;
     return StreamComponentFactory(
       builders: _components,
-      child: Stack(
-        children: [
-          Positioned.fill(
-            // The person's messages in bubbles, the agent's as their steps and then their
-            // answer. What the person asks shows at once, and Stream's copy takes its place,
-            // photos and all. Each question goes to the top as it is asked, and its reply
-            // writes itself out below it without moving what is on screen.
-            child: NotificationListener<ScrollUpdateNotification>(
-              onNotification: (notification) {
-                if (notification.dragDetails != null) {
-                  FocusManager.instance.primaryFocus?.unfocus();
-                }
-                return false;
-              },
-              child: AIConversationView(
-                messages: chat?.listMessages ?? const [],
-                pendingMessage: _asking?.pending,
-                // A question on its way is thought about before the session says anything.
-                isThinking: workingOn == null && ((chat?.isThinking ?? false) || _asking != null),
-                approver: chat == null ? null : _approver,
-                ui: chat?.ui,
-                loadOlderMessages: chat != null && chat.hasOlderMessages
-                    ? chat.loadOlderMessages
-                    : null,
-                footer: workingOn == null ? null : AITypingIndicatorView(text: workingOn),
-                emptyContent: Padding(
-                  padding: EdgeInsets.only(bottom: _barHeight),
-                  child: const _Welcome(),
+      child: ListenableBuilder(
+        listenable: Listenable.merge([_conversation, _chat.failure, _chat.sessionFailure]),
+        builder: (context, _) {
+          final activity = _conversation.activity;
+          final isWelcoming =
+              _conversation.messages.isEmpty && _conversation.pendingMessage == null;
+          final takesQuestions = _chat.takesQuestions;
+          return Stack(
+            children: [
+              Positioned.fill(
+                // The person's messages in bubbles, the agent's as their steps and then their
+                // answer. What the person asks shows at once, and Stream's copy takes its
+                // place, photos and all. Each question goes to the top as it is asked, and its
+                // reply writes itself out below it without moving what is on screen.
+                child: NotificationListener<ScrollUpdateNotification>(
+                  onNotification: (notification) {
+                    if (notification.dragDetails != null) {
+                      FocusManager.instance.primaryFocus?.unfocus();
+                    }
+                    return false;
+                  },
+                  child: AIConversationView.conversation(
+                    conversation: _conversation,
+                    ui: _chat.ui,
+                    footer: _conversation.status.isAnswering && activity?.text != null
+                        ? AITypingIndicatorView(text: activity!.text!)
+                        : null,
+                    emptyContent: Padding(
+                      padding: EdgeInsets.only(bottom: _barHeight),
+                      child: const _Welcome(),
+                    ),
+                    padding: EdgeInsets.fromLTRB(16, 0, 16, 16 + _barHeight),
+                  ),
                 ),
-                padding: EdgeInsets.fromLTRB(16, 0, 16, 16 + _barHeight),
               ),
-            ),
-          ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: _Measured(
-              onHeight: (height) {
-                if (mounted) setState(() => _barHeight = height);
-              },
-              child: _composerBar(chat, isWelcoming: isWelcoming),
-            ),
-          ),
-        ],
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: _Measured(
+                  onHeight: (height) {
+                    if (mounted) setState(() => _barHeight = height);
+                  },
+                  child: _composerBar(isWelcoming: isWelcoming, takesQuestions: takesQuestions),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
 
-  /// The starters, why asking failed, and the composer, over the bottom of the conversation,
-  /// which fades away under them rather than ending at a bar.
-  Widget _composerBar(AgentChat? chat, {required bool isWelcoming}) {
-    final colors = context.streamColorScheme;
-    final surface = colors.backgroundApp;
-    final failure =
-        _failure ??
-        chat?.failure ??
-        chat?.session.conversation.value.failure ??
+  /// Why asking failed: what the conversation could not be opened for, what telling the agent
+  /// about the UI of a reply or reading a photo did, why it could not answer, or why the
+  /// session's socket stopped.
+  String? get _failureText {
+    final error = _conversation.error;
+    return _failure ??
+        _chat.failure.value ??
+        (error == null ? null : _describe(error)) ??
         // The socket dropped, such as when the phone changed networks: the tools and the
         // questions they ask stop until the conversation is opened again.
-        chat?.session.failure?.toString();
+        _chat.sessionFailure.value;
+  }
+
+  String _describe(Object error) =>
+      error is AIAgentError ? error.localizedMessage(AITranslations.of(context)) : '$error';
+
+  /// What Try again does about [_failureText], or null when there is nothing to try: opens
+  /// a conversation from the list that did not open, or asks again what the conversation
+  /// could not.
+  VoidCallback? get _retry {
+    if (_failure != null && !_chat.takesQuestions) return () => unawaited(_open());
+    return _conversation.error == null ? null : _conversation.retry;
+  }
+
+  /// The starters, why asking failed, and the composer, over the bottom of the conversation,
+  /// which fades away under them rather than ending at a bar.
+  ///
+  /// Until a conversation from the list [takesQuestions], it has no starters and its composer
+  /// takes nothing: what is asked before what was said in it arrives would lose its reply.
+  Widget _composerBar({required bool isWelcoming, required bool takesQuestions}) {
+    final colors = context.streamColorScheme;
+    final surface = colors.backgroundApp;
+    final failure = _failureText;
+    final retry = _retry;
     return DecoratedBox(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -406,7 +321,11 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (isWelcoming) AISuggestionsView(suggestions: _starters, onSuggestionSelected: _send),
+            if (isWelcoming && takesQuestions)
+              AISuggestionsView(
+                suggestions: _starters,
+                onSuggestionSelected: (text) => _conversation.send(text),
+              ),
             if (failure != null)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -414,28 +333,46 @@ class _ChatScreenState extends State<ChatScreen> {
                   shape: const StadiumBorder(),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    child: Text(
-                      failure,
-                      style: context.streamTextTheme.captionDefault.copyWith(
-                        color: colors.accentError,
-                      ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      spacing: 8,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            failure,
+                            style: context.streamTextTheme.captionDefault.copyWith(
+                              color: colors.accentError,
+                            ),
+                          ),
+                        ),
+                        if (retry != null)
+                          StreamButton(
+                            onPressed: retry,
+                            type: .ghost,
+                            size: .small,
+                            child: const Text('Try again'),
+                          ),
+                      ],
                     ),
                   ),
                 ),
               ),
             // The composer's button and field float over the conversation, so they are
             // frosted rather than filled.
-            ComposerTheme(
-              data: ComposerThemeData(
-                fillColor: colors.backgroundSurfaceStrong.withValues(alpha: 0.6),
-                borderColor: Colors.transparent,
-              ),
-              child: ChatComposer(
-                controller: _composer,
-                enableSpeechToText: true,
-                onSendPressed: (text, option, photos) =>
-                    _send(text, photos: photos, thinkHarder: option?.id == _thinkHarder.id),
-                onStopPressed: chat?.stop,
+            IgnorePointer(
+              ignoring: !takesQuestions,
+              child: Opacity(
+                opacity: takesQuestions ? 1 : 0.5,
+                child: ComposerTheme(
+                  data: ComposerThemeData(
+                    fillColor: colors.backgroundSurfaceStrong.withValues(alpha: 0.6),
+                    borderColor: Colors.transparent,
+                  ),
+                  child: ChatComposer.conversation(
+                    conversation: _conversation,
+                    enableSpeechToText: true,
+                  ),
+                ),
               ),
             ),
           ],
@@ -445,30 +382,36 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-/// A question on its way, as the person sees it before Stream's copy of it arrives.
-class _Asked {
-  _Asked(String text, List<XFile> photos)
-    : pending = AIPendingMessage(
-        text: text,
-        attachments: [
-          // From the file, shrunk, since the components load a URL attachment from the network.
-          for (final photo in photos)
-            AIMessageAttachment.memoryImage(
-              ResizeImage(FileImage(File(photo.path)), width: _thumbnailWidth),
+/// The composer's way to add photos, frosted rather than filled.
+class _AddButton extends StatelessWidget {
+  const _AddButton({required this.props});
+
+  final ChatComposerLeadingProps props;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.streamColorScheme;
+    return _Frosted(
+      shape: const CircleBorder(),
+      child: ListenableBuilder(
+        listenable: props.controller,
+        builder: (context, _) => StreamButton.icon(
+          icon: Icon(context.streamIcons.plus),
+          style: .secondary,
+          type: .outline,
+          tooltip: AITranslations.of(context).addPhotos,
+          onPressed: props.controller.isGenerating ? null : props.openAttachmentSheet,
+          themeStyle: StreamButtonThemeStyle(
+            tapTargetSize: .shrinkWrap,
+            backgroundColor: WidgetStatePropertyAll(
+              colors.backgroundSurfaceStrong.withValues(alpha: 0.6),
             ),
-        ],
-      );
-
-  /// How wide a photo is decoded for the question, in pixels: enough for its tile, rather than
-  /// the whole of a camera's photo.
-  static const _thumbnailWidth = 540;
-
-  /// Its row in the list, which Stream's copy of it takes over.
-  final AIPendingMessage pending;
-
-  /// How many of the person's messages the conversation held when it was asked, once it is
-  /// open: the next one is this question.
-  int? after;
+            borderColor: const WidgetStatePropertyAll(Colors.transparent),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// A frosted glass that lets the conversation show through, blurred, where something floats

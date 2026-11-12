@@ -69,6 +69,7 @@ extension StringCodingKey {
     static let executor: StringCodingKey = "executor"
     static let expiresAt: StringCodingKey = "expires_at"
     static let field: StringCodingKey = "field"
+    static let files: StringCodingKey = "files"
     static let filter: StringCodingKey = "filter"
     static let finishedAt: StringCodingKey = "finished_at"
     static let floorControl: StringCodingKey = "floor_control"

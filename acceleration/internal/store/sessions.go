@@ -363,7 +363,18 @@ func (s *Store) DeleteSession(ctx context.Context, customerID, id string) error 
 		return stack.Wrap(errors.New("store: a customer and a session id are required"))
 	}
 
+	// The documents first: they hold the person's files, and have no foreign key to go with
+	// the session by.
 	_, err := onEveryShard(ctx, s, func(ctx context.Context, db bun.IDB) (sql.Result, error) {
+		return db.NewDelete().Model((*ConversationDocument)(nil)).
+			Where("session_id = ?", id).
+			Where("customer_id = ?", customerID).
+			Exec(ctx)
+	})
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: delete session documents: %w", err))
+	}
+	_, err = onEveryShard(ctx, s, func(ctx context.Context, db bun.IDB) (sql.Result, error) {
 		return db.NewDelete().Model((*AgentSession)(nil)).
 			Where("id = ?", id).
 			Where("customer_id = ?", customerID).

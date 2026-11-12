@@ -159,6 +159,10 @@ type Turn struct {
 	Instructions string
 	// History is the conversation so far, oldest first, ending with what to reply to.
 	History []llm.Message
+	// Documents are the files the caller attached in this conversation (DocumentMessage),
+	// sent ahead of History on every reply. They are not History: compaction never sums them
+	// up, and a colleague is not handed them.
+	Documents []llm.Message
 	// Note is something true of this turn alone, such as the caller not having been
 	// heard clearly. It goes at the end of what this reply is sent and is not kept.
 	Note string
@@ -478,7 +482,7 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 			tools = nil
 		}
 	}
-	input := slices.Concat(WithImages(turn.History, turn.Images), carried)
+	input := slices.Concat(turn.Documents, WithImages(turn.History, turn.Images), carried)
 	if transient != "" {
 		input = append(input, llm.Message{Role: llm.System, Content: noteHeader + "\n" + transient})
 	}

@@ -46,7 +46,7 @@ type UsageEvent struct {
 	Success        bool              `bun:"success,notnull"`
 	ErrorCode      string            `bun:"error_code,notnull"`
 	Tags           map[string]string `bun:"tags,type:jsonb,nullzero"`
-	// Source is the producer: "router/<shard>/<pod>".
+	// Source is the producer: "router/<shard>/<pod>", or "job/<shard>/<pod>" for a job.
 	Source string `bun:"source,notnull"`
 }
 

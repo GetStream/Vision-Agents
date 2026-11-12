@@ -300,6 +300,10 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 				timeout := int64(child.TimeoutMs)
 				declared.TimeoutMs = &timeout
 			}
+			if child.MaxToolRounds != 0 {
+				rounds := int64(child.MaxToolRounds)
+				declared.MaxToolRounds = &rounds
+			}
 			agents = append(agents, declared)
 		}
 		body.Agents = &agents

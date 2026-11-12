@@ -663,3 +663,23 @@ func (s *TelnyxUnpaidSuite) TestAThreadTaskWhoseSessionEndsMidTurnSettles() {
 	}, deliveryWait, 20*time.Millisecond, "the task's run never settled")
 	s.Equal(store.ScheduledTaskRunDelivered, settled.State)
 }
+
+// A task made in a thread its organization's tier no longer lets it text fails as a tier limit
+// reached, not as a channel that cannot reach the person, and texts nothing.
+func (s *TelnyxUnpaidSuite) TestAThreadTaskOverTheTiersLimitsIsATierLimitReached() {
+	person := "+13125550001"
+	task := s.threadTask(s.creditedThread(person))
+	s.usage.SetLimits(s.T(), s.RouterSuite.app.organization.ID, usage.Limits{Channels: map[string]usage.ChannelLimits{
+		dlc.SMS: {Countries: []string{"CA"}},
+	}})
+	s.Require().Eventually(func() bool {
+		return errors.Is(s.gate.Allow(context.Background(), s.customerID(), dlc.SMS, person), dlc.ErrRefused)
+	}, 10*time.Second, 50*time.Millisecond, "the organization's limits are read")
+
+	run, _ := s.settledByTheWorker(task)
+
+	s.Equal(store.ScheduledTaskRunFailed, run.State)
+	s.Require().NotNil(run.Error)
+	s.Equal("tier_limit_reached", *run.Error)
+	s.Len(s.telnyx().sent(), 1, "only the answer to hi")
+}

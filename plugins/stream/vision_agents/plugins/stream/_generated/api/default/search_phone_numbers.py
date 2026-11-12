@@ -154,7 +154,8 @@ def sync_detailed(
     Args:
         limit (int | Unset):  Default: 10.
         vendor (str | Unset): One vendor to search. Absent searches every usable vendor.
-        country (str): ISO 3166-1 alpha-2 country code.
+        country (str): ISO 3166-1 alpha-2 country code. Numbers are sold only in the US (US) and
+            Canada (CA); any other country is refused.
         area_code (str | Unset):
         contains (str | Unset): Digits the number must contain, anywhere in it.
         prefix (str | Unset): Digits the number must start with, matched after the country dial
@@ -219,7 +220,8 @@ def sync(
     Args:
         limit (int | Unset):  Default: 10.
         vendor (str | Unset): One vendor to search. Absent searches every usable vendor.
-        country (str): ISO 3166-1 alpha-2 country code.
+        country (str): ISO 3166-1 alpha-2 country code. Numbers are sold only in the US (US) and
+            Canada (CA); any other country is refused.
         area_code (str | Unset):
         contains (str | Unset): Digits the number must contain, anywhere in it.
         prefix (str | Unset): Digits the number must start with, matched after the country dial
@@ -279,7 +281,8 @@ async def asyncio_detailed(
     Args:
         limit (int | Unset):  Default: 10.
         vendor (str | Unset): One vendor to search. Absent searches every usable vendor.
-        country (str): ISO 3166-1 alpha-2 country code.
+        country (str): ISO 3166-1 alpha-2 country code. Numbers are sold only in the US (US) and
+            Canada (CA); any other country is refused.
         area_code (str | Unset):
         contains (str | Unset): Digits the number must contain, anywhere in it.
         prefix (str | Unset): Digits the number must start with, matched after the country dial
@@ -342,7 +345,8 @@ async def asyncio(
     Args:
         limit (int | Unset):  Default: 10.
         vendor (str | Unset): One vendor to search. Absent searches every usable vendor.
-        country (str): ISO 3166-1 alpha-2 country code.
+        country (str): ISO 3166-1 alpha-2 country code. Numbers are sold only in the US (US) and
+            Canada (CA); any other country is refused.
         area_code (str | Unset):
         contains (str | Unset): Digits the number must contain, anywhere in it.
         prefix (str | Unset): Digits the number must start with, matched after the country dial

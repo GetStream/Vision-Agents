@@ -249,6 +249,11 @@ func fetchImage(ctx context.Context, client *http.Client, source string) ([]byte
 
 // fetchAtMost is the body at source and the type it was labelled with, refused past limit
 // bytes.
+// fetchTooLargeError is a fetched file larger than its limit, in bytes.
+type fetchTooLargeError struct{ limit int }
+
+func (e fetchTooLargeError) Error() string { return fmt.Sprintf("it is over %d MB", e.limit>>20) }
+
 func fetchAtMost(ctx context.Context, client *http.Client, source string, limit int) ([]byte, string, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
 	if err != nil {
@@ -268,7 +273,7 @@ func fetchAtMost(ctx context.Context, client *http.Client, source string, limit 
 		return nil, "", err
 	}
 	if len(data) > limit {
-		return nil, "", fmt.Errorf("it is over %d MB", limit>>20)
+		return nil, "", fetchTooLargeError{limit: limit}
 	}
 	return data, response.Header.Get("Content-Type"), nil
 }
