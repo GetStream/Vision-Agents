@@ -94,8 +94,8 @@ value has none counted for it; nothing is guessed.
 | `router_phone_short_calls_total{vendor, direction}` | an answered call under 6 s (Twilio's `pstn_short_duration`) | where `router_phone_call_outcomes_total` counts the call |
 
 `direction` is `outbound` for the first two: the router sees no carrier response for an
-inbound call. Series: at most 4 vendors × 50 codes, 2 × 14 for the histogram (11 buckets),
-(vendors + 2) × 2 short. `seed` sets all of them to 0 too, for the vendors the keeper names and
+inbound call. Series: (vendors + 2) × 50 codes, (vendors + 2) × 14 for the histogram (11 buckets, +Inf, sum,
+count), (vendors + 2) × 2 short. `seed` sets all of them to 0 too, for the vendors the keeper names and
 `other`, under the directions each is counted with.
 
 | Vendor | SIP code | Post-dial delay | Source |
