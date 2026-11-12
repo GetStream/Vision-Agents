@@ -67,9 +67,6 @@ final agents = StreamAgents(
 );
 ```
 
-`StreamAgents` reaches Stream's hosted router in us-east4. For another region, pass
-`url: Backend.regionUrl('europe-west4')`.
-
 ### Start a conversation
 
 ```dart
