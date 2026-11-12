@@ -5,7 +5,6 @@
 > `stream_agents_core` does.
 
 [![Pub](https://img.shields.io/pub/v/stream_agents_chat.svg)](https://pub.dev/packages/stream_agents_chat)
-[![CI](https://github.com/GetStream/Vision-Agents/actions/workflows/client-sdks.yml/badge.svg?branch=accelerate)](https://github.com/GetStream/Vision-Agents/actions/workflows/client-sdks.yml)
 
 **Quick Links**
 
@@ -98,13 +97,6 @@ channel.client.on(stream.EventType.messageUpdated).listen((event) {
 final text = reasoning[(message: replyId, step: 'r1')];
 ```
 
-## Example Apps
-
-- [`flutter_demo`](https://github.com/GetStream/Vision-Agents/tree/accelerate/examples/voice_agents/flutter_demo)
-  - a conversation shown with `stream_chat_flutter_ai` over its channel
-- [`flutter_assistant`](https://github.com/GetStream/Vision-Agents/tree/accelerate/examples/voice_agents/flutter_assistant)
-  - an assistant with device tools, photos and past conversations
-
 ## Contributing
 
 We welcome code changes that improve this library or fix a problem. Please follow the existing
@@ -117,4 +109,4 @@ dart test
 
 ## License
 
-Apache License 2.0. See [LICENSE](https://github.com/GetStream/Vision-Agents/blob/accelerate/sdks/dart/chat/LICENSE).
+Apache License 2.0. See [LICENSE](LICENSE).

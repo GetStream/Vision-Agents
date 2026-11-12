@@ -4,7 +4,6 @@
 > the agent's video beside the device camera, and lets the agent look through the camera.
 
 [![Pub](https://img.shields.io/pub/v/stream_agents_rtc.svg)](https://pub.dev/packages/stream_agents_rtc)
-[![CI](https://github.com/GetStream/Vision-Agents/actions/workflows/client-sdks.yml/badge.svg?branch=accelerate)](https://github.com/GetStream/Vision-Agents/actions/workflows/client-sdks.yml)
 
 **Quick Links**
 
@@ -108,13 +107,6 @@ Otherwise the SDK connects a `StreamVideo` with the agents' API key, user and to
 time a session joins, and reuses it for that user's calls on the same `StreamAgents`.
 `agents.disconnect()` closes the client the SDK connected and leaves the app's own alone.
 
-## Example Apps
-
-- [`flutter_demo`](https://github.com/GetStream/Vision-Agents/tree/accelerate/examples/voice_agents/flutter_demo)
-  - a written and a spoken conversation with one agent
-- [`flutter_assistant`](https://github.com/GetStream/Vision-Agents/tree/accelerate/examples/voice_agents/flutter_assistant)
-  - an assistant with device tools, photos and past conversations
-
 ## Contributing
 
 We welcome code changes that improve this library or fix a problem. Please follow the existing
@@ -127,4 +119,4 @@ flutter test
 
 ## License
 
-Apache License 2.0. See [LICENSE](https://github.com/GetStream/Vision-Agents/blob/accelerate/sdks/dart/rtc/LICENSE).
+Apache License 2.0. See [LICENSE](LICENSE).

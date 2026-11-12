@@ -5,7 +5,6 @@
 > Flutter on every platform, on the Dart VM and in a browser.
 
 [![Pub](https://img.shields.io/pub/v/stream_agents_core.svg)](https://pub.dev/packages/stream_agents_core)
-[![CI](https://github.com/GetStream/Vision-Agents/actions/workflows/client-sdks.yml/badge.svg?branch=accelerate)](https://github.com/GetStream/Vision-Agents/actions/workflows/client-sdks.yml)
 
 **Quick Links**
 
@@ -121,16 +120,6 @@ The agent only sees what the tool returns.
 - `AgentsException` - what a failed call throws: `RouterException`, `TransportException` and
   the others
 
-## Example Apps
-
-Two Flutter apps use this package together with `stream_agents_chat`, `stream_agents_rtc` and
-`stream_chat_flutter_ai`:
-
-- [`flutter_demo`](https://github.com/GetStream/Vision-Agents/tree/accelerate/examples/voice_agents/flutter_demo)
-  - a written and a spoken conversation with one agent
-- [`flutter_assistant`](https://github.com/GetStream/Vision-Agents/tree/accelerate/examples/voice_agents/flutter_assistant)
-  - an assistant with device tools, photos and past conversations
-
 ## Contributing
 
 We welcome code changes that improve this library or fix a problem. Please follow the existing
@@ -147,4 +136,4 @@ The API client in `lib/src/generated` is generated from the router's OpenAPI spe
 
 ## License
 
-Apache License 2.0. See [LICENSE](https://github.com/GetStream/Vision-Agents/blob/accelerate/sdks/dart/core/LICENSE).
+Apache License 2.0. See [LICENSE](LICENSE).
