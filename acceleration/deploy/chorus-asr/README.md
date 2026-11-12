@@ -733,11 +733,10 @@ caller said reaches it. `ignore` with words, over the agent or not, says they we
 for the agent: a murmur ("yeah", "mm-hmm"), a voice in the room, a radio, or a caller's aside
 ("Yeah, zip is 46281." over a reply). They are heard, and kept for the next reply to the
 caller, which is told they may be someone else and uses them only where they fit, a line the
-agent says of its own accord included; the agent is not interrupted. Once nobody, caller or
-agent, has spoken for 1.5 s after them (the silence after which a caller's words no longer
-hold the floor, `callerHold`), they are answered as the caller's turn, with the same caution:
-a caller's own line the model took for background is not left waiting. A cough or a lone
-"uh" stays ignored. With another transcriber writing the words,
+agent says of its own accord included; the agent is not interrupted, and nothing is answered
+on their own account: a caller's line the model took for background is answered with their
+next turn, and the model's ignores are its training's to get right. A cough or a lone "uh"
+stays ignored. With another transcriber writing the words,
 the runs it had settled go out as a turn of their own when the floor steps aside or takes the
 turns back, a final that comes after the floor gave up waiting for it is the next turn's (its
 words past the ones the turn ended on), and words settled with no voice heard since are a
