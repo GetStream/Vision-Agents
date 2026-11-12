@@ -18,6 +18,9 @@ const (
 	Unknown Outcome = "unknown"
 )
 
+// stored are the outcomes a call is stored with, each one a value of Outcome but empty.
+var stored = []Outcome{Completed, Busy, NoAnswer, Failed, Canceled, Unknown}
+
 // Unanswered reports whether the person never picked up.
 func (o Outcome) Unanswered() bool {
 	switch o {

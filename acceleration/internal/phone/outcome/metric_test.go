@@ -1,9 +1,15 @@
 package outcome
 
 import (
+	"context"
+	"crypto/rand"
+	"log/slog"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -118,4 +124,113 @@ func (s *CarrierSuite) TestAnOutcomeDecidedAtTheEndCameFromTheEnd() {
 	s.False(finalReportKept(Call{Outcome: NoAnswer, DecidedAt: new(s.ended), EndedAt: new(s.ended)}))
 	s.False(finalReportKept(Call{Outcome: Completed, DecidedAt: new(s.ended.Add(time.Second)), EndedAt: new(s.ended)}),
 		"a join after the end")
+}
+
+// SeriesSuite is the series a router holds before its first call: the first call of a pod must
+// move its series from 0 to 1, or increase() and rate() read no change. Each test names a vendor
+// of its own, so it reads only the series it made.
+type SeriesSuite struct {
+	suite.Suite
+	vendor string
+	keeper *Keeper
+}
+
+func TestSeriesSuite(t *testing.T) { suite.Run(t, new(SeriesSuite)) }
+
+func (s *SeriesSuite) SetupTest() {
+	s.vendor = "vendor-" + rand.Text()
+	s.keeper = NewKeeper(nil, time.Now, []string{s.vendor}, slog.New(slog.DiscardHandler))
+}
+
+// series is every phone series of vendor in the registry /metrics serves, by metric, direction
+// and the label that tells them apart (outcome or code): a counter's value, a histogram's count.
+func (s *SeriesSuite) series(vendor string) map[string]float64 {
+	families, err := prometheus.DefaultGatherer.Gather()
+	s.Require().NoError(err)
+	got := map[string]float64{}
+	for _, family := range families {
+		if !strings.HasPrefix(family.GetName(), "router_phone_") {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			labels := map[string]string{}
+			for _, pair := range metric.GetLabel() {
+				labels[pair.GetName()] = pair.GetValue()
+			}
+			if labels["vendor"] != vendor {
+				continue
+			}
+			key := family.GetName() + " " + labels["direction"] + " " + labels["outcome"] + labels["code"]
+			if histogram := metric.GetHistogram(); histogram != nil {
+				got[key] = float64(histogram.GetSampleCount())
+			} else {
+				got[key] = metric.GetCounter().GetValue()
+			}
+		}
+	}
+	return got
+}
+
+// wanted is every series a vendor the keeper names has before its first call, at 0.
+func (s *SeriesSuite) wanted() map[string]float64 {
+	want := map[string]float64{
+		"router_phone_post_dial_delay_seconds outbound ": 0,
+		"router_phone_short_calls_total inbound ":        0,
+		"router_phone_short_calls_total outbound ":       0,
+	}
+	for _, outcome := range []string{"completed", "busy", "no_answer", "failed", "canceled", "unknown", "dropped", "refused"} {
+		want["router_phone_call_outcomes_total outbound "+outcome] = 0
+	}
+	for _, outcome := range []string{"completed", "failed", "dropped"} {
+		want["router_phone_call_outcomes_total inbound "+outcome] = 0
+	}
+	for _, code := range sipCodes {
+		want["router_phone_call_sip_responses_total outbound "+strconv.Itoa(code)] = 0
+	}
+	for _, class := range []string{"2xx", "3xx", "4xx", "5xx", "6xx"} {
+		want["router_phone_call_sip_responses_total outbound "+class] = 0
+	}
+	return want
+}
+
+func (s *SeriesSuite) TestAVendorTheKeeperNamesHasEverySeriesAtZeroBeforeItsFirstCall() {
+	s.Equal(s.wanted(), s.series(s.vendor))
+}
+
+func (s *SeriesSuite) TestEveryKeeperHasTheOtherVendorsSeriesToo() {
+	got := s.series(otherVendor)
+	for series := range s.wanted() {
+		s.Contains(got, series)
+	}
+}
+
+func (s *SeriesSuite) TestTheFirstCallMovesExactlyItsSeriesFromZeroToOne() {
+	want := s.wanted()
+	want["router_phone_call_outcomes_total outbound busy"] = 1
+	want["router_phone_call_sip_responses_total outbound 486"] = 1
+	want["router_phone_post_dial_delay_seconds outbound "] = 1
+
+	s.keeper.count(context.Background(), Key{}, s.vendor, outbound, Busy, nil, time.Now())
+	s.keeper.countReport(Call{Vendor: s.vendor}, Report{Outcome: Busy, SIPCode: 486, PostDialDelay: 2 * time.Second}, time.Now())
+
+	s.Equal(want, s.series(s.vendor))
+}
+
+func (s *SeriesSuite) TestAnInboundCallMovesItsOwnSeries() {
+	want := s.wanted()
+	want["router_phone_call_outcomes_total inbound failed"] = 1
+
+	s.keeper.count(context.Background(), Key{}, s.vendor, inbound, Failed, nil, time.Now())
+
+	s.Equal(want, s.series(s.vendor))
+}
+
+func (s *SeriesSuite) TestAVendorTheKeeperDoesNotNameIsCountedAsOtherAndMakesNoSeries() {
+	raw := "raw-" + rand.Text()
+	before := s.series(otherVendor)["router_phone_call_outcomes_total outbound failed"]
+
+	s.keeper.count(context.Background(), Key{}, raw, outbound, Failed, nil, time.Now())
+
+	s.Empty(s.series(raw))
+	s.Equal(before+1, s.series(otherVendor)["router_phone_call_outcomes_total outbound failed"])
 }
