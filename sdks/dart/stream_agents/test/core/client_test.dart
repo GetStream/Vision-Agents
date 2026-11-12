@@ -21,6 +21,50 @@ void main() {
     await router.close();
   });
 
+  group('Session', () {
+    final at = DateTime.utc(2026);
+
+    test('is another session once pinned, renamed or relabelled', () {
+      final session = Session(id: 's1', createdAt: at, custom: const {'topic': 'billing'});
+
+      expect(Session(id: 's1', createdAt: at, custom: const {'topic': 'billing'}), session);
+      expect(
+        Session(id: 's1', createdAt: at, custom: const {'topic': 'billing'}, pinnedAt: at),
+        isNot(session),
+      );
+      expect(
+        Session(id: 's1', createdAt: at, custom: const {'topic': 'billing'}, description: 'x'),
+        isNot(session),
+      );
+      expect(Session(id: 's1', createdAt: at, custom: const {'topic': 'refunds'}), isNot(session));
+    });
+
+    test('labels decoded twice are the same labels', () {
+      Session decoded() => Session(
+        id: 's1',
+        createdAt: at,
+        custom: jsonDecode('{"tags":["a","b"],"owner":{"team":"support"}}') as Map<String, Object?>,
+      );
+
+      expect(decoded(), decoded());
+      expect(decoded().hashCode, decoded().hashCode);
+    });
+  });
+
+  group('AgentResponse', () {
+    test('is another response once it finishes or says something else', () {
+      final at = DateTime.utc(2026);
+      final running = AgentResponse(id: 'r1', sessionId: 's1', createdAt: at, said: 'hi');
+
+      expect(AgentResponse(id: 'r1', sessionId: 's1', createdAt: at, said: 'hi'), running);
+      expect(
+        AgentResponse(id: 'r1', sessionId: 's1', createdAt: at, said: 'hi', finishedAt: at),
+        isNot(running),
+      );
+      expect(AgentResponse(id: 'r1', sessionId: 's1', createdAt: at, said: 'hey'), isNot(running));
+    });
+  });
+
   group('Backend', () {
     test('declares a device on every request, even to a router that believes the header', () async {
       router.answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));

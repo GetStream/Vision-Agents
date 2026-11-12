@@ -128,10 +128,69 @@ final class Session {
 
   @override
   bool operator ==(Object other) =>
-      other is Session && other.id == id && other.state == state && other.title == title;
+      other is Session &&
+      other.id == id &&
+      other.callId == callId &&
+      other.callType == callType &&
+      other.userId == userId &&
+      other.agentId == agentId &&
+      other.isText == isText &&
+      other.state == state &&
+      other.mode == mode &&
+      other.modality == modality &&
+      other.agent == agent &&
+      other.configId == configId &&
+      other.conversationId == conversationId &&
+      other.instructions == instructions &&
+      other.llm == llm &&
+      other.stt == stt &&
+      other.tts == tts &&
+      other.sts == sts &&
+      other.voice == voice &&
+      other.title == title &&
+      other.description == description &&
+      other.projectId == projectId &&
+      other.team == team &&
+      _sameJson(other.custom, custom) &&
+      other.incognito == incognito &&
+      other.forkedFrom == forkedFrom &&
+      other.createdAt == createdAt &&
+      other.closedAt == closedAt &&
+      other.lastResponseAt == lastResponseAt &&
+      other.pinnedAt == pinnedAt;
 
   @override
-  int get hashCode => Object.hash(id, state, title);
+  int get hashCode => Object.hashAll([
+    id,
+    callId,
+    callType,
+    userId,
+    agentId,
+    isText,
+    state,
+    mode,
+    modality,
+    agent,
+    configId,
+    conversationId,
+    instructions,
+    llm,
+    stt,
+    tts,
+    sts,
+    voice,
+    title,
+    description,
+    projectId,
+    team,
+    Object.hashAllUnordered(custom.keys),
+    incognito,
+    forkedFrom,
+    createdAt,
+    closedAt,
+    lastResponseAt,
+    pinnedAt,
+  ]);
 
   @override
   String toString() => 'Session($id, ${state.name})';
@@ -179,10 +238,17 @@ final class AgentResponse {
 
   @override
   bool operator ==(Object other) =>
-      other is AgentResponse && other.id == id && other.status == status;
+      other is AgentResponse &&
+      other.id == id &&
+      other.sessionId == sessionId &&
+      other.said == said &&
+      other.status == status &&
+      other.error == error &&
+      other.createdAt == createdAt &&
+      other.finishedAt == finishedAt;
 
   @override
-  int get hashCode => Object.hash(id, status);
+  int get hashCode => Object.hash(id, sessionId, said, status, error, createdAt, finishedAt);
 
   @override
   String toString() => 'AgentResponse($id, ${status.name})';
@@ -522,3 +588,16 @@ final class ListPage<T> {
   /// What to ask for the next page with, null on the last one.
   final String? nextCursor;
 }
+
+/// Whether two values decoded from JSON hold the same thing, maps and lists compared by what
+/// is in them.
+bool _sameJson(Object? a, Object? b) => switch ((a, b)) {
+  (final Map<Object?, Object?> a, final Map<Object?, Object?> b) =>
+    a.length == b.length &&
+        a.entries.every(
+          (entry) => b.containsKey(entry.key) && _sameJson(entry.value, b[entry.key]),
+        ),
+  (final List<Object?> a, final List<Object?> b) =>
+    a.length == b.length && a.indexed.every((item) => _sameJson(item.$2, b[item.$1])),
+  _ => a == b,
+};
