@@ -2553,21 +2553,24 @@ func (s *ConverseSuite) floorIgnores(ready candidate, state floor) []Action {
 }
 
 // The floor rules on when the agent speaks, not on whether the caller's words count: its
-// ignore of words that take the floor, over the agent, is the queue. The agent is not
-// interrupted, the words are heard at once, and the turn is answered once the agent is quiet.
-func (s *ConverseSuite) TestTheFloorsIgnoreOfWordsOverTheAgentIsTheQueue() {
-	ready := s.settle("just want to know the t-shirt count", s.talking())
+// ignore of words over the agent, a caller's aside or a radio, is heard as said and kept for
+// the next reply to the caller to see. The agent is not interrupted, and nothing is said to
+// the words alone once it is quiet: made a turn, a radio's "thank you" was answered.
+func (s *ConverseSuite) TestTheFloorsIgnoreOfWordsOverTheAgentIsHeardAndKeptForTheNextReply() {
+	ready := s.settle("yeah, zip is 46281", s.talking())
 	actions := s.floorIgnores(ready, s.talking())
-	s.Equal([]ActionKind{ActQueue}, kinds(actions))
+	s.Require().Equal([]ActionKind{ActIgnore}, kinds(actions))
+	s.NotEmpty(actions[0].LineID)
 	s.eventually(func() bool { return len(s.heard()) == 1 }, "the words were never heard")
-	s.Equal("just want to know the t-shirt count", s.heard()[0].Text)
+	s.Equal("yeah, zip is 46281", s.heard()[0].Text)
 	s.Equal(actions[0].LineID, s.heard()[0].LineID)
+	s.Zero(countOf[OverlapDecided](s.seen()), "nothing was decided about the floor")
 
-	answer, waiting := s.converse.Waiting(s.quiet())
-	s.Require().True(waiting, "the turn was not answered once the agent was quiet")
-	s.Equal(ActAnswer, answer.Kind)
-	s.Equal("just want to know the t-shirt count", answer.Text)
-	s.Empty(s.converse.takeAside(caller.ID), "a turn, not an aside")
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting, "not a turn of its own")
+	s.Equal("yeah, zip is 46281", s.converse.peekAside(caller.ID), "kept for the next reply, and left for it")
+	s.Equal("yeah, zip is 46281", s.converse.takeAside(caller.ID))
+	s.Empty(s.converse.takeAside(caller.ID), "seen once")
 }
 
 // Its ignore of a murmur is heard, as the caller said it, and kept for the next reply to them
@@ -2604,12 +2607,13 @@ func (s *ConverseSuite) TestTheFloorsIgnoreOfWordsWithTheAgentQuietIsHeardAndKep
 	s.False(waiting, "not a turn of its own")
 	s.Equal("turn that down, the agent is on", s.converse.takeAside(caller.ID), "kept for the next reply")
 
-	// Over the agent, words that take the floor are the queue, answered once the agent is quiet.
+	// Over the agent the same: heard, kept with the rest, and no turn of its own.
 	ready = s.settle("and what time do you open", s.talking())
-	s.Equal([]ActionKind{ActQueue}, kinds(s.floorIgnores(ready, s.talking())))
-	answer, waiting := s.converse.Waiting(s.quiet())
-	s.Require().True(waiting)
-	s.Equal(ActAnswer, answer.Kind)
+	s.Equal([]ActionKind{ActIgnore}, kinds(s.floorIgnores(ready, s.talking())))
+	s.eventually(func() bool { return len(s.heard()) == 2 }, "the words were never heard")
+	_, waiting = s.converse.Waiting(s.quiet())
+	s.False(waiting)
+	s.Equal("and what time do you open", s.converse.takeAside(caller.ID))
 }
 
 // A cough or a lone "uh" is no words: it stays ignored, and nothing is heard of it.

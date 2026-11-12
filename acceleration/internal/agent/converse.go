@@ -910,22 +910,17 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 	}
 
 	// A floor that heard the audio (chorus-asr, Ruler Heard) rules on when the agent speaks,
-	// never on whether the caller's words count. Over the agent, its ignore of words that
-	// take the floor is what the default flow controller's queue is: the agent is not
-	// interrupted, and the words are heard now and answered once it is quiet. Its ignore of
-	// a murmur ("yeah", "mm-hmm"), or of any words with the agent quiet, where ignore says
-	// they were not for the agent (a voice in the room, a radio), is heard and kept for the
-	// next reply to see, as context and no turn of its own (keepAside): answering a room's
-	// voice is worse than hearing it late. A cough or a lone "uh" is no words, and stays
-	// ignored.
-	heardFloor := ruling.Ruler == harness.Heard && ruling.Disposition == harness.Ignore &&
+	// never on whether the caller's words count. Its ignore says the words were no turn for
+	// the agent: a murmur over it ("yeah", "mm-hmm"), or a voice that was not the caller's
+	// (the room, a radio), over it or not. They are heard, as said, and kept for the next
+	// reply to the caller to see, as context and no turn of their own (keepAside): the agent
+	// is not interrupted, and nothing is said to them alone, as answering a radio is worse
+	// than hearing a caller's aside late. Made a turn to answer once the agent was quiet, as
+	// the default flow controller's queue is, a radio's "Thank you so much" over the agent
+	// was answered "You're welcome" while the caller spelled a name. A cough or a lone "uh"
+	// is no words, and stays ignored.
+	aside := ruling.Ruler == harness.Heard && ruling.Disposition == harness.Ignore &&
 		words(ready.Text) != "" && !overlapNoise(ready.Text)
-	aside := heardFloor && (state.Quiet || !takesFloor(ready.Text))
-	if heardFloor && !aside {
-		c.logger.Info("the floor ruled ignore on words that take the floor over the agent, which are kept: the agent is not interrupted, and they are answered once it is quiet",
-			"candidate", ruling.CandidateID, "participant", ready.Participant.ID, "text", ready.Text)
-		ruling.Disposition, ruling.Floor = harness.Respond, harness.Continue
-	}
 
 	queue := !state.Quiet && !overlapNoise(ready.Text) && ruling.Disposition != harness.Ignore &&
 		(state.Recovering || ruling.Floor != harness.Stop)
@@ -966,9 +961,9 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 			Language:    ready.Language,
 			LineID:      line,
 		})
-		reason := "words the floor ruled were not for the agent: heard, and kept for the next reply to see, as no turn of their own"
+		reason := "words the floor ruled were no turn for the agent: heard, and kept for the next reply to see, as no turn of their own"
 		if !state.Quiet {
-			reason = "a murmur the floor let the agent talk through: heard, and kept for the next reply to see, as no turn of its own"
+			reason = "words the floor let the agent talk through: heard, and kept for the next reply to see, as no turn of their own"
 		}
 		return []Action{c.decide(Action{
 			Kind:        ActIgnore,
@@ -1755,6 +1750,15 @@ func (c *converse) takeAside(participantID string) string {
 	aside := c.asides[participantID]
 	delete(c.asides, participantID)
 	return aside
+}
+
+// peekAside is what takeAside would take, left kept: for a line the agent says of its own
+// accord, a check-in after a silence, which sees it without spending it, as the reply to the
+// caller's next turn is still to see it.
+func (c *converse) peekAside(participantID string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.asides[participantID]
 }
 
 // hold keeps a turn until the agent has stopped talking. Only one is kept: a caller who

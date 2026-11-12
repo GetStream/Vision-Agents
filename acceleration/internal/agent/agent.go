@@ -1372,7 +1372,7 @@ func (a *Agent) Greet(ctx context.Context, greeting string, vary bool) error {
 		return a.Prompt(ctx, "Open the call by greeting the caller. Say this, in these words or close to them: "+greeting)
 	}
 	if vary {
-		line, err := a.compose(ctx, fmt.Sprintf(greetPurpose, greeting))
+		line, err := a.compose(ctx, fmt.Sprintf(greetPurpose, greeting), "")
 		if err != nil {
 			a.logger.Warn("could not vary the greeting, saying it as written", append(a.replyModel(), "error", err)...)
 		} else if line != "" {
@@ -2668,7 +2668,7 @@ func (a *Agent) checkIn(participant stt.Participant, purpose string) {
 			a.composing = false
 			a.mu.Unlock()
 		}()
-		line, err := a.compose(ctx, purpose)
+		line, err := a.compose(ctx, purpose, a.converse.peekAside(participant.ID))
 		if err != nil {
 			a.logger.Warn("could not write a line to say", append(a.replyModel(), "kind", kind, "error", err)...)
 			return
