@@ -666,3 +666,32 @@ func (s *BranchesSuite) TestASwitchThatCannotBeSettledRefusesOtherTurnsUntilItsR
 	third := s.asks(session, "And Sunday?")
 	s.Equal(branched.ResponseID, s.response(session, third).ParentResponseID)
 }
+
+// An edit retried after Chat hid its question carries on the switch it began, though the
+// question it replaces is no longer in the channel to be found.
+func (s *BranchesSuite) TestAnEditRetriedAfterChatHidItsQuestionCarriesOnItsSwitch() {
+	session := s.opens()
+	first := s.asks(session, "Is it raining?")
+	second := s.asks(session, "And tomorrow?")
+	request := uuid.NewString()
+	s.chat.LoseRewindAnswer()
+	waiting, release := s.chat.Hold("/rewind")
+	failed := make(chan error, 1)
+	go func() {
+		_, err := session.Edit(s.ctx, request, second, "And on Sunday?", "", options.LLM{})
+		failed <- err
+	}()
+	<-waiting
+	s.chat.Fail("POST", "/query")
+	release()
+	s.Require().ErrorIs(<-failed, ErrSwitchUnfinished)
+	s.chat.Heal("POST", "/query")
+
+	branched, err := session.Edit(s.ctx, request, second, "And on Sunday?", "", options.LLM{})
+
+	s.Require().NoError(err)
+	s.settled(session)
+	s.Equal([]string{"Is it raining?", "Answer 1 to Is it raining?", "And on Sunday?", "Answer 3 to And on Sunday?"}, s.texts(session))
+	s.Equal(s.texts(session), history(session))
+	s.Equal(first, s.response(session, branched.ResponseID).ParentResponseID)
+}

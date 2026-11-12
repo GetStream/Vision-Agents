@@ -262,7 +262,14 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 	if replaced.QuestionResponseID == "" {
 		return Branched{}, stack.Wrap(&persistent.BranchesUnsupportedError{Reason: persistent.UnsupportedUnmarked})
 	}
-	if replaced.RewoundAt != nil {
+	// A retry of a request whose switch an earlier try left unfinished carries it on from the
+	// message it rewound to: Chat may hide that message by now, and the replaced response be
+	// off the conversation.
+	earlier, err := s.unfinishedSwitch(ctx, switchID(s.id, id), replaced.ID)
+	if err != nil {
+		return Branched{}, err
+	}
+	if replaced.RewoundAt != nil && earlier.ID == "" {
 		return Branched{}, stack.Wrap(fmt.Errorf("%w: response %s is not on the conversation; activate its branch first", persistent.ErrBranchConflict, responseID))
 	}
 
@@ -270,9 +277,11 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 	if err := s.records.Flush(ctx); err != nil {
 		return Branched{}, stack.Wrap(err)
 	}
-	found, err := s.persisted.ResponseMessages(ctx, replaced.ID, replaced.QuestionResponseID)
-	if err != nil {
-		return Branched{}, err
+	found := persistent.ResponseMessages{Question: earlier.ForkMessageID}
+	if earlier.ID == "" {
+		if found, err = s.persisted.ResponseMessages(ctx, replaced.ID, replaced.QuestionResponseID); err != nil {
+			return Branched{}, err
+		}
 	}
 	if found.Question == "" {
 		return Branched{}, stack.Wrap(&persistent.BranchesUnsupportedError{Reason: persistent.UnsupportedUnmarked})
@@ -573,6 +582,21 @@ func switchID(session, request string) string {
 // answers in the channel, rewinding only after it: a later open that finishes the switch
 // sends again what it would have sent, without a second copy of that message.
 const keptQuestionPrefix = "aq"
+
+// unfinishedSwitch is the switch id an earlier try left unfinished, when it replaces target;
+// the zero switch for none.
+func (s *Session) unfinishedSwitch(ctx context.Context, id, target string) (store.AgentBranchSwitch, error) {
+	unfinished, err := s.tree.UnfinishedBranchSwitches(ctx, s.spec.CustomerID, s.id)
+	if err != nil {
+		return store.AgentBranchSwitch{}, err
+	}
+	for _, sw := range unfinished {
+		if sw.ID == id && sw.TargetResponseID == target && sw.Kind != store.SwitchActivate {
+			return sw, nil
+		}
+	}
+	return store.AgentBranchSwitch{}, nil
+}
 
 // unfinishedActivation is the activation of target an earlier try left unfinished, so it is
 // finished rather than sent again beside it; the zero switch for none.
