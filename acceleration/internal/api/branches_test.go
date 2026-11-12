@@ -316,6 +316,46 @@ func (s *ResponseBranchesSuite) TestThePointPastTheLimitIsRefusedAndTheConversat
 	s.asks(s.client, opened, "And Monday?")
 }
 
+// A regenerate that cannot be finished after Chat may have rewound is a 409 a client can tell
+// from a conflict: it sends the same request again, which finishes it, and nothing else is
+// answered meanwhile.
+func (s *ResponseBranchesSuite) TestARegenerateLeftUnfinishedRefusesOtherQuestionsUntilItIsSentAgain() {
+	opened := s.opens(s.client)
+	s.asks(s.client, opened, "Is it raining?")
+	second := s.asks(s.client, opened, "And tomorrow?")
+	request := s.utils.uuid()
+	s.chat.LoseRewindAnswer()
+	waiting, release := s.chat.Hold("/rewind")
+	type answer struct {
+		status int
+		body   []byte
+	}
+	failed := make(chan answer, 1)
+	go func() {
+		status, body := s.client.call(http.MethodPost, responsesPath(opened), CreateResponseRequest{RequestId: &request, Replaces: &second})
+		failed <- answer{status, body}
+	}()
+	<-waiting
+	s.chat.Fail("POST", "/query")
+	release()
+	first := <-failed
+	s.Equal(http.StatusConflict, first.status)
+	s.Equal("switch_unfinished", errorCode(s, first.body))
+
+	asked := s.utils.uuid()
+	status, body := s.client.call(http.MethodPost, responsesPath(opened), CreateResponseRequest{RequestId: &asked, Text: "And Sunday?"})
+	s.Equal(http.StatusConflict, status)
+	s.Equal("switch_unfinished", errorCode(s, body))
+
+	s.chat.Heal("POST", "/query")
+	status, body = s.client.call(http.MethodPost, responsesPath(opened), CreateResponseRequest{RequestId: &request, Replaces: &second})
+	s.Require().Equal(http.StatusAccepted, status, string(body))
+	var regenerated AgentResponse
+	s.Require().NoError(json.Unmarshal(body, &regenerated))
+	s.settled(opened, regenerated.Id)
+	s.asks(s.client, opened, "And Sunday?")
+}
+
 // opens a conversation kept in Stream Chat, for as.
 func (s *ResponseBranchesSuite) opens(as *testClient) Session {
 	return as.createSession(CreateSessionRequest{Llm: pointerTo("noted/noted-model")})
