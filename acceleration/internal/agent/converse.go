@@ -133,6 +133,9 @@ type Action struct {
 	// Unanswered is what the same participant said in a turn queued before this one, which
 	// this answer is for too. Empty when nothing was waiting.
 	Unanswered string
+	// Aside is what was heard on the participant's line that the floor ruled no turn of
+	// theirs, kept for this answer to see (keepAside). Empty when nothing was kept.
+	Aside string
 	// Err is why a judgement could not be made.
 	Err error
 	// At is when a held reply may go out: the caller holds the floor until then.
@@ -262,9 +265,26 @@ type converse struct {
 	// greeted is the turn whose unheard reply each participant's lone greeting holds, until
 	// the greeting settles or they go on.
 	greeted map[string]string
-	// asides is, for each participant, what they said that the floor ruled was no turn of
-	// theirs, a murmur over the agent, kept for the next reply to them to see (keepAside).
-	asides map[string]string
+	// asides is, for each participant, what was heard on their line that the floor ruled was
+	// no turn of theirs, kept for the next reply to them to see (keepAside), or to answer as
+	// their turn once nobody has spoken for asideWait after it (asideTurn).
+	asides map[string]*aside
+	// asideWait is how long nobody, caller or agent, must have spoken after words kept
+	// aside before they are answered as the caller's turn: callerHold, the silence after
+	// which words that stopped changing no longer hold the floor. A field so tests can
+	// shorten it, as undecidedFor is.
+	asideWait time.Duration
+}
+
+// aside is what was heard on a participant's line that the floor ruled no turn of theirs,
+// kept (keepAside): the words, the newest missedWords of them, the line they were heard as,
+// and when the last of them came.
+type aside struct {
+	participant stt.Participant
+	words       string
+	language    string
+	line        string
+	at          time.Time
 }
 
 // stoppedOn is an utterance a stop over the agent was ruled on, and the words so far it was
@@ -368,7 +388,8 @@ func newConverse(
 		repeated:     map[string]string{},
 		stops:        map[string]stoppedOn{},
 		greeted:      map[string]string{},
-		asides:       map[string]string{},
+		asides:       map[string]*aside{},
+		asideWait:    callerHold,
 	}
 }
 
@@ -954,7 +975,7 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 		// Heard, as the caller said it, and the next reply to them sees it; nothing is said
 		// to it alone.
 		shown, line := c.closeLine(ready.Participant.ID, ready.Text, true)
-		c.keepAside(ready.Participant.ID, ready.Text)
+		c.keepAside(ready.Participant, ready.Text, ready.Language, line)
 		sendHeard(c.emitter, c.onHeard, Heard{
 			Participant: ready.Participant,
 			Text:        shown,
@@ -1032,6 +1053,7 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 	}
 
 	if state.Quiet {
+		answer.Aside = c.takeAside(ready.Participant.ID)
 		return []Action{c.decide(answer)}
 	}
 
@@ -1054,6 +1076,8 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 			answering.Kind = ActQueue
 			answering.Reason = "the voice is being replaced, so the caller's answer waits until it is ready"
 			c.hold(queuedCandidate{candidate: ready, clarify: clarify, heard: true, line: line})
+		} else {
+			answering.Aside = c.takeAside(ready.Participant.ID)
 		}
 		return []Action{
 			c.decide(Action{
@@ -1296,7 +1320,7 @@ func (c *converse) Waiting(state floor) (Action, bool) {
 	c.mu.Lock()
 	if c.queued == nil {
 		c.mu.Unlock()
-		return Action{}, false
+		return c.asideTurn(state)
 	}
 	// A copy: what is queued changes with the line it is in, under the lock.
 	held := *c.queued
@@ -1352,6 +1376,64 @@ func (c *converse) Waiting(state floor) (Action, bool) {
 		Text:        held.candidate.Text,
 		Clarify:     held.clarify,
 		LineID:      line,
+		Aside:       c.takeAside(held.candidate.Participant.ID),
+	}), true
+}
+
+// asideTurnNote is what the model is told when words kept aside are answered as the caller's
+// turn (asideTurn): the floor took them for no turn of the caller's, and only the silence
+// after them says otherwise.
+const asideTurnNote = "These words were heard on the caller's line, and nobody has spoken since. " +
+	"Floor control took them for no turn of the caller's, so they may be someone else: another " +
+	"person in the room, or a TV or radio. Answer them if they fit what the caller is doing; if " +
+	"they do not, do not act on them, and briefly check what the caller needs instead."
+
+// asideTurn answers what was kept aside for a participant as their turn, once nobody has
+// spoken for asideWait after it: not the caller, whose words would have folded it into their
+// next turn (takeAside), and not the agent, whose reply would have. The floor took the words
+// for no turn of the caller's, and with the agent quiet that left a caller's own line unanswered
+// (airline:28, "user ID, Amelia_Rossi_12", waited 12.7 s); a silence after them says the
+// caller is waiting. Words kept while the agent talked wait the same silence from when it
+// stopped. It runs with the agent quiet, on each tick (Agent.respondQueued).
+func (c *converse) asideTurn(state floor) (Action, bool) {
+	c.mu.Lock()
+	var due *aside
+	for _, kept := range c.asides {
+		since := kept.at
+		if state.LastSpokeAt.After(since) {
+			since = state.LastSpokeAt
+		}
+		if state.LastHeardAt.After(since) {
+			since = state.LastHeardAt
+		}
+		if time.Since(since) >= c.asideWait && (due == nil || kept.at.Before(due.at)) {
+			due = kept
+		}
+	}
+	if due == nil {
+		c.mu.Unlock()
+		return Action{}, false
+	}
+	delete(c.asides, due.participant.ID)
+	c.mu.Unlock()
+	ready := candidate{
+		ID:          replyPrefix + turnStamp(),
+		Participant: due.participant,
+		Text:        due.words,
+		Language:    due.language,
+		RevisedAt:   due.at,
+		ReadyAt:     time.Now(),
+		Final:       true,
+		Ended:       true,
+	}
+	return c.decide(Action{
+		Kind:        ActAnswer,
+		Reason:      "nobody has spoken since words the floor ruled no turn for the agent, so they are answered as the caller's turn",
+		Candidate:   ready,
+		Participant: due.participant,
+		Text:        due.words,
+		Clarify:     asideTurnNote,
+		LineID:      due.line,
 	}), true
 }
 
@@ -1733,23 +1815,33 @@ func joinOverlapping(held, more string) string {
 	return held + " " + more
 }
 
-// keepAside keeps words of participant's that the floor ruled were no turn of theirs, a
-// murmur over the agent or between turns, for the next reply to them to see (takeAside): the
-// newest missedWords of them, as a dropped reply's note carries.
-func (c *converse) keepAside(participantID, text string) {
+// keepAside keeps words heard on participant's line that the floor ruled were no turn of
+// theirs, heard as line, for the next reply to them to see (takeAside), or to answer as their
+// turn once nobody has spoken for asideWait after them (asideTurn): the newest missedWords of
+// them, as a dropped reply's note carries, timed from the last.
+func (c *converse) keepAside(participant stt.Participant, text, language, line string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.asides[participantID] = newestWords(strings.TrimSpace(c.asides[participantID]+" "+strings.TrimSpace(text)), missedWords)
+	kept := c.asides[participant.ID]
+	if kept == nil {
+		kept = &aside{participant: participant}
+		c.asides[participant.ID] = kept
+	}
+	kept.words = newestWords(strings.TrimSpace(kept.words+" "+strings.TrimSpace(text)), missedWords)
+	kept.language, kept.line, kept.at = language, line, time.Now()
 }
 
-// takeAside is what participant said that was kept for the next reply to them to see
-// (keepAside), taken: a reply sees it once. Empty when nothing was kept.
+// takeAside is what was kept for the next reply to participant to see (keepAside), taken: a
+// reply sees it once. Empty when nothing was kept.
 func (c *converse) takeAside(participantID string) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	aside := c.asides[participantID]
+	kept := c.asides[participantID]
 	delete(c.asides, participantID)
-	return aside
+	if kept == nil {
+		return ""
+	}
+	return kept.words
 }
 
 // peekAside is what takeAside would take, left kept: for a line the agent says of its own
@@ -1758,7 +1850,10 @@ func (c *converse) takeAside(participantID string) string {
 func (c *converse) peekAside(participantID string) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.asides[participantID]
+	if kept := c.asides[participantID]; kept != nil {
+		return kept.words
+	}
+	return ""
 }
 
 // hold keeps a turn until the agent has stopped talking. Only one is kept: a caller who

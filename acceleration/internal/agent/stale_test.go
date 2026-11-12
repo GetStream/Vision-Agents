@@ -1347,9 +1347,10 @@ func (s *AgentSuite) TestWritingAResponseStillBeingOpenedWaitsForIt() {
 // they had said nothing, and the reply to their next words still sees the zip.
 func (s *AgentSuite) TestAnAsideReachesACheckInAndThenTheNextReply() {
 	s.join(true)
+	s.agent.converse.asideWait = time.Hour // the silence after an aside is another test's
 	s.model.composes = []string{"Did I catch that zip code right?"}
 	s.speak(nash)
-	s.agent.converse.keepAside(nash.ID, "Yeah, zip is 46281.")
+	s.agent.converse.keepAside(nash, "Yeah, zip is 46281.", "en", "line-1")
 
 	s.agent.checkIn(nash, idlePurpose)
 	s.eventually(func() bool { return len(s.model.composeRequests()) == 1 }, "the check-in was never written")
@@ -1362,4 +1363,22 @@ func (s *AgentSuite) TestAnAsideReachesACheckInAndThenTheNextReply() {
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the caller was never answered")
 	s.Contains(shown(s.model.requests()[0]), asideNote("Yeah, zip is 46281."), "the reply sees the aside")
 	s.Empty(s.agent.converse.peekAside(nash.ID), "seen by a reply once")
+}
+
+// Words kept aside with the agent quiet are answered as the caller's turn once nobody has
+// spoken for asideWait after them, on the agent's tick: a caller's own line the floor took
+// for background is not left waiting. The model is told the words may be someone else's.
+func (s *AgentSuite) TestAnAsideNobodySpeaksAfterIsAnsweredAsTheCallersTurn() {
+	s.join(true)
+	s.agent.converse.asideWait = 50 * time.Millisecond
+	s.speak(nash)
+	s.agent.converse.keepAside(nash, "user ID, Amelia_Rossi_12.", "en", "line-1")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the aside was never answered")
+	request := s.model.requests()[0]
+	s.Contains(shown(request), asideTurnNote)
+	s.NotContains(shown(request), "Also heard on the caller's line", "the words are the turn, not a note")
+	input := harness.WithoutNotes(request.Input)
+	s.Equal("user ID, Amelia_Rossi_12.", input[len(input)-1].Content)
+	s.Empty(s.agent.converse.peekAside(nash.ID))
 }
