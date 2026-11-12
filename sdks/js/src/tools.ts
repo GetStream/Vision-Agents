@@ -81,8 +81,8 @@ export interface Tool<In = Readonly<Record<string, unknown>>> {
   timeoutMs?: number;
   /**
    * How many calls to it run at once. A call over the cap waits its turn, and its timeout keeps
-   * counting while it waits. Omitted, its calls are capped only by the 16 its `Tools` runs at
-   * once in all.
+   * counting while it waits. Omitted, its calls are capped only by how many its `Tools` runs at
+   * once in all, 16 unless `setConcurrency` says otherwise.
    */
   concurrency?: number;
   /**
@@ -294,6 +294,19 @@ export class Tools {
     return this;
   }
 
+  /**
+   * Caps how many calls to all its functions run at once, in place of 16. A `Dispatch` hosting
+   * an agent shares its `tools` across every session it hosts, so this caps the worker's calls.
+   * Calls already waiting take a place as soon as the cap allows.
+   */
+  setConcurrency(calls: number): this {
+    if (!(Number.isInteger(calls) && calls >= 1)) {
+      throw new ConfigurationError(`a concurrency that is not a number of calls: ${calls}`);
+    }
+    this.slots.resize(calls);
+    return this;
+  }
+
   /** How many functions are registered. */
   get size(): number {
     return this.registered.size;
@@ -386,7 +399,9 @@ export class Tools {
     const held: Slots[] = [];
     let running: Promise<unknown> | undefined;
     try {
-      for (const places of [this.slots, slots]) {
+      // The function's own place first, so its calls waiting their turn hold none of the
+      // places every other function needs.
+      for (const places of [slots, this.slots]) {
         if (places) {
           await places.take(stopped);
           held.unshift(places);
@@ -409,22 +424,23 @@ export class Tools {
   }
 }
 
-/** How many calls a `Tools` runs at once. */
+/** How many calls a `Tools` runs at once unless told otherwise. */
 const DEFAULT_CONCURRENCY = 16;
 
 /** Places for calls to run in, handed to the calls waiting for one in the order they came. */
 class Slots {
-  private free: number;
+  private size: number;
+  private taken = 0;
   private readonly waiting: (() => void)[] = [];
 
   constructor(size: number) {
-    this.free = size;
+    this.size = size;
   }
 
   /** Takes a place, waiting for one unless `stopped` rejects first, which leaves the queue. */
   async take(stopped: Promise<never>): Promise<void> {
-    if (this.free > 0) {
-      this.free -= 1;
+    if (this.taken < this.size && this.waiting.length === 0) {
+      this.taken += 1;
       return;
     }
     let grant = (): void => undefined;
@@ -448,11 +464,20 @@ class Slots {
 
   /** Gives a place back, to the call that has waited longest. */
   give(): void {
-    const next = this.waiting.shift();
-    if (next) {
-      next();
-    } else {
-      this.free += 1;
+    this.taken -= 1;
+    this.handOut();
+  }
+
+  /** Makes it `size` places. Calls holding more than that keep them until they give them back. */
+  resize(size: number): void {
+    this.size = size;
+    this.handOut();
+  }
+
+  private handOut(): void {
+    while (this.taken < this.size && this.waiting.length > 0) {
+      this.taken += 1;
+      this.waiting.shift()!();
     }
   }
 }

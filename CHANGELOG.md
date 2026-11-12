@@ -21,7 +21,9 @@
 
 ### JavaScript: a tool caps how many of its calls run at once
 
-A tool takes `concurrency`, as Go's `tools.Concurrency(n)` does: at most that many calls to it run at once, and a call over the cap waits its turn, its timeout counting while it waits. Every tool's calls together are capped at 16 at once, as in Go. A call cancelled or timed out keeps its place until its function returns. The cap is kept in this process and is not sent to the router. A concurrency that is not a whole number of calls is refused when the tool is registered.
+A tool takes `concurrency`, as Go's `tools.Concurrency(n)` does: at most that many calls to it run at once, and a call over the cap waits its turn, its timeout counting while it waits. A call waiting on its tool's cap holds none of the places other tools need. A call cancelled or timed out keeps its place until its function returns. The cap is kept in this process and is not sent to the router. A concurrency that is not a whole number of calls is refused when the tool is registered.
+
+**Behaviour change.** Every tool's calls together now run at most 16 at once, as in Go, where before there was no cap. `Dispatch.host` shares an agent's `tools` across every session it hosts, so a dispatch worker runs at most 16 tool calls at once across all its sessions. `agent.tools.setConcurrency(n)` raises or lowers that, as Go's `Registry.SetConcurrency` does, and calls already waiting take a place as soon as it allows.
 
 ### Session queries take `$and` / `$or` filters and a sort, and sessions can be pinned
 

@@ -352,6 +352,61 @@ describe("Tools concurrency", () => {
     assert.equal(started, 20);
   });
 
+  it("runs as many calls at once as it is set to, waiting calls included", async () => {
+    const { opened, open } = gate();
+    let started = 0;
+    const tools = new Tools().register({
+      name: "lookup",
+      description: "Look it up",
+      run: async () => {
+        started += 1;
+        await opened;
+        return "found";
+      },
+    });
+
+    tools.setConcurrency(2);
+    const answers = Promise.all(Array.from({ length: 24 }, () => tools.call("lookup", "{}", nothing)));
+    await settle();
+    assert.equal(started, 2);
+
+    tools.setConcurrency(20);
+    await settle();
+    assert.equal(started, 20);
+
+    open();
+    assert.equal((await answers).length, 24);
+    assert.equal(started, 24);
+  });
+
+  it("refuses to run a number of calls at once that is not a whole number", () => {
+    for (const calls of [0, -1, 1.5, Number.NaN]) {
+      assert.throws(() => new Tools().setConcurrency(calls), ConfigurationError, String(calls));
+    }
+  });
+
+  it("keeps calls waiting on one function from holding places another needs", { timeout: 2000 }, async () => {
+    const { opened, open } = gate();
+    const tools = new Tools()
+      .register({
+        name: "book",
+        description: "Book it",
+        concurrency: 1,
+        run: async () => {
+          await opened;
+          return "booked";
+        },
+      })
+      .register({ name: "lookup", description: "Look it up", run: () => "found" });
+
+    const booked = Promise.all(Array.from({ length: 16 }, () => tools.call("book", "{}", nothing)));
+    await settle();
+    assert.equal(await tools.call("lookup", "{}", nothing), "found");
+
+    open();
+    assert.equal((await booked).length, 16);
+  });
+
   it("counts the wait for a place toward a call's timeout", { timeout: 2000 }, async () => {
     const { opened, open } = gate();
     let started = 0;
