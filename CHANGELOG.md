@@ -586,6 +586,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### Dart: the token function is asked once, and again after a 401
+
+The Dart SDK called the app's token function on every router request and every session-socket open, and a 401 failed the request. It now keeps the token, and requests that need one while it is being fetched share that fetch. It asks again when the router answers 401 (the request is sent once more), when a session socket is refused (it is dialled once more), when the token is within a minute of the `exp` it carries, and when Stream Chat or Stream Video say theirs expired (`Backend.streamCredentials(refresh: true)`). A `withUser` copy with a new token function starts with no token kept. `Backend.expireToken` drops the kept token. A socket that cannot be opened no longer quotes its token and API key in the error. Swift, Kotlin and JavaScript already worked this way (FLU-1263).
+
 ### Kotlin: the reply model failing ends the agent's turn, and a failure lasts until the agent works again
 
 `Conversation.reduce` in the Kotlin SDK sets `state` to `Idle` for an `error` event whose `context` is `llm` or `sts` while the agent is `Responding` or `Working`, and keeps `failure`. Before, only `failure` was set, so a reply that failed with no `responded` after it left an app showing the agent thinking. An error from anything else, a tool, the voice or the transcriber, still leaves `state` as it was, and an `Ended` conversation stays ended. `failure` is now cleared when the agent next hears, starts answering or speaks (`heard`, `responding`, `spoke`), as the JavaScript SDK's is; before, it stayed for the rest of the conversation.
