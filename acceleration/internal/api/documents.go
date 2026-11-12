@@ -19,7 +19,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/extract"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/files"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/ocrrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
@@ -128,6 +130,9 @@ func (s *Server) readDocument(ctx context.Context, found *session.Session, sourc
 		return sentDocument{}, newAPIError(ErrorTypeUnsupportedMediaType,
 			fmt.Sprintf("the file is %s: a PDF or a Word document (DOCX or DOC) can be sent", read.Format))
 	}
+	if failure := s.readDocumentPictures(ctx, spec, &read); failure != nil {
+		return sentDocument{}, failure
+	}
 	if !hasText(read) {
 		return sentDocument{}, documentUnreadable("the file has no text in it")
 	}
@@ -184,6 +189,43 @@ func (s *Server) keepDocument(ctx context.Context, found *session.Session, respo
 	if err != nil {
 		s.logger.Error("could not keep a file sent with a question", "session", found.ID(), "response", responseID, "error", err)
 	}
+}
+
+// Pictures of a file sent with a question are read with the person waiting, so far fewer of
+// them than of a knowledge file.
+const (
+	// maxDocumentScans is the most scanned pages read from their pictures.
+	maxDocumentScans = 10
+	// maxDocumentPictures is the most pictures read in all: scans, then pages with charts on
+	// them, then the pictures a Word file holds.
+	maxDocumentPictures = 10
+)
+
+// readDocumentPictures reads a file's scanned pages, and its charts and pictures, as text,
+// through the OCR models knowledge reads them with, billed to the session's customer. A
+// deployment with no OCR leaves them unread, and the model is told which (withUnreadPages).
+func (s *Server) readDocumentPictures(ctx context.Context, spec session.Spec, read *extract.Document) error {
+	if s.streams == nil || s.streams.OCR == nil {
+		return nil
+	}
+	ctx = routing.WithAttribution(ctx, spec.Attribution)
+	request := ocrrouter.Request{CustomerID: spec.CustomerID, Tags: spec.Tags, Target: files.FiguresTarget}
+	refused := func(err error) bool { _, money := moneyError(err); return money }
+	err := files.ReadPictures(ctx, s.streams.OCR, request, read,
+		files.PictureLimits{Scanned: maxDocumentScans, Reads: maxDocumentPictures}, refused,
+		s.logger.With("customer_id", spec.CustomerID))
+	var tooMany *files.TooManyScansError
+	switch {
+	case err == nil:
+		return nil
+	case errors.As(err, &tooMany):
+		return documentTooLarge(fmt.Sprintf("the file has %d pages that are only a picture, and at most %d are read: send a copy with a text layer",
+			tooMany.Scanned, tooMany.Limit))
+	}
+	if answer, money := moneyError(err); money {
+		return answer
+	}
+	return modelFailed(err)
 }
 
 // fetchDocument is the bytes of the file at source, a data URI or a URL, and its name.
@@ -268,10 +310,21 @@ func withUnreadPages(read extract.Document) string {
 	if scanned := read.Scanned(); len(scanned) > 0 {
 		text += "\n\n[" + pageList(scanned, "is", "are") + " only a picture, which was not read]"
 	}
-	if figured := read.Figured(); len(figured) > 0 {
+	if figured := unreadFigures(read); len(figured) > 0 {
 		text += "\n\n[" + pageList(figured, "has", "have") + " charts, diagrams or pictures, which were not read]"
 	}
 	return text
+}
+
+// unreadFigures are the pages with charts on them that nothing read.
+func unreadFigures(read extract.Document) []int {
+	var numbers []int
+	for _, page := range read.Pages {
+		if page.Figured && strings.TrimSpace(page.Figures) == "" {
+			numbers = append(numbers, page.Number)
+		}
+	}
+	return numbers
 }
 
 // pageList names pages as a sentence opens, with its verb: "Page 3 is", "Pages 3, 7 are".
