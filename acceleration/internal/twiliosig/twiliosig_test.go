@@ -117,6 +117,11 @@ func (s *SignatureSuite) TestTheDefaultPortMayBeAddedOrRemoved() {
 	s.NoError(Verify(sdkToken, withPort, s.params, sdkSig), "signed without :443, called with")
 	s.Error(Verify(sdkToken, "https://mycompany.com:8443/myapp.php?foo=1&bar=2", s.params, sdkSig), "a non-default port is not stripped")
 	s.Error(Verify(sdkToken, sdkURL, s.params, "qXmXTn46nE2BzIX2mElesF0OUiA="), "no other port is added")
+
+	const httpURL = "http://mycompany.com/myapp.php?foo=1&bar=2"
+	s.NoError(Verify(sdkToken, httpURL, s.params, "mqKGmqArfRPvhlwp8lrFvsalbUs="), "http signed with :80, called without")
+	s.NoError(Verify(sdkToken, "http://mycompany.com:80/myapp.php?foo=1&bar=2", s.params, "4XFnamIunYXkouX6Cf8uqcnjzjU="), "http signed without :80, called with")
+	s.Error(Verify(sdkToken, httpURL, s.params, "jCqVUJGQSXy0EU1wVIxZfTEk/+4="), "http does not get the https default port")
 }
 
 // Anyone can sign with an empty key, so an unset token must verify nothing.
