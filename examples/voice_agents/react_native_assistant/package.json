@@ -39,8 +39,8 @@
     "react-native-teleport": "^1.2.2",
     "react-native-worklets": "0.13.0",
     "stream-chat": "^10.0.1",
-    "stream-chat-expo": "10.1.0-beta.1",
-    "stream-chat-react-native-core": "10.1.0-beta.1",
+    "stream-chat-expo": "10.1.0",
+    "stream-chat-react-native-core": "10.1.0",
     "use-sync-external-store": "^1.7.0",
     "victory-native": "^42.0.1"
   },
@@ -65,11 +65,5 @@
     "transformIgnorePatterns": [
       "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@stream-io/.*)"
     ]
-  },
-  "overrides": {
-    "@khanacademy/simple-markdown": {
-      "react": "$react",
-      "react-dom": "$react-dom"
-    }
   }
 }
