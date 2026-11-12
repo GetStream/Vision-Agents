@@ -121,6 +121,8 @@ jobs:
         with:
           sdk: stable
 
+      # The dry run fails on a warning (exit 65), so a missing LICENSE or an exact pin on a
+      # dependency fails here rather than at release. pubspec_overrides.yaml is only a hint.
       - name: Check and test core
         working-directory: sdks/dart/core
         run: |
@@ -129,6 +131,7 @@ jobs:
           dart analyze
           dart run tool/generate.dart --check
           dart test
+          dart pub publish --dry-run
 
       - name: Check and test chat
         working-directory: sdks/dart/chat
@@ -137,6 +140,29 @@ jobs:
           dart format --set-exit-if-changed .
           dart analyze
           dart test
+          dart pub publish --dry-run
+
+  # rtc depends on Flutter (stream_video_flutter), so it needs the Flutter SDK rather than the
+  # dart image the core and chat are tested in.
+  dart-rtc:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.dart == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+
+      - name: Check and test rtc
+        working-directory: sdks/dart/rtc
+        run: |
+          flutter pub get
+          dart format --set-exit-if-changed .
+          flutter analyze
+          flutter test
+          flutter pub publish --dry-run
 
   swift:
     needs: changes

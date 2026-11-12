@@ -396,6 +396,7 @@ final class CallUsage {
 final class CreateResponseRequest {
   const CreateResponseRequest({
     this.audio,
+    this.files,
     this.images,
     this.maxOutputTokens,
     this.reasoningEffort,
@@ -411,6 +412,12 @@ final class CreateResponseRequest {
       audio: switch (json['audio']) {
         null => null,
         final Object value => AudioSource.fromJson(value),
+      },
+      files: switch (json['files']) {
+        null => null,
+        final Object value => [
+          for (final item in _list(value, 'CreateResponseRequest.files')) FileSource.fromJson(item),
+        ],
       },
       images: switch (json['images']) {
         null => null,
@@ -447,6 +454,7 @@ final class CreateResponseRequest {
   }
 
   final AudioSource? audio;
+  final List<FileSource>? files;
   final List<ImageSource>? images;
   final int? maxOutputTokens;
   final String? reasoningEffort;
@@ -457,6 +465,7 @@ final class CreateResponseRequest {
 
   Map<String, Object?> toJson() => {
     if (audio case final value?) 'audio': value.toJson(),
+    if (files case final value?) 'files': [for (final item in value) item.toJson()],
     if (images case final value?) 'images': [for (final item in value) item.toJson()],
     'max_output_tokens': ?maxOutputTokens,
     'reasoning_effort': ?reasoningEffort,
@@ -796,6 +805,27 @@ final class CreateSessionRequest {
     if (video case final value?) 'video': value.toJson(),
     'voice': ?voice,
   };
+}
+
+/// A file sent with a question.
+final class FileSource {
+  const FileSource({this.name, required this.url});
+
+  factory FileSource.fromJson(Object? value) {
+    final json = _object(value, 'FileSource');
+    return FileSource(
+      name: switch (json['name']) {
+        null => null,
+        final Object value => _string(value, 'FileSource.name'),
+      },
+      url: _string(json['url'], 'FileSource.url'),
+    );
+  }
+
+  final String? name;
+  final String url;
+
+  Map<String, Object?> toJson() => {'name': ?name, 'url': url};
 }
 
 /// The model that controls an agent's floor, and how long a caller may wait once they stop.

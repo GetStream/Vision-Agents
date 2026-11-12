@@ -446,6 +446,26 @@ func (s *AgentSuite) TestAVoiceLostWhileAReplyIsHeldForAGreetingDropsIt() {
 		5*time.Millisecond, "the dropped reply went out in the next voice")
 }
 
+// The reply's text can be on its way to the voice, past the check that the turn is still
+// being spoken, while the voice is lost and the reply held for the greeting dropped with it.
+func (s *AgentSuite) TestTextOnItsWayWhenAVoiceLostDropsAHeldReplyIsNotSentToTheNextVoice() {
+	s.logs = &logLines{}
+	s.join(true)
+	s.replacement = newStubTTS(true)
+	turn := s.answering("Hello? Hello. Hello.")
+	s.greetedOver(turn, s.mutters, "Hello?")
+
+	s.voice.emitter.Send(tts.Error{Provider: "stub", Model: "stub-tts", Err: errors.New("quota exceeded"), Fatal: true})
+	s.eventually(func() bool { return len(s.logs.records("the voice was lost, speaking in another")) > 0 },
+		"the voice was never replaced")
+	s.Require().True(s.agent.abandonedTurn(turn))
+
+	s.agent.say(turn, "Hi, yes, I can hear you.")
+
+	s.Empty(s.replacement.spoken(), "the dropped reply was sent to the next voice")
+	s.Empty(s.edge.heard())
+}
+
 // Acting on chorus-asr, the floor model rules on the greeting too, and a stop on it would cut
 // the reply that answers it.
 func (s *AgentSuite) TestTheFloorModelStoppingOnAHeldGreetingLeavesTheReply() {

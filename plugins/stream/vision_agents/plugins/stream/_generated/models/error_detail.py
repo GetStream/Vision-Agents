@@ -8,6 +8,7 @@ from attrs import field as _attrs_field
 from typing_extensions import Self
 
 from ..models.error_type import ErrorType
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="ErrorDetail")
 
@@ -45,12 +46,19 @@ class ErrorDetail:
             no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting
             team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the
             future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as
-            it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model
-            that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a
-            429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503:
-            the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a
-            run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an
-            image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image
+            it may), tier_limit_reached (the organization's tier limits refuse the work, and limit says which: a 403 for a
+            call or a transfer, to a country the tier does not reach, past its minutes or recipients of the day, or past its
+            calls at once; a 400 for an agent config whose sandbox is bigger or more open than the organization's sandbox
+            limits allow. The message names the tier and the limit), account_suspended (a 403: the organization is
+            suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the
+            message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and
+            Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection
+            (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an
+            unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is
+            not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), document_too_large (a 413: a file
+            sent with a response has more pages or text than one may, alone or with the files the conversation already
+            holds, and the message names the limit), document_unreadable (a 400: a file sent with a response could not be
+            read, such as one with a password, one that is damaged or one with no text in it, which retrying the same file
             does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's
             usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64
             characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters),
@@ -76,12 +84,16 @@ class ErrorDetail:
             authentication 401, payment_required 402, permission 403, not_found 404, method_not_allowed 405, not_acceptable
             406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500,
             unavailable 503, timeout 504.
+        limit (str | Unset): Which limit refused the work, present with tier_limit_reached only: country, per_day,
+            recipients_per_day or concurrent for a call or a transfer, sandbox_network, sandbox_cpu, sandbox_memory_gb or
+            sandbox_disk_gb for an agent config's sandbox. More may be added.
     """
 
     code: str
     doc_url: str
     message: str
     type_: ErrorType
+    limit: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -93,6 +105,8 @@ class ErrorDetail:
 
         type_ = self.type_.value
 
+        limit = self.limit
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -103,6 +117,8 @@ class ErrorDetail:
                 "type": type_,
             }
         )
+        if limit is not UNSET:
+            field_dict["limit"] = limit
 
         return field_dict
 
@@ -117,11 +133,14 @@ class ErrorDetail:
 
         type_ = ErrorType._decode(d.pop("type"))
 
+        limit = d.pop("limit", UNSET)
+
         error_detail = cls(
             code=code,
             doc_url=doc_url,
             message=message,
             type_=type_,
+            limit=limit,
         )
 
         error_detail.additional_properties = d

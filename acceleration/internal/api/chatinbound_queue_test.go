@@ -539,7 +539,7 @@ func (s *ChatInboundQueueSuite) TestADeliveryOnAChannelTwoCustomersCalledOnIsAns
 		Body: []byte(s.message(suiteStreamApp, deliveredConfig(&s.RouterSuite, s.customerID()), ""))})
 
 	s.NoError(err)
-	s.True(s.reachesWorker(worker.Messages()))
+	s.True(s.handedOn(worker.Messages()))
 }
 
 // Sessions of two customers on a channel that names nobody say nobody's session answers it,
@@ -660,7 +660,7 @@ func (s *ChatInboundQueueSuite) TestAQueuedDeliveryPlacedBeforeTheRouterStoppedI
 	defer release()
 	queued := s.row(s.queue(s.message(suiteStreamApp, deliveredConfig(&s.RouterSuite, s.customerID()), "")))
 	s.Require().NoError(s.router.AnswerChatInbound(context.Background(), queued))
-	s.True(s.reachesWorker(worker.Messages()))
+	s.True(s.handedOn(worker.Messages()))
 
 	s.NoError(s.router.AnswerChatInbound(context.Background(), queued), "a try after the answer started is settled")
 	s.answering()

@@ -293,8 +293,8 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	} else if !ok {
 		return nil, invalidRequest(message)
 	}
-	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, was); !ok {
-		return nil, invalidRequest(message)
+	if failure, refused := s.sandboxLimitsComplaint(ctx, customerID, config, was); refused {
+		return nil, failure
 	}
 	if message, ok, err := s.regionComplaint(ctx, config, &original); err != nil {
 		return nil, err
