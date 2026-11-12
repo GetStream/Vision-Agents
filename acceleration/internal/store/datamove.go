@@ -129,6 +129,7 @@ var dataTables = []dataTable{
 	{name: "agent_session_tools", parent: "agent_sessions", parentColumn: "session_id", shard: true},
 	{name: "agent_responses", customer: "customer_id", shard: true},
 	{name: "agent_response_items", parent: "agent_responses", parentColumn: "response_id", shard: true},
+	{name: "conversation_documents", customer: "customer_id", shard: true},
 	// Nothing points at a log's id, so a copied log is given one of this deployment's
 	// (20261206120000_agent_logs_source_id.sql).
 	{name: "agent_logs", customer: "customer_id", copied: "source_id"},

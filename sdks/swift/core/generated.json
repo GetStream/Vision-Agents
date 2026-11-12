@@ -1,11 +1,11 @@
 {
-  "spec_sha256": "95545264ecf48410ae4a3c899c0875883dd289186abbb87cdc707dede2aa1f32",
-  "client_sha256": "f7ea688319e3e4be67801c0c24ca8ba82bf46441ad6a199647af797364e506a6",
+  "spec_sha256": "cfd52b7b57c3c16e3d566a93942eb061389bbe67557244b95227ef6940595b5f",
+  "client_sha256": "a88a4e8399354fc8b888f772bc06cac08a01243d32113965510a2d3490539ec6",
   "options": [
     "access_modifier=internal",
     "immutable_models=true",
     "raw_representable_over_enum=true",
     "string_coding_keys=true"
   ],
-  "generator": "53ddd89b820c8fa9de82385ebc5ef02c1d31bc03"
+  "generator": "a73c9124e850cd25220bc74e2e81af8bea2cf113"
 }

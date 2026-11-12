@@ -12,6 +12,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.audio_source import AudioSource
     from ..models.create_response_request_ui_action import CreateResponseRequestUiAction
+    from ..models.file_source import FileSource
     from ..models.image_source import ImageSource
     from ..models.video_source import VideoSource
 
@@ -48,6 +49,14 @@ class CreateResponseRequest:
         videos (list[VideoSource] | Unset): Recorded clips to show the agent. The router samples evenly spaced frames
             from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a
             video, since none of the ones routed here take one whole.
+        files (list[FileSource] | Unset): A file to answer questions about: a PDF or a Word document. The router reads
+            it as text before the turn starts, and the agent answers from it on this turn and on every turn of the
+            conversation after it, including a conversation carried on later or forked by the same person. In a conversation
+            kept in Stream Chat the person's message shows the file. At most 100 pages, and at most 120,000 characters of
+            text together with the files the conversation already holds, or a quarter of what the model reads at once. Only
+            in a person's own conversation: refused in a thread, in a channel others write in, in a session a worker opened
+            for a channel's message, and by a speech-to-speech session. Not with a voice note. Refused before any turn
+            starts when it cannot be read, is too large, or reads as a prompt injection under the organization's policy.
     """
 
     text: str
@@ -58,6 +67,7 @@ class CreateResponseRequest:
     request_id: str | Unset = UNSET
     ui_action: CreateResponseRequestUiAction | Unset = UNSET
     videos: list[VideoSource] | Unset = UNSET
+    files: list[FileSource] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -91,6 +101,13 @@ class CreateResponseRequest:
                 videos_item = videos_item_data.to_dict()
                 videos.append(videos_item)
 
+        files: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.files, Unset):
+            files = []
+            for files_item_data in self.files:
+                files_item = files_item_data.to_dict()
+                files.append(files_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -112,6 +129,8 @@ class CreateResponseRequest:
             field_dict["ui_action"] = ui_action
         if videos is not UNSET:
             field_dict["videos"] = videos
+        if files is not UNSET:
+            field_dict["files"] = files
 
         return field_dict
 
@@ -121,6 +140,7 @@ class CreateResponseRequest:
         from ..models.create_response_request_ui_action import (
             CreateResponseRequestUiAction,
         )
+        from ..models.file_source import FileSource
         from ..models.image_source import ImageSource
         from ..models.video_source import VideoSource
 
@@ -165,6 +185,15 @@ class CreateResponseRequest:
 
                 videos.append(videos_item)
 
+        _files = d.pop("files", UNSET)
+        files: list[FileSource] | Unset = UNSET
+        if _files is not UNSET:
+            files = []
+            for files_item_data in _files:
+                files_item = FileSource.from_dict(files_item_data)
+
+                files.append(files_item)
+
         create_response_request = cls(
             text=text,
             audio=audio,
@@ -174,6 +203,7 @@ class CreateResponseRequest:
             request_id=request_id,
             ui_action=ui_action,
             videos=videos,
+            files=files,
         )
 
         create_response_request.additional_properties = d
