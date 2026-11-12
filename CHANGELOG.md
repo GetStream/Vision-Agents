@@ -1397,6 +1397,10 @@ When the provider lists a granted tool with another schema than the one approved
 
 A chat episode now starts when Stream made the message that opened it. Before, it started when the router opened it, a moment later, so the summary left out that message: a one-message chat was summed up as "the user wrote nothing". A message in a channel with a member other than the person and the agent now opens no episode and writes no card, the rule a session already reads cards by. Without members in what Stream sends, the message opens none. A config with `episode_cards` off writes and reads nothing new (AI-2632).
 
+### Go SDK: phone numbers and end-user ids stay out of Info logs
+
+A dispatch worker's `answering a call` line and an agent's `ringing` line carry the last four characters of each number (`***0111`) where they carried the whole number. `answering a message` no longer says who wrote it; the user id is logged at Debug. The doc of `edge.MonitorURL` and `Session.MonitorURL` says the link carries a token and should be kept out of logs, and the voice example says it prints the caller's speech.
+
 ## Breaking Changes
 
 ### The Dart SDK has no views of its own
