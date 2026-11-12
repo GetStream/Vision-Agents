@@ -191,6 +191,31 @@ void main() {
 
     expect(find.text('Your order is on its way.'), findsOneWidget);
   });
+
+  test('CaptionView.tail leaves out only the words that do not fit', () {
+    const style = TextStyle(fontSize: 10);
+    final said = List.generate(60, (i) => 'word$i').join(' ');
+
+    final shown = CaptionView.tail(said, style: style, maxWidth: 200);
+    final words = shown.substring(1).split(' ');
+    final oneMore =
+        '…${said.split(' ')[60 - words.length - 1]} ${words.join(' ')}';
+
+    bool fits(String candidate) {
+      final painter = TextPainter(
+        text: TextSpan(text: candidate, style: style),
+        textAlign: TextAlign.center,
+        maxLines: 2,
+        textDirection: TextDirection.ltr,
+      )..layout(maxWidth: 200);
+      final ok = !painter.didExceedMaxLines;
+      painter.dispose();
+      return ok;
+    }
+
+    expect(fits(shown), isTrue);
+    expect(fits(oneMore), isFalse);
+  });
 }
 
 const _tick = Duration(milliseconds: 100);

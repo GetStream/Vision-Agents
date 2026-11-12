@@ -1,3 +1,5 @@
+import 'dart:async';
+
 // ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
@@ -48,6 +50,7 @@ class _ChatViewState extends State<ChatView> {
       final chat = await AgentChat.open(session);
       if (!mounted) {
         await chat.close();
+        chat.dispose();
         return;
       }
       setState(() => _chat = chat);
@@ -60,8 +63,18 @@ class _ChatViewState extends State<ChatView> {
 
   @override
   void dispose() {
-    _chat?.dispose();
+    final chat = _chat;
+    if (chat != null) unawaited(_leave(chat));
     super.dispose();
+  }
+
+  static Future<void> _leave(AgentChat chat) async {
+    try {
+      await chat.close();
+    } on Object catch (error) {
+      debugPrint('Closing the conversation failed: $error');
+    }
+    chat.dispose();
   }
 
   @override
@@ -105,6 +118,18 @@ class _AgentConversationState extends State<_AgentConversation> {
 
   final _composer = ChatComposerController();
 
+  late final _conversation = AIConversation(
+    transport: widget.chat,
+    composer: _composer,
+    approver: _approver,
+    actions: AIConversationActions.rate,
+  );
+
+  late final _shown = Listenable.merge([
+    _conversation,
+    widget.chat.sessionFailure,
+  ]);
+
   // Answers the questions of the tools that ask first, as the person signed in here.
   //
   // The router addresses a question to the person whose message the call answers, and
@@ -127,110 +152,98 @@ class _AgentConversationState extends State<_AgentConversation> {
     },
   );
 
-  // Stream's components, with what the person can do under each finished reply: copy it,
-  // share it and rate it, and the composer without its attachment button, since a question
-  // goes to the agent as text and dictating one stays. Made once, since new builders rebuild
-  // every component that reads them.
+  // Stream's components, with the composer without its attachment button: a question goes to
+  // the agent as text, and dictating one stays. Copy, share and rate show under each finished
+  // reply through AIConversationActions.rate.
   late final _components = StreamComponentBuilders(
     extensions: streamAIComponentBuilders(
-      replyActions: _replyActions,
       composerLeading: (context, props) => ChatComposer.hidden,
     ),
   );
 
   @override
-  void initState() {
-    super.initState();
-    widget.chat.addListener(_changed);
-  }
-
-  @override
   void dispose() {
-    widget.chat.removeListener(_changed);
+    _conversation.dispose();
     _composer.dispose();
     _approver.dispose();
     super.dispose();
   }
 
-  // What the person can do under a finished reply: copy it, share it (the components open
-  // the share sheet themselves) and rate it. Asking for a reply again needs the router to
-  // replace one, which it does not yet.
-  Widget _replyActions(BuildContext context, AIReplyActionsProps props) {
-    final chat = widget.chat;
-    // Read here, from the chat, so the thumbs change as soon as the rating does.
-    return ListenableBuilder(
-      listenable: chat,
-      builder: (context, _) => AIReplyActionsView(
-        text: props.text,
-        actions: AIReplyActions(
-          rating: chat.ratings[props.message.id],
-          onRate: (rating) => chat.rate(props.message.id, rating),
-        ),
-      ),
-    );
-  }
-
-  void _changed() {
-    _composer.isGenerating = widget.chat.isAnswering;
-    // The conversation moved on: new messages, thinking, a failure or a rating.
-    setState(() {});
-  }
+  String _describe(BuildContext context, Object error) => error is AIAgentError
+      ? error.localizedMessage(AITranslations.of(context))
+      : '$error';
 
   @override
   Widget build(BuildContext context) {
-    final chat = widget.chat;
-    final workingOn = chat.workingOn;
-    // Here rather than above the app, since the reply actions read this chat.
+    final colors = context.streamColorScheme;
     return StreamComponentFactory(
       builders: _components,
-      child: Column(
-        children: [
-          Expanded(
-            // The person's messages in bubbles, the agent's as their steps and then their
-            // answer. Each question goes to the top as it is asked, and its reply writes
-            // itself out below it without moving what is on screen.
-            child: AIConversationView(
-              messages: chat.listMessages,
-              isThinking: chat.isThinking,
-              approver: _approver,
-              loadOlderMessages: chat.hasOlderMessages
-                  ? chat.loadOlderMessages
-                  : null,
-              footer: workingOn == null
-                  ? null
-                  : AITypingIndicatorView(text: workingOn),
-              emptyContent: Notice(
-                icon: context.streamIcons.archive,
-                title: 'Ask about an order',
-                message: 'Orders A-1042 and A-1043 are on this account.',
-              ),
-            ),
-          ),
-          if (chat.messages.isEmpty)
-            AISuggestionsView(
-              suggestions: _starters,
-              onSuggestionSelected: chat.ask,
-            ),
-          if (chat.failure case final failure?)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Text(
-                failure,
-                style: context.streamTextTheme.captionDefault.copyWith(
-                  color: context.streamColorScheme.accentError,
+      child: ListenableBuilder(
+        listenable: _shown,
+        builder: (context, _) {
+          final activity = _conversation.activity;
+          final error = _conversation.error;
+          final failure = error == null
+              ? widget.chat.sessionFailure.value
+              : _describe(context, error);
+          final isWelcoming =
+              _conversation.messages.isEmpty &&
+              _conversation.pendingMessage == null;
+          return Column(
+            children: [
+              Expanded(
+                child: AIConversationView.conversation(
+                  conversation: _conversation,
+                  footer:
+                      _conversation.status.isAnswering && activity?.text != null
+                      ? AITypingIndicatorView(text: activity!.text!)
+                      : null,
+                  emptyContent: Notice(
+                    icon: context.streamIcons.archive,
+                    title: 'Ask about an order',
+                    message: 'Orders A-1042 and A-1043 are on this account.',
+                  ),
                 ),
               ),
-            ),
-          SafeArea(
-            top: false,
-            child: ChatComposer(
-              controller: _composer,
-              enableSpeechToText: true,
-              onSendPressed: (text, _, _) => chat.ask(text),
-              onStopPressed: chat.stop,
-            ),
-          ),
-        ],
+              if (isWelcoming)
+                AISuggestionsView(
+                  suggestions: _starters,
+                  onSuggestionSelected: _conversation.send,
+                ),
+              if (failure != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    spacing: 8,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          failure,
+                          style: context.streamTextTheme.captionDefault
+                              .copyWith(color: colors.accentError),
+                        ),
+                      ),
+                      if (error != null)
+                        StreamButton(
+                          onPressed: _conversation.retry,
+                          type: .ghost,
+                          size: .small,
+                          child: const Text('Try again'),
+                        ),
+                    ],
+                  ),
+                ),
+              SafeArea(
+                top: false,
+                child: ChatComposer.conversation(
+                  conversation: _conversation,
+                  enableSpeechToText: true,
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
