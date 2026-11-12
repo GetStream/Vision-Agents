@@ -328,6 +328,31 @@ describe("agentChatTransport, branching", () => {
     assert.equal(asked["request_id"], "ctl_ask");
   });
 
+  it("drops a switch still reading when something is sent, rather than show it over the question", async () => {
+    const { streamChat, chat, transport, feed } = await connected();
+    // The switch stays on its way to the router until the question has gone and arrived.
+    let open = () => {};
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const session = chat.session.bind(chat);
+    let calls = 0;
+    chat.session = () => (calls++ === 0 ? gate.then(session) : session());
+    router.serve("POST", responsesPath, () => {
+      arrive(streamChat, chatMessage("q4", 8, mark("resp_4", "question", 1, 1)));
+      return answering(undefined);
+    });
+
+    const switching = transport.switchBranch(feed.find("r2"), "previous");
+    await transport.send(request({ text: "And Porto?", messageId: "ctl_ask" }));
+    await until(() => feed.ids.includes("q4"), "the question never arrived");
+    open();
+    await switching;
+
+    assert.deepEqual(feed.ids, ["q0", "r0", "q1", "r2", "q4"], "the question asked on the conversation shown");
+    assert.deepEqual(writes(), [responsesPath], "nothing to bring back: no other version was shown when it was sent");
+  });
+
   it("brings the version shown back before regenerating a reply of it", async () => {
     const { transport, feed } = await connected();
     router.serve("POST", "/v1/agents/sessions/sess_1/responses/resp_3/activate", {

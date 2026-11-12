@@ -157,7 +157,7 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
   let lastAsked: { text: string; images: ImageSource[]; uiAction: UIAction | undefined; reasoningEffort: string | undefined } | undefined;
   // The other version of the conversation shown in place of the channel's, from a message on.
   let overlay: Overlay<M> | undefined;
-  // Bumped by each switch, so one that finishes after a later one shows nothing.
+  // Bumped by each switch and each send, so a switch that finishes after either shows nothing.
   let switches = 0;
   // What a regenerate, an edit or an activation of this device hid. The channel drops them too,
   // but stream-chat 9 says nothing when it does, so the feed would show them until its next event.
@@ -358,6 +358,9 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
       };
     },
     async send(request) {
+      // A switch still reading would land its version over what is sent now: it shows nothing.
+      // The version already shown stays until what is sent replaces it, and if it fails.
+      switches++;
       if (request.kind === "regenerate" && request.message === undefined) {
         // A question the agent couldn't answer, asked again as a new question under a new request
         // id: under the original one, the router would take it for the question it already
