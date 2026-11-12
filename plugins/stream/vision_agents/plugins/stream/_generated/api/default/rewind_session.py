@@ -65,6 +65,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = ErrorResponse.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 500:
         response_500 = ErrorResponse.from_dict(response.json())
 
@@ -106,9 +111,13 @@ def sync_detailed(
     response itself is kept.
     The history is rebuilt from what the session recorded, the question and the answer of each turn, so
     a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no
-    store, and a native speech-to-speech one, whose model keeps its own context. A persistent
-    conversation is refused as well, because its transcript lives in Chat and would bring the rewound
-    turns back the next time it opened; fork it at the response instead.
+    store, and a native speech-to-speech one, whose model keeps its own context.
+    A conversation kept in Chat is rewound there too: every message after the response's answer is
+    hidden from every read, so reopening the conversation does not bring the rewound turns back. A
+    shared, dispatched or thread conversation is refused, because others write to its channel; fork it
+    at the response instead. A response recorded before its Chat message was kept cannot be rewound to.
+    If something is written to the channel while it is being rewound, nothing is hidden and the call
+    answers 409: rewind again.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -148,9 +157,13 @@ def sync(
     response itself is kept.
     The history is rebuilt from what the session recorded, the question and the answer of each turn, so
     a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no
-    store, and a native speech-to-speech one, whose model keeps its own context. A persistent
-    conversation is refused as well, because its transcript lives in Chat and would bring the rewound
-    turns back the next time it opened; fork it at the response instead.
+    store, and a native speech-to-speech one, whose model keeps its own context.
+    A conversation kept in Chat is rewound there too: every message after the response's answer is
+    hidden from every read, so reopening the conversation does not bring the rewound turns back. A
+    shared, dispatched or thread conversation is refused, because others write to its channel; fork it
+    at the response instead. A response recorded before its Chat message was kept cannot be rewound to.
+    If something is written to the channel while it is being rewound, nothing is hidden and the call
+    answers 409: rewind again.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -185,9 +198,13 @@ async def asyncio_detailed(
     response itself is kept.
     The history is rebuilt from what the session recorded, the question and the answer of each turn, so
     a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no
-    store, and a native speech-to-speech one, whose model keeps its own context. A persistent
-    conversation is refused as well, because its transcript lives in Chat and would bring the rewound
-    turns back the next time it opened; fork it at the response instead.
+    store, and a native speech-to-speech one, whose model keeps its own context.
+    A conversation kept in Chat is rewound there too: every message after the response's answer is
+    hidden from every read, so reopening the conversation does not bring the rewound turns back. A
+    shared, dispatched or thread conversation is refused, because others write to its channel; fork it
+    at the response instead. A response recorded before its Chat message was kept cannot be rewound to.
+    If something is written to the channel while it is being rewound, nothing is hidden and the call
+    answers 409: rewind again.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -225,9 +242,13 @@ async def asyncio(
     response itself is kept.
     The history is rebuilt from what the session recorded, the question and the answer of each turn, so
     a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no
-    store, and a native speech-to-speech one, whose model keeps its own context. A persistent
-    conversation is refused as well, because its transcript lives in Chat and would bring the rewound
-    turns back the next time it opened; fork it at the response instead.
+    store, and a native speech-to-speech one, whose model keeps its own context.
+    A conversation kept in Chat is rewound there too: every message after the response's answer is
+    hidden from every read, so reopening the conversation does not bring the rewound turns back. A
+    shared, dispatched or thread conversation is refused, because others write to its channel; fork it
+    at the response instead. A response recorded before its Chat message was kept cannot be rewound to.
+    If something is written to the channel while it is being rewound, nothing is hidden and the call
+    answers 409: rewind again.
 
     Args:
         id (str): The session, as returned when it was created.

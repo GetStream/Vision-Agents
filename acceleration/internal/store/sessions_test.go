@@ -687,6 +687,28 @@ func (s *StoreSuite) TestRewindingTakesLaterTurnsOutOfTheConversation() {
 	s.Equal("fourth", exchanges[1].ResponseID)
 }
 
+func (s *StoreSuite) TestAResponseKeepsTheChatMessageItsAnswerWasWrittenTo() {
+	s.opened("one", "app", s.base, nil)
+	s.responded("one", "first", "one", s.base, ItemSaid, ItemAnswer)
+	s.responded("one", "second", "two", s.base.Add(time.Hour), ItemSaid, ItemAnswer)
+
+	none, err := s.store.ResponseChatMessage(s.ctx, "app", "one", "first")
+	s.Require().NoError(err)
+	s.Empty(none, "a response whose answer wrote no Chat message has none")
+
+	s.Require().NoError(s.store.AnsweredIn(s.ctx, "first", "message-1"))
+	s.Require().NoError(s.store.AnsweredIn(s.ctx, "first", "message-2"))
+	written, err := s.store.ResponseChatMessage(s.ctx, "app", "one", "first")
+	s.Require().NoError(err)
+	s.Equal("message-2", written, "a reply continuing the turn replaces the message it ends on")
+
+	_, err = s.store.ResponseChatMessage(s.ctx, "another-app", "one", "first")
+	s.ErrorIs(err, ErrUnknownResponse, "another customer's response is not found")
+	s.Require().NoError(s.store.RewindResponses(s.ctx, "app", "one", "first", s.base.Add(2*time.Hour)))
+	_, err = s.store.ResponseChatMessage(s.ctx, "app", "one", "second")
+	s.ErrorIs(err, ErrUnknownResponse, "a rewound response is not somewhere to go back to")
+}
+
 func (s *StoreSuite) TestDeletingASessionTakesItsTurnsWithIt() {
 	s.opened("one", "app", s.base, nil)
 	s.responded("one", "first", "hello", s.base, ItemSaid, ItemAnswer)

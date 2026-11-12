@@ -2239,7 +2239,8 @@ export type paths = {
         /**
          * Go back to a response and carry on from there
          * @description The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
-         *     The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
+         *     The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context.
+         *     A conversation kept in Chat is rewound there too: every message after the response's answer is hidden from every read, so reopening the conversation does not bring the rewound turns back. A shared, dispatched or thread conversation is refused, because others write to its channel; fork it at the response instead. A response recorded before its Chat message was kept cannot be rewound to. If something is written to the channel while it is being rewound, nothing is hidden and the call answers 409: rewind again.
          */
         readonly post: operations["rewindSession"];
         readonly delete?: never;
@@ -16805,6 +16806,15 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description The channel moved on while it was being rewound; nothing was hidden */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             readonly 500: components["responses"]["InternalError"];
             readonly 503: components["responses"]["Unavailable"];
         };

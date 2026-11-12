@@ -1176,18 +1176,6 @@ func (s *Session) Rewind(ctx context.Context, recorded Recorded, responseID stri
 	if err := s.records.Flush(ctx); err != nil {
 		return stack.Wrap(err)
 	}
-	if s.persisted != nil {
-		messageID, err := recorded.ResponseChatMessage(ctx, s.spec.CustomerID, s.id, responseID)
-		if err != nil {
-			return stack.Wrap(err)
-		}
-		if messageID == "" {
-			return stack.Wrap(fmt.Errorf("%w: that response has no Chat message to go back to; it was recorded before rewind could reach Chat", ErrCannotRewind))
-		}
-		if err := s.persisted.Rewind(ctx, messageID); err != nil {
-			return stack.Wrap(err)
-		}
-	}
 	exchanges, err := recorded.Exchanges(ctx, s.spec.CustomerID, s.id, responseID)
 	if err != nil {
 		return stack.Wrap(err)
@@ -1198,6 +1186,22 @@ func (s *Session) Rewind(ctx context.Context, recorded Recorded, responseID stri
 		store.DocumentScope{ConversationID: s.spec.ConversationID, SessionID: s.id, Owner: s.spec.Caller.UserID, UntilResponse: responseID})
 	if err != nil {
 		return stack.Wrap(err)
+	}
+	// A conversation kept in Chat is rewound there first, once everything above has been
+	// read: a refusal leaves the session and its records as they were.
+	if s.persisted != nil {
+		messageID, err := recorded.ResponseChatMessage(ctx, s.spec.CustomerID, s.id, responseID)
+		if err != nil {
+			return stack.Wrap(err)
+		}
+		if messageID == "" {
+			// A line said as written, such as the greeting, writes no Chat message, and a
+			// response recorded before the message was kept has none on its row.
+			return stack.Wrap(fmt.Errorf("%w: that response has no Chat message to go back to: it wrote none, such as a greeting, or it was recorded before rewind could reach Chat", ErrCannotRewind))
+		}
+		if err := s.persisted.Rewind(ctx, messageID); err != nil {
+			return stack.Wrap(err)
+		}
 	}
 	if err := recorded.RewindResponses(ctx, s.spec.CustomerID, s.id, responseID, time.Now().UTC()); err != nil {
 		return stack.Wrap(err)

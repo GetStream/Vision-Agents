@@ -395,7 +395,8 @@ func (s *SessionVerbsSuite) TestRewindingToATurnNobodyTookIsRefused() {
 	status, body := s.serverClient.call(http.MethodPost,
 		"/v1/agents/sessions/"+opened.Id+"/rewind", RewindSessionRequest{ResponseId: s.utils.uuid()})
 
-	s.Equal(http.StatusBadRequest, status, string(body))
+	// Not found rather than the 400 every persistent session got before it could be rewound.
+	s.Equal(http.StatusNotFound, status, string(body))
 }
 
 // A default session keeps its conversation in Chat, which is what used to make every rewind

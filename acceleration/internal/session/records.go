@@ -64,11 +64,11 @@ type recordWrite struct {
 	// chose is a connection a login in the conversation chose for a binding, nil otherwise.
 	chose *chose
 	// answered is the Chat message a turn's answer was written to, nil otherwise.
-	answered *answered
+	answered *chatAnswer
 }
 
-// answered is a response and the Stream Chat message carrying its answer.
-type answered struct {
+// chatAnswer is a response and the Stream Chat message carrying its answer.
+type chatAnswer struct {
 	id, chatMessageID string
 }
 
@@ -200,7 +200,7 @@ func (r *sessionRecorder) Responding(row store.AgentResponse) {
 // AnsweredIn queues the Stream Chat message a turn's answer was written to, behind the
 // response row it is set on.
 func (r *sessionRecorder) AnsweredIn(id, chatMessageID string) {
-	r.queueWrite(recordWrite{answered: &answered{id, chatMessageID}})
+	r.queueWrite(recordWrite{answered: &chatAnswer{id, chatMessageID}})
 }
 
 // Responded queues how a turn ended.
