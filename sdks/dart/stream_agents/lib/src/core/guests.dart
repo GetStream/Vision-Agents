@@ -5,15 +5,16 @@ import 'wire.dart';
 
 /// Somewhere to remember a guest between launches.
 ///
-/// Narrow on purpose, so an app passes whatever it already persists with. With Flutter's
-/// `shared_preferences` it is three lines:
+/// Narrow on purpose, so an app passes whatever it already persists with. What it keeps is a
+/// token and the secret that refreshes it, so keep it in the platform's keystore rather than
+/// in plain preferences. With `flutter_secure_storage` it is three lines:
 ///
-///     final class PreferencesGuestStore implements GuestStore {
-///       PreferencesGuestStore(this.prefs);
-///       final SharedPreferencesAsync prefs;
-///       Future<String?> read() => prefs.getString(guestStorageKey);
-///       Future<void> write(String value) => prefs.setString(guestStorageKey, value);
-///       Future<void> clear() => prefs.remove(guestStorageKey);
+///     final class SecureGuestStore implements GuestStore {
+///       SecureGuestStore(this.storage);
+///       final FlutterSecureStorage storage;
+///       Future<String?> read() => storage.read(key: guestStorageKey);
+///       Future<void> write(String value) => storage.write(key: guestStorageKey, value: value);
+///       Future<void> clear() => storage.delete(key: guestStorageKey);
 ///     }
 abstract interface class GuestStore {
   Future<String?> read();

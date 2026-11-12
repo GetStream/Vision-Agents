@@ -9,7 +9,7 @@ export 'agent_session.dart' hide CameraHandler, CameraPicture;
 export 'backend.dart';
 export 'command.dart';
 export 'conversation.dart';
-export 'errors.dart';
+export 'errors.dart' hide withoutCredentials;
 export 'guests.dart' show GuestStore, MemoryGuestStore, guestStorageKey;
 export 'live_value.dart';
 export 'models.dart';

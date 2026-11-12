@@ -1100,6 +1100,34 @@ void main() {
       },
     );
 
+    test('a socket that cannot open says why without the token', () async {
+      router
+        ..answer('POST /v1/agents/sessions/s1/stop', const Answer(204))
+        ..refuseSockets = true;
+      final keyed = StreamAgents(url: router.url, apiKey: 'key', token: () async => 'secret-tok');
+      addTearDown(keyed.close);
+
+      final error = await keyed.chat().then<Object>(
+        (_) => fail('the socket opened'),
+        onError: (Object error) => error,
+      );
+
+      expect(error, isA<TransportException>());
+      expect('$error', allOf(contains('was not upgraded'), isNot(contains('secret-tok'))));
+      expect('${(error as TransportException).cause}', isNot(contains('secret-tok')));
+    });
+
+    test('a frame over 16 MiB ends the conversation rather than being read', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+
+      socket.send('{"type":"response_delta","turn_id":"t1","text":"${'a' * (17 * 1024 * 1024)}"}');
+
+      await until(() => chat.connection.value is Disconnected);
+      expect(chat.failure, isA<SocketClosedException>());
+      expect(chat.turns, isEmpty);
+    });
+
     test('deleting takes the conversation away and ends it here', () async {
       router.answer('DELETE /v1/agents/sessions/s1', const Answer(204));
       final chat = await agents.chat();

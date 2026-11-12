@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:web_socket/web_socket.dart';
@@ -31,11 +32,19 @@ final class SessionSocket {
     if (_socket != null) {
       throw StateError('the socket is already open');
     }
+    final connecting = WebSocket.connect(uri);
     final WebSocket socket;
     try {
-      socket = await WebSocket.connect(uri);
+      socket = await connecting.timeout(_opening);
+    } on TimeoutException {
+      // One that opens after all is closed again, since nobody is waiting for it.
+      connecting.then(_closeQuietly).ignore();
+      throw TransportException(
+        'the session socket did not open within ${_opening.inSeconds} seconds',
+      );
     } on WebSocketException catch (error) {
-      throw TransportException(error);
+      // Its message is the whole URL, token and all.
+      throw TransportException(withoutCredentials('$error'));
     }
     _socket = socket;
     // Closed while it was connecting.
@@ -71,6 +80,14 @@ final class SessionSocket {
     }
   }
 
+  /// Ends the conversation on a frame larger than any the router sends, rather than reading
+  /// whatever a broken or hostile server sends next.
+  Future<Never> _tooLarge(WebSocket socket) async {
+    _closing = true;
+    await _closeQuietly(socket);
+    throw const SocketClosedException(null, 'the router sent a frame over 16 MiB');
+  }
+
   Future<void> _closeQuietly(WebSocket socket) async {
     try {
       await socket.close(1000, 'closed by the client');
@@ -83,12 +100,19 @@ final class SessionSocket {
     await for (final event in socket.events) {
       switch (event) {
         case TextDataReceived(:final text):
+          // A string is at least as many bytes as it has code units.
+          if (text.length > _largestFrame) {
+            await _tooLarge(socket);
+          }
           // A frame this SDK cannot read is skipped rather than ending the conversation,
           // which is what the router does with a command it cannot read.
           if (AgentEvent.tryParse(text) case final parsed?) {
             yield parsed;
           }
         case BinaryDataReceived(:final data):
+          if (data.length > _largestFrame) {
+            await _tooLarge(socket);
+          }
           if (AgentEvent.tryParse(utf8.decode(data, allowMalformed: true)) case final parsed?) {
             yield parsed;
           }
@@ -101,3 +125,9 @@ final class SessionSocket {
     }
   }
 }
+
+/// How long the socket has to open.
+const _opening = Duration(seconds: 15);
+
+/// The largest frame read, well past the router's own 5 MiB.
+const _largestFrame = 16 * 1024 * 1024;

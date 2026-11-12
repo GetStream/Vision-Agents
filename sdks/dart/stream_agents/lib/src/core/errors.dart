@@ -109,8 +109,19 @@ final class TransportException extends AgentsException {
   final Object cause;
 
   @override
-  String toString() => 'TransportException: could not reach the router: $cause';
+  String toString() =>
+      'TransportException: could not reach the router: ${withoutCredentials('$cause')}';
 }
+
+/// [text] with the credentials a socket URL carries in its query blanked out, so a message
+/// a person or a log reads never holds a token. Not exported.
+String withoutCredentials(String text) =>
+    text.replaceAllMapped(_credentialInQuery, (match) => '${match[1]}=redacted');
+
+final _credentialInQuery = RegExp(
+  r'''\b(token|authorization|api_key)=[^&#\s'"]*''',
+  caseSensitive: false,
+);
 
 /// The router answered with something this SDK cannot read.
 final class UnreadableException extends AgentsException {

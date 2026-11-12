@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -39,7 +41,9 @@ final class HttpWire implements Wire {
     Object? body,
   }) async {
     final anonymously = operation == 'createGuestUser' && backend.anonymous;
-    final request = http.Request(method, backend.requestUri(path, query));
+    // A redirect is answered as the refusal it is rather than followed, so the credential
+    // never goes to another origin.
+    final request = http.Request(method, backend.requestUri(path, query))..followRedirects = false;
     request.headers.addAll(
       anonymously ? const {'Stream-Auth-Type': 'anonymous'} : await backend.headers(),
     );
@@ -50,9 +54,20 @@ final class HttpWire implements Wire {
 
     final http.Response response;
     try {
-      response = await http.Response.fromStream(await client.send(request));
+      response = await () async {
+        final streamed = await client.send(request);
+        return http.Response.bytes(
+          await _bodyOf(streamed, operation),
+          streamed.statusCode,
+          headers: streamed.headers,
+          reasonPhrase: streamed.reasonPhrase,
+          request: request,
+        );
+      }().timeout(_answering);
     } on http.ClientException catch (error) {
       throw TransportException(error);
+    } on TimeoutException {
+      throw TransportException('$operation got no answer within ${_answering.inSeconds} seconds');
     }
 
     if (anonymously && response.statusCode == 401) {
@@ -70,6 +85,28 @@ final class HttpWire implements Wire {
       throw UnreadableException('$operation answered with something other than JSON: $error');
     }
   }
+}
+
+/// How long a request has to be answered, body included.
+const _answering = Duration(seconds: 30);
+
+/// The largest body read, far past anything the router answers.
+const _largestBody = 16 * 1024 * 1024;
+
+/// The body of [response], refused past [_largestBody] rather than read whole.
+Future<Uint8List> _bodyOf(http.StreamedResponse response, String operation) async {
+  final tooLarge = UnreadableException('$operation answered with more than 16 MiB');
+  if ((response.contentLength ?? 0) > _largestBody) {
+    throw tooLarge;
+  }
+  final body = BytesBuilder(copy: false);
+  await for (final chunk in response.stream) {
+    body.add(chunk);
+    if (body.length > _largestBody) {
+      throw tooLarge;
+    }
+  }
+  return body.takeBytes();
 }
 
 /// What a device asking for a guest with no token is told when the router, or Stream's proxy

@@ -66,6 +66,32 @@ void main() {
   });
 
   group('Backend', () {
+    test('answers a redirect as a refusal, so the token never reaches another origin', () async {
+      final elsewhere = await TestRouter.start();
+      addTearDown(elsewhere.close);
+      router.answer(
+        'GET /v1/agents/sessions/s1',
+        Answer(302, null, {'Location': '${elsewhere.url}/v1/agents/sessions/s1'}),
+      );
+      final keyed = StreamAgents(url: router.url, apiKey: 'key', token: () async => 'secret');
+      addTearDown(keyed.close);
+
+      await expectLater(
+        keyed.sessions.get('s1'),
+        throwsA(isA<RouterException>().having((e) => e.status, 'status', 302)),
+      );
+      expect(elsewhere.arrived, isEmpty);
+    });
+
+    test('refuses an answer over 16 MiB rather than reading it whole', () async {
+      router.answer(
+        'GET /v1/agents/sessions/s1',
+        Answer(200, {...sessionJson(), 'title': 'a' * (17 * 1024 * 1024)}),
+      );
+
+      await expectLater(agents.sessions.get('s1'), throwsA(isA<UnreadableException>()));
+    });
+
     test('declares a device on every request, even to a router that believes the header', () async {
       router.answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));
 
