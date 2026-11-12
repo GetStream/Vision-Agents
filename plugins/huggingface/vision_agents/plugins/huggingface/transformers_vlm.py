@@ -81,12 +81,14 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         device: ``"auto"`` (recommended), ``"cuda"``, ``"mps"``, or ``"cpu"``.
         quantization: ``"none"``, ``"4bit"``, or ``"8bit"``.
         torch_dtype: ``"auto"``, ``"float16"``, ``"bfloat16"``, or ``"float32"``.
-        trust_remote_code: Allow custom model code (default ``True`` for VLMs).
+        trust_remote_code: Run custom code from the model repo (default ``False``).
         fps: Frames per second to capture from video stream.
         frame_buffer_seconds: Seconds of frames to keep in the buffer.
         max_frames: Maximum frames to send per inference. Evenly sampled from buffer.
         max_new_tokens: Default maximum tokens to generate per response.
         max_tool_rounds: Maximum tool-call rounds per response (default 3).
+        revision: Commit hash, tag or branch of the model repo to load.
+            Pin a commit hash when ``trust_remote_code`` is on.
     """
 
     provider_name = PLUGIN_NAME
@@ -97,12 +99,13 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         device: DeviceType = "auto",
         quantization: QuantizationType = "none",
         torch_dtype: TorchDtypeType = "auto",
-        trust_remote_code: bool = True,
+        trust_remote_code: bool = False,
         fps: int = 1,
         frame_buffer_seconds: int = 10,
         max_frames: int = 4,
         max_new_tokens: int = 512,
         max_tool_rounds: int = 3,
+        revision: Optional[str] = None,
     ):
         super().__init__()
 
@@ -111,6 +114,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         self._quantization = quantization
         self._torch_dtype_config = torch_dtype
         self._trust_remote_code = trust_remote_code
+        self._revision = revision
         self._max_new_tokens = max_new_tokens
         self._max_tool_rounds = max_tool_rounds
         self._fps = fps
@@ -145,6 +149,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
 
         load_kwargs: dict[str, Any] = {
             "trust_remote_code": self._trust_remote_code,
+            "revision": self._revision,
             "torch_dtype": torch_dtype,
         }
 
@@ -167,7 +172,9 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         model.eval()
 
         processor = AutoProcessor.from_pretrained(
-            self.model_id, trust_remote_code=self._trust_remote_code
+            self.model_id,
+            trust_remote_code=self._trust_remote_code,
+            revision=self._revision,
         )
 
         device = next(model.parameters()).device
