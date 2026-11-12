@@ -162,20 +162,60 @@ tools.Register(agent.Tools(), "search_flights", "Search for flights", searchFlig
     tools.Concurrency(4))            // at most four at once; the registry allows 16
 ```
 
-A function that changes something can ask a voice caller first:
+A function that changes something can have a person allow each call first:
 
 ```go
 tools.Register(agent.Tools(), "book_flight", "Book a flight", bookFlight,
     tools.NeedsApproval("Book flight {flight_id}?"))
 ```
 
-The router asks the question, with each `{argument}` filled in from the call, and runs the
-function only once the caller says yes within 15 seconds of the question ending. The function
-sees `tools.ToolCallContextFrom(ctx).Approved` set, and its timeout starts then. A no or silence
-declines the call, and it never runs. A speech-to-speech model asks in its own voice and may not
-say the question word for word. Registering a question that names an argument the function does
-not take is an error. Only voice calls ask: in writing, the question goes out as the tool's
-`approval` for the app to show, and the call runs as it comes.
+On a voice call the router asks the question out loud, with each `{argument}` filled in from the
+call, and sends the call only once the caller says yes within 15 seconds of the question ending.
+The function sees `tools.ToolCallContextFrom(ctx).Approved` set, and its timeout starts then. A no
+or silence declines the call, and it never runs. A speech-to-speech model asks in its own voice
+and may not say the question word for word. Registering a question that names an argument the
+function does not take is an error.
+
+In writing nobody is asked out loud, so the session holds the call and hands it to you as a
+`tool_call` event. It runs only once you answer for the person:
+
+```go
+for event := range session.Events() {
+    if event.Kind == "tool_call" {
+        // Show event.Frame.String("name") and event.Frame.String("arguments"), and ask.
+        allowed := askThePerson(event.Frame)
+        session.AnswerApproval(event.Frame.String("id"), event.Frame.String("request_id"), allowed, "")
+    }
+}
+```
+
+Allowed, the function runs and its result goes back as it would have. Declined, it never runs
+and the model is told the person declined. A call nobody answers does not run: the router gives
+up on it at the tool's timeout. A dispatch worker has no person to ask, so it refuses a hosted
+call to such a function unless the router says the caller said yes, which it does on a voice
+call only.
+
+`tools.Authorize` decides whether a call may run at all, before its arguments are checked. It
+is where to check who the call is for: the model asks for whatever the conversation talked it
+into.
+
+```go
+tools.Register(agent.Tools(), "refund_order", "Refund an order", refundOrder,
+    tools.Authorize(func(ctx context.Context, call tools.Call) error {
+        if !staff.Has(call.User.ID) {
+            return errors.New("refunds are for staff")
+        }
+        return nil
+    }))
+```
+
+A refused call never runs, and the model is told only that it was refused.
+
+When a function returns an error the model is told "the tool failed" and nothing more, and the
+error is logged here: what a database or an API says when it fails can name hosts, accounts and
+queries. Return a `tools.UserError` for a failure the model should read as written, such as
+`tools.UserError("there is no order 1042")`. Arguments that do not fit the function's schema
+are explained to the model too, so it can correct its call.
 
 Its `ctx` is cancelled when the router cancels the call: its timeout passed, or, for an
 interruptible tool, the caller interrupted. `tools.ToolCallContextFrom(ctx)` is the call being

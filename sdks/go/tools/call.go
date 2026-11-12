@@ -19,8 +19,9 @@ type Call struct {
 	User User
 	// Conversation is where the call was made. Empty when the router did not say.
 	Conversation Conversation
-	// Approved says the caller already said yes to this call, when the function asked
-	// with NeedsApproval and the router asked them on a voice call.
+	// Approved says a person said yes to this call, when the function asked with
+	// NeedsApproval: the caller, asked out loud on a voice call, or whoever allowed it
+	// through AnswerApproval in writing.
 	Approved bool
 }
 

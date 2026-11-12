@@ -494,8 +494,10 @@ func (s *Session) Wait(ctx context.Context) error {
 // Interrupt abandons the reply being spoken.
 func (s *Session) Interrupt() error { return s.pipeline.Interrupt() }
 
-// AnswerApproval answers a tool call whose step waits for a person to allow it, as
-// stream.Pipeline.AnswerApproval does.
+// AnswerApproval answers a tool call that waits for a person to allow it, as
+// stream.Pipeline.AnswerApproval does: a call to one of this session's functions that asks
+// first (tools.NeedsApproval) arrives on Events as a tool_call and runs only once allowed
+// here.
 func (s *Session) AnswerApproval(toolCallID, requestID string, allowed bool, summary string) error {
 	return s.pipeline.AnswerApproval(toolCallID, requestID, allowed, summary)
 }

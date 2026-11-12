@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -166,7 +167,8 @@ type Participant struct {
 // Kind is the backend's own name for it: joined, heard, responding, response_delta,
 // responded, spoke, turn, delegated, task_settled, task_cancelled, tool_ran, transferred,
 // pressed, looked_up, backchannel, interrupted, overlap_decided, conversation_compacted,
-// error and left. The fields below are filled from whichever of those carry them, and Frame
+// error and left. A tool_call is a call to a function that asks first, held until
+// AnswerApproval. The fields below are filled from whichever of those carry them, and Frame
 // is the whole thing for anything they do not cover.
 type Event struct {
 	Kind        string
@@ -224,6 +226,8 @@ type Pipeline struct {
 	running sync.WaitGroup
 	watcher sync.WaitGroup
 	holds   holds
+	// approvals are the calls waiting for AnswerApproval.
+	approvals approvals
 
 	// awaiting is the request id of the last question asked, which a reconnect asks after.
 	awaiting atomic.Value
@@ -451,16 +455,58 @@ func (p *Pipeline) Interrupt() error {
 	return p.command(Frame{"type": "interrupt"})
 }
 
-// AnswerApproval answers a tool call whose step waits for a person to allow it (an
-// ai_tool_call step awaiting_approval): the step's id, the request_id of the command its reply
-// answers, whether they allow it and, declined, what the step says. A connector call the router
-// holds for approval (a binding's require_approval) is sent only once allowed.
+// AnswerApproval answers a tool call that waits for a person to allow it: the call's id, the
+// request_id of the command its reply answers, whether they allow it and, declined, what
+// the call's step says.
+//
+// A call to one of this pipeline's functions that asks first (tools.NeedsApproval) is held
+// here, and arrives on Events as a tool_call whose Frame carries its id, name and arguments.
+// Allowed, it runs and its result goes back as it would have. Declined, it never runs and
+// the model is told the person declined. Its answer names the request and turn the call
+// came with, whatever requestID says. If the answer cannot be sent, the call goes on
+// waiting.
+//
+// Any other id is answered for the router alone: a connector call it holds for approval (a
+// binding's require_approval) is sent only once allowed.
 func (p *Pipeline) AnswerApproval(toolCallID, requestID string, allowed bool, summary string) error {
 	frame := Frame{"type": "tool_approval", "tool_call_id": toolCallID, "request_id": requestID, "allowed": allowed}
 	if summary != "" {
 		frame["summary"] = summary
 	}
-	return p.command(frame)
+	held, waiting := p.approvals.asking(toolCallID)
+	if waiting {
+		delete(frame, "request_id")
+		for key, value := range resultIDs(held.frame) {
+			frame[key] = value
+		}
+	}
+	// A second answer, or one for a call the router cancelled meanwhile, finds nothing to
+	// settle and runs nothing.
+	if err := p.command(frame); err != nil || !waiting || !p.approvals.settle(toolCallID, allowed) {
+		return err
+	}
+	if !allowed {
+		declined := Frame{"type": "tool_result", "tool_call_id": toolCallID, "error": toolDeclined}
+		for key, value := range resultIDs(held.frame) {
+			declined[key] = value
+		}
+		return p.command(declined)
+	}
+
+	// Counted while the socket is still held, which Leave lets go of before it waits for
+	// the calls running.
+	p.mu.Lock()
+	if p.socket == nil {
+		p.mu.Unlock()
+		return ErrNotOnCall
+	}
+	p.running.Add(1)
+	p.mu.Unlock()
+	go func() {
+		defer p.running.Done()
+		held.run()
+	}()
+	return nil
 }
 
 // Leave ends the call. Safe to call after it has already ended.
@@ -720,6 +766,16 @@ func (p *Pipeline) read(ctx context.Context, socket *Socket, out chan<- Event, c
 				p.logger.Debug("leaving a call for a tool held elsewhere", "tool", frame.String("name"))
 				continue
 			}
+			// A function that asks first runs only on a person's yes: the caller's, which the
+			// router says it heard, or the one AnswerApproval brings. Held, the call goes out
+			// as an event for whoever asks them.
+			if asksFirst(p.functions, frame.String("name")) != "" && !frame.Bool("approved") {
+				allowed := maps.Clone(frame)
+				allowed["approved"] = true
+				if p.approvals.hold(frame.String("id"), heldCall{frame: frame, run: func() { p.runTool(ctx, allowed) }}) {
+					break
+				}
+			}
 			p.running.Add(1)
 			go func() {
 				defer p.running.Done()
@@ -727,6 +783,7 @@ func (p *Pipeline) read(ctx context.Context, socket *Socket, out chan<- Event, c
 			}()
 			continue
 		case "tool_cancel":
+			p.approvals.settle(frame.String("id"), false)
 			p.holds.answer(frame.String("id"), false)
 			p.functions.Cancel(p.sessionID(), frame.String("id"))
 		case "tool_held":
@@ -827,18 +884,15 @@ func (p *Pipeline) open(ctx context.Context, id string, asked url.Values) (*Sock
 func (p *Pipeline) runTool(ctx context.Context, frame Frame) {
 	name := frame.String("name")
 	result := Frame{"type": "tool_result", "tool_call_id": frame.String("id")}
-	// A durable request's result is only accepted back with the request and turn it names.
-	for _, key := range []string{"request_id", "turn_id"} {
-		if value := frame.String(key); value != "" {
-			result[key] = value
-		}
+	for key, value := range resultIDs(frame) {
+		result[key] = value
 	}
 
 	line := tools.WithLine(ctx, toolLine{send: p.command, holds: &p.holds})
 	output, err := p.functions.Run(line, toolCallContextOf(frame, p.sessionID()), name, frame.String("arguments"))
 	if err != nil {
 		p.logger.Error("the tool failed", "tool", name, "error", err)
-		result["error"] = err.Error()
+		result["error"] = failureSaid(err)
 	} else {
 		result["output"] = output.Wire()
 	}
@@ -852,6 +906,18 @@ func (p *Pipeline) runTool(ctx context.Context, frame Frame) {
 	if err := socket.Send(result); err != nil {
 		p.logger.Error("the tool result never reached the model", "tool", name, "error", err)
 	}
+}
+
+// resultIDs are the request and turn a call's frame names, which a durable request's result
+// and approval are only accepted back with.
+func resultIDs(frame Frame) Frame {
+	ids := Frame{}
+	for _, key := range []string{"request_id", "turn_id"} {
+		if value := frame.String(key); value != "" {
+			ids[key] = value
+		}
+	}
+	return ids
 }
 
 // toolCallContextOf is the call a tool_call frame asks for, as tools.ToolCallContextFrom
@@ -912,6 +978,7 @@ func (p *Pipeline) stopWatching() {
 	}
 	p.watcher.Wait()
 	p.running.Wait()
+	p.approvals.clear()
 }
 
 // eventOf fills in the fields the frames that carry them have in common.

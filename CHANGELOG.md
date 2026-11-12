@@ -602,6 +602,18 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 `Folder.load`, and so `Agent.new(folder: "…")`, raise a `ConfigurationError` for a folder whose agent.yaml names `plugins:`, with an error that names the file and points to `connectors:`. An empty or null `plugins` still loads and sends nothing, as before. Folder sync no longer sends `plugins`, and the warning that plugins are deprecated is gone, as is the check that no name is under both `connectors` and `plugins`. Move each plugin to a `connectors:` entry (AI-2528).
 
+### Go SDK: a tool that asks first waits for a person, and a failed tool tells the model less
+
+Two defaults of the Go SDK change, and two things are new. Found by the AI-3210 threat models.
+
+- **A `tools.NeedsApproval` function no longer runs unasked in writing.** A session holds the call and delivers it on `Events` as a `tool_call`; it runs only once `AnswerApproval` allows it (`stream.Pipeline`, `client.Session`, `agents.Session`), and a declined call never runs: the model is told the person declined. Before, the call ran as it came. A call the caller said yes to out loud on a voice call still runs at once. `AnswerApproval` now sends the `turn_id` the call came with, which the router needs to take the answer.
+- **A dispatch worker refuses a hosted `NeedsApproval` call that arrives without `approved`.** The router sets `approved` only on a voice call, after the caller said yes. In writing it asks nobody, so a hosted tool that asks first no longer runs in a written session: the model is told nobody allowed the call. Holding such a call for a person is a router change that is not made yet.
+- **A function's error is no longer sent to the model.** The model is told "the tool failed" and the error is logged where the function runs. Arguments that do not fit the function's schema are still explained to it.
+- **New: `tools.UserError`.** Return `tools.UserError("there is no order 1042")`, or wrap one, for a failure the model should read as written.
+- **New: `tools.Authorize(func(ctx, call) error)`.** An option on a function, asked before its arguments are checked. An error refuses the call, which never runs, and the model is told only that it was refused.
+
+`tools.Receipt` gains `User`, so a call the router sends again is answered with the same words; a receipt store that keeps the struct whole needs no change. Unknown arguments are still dropped, not refused.
+
 ## Bug Fixes
 
 ### Call minutes are priced for Twilio in the US and Canada, and for Telnyx calls to Canada

@@ -20,6 +20,8 @@ type Receipt struct {
 	Output Output
 	// Failure is the error the call failed with, as words. Empty on success.
 	Failure string
+	// User says Failure is a UserError's message, which the model is told as written.
+	User bool
 }
 
 // Receipts remember which calls have finished, and with what.
@@ -97,6 +99,9 @@ func (r *Registry) Run(ctx context.Context, call Call, name string, arguments st
 		current.output = receipt.Output
 		if receipt.Failure != "" {
 			current.failure = errors.New(receipt.Failure)
+			if receipt.User {
+				current.failure = UserError(receipt.Failure)
+			}
 		}
 		return current.output, current.failure
 	}
@@ -108,6 +113,10 @@ func (r *Registry) Run(ctx context.Context, call Call, name string, arguments st
 		stored := Receipt{Output: current.output}
 		if current.failure != nil {
 			stored.Failure = current.failure.Error()
+			var said UserError
+			if errors.As(current.failure, &said) {
+				stored.Failure, stored.User = string(said), true
+			}
 		}
 		_ = receipts.Store(context.WithoutCancel(ctx), key, stored)
 	}
@@ -152,12 +161,18 @@ func (r *Registry) SetReceipts(receipts Receipts) {
 	r.receipts = receipts
 }
 
-// execute runs a function within its timeout and the concurrency it is allowed.
+// execute runs a function its Authorize allows, within its timeout and the concurrency it
+// is allowed.
 func (r *Registry) execute(ctx context.Context, function *Function, call *Call, arguments string) (Output, error) {
 	if function.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, function.Timeout)
 		defer cancel()
+	}
+	if function.authorize != nil {
+		if err := function.authorize(WithToolCallContext(ctx, call), *call); err != nil {
+			return Output{}, refused(function.Name, err)
+		}
 	}
 	r.mu.RLock()
 	slots := r.slots
@@ -175,7 +190,8 @@ func (r *Registry) execute(ctx context.Context, function *Function, call *Call, 
 	}
 	if function.schema != nil {
 		if err := check(function.schema, []byte(arguments)); err != nil {
-			return Output{}, fmt.Errorf("tools: %s was asked for with arguments it cannot take: %w", function.Name, err)
+			// The model corrects its call from this, so it is told what was wrong with it.
+			return Output{}, UserError(fmt.Sprintf("tools: %s was asked for with arguments it cannot take: %v", function.Name, err))
 		}
 	}
 	return function.run(WithToolCallContext(ctx, call), []byte(arguments))
