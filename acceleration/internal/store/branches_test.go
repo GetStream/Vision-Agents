@@ -278,6 +278,26 @@ func (s *StoreSuite) TestForgettingAUserDeletesTheCopiesOfTheirSessionsAlone() {
 	s.Len(left, 1)
 }
 
+func (s *StoreSuite) TestCountingAUsersCopiesChangesNothingAndMatchesTheDeletion() {
+	s.opened("one", "app", s.base, nil)
+	s.opened("two", "app", s.base, func(session *AgentSession) { session.UserID = "rlafleur" })
+	theirs := hidden("m2", "second", "switch", s.base, "kept")
+	theirs.SessionID = "two"
+	s.Require().NoError(s.store.SaveBranchMessages(s.ctx, []AgentBranchMessage{hidden("m1", "second", "switch", s.base, "gone"), theirs}))
+
+	counted, err := s.store.CountUserBranchMessages(s.ctx, "app", "jlahey")
+	s.Require().NoError(err)
+	s.EqualValues(1, counted)
+	all, err := s.store.BranchMessages(s.ctx, "app", "one", nil)
+	s.Require().NoError(err)
+	s.Len(all, 1, "counting deletes nothing")
+	other, err := s.store.CountUserBranchMessages(s.ctx, "somebody-else", "jlahey")
+	s.Require().NoError(err)
+	s.Zero(other)
+	_, err = s.store.CountUserBranchMessages(s.ctx, "app", "")
+	s.Error(err)
+}
+
 // switched records a switch of session "one" on into, hiding from from at at.
 func (s *StoreSuite) switched(into *Store, id string, from, at time.Time, state string) {
 	s.Require().NoError(into.StartBranchSwitch(s.ctx, &AgentBranchSwitch{

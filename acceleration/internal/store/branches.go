@@ -381,6 +381,27 @@ func (s *Store) AbandonBranchSwitch(ctx context.Context, customerID, sessionID, 
 	return nil
 }
 
+// CountUserBranchMessages counts what DeleteUserBranchMessages would delete, on every shard.
+func (s *Store) CountUserBranchMessages(ctx context.Context, appID, userID string) (int64, error) {
+	if appID == "" || userID == "" {
+		return 0, stack.Wrap(errors.New("store: an app and a user id are required"))
+	}
+	counts, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) (int, error) {
+		return db.NewSelect().Model((*AgentBranchMessage)(nil)).
+			Where("customer_id = ?", appID).
+			Where("session_id IN (SELECT id FROM agent_sessions WHERE customer_id = ? AND user_id = ?)", appID, userID).
+			Count(ctx)
+	})
+	if err != nil {
+		return 0, stack.Wrap(fmt.Errorf("store: count user branch messages: %w", err))
+	}
+	var total int64
+	for _, count := range counts {
+		total += int64(count)
+	}
+	return total, nil
+}
+
 // switchStates are a switch's states in the order it passes them.
 var switchStates = []string{SwitchSnapshotted, SwitchRewound, SwitchResending, SwitchDone}
 
