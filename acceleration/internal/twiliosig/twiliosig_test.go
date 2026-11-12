@@ -101,7 +101,8 @@ func (s *SignatureSuite) TestAMissingSignatureFails() {
 }
 
 func (s *SignatureSuite) TestASignatureIsComparedAsSent() {
-	for _, signature := range []string{" " + sdkSig, sdkSig + "\n", "IK-Dwps556ElfBT0I3Rgjkr1wJU="} {
+	for _, signature := range []string{" " + sdkSig, sdkSig + "\n", "IK-Dwps556ElfBT0I3Rgjkr1wJU=",
+		"ik+dwps556elfbt0i3rgjkr1wju="} {
 		s.Error(Verify(sdkToken, sdkURL, s.params, signature), signature)
 	}
 }
