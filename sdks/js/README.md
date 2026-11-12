@@ -638,7 +638,12 @@ conversation is on shows the channel's own messages again, and so does a `channe
 the message the versions part at leaving the channel. New messages in the channel keep the
 version shown on screen. Asking anything while another version is shown, or regenerating or
 editing one of its messages, first brings it back with `responses.activate`, so the agent
-answers from what the person sees.
+answers from what the person sees. Bringing it back sends its messages again as copies carrying
+`resent_from`, which the controller never takes for the new reply; the transport resolves only
+once they are in the conversation (or after a few seconds and a fresh read of the channel), so
+keep `resent_from` in what `adapt` makes of a message. `fromStreamMessage` maps it to
+`resentFrom`. A switch the controller aborts, because the person sent something first, shows
+nothing.
 
 A refusal is an `AgentBranchError` whose message is for the person and whose `code` says which:
 

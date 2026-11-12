@@ -137,6 +137,12 @@ export interface AgentChatTransportOptions<M extends AgentChatMessage, Message> 
  * makes it the conversation again (`responses.activate`). A `channel.rewound`, or the message the
  * versions part at leaving the channel, goes back to the channel's own.
  *
+ * Bringing a version back sends its messages again as copies carrying `resent_from`, the id of
+ * the message each copies, which the controller never takes for the new reply: `send` resolves
+ * once they are in the feed, or after a bounded wait and a read of the channel. Messages of a
+ * version shown by `switchBranch` keep it too, so `adapt` should carry it through, as
+ * `fromStreamMessage` does as `resentFrom`.
+ *
  * Only messages the router marked with `support_branch` can be branched: one from before
  * branches, or typed during a call, is refused with an `AgentBranchError` (`not_branchable`), as
  * are the router's `branch_limit_reached`, `branch_too_long` and `branch_unavailable`. A
