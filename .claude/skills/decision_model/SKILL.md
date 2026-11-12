@@ -172,6 +172,7 @@ On System One, a vendor is an `Endpoint` and nothing else:
    `keys` map in `integration_test.go`.
 3. Declare its models in `router.yaml`. `TestTheDefaultRegistryHasEveryProviderTheConfigDeclares`
    fails until step 2 is done, which is the point.
+4. Make sure to register usage and include pricing information, see the `pricing` skill from this repo on how to do this.
 
 Off System One, the package implements `decisionmodel.Provider` itself. It translates the
 neutral request into the vendor's wire shape and back inside that package, and follows every
