@@ -1482,6 +1482,41 @@ describe("Regenerate, edit and branches", () => {
     await session.close();
   });
 
+  it("keeps what it holds when an edit's rewind arrives after the edit's answer already dropped the question", async () => {
+    const { chat, session, ids } = await loaded([message("m1", 1), message("m2", 2), message("m3", 3), message("m4", 4)]);
+    router.serve("POST", "/v1/agents/sessions/sess_1/responses", () => {
+      // The new question can arrive before the answer, and before the rewind event.
+      arrive(chat, message("q2", 6));
+      return {
+        status: 202,
+        body: {
+          id: "resp_2",
+          session_id: "sess_1",
+          status: "running",
+          created_at: "2026-01-01T00:00:06Z",
+          rewound_to: { message_id: "m3", inclusive: true },
+        },
+      };
+    });
+    await session.responses.edit("resp_1", "Rome instead");
+    assert.deepEqual(ids(), ["m1", "m2", "q2"], "the edited question went with the answer");
+    let heldWhenRead: string[] | undefined;
+    router.serve("POST", QUERY_PATH, () => {
+      heldWhenRead = ids();
+      return channelPage([message("m1", 1), message("m2", 2), message("m3", 3), message("q2", 6)]);
+    });
+
+    // The edit's own rewind, to the question this device no longer holds.
+    rewind(chat, "m3", true, 5);
+
+    assert.deepEqual(ids(), ["m1", "m2", "q2"], "nothing more dropped: where the rewind starts is known here");
+    await until(() => router.requestsTo("POST", QUERY_PATH).length === 2);
+    await until(() => heldWhenRead !== undefined && ids().length === 3);
+    assert.deepEqual(heldWhenRead, ["m1", "m2", "q2"]);
+    assert.deepEqual(ids(), ["m1", "m2", "q2"], "a stale read does not bring the edited question back");
+    await session.close();
+  });
+
   it("stops following the channel's rewinds once the session is closed", async () => {
     const { chat, session, ids } = await loaded([message("m1", 1), message("m2", 2)]);
 

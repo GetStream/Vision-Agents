@@ -209,9 +209,11 @@ async function rewound(channel: unknown, event: Record<string, unknown>): Promis
     return;
   }
   const made = typeof createdAt === "string" ? Date.parse(createdAt) : NaN;
+  const known = rewoundFrom.get(channel as object)?.get(messageId);
   const hidden: Hidden = {
     messageId,
     inclusive: inclusive === true,
+    ...(known === undefined ? {} : { from: known }),
     ...(Number.isFinite(made) ? { until: made } : {}),
   };
   const loaded = held(channel).length > 0 || (channel as { initialized?: unknown } | null)?.initialized === true;
@@ -248,14 +250,26 @@ function readAgain(channel: unknown): (() => Promise<unknown>) | undefined {
 }
 
 /**
+ * Per channel, the `created_at` of each message a rewind of this device's went to. An edit's
+ * answer drops the edited question, and its `channel.rewound` arrives after, naming a message
+ * no longer held: without this, the event would forget everything held.
+ */
+const rewoundFrom = new WeakMap<object, Map<string, number>>();
+
+/**
  * Drops the messages a rewind hides from the channel's state, and answers the rewound-to
  * message's `created_at`, or undefined when it is not held and was not known.
  */
 function prune(channel: unknown, hidden: Hidden): number | undefined {
   const messages = held(channel);
-  const from = messages.find(({ id }) => id === hidden.messageId)?.at ?? hidden.from;
+  const found = messages.find(({ id }) => id === hidden.messageId)?.at;
+  const from = found ?? hidden.from;
   if (from === undefined) {
     return undefined;
+  }
+  if (found !== undefined && typeof channel === "object" && channel !== null) {
+    const known = rewoundFrom.get(channel) ?? new Map<string, number>();
+    rewoundFrom.set(channel, known.set(hidden.messageId, found));
   }
   const drop = messages.filter(({ id, at }) =>
     (id === hidden.messageId ? hidden.inclusive : at > from) &&
