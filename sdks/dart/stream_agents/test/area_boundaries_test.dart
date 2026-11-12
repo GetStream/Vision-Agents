@@ -1,9 +1,7 @@
 // core, chat and rtc are kept apart inside the package: each area is self-contained under
-// lib/src/<area> and test/<area>, core stays pure Dart, and the only way in from another area is
-// its barrel. These tests keep that true: they read the directives of every file under lib/ and
-// test/ and fail on one that reaches where it should not.
-//
-// Run from the package root, as flutter test does.
+// lib/src/<area> and test/<area>, core and chat stay pure Dart, and the only way in from another
+// area is its barrel. These tests keep that true: they read the directives of every file under
+// lib/ and test/ and fail on one that reaches where it should not.
 import 'dart:io';
 
 import 'package:test/test.dart';
@@ -23,38 +21,83 @@ const _owned = {
   'rtc': ['stream_video_flutter', 'image'],
 };
 
-/// What core keeps out besides the other areas' packages, so it stays pure Dart and runs in a
-/// browser: Flutter, and the libraries a browser does not have.
-const _notInCore = ['package:flutter/', 'package:flutter_test/', 'dart:io', 'dart:ui'];
+/// What core may import besides its own files: the libraries every platform has, a browser
+/// included, and the packages that pick the platform themselves. A list of what is allowed
+/// rather than of what is not, so a dependency added for rtc, or a Flutter plugin, cannot slip
+/// into core.
+const _portable = [
+  'dart:async',
+  'dart:collection',
+  'dart:convert',
+  'dart:math',
+  'dart:typed_data',
+  'package:http/',
+  'package:meta/',
+  'package:web_socket/',
+];
 
-final _directive = RegExp(r'''^\s*(?:import|export|part)\s+['"]([^'"]+)['"]''', multiLine: true);
+/// What each pure-Dart area may import besides its own files.
+const _pureDart = {
+  'core': _portable,
+  'chat': [..._portable, 'package:stream_chat/', 'package:stream_agents/src/core/core.dart'],
+};
 
-/// The import, export and part URIs of every Dart file under [directory], by path.
+/// What a pure-Dart area's tests keep out, so they would run without Flutter: Flutter itself,
+/// and the public library, which brings rtc and Stream Video with it.
+const _notInPureTests = [
+  'package:flutter/',
+  'package:flutter_test/',
+  'package:stream_agents/stream_agents.dart',
+];
+
+/// One directive, across lines, up to its semicolon: every quoted URI in it counts, so a
+/// conditional import's alternatives are read too.
+final _directive = RegExp(r'^\s*(?:import|export|part)\b[^;]*;', multiLine: true);
+final _quoted = RegExp(r'''['"]([^'"]+)['"]''');
+final _areaUri = RegExp(r'^package:stream_agents/src/(\w+)/');
+final _packageUri = RegExp(r'^package:([^/]+)/');
+
+/// The package's root, which flutter test runs from.
+final _root = Directory.current.absolute.uri;
+
+/// The import, export and part URIs of every Dart file under [directory], by its path from the
+/// package root with forward slashes.
 Map<String, List<String>> _directives(String directory) => {
-  for (final file in Directory(directory).listSync(recursive: true).whereType<File>())
-    if (file.path.endsWith('.dart'))
-      file.path: [
-        for (final match in _directive.allMatches(file.readAsStringSync())) match.group(1)!,
+  for (final file in Directory.fromUri(_root.resolve(directory)).listSync(recursive: true))
+    if (file is File && file.path.endsWith('.dart'))
+      file.absolute.uri.path.substring(_root.path.length): [
+        for (final directive in _directive.allMatches(file.readAsStringSync()))
+          for (final uri in _quoted.allMatches(directive[0]!)) uri[1]!,
       ],
 };
 
 /// The area a package:stream_agents URI is in, or null for the public library.
-String? _areaOf(String uri) => RegExp(r'^package:stream_agents/src/(\w+)/').firstMatch(uri)?[1];
+String? _areaOf(String uri) => _areaUri.firstMatch(uri)?[1];
 
 /// The package a package: URI is from.
-String? _packageOf(String uri) => RegExp(r'^package:([^/]+)/').firstMatch(uri)?[1];
+String? _packageOf(String uri) => _packageUri.firstMatch(uri)?[1];
 
 void main() {
   test('every file under lib/src is in an area', () {
     final stray = [
-      for (final path in _directives('lib/src').keys)
+      for (final path in _directives('lib/src/').keys)
         if (!_areas.any((area) => path.startsWith('lib/src/$area/'))) path,
     ];
     expect(stray, isEmpty);
   });
 
+  test('every test is in an area, but this one', () {
+    final stray = [
+      for (final path in _directives('test/').keys)
+        if (path != 'test/area_boundaries_test.dart' &&
+            !_areas.any((area) => path.startsWith('test/$area/')))
+          path,
+    ];
+    expect(stray, isEmpty);
+  });
+
   test('the public library exports the three area barrels and nothing else', () {
-    expect(_directives('lib')['lib/stream_agents.dart'], [
+    expect(_directives('lib/')['lib/stream_agents.dart'], [
       'src/chat/chat.dart',
       'src/core/core.dart',
       'src/rtc/rtc.dart',
@@ -63,7 +106,7 @@ void main() {
 
   for (final area in _areas) {
     group(area, () {
-      final files = _directives('lib/src/$area');
+      final files = _directives('lib/src/$area/');
 
       test('reaches another area only through its barrel, and only the areas it may', () {
         final wrong = [
@@ -99,12 +142,12 @@ void main() {
         expect(wrong, isEmpty);
       });
 
-      if (area == 'core') {
-        test('stays pure Dart', () {
+      if (_pureDart[area] case final allowed?) {
+        test('stays pure Dart: imports only what runs on every platform', () {
           final wrong = [
             for (final MapEntry(key: path, value: uris) in files.entries)
               for (final uri in uris)
-                if (_notInCore.any(uri.startsWith)) '$path: $uri',
+                if (uri.contains(':') && !allowed.any(uri.startsWith)) '$path: $uri',
           ];
           expect(wrong, isEmpty);
         });
@@ -112,15 +155,19 @@ void main() {
     });
 
     group('test/$area', () {
-      final files = _directives('test/$area');
+      final files = _directives('test/$area/');
 
-      test('imports its own area or the public library, and no other area', () {
+      test('imports its own area, the barrels it reaches or the public library, and nothing else '
+          'of the package', () {
         final wrong = [
           for (final MapEntry(key: path, value: uris) in files.entries)
             for (final uri in uris)
               if ((_packageOf(uri) == 'stream_agents' &&
                       uri != 'package:stream_agents/stream_agents.dart' &&
-                      _areaOf(uri) != area) ||
+                      _areaOf(uri) != area &&
+                      !_reaches[area]!.any(
+                        (other) => uri == 'package:stream_agents/src/$other/$other.dart',
+                      )) ||
                   _leavesArea(path, uri, area))
                 '$path: $uri',
         ];
@@ -135,6 +182,17 @@ void main() {
         ];
         expect(wrong, isEmpty);
       });
+
+      if (_pureDart.containsKey(area)) {
+        test('runs without Flutter', () {
+          final wrong = [
+            for (final MapEntry(key: path, value: uris) in files.entries)
+              for (final uri in uris)
+                if (_notInPureTests.any(uri.startsWith)) '$path: $uri',
+          ];
+          expect(wrong, isEmpty);
+        });
+      }
     });
   }
 }
@@ -152,6 +210,6 @@ String? _ownerOf(String uri) {
 bool _leavesArea(String path, String uri, String area) {
   if (uri.contains(':')) return false;
   final root = path.startsWith('lib/') ? 'lib/src/$area' : 'test/$area';
-  final resolved = File(path).parent.uri.resolve(uri).path;
+  final resolved = Uri.parse(path).resolve(uri).path;
   return !resolved.startsWith('$root/');
 }

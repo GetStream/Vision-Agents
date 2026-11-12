@@ -1,6 +1,7 @@
 import 'package:stream_chat/stream_chat.dart' as stream;
 import 'package:test/test.dart';
-import 'package:stream_agents/stream_agents.dart';
+import 'package:stream_agents/src/chat/chat.dart';
+import 'package:stream_agents/src/core/core.dart';
 
 void main() {
   late StreamAgents agents;
