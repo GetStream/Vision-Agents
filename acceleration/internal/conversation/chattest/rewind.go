@@ -261,8 +261,9 @@ func (db *store) rewindChannel(channelType, id string, body map[string]any) (int
 	}
 
 	target := db.messages[req.MessageID]
+	// Chat answers a target it does not have, or hides, with an input error, not a 404.
 	if target == nil || target["cid"] != cid || db.hidden(target) {
-		return http.StatusNotFound, chatError(http.StatusNotFound, 16, "message "+req.MessageID+" does not exist", nil)
+		return http.StatusBadRequest, chatError(http.StatusBadRequest, 4, "Message with id "+req.MessageID+" doesn't exist", nil)
 	}
 	if parent, _ := target["parent_id"].(string); parent != "" {
 		return http.StatusBadRequest, chatError(http.StatusBadRequest, 4, "message "+req.MessageID+" is a thread reply, a channel can only be rewound to a top-level message", nil)

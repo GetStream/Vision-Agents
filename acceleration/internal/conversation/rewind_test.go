@@ -202,7 +202,7 @@ func (s *RewindSuite) TestARefusalWithNoKnownReasonIsChatsOwnError() {
 	}
 	chat, ok := errors.AsType[*getstream.StreamError](err)
 	s.Require().True(ok)
-	s.Equal(http.StatusNotFound, chat.StatusCode)
+	s.Equal(http.StatusBadRequest, chat.StatusCode)
 }
 
 // A message sent at an instant a rewind hid is moved past the hole, as Chat moves it.
