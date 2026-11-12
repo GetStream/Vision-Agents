@@ -38,6 +38,10 @@ var errBranchTooLong = APIError{Type: ErrorTypeConflict, Code: codeBranchTooLong
 var errBranchGone = APIError{Type: ErrorTypeGone, Code: codeBranchUnavailable,
 	Message: "this branch is no longer kept, so it can be neither read nor brought back"}
 
+// errSwitchUnfinished is a turn refused while a regenerate, an edit or an activation the
+// session began is left unfinished after Chat may have rewound.
+var errSwitchUnfinished = conflict("the conversation's last regenerate, edit or branch switch did not finish; retry that request, or reopen the conversation")
+
 // errUnknownResponse is a response the session does not have.
 var errUnknownResponse = notFound("no such response in this session")
 
@@ -64,6 +68,8 @@ func branchRefused(err error) error {
 		return invalidRequest(message)
 	}
 	switch {
+	case errors.Is(err, session.ErrSwitchUnfinished):
+		return errSwitchUnfinished
 	case errors.Is(err, conversation.ErrConversationUnwritable):
 		return unavailable("the conversation's earlier messages cannot be written to Stream Chat now, so it cannot be switched; try again shortly")
 	case errors.Is(err, conversation.ErrBranchLimit):

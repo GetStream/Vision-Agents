@@ -227,7 +227,12 @@ type Session struct {
 	// awaiting are the commands accepted for a dispatch worker and not yet answered, which
 	// the server may still have the model answer. Guarded by commandMu.
 	awaiting map[string]struct{}
-	mu       sync.Mutex
+	// unsettled is the switch to another branch the session began and could not finish once
+	// Chat may have rewound, which leaves it unsure what the person sees: every turn but the
+	// retry of that switch's own request is refused until it is finished (ErrSwitchUnfinished).
+	// Guarded by commandMu.
+	unsettled string
+	mu        sync.Mutex
 	// watchers are the connections being fanned out to, keyed so one can detach without
 	// disturbing the others.
 	watchers    map[uint64]*watcher
@@ -699,6 +704,9 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 	if err := s.current().CheckAsked(asked); err != nil {
 		return "", stack.Wrap(err)
 	}
+	if err := s.checkSettled(""); err != nil {
+		return "", err
+	}
 	// What a worker hands on from a channel it answers is already there, written by the
 	// person, so only the reply is (Spec.Dispatched).
 	if s.persisted != nil && s.spec.Text && s.spec.Dispatched {
@@ -865,6 +873,13 @@ func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, client
 	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
 		return persistent.CommandReceipt{}, "", stack.Wrap(err)
 	}
+	if _, err := s.persisted.Command(id); err != nil {
+		// A retry of a command already taken is answered with its receipt, which changes
+		// nothing.
+		if err := s.checkSettled(""); err != nil {
+			return persistent.CommandReceipt{}, "", err
+		}
+	}
 	told := text
 	if note := persistent.DescribeUIAction(action, s.persisted.ActedOn(ctx, action)); note != "" {
 		told += "\n\n" + note
@@ -1028,6 +1043,9 @@ func (s *Session) followUp(ctx context.Context, id, text string, images []llm.Im
 	}
 	if nothingToAnswer(text, images) {
 		return persistent.CommandReceipt{}, "", stack.Wrap(errNothingToAnswer)
+	}
+	if err := s.checkSettled(""); err != nil {
+		return persistent.CommandReceipt{}, "", err
 	}
 	receipt, err := s.persisted.BeginFollowUp(id, text)
 	if err != nil {

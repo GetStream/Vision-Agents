@@ -494,6 +494,49 @@ func (c *Conversation) switchTo(ctx context.Context, target RewindTarget, chosen
 	return outcome, nil
 }
 
+// SettleSwitch finishes the switch target names after Rewind or Activate failed with an error
+// that leaves it unknown whether Chat rewound: Chat is read again, a switch whose rewind
+// landed is carried on as a retry of it would be, and one whose rewind never landed is
+// forgotten. carried says which; nothing journaled under the id is not carried either. The
+// outcome is the conversation as Chat shows it now, as Rewind's.
+func (c *Conversation) SettleSwitch(ctx context.Context, target RewindTarget, chosen []store.AgentBranchMessage) (RewindOutcome, bool, error) {
+	sw, err := c.switcherFor(ctx, target)
+	if err != nil {
+		return RewindOutcome{}, false, err
+	}
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	unfinished, err := sw.branches.UnfinishedBranchSwitches(ctx, sw.customer, sw.session)
+	if err != nil {
+		return RewindOutcome{}, false, err
+	}
+	for _, row := range unfinished {
+		if row.ID != target.SwitchID {
+			continue
+		}
+		outcome, carried, err := c.finishTried(ctx, sw, row, chosen)
+		if refusal := branchRefusal(err); refusal != nil {
+			return RewindOutcome{}, false, stack.Wrap(refusal)
+		}
+		return outcome, carried, err
+	}
+	return RewindOutcome{}, false, nil
+}
+
+// Refused is whether err is a switch Chat or the conversation refused, which changed
+// nothing: there is no switch left to settle.
+func Refused(err error) bool {
+	if _, ok := errors.AsType[*BranchesUnsupportedError](err); ok {
+		return true
+	}
+	for _, refusal := range []error{ErrBranchLimit, ErrBranchConflict, ErrBranchUnavailable, ErrBranchTooLong, ErrConversationUnwritable} {
+		if errors.Is(err, refusal) {
+			return true
+		}
+	}
+	return false
+}
+
 // finishTried finishes a switch tried before under the same id, from where it got to, and
 // says whether it carried it on: not when its rewind never landed, which forgets it. The page
 // is read as Chat shows it now, without what the switch hid.

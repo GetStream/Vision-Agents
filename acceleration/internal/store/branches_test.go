@@ -155,6 +155,19 @@ func (s *StoreSuite) TestMovingToAResponseInTheConversationCutsItShortThere() {
 	s.Equal([]string{"first"}, s.conversation())
 }
 
+// A switch finished after the person asked on takes off the conversation only what it found
+// there when it began.
+func (s *StoreSuite) TestMovingThePathUntilATimeLeavesTheTurnsAskedSinceOnTheConversation() {
+	s.opened("one", "app", s.base, nil)
+	s.branchAnswered(s.store, "first", "", "", s.base)
+	s.branchAnswered(s.store, "second", "first", "", s.base.Add(time.Minute))
+	s.branchAnswered(s.store, "asked-since", "second", "", s.base.Add(3*time.Minute))
+
+	s.Require().NoError(s.store.MoveActivePathUntil(s.ctx, "app", "one", "first", s.base.Add(4*time.Minute), s.base.Add(2*time.Minute)))
+
+	s.Equal([]string{"first", "asked-since"}, s.conversation())
+}
+
 func (s *StoreSuite) TestMovingThePathKeepsTurnsFromBeforeBranchesWereKept() {
 	s.opened("one", "app", s.base, nil)
 	_, err := s.store.shard.NewInsert().Model(&AgentResponse{

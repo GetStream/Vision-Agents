@@ -42,6 +42,17 @@ type rewindState struct {
 	// forking are the cids answered as forks whose copy is not complete.
 	forking map[string]bool
 	made    int
+	// lose is how many of the next rewinds Chat makes are answered with a 500 all the same.
+	lose int
+}
+
+// LoseRewindAnswer makes the next rewind Chat accepts and answers it with a 500, as a rewind
+// whose answer a timeout or a dropped connection lost: the channel is rewound, and the caller
+// cannot tell.
+func (s *Server) LoseRewindAnswer() {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	s.db.rewind.lose++
 }
 
 // DisableRewind answers every rewind from now on as Chat does for an app that is not
@@ -336,6 +347,10 @@ func (db *store) rewindChannel(channelType, id string, body map[string]any) (int
 	}
 	db.rewind.ranges[cid] = merged
 	db.rewind.made++
+	if db.rewind.lose > 0 {
+		db.rewind.lose--
+		return http.StatusInternalServerError, chatError(http.StatusInternalServerError, -1, "the answer was lost", nil)
+	}
 	return http.StatusCreated, map[string]any{
 		"rewind": map[string]any{
 			"id": fmt.Sprintf("rewind-%d", db.rewind.made), "message_id": req.MessageID, "inclusive": req.Inclusive,

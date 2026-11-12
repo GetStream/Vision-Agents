@@ -613,3 +613,56 @@ func (s *BranchesSuite) TestActivatingABranchPinsTheDocumentsOfItsTurns() {
 	s.Equal(third, activated.LeafResponseID)
 	s.Equal([]string{"forecast.pdf"}, pinned(session))
 }
+
+// A regenerate whose rewind Chat made but whose answer was lost finds out from Chat that it
+// landed and carries on: the model and the next question follow what the person sees.
+func (s *BranchesSuite) TestARegenerateWhoseRewindAnswerWasLostCarriesOnFromWhatChatShows() {
+	session := s.opens()
+	s.asks(session, "Is it raining?")
+	second := s.asks(session, "And tomorrow?")
+	s.chat.LoseRewindAnswer()
+
+	branched, err := session.Regenerate(s.ctx, uuid.NewString(), second, options.LLM{})
+
+	s.Require().NoError(err)
+	s.settled(session)
+	s.Equal([]string{"Is it raining?", "Answer 1 to Is it raining?", "And tomorrow?", "Answer 3 to And tomorrow?"}, s.texts(session))
+	s.Equal(s.texts(session), history(session))
+	third := s.asks(session, "And Sunday?")
+	s.Equal(branched.ResponseID, s.response(session, third).ParentResponseID)
+}
+
+// A switch that cannot be settled once Chat may have rewound refuses every other turn, which
+// would be answered from a conversation nobody knows, until its own request is retried.
+func (s *BranchesSuite) TestASwitchThatCannotBeSettledRefusesOtherTurnsUntilItsRequestIsRetried() {
+	session := s.opens()
+	s.asks(session, "Is it raining?")
+	second := s.asks(session, "And tomorrow?")
+	request := uuid.NewString()
+	s.chat.LoseRewindAnswer()
+	waiting, release := s.chat.Hold("/rewind")
+	failed := make(chan error, 1)
+	go func() {
+		_, err := session.Regenerate(s.ctx, request, second, options.LLM{})
+		failed <- err
+	}()
+	<-waiting
+	// Chat cannot be read once it rewound, so whether it did is not known.
+	s.chat.Fail("POST", "/query")
+	release()
+	s.Require().ErrorIs(<-failed, ErrSwitchUnfinished)
+
+	_, _, err := session.RespondCommand(s.ctx, uuid.NewString(), "And Sunday?", "", nil, options.LLM{})
+	s.Require().ErrorIs(err, ErrSwitchUnfinished)
+	_, err = session.Regenerate(s.ctx, uuid.NewString(), second, options.LLM{})
+	s.Require().ErrorIs(err, ErrSwitchUnfinished)
+
+	s.chat.Heal("POST", "/query")
+	branched, err := session.Regenerate(s.ctx, request, second, options.LLM{})
+	s.Require().NoError(err)
+	s.settled(session)
+	s.Equal([]string{"Is it raining?", "Answer 1 to Is it raining?", "And tomorrow?", "Answer 3 to And tomorrow?"}, s.texts(session))
+	s.Equal(s.texts(session), history(session))
+	third := s.asks(session, "And Sunday?")
+	s.Equal(branched.ResponseID, s.response(session, third).ParentResponseID)
+}
