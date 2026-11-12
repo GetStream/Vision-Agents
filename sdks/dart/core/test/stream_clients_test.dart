@@ -49,6 +49,28 @@ void main() {
       expect((await backend.headers())['Authorization'], 'Bearer token-2');
     });
 
+    test(
+      "Stream's token loader hands over the token Stream connected with, then fresh ones",
+      () async {
+        var asked = 0;
+        final backend = Backend(
+          apiKey: 'key',
+          userId: 'john',
+          token: () async => 'token-${++asked}',
+        );
+        final connected = (await backend.streamCredentials()).token;
+
+        final chat = backend.streamTokenLoader(first: connected);
+        final video = backend.streamTokenLoader();
+
+        expect(await chat(), 'token-1', reason: 'connecting is not an expiry');
+        expect(asked, 1);
+        expect(await chat(), 'token-2', reason: 'Stream asks again only once its token expired');
+        expect(await video(), 'token-3');
+        expect(asked, 3);
+      },
+    );
+
     test('a refresh while a token is being fetched waits for that fetch', () async {
       var asked = 0;
       final fetched = Completer<String>();

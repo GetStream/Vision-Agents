@@ -112,17 +112,22 @@ final class Backend {
   bool get anonymous => !_byCustomer && token == null;
 
   /// The same router, asked by somebody else. Shares this one's Stream clients, which are
-  /// kept per user. A new [token] provider starts with no token kept; without one, the token
-  /// this one holds is shared.
-  Backend withUser(String userId, {TokenProvider? token}) => Backend._(
-    url,
-    customerId,
-    apiKey,
-    userId,
-    token ?? this.token,
-    token == null ? _tokenCache : _TokenCache(token),
-    _clients,
-  );
+  /// kept per user. A token is one user's, so the token this one holds is shared only by a
+  /// copy for the same user with the same provider: any other starts with none kept.
+  Backend withUser(String userId, {TokenProvider? token}) {
+    final provider = token ?? this.token;
+    return Backend._(
+      url,
+      customerId,
+      apiKey,
+      userId,
+      provider,
+      token == null && userId == this.userId
+          ? _tokenCache
+          : (provider == null ? null : _TokenCache(provider)),
+      _clients,
+    );
+  }
 
   /// Drops the token the provider last answered, so the next request asks it again.
   ///
@@ -217,6 +222,20 @@ final class Backend {
       _tokenCache!.refresh();
     }
     return StreamCredentials(apiKey: apiKey, userId: userId, token: await _token());
+  }
+
+  /// What Stream's own Chat and Video clients ask for a token with: [first], the token they
+  /// connected with, the first time they ask, and a fresh one from the provider after that,
+  /// since they ask again only once theirs has expired.
+  ///
+  /// For the chat and rtc packages.
+  Future<String> Function() streamTokenLoader({String? first}) {
+    var unused = first;
+    return () async {
+      final token = unused ?? (await streamCredentials(refresh: true)).token;
+      unused = null;
+      return token;
+    };
   }
 
   /// Uses [client], the app's own Stream client of this [kind], rather than building one.
@@ -369,8 +388,8 @@ bool _expiresSoon(String token) {
   try {
     final claims = jsonDecode(utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))));
     if (claims case {'exp': final num exp}) {
-      final expiry = DateTime.fromMillisecondsSinceEpoch((exp * 1000).round());
-      return expiry.difference(DateTime.now()) < _expiryMargin;
+      // Plain numbers rather than a DateTime, which cannot hold an expiry far enough out.
+      return exp * 1000 - DateTime.now().millisecondsSinceEpoch < _expiryMargin.inMilliseconds;
     }
   } on FormatException {
     // Not a JWT this can read.

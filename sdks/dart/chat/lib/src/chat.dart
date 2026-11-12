@@ -95,13 +95,9 @@ final class LiveReasoning {
 /// the last one expired.
 Future<stream.StreamChatClient> _connect(Backend backend, StreamCredentials credentials) async {
   final client = stream.StreamChatClient(credentials.apiKey);
-  String? unused = credentials.token;
+  final load = backend.streamTokenLoader(first: credentials.token);
   try {
-    await client.connectUserWithProvider(stream.User(id: credentials.userId), (_) async {
-      final token = unused ?? (await backend.streamCredentials(refresh: true)).token;
-      unused = null;
-      return token;
-    });
+    await client.connectUserWithProvider(stream.User(id: credentials.userId), (_) => load());
   } catch (_) {
     await client.dispose();
     rethrow;

@@ -212,16 +212,41 @@ void main() {
         expect(router.last('GET /v1/agents/sessions/s1').header('Authorization'), 'Bearer token-2');
       });
 
+      test("never hands one user's token to a copy for another user", () async {
+        router.answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));
+        // A provider that answers for whoever is signed in, as an app's usually does.
+        var signedIn = 'alice';
+        final alice = VisionAgents(
+          url: router.url,
+          apiKey: 'key',
+          userId: 'alice',
+          token: () async => 'token-for-$signedIn',
+        );
+
+        await alice.sessions.get('s1');
+        signedIn = 'bob';
+        final bob = alice.withUser('bob');
+        await bob.sessions.get('s1');
+        final credentials = await bob.backend.streamCredentials();
+        alice.close();
+
+        expect(
+          router.last('GET /v1/agents/sessions/s1').header('Authorization'),
+          'Bearer token-for-bob',
+        );
+        expect([credentials.userId, credentials.token], ['bob', 'token-for-bob']);
+      });
+
       test(
-        'is shared by a copy for another user, and not by one with a provider of its own',
+        'is shared by a copy for the same user, and not by one with a provider of its own',
         () async {
           router.answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));
           var otherAsked = 0;
 
           await keyed.sessions.get('s1');
-          await keyed.withUser('ada').sessions.get('s1');
+          await keyed.withUser('jlahey').sessions.get('s1');
           await keyed
-              .withUser('bob', token: () async => 'other-${++otherAsked}')
+              .withUser('jlahey', token: () async => 'other-${++otherAsked}')
               .sessions
               .get('s1');
 
@@ -234,6 +259,24 @@ void main() {
           ]);
         },
       );
+
+      test('keeps a token whose expiry is further out than a date can hold', () async {
+        router.answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));
+        final claims = base64Url.encode(utf8.encode(jsonEncode({'exp': 9999999999999})));
+        final forever = VisionAgents(
+          url: router.url,
+          apiKey: 'key',
+          token: () async => 'header.${claims.replaceAll('=', '')}.signature-${++asked}',
+        );
+
+        for (var i = 0; i < 3; i++) {
+          await forever.sessions.get('s1');
+        }
+        forever.close();
+
+        expect(router.arrived, hasLength(3));
+        expect(asked, 1);
+      });
     });
 
     test(

@@ -181,8 +181,9 @@ final class VisionAgents {
       // stopped rather than left holding a call nobody is listening to.
       try {
         await sessions.stop(session.id);
-      } on AgentsException {
-        // Reporting why the socket did not open matters more than this.
+      } catch (_) {
+        // Reporting why the socket did not open matters more than this, which can fail for
+        // the same reason, such as no token to be had.
       }
       rethrow;
     }

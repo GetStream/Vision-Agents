@@ -41,6 +41,14 @@ final class SessionSocket {
       throw TransportException(WebSocketException(message.replaceAll(_query, '')));
     }
     _socket = socket;
+    if (_closing) {
+      // Closed while it was being opened, when there was nothing to close yet.
+      try {
+        await socket.close(1000, 'closed by the client');
+      } on WebSocketConnectionClosed {
+        // Already gone.
+      }
+    }
     return _read(socket);
   }
 

@@ -154,11 +154,10 @@ final class AgentSession {
       'decisions': 'false',
       if (interim) 'interim': 'true',
     };
-    final uri = await _backend.socketUri(path, query);
-    var socket = _socket = SessionSocket(uri);
-
     Stream<AgentEvent> events;
     try {
+      final uri = await _socketUri(path, query);
+      final socket = _socket = SessionSocket(uri);
       try {
         events = await socket.open();
       } on TransportException {
@@ -168,8 +167,7 @@ final class AgentSession {
         if (!_backend.expireToken(uri.queryParameters['token'])) {
           rethrow;
         }
-        socket = _socket = SessionSocket(await _backend.socketUri(path, query));
-        events = await socket.open();
+        events = await (_socket = SessionSocket(await _socketUri(path, query))).open();
       }
     } on AgentsException catch (error) {
       _stopped(error);
@@ -324,6 +322,18 @@ final class AgentSession {
   Future<void> delete() async {
     await _sessions.delete(id);
     await _hangUp();
+  }
+
+  /// The socket's URL. A token the provider failed to hand over is reported as a socket that
+  /// could not open, so the session is stopped rather than left holding the agent.
+  Future<Uri> _socketUri(String path, Map<String, String> query) async {
+    try {
+      return await _backend.socketUri(path, query);
+    } on ArgumentError {
+      rethrow;
+    } catch (error) {
+      throw TransportException(error);
+    }
   }
 
   Future<void> _hangUp() async {

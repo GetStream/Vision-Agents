@@ -99,6 +99,80 @@ void main() {
       },
     );
 
+    test('stops the agent when the token for dialling again cannot be had', () async {
+      router
+        ..answer('POST /v1/agents/sessions/s1/stop', const Answer(204))
+        ..refuseSocketsWhere = (query) => query['token'] == 'token-1';
+      var asked = 0;
+      final keyed = VisionAgents(
+        url: router.url,
+        apiKey: 'key',
+        // Down only for the moment the socket is dialled again.
+        token: () async => ++asked == 2 ? throw StateError('backend down') : 'token-$asked',
+      );
+
+      await expectLater(keyed.chat(), throwsA(isA<TransportException>()));
+      keyed.close();
+
+      expect(router.last('POST /v1/agents/sessions/s1/stop').method, 'POST');
+    });
+
+    test(
+      'says why the socket did not open when no token can be had to stop the agent either',
+      () async {
+        router.refuseSocketsWhere = (query) => query['token'] == 'token-1';
+        var asked = 0;
+        final keyed = VisionAgents(
+          url: router.url,
+          apiKey: 'key',
+          token: () async => ++asked == 1 ? 'token-1' : throw StateError('backend down'),
+        );
+
+        await expectLater(
+          keyed.chat(),
+          throwsA(isA<TransportException>().having((error) => error.cause, 'cause', isStateError)),
+        );
+        keyed.close();
+      },
+    );
+
+    test('a session closed while its socket is dialled again leaves no socket open', () async {
+      router
+        ..answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()))
+        ..answer('POST /v1/agents/sessions/s1/stop', const Answer(204))
+        ..refuseSocketsWhere = (query) => query['token'] == 'token-1';
+      final second = Completer<String>();
+      var asked = 0;
+      final keyed = VisionAgents(
+        url: router.url,
+        apiKey: 'key',
+        token: () => ++asked == 1 ? Future.value('token-1') : second.future,
+      );
+      await keyed.backend.headers();
+      final session = AgentSession(
+        await keyed.sessions.get('s1'),
+        backend: keyed.backend,
+        sessions: keyed.sessions,
+      );
+
+      final seen = <Connection>[];
+      final watching = session.connection.stream.listen(seen.add);
+
+      final starting = session.start();
+      await until(() => asked == 2);
+      final closing = session.close();
+      second.complete('token-2');
+      await closing;
+      await starting;
+
+      await watching.cancel();
+      expect(seen.whereType<Connected>(), isEmpty, reason: 'closed is closed, even mid-dial');
+      final socket = await router.socket();
+      await socket.done;
+      expect(socket.closeCode, isNotNull);
+      keyed.close();
+    });
+
     test('does not dial a refused socket again when the router is never shown a token', () async {
       router
         ..answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()))

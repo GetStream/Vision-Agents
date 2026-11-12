@@ -224,14 +224,17 @@ final class VoiceSession {
       _kind,
       // `create` rather than the singleton constructor: a library installing Stream Video's
       // singleton would collide with a host that has its own.
-      open: (credentials) async => video.StreamVideo.create(
-        credentials.apiKey,
-        user: video.User.regular(userId: credentials.userId),
-        userToken: credentials.token,
-        // Asked when the token expires, which it does an hour in. Asking the agents' token
-        // provider again is what keeps a long call from dropping.
-        tokenLoader: (_) async => (await backend.streamCredentials(refresh: true)).token,
-      ),
+      open: (credentials) async {
+        final load = backend.streamTokenLoader();
+        return video.StreamVideo.create(
+          credentials.apiKey,
+          user: video.User.regular(userId: credentials.userId),
+          userToken: credentials.token,
+          // Asked when the token expires, which it does an hour in. Asking the agents' token
+          // provider again is what keeps a long call from dropping.
+          tokenLoader: (_) => load(),
+        );
+      },
       disconnect: (client) => client.dispose(),
     );
   }
