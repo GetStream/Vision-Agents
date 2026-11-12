@@ -89,6 +89,9 @@ type Message struct {
 	Error                   string                   `json:"persistence_error,omitempty"`
 	// Refused is a reply the prompt injection screen refused (RefusedField).
 	Refused bool `json:"refused,omitempty"`
+	// Branch is the message's place among the conversation's branches (BranchField), nil on
+	// a message written without a response id.
+	Branch *Branch `json:"branch,omitempty"`
 
 	// Read from Stream user metadata, never from message custom fields.
 	authorID, authorName string
@@ -992,6 +995,16 @@ func commandsIn(messages []Message) map[string]commandRecord {
 			continue
 		}
 		record, ok := commands[m.CommandID]
+		// A regenerated reply answers a question under a command id of its own (BeginRegenerate),
+		// which is the person's who asked it.
+		if asked, isQuestion := commands[m.QuestionID]; !ok && m.QuestionID != m.CommandID && isQuestion && asked.UserMessageID == m.QuestionID {
+			commands[m.CommandID] = commandRecord{
+				CommandReceipt: CommandReceipt{CommandID: m.CommandID, UserMessageID: m.QuestionID, AssistantMessageID: m.ID, State: m.State},
+				Digest:         regenerateDigest(m.QuestionID),
+				Initiator:      asked.Initiator,
+			}
+			continue
+		}
 		if !ok {
 			record = commandRecord{CommandReceipt: CommandReceipt{CommandID: m.CommandID, AssistantMessageID: m.ID, State: m.State}}
 			if readBack(m.CommandID) {
@@ -1458,6 +1471,10 @@ func (c *Conversation) BeginCommand(id, text, clientID string, photos ...Photo) 
 // BeginCommandWithAction is BeginCommand for a person's message that says what they did in a
 // reply's UI (ui.go), which their message carries beside their words.
 func (c *Conversation) BeginCommandWithAction(id, text, clientID string, action map[string]any, photos ...Photo) (CommandReceipt, error) {
+	return c.beginCommand(Turn{}, id, text, clientID, action, photos...)
+}
+
+func (c *Conversation) beginCommand(turn Turn, id, text, clientID string, action map[string]any, photos ...Photo) (CommandReceipt, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.active {
@@ -1491,11 +1508,13 @@ func (c *Conversation) BeginCommandWithAction(id, text, clientID string, action 
 	// The user's message is stored under the command ID, so a client that shows the
 	// message before it is delivered (an optimistic send) sees Stream's copy replace
 	// its own instead of a duplicate.
-	u := Message{ID: id, CommandID: id, Role: "user", Text: text, State: "completed", StartedAt: now, StateStartedAt: now, FinishedAt: &now, Tools: []Tool{}, ClientID: clientID, UIAction: action}
+	u := Message{ID: id, CommandID: id, Role: "user", Text: text, State: "completed", StartedAt: now, StateStartedAt: now, FinishedAt: &now, Tools: []Tool{}, ClientID: clientID, UIAction: action,
+		Branch: turn.mark(BranchOfQuestion, turn.Question)}
 	for _, photo := range photos {
 		u.Files = append(u.Files, photo.Uploaded)
 	}
-	a := Message{ID: uuid.NewString(), CommandID: id, Role: "assistant", TextLayout: 1, QuestionID: u.ID, State: "thinking", StartedAt: now, StateStartedAt: now, Tools: []Tool{}}
+	a := Message{ID: uuid.NewString(), CommandID: id, Role: "assistant", TextLayout: 1, QuestionID: u.ID, State: "thinking", StartedAt: now, StateStartedAt: now, Tools: []Tool{},
+		Branch: turn.mark(BranchOfReply, turn.Reply)}
 	receipt := CommandReceipt{CommandID: id, UserMessageID: u.ID, AssistantMessageID: a.ID, State: a.State}
 	if c.data.Commands == nil {
 		c.data.Commands = map[string]commandRecord{}
@@ -2068,6 +2087,9 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 	if m.Refused {
 		fields[RefusedField] = true
 	}
+	if m.Branch != nil {
+		fields[BranchField] = m.Branch
+	}
 	parts := m.Parts
 	if op.live != nil {
 		parts = liveParts(parts, *op.live)
@@ -2088,6 +2110,9 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 		}
 		if m.UIAction != nil {
 			custom["ai_ui_action"] = m.UIAction
+		}
+		if m.Branch != nil {
+			custom[BranchField] = m.Branch
 		}
 		// ai_generated is how Stream's AI components tell a streamed reply from the rest.
 		// User messages are written as the agent too, so it goes on assistant replies only.
