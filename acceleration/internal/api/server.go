@@ -336,6 +336,8 @@ type Options struct {
 
 // Server serves the router's HTTP API.
 type Server struct {
+	// mux is what Handler built, which a middleware asks for the pattern of a path.
+	mux                *chi.Mux
 	routers            map[routing.Modality]routing.Inspector
 	pricer             pricing.Pricer
 	prices             *pricing.Active
@@ -768,6 +770,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+channels.HookPath+"{token}", s.receiveChannelMessage)
 	mux.HandleFunc("POST "+dlc.HookPath, s.receiveDLCReport)
 	s.newAPI(mux)
+	s.mux = mux
 	var handler http.Handler = mux
 	// Sentry is outermost so it sees panics from every middleware below it, not
 	// only from the route handlers.
@@ -976,7 +979,7 @@ func (s *Server) withRequestLog(routes *chi.Mux, next http.Handler) http.Handler
 			if recovered != http.ErrAbortHandler {
 				customer, _ := CustomerFrom(r.Context())
 				s.logger.Error("a request panicked",
-					"method", r.Method, "path", r.URL.Path, "customer", customer,
+					"method", r.Method, "path", loggedPath(routes, r), "customer", customer,
 					"request_id", RequestIDFrom(r.Context()),
 					"panic", fmt.Sprint(recovered), "stack", string(debug.Stack()))
 				if recorder.code == 0 && recorder.written == 0 && !recorder.hijacked {
@@ -993,7 +996,7 @@ func (s *Server) withRequestLog(routes *chi.Mux, next http.Handler) http.Handler
 		// since it is logged once it has closed.
 		fields := []any{
 			"method", r.Method,
-			"path", r.URL.Path,
+			"path", loggedPath(routes, r),
 			"status", recorder.status(),
 			"duration", time.Since(started).Round(time.Millisecond),
 			"customer", customer,
@@ -1125,7 +1128,7 @@ func (s *Server) refuseClientSide(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	s.logger.Debug("refused a client-side caller a server-side operation",
-		"method", r.Method, "path", r.URL.Path)
+		"method", r.Method, "path", loggedPath(s.mux, r))
 	writeError(w, errServerSideOnly)
 	return true
 }
@@ -1171,7 +1174,7 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 		span.End()
 		if errors.Is(err, auth.ErrLevelRefused) {
 			s.logger.Debug("refused a level of user this app turns away",
-				"method", r.Method, "path", r.URL.Path, "kind", principal.Kind)
+				"method", r.Method, "path", loggedPath(s.mux, r), "kind", principal.Kind)
 			writeError(w, forbidden("this app does not accept "+
 				"requests from this level of user"))
 			return
