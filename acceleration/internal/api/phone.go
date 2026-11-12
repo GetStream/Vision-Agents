@@ -1088,6 +1088,7 @@ func (s *Server) registerPhone(api huma.API) {
 		Method:        http.MethodPost,
 		Path:          "/v1/phone/numbers",
 		Summary:       "Buy a number, which starts its monthly charge",
+		Description:   "Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.",
 		DefaultStatus: http.StatusCreated,
 		Responses: map[string]*huma.Response{
 			"201": {Description: "The number is bought and recorded"},
@@ -1274,7 +1275,7 @@ type listPhoneVendorsResponse struct {
 
 type searchPhoneNumbersRequest struct {
 	Vendor             optionalParam[string]            `query:"vendor" doc:"One vendor to search. Absent searches every usable vendor."`
-	Country            string                           `query:"country" doc:"ISO 3166-1 alpha-2 country code." required:"true"`
+	Country            string                           `query:"country" doc:"ISO 3166-1 alpha-2 country code. Numbers are sold only in the US (US) and Canada (CA); any other country is refused." required:"true"`
 	AreaCode           optionalParam[string]            `query:"area_code"`
 	Contains           optionalParam[string]            `query:"contains" doc:"Digits the number must contain, anywhere in it."`
 	Prefix             optionalParam[string]            "query:\"prefix\" doc:\"Digits the number must start with, matched after the country dial code. This differs from `contains` in where the digits have to fall.\""
