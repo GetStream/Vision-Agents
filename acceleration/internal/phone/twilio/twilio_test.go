@@ -861,3 +861,60 @@ func (s *TwilioSuite) TestAnAnswerThatIsNotJSONIsAVendorErrorWithoutTheBody() {
 	s.Equal("could not read the answer", vendorErr.Message)
 	s.Equal(http.StatusOK, vendorErr.Status)
 }
+
+// hangUps records every request to a call's path, answering each with the next reply.
+func (s *TwilioSuite) hangUps(replies ...string) *[]url.Values {
+	var forms []url.Values
+	s.respond = func(w http.ResponseWriter, r *http.Request) {
+		forms = append(forms, r.PostForm)
+		_, _ = w.Write([]byte(replies[len(forms)-1]))
+	}
+	return &forms
+}
+
+func (s *TwilioSuite) TestARingingCallIsCanceled() {
+	forms := s.hangUps(`{"sid":"CA123","status":"canceled"}`)
+
+	s.Require().NoError(s.provider.HangUp(s.ctx, "CA123"))
+
+	s.Equal(http.MethodPost, s.seen.method)
+	s.Equal("/2010-04-01/Accounts/AC123/Calls/CA123.json", s.seen.path)
+	s.Require().Len(*forms, 1)
+	s.Equal("canceled", (*forms)[0].Get("Status"))
+}
+
+func (s *TwilioSuite) TestAnAnsweredCallIsCompletedAfterCancelLeftItUp() {
+	forms := s.hangUps(`{"sid":"CA123","status":"in-progress"}`, `{"sid":"CA123","status":"completed"}`)
+
+	s.Require().NoError(s.provider.HangUp(s.ctx, "CA123"))
+
+	s.Require().Len(*forms, 2)
+	s.Equal("canceled", (*forms)[0].Get("Status"))
+	s.Equal("completed", (*forms)[1].Get("Status"))
+}
+
+func (s *TwilioSuite) TestACallAlreadyOverIsNoFailure() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"code":21220,"message":"Call is not in-progress. Cannot redirect."}`))
+	}
+
+	s.NoError(s.provider.HangUp(s.ctx, "CA123"))
+}
+
+func (s *TwilioSuite) TestARefusedHangUpIsAVendorError() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"code":20404,"message":"not found"}`))
+	}
+
+	err := s.provider.HangUp(s.ctx, "CA123")
+
+	refused, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal("20404", refused.Code)
+}
+
+func (s *TwilioSuite) TestHangingUpWithoutACallIsRejected() {
+	s.ErrorContains(s.provider.HangUp(s.ctx, ""), "call to hang up")
+}

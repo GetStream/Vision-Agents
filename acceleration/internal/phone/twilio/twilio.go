@@ -48,6 +48,9 @@ const pricesTTL = 24 * time.Hour
 // errorBodyLimit caps how much of a failed response is read into an error message.
 const errorBodyLimit = 2048
 
+// callNotInProgress is Twilio refusing to change a call that is already over.
+const callNotInProgress = "21220"
+
 // addressRequired is Twilio's error for a number sold only with a verified address.
 const addressRequired = "21631"
 
@@ -420,6 +423,31 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		return phone.Dialed{}, err
 	}
 	return phone.Dialed{VendorCallID: placed.SID, Status: placed.Status}, nil
+}
+
+// HangUp ends a call placed by Dial. Canceling is what stops a call that still rings, and
+// Twilio leaves an answered one up, so that one is completed in a second request
+// (https://www.twilio.com/docs/voice/api/call-resource#update-a-call-resource). A call that
+// is already over is not a failure: Twilio refuses it with 21220.
+func (p *Provider) HangUp(ctx context.Context, vendorCallID string) error {
+	if vendorCallID == "" {
+		return stack.Wrap(errors.New("twilio: hanging up needs the call to hang up"))
+	}
+	path := fmt.Sprintf("/2010-04-01/Accounts/%s/Calls/%s.json", p.accountSID, url.PathEscape(vendorCallID))
+
+	for _, status := range []string{"canceled", "completed"} {
+		var ended call
+		if err := p.post(ctx, path, url.Values{"Status": {status}}, &ended); err != nil {
+			if refused, ok := errors.AsType[*phone.VendorError](err); ok && refused.Code == callNotInProgress {
+				return nil
+			}
+			return err
+		}
+		if ended.Status == status {
+			return nil
+		}
+	}
+	return nil
 }
 
 // ReadStatus reads the form Twilio posts to a call's StatusCallback. A CallStatus that does
