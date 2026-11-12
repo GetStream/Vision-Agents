@@ -246,11 +246,16 @@ func (s *PausesSuite) TestTheAgentIsToldTheCallerIsTalkingUntilTheTurnEnds() {
 	s.say(900, false)
 	s.Greater(s.agent.heardSoFar(), voiced, "told while the model waited on the pause")
 	s.ending(0.999)
-	s.say(300, false)
-	next[stt.Transcript](&s.transcribing)
-	ended := s.agent.heardSoFar()
+	// The next check ends the turn, once the pause's last check has answered: a frame at a
+	// time, as each check's answer may come after the frames it was asked in have been sent,
+	// and its final a moment after the answer.
+	if _, _, ended := s.holding(600, false); !ended {
+		for !next[stt.Transcript](&s.transcribing).Final() {
+		}
+	}
+	told := s.agent.heardSoFar()
 	s.say(2000, false)
-	s.Equal(ended, s.agent.heardSoFar(), "told nothing once the turn had ended")
+	s.Equal(told, s.agent.heardSoFar(), "told nothing once the turn had ended")
 }
 
 // An utterance a check over the agent stopped it in goes on, uncut, and ends by the free
