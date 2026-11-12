@@ -75,3 +75,45 @@ func (s *GateSuite) TestAnErrorThatIsNoRefusalHasNoCode() {
 	s.Empty(dlc.RefusalCode(dlc.ErrRefused))
 	s.Empty(dlc.RefusalCode(nil))
 }
+
+func (s *GateSuite) TestARefusalOverACountryIsATierLimit() {
+	s.limit(map[string]usage.ChannelLimits{dlc.SMS: {Countries: []string{"US"}}})
+
+	s.Equal("country", dlc.TierLimit(s.gate.Allow(s.ctx, s.app(), dlc.SMS, "+442079460000")))
+}
+
+func (s *GateSuite) TestARefusalOverTheDailyLimitIsATierLimit() {
+	s.limit(map[string]usage.ChannelLimits{dlc.SMS: {PerDay: new(0)}})
+
+	s.Equal("per_day", dlc.TierLimit(s.gate.Allow(s.ctx, s.app(), dlc.SMS, "+15125550123")))
+}
+
+func (s *GateSuite) TestARefusalOverTheRecipientsADayIsATierLimit() {
+	s.limit(map[string]usage.ChannelLimits{dlc.SMS: {RecipientsPerDay: new(0)}})
+
+	s.Equal("recipients_per_day", dlc.TierLimit(s.gate.Allow(s.ctx, s.app(), dlc.SMS, "+15125550123")))
+}
+
+func (s *GateSuite) TestARefusalOverTheCallsAtOnceIsATierLimit() {
+	s.limit(map[string]usage.ChannelLimits{dlc.Voice: {Concurrent: new(1)}})
+	s.leg(store.Outbound, time.Now(), true)
+
+	s.Equal("concurrent", dlc.TierLimit(s.gate.Allow(s.ctx, s.app(), dlc.Voice, "+15125550123")))
+}
+
+func (s *GateSuite) TestARefusalOfTheSandboxOrAnOptOutIsNoTierLimit() {
+	gate := s.newGate(dlc.Sandbox{Enabled: true, Recipients: 2}, config.LimitsEnforce)
+	s.Require().NoError(s.money.Store.SetSandboxRecipients(s.ctx, s.app(), []string{"+15125550001"}))
+	s.Require().NoError(s.money.Store.OptOut(s.ctx, &store.OptOut{
+		CustomerID: s.app(), Recipient: "+15125550001", Channel: dlc.SMS, Source: "test",
+	}))
+
+	outside := gate.Allow(s.ctx, s.app(), dlc.SMS, "+15125550003")
+	optedOut := gate.Allow(s.ctx, s.app(), dlc.SMS, "+15125550001")
+
+	s.Require().ErrorIs(outside, dlc.ErrRefused)
+	s.Require().ErrorIs(optedOut, dlc.ErrRefused)
+	s.Empty(dlc.TierLimit(outside))
+	s.Empty(dlc.TierLimit(optedOut))
+	s.Empty(dlc.TierLimit(errors.New("boom")))
+}

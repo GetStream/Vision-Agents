@@ -117,6 +117,7 @@ func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, a
 			Instructions: instructions,
 			Tell:         tell,
 			History:      append(a.replayLocked(), named(said)),
+			Documents:    a.pinnedLocked(),
 			Note:         note,
 			Generation:   a.speculated,
 		},

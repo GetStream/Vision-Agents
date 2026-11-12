@@ -4,14 +4,19 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"log/slog"
+	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/getsentry/sentry-go"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/alerts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer/turbopuffertest"
@@ -19,6 +24,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/server"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
 )
 
 // storageHour is the hour the storage tests record.
@@ -92,6 +99,32 @@ func (s *UsageCommandsSuite) TestStorageIsRecordedOncePerNamespacePerHour() {
 	s.Len(s.requests(), 4, "the next hour is billed again")
 }
 
+func (s *UsageCommandsSuite) TestAJobShipsItsEventsUnderAJobSourceTheEventLagLeavesOut() {
+	service := usagetest.Start(s.T(), usagetest.Options{DSN: usagetest.Database(s.T(), "usage_jobsource")})
+	usagetest.Empty(s.T(), service.Ledger)
+	s.settings.Usage = config.Usage{URL: service.URL, Token: service.Token}
+	s.deploymentApps("app-1")
+	turbo := turbopuffertest.Start(s.T())
+	turbo.Holds("app-1__docs", 2_000_000_000)
+
+	_, lagBefore := alerts.Above(server.EventLag, 600)
+	_, err := s.runStorage(turbo, storageHour, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+
+	s.Eventually(func() bool {
+		var sources []string
+		s.Require().NoError(service.Ledger.DB().NewSelect().Table("usage_events").Column("source").Scan(s.ctx, &sources))
+		return len(sources) == 1
+	}, 10*time.Second, 50*time.Millisecond, "the storage row reaches the usage service")
+	var source string
+	s.Require().NoError(service.Ledger.DB().NewSelect().Table("usage_events").Column("source").Scan(s.ctx, &source))
+	host, _ := os.Hostname()
+	s.Equal(routing.JobSource(cmp.Or(s.settings.Shard, routing.Unsharded), host), source)
+	s.True(strings.HasPrefix(source, "job/"), source)
+	_, lagAfter := alerts.Above(server.EventLag, 600)
+	s.Equal(lagBefore, lagAfter, "a job's row, dated to the hour it bills, is not observed as a router's event lag")
+}
+
 // keptKeys are the keys customers keep, by customer, provider and region.
 type keptKeys map[string]string
 
@@ -136,11 +169,15 @@ func (s *UsageCommandsSuite) TestABaseInACustomersOwnAccountIsSampledOnTheirKeyA
 
 func (s *UsageCommandsSuite) TestAStorageRowWithNoPriceAlertsAsTheJobStops() {
 	var mu sync.Mutex
-	var fingerprints []string
+	const unpriced = "usage_unpriced:knowledge/turbopuffer/storage/eu/false"
+	var fingerprints, sources []string
 	client, err := sentry.NewClient(sentry.ClientOptions{BeforeSend: func(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
 		mu.Lock()
 		defer mu.Unlock()
 		fingerprints = append(fingerprints, event.Fingerprint...)
+		if slices.Contains(event.Fingerprint, unpriced) {
+			sources = append(sources, event.Tags["source"])
+		}
 		return nil
 	}})
 	s.Require().NoError(err)
@@ -167,7 +204,9 @@ func (s *UsageCommandsSuite) TestAStorageRowWithNoPriceAlertsAsTheJobStops() {
 	s.Require().Len(s.requests(), 1)
 	mu.Lock()
 	defer mu.Unlock()
-	s.Contains(fingerprints, "usage_unpriced:knowledge/turbopuffer/storage/eu/false", "vendor.json prices no eu storage")
+	s.Contains(fingerprints, unpriced, "vendor.json prices no eu storage")
+	host, _ := os.Hostname()
+	s.Equal([]string{routing.JobSource(cmp.Or(s.settings.Shard, routing.Unsharded), host)}, sources, "the alert names the job, not a router")
 }
 
 func (s *UsageCommandsSuite) TestAKnowledgeBaseThatCannotBeReadIsAMissedHour() {

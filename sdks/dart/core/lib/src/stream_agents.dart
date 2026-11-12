@@ -16,7 +16,7 @@ import 'wire.dart';
 ///
 /// Two lines get a conversation going:
 ///
-///     final agents = VisionAgents(url: Uri.parse('https://your-router'), customerId: 'acme');
+///     final agents = StreamAgents(url: Uri.parse('https://your-router'), customerId: 'acme');
 ///     final chat = await agents.agent('docs').chat();
 ///
 /// Opening a conversation, following it, reading back its turns, going back to one of them,
@@ -30,8 +30,8 @@ import 'wire.dart';
 /// however many sessions ask, or use the app's own, and [disconnect] closes the ones built.
 ///
 /// The constructor does no I/O.
-final class VisionAgents {
-  VisionAgents({
+final class StreamAgents {
+  StreamAgents({
     Uri? url,
     String customerId = '',
     String apiKey = '',
@@ -44,7 +44,7 @@ final class VisionAgents {
        );
 
   /// An injected [httpClient] is the caller's and is never closed here.
-  VisionAgents.withBackend(this.backend, {http.Client? httpClient})
+  StreamAgents.withBackend(this.backend, {http.Client? httpClient})
     : _client = httpClient ?? http.Client(),
       _ownsClient = httpClient == null {
     _operations = api.Operations(HttpWire(backend, _client));
@@ -63,12 +63,12 @@ final class VisionAgents {
   Agent agent(String name) => Agent._(this, name);
 
   /// The same router, asked by somebody else. Shares this one's HTTP client.
-  VisionAgents withUser(String userId, {TokenProvider? token}) =>
-      VisionAgents.withBackend(backend.withUser(userId, token: token), httpClient: _client);
+  StreamAgents withUser(String userId, {TokenProvider? token}) =>
+      StreamAgents.withBackend(backend.withUser(userId, token: token), httpClient: _client);
 
   /// The same router, asked by a guest. On a router verifying tokens, the guest's own token is
   /// the credential.
-  VisionAgents withGuest(GuestUser guest) =>
+  StreamAgents withGuest(GuestUser guest) =>
       withUser(guest.id, token: backend.apiKey.isEmpty ? null : () async => guest.token);
 
   /// Holds a conversation in writing: no call is joined, nothing is transcribed or spoken.
@@ -201,7 +201,7 @@ final class Agent {
   Agent._(this._agents, this.name)
     : sessions = Sessions(_agents._operations, agent: name, userId: _agents.backend.userId);
 
-  final VisionAgents _agents;
+  final StreamAgents _agents;
 
   /// The name its config was stored under.
   final String name;

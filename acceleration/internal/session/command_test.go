@@ -660,7 +660,7 @@ func (s *SessionSuite) TestAHandedOnCommandTellsTheModelWhatThePersonDidInTheUI(
 		"payload": map[string]any{"context": map[string]any{"pace": []any{"packed"}}},
 	}
 
-	_, _, err = worker.RespondCommandWithAction(s.ctx, "command-w", "Update the plan", "", nil, options.LLM{}, action)
+	_, _, err = worker.RespondCommandWithAction(s.ctx, "command-w", "Update the plan", "", nil, options.LLM{}, action, nil)
 	s.Require().NoError(err)
 
 	s.eventually(func() bool {

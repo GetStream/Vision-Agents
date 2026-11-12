@@ -12,7 +12,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:test/test.dart';
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents_core/stream_agents_core.dart';
 
 final _url = Platform.environment['VISION_AGENTS_URL'];
 final _customerId = Platform.environment['VISION_AGENTS_CUSTOMER_ID'] ?? 'acme';
@@ -25,7 +25,7 @@ final _agent = Platform.environment['VISION_AGENTS_AGENT'] ?? '';
 final _user = 'dart-live-${DateTime.now().millisecondsSinceEpoch}';
 
 void main() {
-  late VisionAgents agents;
+  late StreamAgents agents;
   final opened = <AgentSession>[];
 
   Future<AgentSession> chat([SessionOptions options = const SessionOptions()]) async {
@@ -35,7 +35,7 @@ void main() {
   }
 
   setUp(() {
-    agents = VisionAgents(url: Uri.parse(_url!), customerId: _customerId).withUser(_user);
+    agents = StreamAgents(url: Uri.parse(_url!), customerId: _customerId).withUser(_user);
   });
 
   tearDown(() async {

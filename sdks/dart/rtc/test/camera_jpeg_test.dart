@@ -2,7 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as image;
-import 'package:vision_agents_rtc/src/camera_jpeg.dart';
+import 'package:stream_agents_rtc/src/camera_jpeg.dart';
 
 /// A picture of [width] by [height] with something in it, as a camera would hand one over.
 image.Image _picture(int width, int height) {

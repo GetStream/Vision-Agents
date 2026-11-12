@@ -4,8 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:stream_chat/stream_chat.dart' as stream;
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 import 'package:stream_chat_flutter_ai_a2ui/stream_chat_flutter_ai_a2ui.dart';
-import 'package:vision_agents_chat/vision_agents_chat.dart';
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents_chat/stream_agents_chat.dart';
+import 'package:stream_agents_core/stream_agents_core.dart';
 
 import 'assistant.dart';
 import 'photos.dart';

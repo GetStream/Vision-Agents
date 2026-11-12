@@ -2,8 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vision_agents_core/vision_agents_core.dart';
-import 'package:vision_agents_rtc/vision_agents_rtc.dart';
+import 'package:stream_agents_core/stream_agents_core.dart';
+import 'package:stream_agents_rtc/stream_agents_rtc.dart';
 
 /// A router on loopback that answers what a voice session does before joining a call:
 /// creating and reading a session, and its events socket. Every request, body and command
@@ -71,11 +71,11 @@ Future<void> _until(bool Function() done) async {
 
 void main() {
   late _Router router;
-  late VisionAgents agents;
+  late StreamAgents agents;
 
   setUp(() async {
     router = await _Router.start();
-    agents = VisionAgents(url: router.url, customerId: 'acme', userId: 'ada');
+    agents = StreamAgents(url: router.url, customerId: 'acme', userId: 'ada');
   });
 
   tearDown(() async {
@@ -107,7 +107,7 @@ void main() {
     });
 
     test('keeps why joining failed when the token could not be had', () async {
-      final keyed = VisionAgents(
+      final keyed = StreamAgents(
         url: router.url,
         customerId: 'acme',
         apiKey: 'stream-key',

@@ -1,6 +1,6 @@
-name: vision_agents_rtc
+name: stream_agents_rtc
 description: >-
-  Talk to a Stream Vision Agent out loud: joins the call the agent is on with Stream Video,
+  Talk to a Stream agent out loud: joins the call the agent is on with Stream Video,
   and renders the agent's video beside the device camera.
 version: 0.1.0
 repository: https://github.com/GetStream/Vision-Agents/tree/accelerate/sdks/dart/rtc
@@ -15,8 +15,8 @@ dependencies:
   flutter:
     sdk: flutter
   # A hosted constraint, resolved to ../core in this repository by pubspec_overrides.yaml.
-  vision_agents_core: ^0.1.0
-  stream_video_flutter: 1.6.0
+  stream_agents_core: ^0.1.0
+  stream_video_flutter: ^1.6.0
   # Makes the camera's pictures into the JPEGs the agent is sent, in pure Dart.
   image: ^4.12.0
 

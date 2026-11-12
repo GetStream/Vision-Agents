@@ -504,6 +504,7 @@ interface ChannelV10 {
   readonly messagePaginator: {
     pageSize: number;
     readonly hasMoreTail: boolean;
+    readonly lastQueryError?: Error;
     readonly state: {
       subscribeWithSelector<O extends Readonly<Record<string, unknown>>>(
         selector: (value: { items?: readonly AgentChatMessage[] | undefined; hasMoreTail: boolean }) => O,
@@ -561,8 +562,13 @@ function readerV10(channel: ChannelV10, pageSize: number, events: ReaderEvents):
       await channel.watch({ messages: { limit: pageSize } });
     },
     async loadOlder() {
-      if (channel.messagePaginator.hasMoreTail) {
-        await channel.messagePaginator.toTail();
+      const paginator = channel.messagePaginator;
+      if (!paginator.hasMoreTail) {
+        return;
+      }
+      await paginator.toTail();
+      if (paginator.lastQueryError) {
+        throw paginator.lastQueryError;
       }
     },
     stop() {

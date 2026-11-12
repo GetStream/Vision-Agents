@@ -1,6 +1,6 @@
 {
   "name": "@stream-io/stream-agents",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Stream Agents for JavaScript: the client for agents that run on the Stream acceleration backend, and the conversations they hold.",
   "license": "Apache-2.0",
   "repository": {

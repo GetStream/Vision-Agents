@@ -348,11 +348,15 @@ func (m *Manager) startRuntime(spec Spec) *routing.Slices {
 // newSession is the session spec opens, timed from now by runtime, which every session is
 // given so that none is open unbilled.
 func (m *Manager) newSession(spec Spec, conv *persistent.Conversation, skills harness.Skills, opening time.Time, runtime *routing.Slices) *Session {
+	// The files a fork carried are pinned and kept below, and are not the session's to hand
+	// on: a spec read off it (a fork, a reopen) reads its own files by their owner.
+	held := spec
+	held.Documents = nil
 	created := &Session{
 		logs:      m.logs,
 		persisted: conv,
 		id:        spec.ID,
-		spec:      spec,
+		spec:      held,
 		// Postgres keeps microseconds. The live session sorts by the same instant as its
 		// row, or a cursor taken from one would hand the other back on the next page.
 		created:       opening.Truncate(time.Microsecond),
@@ -937,6 +941,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		created.cardsFor = person
 	}
 	built.RestoreHistory(append(cards, previous...))
+	if !spec.Native() {
+		built.PinDocuments(m.documents(ctx, spec)...)
+	}
 	// A reopened chat is reviewed again when it ends, and its summary is of all of it.
 	if !spec.Reopened.IsZero() {
 		earlier := spokenOf(previous)

@@ -3411,6 +3411,25 @@ decision_model:
       realtime: true
       tier: low-latency
 
+    # Gemini Decision 1 on Google's own Decisions API (GOOGLE_API_KEY), at $0.10/1M input
+    # tokens of any modality and no output (ai.google.dev/gemini-api/docs/pricing, read
+    # 2026-11-12). It is the only model that endpoint serves, and it reads images, audio,
+    # video and PDFs as well as text, though only text reaches it from here. On 2026-11-12
+    # it answered a 128-case guardrail, injection, routing and severity set as well as Jev
+    # and the Deciders, at Jev's latency, for the highest rate here: about $0.18 per 1,000
+    # twelve-question guardrail calls, against $0.08 for Jev and $0.03 for the Deciders.
+    # Google do not use paid-tier traffic to improve their products and log it for an
+    # unstated period, with no zero-retention path on the Developer API.
+    - provider: gemini
+      model: gemini-decision-1
+      description: "Google's multimodal decision model. As quick as Jev and as accurate, at the highest rate of any decision model here."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+
   aliases:
     en-low-latency:
       languages: [en]

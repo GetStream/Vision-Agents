@@ -128,15 +128,22 @@ class ChannelV10 {
   deactivated = 0;
   tails = 0;
   latest: Message[] = [];
+  /** Fails the next older page the way the paginator does: recorded, not thrown. */
+  tailError: Error | undefined;
   private readonly handlers = new Map<string, Set<(event: { type: string; message?: Message }) => void>>();
   readonly messagePaginator = {
     pageSize: 0,
+    lastQueryError: undefined as Error | undefined,
     state: new AgentChatStore<{ items: Message[] | undefined; hasMoreTail: boolean }>({ items: undefined, hasMoreTail: false }),
     get hasMoreTail() {
       return this.state.getLatestValue().hasMoreTail;
     },
     toTail: async () => {
       this.tails += 1;
+      this.messagePaginator.lastQueryError = this.tailError;
+      if (this.tailError) {
+        return;
+      }
       const { items = [] } = this.messagePaginator.state.getLatestValue();
       this.messagePaginator.state.next({ items: [{ id: "older" }, ...items], hasMoreTail: false });
     },
@@ -577,6 +584,26 @@ describe("AgentChat", () => {
 
       await chat.close();
       assert.equal(channel.deactivated, 1);
+    });
+
+    it("rejects when an older page can't load, and loads it on the next try", async () => {
+      const channel = new ChannelV10();
+      channel.latest = [{ id: "a" }];
+      const { open } = opener(channel);
+      const chat = new AgentChat<Message>({ sessionId: "s1", open });
+      await chat.prepare();
+
+      channel.tailError = new Error("offline");
+      await assert.rejects(chat.loadOlderMessages(), /offline/);
+      assert.equal(chat.state.getLatestValue().hasOlderMessages, true);
+
+      channel.tailError = undefined;
+      await chat.loadOlderMessages();
+      assert.equal(channel.tails, 2);
+      assert.deepEqual(
+        chat.state.getLatestValue().messages.map((message) => message.id),
+        ["older", "a"],
+      );
     });
   });
 });
