@@ -260,21 +260,23 @@ export class Responses {
    * (the default) the answers to its question, its regenerations; with `of: "question"` the
    * questions asked in its place, its edits, each named by the first response that answered it.
    * Each has its `index`, the i of ‹ i/n ›, and whether it is `active`, on the conversation now.
+   * `signal` abandons the read.
    */
   async siblings(
     response: ResponseRef,
-    options: { of?: "reply" | "question"; limit?: number; cursor?: string } = {},
+    options: { of?: "reply" | "question"; limit?: number; cursor?: string; signal?: AbortSignal } = {},
   ): Promise<Schemas["ResponseSiblingPage"]> {
     return this.client.get("/v1/agents/sessions/{id}/responses/{response_id}/siblings", {
       path: { id: this.sessionId, response_id: recorded(response, "listed the siblings of") },
       query: { of: options.of, limit: options.limit, cursor: options.cursor },
+      ...(options.signal ? { signal: options.signal } : {}),
     });
   }
 
   /** Every alternative to a response, oldest first, fetching a page at a time. See `siblings`. */
   async *unwindSiblings(
     response: ResponseRef,
-    options: { of?: "reply" | "question"; limit?: number } = {},
+    options: { of?: "reply" | "question"; limit?: number; signal?: AbortSignal } = {},
   ): AsyncGenerator<Schemas["ResponseSibling"]> {
     let cursor: string | undefined;
     while (true) {
@@ -293,22 +295,23 @@ export class Responses {
    * so they render in place of the channel's own. Nothing is written to Chat and the model is
    * not told: this is what a ‹ i/n › control shows. A response on the conversation answers
    * `active: true` and no items, since the channel already shows it. A branch whose copies were
-   * deleted is a `RouterError` with code `branch_unavailable`.
+   * deleted is a `RouterError` with code `branch_unavailable`. `signal` abandons the read.
    */
   async branch(
     response: ResponseRef,
-    options: { limit?: number; cursor?: string } = {},
+    options: { limit?: number; cursor?: string; signal?: AbortSignal } = {},
   ): Promise<Schemas["BranchMessagePage"]> {
     return this.client.get("/v1/agents/sessions/{id}/responses/{response_id}/branch", {
       path: { id: this.sessionId, response_id: recorded(response, "read the branch of") },
       query: { limit: options.limit, cursor: options.cursor },
+      ...(options.signal ? { signal: options.signal } : {}),
     });
   }
 
   /** Every message of a hidden branch, oldest first, fetching a page at a time. See `branch`. */
   async *unwindBranch(
     response: ResponseRef,
-    options: { limit?: number } = {},
+    options: { limit?: number; signal?: AbortSignal } = {},
   ): AsyncGenerator<Schemas["BranchMessage"]> {
     let cursor: string | undefined;
     while (true) {

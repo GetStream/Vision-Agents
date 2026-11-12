@@ -338,6 +338,22 @@ describe("agentChatTransport, branching", () => {
     assert.deepEqual(feed.ids, ["q0", "r0", "qe", "re"]);
   });
 
+  it("abandons a switch once its signal aborts, reading and showing nothing of it", async () => {
+    const { transport, feed } = await connected();
+    const controller = new AbortController();
+
+    const switching = transport.switchBranch(feed.find("r2"), "previous", controller.signal);
+    controller.abort();
+    await switching;
+
+    assert.deepEqual(feed.ids, ["q0", "r0", "q1", "r2"]);
+    assert.deepEqual(
+      router.received.filter((one) => one.method === "GET").map((one) => one.path),
+      [],
+      "the reads were abandoned before they went",
+    );
+  });
+
   it("keeps showing a version over the channel's newer messages", async () => {
     const { streamChat, transport, feed } = await connected();
     await transport.switchBranch(feed.find("r2"), "previous");

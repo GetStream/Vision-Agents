@@ -61,8 +61,9 @@ export interface AgentTransport<Message> {
   /**
    * Shows the alternative before or after `message`, the ‹ i/n › of its `branch`. Present, it
    * has the controller offer regenerate on every reply and edit on every person's message.
+   * Once `signal` aborts, it shows nothing of that version.
    */
-  switchBranch?: (message: Message, to: "previous" | "next") => Promise<void>;
+  switchBranch?: (message: Message, to: "previous" | "next", signal?: AbortSignal) => Promise<void>;
 }
 
 /**
@@ -475,27 +476,33 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
         requestId: request.messageId,
       });
     },
-    async switchBranch(message, to) {
+    async switchBranch(message, to, signal) {
       const source = sourceOf(message);
       const place = source ? supportBranchOf(source) : undefined;
       if (!source || !place) {
         throw new AgentBranchError("not_branchable");
       }
       const switching = ++switches;
+      // Whether a later switch or a send, or the controller through `signal`, took its place.
+      const dropped = () => switching !== switches || signal?.aborted === true;
+      const reading = signal ? { signal } : {};
       const session = await chat.session();
       const siblings: Schemas["ResponseSibling"][] = [];
       try {
-        for await (const sibling of session.responses.unwindSiblings(place.responseId, { of: place.of })) {
+        for await (const sibling of session.responses.unwindSiblings(place.responseId, { of: place.of, ...reading })) {
           siblings.push(sibling);
         }
       } catch (error) {
+        if (dropped()) {
+          return;
+        }
         throw branchError(error);
       }
       // Where the message stands now, which its mark, written when it was, may not say.
       const self = place.of === "question" ? place.questionResponseId || place.responseId : place.responseId;
       const index = siblings.find((sibling) => sibling.id === self)?.index ?? place.index;
       const target = siblings.find((sibling) => sibling.index === index + (to === "next" ? 1 : -1));
-      if (!target || switching !== switches) {
+      if (!target || dropped()) {
         return;
       }
       if (target.active) {
@@ -505,13 +512,16 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
       }
       const read: Schemas["BranchMessage"][] = [];
       try {
-        for await (const item of session.responses.unwindBranch(target.id)) {
+        for await (const item of session.responses.unwindBranch(target.id, reading)) {
           read.push(item);
         }
       } catch (error) {
+        if (dropped()) {
+          return;
+        }
         throw branchError(error);
       }
-      if (switching !== switches) {
+      if (dropped()) {
         return;
       }
       const first = read[0];
