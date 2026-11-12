@@ -666,13 +666,11 @@ func (s *BranchesSuite) TestARegenerateWhoseRewindAnswerWasLostCarriesOnFromWhat
 	s.Equal(branched.ResponseID, s.response(session, third).ParentResponseID)
 }
 
-// A switch that cannot be settled once Chat may have rewound refuses every other turn, which
-// would be answered from a conversation nobody knows, until its own request is retried.
-func (s *BranchesSuite) TestASwitchThatCannotBeSettledRefusesOtherTurnsUntilItsRequestIsRetried() {
-	session := s.opens()
-	s.asks(session, "Is it raining?")
-	second := s.asks(session, "And tomorrow?")
-	request := uuid.NewString()
+// strandedRegenerate regenerates second under request with Chat's answer to the rewind lost
+// and Chat unreadable from then on, so the switch is left unsettled; the background retry
+// waits as long as wait first.
+func (s *BranchesSuite) strandedRegenerate(session *Session, request, second string, wait time.Duration) {
+	session.healFirst = wait
 	s.chat.LoseRewindAnswer()
 	waiting, release := s.chat.Hold("/rewind")
 	failed := make(chan error, 1)
@@ -685,6 +683,39 @@ func (s *BranchesSuite) TestASwitchThatCannotBeSettledRefusesOtherTurnsUntilItsR
 	s.chat.Fail("POST", "/query")
 	release()
 	s.Require().ErrorIs(<-failed, ErrSwitchUnfinished)
+}
+
+// settledSwitch is whether the session holds no unsettled switch.
+func settledSwitch(session *Session) bool {
+	session.commandMu.Lock()
+	defer session.commandMu.Unlock()
+	return session.unsettled == ""
+}
+
+// The next question after a switch that could not be settled finishes it first, once Chat
+// answers, and is answered from what Chat shows: nobody has to send the switch's request again.
+func (s *BranchesSuite) TestTheNextQuestionAfterAnUnsettledSwitchSettlesItAndIsAnswered() {
+	session := s.opens()
+	first := s.asks(session, "Is it raining?")
+	second := s.asks(session, "And tomorrow?")
+	s.strandedRegenerate(session, uuid.NewString(), second, time.Hour)
+	s.chat.Heal("POST", "/query")
+
+	third := s.asks(session, "And Sunday?")
+
+	s.Equal([]string{"Is it raining?", "Answer 1 to Is it raining?", "And tomorrow?", "And Sunday?", "Answer 3 to And Sunday?"}, s.texts(session))
+	s.Equal(first, s.response(session, third).ParentResponseID, "the regenerated reply is off the conversation")
+	s.NotNil(s.response(session, second).RewoundAt)
+	s.True(settledSwitch(session))
+}
+
+// While a switch cannot be settled, as while Chat cannot be read, every turn is refused, which
+// would be answered from a conversation nobody knows; once Chat answers the next one goes on.
+func (s *BranchesSuite) TestTurnsAreRefusedWhileAnUnsettledSwitchCannotBeSettledAndGoOnOnceChatAnswers() {
+	session := s.opens()
+	s.asks(session, "Is it raining?")
+	second := s.asks(session, "And tomorrow?")
+	s.strandedRegenerate(session, uuid.NewString(), second, time.Hour)
 
 	_, _, err := session.RespondCommand(s.ctx, uuid.NewString(), "And Sunday?", "", nil, options.LLM{})
 	s.Require().ErrorIs(err, ErrSwitchUnfinished)
@@ -692,13 +723,23 @@ func (s *BranchesSuite) TestASwitchThatCannotBeSettledRefusesOtherTurnsUntilItsR
 	s.Require().ErrorIs(err, ErrSwitchUnfinished)
 
 	s.chat.Heal("POST", "/query")
-	branched, err := session.Regenerate(s.ctx, request, second, options.LLM{})
-	s.Require().NoError(err)
-	s.settled(session)
-	s.Equal([]string{"Is it raining?", "Answer 1 to Is it raining?", "And tomorrow?", "Answer 3 to And tomorrow?"}, s.texts(session))
+	s.asks(session, "And Sunday?")
 	s.Equal(s.texts(session), history(session))
-	third := s.asks(session, "And Sunday?")
-	s.Equal(branched.ResponseID, s.response(session, third).ParentResponseID)
+}
+
+// A session nobody asks anything of finishes an unsettled switch by itself once Chat answers.
+func (s *BranchesSuite) TestAnIdleSessionSettlesAnUnsettledSwitchOnceChatAnswers() {
+	session := s.opens()
+	s.asks(session, "Is it raining?")
+	second := s.asks(session, "And tomorrow?")
+	s.strandedRegenerate(session, uuid.NewString(), second, 10*time.Millisecond)
+	s.Require().False(settledSwitch(session))
+
+	s.chat.Heal("POST", "/query")
+
+	s.Require().Eventually(func() bool { return settledSwitch(session) }, 5*time.Second, 5*time.Millisecond)
+	s.Equal([]string{"Is it raining?", "Answer 1 to Is it raining?", "And tomorrow?"}, history(session))
+	s.NotNil(s.response(session, second).RewoundAt)
 }
 
 // An edit retried after Chat hid its question carries on the switch it began, though the
@@ -708,6 +749,8 @@ func (s *BranchesSuite) TestAnEditRetriedAfterChatHidItsQuestionCarriesOnItsSwit
 	first := s.asks(session, "Is it raining?")
 	second := s.asks(session, "And tomorrow?")
 	request := uuid.NewString()
+	// Left to the retry of the request, not to the background one.
+	session.healFirst = time.Hour
 	s.chat.LoseRewindAnswer()
 	waiting, release := s.chat.Hold("/rewind")
 	failed := make(chan error, 1)

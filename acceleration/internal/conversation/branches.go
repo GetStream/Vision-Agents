@@ -382,8 +382,16 @@ func (c *Conversation) hide(ids map[string]bool) {
 	c.dropLocked(ids)
 }
 
-// switcherFor is what switches the conversation's branches, or why it cannot.
+// switcherFor is what switches the conversation's branches to target, or why it cannot.
 func (c *Conversation) switcherFor(ctx context.Context, target RewindTarget) (switcher, error) {
+	if !validCommandID.MatchString(target.SwitchID) || target.MessageID == "" || len(target.MessageID) > 128 {
+		return switcher{}, stack.Wrap(errors.New("conversation: invalid rewind target"))
+	}
+	return c.switcher(ctx)
+}
+
+// switcher is what switches the conversation's branches, or why it cannot.
+func (c *Conversation) switcher(ctx context.Context) (switcher, error) {
 	c.service.mu.Lock()
 	branches, hooks, logger := c.service.branches, c.service.hooks, c.service.logger
 	c.service.mu.Unlock()
@@ -406,8 +414,6 @@ func (c *Conversation) switcherFor(ctx context.Context, target RewindTarget) (sw
 		return switcher{}, stack.Wrap(errors.New("conversation: branch switches are not kept anywhere"))
 	case session == "":
 		return switcher{}, stack.Wrap(errors.New("conversation: opened without a session to keep its branches under"))
-	case !validCommandID.MatchString(target.SwitchID) || target.MessageID == "" || len(target.MessageID) > 128:
-		return switcher{}, stack.Wrap(errors.New("conversation: invalid rewind target"))
 	}
 	client, err := c.chat(ctx)
 	if err != nil {
@@ -519,6 +525,53 @@ func (c *Conversation) SettleSwitch(ctx context.Context, target RewindTarget, ch
 		return outcome, carried, err
 	}
 	return RewindOutcome{}, false, nil
+}
+
+// CompleteSwitch finishes the switch switchID as the next open would, for a session that can
+// no longer wait for the request that began it: a switch whose rewind landed is carried to the
+// end, the session told (SwitchHooks.Switched) and the switch marked done; one whose rewind
+// never landed is forgotten. A switch no longer unfinished is left as it is. The outcome is the
+// conversation as Chat shows it afterwards.
+func (c *Conversation) CompleteSwitch(ctx context.Context, switchID string) (RewindOutcome, error) {
+	sw, err := c.switcher(ctx)
+	if err != nil {
+		return RewindOutcome{}, err
+	}
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	unfinished, err := sw.branches.UnfinishedBranchSwitches(ctx, sw.customer, sw.session)
+	if err != nil {
+		return RewindOutcome{}, err
+	}
+	for _, row := range unfinished {
+		if row.ID != switchID {
+			continue
+		}
+		got, err := sw.resume(ctx, row, nil, true)
+		if err != nil {
+			return RewindOutcome{}, err
+		}
+		if got.state == "" {
+			// Its rewind never landed: nothing was hidden.
+			continue
+		}
+		hidden := map[string]bool{}
+		for _, id := range got.hidden {
+			hidden[id] = true
+		}
+		c.mu.Lock()
+		maps.Copy(c.hidden, hidden)
+		c.dropLocked(hidden)
+		c.mu.Unlock()
+		c.resent(got.resent)
+	}
+	page, err := c.readUpTo(ctx, sw.client, "", nil)
+	if err != nil {
+		return RewindOutcome{}, err
+	}
+	outcome := RewindOutcome{Page: page}
+	outcome.History, outcome.Truncated = restored(ctx, c.data.CID, page)
+	return outcome, nil
 }
 
 // Refused is whether err is a switch Chat or the conversation refused, which changed

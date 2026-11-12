@@ -317,9 +317,9 @@ func (s *ResponseBranchesSuite) TestThePointPastTheLimitIsRefusedAndTheConversat
 }
 
 // A regenerate that cannot be finished after Chat may have rewound is a 409 a client can tell
-// from a conflict: it sends the same request again, which finishes it, and nothing else is
-// answered meanwhile.
-func (s *ResponseBranchesSuite) TestARegenerateLeftUnfinishedRefusesOtherQuestionsUntilItIsSentAgain() {
+// from a conflict, and so is every question while Chat stays unreadable; once Chat answers the
+// next question finishes the switch and is answered, with nothing sent again.
+func (s *ResponseBranchesSuite) TestARegenerateLeftUnfinishedRefusesQuestionsUntilChatAnswers() {
 	opened := s.opens(s.client)
 	s.asks(s.client, opened, "Is it raining?")
 	second := s.asks(s.client, opened, "And tomorrow?")
@@ -347,12 +347,9 @@ func (s *ResponseBranchesSuite) TestARegenerateLeftUnfinishedRefusesOtherQuestio
 	s.Equal(http.StatusConflict, status)
 	s.Equal("switch_unfinished", errorCode(s, body))
 
+	s.Contains(string(body), "try again shortly")
+
 	s.chat.Heal("POST", "/query")
-	status, body = s.client.call(http.MethodPost, responsesPath(opened), CreateResponseRequest{RequestId: &request, Replaces: &second})
-	s.Require().Equal(http.StatusAccepted, status, string(body))
-	var regenerated AgentResponse
-	s.Require().NoError(json.Unmarshal(body, &regenerated))
-	s.settled(opened, regenerated.Id)
 	s.asks(s.client, opened, "And Sunday?")
 }
 

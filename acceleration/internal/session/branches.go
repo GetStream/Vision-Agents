@@ -26,9 +26,9 @@ import (
 var ErrBranchGone = errors.New("session: this branch is no longer kept")
 
 // ErrSwitchUnfinished is a turn refused because a switch to another branch the session began
-// could not be finished after Chat may have rewound: what the person sees is not known. The
-// retry of the request that began it finishes it, as does reopening the conversation.
-var ErrSwitchUnfinished = errors.New("session: the conversation's last regenerate, edit or branch switch did not finish; retry that request, or reopen the conversation")
+// could not be finished after Chat may have rewound, and still cannot be, as while Chat cannot
+// be read: what the person sees is not known. It clears by itself once Chat answers.
+var ErrSwitchUnfinished = errors.New("session: the conversation's last regenerate, edit or branch switch has not finished yet; try again shortly")
 
 // rangesWarned is how many hidden ranges a conversation may reach before each switch logs a
 // warning: Chat refuses a rewind past 100.
@@ -168,7 +168,7 @@ func (s *Session) Activate(ctx context.Context, responseID string) (Activated, e
 			rewind.SwitchID = keptQuestionPrefix + newID()[:30]
 		}
 	}
-	if err := s.checkSettled(rewind.SwitchID); err != nil {
+	if err := s.checkSettled(ctx, rewind.SwitchID); err != nil {
 		return Activated{}, err
 	}
 	chosen, err := chosenFor(ctx, s.tree, top, tail, kept)
@@ -236,7 +236,7 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 	if err := s.current().CheckAsked(asked); err != nil {
 		return Branched{}, stack.Wrap(err)
 	}
-	if err := s.checkSettled(switchID(s.id, id)); err != nil {
+	if err := s.checkSettled(ctx, switchID(s.id, id)); err != nil {
 		return Branched{}, err
 	}
 	if taken, err := s.persisted.Command(id); err == nil {
@@ -398,13 +398,104 @@ func lastQuestion(page persistent.Page) (persistent.Message, bool) {
 	return persistent.Message{}, false
 }
 
-// checkSettled refuses a turn while a switch the session began is left unfinished, but the
-// retry of that switch's own request, switchID, which finishes it. The caller holds commandMu.
-func (s *Session) checkSettled(switchID string) error {
+// checkSettled finishes a switch the session began and left unfinished before a turn, but the
+// retry of that switch's own request, switchID, which finishes it itself. The turn is refused
+// only while the switch cannot be finished, as when Chat cannot be read. The caller holds
+// commandMu.
+func (s *Session) checkSettled(ctx context.Context, switchID string) error {
 	if s.unsettled == "" || s.unsettled == switchID {
 		return nil
 	}
-	return stack.Wrap(ErrSwitchUnfinished)
+	return s.heal(ctx)
+}
+
+// heal finishes the unsettled switch as the next open would (CompleteSwitch): the session's
+// responses, model history, leaf and documents then follow what Chat shows. The caller holds
+// commandMu.
+func (s *Session) heal(ctx context.Context) error {
+	reading, err := s.restoring(ctx)
+	if err != nil {
+		return stack.Wrap(errors.Join(ErrSwitchUnfinished, err))
+	}
+	outcome, err := s.persisted.CompleteSwitch(reading, s.unsettled)
+	if err != nil {
+		return stack.Wrap(errors.Join(ErrSwitchUnfinished, err))
+	}
+	leaf, err := s.tree.ActiveLeaf(ctx, s.spec.CustomerID, s.id)
+	if err != nil {
+		return stack.Wrap(errors.Join(ErrSwitchUnfinished, err))
+	}
+	s.turnsMu.Lock()
+	s.leaf = leaf
+	s.turnsMu.Unlock()
+	history, _ := s.persisted.HistoryOf(reading, outcome.Page)
+	s.carryOnFrom(history)
+	s.pinActivatedDocuments(ctx)
+	s.unsettled = ""
+	return nil
+}
+
+// unsettle leaves the switch switchID unsettled, and has it retried in the background so a
+// session nobody asks anything of recovers too. The caller holds commandMu.
+func (s *Session) unsettle(switchID string) {
+	s.unsettled = switchID
+	s.healMu.Lock()
+	defer s.healMu.Unlock()
+	if s.healStopped || s.healCancel != nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.healCancel = cancel
+	first := cmp.Or(s.healFirst, healFirstDelay)
+	s.healing.Go(func() { s.healUnsettled(ctx, first) })
+}
+
+// How long the background retry of an unsettled switch waits: healFirstDelay at first,
+// doubled after each miss up to healMostDelay. What leaves a switch unsettled is mostly a
+// lost answer or a Chat blip of a few seconds, so the first retry comes before the person
+// notices; a longer outage costs Chat at most one read a minute per stuck session, and any
+// turn asked meanwhile tries at once anyway.
+const (
+	healFirstDelay = time.Second
+	healMostDelay  = time.Minute
+)
+
+// healUnsettled retries the unsettled switch until it is finished or the session closes.
+func (s *Session) healUnsettled(ctx context.Context, delay time.Duration) {
+	for {
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		s.commandMu.Lock()
+		healed := s.unsettled == "" || s.heal(ctx) == nil
+		if healed {
+			// Cleared under commandMu, so a switch unsettled after this starts a retry of its own.
+			s.healMu.Lock()
+			s.healCancel()
+			s.healCancel = nil
+			s.healMu.Unlock()
+		}
+		s.commandMu.Unlock()
+		if healed {
+			return
+		}
+		delay = min(2*delay, healMostDelay)
+	}
+}
+
+// stopHealing stops the background retry of an unsettled switch, and waits for it.
+func (s *Session) stopHealing() {
+	s.healMu.Lock()
+	s.healStopped = true
+	if s.healCancel != nil {
+		s.healCancel()
+	}
+	s.healMu.Unlock()
+	s.healing.Wait()
 }
 
 // settle finishes target's switch after cause, the error Rewind or Activate failed with, left
@@ -418,7 +509,7 @@ func (s *Session) settle(ctx context.Context, target persistent.RewindTarget, ch
 	}
 	outcome, carried, err := s.persisted.SettleSwitch(ctx, target, chosen)
 	if err != nil {
-		s.unsettled = target.SwitchID
+		s.unsettle(target.SwitchID)
 		return persistent.RewindOutcome{}, stack.Wrap(errors.Join(ErrSwitchUnfinished, cause, err))
 	}
 	if !carried {
@@ -440,7 +531,7 @@ func (s *Session) moveActivePath(ctx context.Context, leaf string, sw store.Agen
 	}
 	if err := s.tree.MoveActivePathUntil(ctx, s.spec.CustomerID, s.id, leaf, now, until); err != nil {
 		if sw.ID != "" {
-			s.unsettled = sw.ID
+			s.unsettle(sw.ID)
 		}
 		return err
 	}

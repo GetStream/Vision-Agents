@@ -228,10 +228,19 @@ type Session struct {
 	// the server may still have the model answer. Guarded by commandMu.
 	awaiting map[string]struct{}
 	// unsettled is the switch to another branch the session began and could not finish once
-	// Chat may have rewound, which leaves it unsure what the person sees: every turn but the
-	// retry of that switch's own request is refused until it is finished (ErrSwitchUnfinished).
-	// Guarded by commandMu.
+	// Chat may have rewound, which leaves it unsure what the person sees. Every turn but the
+	// retry of that switch's own request tries to finish it first, and is refused only while
+	// that fails (ErrSwitchUnfinished); a background retry finishes it for an idle session
+	// (healUnsettled). Guarded by commandMu.
 	unsettled string
+	// healMu guards healCancel, which stops the background retry of an unsettled switch while
+	// one runs, and healStopped, set once the session closes so none starts after.
+	healMu      sync.Mutex
+	healCancel  context.CancelFunc
+	healStopped bool
+	healing     sync.WaitGroup
+	// healFirst is the wait before the first background retry, healFirstDelay when zero.
+	healFirst time.Duration
 	mu        sync.Mutex
 	// watchers are the connections being fanned out to, keyed so one can detach without
 	// disturbing the others.
@@ -704,7 +713,7 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 	if err := s.current().CheckAsked(asked); err != nil {
 		return "", stack.Wrap(err)
 	}
-	if err := s.checkSettled(""); err != nil {
+	if err := s.checkSettled(ctx, ""); err != nil {
 		return "", err
 	}
 	// What a worker hands on from a channel it answers is already there, written by the
@@ -876,7 +885,7 @@ func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, client
 	if _, err := s.persisted.Command(id); err != nil {
 		// A retry of a command already taken is answered with its receipt, which changes
 		// nothing.
-		if err := s.checkSettled(""); err != nil {
+		if err := s.checkSettled(ctx, ""); err != nil {
 			return persistent.CommandReceipt{}, "", err
 		}
 	}
@@ -1044,7 +1053,7 @@ func (s *Session) followUp(ctx context.Context, id, text string, images []llm.Im
 	if nothingToAnswer(text, images) {
 		return persistent.CommandReceipt{}, "", stack.Wrap(errNothingToAnswer)
 	}
-	if err := s.checkSettled(""); err != nil {
+	if err := s.checkSettled(ctx, ""); err != nil {
 		return persistent.CommandReceipt{}, "", err
 	}
 	receipt, err := s.persisted.BeginFollowUp(id, text)
@@ -1815,6 +1824,7 @@ func (s *Session) halt() error {
 func (s *Session) close() error {
 	// The last slice is written before anything else closes, however long the rest takes.
 	s.runtime.Stop()
+	s.stopHealing()
 
 	s.mu.Lock()
 	s.closing = true
