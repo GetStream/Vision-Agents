@@ -1,7 +1,8 @@
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter_demo/captions.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:stream_agents_core/stream_agents_core.dart';
+import 'package:stream_agents/stream_agents.dart';
 
 void main() {
   test(

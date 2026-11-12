@@ -1,6 +1,6 @@
 import 'package:flutter_assistant/conversations.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:stream_agents_core/stream_agents_core.dart';
+import 'package:stream_agents/stream_agents.dart';
 
 void main() {
   test('Conversations.dayTitle lists one started earlier today under Today', () {

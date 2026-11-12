@@ -1,0 +1,339 @@
+import 'package:stream_video_flutter/stream_video_flutter.dart' as video;
+import 'package:stream_agents/src/core/core.dart';
+
+import 'camera_jpeg.dart';
+import 'camera_shots.dart';
+
+const _kind = 'video';
+
+/// The app's own Stream Video client.
+extension VideoClients on StreamAgents {
+  /// Hands over the app's own Stream Video client, so every call is joined on it rather than
+  /// on a second one. It must be connected as the agents' `userId`, and [disconnect] leaves it
+  /// alone.
+  void useVideo(video.StreamVideo client) {
+    if (client.currentUser.id != backend.userId) {
+      throw ArgumentError(
+        'the video client is for ${client.currentUser.id} but these agents are for '
+        '${backend.userId}: hand over a client for the same user',
+      );
+    }
+    backend.give(_kind, client);
+  }
+}
+
+/// Where a spoken conversation is: joining, joined or over, microphone, camera, and why it
+/// failed.
+final class VoiceState {
+  const VoiceState({
+    this.call,
+    this.isMuted = false,
+    this.isCameraEnabled = false,
+    this.isJoining = false,
+    this.isEnded = false,
+    this.failure,
+  });
+
+  /// The Stream call this device is on, once it has joined.
+  final video.Call? call;
+  final bool isMuted;
+  final bool isCameraEnabled;
+
+  /// True while [VoiceSession.join] is under way.
+  final bool isJoining;
+
+  /// True once this device has left or hung up; the voice session joins nothing after that.
+  final bool isEnded;
+
+  /// Why the last join or change failed, or null once one has worked. Kept rather than
+  /// thrown, since joining is usually started from a widget where there is nobody to throw to.
+  final Object? failure;
+
+  bool get isJoined => call != null;
+
+  VoiceState _with({
+    video.Call? call,
+    bool? isMuted,
+    bool? isCameraEnabled,
+    bool? isJoining,
+    Object? failure = _keep,
+  }) => VoiceState(
+    call: call ?? this.call,
+    isMuted: isMuted ?? this.isMuted,
+    isCameraEnabled: isCameraEnabled ?? this.isCameraEnabled,
+    isJoining: isJoining ?? this.isJoining,
+    isEnded: isEnded,
+    failure: identical(failure, _keep) ? this.failure : failure,
+  );
+}
+
+/// Leaves [VoiceState.failure] as it is, where null clears it.
+const _keep = Object();
+
+/// Joining or changing the call failed; [message] is what Stream Video said.
+final class CallFailure implements Exception {
+  const CallFailure(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+/// A spoken conversation: the agent on a call, and this device on the same call.
+///
+/// Two things happen, in this order, and the order matters:
+///
+/// 1. The router starts a session, which puts the agent on the session's own call,
+///    `agent:<session id>`.
+/// 2. Stream Video joins it with the agents' key, user and token, and audio starts flowing.
+///
+/// The transcript comes over the session socket rather than out of the call, so what is said
+/// is readable even before anybody is listening to it. That is [session], the same
+/// [AgentSession] a text conversation uses.
+final class VoiceSession {
+  VoiceSession._(this.session, {required this._createdLocally});
+
+  /// Starts an agent on a new session's call and prepares to join it, so a person tapping
+  /// "talk to the agent" needs no id from anywhere.
+  static Future<VoiceSession> start(
+    StreamAgents agents, {
+    String? agent,
+    SessionOptions options = const SessionOptions(),
+  }) async {
+    final session = await (agent == null
+        ? agents.voice(options)
+        : agents.agent(agent).voice(options));
+    return VoiceSession._(session, createdLocally: true);
+  }
+
+  /// Joins a call an agent is already on, without creating a session.
+  ///
+  /// [sessionId] is the id the router holds the session by. A session this user did not open
+  /// is not found, since reading one is reading a conversation.
+  static Future<VoiceSession> attach(
+    StreamAgents agents,
+    String sessionId, {
+    List<AgentTool> tools = const [],
+  }) async => VoiceSession._(await agents.attach(sessionId, tools: tools), createdLocally: false);
+
+  /// The conversation: the transcript, and what the agent is doing.
+  final AgentSession session;
+
+  /// True when this device called [start]. Leaving closes only a session this device owns.
+  final bool _createdLocally;
+  final _state = LiveValueController(const VoiceState());
+
+  /// Counts leaving, so a join that finishes after it leaves the call it joined.
+  int _left = 0;
+  late final _shots = CameraShots(_shot, cameraJpeg);
+
+  LiveValue<VoiceState> get state => _state;
+  video.Call? get call => _state.value.call;
+
+  /// Joins the call from this device.
+  ///
+  /// The agent is already there: it joined when the session was created. The microphone is
+  /// on and the speaker is the loudspeaker; the camera is off unless [camera] is true, and
+  /// starts on the back lens, since what an agent is shown is whatever the caller points at.
+  /// Both are join settings rather than changed afterwards, so no front-facing frame is ever
+  /// published. While the camera is on, the agent can look through it, as [setCameraEnabled]
+  /// says.
+  ///
+  /// It joins on the client handed over with `useVideo`, or else on one built from the
+  /// agents' key, user and token, which every voice session then shares. Without a key, user
+  /// and token there is nothing to join with, which is an [ArgumentError].
+  ///
+  /// Leaving while it is under way wins: the call it joined is left again.
+  Future<void> join({bool camera = false}) async {
+    final state = _state.value;
+    if (state.isJoining || state.isJoined || state.isEnded) {
+      return;
+    }
+    final left = _left;
+    _state.value = state._with(isJoining: true);
+    try {
+      final joined = (await _client()).makeCall(
+        callType: video.StreamCallType.fromString(session.session.callType),
+        id: session.session.callId,
+      );
+      if (left != _left) {
+        return;
+      }
+      // `join` creates the call too: which of the agent and this device arrives first is a
+      // race.
+      final result = await joined.join(
+        connectOptions: video.CallConnectOptions(
+          microphone: video.TrackOption.enabled(),
+          camera: video.TrackOption.fromSetting(enabled: camera),
+          cameraFacingMode: video.FacingMode.environment,
+          // Remote audio otherwise plays out of the earpiece, and an agent you talk to
+          // hands-free wants the speaker.
+          speakerDefaultOn: true,
+        ),
+      );
+      if (left != _left) {
+        if (result is! video.Failure) {
+          await joined.leave();
+        }
+        return;
+      }
+      if (result case video.Failure(:final error)) {
+        _state.value = _state.value._with(isJoining: false, failure: CallFailure(error.message));
+        return;
+      }
+      _state.value = _state.value._with(
+        call: joined,
+        isMuted: false,
+        isCameraEnabled: camera,
+        isJoining: false,
+        failure: null,
+      );
+      if (camera) {
+        _look(joined);
+      }
+    } on Exception catch (error) {
+      if (left == _left) {
+        _state.value = _state.value._with(isJoining: false, failure: error);
+      }
+    } finally {
+      if (left == _left && _state.value.isJoining) {
+        _state.value = _state.value._with(isJoining: false);
+      }
+    }
+  }
+
+  /// Turns this device's microphone on or off. The agent stays on the call either way.
+  Future<void> setMuted(bool muted) async {
+    final call = this.call;
+    if (call == null) {
+      return;
+    }
+    final result = await call.setMicrophoneEnabled(enabled: !muted);
+    if (!identical(this.call, call) || _failed(result)) {
+      return;
+    }
+    _state.value = _state.value._with(isMuted: muted, failure: null);
+  }
+
+  /// Turns this device's camera on or off. Turning it back on keeps the back lens.
+  ///
+  /// While it is on, the agent can look through it: when its vision skill asks, [session]
+  /// answers with pictures the camera takes then. Nothing is taken until it asks.
+  Future<void> setCameraEnabled(bool enabled) async {
+    final call = this.call;
+    if (call == null) {
+      return;
+    }
+    // Stopped before Stream Video turns the camera off, not after: a look under way would
+    // otherwise find the camera off first and hand the agent what it had already taken.
+    final wasLooking = !enabled && _state.value.isCameraEnabled;
+    if (!enabled) {
+      _stopLooking();
+    }
+    final result = await call.setCameraEnabled(
+      enabled: enabled,
+      constraints: const video.CameraConstraints(facingMode: video.FacingMode.environment),
+    );
+    if (!identical(this.call, call)) {
+      return;
+    }
+    if (_failed(result)) {
+      // The camera is still on, so the agent can still look through it.
+      if (wasLooking) {
+        _look(call);
+      }
+      return;
+    }
+    _state.value = _state.value._with(isCameraEnabled: enabled, failure: null);
+    if (enabled) {
+      _look(call);
+    }
+  }
+
+  /// Leaves this device's call. Closes the router session only if this device started it;
+  /// an attached device navigating away leaves it running and closes only its own socket.
+  /// The Video client stays connected for the next call, until [StreamAgents.disconnect].
+  Future<void> leave() => _leave(closeSession: _createdLocally);
+
+  /// Hangs up: leaves the call and ends the agent session, whoever started it.
+  Future<void> end() => _leave(closeSession: true);
+
+  Future<void> _leave({required bool closeSession}) async {
+    _left++;
+    _stopLooking();
+    final call = this.call;
+    _state.value = VoiceState(isEnded: true, failure: _state.value.failure);
+    if (call != null) {
+      await call.leave();
+    }
+    if (closeSession) {
+      await session.close();
+    } else {
+      // ignore: invalid_use_of_internal_member
+      await session.detach();
+    }
+  }
+
+  Future<video.StreamVideo> _client() {
+    final backend = session.backend;
+    return backend.shared<video.StreamVideo>(
+      _kind,
+      // `create` rather than the singleton constructor: a library installing Stream Video's
+      // singleton would collide with a host that has its own.
+      open: (credentials) async => video.StreamVideo.create(
+        credentials.apiKey,
+        user: video.User.regular(userId: credentials.userId),
+        userToken: credentials.token,
+        // Asked when the token expires, which it does an hour in. Asking the agents' token
+        // provider again is what keeps a long call from dropping.
+        tokenLoader: (_) async => (await backend.streamCredentials()).token,
+      ),
+      disconnect: (client) => client.dispose(),
+    );
+  }
+
+  /// Lets [session] answer the agent with pictures from the call's camera.
+  ///
+  /// A call left while its camera was being turned on is not looked through.
+  void _look(video.Call call) {
+    if (!identical(this.call, call)) {
+      return;
+    }
+    // ignore: invalid_use_of_internal_member
+    session.camera = _shots.look;
+  }
+
+  void _stopLooking() {
+    _shots.stop();
+    // ignore: invalid_use_of_internal_member
+    session.camera = null;
+  }
+
+  /// The picture to take with the call's camera now, or null when it is not sending video.
+  CameraShot? _shot() {
+    // Only while the call is sending video: a camera turned off some other way, by Stream
+    // Video's own controls or the app's, has no frame to give.
+    final call = this.call;
+    final local = call?.state.value.localParticipant;
+    if (call == null || local == null || !local.isVideoEnabled) {
+      return null;
+    }
+    final track = call.getTrack(local.trackIdPrefix, video.SfuTrackType.video);
+    if (track == null) {
+      return null;
+    }
+    return (
+      track: track.mediaTrack.id,
+      take: () async => (await track.captureScreenshot())?.asUint8List(),
+    );
+  }
+
+  bool _failed(video.Result<video.None> result) {
+    if (result case video.Failure(:final error)) {
+      _state.value = _state.value._with(failure: CallFailure(error.message));
+      return true;
+    }
+    return false;
+  }
+}

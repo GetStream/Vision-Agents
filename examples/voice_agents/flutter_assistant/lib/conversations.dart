@@ -1,9 +1,10 @@
 import 'dart:async';
 
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:stream_core_flutter/core.dart';
 import 'package:intl/intl.dart';
-import 'package:stream_agents_core/stream_agents_core.dart';
+import 'package:stream_agents/stream_agents.dart';
 
 import 'assistant.dart';
 

@@ -6,7 +6,7 @@ it and sign the phone's Stream token are all swift_assistant's. Only the app is 
 [android_assistant](../android_assistant).
 
 ```
-lib/       the phone half: Flutter over stream_agents_core/chat/rtc and Stream's AI components
+lib/       the phone half: Flutter over stream_agents and Stream's AI components
 ios/       Runner, with the calendar and reminders over EventKit (AppDelegate.swift)
 android/   the app, with the calendar over the calendar provider (CalendarChannel.kt)
 ```

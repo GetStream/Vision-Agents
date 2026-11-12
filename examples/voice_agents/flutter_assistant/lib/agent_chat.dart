@@ -4,8 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:stream_chat/stream_chat.dart' as stream;
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 import 'package:stream_chat_flutter_ai_a2ui/stream_chat_flutter_ai_a2ui.dart';
-import 'package:stream_agents_chat/stream_agents_chat.dart';
-import 'package:stream_agents_core/stream_agents_core.dart';
+import 'package:stream_agents/stream_agents.dart';
 
 import 'assistant.dart';
 import 'photos.dart';
@@ -148,18 +147,31 @@ class AgentChat with AIConversationTransport<AgentMessage> {
   bool get takesQuestions => !_closed && (sessionId == null || _session != null);
 
   /// The messages as Stream's AI components show them.
-  List<AgentMessage> get listMessages => listed(_channel?.state?.messages ?? const [], reasoning);
+  List<AgentMessage> get listMessages =>
+      listed(_channel?.state?.messages ?? const [], reasoning, shown: _shown);
+
+  /// Each message as it was last shown. A changed message is a new one, so one that did not
+  /// change is not parsed again as every streamed word arrives.
+  final _shown = Expando<AgentMessage>();
 
   /// The [messages] as Stream's AI components show them, oldest first, without those deleted
-  /// and without the replies that ended with nothing to show.
+  /// and without the replies that ended with nothing to show, reusing those in [shown].
   ///
   /// The router opens a reply, empty, as it takes a question, and ends it as it is when the
   /// reply fails or is stopped. The conversation would take that for the agent's answer, and
   /// forget that it failed.
-  static List<AgentMessage> listed(List<stream.Message> messages, LiveReasoning reasoning) => [
-    for (final message in messages)
-      if (message.deletedAt == null && !message.isUnwrittenReply) AgentMessage(message, reasoning),
-  ];
+  static List<AgentMessage> listed(
+    List<stream.Message> messages,
+    LiveReasoning reasoning, {
+    Expando<AgentMessage>? shown,
+  }) {
+    final known = shown ?? Expando<AgentMessage>();
+    return [
+      for (final message in messages)
+        if (message.deletedAt == null && !message.isUnwrittenReply)
+          known[message] ??= AgentMessage(message, reasoning),
+    ];
+  }
 
   @override
   void connect(AIConversationFeed<AgentMessage> feed) {
@@ -234,10 +246,9 @@ class AgentChat with AIConversationTransport<AgentMessage> {
       // updates into one, and each update carries its own window of the reply's thinking.
       ..add(
         channel.client.on(stream.EventType.messageUpdated).listen((event) {
-          if (event.cid == channel.cid && event.message != null) {
-            reasoning.read(event.message!);
-            _publish();
-          }
+          // The rest of an update reaches the channel's messages, which publish it.
+          final message = event.message;
+          if (event.cid == channel.cid && message != null && _readReasoning(message)) _publish();
         }),
       )
       ..add(session.conversation.stream.listen((_) => _sessionChanged(session)))
@@ -245,6 +256,17 @@ class AgentChat with AIConversationTransport<AgentMessage> {
       // A reply that fails ends with nothing written in the channel: only the socket says so.
       ..add(session.events().listen((event) => _report(event, session)));
     _sessionChanged(session);
+  }
+
+  /// Reads the window of thinking [message] carries, and says whether it added any.
+  bool _readReasoning(stream.Message message) {
+    if (message.extraData['reasoning'] case {'id': final String step}) {
+      final key = (message: message.id, step: step);
+      final before = reasoning[key];
+      reasoning.read(message);
+      return !identical(reasoning[key], before);
+    }
+    return false;
   }
 
   /// Tells the conversation what the channel holds: its messages, each reply with the whole of
@@ -459,6 +481,10 @@ class AgentChat with AIConversationTransport<AgentMessage> {
     for (final subscription in _subscriptions) {
       unawaited(subscription.cancel());
     }
+    // Let go of before the session closes, which can take seconds: the client keeps a watched
+    // channel until it is disposed, and hands that one to the next chat on this conversation.
+    _channel?.dispose();
+    _channel = null;
     final session = _session;
     if (session == null) return;
     try {
@@ -541,10 +567,10 @@ class AgentMessage with AIMessage {
 
   /// The UI the agent wrote for the reply, which shows in place of its text.
   @override
-  AIUIDocument? get uiDocument => AIUIDocument.fromCustomData(message.extraData);
+  late final AIUIDocument? uiDocument = AIUIDocument.fromCustomData(message.extraData);
 
   @override
-  List<AIMessageAttachment> get attachments => [
+  late final List<AIMessageAttachment> attachments = [
     for (final attachment in message.attachments)
       if (attachment.type == 'image' && attachment.imageUrl != null)
         AIMessageAttachment.image(Uri.parse(attachment.imageUrl!), name: attachment.title)
