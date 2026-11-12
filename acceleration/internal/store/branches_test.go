@@ -171,6 +171,52 @@ func (s *StoreSuite) TestMovingThePathKeepsTurnsFromBeforeBranchesWereKept() {
 	s.Equal([]string{"legacy", "first", "second"}, s.conversation())
 }
 
+func (s *StoreSuite) TestMovingToNoResponseRewindsTheWholeConversation() {
+	s.opened("one", "app", s.base, nil)
+	s.branchAnswered(s.store, "first", "", "", s.base)
+	s.branchAnswered(s.store, "second", "first", "", s.base.Add(time.Minute))
+
+	s.Require().NoError(s.store.MoveActivePath(s.ctx, "app", "one", "", s.base.Add(2*time.Minute)))
+
+	s.Empty(s.conversation())
+	leaf, err := s.store.ActiveLeaf(s.ctx, "app", "one")
+	s.Require().NoError(err)
+	s.Empty(leaf)
+}
+
+func (s *StoreSuite) TestTheActiveLeafIsTheNewestResponseOnTheConversation() {
+	// first ── second             (rewound by a regenerate of second)
+	//      └── second-again       (the conversation)
+	s.opened("one", "app", s.base, nil)
+	s.branchAnswered(s.store, "first", "", "", s.base)
+	s.branchAnswered(s.store, "second", "first", "", s.base.Add(time.Minute))
+	s.Require().NoError(s.store.MoveActivePath(s.ctx, "app", "one", "first", s.base.Add(2*time.Minute)))
+	s.branchAnswered(s.store, "second-again", "first", "second", s.base.Add(3*time.Minute))
+
+	leaf, err := s.store.ActiveLeaf(s.ctx, "app", "one")
+	s.Require().NoError(err)
+	s.Equal("second-again", leaf)
+
+	s.Require().NoError(s.store.MoveActivePath(s.ctx, "app", "one", "second", s.base.Add(4*time.Minute)))
+	leaf, err = s.store.ActiveLeaf(s.ctx, "app", "one")
+	s.Require().NoError(err)
+	s.Equal("second", leaf, "an older branch brought back is the conversation's end")
+	response, err := s.store.SessionResponse(s.ctx, "app", "one", "second-again")
+	s.Require().NoError(err)
+	s.Equal("first", response.ParentResponseID)
+	s.Equal("second", response.QuestionResponseID)
+	s.NotNil(response.RewoundAt)
+}
+
+func (s *StoreSuite) TestASessionWithNoResponsesHasNoActiveLeaf() {
+	s.opened("one", "app", s.base, nil)
+
+	leaf, err := s.store.ActiveLeaf(s.ctx, "app", "one")
+
+	s.Require().NoError(err)
+	s.Empty(leaf)
+}
+
 func (s *StoreSuite) TestMovingToAResponseTheSessionDoesNotHaveFails() {
 	s.opened("one", "app", s.base, nil)
 
@@ -406,6 +452,28 @@ func (s *StoreSuite) TestTheRangesRewindsHidAreCountedMerged() {
 	s.Require().NoError(err)
 
 	s.Equal(2, count)
+}
+
+// An activation of a branch whose sibling never landed hides nothing, but is journaled all the
+// same so its messages are sent again only once: it is no range of Chat's.
+func (s *StoreSuite) TestAnActivationThatHidNothingIsNoRange() {
+	s.opened("one", "app", s.base, nil)
+	s.switched(s.store, "regenerate", s.base, s.base.Add(10*time.Minute), SwitchDone)
+	s.Require().NoError(s.store.SaveBranchMessages(s.ctx, []AgentBranchMessage{hidden("m1", "second", "regenerate", s.base, "gone")}))
+	s.Require().NoError(s.store.StartBranchSwitch(s.ctx, &AgentBranchSwitch{
+		ID: "nothing-hidden", SessionID: "one", CustomerID: "app", Kind: SwitchActivate, TargetResponseID: "second",
+		ForkMessageID: "m-last", HiddenFrom: s.base.Add(time.Hour), State: SwitchDone, CreatedAt: s.base.Add(2 * time.Hour),
+	}))
+	s.Require().NoError(s.store.StartBranchSwitch(s.ctx, &AgentBranchSwitch{
+		ID: "hid-some", SessionID: "one", CustomerID: "app", Kind: SwitchActivate, TargetResponseID: "second",
+		ForkMessageID: "m-fork", HiddenFrom: s.base.Add(3 * time.Hour), State: SwitchDone, CreatedAt: s.base.Add(4 * time.Hour),
+	}))
+	s.Require().NoError(s.store.SaveBranchMessages(s.ctx, []AgentBranchMessage{hidden("m2", "third", "hid-some", s.base.Add(3*time.Hour), "gone")}))
+
+	count, err := s.store.MergedRangeCount(s.ctx, "app", "one")
+
+	s.Require().NoError(err)
+	s.Equal(2, count, "the regenerate and the activation that hid a message")
 }
 
 func (s *ShardedStoreSuite) TestTheRangesOfEveryShardAreCountedTogether() {

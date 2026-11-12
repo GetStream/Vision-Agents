@@ -125,11 +125,12 @@ func (s *Store) BranchTail(ctx context.Context, customerID, sessionID, fromRespo
 
 // MoveActivePath makes the path ending at leafResponseID the session's conversation. The
 // responses after the point where it leaves the current conversation are rewound at at, and
-// the ones on the new path after that point are brought back. Running it again changes
-// nothing.
+// the ones on the new path after that point are brought back. An empty leafResponseID is a
+// conversation with nothing in it yet, as the first question asked again leaves it: every
+// response is rewound. Running it again changes nothing.
 func (s *Store) MoveActivePath(ctx context.Context, customerID, sessionID, leafResponseID string, at time.Time) error {
-	if customerID == "" || sessionID == "" || leafResponseID == "" {
-		return stack.Wrap(errors.New("store: a customer, a session and a response id are required"))
+	if customerID == "" || sessionID == "" {
+		return stack.Wrap(errors.New("store: a customer and a session id are required"))
 	}
 	if at.IsZero() {
 		at = time.Now().UTC()
@@ -138,7 +139,7 @@ func (s *Store) MoveActivePath(ctx context.Context, customerID, sessionID, leafR
 	if err != nil {
 		return err
 	}
-	if _, ok := tree.byID[leafResponseID]; !ok {
+	if _, ok := tree.byID[leafResponseID]; !ok && leafResponseID != "" {
 		return stack.Wrap(ErrUnknownResponse)
 	}
 
@@ -185,6 +186,50 @@ func (s *Store) MoveActivePath(ctx context.Context, customerID, sessionID, leafR
 		return stack.Wrap(fmt.Errorf("store: move active path: bring back: %w", err))
 	}
 	return nil
+}
+
+// SessionResponse is one of a session's responses, with its place in the tree and whether it
+// is on the session's conversation (RewoundAt).
+func (s *Store) SessionResponse(ctx context.Context, customerID, sessionID, responseID string) (AgentResponse, error) {
+	if customerID == "" || sessionID == "" || responseID == "" {
+		return AgentResponse{}, stack.Wrap(errors.New("store: a customer, a session and a response id are required"))
+	}
+	return s.sessionResponse(ctx, customerID, sessionID, responseID)
+}
+
+// ActiveLeaf is the newest of a session's responses on its conversation, the one the next
+// turn is answered after, or empty for a session with none.
+func (s *Store) ActiveLeaf(ctx context.Context, customerID, sessionID string) (string, error) {
+	if customerID == "" || sessionID == "" {
+		return "", stack.Wrap(errors.New("store: a customer and a session id are required"))
+	}
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]AgentResponse, error) {
+		var newest []AgentResponse
+		err := db.NewSelect().Model((*AgentResponse)(nil)).
+			Column("id", "created_at").
+			Where("customer_id = ?", customerID).
+			Where("session_id = ?", sessionID).
+			Where("rewound_at IS NULL").
+			Order("created_at DESC", "id DESC").
+			Limit(1).
+			Scan(ctx, &newest)
+		return newest, err
+	})
+	if err != nil {
+		return "", stack.Wrap(fmt.Errorf("store: active leaf: %w", err))
+	}
+	var leaf *AgentResponse
+	for _, list := range lists {
+		for i := range list {
+			if leaf == nil || oldestResponseFirst(list[i], *leaf) > 0 {
+				leaf = &list[i]
+			}
+		}
+	}
+	if leaf == nil {
+		return "", nil
+	}
+	return leaf.ID, nil
 }
 
 // sessionResponse is one of a session's responses, from whichever shard holds it.
@@ -507,7 +552,8 @@ func oldestSwitchFirst(a, b AgentBranchSwitch) int {
 
 // MergedRangeCount is how many hidden ranges Stream Chat keeps for a session's channel after
 // the switches that rewound it, merged the way Chat merges them, which is what Chat caps. A
-// switch counts once the channel was rewound, from the rewound state on.
+// switch counts once the channel was rewound, from the rewound state on. An activation that
+// copied nothing hid nothing, as one at the end of the conversation does, and is no range.
 func (s *Store) MergedRangeCount(ctx context.Context, customerID, sessionID string) (int, error) {
 	if customerID == "" || sessionID == "" {
 		return 0, stack.Wrap(errors.New("store: a customer and a session id are required"))
@@ -515,7 +561,7 @@ func (s *Store) MergedRangeCount(ctx context.Context, customerID, sessionID stri
 	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]AgentBranchSwitch, error) {
 		var switches []AgentBranchSwitch
 		err := db.NewSelect().Model((*AgentBranchSwitch)(nil)).
-			Column("id", "hidden_from", "inclusive", "created_at").
+			Column("id", "kind", "hidden_from", "inclusive", "created_at").
 			Where("customer_id = ?", customerID).
 			Where("session_id = ?", sessionID).
 			Where("state <> ?", SwitchSnapshotted).
@@ -526,11 +572,53 @@ func (s *Store) MergedRangeCount(ctx context.Context, customerID, sessionID stri
 		return 0, stack.Wrap(fmt.Errorf("store: merged range count: %w", err))
 	}
 	switches := distinct(merged(lists, oldestSwitchFirst, 0), func(b AgentBranchSwitch) string { return b.ID })
+	copied, err := s.copyingActivations(ctx, customerID, sessionID, switches)
+	if err != nil {
+		return 0, err
+	}
 	ranges := make([]HiddenRange, 0, len(switches))
 	for _, b := range switches {
+		if b.Kind == SwitchActivate && !copied[b.ID] {
+			continue
+		}
 		ranges = append(ranges, HiddenRange{From: b.HiddenFrom, To: b.CreatedAt, FromInclusive: b.Inclusive})
 	}
 	return len(MergeHiddenRanges(ranges)), nil
+}
+
+// copyingActivations are the activations among switches that copied a message, in whichever
+// shard the copies are.
+func (s *Store) copyingActivations(ctx context.Context, customerID, sessionID string, switches []AgentBranchSwitch) (map[string]bool, error) {
+	var activations []string
+	for _, b := range switches {
+		if b.Kind == SwitchActivate {
+			activations = append(activations, b.ID)
+		}
+	}
+	if len(activations) == 0 {
+		return nil, nil
+	}
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]string, error) {
+		var ids []string
+		err := db.NewSelect().Model((*AgentBranchMessage)(nil)).
+			Distinct().
+			Column("switch_id").
+			Where("customer_id = ?", customerID).
+			Where("session_id = ?", sessionID).
+			Where("switch_id IN (?)", bun.In(activations)).
+			Scan(ctx, &ids)
+		return ids, err
+	})
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: merged range count: copies: %w", err))
+	}
+	copied := map[string]bool{}
+	for _, ids := range lists {
+		for _, id := range ids {
+			copied[id] = true
+		}
+	}
+	return copied, nil
 }
 
 // HiddenRange is the created_at range of the messages one rewind hid. To is inclusive; From
