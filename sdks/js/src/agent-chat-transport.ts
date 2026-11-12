@@ -163,6 +163,9 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
   // but stream-chat 9 says nothing when it does, so the feed would show them until its next event.
   // A hidden message never comes back under its id: one brought back is sent again as a new one.
   const hidden = new Set<string>();
+  // The response each regenerate and edit went through, by the controller's message id, which a
+  // retry of the same request keeps: its message may be hidden by then, by the first attempt.
+  const replaced = new Map<string, string>();
   // Each connection's way back from the messages it fed to the Stream messages they were made of.
   const sources = new Set<(message: Message) => M | undefined>();
   // Each connection's feed, told again when the view changes outside the channel.
@@ -377,13 +380,23 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
       if (request.kind === "regenerate" || request.kind === "edit") {
         const source = sourceOf(request.message);
         const place = source ? supportBranchOf(source) : undefined;
-        if (!source || !place) {
+        const retried = request.messageId ? replaced.get(request.messageId) : undefined;
+        let responseId: string;
+        if (retried !== undefined) {
+          responseId = retried;
+        } else if (source && place) {
+          responseId =
+            request.kind === "edit" ? answeringOf(shown(chat.state.getLatestValue().messages), source, place) : place.responseId;
+          if (request.messageId) {
+            replaced.set(request.messageId, responseId);
+          }
+        } else {
           throw new AgentBranchError("not_branchable");
         }
-        const responseId =
-          request.kind === "edit" ? answeringOf(shown(chat.state.getLatestValue().messages), source, place) : place.responseId;
         const session = await chat.use();
-        await leaveOverlayFor(session, source);
+        if (source) {
+          await leaveOverlayFor(session, source);
+        }
         const reasoningEffort = options.reasoningEffort?.(request.chatOption);
         const effort = reasoningEffort ? { reasoningEffort } : {};
         await rewinding(async () => {
@@ -393,10 +406,14 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
                   ...effort,
                   // The new question is stored under it, so it replaces the one on its way. The
                   // edited message's own id is taken already.
-                  ...(request.messageId && request.messageId !== source.id ? { requestId: request.messageId } : {}),
+                  ...(request.messageId && request.messageId !== source?.id ? { requestId: request.messageId } : {}),
                 })
-              : // A fresh request id: the controller's names the reply's question, already answered.
-                await session.responses.regenerate(responseId, effort);
+              : // The controller's id is new for each regenerate and kept by its retry, which the
+                // router then answers as the one it already took.
+                await session.responses.regenerate(responseId, {
+                  ...effort,
+                  ...(request.messageId ? { requestId: request.messageId } : {}),
+                });
           return created.created.rewound_to;
         });
         return;
