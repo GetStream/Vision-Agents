@@ -18,7 +18,7 @@ const (
 	Unknown Outcome = "unknown"
 )
 
-// stored are the outcomes a call is stored with, each one a value of Outcome but empty.
+// stored are the outcomes a call is stored with: every Outcome but the empty one.
 var stored = []Outcome{Completed, Busy, NoAnswer, Failed, Canceled, Unknown}
 
 // Unanswered reports whether the person never picked up.

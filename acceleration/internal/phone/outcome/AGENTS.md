@@ -18,7 +18,8 @@ once, when its leg first ends. `phone.Service.tell` (`internal/phone/legs.go`) t
 | `direction` | `outbound`: a call the router placed. `inbound`: a call that arrived on a number |
 | `outcome` | the stored outcome, `dropped`, or `refused`: a dial the vendor refused. An inbound call is `completed`, `failed` (the router refused it) or `dropped` |
 
-Series: at most (vendors + 2) × 11 (8 outbound outcomes, 3 inbound).
+Series: at most (vendors + 2) × 11 (8 outbound outcomes, 3 inbound). `NewKeeper` sets each to 0
+(`seed`), so a pod's first call moves its series from 0 to 1 and `increase()` reads it.
 
 Count once, whatever the order of events:
 
@@ -94,7 +95,8 @@ value has none counted for it; nothing is guessed.
 
 `direction` is `outbound` for the first two: the router sees no carrier response for an
 inbound call. Series: at most 4 vendors × 50 codes, 2 × 14 for the histogram (11 buckets),
-(vendors + 2) × 2 short.
+(vendors + 2) × 2 short. `seed` sets all of them to 0 too, for the vendors the keeper names and
+`other`, under the directions each is counted with.
 
 | Vendor | SIP code | Post-dial delay | Source |
 | --- | --- | --- | --- |
