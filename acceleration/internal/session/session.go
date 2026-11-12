@@ -23,6 +23,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
@@ -320,6 +322,23 @@ type Session struct {
 	// turns maps a turn id to the response row it is being recorded as, so the events of
 	// one turn -- which arrive interleaved with another's -- land on the right one.
 	turns map[string]*recordedTurn
+	// leaf is the newest response on the conversation, which the next turn is answered after
+	// (its parent_response_id). Guarded by turnsMu.
+	leaf string
+	// claimed is the response the next question asked of the model is recorded as, allocated
+	// before its messages were written so they carry its id. Guarded by turnsMu.
+	claimed *persistent.Turn
+
+	// tree is where the session's responses and the copies of its hidden branches are kept,
+	// nil when nothing is. Set once, before the session can be reached.
+	tree *store.Store
+	// restoring is ctx with the session's resume_history (Manager.restoring), which a branch
+	// switch reads the conversation back with, as a reopen does. Set once, before the session
+	// can be reached.
+	restoring func(ctx context.Context) (context.Context, error)
+	// cards are the person's other episodes the model's history opens with (callCards.read).
+	// Set once, before the session can be reached.
+	cards []llm.Message
 
 	// closers undo what Create wired up, in reverse.
 	closers   []func()
@@ -691,23 +710,27 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 		if s.spec.Caller.UserID != "" {
 			return "", stack.Wrap(errPersonalNeedsCommand)
 		}
-		if err := s.persisted.Begin(text, shown...); err != nil {
+		turn := s.nextTurn()
+		if _, err := s.persisted.BeginCommandWithTurn(turn, uuid.NewString(), text, "", nil, shown...); err != nil {
 			return "", stack.Wrap(err)
 		}
+		s.claim(turn)
 	}
 	turnID, err := s.current().RespondTo(ctx, text, images, asked)
 	if err != nil {
+		s.unclaim()
 		if s.persisted != nil && s.spec.Text {
 			s.persisted.Cancel()
 		}
 		return "", stack.Wrap(err)
 	}
 	if turnID == "" {
+		s.unclaim()
 		return "", nil
 	}
 	// Opening the turn here as well as on the event is what makes the id available to whoever
 	// asked for the answer. It happens once whichever way round the two arrive.
-	return s.openTurn(turnID, text), nil
+	return s.openAskedTurn(turnID, text), nil
 }
 
 // errNothingToAnswer is a follow-up with no text and no images.
@@ -849,7 +872,8 @@ func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, client
 	if handedOn {
 		return s.followUp(ctx, id, told, images, asked, true)
 	}
-	receipt, err := s.persisted.BeginCommandWithAction(id, text, clientID, action, photos...)
+	turn := s.nextTurn()
+	receipt, err := s.persisted.BeginCommandWithTurn(turn, id, text, clientID, action, photos...)
 	if err != nil {
 		return receipt, "", stack.Wrap(err)
 	}
@@ -861,20 +885,25 @@ func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, client
 			return receipt, "", nil
 		}
 		delete(s.awaiting, id)
+		// Its messages carry the response id they were first written with, not this one.
+		turn = persistent.Turn{}
 	}
 	if !s.spec.Text {
 		s.typeInto(text)
 	}
+	s.claim(turn)
 	turnID, err := s.current().RespondTo(ctx, told, images, asked)
 	if err != nil {
+		s.unclaim()
 		s.persisted.Cancel()
 		return receipt, "", stack.Wrap(err)
 	}
 	s.persisted.BindTurn(receipt.CommandID, turnID)
 	if turnID == "" {
+		s.unclaim()
 		return receipt, "", nil
 	}
-	return receipt, s.openTurn(turnID, text), nil
+	return receipt, s.openAskedTurn(turnID, text), nil
 }
 
 // reachesModel is whether the command under id would be shown to the model: one not taken
@@ -1180,6 +1209,9 @@ func (s *Session) Rewind(ctx context.Context, recorded Recorded, responseID stri
 	if err := recorded.RewindResponses(ctx, s.spec.CustomerID, s.id, responseID, time.Now().UTC()); err != nil {
 		return stack.Wrap(err)
 	}
+	s.turnsMu.Lock()
+	s.leaf = responseID
+	s.turnsMu.Unlock()
 	s.current().RestoreHistory(HistoryOf(exchanges))
 	s.current().ReplaceDocuments(pinnable(documents)...)
 	return nil
@@ -1915,7 +1947,11 @@ func (s *Session) startRecording() {
 func (s *Session) write(event Event) {
 	switch typed := event.(type) {
 	case agent.Responding:
-		if !s.continueTurn(typed.TurnID, typed.Continues) {
+		switch {
+		case s.continueTurn(typed.TurnID, typed.Continues):
+		case typed.Continues == "":
+			s.openAskedTurn(typed.TurnID, typed.Prompt)
+		default:
 			s.openTurn(typed.TurnID, typed.Prompt)
 		}
 	case agent.ToolStarted:
@@ -1981,7 +2017,19 @@ func (s *Session) write(event Event) {
 // A turn can also start responding more than once without being new: work handed to a
 // subagent comes back and the agent speaks again under the same turn id. That is one response
 // with more items in it, not two.
+//
+// Every turn is answered after the newest response on the conversation, and becomes it.
 func (s *Session) openTurn(turnID, said string) string {
+	return s.openTurnAs(turnID, said, false)
+}
+
+// openAskedTurn is openTurn for a turn answering a question somebody asked: the first one
+// opened takes the response the question's messages were written with (claim).
+func (s *Session) openAskedTurn(turnID, said string) string {
+	return s.openTurnAs(turnID, said, true)
+}
+
+func (s *Session) openTurnAs(turnID, said string, asked bool) string {
 	if s.records == nil {
 		return ""
 	}
@@ -1994,18 +2042,54 @@ func (s *Session) openTurn(turnID, said string) string {
 		s.turnsMu.Unlock()
 		return held.id
 	}
-	turn := &recordedTurn{id: newID()}
+	row := store.AgentResponse{ID: newID(), ParentResponseID: s.leaf}
+	if claimed := s.claimed; asked && claimed != nil {
+		row.ID, row.ParentResponseID, row.QuestionResponseID = claimed.ResponseID, claimed.ParentResponseID, claimed.QuestionResponseID
+		s.claimed = nil
+	}
+	turn := &recordedTurn{id: row.ID}
 	s.turns[turnID] = turn
+	s.leaf = row.ID
 	s.turnsMu.Unlock()
 
-	s.records.Responding(store.AgentResponse{
-		ID: turn.id, SessionID: s.id, CustomerID: s.spec.CustomerID,
-		Said: said, CreatedAt: time.Now().UTC(),
-	})
+	row.SessionID, row.CustomerID, row.Said, row.CreatedAt = s.id, s.spec.CustomerID, said, time.Now().UTC()
+	s.records.Responding(row)
 	if said != "" {
 		s.item(turnID, store.ItemSaid, said, "", nil)
 	}
 	return turn.id
+}
+
+// nextTurn is the response the next question is recorded as, allocated now so the messages
+// the question is written with carry its id: answered after the conversation's newest
+// response, asking its own question. The zero Turn when nothing is recorded, or on a call,
+// where a turn somebody said aloud could open first and take it.
+func (s *Session) nextTurn() persistent.Turn {
+	if s.records == nil || s.Voicing() {
+		return persistent.Turn{}
+	}
+	s.turnsMu.Lock()
+	defer s.turnsMu.Unlock()
+	id := newID()
+	return persistent.Turn{ResponseID: id, ParentResponseID: s.leaf, QuestionResponseID: id}
+}
+
+// claim has the next asked turn opened (openAskedTurn) recorded as turn. A zero turn claims
+// nothing.
+func (s *Session) claim(turn persistent.Turn) {
+	if turn.ResponseID == "" {
+		return
+	}
+	s.turnsMu.Lock()
+	defer s.turnsMu.Unlock()
+	s.claimed = &turn
+}
+
+// unclaim drops a claim no turn took, as a question the model refused leaves.
+func (s *Session) unclaim() {
+	s.turnsMu.Lock()
+	defer s.turnsMu.Unlock()
+	s.claimed = nil
 }
 
 // continueTurn records a reply delivering an earlier turn's tools or delegated work as more
