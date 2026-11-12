@@ -1,4 +1,4 @@
-# Official Flutter voice and video for [Stream Agents](https://getstream.io/agents/docs/)
+# Official Flutter voice and video for Stream Agents
 
 > Talk to a Stream agent out loud: joins the call the agent is on with Stream Video, renders
 > the agent's video beside the device camera, and lets the agent look through the camera.
@@ -9,8 +9,6 @@
 **Quick Links**
 
 - [Register](https://dashboard.getstream.io/signup/) to get an API key for Stream
-- [Stream Agents documentation](https://getstream.io/agents/docs/)
-- [Quickstart](https://getstream.io/agents/docs/quickstart/)
 
 ## Changelog
 

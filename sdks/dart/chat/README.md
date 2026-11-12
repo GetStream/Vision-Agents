@@ -1,4 +1,4 @@
-# Official Stream Chat integration for [Stream Agents](https://getstream.io/agents/docs/)
+# Official Stream Chat integration for Stream Agents
 
 > Keeps a Stream Agents conversation in a Stream Chat channel, so it can be shown with Stream
 > Chat's AI components and read like any other channel. Pure Dart, so it runs anywhere
@@ -10,8 +10,6 @@
 **Quick Links**
 
 - [Register](https://dashboard.getstream.io/signup/) to get an API key for Stream
-- [Stream Agents documentation](https://getstream.io/agents/docs/)
-- [Quickstart](https://getstream.io/agents/docs/quickstart/)
 
 ## Changelog
 

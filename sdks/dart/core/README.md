@@ -1,4 +1,4 @@
-# Official Dart client for [Stream Agents](https://getstream.io/agents/docs/)
+# Official Dart client for Stream Agents
 
 > Talk to a Stream agent from Dart: open a conversation, follow it as it happens, answer the
 > agent's tool calls on the device, and find past conversations. Pure Dart, so it runs in
@@ -10,8 +10,6 @@
 **Quick Links**
 
 - [Register](https://dashboard.getstream.io/signup/) to get an API key for Stream
-- [Stream Agents documentation](https://getstream.io/agents/docs/)
-- [Quickstart](https://getstream.io/agents/docs/quickstart/)
 
 ## Changelog
 
