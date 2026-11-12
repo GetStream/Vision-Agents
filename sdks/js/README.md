@@ -350,6 +350,9 @@ agent.tools.register<{ flight_id: string }>({
   default it keeps running and the model is told it is still going.
 - `timeoutMs` is how long one call may take, in place of the session's. A call that takes
   longer fails.
+- `concurrency` caps how many calls to the tool run at once. A call over the cap waits its
+  turn, and its timeout keeps counting while it waits. Every tool's calls together are capped
+  at 16 at once.
 - `approval` is asked before each call runs. In writing the call waits in `session.approvals`
   until `session.decide(id, { allowed })` answers it; a page follows the list in
   `session.conversation`, which says when it changes, a cancel by the model included.

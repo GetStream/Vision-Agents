@@ -80,6 +80,12 @@ export interface Tool<In = Readonly<Record<string, unknown>>> {
    */
   timeoutMs?: number;
   /**
+   * How many calls to it run at once. A call over the cap waits its turn, and its timeout keeps
+   * counting while it waits. Omitted, its calls are capped only by the 16 its `Tools` runs at
+   * once in all.
+   */
+  concurrency?: number;
+  /**
    * Runs it, with the arguments and then the call it runs for, which a function that needs
    * neither who asked nor how to tell them how it is going leaves out. What it returns is
    * rendered for the model: a string is used as it is, a `ToolOutput` also shows the model its
@@ -245,6 +251,7 @@ export interface ToolApproval {
  */
 export class Tools {
   private readonly registered = new Map<string, Registered>();
+  private readonly slots = new Slots(DEFAULT_CONCURRENCY);
 
   /** Adds a function. Registering one name twice is refused rather than silently winning. */
   register<In>(tool: Tool<In>): this {
@@ -262,6 +269,11 @@ export class Tools {
     if (tool.timeoutMs !== undefined && !(Number.isFinite(tool.timeoutMs) && tool.timeoutMs >= 0)) {
       throw new ConfigurationError(`${tool.name} has a timeout that is not a duration: ${tool.timeoutMs}`);
     }
+    if (tool.concurrency !== undefined && !(Number.isInteger(tool.concurrency) && tool.concurrency >= 1)) {
+      throw new ConfigurationError(
+        `${tool.name} has a concurrency that is not a number of calls: ${tool.concurrency}`,
+      );
+    }
     const parameters = parametersOf(tool.name, tool.parameters);
     if (tool.approval) {
       const properties = (parameters?.["properties"] ?? {}) as Record<string, unknown>;
@@ -277,6 +289,7 @@ export class Tools {
       tool: tool as unknown as Tool<never>,
       parameters,
       parse: isStandard(tool.parameters) ? tool.parameters["~standard"].validate : undefined,
+      slots: tool.concurrency ? new Slots(tool.concurrency) : undefined,
     });
     return this;
   }
@@ -315,7 +328,7 @@ export class Tools {
    *
    * Arguments are the JSON object the model wrote. Empty is treated as no arguments, since
    * a model calling a function that takes none often sends nothing at all. A function with
-   * a timeout that takes longer is aborted and fails.
+   * a timeout that takes longer is aborted and fails, its wait for a place to run included.
    */
   async call(
     name: string,
@@ -327,7 +340,7 @@ export class Tools {
     if (!registered) {
       throw new ConfigurationError(`nothing is registered as ${name}`);
     }
-    const { tool, parse } = registered;
+    const { tool, parse, slots } = registered;
 
     let input: unknown = {};
     if (args.trim()) {
@@ -368,13 +381,78 @@ export class Tools {
       late.signal.addEventListener("abort", () => reject(late.signal.reason as Error), { once: true });
     });
     timedOut.catch(() => undefined);
+    const stopped = Promise.race([timedOut, cancelled]);
+    stopped.catch(() => undefined);
+    const held: Slots[] = [];
+    let running: Promise<unknown> | undefined;
     try {
+      for (const places of [this.slots, slots]) {
+        if (places) {
+          await places.take(stopped);
+          held.unshift(places);
+        }
+      }
       const call = timeout ? toolCallContext.lastingUntil(late.signal) : toolCallContext;
-      const running = Promise.resolve(tool.run(input as never, call));
+      running = Promise.resolve(tool.run(input as never, call));
       return render(await Promise.race([running, timedOut, cancelled]));
     } finally {
       clearTimeout(timer);
       signal.removeEventListener("abort", stop);
+      // A call no longer waited on may still be running, and keeps its places until it returns.
+      const release = (): void => held.forEach((places) => places.give());
+      if (running) {
+        running.then(release, release);
+      } else {
+        release();
+      }
+    }
+  }
+}
+
+/** How many calls a `Tools` runs at once. */
+const DEFAULT_CONCURRENCY = 16;
+
+/** Places for calls to run in, handed to the calls waiting for one in the order they came. */
+class Slots {
+  private free: number;
+  private readonly waiting: (() => void)[] = [];
+
+  constructor(size: number) {
+    this.free = size;
+  }
+
+  /** Takes a place, waiting for one unless `stopped` rejects first, which leaves the queue. */
+  async take(stopped: Promise<never>): Promise<void> {
+    if (this.free > 0) {
+      this.free -= 1;
+      return;
+    }
+    let grant = (): void => undefined;
+    const granted = new Promise<void>((resolve) => {
+      grant = resolve;
+    });
+    this.waiting.push(grant);
+    try {
+      await Promise.race([granted, stopped]);
+    } catch (reason) {
+      const at = this.waiting.indexOf(grant);
+      if (at >= 0) {
+        this.waiting.splice(at, 1);
+      } else {
+        // Handed a place just as it stopped waiting, so it passes the place on.
+        this.give();
+      }
+      throw reason;
+    }
+  }
+
+  /** Gives a place back, to the call that has waited longest. */
+  give(): void {
+    const next = this.waiting.shift();
+    if (next) {
+      next();
+    } else {
+      this.free += 1;
     }
   }
 }
@@ -385,6 +463,8 @@ interface Registered {
   parameters: ParameterSchema | undefined;
   /** What a call's arguments are parsed by first, for a tool described by a schema library. */
   parse: StandardToolSchema["~standard"]["validate"] | undefined;
+  /** The places its calls run in, for a tool that caps them. */
+  slots: Slots | undefined;
 }
 
 function isStandard(parameters: unknown): parameters is StandardToolSchema {
