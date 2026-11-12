@@ -107,16 +107,6 @@ Otherwise the SDK connects a `StreamVideo` with the agents' API key, user and to
 time a session joins, and reuses it for that user's calls on the same `StreamAgents`.
 `agents.disconnect()` closes the client the SDK connected and leaves the app's own alone.
 
-## Contributing
-
-We welcome code changes that improve this library or fix a problem. Please follow the existing
-conventions and add tests before submitting a Pull Request on
-[GitHub](https://github.com/GetStream/Vision-Agents).
-
-```shell
-flutter test
-```
-
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).

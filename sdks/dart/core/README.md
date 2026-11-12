@@ -120,20 +120,6 @@ The agent only sees what the tool returns.
 - `AgentsException` - what a failed call throws: `RouterException`, `TransportException` and
   the others
 
-## Contributing
-
-We welcome code changes that improve this library or fix a problem. Please follow the existing
-conventions and add tests before submitting a Pull Request on
-[GitHub](https://github.com/GetStream/Vision-Agents).
-
-```shell
-dart test
-```
-
-The API client in `lib/src/generated` is generated from the router's OpenAPI spec
-(`acceleration/api/openapi.yaml` in the repository) and committed. Regenerate it with
-`dart run tool/generate.dart`; `--check` verifies it is up to date.
-
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).

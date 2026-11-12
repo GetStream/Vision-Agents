@@ -97,16 +97,6 @@ channel.client.on(stream.EventType.messageUpdated).listen((event) {
 final text = reasoning[(message: replyId, step: 'r1')];
 ```
 
-## Contributing
-
-We welcome code changes that improve this library or fix a problem. Please follow the existing
-conventions and add tests before submitting a Pull Request on
-[GitHub](https://github.com/GetStream/Vision-Agents).
-
-```shell
-dart test
-```
-
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).
