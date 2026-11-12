@@ -1,15 +1,16 @@
 import logging
 import os
+import secrets
 from typing import Any, Dict
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
-from fastapi import Response
+from fastapi import Header, HTTPException, Response
 from opentelemetry import metrics
 from opentelemetry.exporter.prometheus import PrometheusMetricReader
 from opentelemetry.sdk.metrics import MeterProvider
 from prometheus_client import CONTENT_TYPE_LATEST, Gauge, generate_latest
-from vision_agents.core import Agent, AgentLauncher, Runner, User
+from vision_agents.core import Agent, AgentLauncher, Runner, ServeOptions, User
 from vision_agents.core.agents.session_registry import (
     RedisSessionKVStore,
     SessionRegistry,
@@ -84,7 +85,25 @@ launcher = AgentLauncher(
     join_call=join_call,
     registry=registry,
 )
-runner = Runner(launcher)
+
+
+def require_api_token(authorization: str = Header(default="")) -> None:
+    """Allow a request only if it carries `Authorization: Bearer $AGENT_API_TOKEN`."""
+    token = os.environ.get("AGENT_API_TOKEN", "")
+    expected = f"Bearer {token}".encode()
+    if not token or not secrets.compare_digest(authorization.encode(), expected):
+        raise HTTPException(status_code=401, detail="Invalid or missing API token")
+
+
+runner = Runner(
+    launcher,
+    serve_options=ServeOptions(
+        can_start_session=require_api_token,
+        can_close_session=require_api_token,
+        can_view_session=require_api_token,
+        can_view_metrics=require_api_token,
+    ),
+)
 
 
 async def metrics_endpoint() -> Response:

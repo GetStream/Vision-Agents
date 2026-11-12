@@ -1,5 +1,9 @@
+import os
+import secrets
+
 from dotenv import load_dotenv
-from vision_agents.core import Agent, Runner, User
+from fastapi import Header, HTTPException
+from vision_agents.core import Agent, Runner, ServeOptions, User
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import getstream, gemini
 
@@ -28,7 +32,23 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         await agent.finish()
 
 
-runner = Runner(AgentLauncher(create_agent=create_agent, join_call=join_call))
+def require_api_token(authorization: str = Header(default="")) -> None:
+    """Allow a request only if it carries `Authorization: Bearer $AGENT_API_TOKEN`."""
+    token = os.environ.get("AGENT_API_TOKEN", "")
+    expected = f"Bearer {token}".encode()
+    if not token or not secrets.compare_digest(authorization.encode(), expected):
+        raise HTTPException(status_code=401, detail="Invalid or missing API token")
+
+
+runner = Runner(
+    AgentLauncher(create_agent=create_agent, join_call=join_call),
+    serve_options=ServeOptions(
+        can_start_session=require_api_token,
+        can_close_session=require_api_token,
+        can_view_session=require_api_token,
+        can_view_metrics=require_api_token,
+    ),
+)
 
 
 if __name__ == "__main__":

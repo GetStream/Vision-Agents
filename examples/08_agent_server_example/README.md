@@ -43,7 +43,10 @@ In this example, we will cover the HTTP server mode which allows you to:
    DEEPGRAM_API_KEY=your_deepgram_key
    STREAM_API_KEY=your_stream_key
    STREAM_API_SECRET=your_stream_secret
+   AGENT_API_TOKEN=a_long_random_value
    ```
+
+   `AGENT_API_TOKEN` is the token clients of the HTTP server must send as `Authorization: Bearer <token>`.
 
 ## Running Agent HTTP Server
 
@@ -86,14 +89,29 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
 ### Running with Runner
 
-The `Runner` class ties everything together:
+The `Runner` class ties everything together. The four `can_*` options check the bearer token on every session request:
 
 ```python
+def require_api_token(authorization: str = Header(default="")) -> None:
+    token = os.environ.get("AGENT_API_TOKEN", "")
+    expected = f"Bearer {token}".encode()
+    if not token or not secrets.compare_digest(authorization.encode(), expected):
+        raise HTTPException(status_code=401, detail="Invalid or missing API token")
+
+
 if __name__ == "__main__":
     Runner(
         AgentLauncher(create_agent=create_agent, join_call=join_call),
+        serve_options=ServeOptions(
+            can_start_session=require_api_token,
+            can_close_session=require_api_token,
+            can_view_session=require_api_token,
+            can_view_metrics=require_api_token,
+        ),
     ).cli()
 ```
+
+The server binds to `127.0.0.1` by default. `serve --host 0.0.0.0`, or any other host that is not loopback, refuses to start unless all four `can_*` options are set.
 
 ## Configuration
 
@@ -101,18 +119,6 @@ Customize the HTTP server behavior with `ServeOptions`:
 
 ```python
 from vision_agents.core import Runner, AgentLauncher, ServeOptions
-from fastapi import Depends, HTTPException, Header
-
-
-# Custom authentication
-async def verify_api_key(x_api_key: str = Header(...)):
-    if x_api_key != "secret-key":
-        raise HTTPException(status_code=401, detail="Invalid API key")
-
-
-# Custom permission check — call_id comes from the URL path
-async def can_start(call_id: str, x_api_key: str = Header(...)):
-    await verify_api_key(x_api_key)
 
 
 runner = Runner(
@@ -124,11 +130,15 @@ runner = Runner(
         cors_allow_headers=["*"],
         cors_allow_credentials=True,
 
+        # Swagger UI and the OpenAPI schema
+        docs_url="/docs",
+        openapi_url="/openapi.json",
+
         # Permission callbacks (can use FastAPI Depends)
-        can_start_session=can_start,
-        can_close_session=can_start,
-        can_view_session=can_start,
-        can_view_metrics=can_start,
+        can_start_session=require_api_token,
+        can_close_session=require_api_token,
+        can_view_session=require_api_token,
+        can_view_metrics=require_api_token,
     ),
 )
 ```
@@ -138,10 +148,13 @@ runner = Runner(
 | Option                   | Default   | Description                                                               |
 |--------------------------|-----------|---------------------------------------------------------------------------|
 | `fast_api`               | none      | Custom FastAPI instance (skips all configuration)                         |
-| `cors_allow_origins`     | `("*",)`  | Allowed CORS origins                                                      |
+| `cors_allow_origins`     | `()`      | Allowed CORS origins                                                      |
 | `cors_allow_methods`     | `("*",)`  | Allowed CORS methods                                                      |
 | `cors_allow_headers`     | `("*",)`  | Allowed CORS headers                                                      |
-| `cors_allow_credentials` | `True`    | Allow CORS credentials                                                    |
+| `cors_allow_credentials` | `False`   | Allow CORS credentials                                                    |
+| `docs_url`               | none      | Path of the Swagger UI (needs `openapi_url`)                              |
+| `redoc_url`              | none      | Path of the ReDoc page (needs `openapi_url`)                              |
+| `openapi_url`            | none      | Path of the OpenAPI schema                                                |
 | `can_start_session`      | allow all | Permission check for starting sessions. Receives `call_id` from URL path. |
 | `can_close_session`      | allow all | Permission check for closing sessions. Receives `call_id` from URL path.  |
 | `can_view_session`       | allow all | Permission check for viewing sessions. Receives `call_id` from URL path.  |
@@ -230,16 +243,17 @@ store = RedisSessionKVStore(client=client, key_prefix="my_app:")
 
 #### OpenAPI & Swagger support
 
-The underlying API is built with `FastAPI` which provides a Swagger UI on http://127.0.0.1:8000/docs.
+The underlying API is built with `FastAPI`. The Swagger UI and the OpenAPI schema are off by default. Set `docs_url="/docs"` and `openapi_url="/openapi.json"` in `ServeOptions` to get a Swagger UI on http://127.0.0.1:8000/docs.
 
 #### Start a Session
 
 **POST** `/calls/{call_id}/sessions`
 
-Start a new agent and have it join a call.
+Start a new agent and have it join a call. `call_id` and `call_type` may hold letters, digits, `_` and `-`, up to 64 characters.
 
 ```bash
 curl -X POST http://localhost:8000/calls/my-call-123/sessions \
+  -H "Authorization: Bearer $AGENT_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"call_type": "default"}'
 ```
@@ -261,7 +275,8 @@ curl -X POST http://localhost:8000/calls/my-call-123/sessions \
 Stop an agent and remove it from a call.
 
 ```bash
-curl -X DELETE http://localhost:8000/calls/my-call-123/sessions/agent-uuid
+curl -X DELETE http://localhost:8000/calls/my-call-123/sessions/agent-uuid \
+  -H "Authorization: Bearer $AGENT_API_TOKEN"
 ```
 
 #### Close via sendBeacon
@@ -277,7 +292,8 @@ Alternative endpoint for closing sessions via browser's `sendBeacon()` API.
 Get information about a running agent session.
 
 ```bash
-curl http://localhost:8000/calls/my-call-123/sessions/agent-uuid
+curl http://localhost:8000/calls/my-call-123/sessions/agent-uuid \
+  -H "Authorization: Bearer $AGENT_API_TOKEN"
 ```
 
 #### Get Session Metrics
@@ -287,7 +303,8 @@ curl http://localhost:8000/calls/my-call-123/sessions/agent-uuid
 Get real-time metrics for a running session.
 
 ```bash
-curl http://localhost:8000/calls/my-call-123/sessions/agent-uuid/metrics
+curl http://localhost:8000/calls/my-call-123/sessions/agent-uuid/metrics \
+  -H "Authorization: Bearer $AGENT_API_TOKEN"
 ```
 
 **Response:**
