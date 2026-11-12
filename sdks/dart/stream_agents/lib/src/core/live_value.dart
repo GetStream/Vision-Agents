@@ -37,8 +37,10 @@ final class LiveValueController<T> implements LiveValue<T> {
     }
   }
 
+  /// The same stream every time, so a `StreamBuilder` rebuilt by its parent keeps its
+  /// subscription rather than starting again.
   @override
-  Stream<T> get stream => Stream.multi((controller) {
+  late final Stream<T> stream = Stream.multi((controller) {
     if (_closed) {
       controller
         ..add(_value)

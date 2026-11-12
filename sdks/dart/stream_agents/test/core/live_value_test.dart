@@ -66,6 +66,15 @@ void main() {
       await b.cancel();
     });
 
+    test('is one stream, and a listener joining it later starts from the value then', () async {
+      final value = LiveValueController(0);
+      final stream = value.stream;
+      value.value = 1;
+
+      expect(identical(value.stream, stream), isTrue);
+      expect(await stream.first, 1);
+    });
+
     test('closing ends every stream and keeps the value readable', () async {
       final value = LiveValueController(7);
       final done = Completer<void>();
