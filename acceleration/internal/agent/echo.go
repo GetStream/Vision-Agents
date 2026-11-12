@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	// echoWords is the fewest of the agent's own words in a row a transcript has to carry
-	// to be taken for its voice coming back down the caller's line.
+	// echoWords is the fewest of the agent's own words a transcript has to carry, each heard
+	// right and in a row as the agent said them, to be taken for its voice coming back down
+	// the caller's line. Words misheard or dropped may stretch a run on either side of them.
 	echoWords = 3
 	// echoMiss is the share of an echo's words the transcriber may have heard wrong.
 	echoMiss = 0.25
@@ -43,12 +44,14 @@ var echoes = promauto.NewCounterVec(prometheus.CounterOpts{
 // with no echo cancellation sends the agent's voice back down it, which the model writes as
 // the caller's words, or around theirs when they speak over it. Echo is the agent's voice in
 // the caller's microphone, so it can only be in audio that came while that voice was going
-// out or within echoDelay of it: in a transcript whose audio did, every run of at least
-// echoWords of what the agent said, near enough, is taken for that echo (echoed), what is
-// left is the caller's, and an echo alone is nothing heard. The model writes no word's time,
-// so what is weighed is the audio the words are of, from the start of its utterance: one
-// that began more than echoDelay after the agent's last audible sample went out has none of
-// its voice in it, and a caller who repeats the agent then said the words. The same goes for
+// out or within echoDelay of it: in a transcript whose audio did, the runs of what the agent
+// said, near enough and not inside the caller's own sentence, are taken for that echo
+// (echoed), what is left is the caller's, and an echo alone is nothing heard. The model writes
+// no word's time, nor does the voice, and the agent's reckoning of where its voice is in the
+// reply, by its speaking rate on the call, is too rough to time a word by, so what is weighed
+// is the audio the words are of, from the start of its utterance: one that began more than
+// echoDelay after the agent's last audible sample went out has none of its voice in it, and a
+// caller who repeats the agent then said the words. The same goes for
 // another transcriber's words of an utterance chorus-asr's floor ended (stt.Transcript.Floor),
 // timed by the floor's clock. Other transcribers are left as they are.
 func (a *Agent) withoutEcho(transcript stt.Transcript) (string, int) {
@@ -90,13 +93,18 @@ func (a *Agent) droppingEcho(transcript stt.Transcript, who string) (string, boo
 
 // echoed is text without the agent's words heard back in it, and how many of them there
 // were. The model writes the agent's voice coming back down the line before, after and
-// around what the caller says over it, so the echo is every run of at least echoWords of
-// reference's words, in order and near enough, wherever it is in the text: what is before,
-// between and after the runs is the caller's. Near enough is a run with at most echoMiss of
-// its words misheard, one at a time, and no more than one of the agent's words dropped
-// between two heard: two words that are not the agent's, in a row or with one of its words
-// between them, are the caller's, however short, and end the run, which opens and closes on
-// the agent's words.
+// around what the caller says over it, so the echo is every run of reference's words, in
+// order and near enough, with at least echoWords of them heard right in a row, before, after
+// or between the caller's words: what is left is the caller's. Near enough is a run with at
+// most echoMiss of its words misheard, one at a time, and no more than one of the agent's
+// words dropped between two heard: two words that are not the agent's, in a row or with one
+// of its words between them, are the caller's, however short, and end the run, which opens
+// and closes on the agent's words. A caller says the agent's words too, answering it with
+// them or reading back what it said, while it speaks, and the model writes no word's time to
+// tell them from the echo. A run with words of the caller's own before and after it, more than
+// a murmur (callersAround), is theirs: they said it in their sentence, as "Just use the address
+// from the tablet order for every—" over a reply that says "the address … on the tablet
+// order". A murmur over the echo is no sentence, and the echo around it is the agent's.
 func echoed(text, reference string) (string, int) {
 	fields := strings.Fields(text)
 	var heard []string
@@ -111,18 +119,25 @@ func echoed(text, reference string) (string, int) {
 		return text, 0
 	}
 	at := align(heard, spoken)
-	drop := make([]bool, len(fields))
-	echo := 0
+	var runs [][2]int
 	for start := 0; start < len(heard); {
 		end := agentsRun(at, start)
 		if end == start {
 			start++
 			continue
 		}
-		for i := start; i < end; i++ {
-			drop[field[i]] = true
+		runs, start = append(runs, [2]int{start, end}), end
+	}
+	drop := make([]bool, len(fields))
+	echo := 0
+	for i, run := range runs {
+		if callersAround(fields, field, runs, i) {
+			continue
 		}
-		echo, start = echo+end-start, end
+		for j := run[0]; j < run[1]; j++ {
+			drop[field[j]] = true
+		}
+		echo += run[1] - run[0]
 	}
 	if echo == 0 {
 		return text, 0
@@ -134,6 +149,36 @@ func echoed(text, reference string) (string, int) {
 		}
 	}
 	return strings.Join(left, " "), echo
+}
+
+// callersAround says the i'th of runs, the runs of the agent's words in a transcript's heard
+// words, each of field of fields, has words of the caller's own, more than a murmur
+// (moreThanMurmurs), both before it, back to the run before, and after it, up to the run
+// after.
+func callersAround(fields []string, field []int, runs [][2]int, i int) bool {
+	before, after := 0, len(field)
+	if i > 0 {
+		before = runs[i-1][1]
+	}
+	if i+1 < len(runs) {
+		after = runs[i+1][0]
+	}
+	said := func(from, to int) string {
+		if from >= to {
+			return ""
+		}
+		return strings.Join(fields[field[from]:field[to-1]+1], " ")
+	}
+	return moreThanMurmurs(said(before, runs[i][0])) && moreThanMurmurs(said(runs[i][1], after))
+}
+
+// moreThanMurmurs says text has a word in it that is not a murmur (murmurs), which a listener
+// says over the agent, its echo included, with nothing of their own to say.
+func moreThanMurmurs(text string) bool {
+	return !overlapNoise(text) && slices.ContainsFunc(wordList(text), func(word string) bool {
+		_, murmur := murmurs[word]
+		return !murmur
+	})
 }
 
 // echoTokens is text as the words an echo is compared by: lowercase, without punctuation,
@@ -184,14 +229,17 @@ func numberSaid(digits string) ([]string, bool) {
 
 // agentsRun is the end of the longest run of the agent's words from start in at, aligned's
 // word-by-word account of a transcript, or start when none begins there: the run opens and
-// closes on the agent's words, has at least echoWords in it and at most echoMiss of them
-// misheard, each one on its own among the agent's words (callersNear), and no more than one of
-// the agent's words skipped between two heard.
+// closes on the agent's words, has at least echoWords of them heard right in a row as the
+// agent said them and at most echoMiss of its words misheard, each one on its own among the
+// agent's words (callersNear), and no more than one of the agent's words skipped between two
+// heard. A short run with a word misheard or dropped is as likely the caller's: "Data saving
+// is on." has the reply's "Data Saver is on" with one word misheard, and only "is on" right.
 func agentsRun(at []aligned, start int) int {
 	if !at[start].same {
 		return start
 	}
 	end, misses, last := start, 0, at[start].to
+	row, inRow := 0, 0
 	for i := start; i < len(at); i++ {
 		w := at[i]
 		if !w.same {
@@ -199,6 +247,7 @@ func agentsRun(at []aligned, start int) int {
 				break
 			}
 			misses++
+			row = 0
 			if w.to >= 0 {
 				// Misheard, the word still stands where the agent's did.
 				last = w.to
@@ -208,13 +257,16 @@ func agentsRun(at []aligned, start int) int {
 		if w.to-last > 2 {
 			break
 		}
+		if i > start && w.to-last != 1 {
+			// One of the agent's words dropped: the row starts again.
+			row = 0
+		}
 		last = w.to
-		if float64(misses) <= math.Round(float64(i+1-start)*echoMiss) {
+		row++
+		inRow = max(inRow, row)
+		if inRow >= echoWords && float64(misses) <= math.Round(float64(i+1-start)*echoMiss) {
 			end = i + 1
 		}
-	}
-	if end-start < echoWords {
-		return start
 	}
 	return end
 }
