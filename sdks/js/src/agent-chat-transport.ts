@@ -8,6 +8,7 @@ import {
   type SupportBranch,
 } from "./branches.js";
 import type { Schemas } from "./client.js";
+import { RouterError } from "./errors.js";
 import { messageField } from "./message-field.js";
 import type { ImageSource, UIAction } from "./responses.js";
 import type { Session } from "./session.js";
@@ -164,9 +165,11 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
   // but stream-chat 9 says nothing when it does, so the feed would show them until its next event.
   // A hidden message never comes back under its id: one brought back is sent again as a new one.
   const hidden = new Set<string>();
-  // The response each regenerate and edit went through, by the controller's message id, which a
-  // retry of the same request keeps: its message may be hidden by then, by the first attempt.
-  const replaced = new Map<string, string>();
+  // The response the latest regenerate or edit went through, by the message it targets, which
+  // its retry targets again though the first attempt may have hidden it: the one replaced while
+  // it is asked, then the one that took its place, which a retry under a fresh request id, after
+  // the agent couldn't answer, regenerates or edits. Only the latest, as only it can be retried.
+  let lastBranch: { readonly targetId: string; readonly responseId: string } | undefined;
   // Each connection's way back from the messages it fed to the Stream messages they were made of.
   const sources = new Set<(message: Message) => M | undefined>();
   // Each connection's feed, told again when the view changes outside the channel.
@@ -422,26 +425,26 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
       if (request.kind === "regenerate" || request.kind === "edit") {
         const source = sourceOf(request.message);
         const place = source ? supportBranchOf(source) : undefined;
-        const retried = request.messageId ? replaced.get(request.messageId) : undefined;
+        const targetId = idOf(request.message);
+        const retried = targetId !== undefined && lastBranch?.targetId === targetId ? lastBranch.responseId : undefined;
         let responseId: string;
         if (retried !== undefined) {
           responseId = retried;
         } else if (source && place) {
           responseId =
             request.kind === "edit" ? answeringOf(shown(chat.state.getLatestValue().messages), source, place) : place.responseId;
-          if (request.messageId) {
-            replaced.set(request.messageId, responseId);
-          }
         } else {
           throw new AgentBranchError("not_branchable");
         }
+        lastBranch = targetId === undefined ? undefined : { targetId, responseId };
+        const remembered = lastBranch;
         const session = await chat.use();
         if (source) {
           await leaveOverlayFor(session, source);
         }
         const reasoningEffort = options.reasoningEffort?.(request.chatOption);
         const effort = reasoningEffort ? { reasoningEffort } : {};
-        await rewinding(async () => {
+        const replacing = rewinding(async () => {
           const created =
             request.kind === "edit"
               ? await session.responses.edit(responseId, request.text, {
@@ -456,8 +459,21 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
                   ...effort,
                   ...(request.messageId ? { requestId: request.messageId } : {}),
                 });
+          if (created.created.id && remembered && lastBranch === remembered) {
+            lastBranch = { targetId: remembered.targetId, responseId: created.created.id };
+          }
           return created.created.rewound_to;
         });
+        try {
+          await replacing;
+        } catch (error) {
+          // The response is gone from the conversation, or it changed: the next attempt reads
+          // which response to go through from the conversation again.
+          if (remembered && lastBranch?.targetId === remembered.targetId && stale(error)) {
+            lastBranch = undefined;
+          }
+          throw error;
+        }
         return;
       }
       const images = await imagesOf(request.attachments, options.images);
@@ -623,6 +639,21 @@ function streamMessageOf(item: Schemas["BranchMessage"], like: object | undefine
     return { ...common, custom: { ...item.custom }, created_at: at * 1e6, updated_at: at * 1e6 };
   }
   return { ...item.custom, ...common, created_at: new Date(at), updated_at: new Date(at) };
+}
+
+/** The id of a message the controller holds, or undefined for one without. */
+function idOf(message: unknown): string | undefined {
+  const id = typeof message === "object" && message !== null ? (message as { id?: unknown }).id : undefined;
+  return typeof id === "string" && id ? id : undefined;
+}
+
+/**
+ * Whether the router refused a regenerate or an edit for the response it went through: no
+ * longer on the conversation, or the conversation changed (409 without a branch code), or not
+ * known (404).
+ */
+function stale(error: unknown): boolean {
+  return error instanceof RouterError && ((error.status === 409 && branchErrorOf(error) === undefined) || error.status === 404);
 }
 
 /** A router refusal of a branch in the person's words, or the error as it was. */

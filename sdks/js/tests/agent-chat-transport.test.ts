@@ -222,23 +222,54 @@ describe("agentChatTransport, branching", () => {
   });
 
   it("retries a regenerate whose reply the first attempt already hid, as the request the router took", async () => {
-    const { transport, feed } = await connected();
-    router.serve("POST", responsesPath, (_request, calls) =>
-      calls === 0
-        ? answering({ message_id: "q1", inclusive: false })
-        : // A request id the router already took is answered with no id.
-          { status: 202, body: { session_id: "sess_1", status: "running", created_at: at(9) } },
-    );
+    const { streamChat, transport, feed } = await connected();
+    router.serve("POST", responsesPath, (_request, calls) => {
+      if (calls === 0) {
+        // The router took it and Chat hid the reply, but its answer was lost on the way back.
+        rewind(streamChat as TestChat, "q1", false, 9);
+        return { status: 500, body: { error: { message: "lost", type: "internal" } } };
+      }
+      // A request id the router already took is answered with no id.
+      return { status: 202, body: { session_id: "sess_1", status: "running", created_at: at(9) } };
+    });
     const regenerate = request({ kind: "regenerate", message: feed.find("r2"), messageId: "ctl_regen" });
-    await transport.send(regenerate);
-    assert.deepEqual(feed.ids, ["q0", "r0", "q1"]);
+    await assert.rejects(transport.send(regenerate));
+    await until(() => feed.ids.join() === "q0,r0,q1", `shows ${feed.ids.join()}`);
 
     // The controller's retry: the same request, whose reply is no longer shown.
     await transport.send(regenerate);
 
     const [first, retry] = router.requestsTo("POST", responsesPath).map((one) => one.body);
     assert.deepEqual(retry, first, "the same request, which the router answers once");
-    assert.deepEqual(feed.ids, ["q0", "r0", "q1"]);
+  });
+
+  it("asks again under a fresh request id through the response that took the hidden reply's place", async () => {
+    const { transport, feed } = await connected();
+    router.serve("POST", responsesPath, answering({ message_id: "q1", inclusive: false }));
+    const target = feed.find("r2");
+    await transport.send(request({ kind: "regenerate", message: target, messageId: "ctl_regen" }));
+
+    // The agent couldn't answer: the controller's retry is the same target under a new id.
+    await transport.send(request({ kind: "regenerate", message: target, messageId: "ctl_again" }));
+
+    const [, again] = router.requestsTo("POST", responsesPath).map((one) => one.body as Record<string, unknown>);
+    assert.equal(again?.["replaces"], "resp_9", "the response the first attempt started, on the conversation");
+    assert.equal(again?.["request_id"], "ctl_again");
+  });
+
+  it("forgets the response remembered for a target once the router says it is no longer there", async () => {
+    const { transport, feed } = await connected();
+    router.serve("POST", responsesPath, (_request, calls) =>
+      calls === 1 ? refusal(409, "conflict") : answering(undefined),
+    );
+    const target = feed.find("r2");
+    await transport.send(request({ kind: "regenerate", message: target, messageId: "ctl_1" }));
+    await assert.rejects(transport.send(request({ kind: "regenerate", message: target, messageId: "ctl_2" })));
+
+    await transport.send(request({ kind: "regenerate", message: target, messageId: "ctl_3" }));
+
+    const replaces = router.requestsTo("POST", responsesPath).map((one) => (one.body as Record<string, unknown>)["replaces"]);
+    assert.deepEqual(replaces, ["resp_2", "resp_9", "resp_2"], "read from the conversation again after the refusal");
   });
 
   it("regenerates a reply with no alternatives yet, whose mark has no place", async () => {
