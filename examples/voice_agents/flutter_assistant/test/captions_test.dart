@@ -1,7 +1,7 @@
 import 'package:flutter/painting.dart';
 import 'package:flutter_assistant/captions.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:stream_agents_core/stream_agents_core.dart';
+import 'package:stream_agents/stream_agents.dart';
 
 void main() {
   test('Captions reveals the reply at the pace of the voice, whole words only', () {

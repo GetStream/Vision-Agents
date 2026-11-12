@@ -3,7 +3,7 @@ import 'dart:math';
 import 'dart:ui' as ui;
 
 import 'package:flutter_image_compress/flutter_image_compress.dart';
-import 'package:stream_agents_core/stream_agents_core.dart';
+import 'package:stream_agents/stream_agents.dart';
 
 /// Photos from the composer, as the router takes them.
 ///

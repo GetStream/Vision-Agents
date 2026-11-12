@@ -5,8 +5,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 import 'package:stream_core_flutter/core.dart';
 import 'package:stream_video_flutter/stream_video_flutter.dart' as video;
-import 'package:stream_agents_core/stream_agents_core.dart';
-import 'package:stream_agents_rtc/stream_agents_rtc.dart';
+import 'package:stream_agents/stream_agents.dart';
 
 import 'agent_chat.dart';
 import 'assistant.dart';
