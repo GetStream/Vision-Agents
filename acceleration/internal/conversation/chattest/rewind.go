@@ -44,6 +44,17 @@ type rewindState struct {
 	made    int
 	// lose is how many of the next rewinds Chat makes are answered with a 500 all the same.
 	lose int
+	// paged answers reads with no cursor or id_lt by their limit (PageNewestFirst).
+	paged bool
+}
+
+// PageNewestFirst answers a read with no cursor, or with id_lt, with at most its limit of
+// messages, the newest of them, as Chat does. Until it is called every such read gets every
+// visible message, in the order they were written, as this fake always answered them.
+func (s *Server) PageNewestFirst() {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	s.db.rewind.paged = true
 }
 
 // LoseRewindAnswer makes the next rewind Chat accepts and answers it with a 500, as a rewind
@@ -149,9 +160,10 @@ func (db *store) visibleIn(cid string) []map[string]any {
 }
 
 // pageAfter answers a channel read. With id_gt or id_gte it is the page of at most limit
-// messages from there, oldest first, as Chat reads ascending; with id_lt, the newest limit
-// messages before the one named, and with no cursor the channel's newest limit, oldest first,
-// as Chat reads descending. A read naming no limit gets every visible message. A cursor naming a message Chat does not have, or
+// messages from there, oldest first, as Chat reads ascending; any other read gets every
+// visible message, unless PageNewestFirst was called: then a read with id_lt gets the newest
+// limit messages before the one named, and one with no cursor the channel's newest limit,
+// oldest first, as Chat reads descending. A cursor naming a message Chat does not have, or
 // one a rewind hid, is refused as Chat refuses it (SelectMessageByChannelAndID reads a rewound
 // message as missing): the error is the answer, nil when there is none.
 func (db *store) pageAfter(cid string, body map[string]any) ([]map[string]any, map[string]any) {
@@ -169,6 +181,9 @@ func (db *store) pageAfter(cid string, body map[string]any) ([]map[string]any, m
 	gt, _ := params["id_gt"].(string)
 	gte, _ := params["id_gte"].(string)
 	if gt == "" && gte == "" {
+		if !db.rewind.paged {
+			return visible, nil
+		}
 		limit, limited := params["limit"].(float64)
 		if lt, _ := params["id_lt"].(string); lt != "" {
 			visible = visible[:slices.IndexFunc(visible, func(message map[string]any) bool { return message["id"] == lt })]

@@ -410,6 +410,7 @@ func (s *BranchesSuite) TestAnEditStoppedAfterChatRewoundIsFinishedOnReopenAfter
 	_, err := s.conv.Rewind(s.ctx, edit("sw-1", second))
 	s.Require().ErrorIs(err, errStopped)
 	s.branches.failAdvanceTo = ""
+	s.chat.PageNewestFirst()
 	user := "employee-1"
 	for i := range 101 {
 		text := fmt.Sprintf("note %d", i)
