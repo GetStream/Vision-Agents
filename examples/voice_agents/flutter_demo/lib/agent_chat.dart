@@ -4,8 +4,7 @@ import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:stream_chat/stream_chat.dart' as stream;
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
-import 'package:stream_agents_chat/stream_agents_chat.dart';
-import 'package:stream_agents_core/stream_agents_core.dart';
+import 'package:stream_agents/stream_agents.dart';
 
 /// A written conversation as Stream's AI components want it: the channel it is kept in, the
 /// whole of each reply's thinking, and what the agent is doing before it writes.
