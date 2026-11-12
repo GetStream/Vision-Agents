@@ -1,6 +1,7 @@
 package conversation
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -310,9 +311,6 @@ type RewindTarget struct {
 	// MessageID is the message the channel is rewound to, hidden too when Inclusive.
 	MessageID string
 	Inclusive bool
-	// TurnResponses are the responses of replies written before messages carried their
-	// response id (BranchField), by turn id, for their copies to be found by.
-	TurnResponses map[string]string
 }
 
 // RewindOutcome is what a switch did, and what the session rebuilds its model's history from.
@@ -671,7 +669,7 @@ func (sw switcher) rewind(ctx context.Context, target RewindTarget, read func(be
 	if err := sw.branches.StartBranchSwitch(ctx, &row); err != nil {
 		return rewound{}, err
 	}
-	if err := sw.branches.SaveBranchMessages(ctx, copiesOf(row, hidden, target.TurnResponses)); err != nil {
+	if err := sw.branches.SaveBranchMessages(ctx, copiesOf(row, hidden, responseOf(tail.Messages[0]))); err != nil {
 		return rewound{}, err
 	}
 	if len(hidden) > 0 {
@@ -694,7 +692,7 @@ func (sw switcher) rewind(ctx context.Context, target RewindTarget, read func(be
 			if tail, hidden, err = sw.tailFrom(ctx, target); err != nil {
 				break
 			}
-			if err = sw.branches.SaveBranchMessages(ctx, copiesOf(row, hidden, target.TurnResponses)); err != nil {
+			if err = sw.branches.SaveBranchMessages(ctx, copiesOf(row, hidden, responseOf(tail.Messages[0]))); err != nil {
 				return rewound{}, err
 			}
 		}
@@ -956,29 +954,26 @@ type heldMessage struct {
 	Custom      map[string]any         `json:"custom"`
 }
 
-// copiesOf are the copies of the messages a switch hides. A message is listed under its
-// response (BranchField); one written before messages carried it, under the response of its
-// reply's turn, and a person's message under that of the reply that answers it.
-func copiesOf(row store.AgentBranchSwitch, messages []getstream.MessageResponse, turnResponses map[string]string) []store.AgentBranchMessage {
+// copiesOf are the copies of the messages a switch hides, oldest first. A message is listed
+// under its response (BranchField), and a person's message with none under that of the reply
+// that answers it. Any other, as a customer's backend writes into the channel or a router from
+// before messages carried their response wrote, is listed under the response of the newest
+// message before it that has one, the turn it was written during: before is that of the
+// message the channel is rewound to, for the first.
+func copiesOf(row store.AgentBranchSwitch, messages []getstream.MessageResponse, before string) []store.AgentBranchMessage {
 	responses := map[string]string{}
 	answering := map[string]string{}
 	for _, m := range messages {
 		runtime, _ := m.Custom["support_runtime"].(map[string]any)
-		if b := branchFrom(m.Custom[BranchField]); b != nil {
-			responses[m.ID] = b.ResponseID
-		} else if turn, _ := runtime["turn_id"].(string); turn != "" && turnResponses[turn] != "" {
-			responses[m.ID] = turnResponses[turn]
-		}
+		responses[m.ID] = responseOf(m)
 		if question, _ := runtime["question_id"].(string); question != "" && runtime["role"] == "assistant" && responses[m.ID] != "" {
 			answering[question] = responses[m.ID]
 		}
 	}
 	copies := make([]store.AgentBranchMessage, 0, len(messages))
 	for _, m := range messages {
-		response := responses[m.ID]
-		if response == "" {
-			response = answering[m.ID]
-		}
+		response := cmp.Or(responses[m.ID], answering[m.ID], before)
+		before = response
 		held, _ := toMap(heldMessage{Text: m.Text, Attachments: m.Attachments, Custom: m.Custom})
 		copies = append(copies, store.AgentBranchMessage{
 			SessionID: row.SessionID, OriginalMessageID: m.ID, CustomerID: row.CustomerID, ResponseID: response,
@@ -986,6 +981,14 @@ func copiesOf(row store.AgentBranchSwitch, messages []getstream.MessageResponse,
 		})
 	}
 	return copies
+}
+
+// responseOf is the response a message carries (BranchField), empty for none.
+func responseOf(m getstream.MessageResponse) string {
+	if b := branchFrom(m.Custom[BranchField]); b != nil {
+		return b.ResponseID
+	}
+	return ""
 }
 
 // resentMessage is the copy m sent again: under its new id, with the request and question ids

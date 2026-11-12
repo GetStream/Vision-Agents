@@ -120,6 +120,29 @@ func (s *BranchesSuite) TestARegenerateHidesTheReplyAndKeepsACopyOfIt() {
 	s.Equal(store.SwitchDone, row.State)
 }
 
+// A message no mark names, as a customer's backend writes one into the channel or a router
+// from before branches wrote it, is kept with the turn it was written during, and comes back
+// with its branch.
+func (s *BranchesSuite) TestAnUnmarkedMessageIsKeptWithTheTurnItWasWrittenDuring() {
+	_, second := s.twoTurns()
+	s.written()
+	id, text, user := "backend-note", "Your order shipped.", "backend"
+	_, err := s.chat.Client.Chat().SendMessage(s.ctx, "agent", s.session, &getstream.SendMessageRequest{
+		Message: getstream.MessageRequest{ID: &id, Text: &text, UserID: &user}})
+	s.Require().NoError(err)
+
+	_, err = s.conv.Rewind(s.ctx, regenerate("sw-1", second))
+
+	s.Require().NoError(err)
+	copies, err := s.branches.BranchMessages(s.ctx, "customer", s.session, []string{"resp-2"})
+	s.Require().NoError(err)
+	var kept []string
+	for _, copied := range copies {
+		kept = append(kept, copied.OriginalMessageID)
+	}
+	s.ElementsMatch([]string{second.AssistantMessageID, id}, kept)
+}
+
 func (s *BranchesSuite) TestAnEditHidesTheQuestionAndItsReply() {
 	first, second := s.twoTurns()
 
