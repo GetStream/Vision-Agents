@@ -12,8 +12,8 @@ final readonly class SessionSort
 {
     public function __construct(
         public SessionSortField|string $field,
-        // -1, descending. Ascending is not offered.
-        public ?string $direction = null,
+        // -1 is descending and 1 ascending. pinned and relevance only sort descending.
+        public ?int $direction = null,
     ) {
     }
 
@@ -24,7 +24,7 @@ final readonly class SessionSort
     {
         return new self(
             field: Json::enum($data, 'field', SessionSortField::class),
-            direction: array_key_exists('direction', $data) && $data['direction'] !== null ? Json::string($data, 'direction') : null,
+            direction: array_key_exists('direction', $data) && $data['direction'] !== null ? Json::int($data, 'direction') : null,
         );
     }
 

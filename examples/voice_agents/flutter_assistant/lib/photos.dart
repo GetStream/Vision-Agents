@@ -3,7 +3,7 @@ import 'dart:math';
 import 'dart:ui' as ui;
 
 import 'package:flutter_image_compress/flutter_image_compress.dart';
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents_core/stream_agents_core.dart';
 
 /// Photos from the composer, as the router takes them.
 ///
@@ -20,11 +20,11 @@ abstract final class Photos {
   /// it: the person sees it in their question, and the model would say it sees none.
   static Future<List<AgentImage>> sources(List<XFile> files) async {
     final images = <AgentImage>[];
-    final unread = <String>[];
+    final unread = <XFile>[];
     for (final file in files) {
       final jpeg = await _jpeg(file);
       if (jpeg == null) {
-        unread.add(file.name);
+        unread.add(file);
       } else {
         images.add(AgentImage('data:image/jpeg;base64,${base64Encode(jpeg)}'));
       }
@@ -67,11 +67,13 @@ abstract final class Photos {
 
 /// Photos that could not be read, so the question was not asked.
 class PhotoFailure implements Exception {
-  const PhotoFailure(this.names);
+  const PhotoFailure(this.files);
 
   /// The files that did not read as an image.
-  final List<String> names;
+  final List<XFile> files;
 
   @override
-  String toString() => 'Could not read ${names.join(', ')} as a photo. Remove it and send again.';
+  String toString() =>
+      'Could not read ${files.map((file) => file.name).join(', ')} as a photo. '
+      'Send again without it.';
 }

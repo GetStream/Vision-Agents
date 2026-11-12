@@ -673,6 +673,9 @@ type ChildAgent struct {
 	Description string `json:"description,omitempty"`
 	// TimeoutMs is how long one call to the child may take. Zero is the default.
 	TimeoutMs int `json:"timeout_ms,omitempty"`
+	// MaxToolRounds is the child's agent.Options.MaxToolRounds: zero is the default, negative
+	// is no limit.
+	MaxToolRounds int `json:"max_tool_rounds,omitempty"`
 }
 
 // ConnectorBinding is one connector an agent config may call tools of, as it is stored in
@@ -1963,6 +1966,13 @@ type AgentSession struct {
 	// ended before reasons were kept.
 	EndReason      string     `bun:"end_reason,notnull"`
 	LastResponseAt *time.Time `bun:"last_response_at"`
+	// PinnedAt is when the session was pinned, nil for one that is not. Pinning is not a
+	// change to the conversation, so it moves neither UpdatedAt nor LastResponseAt.
+	PinnedAt *time.Time `bun:"pinned_at"`
+	// ReviewScore is the score the review of the session's call gave it, from 1 to 5, kept
+	// here as well so a list filters and sorts on it without joining calls. Nil until the
+	// review is written, and for a session nobody spoke in.
+	ReviewScore *int `bun:"review_score"`
 	// Rank is how well a search matched, zero outside a search.
 	Rank float32 `bun:"rank,scanonly"`
 }
@@ -1974,11 +1984,16 @@ type SessionConnectorSelection struct {
 	ConnectionID string `json:"connection_id"`
 }
 
-// SessionPosition is the last session of a page, by every key the list is sorted on.
+// SessionPosition is the last session of a page, by every key any order sorts on, so one
+// position serves whichever order the list has.
 type SessionPosition struct {
-	UpdatedAt time.Time `json:"u"`
-	ID        string    `json:"id"`
-	Rank      float32   `json:"r,omitempty"`
+	// LastMessageAt is when the agent last answered, or when the session began.
+	LastMessageAt time.Time `json:"t"`
+	ID            string    `json:"id"`
+	Rank          float32   `json:"r,omitempty"`
+	Pinned        bool      `json:"p,omitempty"`
+	// ReviewScore is nil for a session nobody reviewed, which sorts after every score.
+	ReviewScore *int `json:"v,omitempty"`
 }
 
 // ResponsePosition is the last turn of a page.
@@ -2021,8 +2036,15 @@ type SessionFilter struct {
 	// After and Before bound when the session started, After inclusive and Before not.
 	After  time.Time
 	Before time.Time
-	Limit  int
-	// Cursor starts the page after this session. Nil is the first page.
+	// Where is the filter the request spelled out, with its $and and $or. Nil admits every
+	// session. It is ANDed with every field above, so nothing in it reaches past them: an
+	// end user's UserID and CallerKinds hold whatever the expression says.
+	Where *SessionExpr
+	// Order is what the list is sorted by. The zero value is the most recent message first.
+	// A search is always sorted by relevance, whatever is here.
+	Order SessionOrder
+	Limit int
+	// Cursor starts the page after this session, in Order. Nil is the first page.
 	Cursor *SessionPosition
 }
 

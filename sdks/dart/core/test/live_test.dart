@@ -12,7 +12,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:test/test.dart';
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents_core/stream_agents_core.dart';
 
 final _url = Platform.environment['VISION_AGENTS_URL'];
 final _customerId = Platform.environment['VISION_AGENTS_CUSTOMER_ID'] ?? 'acme';
@@ -25,7 +25,7 @@ final _agent = Platform.environment['VISION_AGENTS_AGENT'] ?? '';
 final _user = 'dart-live-${DateTime.now().millisecondsSinceEpoch}';
 
 void main() {
-  late VisionAgents agents;
+  late StreamAgents agents;
   final opened = <AgentSession>[];
 
   Future<AgentSession> chat([SessionOptions options = const SessionOptions()]) async {
@@ -35,7 +35,7 @@ void main() {
   }
 
   setUp(() {
-    agents = VisionAgents(url: Uri.parse(_url!), customerId: _customerId).withUser(_user);
+    agents = StreamAgents(url: Uri.parse(_url!), customerId: _customerId).withUser(_user);
   });
 
   tearDown(() async {
@@ -146,7 +146,7 @@ void main() {
         final listed = await agents
             .agent(_agent)
             .sessions
-            .query(const SessionQuery(projectId: 'dart-sdk'));
+            .query(filter: {'project_id': 'dart-sdk'});
 
         expect(found.items.first.id, session.id);
         expect(listed.items.map((s) => s.id), contains(session.id));
@@ -173,10 +173,10 @@ void main() {
 
         expect((await agents.sessions.update(session.id, title: title)).title, title);
         await _until(() async {
-          final ended = await agents.sessions.query(
-            const SessionQuery(state: SessionState.ended, limit: 50),
+          final recent = await agents.sessions.query(limit: 50);
+          return recent.items.any(
+            (s) => s.id == session.id && s.state == SessionState.ended && s.title == title,
           );
-          return ended.items.any((s) => s.id == session.id && s.title == title);
         });
       });
 
@@ -186,10 +186,8 @@ void main() {
         await session.close();
 
         await _until(() async {
-          final ended = await agents.sessions.query(
-            const SessionQuery(state: SessionState.ended, limit: 50),
-          );
-          return ended.items.any((s) => s.id == session.id);
+          final recent = await agents.sessions.query(limit: 50);
+          return recent.items.any((s) => s.id == session.id && s.state == SessionState.ended);
         });
       });
 

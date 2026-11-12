@@ -408,6 +408,10 @@ type Agent struct {
 	// history is the conversation so far. It lives here rather than in a provider so a
 	// failover between providers mid-conversation loses nothing.
 	history []llm.Message
+	// documents are the files the caller attached (PinDocuments), and pinned the messages
+	// every reply is sent them as, ahead of history.
+	documents []Document
+	pinned    []llm.Message
 	// compactedAway is what compaction took out of history, oldest first. The model reads
 	// a summary of it instead, but what the caller said and the tools returned are still
 	// facts of the call, and the checks on a tool call's arguments are made against them.
@@ -954,6 +958,19 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 	if a.native() {
 		return "", a.respondNative(ctx, text, images)
 	}
+	text, undo, err := a.attachDocument(ctx, text)
+	if err != nil {
+		return "", err
+	}
+	id, err := a.respondTo(ctx, text, images, asked)
+	if err != nil {
+		undo()
+	}
+	return id, err
+}
+
+// respondTo is RespondTo for a cascaded agent, once the turn's file is pinned.
+func (a *Agent) respondTo(ctx context.Context, text string, images []llm.ImagePart, asked options.LLM) (string, error) {
 	caller := stt.Participant{ID: typedCaller}
 	author, _ := ctx.Value(authorKey{}).(string)
 	sender, _ := routing.CallerFrom(ctx)
@@ -2861,6 +2878,7 @@ func (a *Agent) generate(turn harness.Turn, screen string) error {
 		return nil
 	}
 	current, model := a.harness, a.llm
+	turn.Documents = a.pinnedLocked()
 	ctx, cancel := context.WithCancel(a.chargedLocked(a.ctx, a.scheduled))
 	a.generatingCancel[turn.ID] = cancel
 	a.pumps.Add(1)
@@ -4554,6 +4572,8 @@ func (a *Agent) Continue(previous *Agent) {
 	opened := previous.opened
 	// What the model was told is in the history taken over, so it is not told again.
 	knows := previous.knows
+	// The files are the conversation's, not the call's: a chat that goes to voice still reads them.
+	documents, pinned := previous.documents, previous.pinnedLocked()
 	previous.mu.Unlock()
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -4562,6 +4582,7 @@ func (a *Agent) Continue(previous *Agent) {
 	a.speakers = speakers
 	a.opened = opened
 	a.knows = knows
+	a.documents, a.pinned = slices.Clone(documents), pinned
 }
 
 // RestoreHistory seeds a new text session with previously completed conversation turns.

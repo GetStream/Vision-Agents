@@ -98,7 +98,7 @@ List<String> audit(YamlMap document) {
 /// Runs the output through dart format, so a regenerated file and a committed one compare
 /// byte for byte.
 String format(String source) {
-  final scratch = Directory.systemTemp.createTempSync('vision_agents_generate');
+  final scratch = Directory.systemTemp.createTempSync('stream_agents_generate');
   try {
     final file = File('${scratch.path}/api.dart')..writeAsStringSync(source);
     final result = Process.runSync('dart', [

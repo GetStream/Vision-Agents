@@ -10,7 +10,7 @@ const _itemPage = 200;
 /// Conversations: the ones being held and the ones that were.
 ///
 /// What comes back are rows rather than live handles, because reading a conversation back is
-/// not holding one and most of these are over. `VisionAgents.attach` follows one that is
+/// not holding one and most of these are over. `StreamAgents.attach` follows one that is
 /// still running.
 final class Sessions {
   Sessions(this._operations, {this.agent, String userId = ''}) : _userId = userId;
@@ -30,22 +30,66 @@ final class Sessions {
   Future<Session> create([SessionOptions options = const SessionOptions()]) =>
       _create(options, options.startVoice);
 
-  /// A page of this caller's conversations, most recently updated first, the ones that ended
-  /// included. Ask again with the page's [ListPage.nextCursor] as [SessionQuery.cursor] for
-  /// the next one.
+  /// A page of this caller's conversations, the ones that ended included.
+  ///
+  /// [filter] is the router's own filter, written as it goes on the wire: field keys and
+  /// `$and` / `$or`, the keys of one map all holding. A device may filter on:
+  ///
+  /// - `project_id`: a string, `{'$eq': 'a'}` or `{'$in': ['a', 'b']}`
+  /// - `agent`: a string or `{'$eq': 'support'}`; on an agent's own [Sessions] the top-level
+  ///   one is always that agent, whatever was written there
+  /// - `text`: `{'$q': 'words'}`, once, at the top level or directly in the top-level `$and`,
+  ///   never inside an `$or`
+  ///
+  /// `$and` and `$or` take 1 to 10 filters and nest at most 3 deep. `review_score` and
+  /// `user_id` are a backend's to filter on, and any other key is one the router refuses, so
+  /// each is an [ArgumentError] here before anything is sent.
+  ///
+  /// [sort] left out is most recently answered first, or best match first with `text`.
+  /// Otherwise it is `last_message_at` either way, `pinned` alone or followed by
+  /// `last_message_at`, or `relevance` with `text`; see [SessionSort].
+  ///
+  /// [limit] is up to 200 and 25 when left out. [cursor] is the [ListPage.nextCursor] of the
+  /// page before, asked with the same filter and sort, since a cursor only continues the order
+  /// it came from.
   ///
   /// Only ever the caller's own: the router owns a session by whoever opened it, and a device
   /// cannot widen that by naming somebody else.
-  Future<ListPage<Session>> query([SessionQuery query = const SessionQuery()]) =>
-      _query(null, query);
+  Future<ListPage<Session>> query({
+    Map<String, Object?>? filter,
+    List<SessionSort>? sort,
+    int? limit,
+    String? cursor,
+  }) => _query(filter, sort: sort, limit: limit, cursor: cursor);
 
   /// Finds a conversation by what it was called, best match first, a page at a time.
   ///
   /// It reads the title, the description, the project and the agent name, never what was
-  /// said. An empty [text] is the same as [query], so a search box nobody has typed in yet
-  /// shows a person their conversations rather than nothing.
-  Future<ListPage<Session>> search(String text, [SessionQuery query = const SessionQuery()]) =>
-      _query(text, query);
+  /// said. [filter], [limit] and [cursor] are [query]'s; [text] becomes the filter's top-level
+  /// `text`, so a [filter] that already has one is an [ArgumentError]. There is no sort,
+  /// because a search is ordered by how well it matched. An empty [text] is the same as
+  /// [query], so a search box nobody has typed in yet shows a person their conversations
+  /// rather than nothing.
+  Future<ListPage<Session>> search(
+    String text, {
+    Map<String, Object?>? filter,
+    int? limit,
+    String? cursor,
+  }) {
+    if (filter != null && _mentions(filter, 'text')) {
+      throw ArgumentError.value(filter, 'filter', 'a search sets text itself');
+    }
+    return _query(
+      text.isEmpty
+          ? filter
+          : {
+              ...?filter,
+              'text': {r'$q': text},
+            },
+      limit: limit,
+      cursor: cursor,
+    );
+  }
 
   /// One conversation, whether or not it is still being held.
   ///
@@ -53,21 +97,36 @@ final class Sessions {
   /// is.
   Future<Session> get(String id) async => sessionOf(await _operations.getSession(id: id));
 
-  /// Renames or relabels a conversation, running or ended, and returns it as it now is.
+  /// Renames, relabels, pins or unpins a conversation, running or ended, and returns it as it
+  /// now is.
   ///
   /// A field left null is left as it is. [custom] replaces the labels whole, and an empty map
-  /// clears them.
+  /// clears them. [pinned] true pins it and false unpins it; pinning does not move it in the
+  /// most recently answered order.
   Future<Session> update(
     String id, {
     String? title,
     String? description,
     Map<String, Object?>? custom,
+    bool? pinned,
   }) async => sessionOf(
     await _operations.updateSession(
       id: id,
-      body: api.UpdateSessionRequest(title: title, description: description, custom: custom),
+      body: api.UpdateSessionRequest(
+        title: title,
+        description: description,
+        custom: custom,
+        pinned: pinned,
+      ),
     ),
   );
+
+  /// Pins a conversation, and returns it with [Session.pinnedAt] set. Sorting by `pinned`
+  /// lists the pinned ones first.
+  Future<Session> pin(String id) => update(id, pinned: true);
+
+  /// Unpins a conversation, and returns it with no [Session.pinnedAt].
+  Future<Session> unpin(String id) => update(id, pinned: false);
 
   /// Stops a conversation, which is how the agent leaves. What it recorded and remembered is
   /// kept; [delete] takes it away.
@@ -100,33 +159,21 @@ final class Sessions {
     return sessionOf(await _operations.createSession(body: request));
   }
 
-  Future<ListPage<Session>> _query(String? text, SessionQuery query) async {
-    final filter = api.SessionFilter(
-      agent: _named(query.agent) ?? _named(agent),
-      agentId: _named(query.agentId),
-      projectId: _named(query.projectId),
-      modality: query.modality?.name,
-      state: query.state?.name,
-      team: _named(query.team),
-      createdAt: query.createdSince == null && query.createdBefore == null
-          ? null
-          : api.TimeRange(gte: query.createdSince, lt: query.createdBefore),
-      custom: query.custom.isEmpty ? null : query.custom,
-      text: switch (_named(text)) {
-        final String text => api.TextMatch(q: text),
-        null => null,
-      },
-    );
+  Future<ListPage<Session>> _query(
+    Map<String, Object?>? filter, {
+    List<SessionSort>? sort,
+    int? limit,
+    String? cursor,
+  }) async {
+    // The agent goes on the top level beside the caller's keys rather than around them in a
+    // new $and, since text is only accepted at the top or directly in the top-level $and.
+    final sent = {...?filter, 'agent': ?_named(agent)};
     final page = await _operations.querySessions(
       body: api.SessionQuery(
-        filter: filter.toJson().isEmpty ? null : filter,
-        limit: query.limit,
-        cursor: _named(query.cursor),
-        sort: switch (query.sort) {
-          null => null,
-          SessionSort.updatedAt => [const api.SessionSort(field: 'updated_at')],
-          SessionSort.relevance => [const api.SessionSort(field: 'relevance')],
-        },
+        filter: sent.isEmpty ? null : _filterOf(sent, 'filter'),
+        sort: sort == null || sort.isEmpty ? null : [for (final key in sort) _sortOf(key)],
+        limit: limit,
+        cursor: _named(cursor),
       ),
     );
     return ListPage(
@@ -135,6 +182,60 @@ final class Sessions {
       nextCursor: _named(page.nextCursor),
     );
   }
+}
+
+/// What a backend may filter on and a device may not.
+const _serverSideOnly = {'review_score', 'user_id'};
+
+/// The caller's filter as the request carries it, refused if it holds a key a device may not
+/// send or the router does not know. [at] is where in the filter this map is, for the error.
+api.SessionFilter _filterOf(Map<Object?, Object?> filter, String at) {
+  for (final key in filter.keys) {
+    if (_serverSideOnly.contains(key)) {
+      throw ArgumentError.value(key, at, 'a filter only a backend may send');
+    }
+    if (!const {r'$and', r'$or', 'agent', 'project_id', 'text'}.contains(key)) {
+      throw ArgumentError.value(key, at, 'not a field sessions are filtered on');
+    }
+  }
+  return api.SessionFilter(
+    and: _filtersOf(filter[r'$and'], '$at.\$and'),
+    or: _filtersOf(filter[r'$or'], '$at.\$or'),
+    agent: filter['agent'],
+    projectId: filter['project_id'],
+    text: switch (filter['text']) {
+      null => null,
+      {r'$q': final String words} => api.TextMatch(q: words),
+      final Object other => throw ArgumentError.value(other, '$at.text', r"expected {'$q': words}"),
+    },
+  );
+}
+
+List<api.SessionFilter>? _filtersOf(Object? filters, String at) => switch (filters) {
+  null => null,
+  final List<Object?> filters => [
+    for (final (index, filter) in filters.indexed)
+      switch (filter) {
+        final Map<Object?, Object?> filter => _filterOf(filter, '$at[$index]'),
+        _ => throw ArgumentError.value(filter, '$at[$index]', 'expected a filter'),
+      },
+  ],
+  final Object other => throw ArgumentError.value(other, at, 'expected a list of filters'),
+};
+
+/// Whether a filter names [field] at any depth.
+bool _mentions(Map<Object?, Object?> filter, String field) =>
+    filter.containsKey(field) ||
+    [filter[r'$and'], filter[r'$or']].whereType<List<Object?>>().any(
+      (filters) =>
+          filters.whereType<Map<Object?, Object?>>().any((inner) => _mentions(inner, field)),
+    );
+
+api.SessionSort _sortOf(SessionSort sort) {
+  if (sort.field == 'review_score') {
+    throw ArgumentError.value(sort.field, 'sort', 'an order only a backend may ask for');
+  }
+  return api.SessionSort(field: sort.field, direction: sort.direction);
 }
 
 /// The turns of a session being held here, which show each question in [asking] as it is

@@ -25,6 +25,7 @@ import time
 import warnings
 from typing import Optional
 
+import aiortc
 import av
 import cv2
 import numpy as np
@@ -37,8 +38,9 @@ from dotenv import load_dotenv
 from inference import get_model
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.core.agents.events import UserTurnStartedEvent
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.tts.events import TTSSynthesisCompleteEvent
+from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.warmup import Warmable
 from vision_agents.plugins.roboflow.events import (
     DetectedObject,
@@ -119,6 +121,17 @@ class LocalModerationProcessor(RoboflowCloudDetectionProcessor, Warmable[object]
         self._latest_detections: Optional[sv.Detections] = None
         self._latest_classes: dict[int, str] = {}
         self._inference_task: Optional[asyncio.Task[None]] = None
+        self._user_id: Optional[str] = None
+
+    async def process_video(
+        self,
+        incoming_track: aiortc.VideoStreamTrack,
+        participant_id: Optional[str],
+        shared_forwarder: Optional[VideoForwarder] = None,
+    ) -> None:
+        """Remember whose video track is being moderated."""
+        self._user_id = participant_id
+        await super().process_video(incoming_track, participant_id, shared_forwarder)
 
     async def on_warmup(self) -> object:
         """Pre-load the Roboflow model during agent startup."""
@@ -181,6 +194,7 @@ class LocalModerationProcessor(RoboflowCloudDetectionProcessor, Warmable[object]
             await self._video_track.add_frame(frame)
 
     async def _run_background_inference(self, image: np.ndarray) -> None:
+        user_id = self._user_id
         start_time = time.perf_counter()
         try:
             detections, classes = await self._run_inference(image)
@@ -215,6 +229,9 @@ class LocalModerationProcessor(RoboflowCloudDetectionProcessor, Warmable[object]
                 image_height=img_height,
                 inference_time_ms=inference_time_ms,
                 model_id=self.model_id,
+                participant=Participant(original=None, user_id=user_id, id=user_id)
+                if user_id
+                else None,
             )
         )
 
@@ -302,15 +319,9 @@ async def create_agent(**kwargs: object) -> Agent:
     )
 
     gesture_active = False
-    escalation_count = 0
+    # Offences are counted per user, keyed by the user whose video was flagged.
+    offences: dict[Optional[str], int] = {}
     warning_lock = asyncio.Lock()
-    participant_user_id: Optional[str] = None
-
-    @agent.events.subscribe
-    async def _track_participant(event: UserTurnStartedEvent) -> None:
-        nonlocal participant_user_id
-        if event.participant and event.participant.user_id != agent.agent_user.id:
-            participant_user_id = event.participant.user_id
 
     async def _wait_for_tts_playback() -> None:
         """Wait for TTS synthesis to finish, then wait for audio to play out."""
@@ -334,7 +345,7 @@ async def create_agent(**kwargs: object) -> Agent:
 
     @agent.events.subscribe
     async def on_detection(event: roboflow.DetectionCompletedEvent) -> None:
-        nonlocal gesture_active, escalation_count
+        nonlocal gesture_active
         if not event.objects:
             if gesture_active:
                 gesture_active = False
@@ -353,7 +364,9 @@ async def create_agent(**kwargs: object) -> Agent:
 
         async with warning_lock:
             gesture_active = True
-            escalation_count += 1
+            user_id = event.user_id()
+            escalation_count = offences.get(user_id, 0) + 1
+            offences[user_id] = escalation_count
 
             # Interrupt any in-progress speech and flush the audio
             # track so the warning plays immediately. tts.interrupt()
@@ -387,16 +400,14 @@ async def create_agent(**kwargs: object) -> Agent:
             # before releasing the lock or kicking.
             await _wait_for_tts_playback()
 
-            if escalation_count >= 3 and participant_user_id:
+            # Kick only: a detection can be wrong, so blocking is left to a person.
+            if escalation_count >= 3 and user_id:
                 logger.info(
                     "Kicking user %s after %d offences",
-                    participant_user_id,
+                    user_id,
                     escalation_count,
                 )
-                await agent.call.kick_user(
-                    user_id=participant_user_id,
-                    block=True,
-                )
+                await agent.call.kick_user(user_id=user_id)
 
     return agent
 

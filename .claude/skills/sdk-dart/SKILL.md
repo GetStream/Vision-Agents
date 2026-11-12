@@ -1,6 +1,6 @@
 ---
 name: sdk-dart
-description: How to build and extend the Dart and Flutter SDKs in sdks/dart. Read this before changing vision_agents_core, vision_agents_chat or vision_agents_rtc, the Flutter demo's use of Stream's AI components, or before adding a Dart client for a new endpoint.
+description: How to build and extend the Dart and Flutter SDKs in sdks/dart. Read this before changing stream_agents_core, stream_agents_chat or stream_agents_rtc, the Flutter demo's use of Stream's AI components, or before adding a Dart client for a new endpoint.
 ---
 
 # Dart SDK conventions
@@ -16,16 +16,16 @@ Chat 10.4 is.
 ## Packages
 
 ```
-core  vision_agents_core  pure Dart: generated client, socket, conversation state
-chat  vision_agents_chat  pure Dart: the conversation's Stream Chat channel   -> core
-rtc   vision_agents_rtc   joining the call over Stream Video                  -> core
+core  stream_agents_core  pure Dart: generated client, socket, conversation state
+chat  stream_agents_chat  pure Dart: the conversation's Stream Chat channel   -> core
+rtc   stream_agents_rtc   joining the call over Stream Video                  -> core
 ```
 
 **Three standalone packages, not a pub workspace.** A workspace resolves every member as one
 graph, so once `rtc` (Flutter) is a member, `core` cannot be resolved or tested with the
 plain Dart SDK — and a pure-Dart core testable in `dart:stable` is the point of having one. The
 price is three lockfiles and a local link: `chat` and `rtc` declare
-`vision_agents_core: ^x.y.z` as a hosted dependency, and a committed `pubspec_overrides.yaml`
+`stream_agents_core: ^x.y.z` as a hosted dependency, and a committed `pubspec_overrides.yaml`
 points it at `../core`. Pub never publishes that file and consumers never see it. Before
 releasing, publish `core` first and check the others resolve against the hosted version with the
 override removed.
@@ -40,9 +40,11 @@ override removed.
   the way Swift's did, so the two SDKs stay one shape.
 - `chat` depends on `stream_chat`, which is pure Dart, so it is tested in `dart:stable` like
   `core`. Import it with a prefix (`as stream`): it exports a `TokenProvider` of its own.
-- Stream's packages are pinned to exact versions (`stream_video_flutter: 1.6.0`,
-  `stream_chat: 10.4.0`). Bumping them is a deliberate change: read the changelog,
-  rerun the rtc tests, and check the APIs used (listed below) in the new source.
+- Stream's packages take a caret range from a tested floor (`stream_video_flutter: ^1.6.0`,
+  `stream_chat: ^10.4.0`), as Swift's `from:` and JavaScript's `^` do: a published package
+  pinned to one version would refuse every app on another patch. Raising a floor is a
+  deliberate change: read the changelog, rerun the rtc tests, and check the APIs used (listed
+  below) in the new source. The examples pin exact versions, as apps may.
 - `pubspec.lock` is gitignored: a library leaves resolving to the app.
 
 Stream Video's singleton: use `StreamVideo.create`, never the `StreamVideo(...)` factory, which
@@ -54,12 +56,12 @@ The key, `userId` and token are the one identity for the router, Stream Chat and
 `Backend.shared(kind, open:, disconnect:)` holds one client per `kind:apiKey:userId`: sessions
 asking at once share one opening, one that failed to open is opened again, and `withUser` keeps
 the registry so another user gets their own. `Backend.give` holds the app's own client, which
-`VisionAgents.disconnect()` never touches; it closes only what `shared` built. Beside a
+`StreamAgents.disconnect()` never touches; it closes only what `shared` built. Beside a
 `customerId` the key is Stream's alone and the router is reached by customer id.
 
-- `vision_agents_chat`: `agents.useChat(client)` and `session.chat()`, which answers the
+- `stream_agents_chat`: `agents.useChat(client)` and `session.chat()`, which answers the
   conversation's `Channel`, unwatched. A session with no conversation is a `StateError`.
-- `vision_agents_rtc`: `agents.useVideo(client)` and `VoiceSession.join()`, which joins the
+- `stream_agents_rtc`: `agents.useVideo(client)` and `VoiceSession.join()`, which joins the
   session's `callType:callId`. Leaving disposes nothing.
 - Dart has no overloading, hence `useChat` and `useVideo` rather than Kotlin's `use`. A
   client for another user, or a missing key, user or token, is an `ArgumentError`.
@@ -134,7 +136,7 @@ headers or body.
 ## Public API
 
 ```dart
-final agents = VisionAgents(url: url, customerId: 'acme');
+final agents = StreamAgents(url: url, customerId: 'acme');
 final chat = await agents.agent('support').chat();
 ```
 

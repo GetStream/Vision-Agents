@@ -47,6 +47,8 @@ public data class Session(
     val createdAt: Instant,
     val closedAt: Instant?,
     val lastResponseAt: Instant?,
+    /** When this was pinned, or null for one that is not. */
+    val pinnedAt: Instant? = null,
 ) {
     public enum class State {
         Live,
@@ -93,6 +95,7 @@ public data class Session(
             createdAt = instant(schema.createdAt),
             closedAt = instantOrNull(schema.closedAt),
             lastResponseAt = instantOrNull(schema.lastResponseAt),
+            pinnedAt = instantOrNull(schema.pinnedAt),
         )
     }
 }

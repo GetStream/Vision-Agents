@@ -277,13 +277,10 @@ class VisionAgentsTest {
     }
 
     @Test
-    fun `a modality the SDK never heard of is unknown, and cannot be asked for`() = runTest {
+    fun `a modality the SDK never heard of is unknown`() = runTest {
         router.answer = { Reply(200, sessionJson(modality = "telepathy")) }
 
         assertEquals(Session.Modality.Unknown, agents.sessions.get("s1").modality)
-        assertFailsWith<AgentsException.Configuration> {
-            agents.sessions.query(SessionQuery(modality = Session.Modality.Unknown))
-        }
     }
 
     @Test
@@ -314,20 +311,16 @@ class VisionAgentsTest {
     }
 
     @Test
-    fun `listing an agent's sessions narrows to it and sends only the filters asked for`() = runTest {
+    fun `listing an agent's sessions with no filter sends just the agent`() = runTest {
         router.answer = { Reply(200, pageJson(listOf(sessionJson(state = "ended", modality = "voice")), next = "c2")) }
 
-        val found = agents.agent("docs").sessions.query(
-            SessionQuery(state = Session.State.Ended, modality = Session.Modality.Voice, agentId = "a1", limit = 10, cursor = "c1"),
-        )
+        val found = agents.agent("docs").sessions.query()
+        agents.sessions.query()
 
-        val arrived = router.requests.single()
+        val arrived = router.requests.first()
         assertEquals("POST /v1/agents/sessions/query", "${arrived.method} ${arrived.path}")
-        assertEquals(
-            """{"cursor":"c1","filter":{"agent":{"${'$'}eq":"docs"},"agent_id":{"${'$'}eq":"a1"},""" +
-                """"modality":{"${'$'}eq":"voice"},"state":{"${'$'}eq":"ended"}},"limit":10}""",
-            arrived.body,
-        )
+        assertEquals("""{"filter":{"agent":{"${'$'}eq":"docs"}}}""", arrived.body)
+        assertEquals("""{"filter":{}}""", router.requests.last().body)
         assertEquals(Session.State.Ended, found.items.single().state)
         assertEquals(Session.Modality.Voice, found.items.single().modality)
         assertTrue(found.hasMore)
@@ -335,29 +328,105 @@ class VisionAgentsTest {
     }
 
     @Test
-    fun `listing by date, labels, team and order sends the range, the pairs, the team and the field to sort by`() = runTest {
+    fun `a project filter is sent beside the agent, as one project or as one of several`() = runTest {
+        router.answer = { Reply(200, EMPTY_PAGE) }
+        val sessions = agents.agent("docs").sessions
+
+        sessions.query(filter = SessionFilter.ProjectId(eq = "a"))
+        sessions.query(filter = SessionFilter.ProjectIdIn(listOf("a", "b")))
+
+        val (one, several) = router.requests.map { it.body }
+        assertEquals("""{"filter":{"agent":{"${'$'}eq":"docs"},"project_id":{"${'$'}eq":"a"}}}""", one)
+        assertEquals("""{"filter":{"agent":{"${'$'}eq":"docs"},"project_id":{"${'$'}in":["a","b"]}}}""", several)
+    }
+
+    @Test
+    fun `an or of two projects, and a nested and, are sent as they are with the agent beside them`() = runTest {
+        router.answer = { Reply(200, EMPTY_PAGE) }
+        val sessions = agents.agent("docs").sessions
+        val either = SessionFilter.Or(SessionFilter.ProjectId("a"), SessionFilter.ProjectId("b"))
+
+        sessions.query(filter = either)
+        sessions.query(filter = SessionFilter.And(either, SessionFilter.ProjectIdIn(listOf("a", "c"))))
+
+        val (or, nested) = router.requests.map { it.body }
+        assertEquals(
+            """{"filter":{"${'$'}or":[{"project_id":{"${'$'}eq":"a"}},{"project_id":{"${'$'}eq":"b"}}],"agent":{"${'$'}eq":"docs"}}}""",
+            or,
+        )
+        assertEquals(
+            """{"filter":{"${'$'}and":[{"${'$'}or":[{"project_id":{"${'$'}eq":"a"}},{"project_id":{"${'$'}eq":"b"}}]},""" +
+                """{"project_id":{"${'$'}in":["a","c"]}}],"agent":{"${'$'}eq":"docs"}}}""",
+            nested,
+        )
+    }
+
+    @Test
+    fun `an agent's sessions are that agent's whatever the filter names, and any agent's from the top`() = runTest {
         router.answer = { Reply(200, EMPTY_PAGE) }
 
-        agents.sessions.query(
-            SessionQuery(
-                createdSince = Instant.parse("2026-10-20T00:00:00Z"),
-                createdBefore = Instant.parse("2026-10-27T12:30:00.5Z"),
-                custom = mapOf("ticket" to "4721"),
-                sort = SessionQuery.Sort.UpdatedAt,
-                team = "finance",
-            ),
-        )
-        agents.sessions.query(SessionQuery(createdBefore = Instant.parse("2026-10-27T00:00:00Z")))
-        agents.sessions.search("pricing", SessionQuery(sort = SessionQuery.Sort.Relevance))
+        agents.agent("docs").sessions.query(filter = SessionFilter.Agent("billing"))
+        agents.sessions.query(filter = SessionFilter.Agent("billing"))
 
-        val (filtered, before, searched) = router.requests.map { it.body }
-        assertEquals(
-            """{"filter":{"created_at":{"${'$'}gte":"2026-10-20T00:00:00Z","${'$'}lt":"2026-10-27T12:30:00.500Z"},""" +
-                """"custom":{"ticket":"4721"},"team":{"${'$'}eq":"finance"}},"sort":[{"field":"updated_at"}]}""",
-            filtered,
+        val (scoped, open) = router.requests.map { it.body }
+        assertEquals("""{"filter":{"agent":{"${'$'}eq":"docs"}}}""", scoped)
+        assertEquals("""{"filter":{"agent":{"${'$'}eq":"billing"}}}""", open)
+    }
+
+    @Test
+    fun `a filter serialises to the wire's own keys`() {
+        val filter = SessionFilter.And(
+            SessionFilter.Or(SessionFilter.ProjectId("a"), SessionFilter.ProjectIdIn(listOf("b", "c"))),
+            SessionFilter.Text("billing"),
         )
-        assertEquals("""{"filter":{"created_at":{"${'$'}lt":"2026-10-27T00:00:00Z"}}}""", before)
-        assertEquals("""{"filter":{"text":{"${'$'}q":"pricing"}},"sort":[{"field":"relevance"}]}""", searched)
+
+        assertEquals(
+            """{"${'$'}and":[{"${'$'}or":[{"project_id":{"${'$'}eq":"a"}},{"project_id":{"${'$'}in":["b","c"]}}]},{"text":{"${'$'}q":"billing"}}]}""",
+            filter.toJson().toString(),
+        )
+    }
+
+    @Test
+    fun `each sort sends its field and direction, and no sort sends none`() = runTest {
+        router.answer = { Reply(200, EMPTY_PAGE) }
+        val sessions = agents.sessions
+
+        sessions.query(sort = listOf(SessionSort(SessionSortField.LastMessageAt)))
+        sessions.query(sort = listOf(SessionSort(SessionSortField.LastMessageAt, direction = 1)))
+        sessions.query(sort = listOf(SessionSort(SessionSortField.Pinned)))
+        sessions.query(sort = listOf(SessionSort(SessionSortField.Pinned), SessionSort(SessionSortField.LastMessageAt, 1)))
+        sessions.query(filter = SessionFilter.Text("pricing"), sort = listOf(SessionSort(SessionSortField.Relevance)))
+
+        assertEquals(
+            listOf(
+                """{"filter":{},"sort":[{"field":"last_message_at","direction":-1}]}""",
+                """{"filter":{},"sort":[{"field":"last_message_at","direction":1}]}""",
+                """{"filter":{},"sort":[{"field":"pinned","direction":-1}]}""",
+                """{"filter":{},"sort":[{"field":"pinned","direction":-1},{"field":"last_message_at","direction":1}]}""",
+                """{"filter":{"text":{"${'$'}q":"pricing"}},"sort":[{"field":"relevance","direction":-1}]}""",
+            ),
+            router.requests.map { it.body },
+        )
+        assertFailsWith<AgentsException.Configuration> {
+            sessions.query(sort = listOf(SessionSort(SessionSortField.LastMessageAt, direction = 0)))
+        }
+    }
+
+    @Test
+    fun `the next page is asked for with the cursor of the one before`() = runTest {
+        router.answer = { Reply(200, pageJson(listOf(sessionJson()), next = "c2")) }
+        val sessions = agents.agent("docs").sessions
+        val filter = SessionFilter.ProjectId("a")
+
+        val first = sessions.query(filter = filter, limit = 20)
+        sessions.query(filter = filter, limit = 20, cursor = first.nextCursor)
+
+        val (opening, following) = router.requests.map { it.body }
+        assertEquals("""{"filter":{"agent":{"${'$'}eq":"docs"},"project_id":{"${'$'}eq":"a"}},"limit":20}""", opening)
+        assertEquals(
+            """{"cursor":"c2","filter":{"agent":{"${'$'}eq":"docs"},"project_id":{"${'$'}eq":"a"}},"limit":20}""",
+            following,
+        )
     }
 
     @Test
@@ -372,6 +441,66 @@ class VisionAgentsTest {
         assertEquals("""{"filter":{}}""", router.requests[1].body)
         assertFalse(found.hasMore)
         assertNull(found.nextCursor)
+    }
+
+    @Test
+    fun `a search within a project sets the words beside the filter, and pages`() = runTest {
+        router.answer = { Reply(200, EMPTY_PAGE) }
+        val sessions = agents.agent("docs").sessions
+
+        sessions.search("billing", filter = SessionFilter.ProjectId("a"))
+        sessions.search("billing", filter = SessionFilter.Or(SessionFilter.ProjectId("a"), SessionFilter.ProjectId("b")), limit = 10, cursor = "c1")
+
+        val (within, paged) = router.requests.map { it.body }
+        assertEquals(
+            """{"filter":{"agent":{"${'$'}eq":"docs"},"project_id":{"${'$'}eq":"a"},"text":{"${'$'}q":"billing"}}}""",
+            within,
+        )
+        assertEquals(
+            """{"cursor":"c1","filter":{"${'$'}or":[{"project_id":{"${'$'}eq":"a"}},{"project_id":{"${'$'}eq":"b"}}],""" +
+                """"agent":{"${'$'}eq":"docs"},"text":{"${'$'}q":"billing"}},"limit":10}""",
+            paged,
+        )
+    }
+
+    @Test
+    fun `a search refuses a filter that already holds words`() = runTest {
+        assertFailsWith<AgentsException.Configuration> {
+            agents.sessions.search("billing", filter = SessionFilter.Text("pricing"))
+        }
+        assertFailsWith<AgentsException.Configuration> {
+            agents.sessions.search("billing", filter = SessionFilter.And(SessionFilter.ProjectId("a"), SessionFilter.Text("pricing")))
+        }
+        assertTrue(router.requests.isEmpty())
+    }
+
+    @Test
+    fun `pinning and unpinning send only the pin, and a pinned session says when`() = runTest {
+        val pinned = sessionJson().dropLast(1) + ""","pinned_at":"2026-11-10T09:00:00Z"}"""
+        router.answer = { if (it.body.contains("true")) Reply(200, pinned) else Reply(200, sessionJson()) }
+
+        val held = agents.sessions.pin("s1")
+        val released = agents.sessions.unpin("s1")
+        agents.sessions.update("s1", title = "Billing", pinned = true)
+
+        val (pin, unpin, both) = router.requests
+        assertEquals("PATCH /v1/agents/sessions/s1", "${pin.method} ${pin.path}")
+        assertEquals("""{"pinned":true}""", pin.body)
+        assertEquals("PATCH /v1/agents/sessions/s1", "${unpin.method} ${unpin.path}")
+        assertEquals("""{"pinned":false}""", unpin.body)
+        assertEquals("""{"pinned":true,"title":"Billing"}""", both.body)
+        assertEquals(Instant.parse("2026-11-10T09:00:00Z"), held.pinnedAt)
+        assertNull(released.pinnedAt)
+    }
+
+    @Test
+    fun `a page of sessions carries which are pinned`() = runTest {
+        val pinned = sessionJson(id = "s2").dropLast(1) + ""","pinned_at":"2026-11-10T09:00:00Z"}"""
+        router.answer = { Reply(200, pageJson(listOf(pinned, sessionJson()))) }
+
+        val found = agents.sessions.query(sort = listOf(SessionSort(SessionSortField.Pinned)))
+
+        assertEquals(listOf(Instant.parse("2026-11-10T09:00:00Z"), null), found.items.map { it.pinnedAt })
     }
 
     @Test

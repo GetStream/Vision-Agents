@@ -80,6 +80,7 @@ class TransformersDetectionProcessor(
         classes: Optional list of class names to detect (e.g. ``["person"]``).
         device: ``"auto"``, ``"cuda"``, ``"mps"``, or ``"cpu"``.
         annotate: Draw bounding boxes on the output video. Default ``True``.
+        revision: Commit hash, tag or branch of the model repo to load.
     """
 
     name = "transformers_detection"
@@ -92,6 +93,7 @@ class TransformersDetectionProcessor(
         classes: Optional[list[str]] = None,
         device: DeviceType = "auto",
         annotate: bool = True,
+        revision: Optional[str] = None,
     ):
         super().__init__()
         if not 0 <= conf_threshold <= 1.0:
@@ -103,6 +105,7 @@ class TransformersDetectionProcessor(
         self.annotate = annotate
 
         self._device_config = device
+        self._revision = revision
         self._classes = classes or []
 
         self._resources: Optional[DetectionResources] = None
@@ -131,7 +134,7 @@ class TransformersDetectionProcessor(
     def _load_model_sync(self) -> DetectionResources:
         from transformers import AutoImageProcessor, AutoModelForObjectDetection
 
-        load_kwargs: dict[str, Any] = {}
+        load_kwargs: dict[str, Any] = {"revision": self._revision}
 
         if self._device_config == "auto":
             load_kwargs["device_map"] = "auto"
@@ -147,7 +150,9 @@ class TransformersDetectionProcessor(
 
         model.eval()
 
-        image_processor = AutoImageProcessor.from_pretrained(self.model_id)
+        image_processor = AutoImageProcessor.from_pretrained(
+            self.model_id, revision=self._revision
+        )
 
         first_param = next(model.parameters())
         return DetectionResources(

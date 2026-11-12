@@ -85,6 +85,10 @@ async def vlm(conversation):
 
 @skip_blockbuster
 class TestTransformersVLM:
+    async def test_remote_code_is_off_by_default(self, vlm):
+        """A VLM built with defaults does not run code from the model repo."""
+        assert vlm._trust_remote_code is False
+
     async def test_simple_response_with_frames(self, vlm, conversation):
         """Response with video frames passes images to processor and yields output."""
         for _ in range(3):

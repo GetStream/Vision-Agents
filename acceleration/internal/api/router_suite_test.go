@@ -765,6 +765,7 @@ func (s *RouterSuite) SetupSuite() {
 		VoiceLibrary:      voices.NewCatalogue(),
 		Dispatch:          s.dispatch,
 		Policies:          policies,
+		Documents:         s.documentReader(),
 		Connectors:        s.connectors,
 		// Connector consents and credentials seal under the suite's key.
 		ConnectorSecrets:   connectorSecrets,
@@ -2474,8 +2475,7 @@ func textSession(id *string) CreateSessionRequest {
 // inProject lists the sessions in one project, which is how a test sharing a fixture's app
 // finds its own.
 func inProject(project string) SessionQuery {
-	equals := Equals(project)
-	return SessionQuery{Filter: &SessionFilter{ProjectID: &equals}}
+	return SessionQuery{Filter: sessionFilter(map[string]any{"project_id": project})}
 }
 
 // ids is the ids of a list of sessions, in order.
@@ -2599,4 +2599,11 @@ func (s *RouterSuite) giveApp(customer string, app int64, key string) *chattest.
 	s.apps.mu.Unlock()
 	s.stream.Invalidate(customer)
 	return own
+}
+
+// documentReader reads the files sent with a question, closed with the suite.
+func (s *RouterSuite) documentReader() *extract.Extractor {
+	reader := NewDocumentReader(extract.Options{})
+	s.T().Cleanup(func() { _ = reader.Close() })
+	return reader
 }

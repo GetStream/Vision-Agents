@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents_core/stream_agents_core.dart';
 
 import 'device_tools.dart';
 
@@ -66,7 +66,7 @@ abstract final class Assistant {
   static const userId = 'juno-owner';
   static const userName = 'Alex';
 
-  static final agents = VisionAgents(
+  static final agents = StreamAgents(
     url: routerUrl,
     customerId: customerId,
     apiKey: streamApiKey,

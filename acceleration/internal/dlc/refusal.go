@@ -53,3 +53,14 @@ func RefusalResets(code string) bool {
 	}
 	return false
 }
+
+// TierLimit is which of its organization's tier limits refused err: country, per_day,
+// recipients_per_day or concurrent. It is "" for any other error, a refusal of the sandbox or of
+// an opt-out among them.
+func TierLimit(err error) string {
+	switch code := RefusalCode(err); code {
+	case codeCountry, codePerDay, codeRecipientsPerDay, codeConcurrent:
+		return code
+	}
+	return ""
+}

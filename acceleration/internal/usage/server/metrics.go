@@ -51,7 +51,8 @@ var (
 		Buckets: prometheus.ExponentialBuckets(0.001, 2, 12),
 	})
 	// EventLag is how long after it happened a router's event was recorded. Other producers'
-	// events are left out: rollups and reconcile jobs ship late by design.
+	// events are left out: rollups and the router's usage jobs (job/...) date their rows to the
+	// period they bill, so they ship late by design.
 	EventLag = promauto.NewHistogram(prometheus.HistogramOpts{
 		Name:    "usage_event_lag_seconds",
 		Help:    "received_at - occurred_at of each event recorded from a router (source router/...).",

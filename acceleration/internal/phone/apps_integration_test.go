@@ -94,8 +94,9 @@ func (s *AppsSuite) serviceAt(publicURL string) *Service {
 	return service
 }
 
-// aNumber is a number nobody in the suite's database holds yet.
-func aNumber() string { return fmt.Sprintf("+1512%010d", rand.Int64N(10_000_000_000)) }
+// aNumber is a number nobody in the suite's database holds yet: a well-formed Austin number,
+// since a number in no country is not sold.
+func aNumber() string { return fmt.Sprintf("+1512%d%06d", 2+rand.Int64N(8), rand.Int64N(1_000_000)) }
 
 func (s *AppsSuite) config() Config {
 	config, err := DefaultConfig()
@@ -842,6 +843,17 @@ func (s *AppsSuite) TestBuyingANumberPointsTheCallHookOfTheAppItIsBoughtIn() {
 	s.Empty(s.deployment.EventHooks(s.deployment.Key))
 }
 
+func (s *AppsSuite) TestABuyOutsideTheUSAndCanadaLeavesTheAppsHookAlone() {
+	s.ownApp()
+	purchase := s.purchase()
+	purchase.E164 = "+18765551234"
+
+	_, err := s.service.Buy(s.ctx, purchase)
+
+	s.ErrorIs(err, ErrInvalid)
+	s.Empty(s.own.EventHooks(s.own.Key), "a refused buy changes nothing in the customer's app")
+}
+
 func (s *AppsSuite) TestABuyWhoseHookCannotBePointedIsNotPaidFor() {
 	s.ownApp()
 	s.service = s.serviceAt("ftp://router.example")
@@ -943,7 +955,7 @@ func (s *AppsSuite) TestAnotherFormOfANumberReachesNothingAtTheVendor() {
 func (s *AppsSuite) TestAnAppStreamBlockedCannotBuyANumber() {
 	s.apps.block(s.customer)
 
-	_, err := s.service.Buy(s.ctx, Purchase{Vendor: s.vendor.vendor, E164: "+15550002222", Owner: routing.Owner{CustomerID: s.customer}})
+	_, err := s.service.Buy(s.ctx, Purchase{Vendor: s.vendor.vendor, E164: aNumber(), Owner: routing.Owner{CustomerID: s.customer}})
 
 	s.ErrorIs(err, streamapp.ErrStreamAppDisconnected)
 }

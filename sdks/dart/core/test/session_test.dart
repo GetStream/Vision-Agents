@@ -3,19 +3,19 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:test/test.dart';
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents_core/stream_agents_core.dart';
 
 import 'support/fixtures.dart';
 import 'support/router.dart';
 
 void main() {
   late TestRouter router;
-  late VisionAgents agents;
+  late StreamAgents agents;
 
   setUp(() async {
     router = await TestRouter.start();
     router.answer('POST /v1/agents/sessions', Answer(201, sessionJson()));
-    agents = VisionAgents(url: router.url, customerId: 'acme');
+    agents = StreamAgents(url: router.url, customerId: 'acme');
   });
 
   tearDown(() async {
@@ -40,7 +40,7 @@ void main() {
     });
 
     test('opens the socket with a key as the proxy reads a device\'s credential', () async {
-      final keyed = VisionAgents(url: router.url, apiKey: 'key', token: () async => 'tok');
+      final keyed = StreamAgents(url: router.url, apiKey: 'key', token: () async => 'tok');
       final chat = await keyed.chat();
 
       expect(router.upgrades.single.query, {
@@ -1025,6 +1025,28 @@ void main() {
       expect(renamed.title, 'Billing');
       expect(chat.session.title, 'Billing');
       expect(chat.session.description, 'Refund');
+      expect(chat.isConnected, isTrue);
+      await chat.close();
+    });
+
+    test('pinning and unpinning refresh the session and keep the conversation open', () async {
+      router.answerInTurn('PATCH /v1/agents/sessions/s1', [
+        Answer(200, {...sessionJson(), 'pinned_at': '2026-11-11T10:00:00Z'}),
+        Answer(200, sessionJson()),
+      ]);
+      final chat = await agents.chat();
+
+      final pinned = await chat.pin();
+      final pin = router.last('PATCH /v1/agents/sessions/s1').json;
+      final during = chat.session.pinnedAt;
+      final unpinned = await chat.unpin();
+
+      expect(pin, {'pinned': true});
+      expect(pinned.pinnedAt, DateTime.utc(2026, 11, 11, 10));
+      expect(during, DateTime.utc(2026, 11, 11, 10));
+      expect(router.last('PATCH /v1/agents/sessions/s1').json, {'pinned': false});
+      expect(unpinned.pinnedAt, isNull);
+      expect(chat.session.pinnedAt, isNull);
       expect(chat.isConnected, isTrue);
       await chat.close();
     });

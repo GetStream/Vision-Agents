@@ -97,7 +97,7 @@ final class AgentSession {
   /// Takes pictures with this device's camera when the agent asks to see, or null to leave
   /// the asking to somebody else.
   ///
-  /// Set by `vision_agents_rtc` while the call's camera is on, and not for apps. It is called
+  /// Set by `stream_agents_rtc` while the call's camera is on, and not for apps. It is called
   /// with the moment the question was taken and how many pictures are wanted, 1 to 8, and
   /// returns JPEGs with when each was taken. None at all tells the agent the camera has shown
   /// nothing recent.
@@ -255,16 +255,28 @@ final class AgentSession {
   /// after this if it should not.
   Future<void> rewind(String responseId) => responses.rewind(responseId);
 
-  /// Renames or relabels this conversation, and returns [session] as it now is.
+  /// Renames, relabels, pins or unpins this conversation, and returns [session] as it now is.
   ///
   /// A field left null is left as it is. [custom] replaces the labels whole, and an empty map
-  /// clears them.
+  /// clears them. [pinned] true pins it and false unpins it.
   Future<Session> update({
     String? title,
     String? description,
     Map<String, Object?>? custom,
-  }) async =>
-      _session = await _sessions.update(id, title: title, description: description, custom: custom);
+    bool? pinned,
+  }) async => _session = await _sessions.update(
+    id,
+    title: title,
+    description: description,
+    custom: custom,
+    pinned: pinned,
+  );
+
+  /// Pins this conversation, and returns [session] as it now is, with [Session.pinnedAt] set.
+  Future<Session> pin() => update(pinned: true);
+
+  /// Unpins this conversation, and returns [session] as it now is.
+  Future<Session> unpin() => update(pinned: false);
 
   /// Continues this conversation as a new session, leaving this one as it was.
   ///

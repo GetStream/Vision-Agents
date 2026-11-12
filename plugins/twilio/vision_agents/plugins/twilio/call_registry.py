@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Coroutine, Optional, TYPE_CHECKING, TypeVar
 
+from vision_agents.core.utils.text import mask_phone_number
+
 if TYPE_CHECKING:
     from .media_stream import TwilioMediaStream
     from .models import CallWebhookInput
@@ -142,7 +144,10 @@ class TwilioCallRegistry:
 
         self._calls[call_id] = call
         logger.info(
-            f"TwilioCallRegistry: Created call {call.call_sid} from {call.from_number} to {call.to_number}"
+            "TwilioCallRegistry: Created call %s from %s to %s",
+            call.call_sid,
+            mask_phone_number(call.from_number),
+            mask_phone_number(call.to_number),
         )
         return call
 

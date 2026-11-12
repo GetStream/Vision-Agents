@@ -149,15 +149,29 @@ public final class AgentSession: ObservableObject {
         return session
     }
 
-    /// Renames or relabels this conversation. Nil leaves a field as it is, and `custom`
-    /// replaces the labels whole.
+    /// Renames, relabels, pins or unpins this conversation. Nil leaves a field as it is,
+    /// `custom` replaces the labels whole, and `pinned` true pins it and false unpins.
     @discardableResult
     public func update(
-        title: String? = nil, description: String? = nil, custom: [String: RawJSON]? = nil
+        title: String? = nil, description: String? = nil, custom: [String: RawJSON]? = nil,
+        pinned: Bool? = nil
     ) async throws -> Session {
         session = try await StreamAgents(backend: backend).sessions.update(
-            session.id, title: title, description: description, custom: custom)
+            session.id, title: title, description: description, custom: custom, pinned: pinned)
         return session
+    }
+
+    /// Pins this conversation, which `SessionSort.pinned` lists first. `session.pinnedAt` then
+    /// says when.
+    @discardableResult
+    public func pin() async throws -> Session {
+        try await update(pinned: true)
+    }
+
+    /// Unpins this conversation.
+    @discardableResult
+    public func unpin() async throws -> Session {
+        try await update(pinned: false)
     }
 
     /// Continues this conversation as a new session held in writing, leaving this one as it

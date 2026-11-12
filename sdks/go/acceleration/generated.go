@@ -2587,12 +2587,15 @@ func (e SessionSettingsRequestVerbosity) Valid() bool {
 // Defines values for SessionSortDirection.
 const (
 	Minus1 SessionSortDirection = -1
+	N1     SessionSortDirection = 1
 )
 
 // Valid indicates whether the value is a known member of the SessionSortDirection enum.
 func (e SessionSortDirection) Valid() bool {
 	switch e {
 	case Minus1:
+		return true
+	case N1:
 		return true
 	default:
 		return false
@@ -2601,16 +2604,22 @@ func (e SessionSortDirection) Valid() bool {
 
 // Defines values for SessionSortField.
 const (
-	Relevance SessionSortField = "relevance"
-	UpdatedAt SessionSortField = "updated_at"
+	LastMessageAt SessionSortField = "last_message_at"
+	Pinned        SessionSortField = "pinned"
+	Relevance     SessionSortField = "relevance"
+	ReviewScore   SessionSortField = "review_score"
 )
 
 // Valid indicates whether the value is a known member of the SessionSortField enum.
 func (e SessionSortField) Valid() bool {
 	switch e {
+	case LastMessageAt:
+		return true
+	case Pinned:
+		return true
 	case Relevance:
 		return true
-	case UpdatedAt:
+	case ReviewScore:
 		return true
 	default:
 		return false
@@ -4939,6 +4948,9 @@ type ChildAgent struct {
 	// Description What the model is told the agent does, which is the whole of how it decides when to call it.
 	Description *string `json:"description,omitempty"`
 
+	// MaxToolRounds The reply to a tool result, counted since the agent was handed its input, that is offered no more tools and made to answer from what it has. Zero is the default of 8; a negative number never withdraws them, for an agent that chains many lookups.
+	MaxToolRounds *int64 `json:"max_tool_rounds,omitempty"`
+
 	// TimeoutMs How long one call may take, two minutes when left out. A call never outlasts the run that made it: it gets this or what is left of the run, whichever is less. A call that runs out of time, or whose agent fails, is answered to the model as a failed tool call, and the run goes on.
 	TimeoutMs *int64 `json:"timeout_ms,omitempty"`
 
@@ -5844,7 +5856,10 @@ type CreateOptOutRequestSource string
 
 // CreateResponseRequest defines model for CreateResponseRequest.
 type CreateResponseRequest struct {
-	Audio  *AudioSource   `json:"audio,omitempty"`
+	Audio *AudioSource `json:"audio,omitempty"`
+
+	// Files A file to answer questions about: a PDF or a Word document. The router reads it as text before the turn starts, and the agent answers from it on this turn and on every turn of the conversation after it, including a conversation carried on later or forked by the same person. In a conversation kept in Stream Chat the person's message shows the file. At most 100 pages, and at most 120,000 characters of text together with the files the conversation already holds, or a quarter of what the model reads at once. Only in a person's own conversation: refused in a thread, in a channel others write in, in a session a worker opened for a channel's message, and by a speech-to-speech session. Not with a voice note. Refused before any turn starts when it cannot be read, is too large, or reads as a prompt injection under the organization's policy.
+	Files  *[]FileSource  `json:"files,omitempty"`
 	Images *[]ImageSource `json:"images,omitempty"`
 
 	// MaxOutputTokens Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's.
@@ -6405,13 +6420,30 @@ type Equals1 struct {
 	Eq string `json:"$eq"`
 }
 
+// EqualsOrIn Matches one value exactly, written "value" or {"$eq": "value"}, or any of up to 50 values, written {"$in": ["a", "b"]}. An object holds one of $eq and $in.
+type EqualsOrIn struct {
+	union json.RawMessage
+}
+
+// EqualsOrIn0 defines model for EqualsOrIn.0.
+type EqualsOrIn0 = string
+
+// EqualsOrIn1 defines model for EqualsOrIn.1.
+type EqualsOrIn1 struct {
+	Eq *string   `json:"$eq,omitempty"`
+	In *[]string `json:"$in,omitempty"`
+}
+
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), tier_limit_reached (the organization's tier limits refuse the work, and limit says which: a 403 for a call or a transfer, to a country the tier does not reach, past its minutes or recipients of the day, or past its calls at once; a 400 for an agent config whose sandbox is bigger or more open than the organization's sandbox limits allow. The message names the tier and the limit), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), document_too_large (a 413: a file sent with a response has more pages or text than one may, alone or with the files the conversation already holds, and the message names the limit), document_unreadable (a 400: a file sent with a response could not be read, such as one with a password, one that is damaged or one with no text in it, which retrying the same file does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
 	DocUrl string `json:"doc_url"`
+
+	// Limit Which limit refused the work, present with tier_limit_reached only: country, per_day, recipients_per_day or concurrent for a call or a transfer, sandbox_network, sandbox_cpu, sandbox_memory_gb or sandbox_disk_gb for an agent config's sandbox. More may be added.
+	Limit *string `json:"limit,omitempty"`
 
 	// Message What went wrong, for a person to read. Its wording may change; branch on code.
 	Message string `json:"message"`
@@ -6427,6 +6459,15 @@ type ErrorResponse struct {
 
 // ErrorType The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, payment_required 402, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
 type ErrorType string
+
+// FileSource A file sent with a question. The router reads it as text once, and the agent answers from it on this turn and every turn of the conversation after it.
+type FileSource struct {
+	// Name What the file is called, shown on the person's message and to the model. Left out, the last part of the URL's path, or document for a data URI.
+	Name *string `json:"name,omitempty"`
+
+	// Url Public HTTP(S) URL or base64 data URI, such as data:application/pdf;base64,.... A PDF or a Word document (DOCX or DOC), told apart by its bytes. At most 20 MiB fetched, or 8 MiB as a data URI. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+	Url string `json:"url"`
+}
 
 // FloorControl The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole.
 type FloorControl struct {
@@ -8413,6 +8454,23 @@ type ReviewQueue struct {
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
+// ReviewScoreMatch Matches a review score from 1 to 5: a number, which is short for $eq, or an object of $eq, $gt, $gte, $lt and $lte, every one of which has to hold.
+type ReviewScoreMatch struct {
+	union json.RawMessage
+}
+
+// ReviewScoreMatch0 defines model for ReviewScoreMatch.0.
+type ReviewScoreMatch0 = int
+
+// ReviewScoreMatch1 defines model for ReviewScoreMatch.1.
+type ReviewScoreMatch1 struct {
+	Eq  *int `json:"$eq,omitempty"`
+	Gt  *int `json:"$gt,omitempty"`
+	Gte *int `json:"$gte,omitempty"`
+	Lt  *int `json:"$lt,omitempty"`
+	Lte *int `json:"$lte,omitempty"`
+}
+
 // ReviewUseCaseRequest defines model for ReviewUseCaseRequest.
 type ReviewUseCaseRequest struct {
 	// Decision approve sends the use case to the vendor; request_changes hands it back to the app to edit; reject ends it.
@@ -8662,7 +8720,7 @@ type ScheduledTaskRun struct {
 	// DeliveredTo Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands.
 	DeliveredTo string `json:"delivered_to"`
 
-	// Error Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again; that call may have carried the task out, so the run does not count toward the five failures in a row), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached, spend_limit_reached or user_limit_reached, none of which is tried again, or spend_check_unavailable (the router could not check what the organization has spent, so the run is tried again); on a missed run, task_paused (a run's time came while its task was paused). The full error is in the router's logs. Null otherwise.
+	// Error Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again; that call may have carried the task out, so the run does not count toward the five failures in a row), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), tier_limit_reached (the organization's tier limits refuse the call or the text: tried again for a limit of the day or of calls at once, not for a country), or, refused for money, account_suspended, insufficient_credits, system_limit_reached, spend_limit_reached or user_limit_reached, none of which is tried again, or spend_check_unavailable (the router could not check what the organization has spent, so the run is tried again); on a missed run, task_paused (a run's time came while its task was paused). The full error is in the router's logs. Null otherwise.
 	Error      *string    `json:"error"`
 	FinishedAt *time.Time `json:"finished_at"`
 	Id         string     `json:"id"`
@@ -8867,7 +8925,10 @@ type Session struct {
 	// ModelOverwrites What to change about the models for one session, over whatever its agent config decided.
 	// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent. A backend sets one session's instructions with the instructions of CreateSessionRequest instead, which a device may not send.
 	ModelOverwrites *ModelOverwrites `json:"model_overwrites,omitempty"`
-	ProjectId       *string          `json:"project_id,omitempty"`
+
+	// PinnedAt When the session was pinned. Absent for one that is not pinned.
+	PinnedAt  *time.Time `json:"pinned_at,omitempty"`
+	ProjectId *string    `json:"project_id,omitempty"`
 
 	// ReviewNotes Why the review scored the conversation as it did. Read by a backend only.
 	ReviewNotes *string `json:"review_notes,omitempty"`
@@ -8956,32 +9017,24 @@ type SessionEndReason string
 // SessionEndStage How far a session had got when it ended: ringing, before a person was on the line of a phone call; conversation, once the session was open.
 type SessionEndStage string
 
-// SessionFilter Which sessions to list. A field not listed here is refused rather than ignored.
+// SessionFilter Which sessions to list. The keys of one object are ANDed. $and and $or each take 1 to 10 filters and nest up to 3 deep; a whole filter holds at most 30 field conditions. An empty filter lists every session the caller may see. Any other key, and any other operator, is refused with a 400 that names it and lists the fields that can be filtered.
 type SessionFilter struct {
+	// And Every one of these filters holds.
+	And *[]SessionFilter `json:"$and,omitempty"`
+
+	// Or At least one of these filters holds. It chooses among the sessions the caller may see and never adds to them. text and user_id are refused inside it.
+	Or *[]SessionFilter `json:"$or,omitempty"`
+
 	// Agent Matches one value exactly: "value" is short for {"$eq": "value"}.
 	Agent *Equals `json:"agent,omitempty"`
 
-	// AgentId Matches one value exactly: "value" is short for {"$eq": "value"}.
-	AgentId *Equals `json:"agent_id,omitempty"`
+	// ProjectId Matches one value exactly, written "value" or {"$eq": "value"}, or any of up to 50 values, written {"$in": ["a", "b"]}. An object holds one of $eq and $in.
+	ProjectId *EqualsOrIn `json:"project_id,omitempty"`
 
-	// ConfigId Matches one value exactly: "value" is short for {"$eq": "value"}.
-	ConfigId  *Equals    `json:"config_id,omitempty"`
-	CreatedAt *TimeRange `json:"created_at,omitempty"`
+	// ReviewScore Matches a review score from 1 to 5: a number, which is short for $eq, or an object of $eq, $gt, $gte, $lt and $lte, every one of which has to hold.
+	ReviewScore *ReviewScoreMatch `json:"review_score,omitempty"`
 
-	// Custom The session's custom object holds every one of these pairs, which is how a caller finds again what it labelled.
-	Custom *map[string]string `json:"custom,omitempty"`
-
-	// Modality Matches one value exactly: "value" is short for {"$eq": "value"}.
-	Modality *Equals `json:"modality,omitempty"`
-
-	// ProjectId Matches one value exactly: "value" is short for {"$eq": "value"}.
-	ProjectId *Equals `json:"project_id,omitempty"`
-
-	// State Matches one value exactly: "value" is short for {"$eq": "value"}.
-	State *Equals `json:"state,omitempty"`
-
-	// Team Matches one value exactly: "value" is short for {"$eq": "value"}.
-	Team *Equals    `json:"team,omitempty"`
+	// Text A full-text match, Stream's $q.
 	Text *TextMatch `json:"text,omitempty"`
 
 	// UserId Matches one value exactly: "value" is short for {"$eq": "value"}.
@@ -9035,13 +9088,13 @@ type SessionQuery struct {
 	// Cursor The next_cursor of the previous page, sent with the same filter and sort. Omitted is the first page.
 	Cursor *string `json:"cursor,omitempty"`
 
-	// Filter Which sessions to list. A field not listed here is refused rather than ignored.
+	// Filter Which sessions to list. The keys of one object are ANDed. $and and $or each take 1 to 10 filters and nest up to 3 deep; a whole filter holds at most 30 field conditions. An empty filter lists every session the caller may see. Any other key, and any other operator, is refused with a 400 that names it and lists the fields that can be filtered.
 	Filter *SessionFilter `json:"filter,omitempty"`
 
 	// Limit Up to 200. Omitted is 25.
 	Limit *int64 `json:"limit,omitempty"`
 
-	// Sort Omitted is updated_at, or relevance for a text search.
+	// Sort Omitted is last_message_at descending, or relevance for a text search. One of: last_message_at; pinned, then last_message_at, which lists the pinned sessions first; review_score, for a server-side caller; relevance, for a text search and nothing else.
 	Sort *[]SessionSort `json:"sort,omitempty"`
 }
 
@@ -9084,17 +9137,17 @@ type SessionSettingsRequestVerbosity string
 
 // SessionSort defines model for SessionSort.
 type SessionSort struct {
-	// Direction -1, descending. Ascending is not offered.
+	// Direction -1 is descending and 1 ascending. pinned and relevance only sort descending.
 	Direction *SessionSortDirection `json:"direction,omitempty"`
 
-	// Field updated_at is the most recently active first. relevance is the best match first, and only sorts a text search.
+	// Field last_message_at is when the agent last answered, or when the session began if it has not. pinned lists the pinned sessions first: it sorts descending only, comes first, and is followed by last_message_at, descending when left out. review_score is the review's score, sessions without one last either way, and is a server-side caller's only. relevance is the best match first, and is the one sort of a text search.
 	Field SessionSortField `json:"field"`
 }
 
-// SessionSortDirection -1, descending. Ascending is not offered.
+// SessionSortDirection -1 is descending and 1 ascending. pinned and relevance only sort descending.
 type SessionSortDirection int64
 
-// SessionSortField updated_at is the most recently active first. relevance is the best match first, and only sorts a text search.
+// SessionSortField last_message_at is when the agent last answered, or when the session began if it has not. pinned lists the pinned sessions first: it sorts descending only, comes first, and is followed by last_message_at, descending when left out. review_score is the review's score, sessions without one last either way, and is a server-side caller's only. relevance is the best match first, and is the one sort of a text search.
 type SessionSortField string
 
 // SessionState Whether the agent is still in the call.
@@ -10021,7 +10074,7 @@ type TextContentPart struct {
 // TextContentPartType defines model for TextContentPart.Type.
 type TextContentPartType string
 
-// TextMatch defines model for TextMatch.
+// TextMatch A full-text match, Stream's $q.
 type TextMatch struct {
 	// Q Quoted phrases and bare words both work, and punctuation is taken rather than refused.
 	Q string `json:"$q"`
@@ -10029,15 +10082,6 @@ type TextMatch struct {
 
 // Tier What the model optimises for.
 type Tier string
-
-// TimeRange defines model for TimeRange.
-type TimeRange struct {
-	// Gte At or after this RFC3339 time.
-	Gte *time.Time `json:"$gte,omitempty"`
-
-	// Lt Strictly before this RFC3339 time.
-	Lt *time.Time `json:"$lt,omitempty"`
-}
 
 // TimelineEntry defines model for TimelineEntry.
 type TimelineEntry struct {
@@ -10440,7 +10484,7 @@ type UpdateScheduledTaskRequest struct {
 	Title *string `json:"title,omitempty"`
 }
 
-// UpdateSessionRequest What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller.
+// UpdateSessionRequest What to change about one session. A field left out is left as it is. Title, description, custom and pinned can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller.
 type UpdateSessionRequest struct {
 	// Custom Replaces the caller's labels whole. An empty object clears them.
 	Custom      *map[string]interface{} `json:"custom,omitempty"`
@@ -10449,6 +10493,9 @@ type UpdateSessionRequest struct {
 	// Llm The conversation model, a provider/model or a capability shortcut.
 	Llm             *string `json:"llm,omitempty"`
 	MaxOutputTokens *int    `json:"max_output_tokens,omitempty"`
+
+	// Pinned true pins the session and false unpins it. Pinning one that is already pinned keeps the time it was first pinned. A pin changes nothing else about the session, its place in a last_message_at sort included.
+	Pinned *bool `json:"pinned,omitempty"`
 
 	// Sts A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
 	Sts         *string                        `json:"sts,omitempty"`
@@ -11344,7 +11391,7 @@ type SearchPhoneNumbersParams struct {
 	// Vendor One vendor to search. Absent searches every usable vendor.
 	Vendor *string `form:"vendor,omitempty" json:"vendor,omitempty"`
 
-	// Country ISO 3166-1 alpha-2 country code.
+	// Country ISO 3166-1 alpha-2 country code. Numbers are sold only in the US (US) and Canada (CA); any other country is refused.
 	Country  string  `form:"country" json:"country"`
 	AreaCode *string `form:"area_code,omitempty" json:"area_code,omitempty"`
 
@@ -12135,6 +12182,68 @@ func (t *Equals) UnmarshalJSON(b []byte) error {
 	return err
 }
 
+// AsEqualsOrIn0 returns the union data inside the EqualsOrIn as a EqualsOrIn0
+func (t EqualsOrIn) AsEqualsOrIn0() (EqualsOrIn0, error) {
+	var body EqualsOrIn0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromEqualsOrIn0 overwrites any union data inside the EqualsOrIn as the provided EqualsOrIn0
+func (t *EqualsOrIn) FromEqualsOrIn0(v EqualsOrIn0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeEqualsOrIn0 performs a merge with any union data inside the EqualsOrIn, using the provided EqualsOrIn0
+func (t *EqualsOrIn) MergeEqualsOrIn0(v EqualsOrIn0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsEqualsOrIn1 returns the union data inside the EqualsOrIn as a EqualsOrIn1
+func (t EqualsOrIn) AsEqualsOrIn1() (EqualsOrIn1, error) {
+	var body EqualsOrIn1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromEqualsOrIn1 overwrites any union data inside the EqualsOrIn as the provided EqualsOrIn1
+func (t *EqualsOrIn) FromEqualsOrIn1(v EqualsOrIn1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeEqualsOrIn1 performs a merge with any union data inside the EqualsOrIn, using the provided EqualsOrIn1
+func (t *EqualsOrIn) MergeEqualsOrIn1(v EqualsOrIn1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t EqualsOrIn) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *EqualsOrIn) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
 // AsMessageContent0 returns the union data inside the MessageContent as a MessageContent0
 func (t MessageContent) AsMessageContent0() (MessageContent0, error) {
 	var body MessageContent0
@@ -12193,6 +12302,68 @@ func (t MessageContent) MarshalJSON() ([]byte, error) {
 }
 
 func (t *MessageContent) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsReviewScoreMatch0 returns the union data inside the ReviewScoreMatch as a ReviewScoreMatch0
+func (t ReviewScoreMatch) AsReviewScoreMatch0() (ReviewScoreMatch0, error) {
+	var body ReviewScoreMatch0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromReviewScoreMatch0 overwrites any union data inside the ReviewScoreMatch as the provided ReviewScoreMatch0
+func (t *ReviewScoreMatch) FromReviewScoreMatch0(v ReviewScoreMatch0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeReviewScoreMatch0 performs a merge with any union data inside the ReviewScoreMatch, using the provided ReviewScoreMatch0
+func (t *ReviewScoreMatch) MergeReviewScoreMatch0(v ReviewScoreMatch0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsReviewScoreMatch1 returns the union data inside the ReviewScoreMatch as a ReviewScoreMatch1
+func (t ReviewScoreMatch) AsReviewScoreMatch1() (ReviewScoreMatch1, error) {
+	var body ReviewScoreMatch1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromReviewScoreMatch1 overwrites any union data inside the ReviewScoreMatch as the provided ReviewScoreMatch1
+func (t *ReviewScoreMatch) FromReviewScoreMatch1(v ReviewScoreMatch1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeReviewScoreMatch1 performs a merge with any union data inside the ReviewScoreMatch, using the provided ReviewScoreMatch1
+func (t *ReviewScoreMatch) MergeReviewScoreMatch1(v ReviewScoreMatch1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ReviewScoreMatch) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ReviewScoreMatch) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
@@ -13688,15 +13859,47 @@ type ClientInterface interface {
 
 	// QuerySessionsWithBody List or search the caller's sessions
 	//
-	// Three queries are supported, each over the sessions still running and the ones that ended:
+	// Lists the caller's sessions, the ones still running and the ones that ended, narrowed by a filter and in the order of a sort.
 	//
-	// - every session, sorted by `updated_at`
-	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
-	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+	// A filter is an object of fields. The keys of one object are ANDed, and `$and` and `$or` each take a list of filters, so conditions combine and nest:
 	//
-	// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `team`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	// - `project_id`: a value, `{"$eq": value}` or `{"$in": [values]}`
+	// - `agent`: a value or `{"$eq": value}`, the agent name the session was opened against
+	// - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
+	// - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
+	// - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
 	//
-	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+	// Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
+	//
+	// Every session, pinned first:
+	//
+	// ```json
+	// {"sort": [{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": -1}]}
+	// ```
+	//
+	// One agent's sessions in either of two projects:
+	//
+	// ```json
+	// {"filter": {"agent": "support", "$or": [{"project_id": "health"}, {"project_id": "billing"}]}}
+	// ```
+	//
+	// A search within one project:
+	//
+	// ```json
+	// {"filter": {"text": {"$q": "refund"}, "project_id": "billing"}}
+	// ```
+	//
+	// A backend's badly reviewed sessions and everything in two projects, the lowest score first:
+	//
+	// ```json
+	// {"filter": {"$or": [{"review_score": {"$lte": 2}}, {"project_id": {"$in": ["vip", "pilot"]}}]}, "sort": [{"field": "review_score", "direction": 1}]}
+	// ```
+	//
+	// `sort` is `last_message_at` (the default, descending: when the agent last answered, or when the session began), `pinned` followed by `last_message_at`, `review_score` for a server-side caller, with the sessions nobody reviewed last, or `relevance`, which is how a `text` search is sorted and the only way it is. A session is pinned and unpinned by updating it.
+	//
+	// A backend gets its customer's sessions; an end user gets their own, whatever the filter says: an `$or` chooses among the sessions the caller may see and never adds to them. An anonymous caller who named nobody gets none.
+	//
+	// The search reads what a person named the conversation, not what was said in it. Pages are followed by `next_cursor`, sent back with the same filter and sort. There is no total: counting every conversation costs more than the page.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -13705,15 +13908,47 @@ type ClientInterface interface {
 
 	// QuerySessions List or search the caller's sessions
 	//
-	// Three queries are supported, each over the sessions still running and the ones that ended:
+	// Lists the caller's sessions, the ones still running and the ones that ended, narrowed by a filter and in the order of a sort.
 	//
-	// - every session, sorted by `updated_at`
-	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
-	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+	// A filter is an object of fields. The keys of one object are ANDed, and `$and` and `$or` each take a list of filters, so conditions combine and nest:
 	//
-	// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `team`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	// - `project_id`: a value, `{"$eq": value}` or `{"$in": [values]}`
+	// - `agent`: a value or `{"$eq": value}`, the agent name the session was opened against
+	// - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
+	// - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
+	// - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
 	//
-	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+	// Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
+	//
+	// Every session, pinned first:
+	//
+	// ```json
+	// {"sort": [{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": -1}]}
+	// ```
+	//
+	// One agent's sessions in either of two projects:
+	//
+	// ```json
+	// {"filter": {"agent": "support", "$or": [{"project_id": "health"}, {"project_id": "billing"}]}}
+	// ```
+	//
+	// A search within one project:
+	//
+	// ```json
+	// {"filter": {"text": {"$q": "refund"}, "project_id": "billing"}}
+	// ```
+	//
+	// A backend's badly reviewed sessions and everything in two projects, the lowest score first:
+	//
+	// ```json
+	// {"filter": {"$or": [{"review_score": {"$lte": 2}}, {"project_id": {"$in": ["vip", "pilot"]}}]}, "sort": [{"field": "review_score", "direction": 1}]}
+	// ```
+	//
+	// `sort` is `last_message_at` (the default, descending: when the agent last answered, or when the session began), `pinned` followed by `last_message_at`, `review_score` for a server-side caller, with the sessions nobody reviewed last, or `relevance`, which is how a `text` search is sorted and the only way it is. A session is pinned and unpinned by updating it.
+	//
+	// A backend gets its customer's sessions; an end user gets their own, whatever the filter says: an `$or` chooses among the sessions the caller may see and never adds to them. An anonymous caller who named nobody gets none.
+	//
+	// The search reads what a person named the conversation, not what was said in it. Pages are followed by `next_cursor`, sent back with the same filter and sort. There is no total: counting every conversation costs more than the page.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -13743,7 +13978,7 @@ type ClientInterface interface {
 	//
 	// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 	//
-	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	// An end user's device may change a session's title, description and custom, and pin or unpin it, so a person can tidy up their own conversations. `pinned` sets the session's `pinned_at`, which a query sorted by `pinned` lists first; it moves nothing else, and an incognito session, which nothing records, cannot be pinned: 400. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 	//
 	// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 	//
@@ -13758,7 +13993,7 @@ type ClientInterface interface {
 	//
 	// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 	//
-	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	// An end user's device may change a session's title, description and custom, and pin or unpin it, so a person can tidy up their own conversations. `pinned` sets the session's `pinned_at`, which a query sorted by `pinned` lists first; it moves nothing else, and an incognito session, which nothing records, cannot be pinned: 400. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 	//
 	// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 	//
@@ -14631,12 +14866,16 @@ type ClientInterface interface {
 
 	// BuyPhoneNumberWithBody Buy a number, which starts its monthly charge
 	//
+	// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/phone/numbers (the `BuyPhoneNumber` operationId).
 	BuyPhoneNumberWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// BuyPhoneNumber Buy a number, which starts its monthly charge
+	//
+	// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -18294,15 +18533,47 @@ func (c *Client) CreateSession(ctx context.Context, body CreateSessionJSONReques
 
 // QuerySessionsWithBody List or search the caller's sessions
 //
-// Three queries are supported, each over the sessions still running and the ones that ended:
+// Lists the caller's sessions, the ones still running and the ones that ended, narrowed by a filter and in the order of a sort.
 //
-// - every session, sorted by `updated_at`
-// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
-// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+// A filter is an object of fields. The keys of one object are ANDed, and `$and` and `$or` each take a list of filters, so conditions combine and nest:
 //
-// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `team`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+// - `project_id`: a value, `{"$eq": value}` or `{"$in": [values]}`
+// - `agent`: a value or `{"$eq": value}`, the agent name the session was opened against
+// - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
+// - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
+// - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
 //
-// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+// Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
+//
+// Every session, pinned first:
+//
+// ```json
+// {"sort": [{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": -1}]}
+// ```
+//
+// One agent's sessions in either of two projects:
+//
+// ```json
+// {"filter": {"agent": "support", "$or": [{"project_id": "health"}, {"project_id": "billing"}]}}
+// ```
+//
+// A search within one project:
+//
+// ```json
+// {"filter": {"text": {"$q": "refund"}, "project_id": "billing"}}
+// ```
+//
+// A backend's badly reviewed sessions and everything in two projects, the lowest score first:
+//
+// ```json
+// {"filter": {"$or": [{"review_score": {"$lte": 2}}, {"project_id": {"$in": ["vip", "pilot"]}}]}, "sort": [{"field": "review_score", "direction": 1}]}
+// ```
+//
+// `sort` is `last_message_at` (the default, descending: when the agent last answered, or when the session began), `pinned` followed by `last_message_at`, `review_score` for a server-side caller, with the sessions nobody reviewed last, or `relevance`, which is how a `text` search is sorted and the only way it is. A session is pinned and unpinned by updating it.
+//
+// A backend gets its customer's sessions; an end user gets their own, whatever the filter says: an `$or` chooses among the sessions the caller may see and never adds to them. An anonymous caller who named nobody gets none.
+//
+// The search reads what a person named the conversation, not what was said in it. Pages are followed by `next_cursor`, sent back with the same filter and sort. There is no total: counting every conversation costs more than the page.
 //
 // Takes any type of body and a specified content type.
 //
@@ -18321,15 +18592,47 @@ func (c *Client) QuerySessionsWithBody(ctx context.Context, contentType string, 
 
 // QuerySessions List or search the caller's sessions
 //
-// Three queries are supported, each over the sessions still running and the ones that ended:
+// Lists the caller's sessions, the ones still running and the ones that ended, narrowed by a filter and in the order of a sort.
 //
-// - every session, sorted by `updated_at`
-// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
-// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+// A filter is an object of fields. The keys of one object are ANDed, and `$and` and `$or` each take a list of filters, so conditions combine and nest:
 //
-// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `team`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+// - `project_id`: a value, `{"$eq": value}` or `{"$in": [values]}`
+// - `agent`: a value or `{"$eq": value}`, the agent name the session was opened against
+// - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
+// - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
+// - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
 //
-// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+// Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
+//
+// Every session, pinned first:
+//
+// ```json
+// {"sort": [{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": -1}]}
+// ```
+//
+// One agent's sessions in either of two projects:
+//
+// ```json
+// {"filter": {"agent": "support", "$or": [{"project_id": "health"}, {"project_id": "billing"}]}}
+// ```
+//
+// A search within one project:
+//
+// ```json
+// {"filter": {"text": {"$q": "refund"}, "project_id": "billing"}}
+// ```
+//
+// A backend's badly reviewed sessions and everything in two projects, the lowest score first:
+//
+// ```json
+// {"filter": {"$or": [{"review_score": {"$lte": 2}}, {"project_id": {"$in": ["vip", "pilot"]}}]}, "sort": [{"field": "review_score", "direction": 1}]}
+// ```
+//
+// `sort` is `last_message_at` (the default, descending: when the agent last answered, or when the session began), `pinned` followed by `last_message_at`, `review_score` for a server-side caller, with the sessions nobody reviewed last, or `relevance`, which is how a `text` search is sorted and the only way it is. A session is pinned and unpinned by updating it.
+//
+// A backend gets its customer's sessions; an end user gets their own, whatever the filter says: an `$or` chooses among the sessions the caller may see and never adds to them. An anonymous caller who named nobody gets none.
+//
+// The search reads what a person named the conversation, not what was said in it. Pages are followed by `next_cursor`, sent back with the same filter and sort. There is no total: counting every conversation costs more than the page.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -18389,7 +18692,7 @@ func (c *Client) GetSession(ctx context.Context, id string, reqEditors ...Reques
 //
 // Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 //
-// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
+// An end user's device may change a session's title, description and custom, and pin or unpin it, so a person can tidy up their own conversations. `pinned` sets the session's `pinned_at`, which a query sorted by `pinned` lists first; it moves nothing else, and an incognito session, which nothing records, cannot be pinned: 400. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 //
 // A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 //
@@ -18414,7 +18717,7 @@ func (c *Client) UpdateSessionWithBody(ctx context.Context, id string, contentTy
 //
 // Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 //
-// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
+// An end user's device may change a session's title, description and custom, and pin or unpin it, so a person can tidy up their own conversations. `pinned` sets the session's `pinned_at`, which a query sorted by `pinned` lists first; it moves nothing else, and an incognito session, which nothing records, cannot be pinned: 400. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 //
 // A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 //
@@ -20237,6 +20540,8 @@ func (c *Client) ListPhoneNumbers(ctx context.Context, params *ListPhoneNumbersP
 
 // BuyPhoneNumberWithBody Buy a number, which starts its monthly charge
 //
+// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/phone/numbers (the `BuyPhoneNumber` operationId).
@@ -20253,6 +20558,8 @@ func (c *Client) BuyPhoneNumberWithBody(ctx context.Context, contentType string,
 }
 
 // BuyPhoneNumber Buy a number, which starts its monthly charge
+//
+// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -35826,15 +36133,47 @@ type ClientWithResponsesInterface interface {
 
 	// QuerySessionsWithBodyWithResponse List or search the caller's sessions
 	//
-	// Three queries are supported, each over the sessions still running and the ones that ended:
+	// Lists the caller's sessions, the ones still running and the ones that ended, narrowed by a filter and in the order of a sort.
 	//
-	// - every session, sorted by `updated_at`
-	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
-	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+	// A filter is an object of fields. The keys of one object are ANDed, and `$and` and `$or` each take a list of filters, so conditions combine and nest:
 	//
-	// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `team`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	// - `project_id`: a value, `{"$eq": value}` or `{"$in": [values]}`
+	// - `agent`: a value or `{"$eq": value}`, the agent name the session was opened against
+	// - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
+	// - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
+	// - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
 	//
-	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+	// Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
+	//
+	// Every session, pinned first:
+	//
+	// ```json
+	// {"sort": [{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": -1}]}
+	// ```
+	//
+	// One agent's sessions in either of two projects:
+	//
+	// ```json
+	// {"filter": {"agent": "support", "$or": [{"project_id": "health"}, {"project_id": "billing"}]}}
+	// ```
+	//
+	// A search within one project:
+	//
+	// ```json
+	// {"filter": {"text": {"$q": "refund"}, "project_id": "billing"}}
+	// ```
+	//
+	// A backend's badly reviewed sessions and everything in two projects, the lowest score first:
+	//
+	// ```json
+	// {"filter": {"$or": [{"review_score": {"$lte": 2}}, {"project_id": {"$in": ["vip", "pilot"]}}]}, "sort": [{"field": "review_score", "direction": 1}]}
+	// ```
+	//
+	// `sort` is `last_message_at` (the default, descending: when the agent last answered, or when the session began), `pinned` followed by `last_message_at`, `review_score` for a server-side caller, with the sessions nobody reviewed last, or `relevance`, which is how a `text` search is sorted and the only way it is. A session is pinned and unpinned by updating it.
+	//
+	// A backend gets its customer's sessions; an end user gets their own, whatever the filter says: an `$or` chooses among the sessions the caller may see and never adds to them. An anonymous caller who named nobody gets none.
+	//
+	// The search reads what a person named the conversation, not what was said in it. Pages are followed by `next_cursor`, sent back with the same filter and sort. There is no total: counting every conversation costs more than the page.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -35843,15 +36182,47 @@ type ClientWithResponsesInterface interface {
 
 	// QuerySessionsWithResponse List or search the caller's sessions
 	//
-	// Three queries are supported, each over the sessions still running and the ones that ended:
+	// Lists the caller's sessions, the ones still running and the ones that ended, narrowed by a filter and in the order of a sort.
 	//
-	// - every session, sorted by `updated_at`
-	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
-	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+	// A filter is an object of fields. The keys of one object are ANDed, and `$and` and `$or` each take a list of filters, so conditions combine and nest:
 	//
-	// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `team`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	// - `project_id`: a value, `{"$eq": value}` or `{"$in": [values]}`
+	// - `agent`: a value or `{"$eq": value}`, the agent name the session was opened against
+	// - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
+	// - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
+	// - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
 	//
-	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+	// Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
+	//
+	// Every session, pinned first:
+	//
+	// ```json
+	// {"sort": [{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": -1}]}
+	// ```
+	//
+	// One agent's sessions in either of two projects:
+	//
+	// ```json
+	// {"filter": {"agent": "support", "$or": [{"project_id": "health"}, {"project_id": "billing"}]}}
+	// ```
+	//
+	// A search within one project:
+	//
+	// ```json
+	// {"filter": {"text": {"$q": "refund"}, "project_id": "billing"}}
+	// ```
+	//
+	// A backend's badly reviewed sessions and everything in two projects, the lowest score first:
+	//
+	// ```json
+	// {"filter": {"$or": [{"review_score": {"$lte": 2}}, {"project_id": {"$in": ["vip", "pilot"]}}]}, "sort": [{"field": "review_score", "direction": 1}]}
+	// ```
+	//
+	// `sort` is `last_message_at` (the default, descending: when the agent last answered, or when the session began), `pinned` followed by `last_message_at`, `review_score` for a server-side caller, with the sessions nobody reviewed last, or `relevance`, which is how a `text` search is sorted and the only way it is. A session is pinned and unpinned by updating it.
+	//
+	// A backend gets its customer's sessions; an end user gets their own, whatever the filter says: an `$or` chooses among the sessions the caller may see and never adds to them. An anonymous caller who named nobody gets none.
+	//
+	// The search reads what a person named the conversation, not what was said in it. Pages are followed by `next_cursor`, sent back with the same filter and sort. There is no total: counting every conversation costs more than the page.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -35885,7 +36256,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 	//
-	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	// An end user's device may change a session's title, description and custom, and pin or unpin it, so a person can tidy up their own conversations. `pinned` sets the session's `pinned_at`, which a query sorted by `pinned` lists first; it moves nothing else, and an incognito session, which nothing records, cannot be pinned: 400. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 	//
 	// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 	//
@@ -35900,7 +36271,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 	//
-	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	// An end user's device may change a session's title, description and custom, and pin or unpin it, so a person can tidy up their own conversations. `pinned` sets the session's `pinned_at`, which a query sorted by `pinned` lists first; it moves nothing else, and an incognito session, which nothing records, cannot be pinned: 400. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 	//
 	// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 	//
@@ -36851,12 +37222,16 @@ type ClientWithResponsesInterface interface {
 
 	// BuyPhoneNumberWithBodyWithResponse Buy a number, which starts its monthly charge
 	//
+	// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/phone/numbers (the `BuyPhoneNumber` operationId).
 	BuyPhoneNumberWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BuyPhoneNumberResponse, error)
 
 	// BuyPhoneNumberWithResponse Buy a number, which starts its monthly charge
+	//
+	// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -66546,15 +66921,47 @@ func (c *ClientWithResponses) CreateSessionWithResponse(ctx context.Context, bod
 
 // QuerySessionsWithBodyWithResponse List or search the caller's sessions
 //
-// Three queries are supported, each over the sessions still running and the ones that ended:
+// Lists the caller's sessions, the ones still running and the ones that ended, narrowed by a filter and in the order of a sort.
 //
-// - every session, sorted by `updated_at`
-// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
-// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+// A filter is an object of fields. The keys of one object are ANDed, and `$and` and `$or` each take a list of filters, so conditions combine and nest:
 //
-// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `team`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+// - `project_id`: a value, `{"$eq": value}` or `{"$in": [values]}`
+// - `agent`: a value or `{"$eq": value}`, the agent name the session was opened against
+// - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
+// - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
+// - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
 //
-// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+// Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
+//
+// Every session, pinned first:
+//
+// ```json
+// {"sort": [{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": -1}]}
+// ```
+//
+// One agent's sessions in either of two projects:
+//
+// ```json
+// {"filter": {"agent": "support", "$or": [{"project_id": "health"}, {"project_id": "billing"}]}}
+// ```
+//
+// A search within one project:
+//
+// ```json
+// {"filter": {"text": {"$q": "refund"}, "project_id": "billing"}}
+// ```
+//
+// A backend's badly reviewed sessions and everything in two projects, the lowest score first:
+//
+// ```json
+// {"filter": {"$or": [{"review_score": {"$lte": 2}}, {"project_id": {"$in": ["vip", "pilot"]}}]}, "sort": [{"field": "review_score", "direction": 1}]}
+// ```
+//
+// `sort` is `last_message_at` (the default, descending: when the agent last answered, or when the session began), `pinned` followed by `last_message_at`, `review_score` for a server-side caller, with the sessions nobody reviewed last, or `relevance`, which is how a `text` search is sorted and the only way it is. A session is pinned and unpinned by updating it.
+//
+// A backend gets its customer's sessions; an end user gets their own, whatever the filter says: an `$or` chooses among the sessions the caller may see and never adds to them. An anonymous caller who named nobody gets none.
+//
+// The search reads what a person named the conversation, not what was said in it. Pages are followed by `next_cursor`, sent back with the same filter and sort. There is no total: counting every conversation costs more than the page.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -66569,15 +66976,47 @@ func (c *ClientWithResponses) QuerySessionsWithBodyWithResponse(ctx context.Cont
 
 // QuerySessionsWithResponse List or search the caller's sessions
 //
-// Three queries are supported, each over the sessions still running and the ones that ended:
+// Lists the caller's sessions, the ones still running and the ones that ended, narrowed by a filter and in the order of a sort.
 //
-// - every session, sorted by `updated_at`
-// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
-// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+// A filter is an object of fields. The keys of one object are ANDed, and `$and` and `$or` each take a list of filters, so conditions combine and nest:
 //
-// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `team`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+// - `project_id`: a value, `{"$eq": value}` or `{"$in": [values]}`
+// - `agent`: a value or `{"$eq": value}`, the agent name the session was opened against
+// - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
+// - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
+// - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
 //
-// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+// Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
+//
+// Every session, pinned first:
+//
+// ```json
+// {"sort": [{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": -1}]}
+// ```
+//
+// One agent's sessions in either of two projects:
+//
+// ```json
+// {"filter": {"agent": "support", "$or": [{"project_id": "health"}, {"project_id": "billing"}]}}
+// ```
+//
+// A search within one project:
+//
+// ```json
+// {"filter": {"text": {"$q": "refund"}, "project_id": "billing"}}
+// ```
+//
+// A backend's badly reviewed sessions and everything in two projects, the lowest score first:
+//
+// ```json
+// {"filter": {"$or": [{"review_score": {"$lte": 2}}, {"project_id": {"$in": ["vip", "pilot"]}}]}, "sort": [{"field": "review_score", "direction": 1}]}
+// ```
+//
+// `sort` is `last_message_at` (the default, descending: when the agent last answered, or when the session began), `pinned` followed by `last_message_at`, `review_score` for a server-side caller, with the sessions nobody reviewed last, or `relevance`, which is how a `text` search is sorted and the only way it is. A session is pinned and unpinned by updating it.
+//
+// A backend gets its customer's sessions; an end user gets their own, whatever the filter says: an `$or` chooses among the sessions the caller may see and never adds to them. An anonymous caller who named nobody gets none.
+//
+// The search reads what a person named the conversation, not what was said in it. Pages are followed by `next_cursor`, sent back with the same filter and sort. There is no total: counting every conversation costs more than the page.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -66629,7 +67068,7 @@ func (c *ClientWithResponses) GetSessionWithResponse(ctx context.Context, id str
 //
 // Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 //
-// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
+// An end user's device may change a session's title, description and custom, and pin or unpin it, so a person can tidy up their own conversations. `pinned` sets the session's `pinned_at`, which a query sorted by `pinned` lists first; it moves nothing else, and an incognito session, which nothing records, cannot be pinned: 400. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 //
 // A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 //
@@ -66650,7 +67089,7 @@ func (c *ClientWithResponses) UpdateSessionWithBodyWithResponse(ctx context.Cont
 //
 // Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 //
-// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
+// An end user's device may change a session's title, description and custom, and pin or unpin it, so a person can tidy up their own conversations. `pinned` sets the session's `pinned_at`, which a query sorted by `pinned` lists first; it moves nothing else, and an incognito session, which nothing records, cannot be pinned: 400. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 //
 // A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 //
@@ -68171,6 +68610,8 @@ func (c *ClientWithResponses) ListPhoneNumbersWithResponse(ctx context.Context, 
 
 // BuyPhoneNumberWithBodyWithResponse Buy a number, which starts its monthly charge
 //
+// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/phone/numbers (the `BuyPhoneNumber` operationId).
@@ -68183,6 +68624,8 @@ func (c *ClientWithResponses) BuyPhoneNumberWithBodyWithResponse(ctx context.Con
 }
 
 // BuyPhoneNumberWithResponse Buy a number, which starts its monthly charge
+//
+// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

@@ -128,4 +128,11 @@ func (s *UsageAlertsSuite) TestShipStalePagesOnlyOnceTheOldestRowHasStayedOldFor
 func (s *UsageAlertsSuite) TestASourceNamesTheShardAndTheHost() {
 	s.Equal("router/eu-1/router-7f9c", Source("eu-1", "router-7f9c"))
 	s.Equal("router/unsharded/router-7f9c", Source("", "router-7f9c"))
+	s.Equal("router/eu-1/unknown", Source("eu-1", ""))
+}
+
+func (s *UsageAlertsSuite) TestAJobSourceNamesTheShardAndTheHostUnderJob() {
+	s.Equal("job/eu-1/usage-storage-29412", JobSource("eu-1", "usage-storage-29412"))
+	s.Equal("job/unsharded/usage-storage-29412", JobSource("", "usage-storage-29412"))
+	s.Equal("job/eu-1/unknown", JobSource("eu-1", ""))
 }
