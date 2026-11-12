@@ -364,6 +364,60 @@ func (s *BranchesSuite) TestASwitchStoppedAfterChatRewoundIsFinishedOnReopen() {
 	s.Equal(store.SwitchDone, row.State)
 }
 
+// An edit hides the message it rewinds to, which Chat then refuses as a read's cursor: whether
+// its rewind landed is read from the newest messages back.
+func (s *BranchesSuite) TestAnEditStoppedAfterChatRewoundIsFinishedOnReopen() {
+	_, second := s.twoTurns()
+	s.branches.failAdvanceTo = store.SwitchRewound
+	_, err := s.conv.Rewind(s.ctx, edit("sw-1", second))
+	s.Require().ErrorIs(err, errStopped)
+
+	_, history, switched := s.reopened(nil)
+
+	s.Equal([]llm.Message{{Role: llm.User, Content: "Is it raining?"}, {Role: llm.Assistant, Content: "No."}}, history)
+	s.Equal([]string{"sw-1"}, *switched)
+	row, _ := s.branches.row("sw-1")
+	s.Equal(store.SwitchDone, row.State)
+}
+
+// Whether a switch landed is read back past more than a page of messages written after it.
+func (s *BranchesSuite) TestAnEditStoppedAfterChatRewoundIsFinishedOnReopenAfterAPageOfMessages() {
+	_, second := s.twoTurns()
+	s.branches.failAdvanceTo = store.SwitchRewound
+	_, err := s.conv.Rewind(s.ctx, edit("sw-1", second))
+	s.Require().ErrorIs(err, errStopped)
+	s.branches.failAdvanceTo = ""
+	user := "employee-1"
+	for i := range 101 {
+		text := fmt.Sprintf("note %d", i)
+		_, err := s.chat.Client.Chat().SendMessage(s.ctx, "agent", s.session, &getstream.SendMessageRequest{
+			Message: getstream.MessageRequest{Text: &text, UserID: &user}})
+		s.Require().NoError(err)
+	}
+
+	_, _, switched := s.reopened(nil)
+
+	s.Equal([]string{"sw-1"}, *switched)
+	row, _ := s.branches.row("sw-1")
+	s.Equal(store.SwitchDone, row.State)
+}
+
+// A switch retried after its rewind landed is finished, and Chat refusing a read on the way is
+// the conversation having changed, not a failure of the router.
+func (s *BranchesSuite) TestAnActivationRetriedWhileChatRefusesTheReadIsAConflict() {
+	s.branches.failCountAt = 2
+	_, chosen, err := s.activateAfterEdit()
+	s.Require().ErrorIs(err, errStopped)
+	s.branches.failCountAt = 0
+	edited := s.chat.Visible(s.session)[2]
+	s.chat.FailWith("POST", "/query", 400)
+
+	_, err = s.conv.Activate(s.ctx, conversation.RewindTarget{SwitchID: "sw-2", TargetResponseID: "resp-2",
+		MessageID: edited, Inclusive: true}, chosen)
+
+	s.Require().ErrorIs(err, conversation.ErrBranchConflict)
+}
+
 func (s *BranchesSuite) TestASwitchRewoundButNotFinishedIsFinishedOnReopen() {
 	_, second := s.twoTurns()
 	_, err := s.conv.Rewind(s.ctx, regenerate("sw-1", second))

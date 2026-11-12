@@ -456,6 +456,9 @@ func (c *Conversation) switchTo(ctx context.Context, target RewindTarget, chosen
 			continue
 		}
 		outcome, carried, err := c.finishTried(ctx, sw, row, chosen)
+		if refusal := branchRefusal(err); refusal != nil {
+			return RewindOutcome{}, stack.Wrap(refusal)
+		}
 		if err != nil || carried {
 			return outcome, err
 		}
@@ -684,6 +687,11 @@ func (sw switcher) rewind(ctx context.Context, target RewindTarget, read func(be
 func (sw switcher) tailFrom(ctx context.Context, target RewindTarget) (Tail, []getstream.MessageResponse, error) {
 	channelType, id := channelOf(sw.cid)
 	tail, err := sw.rewinder.ReadFrom(ctx, channelType, id, target.MessageID, true)
+	if refused, ok := errors.AsType[*getstream.StreamError](err); ok && refused.StatusCode == http.StatusBadRequest {
+		// Chat refuses a read from a message it does not have, or that a rewind hid, with an
+		// input error.
+		return Tail{}, nil, stack.Wrap(&rewindRefusal{sentinel: ErrBranchConflict, cause: err})
+	}
 	if err != nil {
 		return Tail{}, nil, err
 	}
@@ -817,23 +825,34 @@ func (sw switcher) resume(ctx context.Context, row store.AgentBranchSwitch, chos
 }
 
 // landed is whether a journaled switch's rewind landed: none of the messages it copied is
-// visible. One with no copies never asked Chat.
+// visible. One with no copies never asked Chat. The channel is read from its newest message
+// back, not from the message rewound to: an inclusive rewind hides that one too, and Chat
+// refuses a read from a message a rewind hid.
 func (sw switcher) landed(ctx context.Context, row store.AgentBranchSwitch, copied []string) (bool, error) {
 	if len(copied) == 0 {
 		return row.Kind == store.SwitchActivate && row.Resent > 0, nil
 	}
+	wanted := make(map[string]bool, len(copied))
+	for _, copiedID := range copied {
+		wanted[copiedID] = true
+	}
+	shown := false
 	channelType, id := channelOf(sw.cid)
-	tail, err := sw.rewinder.ReadFrom(ctx, channelType, id, row.ForkMessageID, true)
+	err := scanChannel(ctx, chatRewinder{client: sw.client}, channelType, id, func(m getstream.MessageResponse) bool {
+		// Every message the switch copied was created at or after the one rewound to.
+		if m.CreatedAt.Time != nil && createdAt(m).Before(row.HiddenFrom) {
+			return true
+		}
+		if wanted[m.ID] && m.DeletedAt == nil && m.Type != "deleted" {
+			shown = true
+			return true
+		}
+		return false
+	})
 	if err != nil {
 		return false, err
 	}
-	visible := idsOf(tail.Messages)
-	for _, copiedID := range copied {
-		if visible[copiedID] {
-			return false, nil
-		}
-	}
-	return true, nil
+	return !shown, nil
 }
 
 // resend sends chosen again, from the first the switch has not counted as sent.
@@ -1066,7 +1085,18 @@ func (c *Conversation) scanBack(ctx context.Context, visit func(getstream.Messag
 	cid := c.data.CID
 	c.mu.Unlock()
 	channelType, id := channelOf(cid)
-	reader := chatRewinder{client: client}
+	return scanChannel(ctx, chatRewinder{client: client}, channelType, id, func(m getstream.MessageResponse) bool {
+		if hidden[m.ID] || m.DeletedAt != nil || m.Type == "deleted" {
+			return false
+		}
+		return visit(m)
+	})
+}
+
+// scanChannel hands every message a read of the channel returns to visit, newest first, until
+// it answers true or the channel's oldest page is read. Each page is read before the oldest
+// message of the one before, which Chat showed, so no read names a message a rewind hid.
+func scanChannel(ctx context.Context, reader chatRewinder, channelType, id string, visit func(getstream.MessageResponse) bool) error {
 	limit := tailPage
 	params := &getstream.MessagePaginationParams{Limit: &limit}
 	for range maxScanPages {
@@ -1075,11 +1105,7 @@ func (c *Conversation) scanBack(ctx context.Context, visit func(getstream.Messag
 			return err
 		}
 		for i := len(page) - 1; i >= 0; i-- {
-			m := page[i]
-			if hidden[m.ID] || m.DeletedAt != nil || m.Type == "deleted" {
-				continue
-			}
-			if visit(m) {
+			if visit(page[i]) {
 				return nil
 			}
 		}
