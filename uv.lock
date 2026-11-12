@@ -49,6 +49,7 @@ members = [
     "vision-agents-plugins-twilio",
     "vision-agents-plugins-ultralytics",
     "vision-agents-plugins-vogent",
+    "vision-agents-plugins-voxcpm",
     "vision-agents-plugins-wizper",
     "vision-agents-plugins-xai",
 ]
@@ -6577,6 +6578,9 @@ ultralytics = [
 vogent = [
     { name = "vision-agents-plugins-vogent" },
 ]
+voxcpm = [
+    { name = "vision-agents-plugins-voxcpm" },
+]
 wizper = [
     { name = "vision-agents-plugins-wizper" },
 ]
@@ -6643,10 +6647,11 @@ requires-dist = [
     { name = "vision-agents-plugins-twilio", marker = "extra == 'twilio'", editable = "plugins/twilio" },
     { name = "vision-agents-plugins-ultralytics", marker = "extra == 'ultralytics'", editable = "plugins/ultralytics" },
     { name = "vision-agents-plugins-vogent", marker = "extra == 'vogent'", editable = "plugins/vogent" },
+    { name = "vision-agents-plugins-voxcpm", marker = "extra == 'voxcpm'", editable = "plugins/voxcpm" },
     { name = "vision-agents-plugins-wizper", marker = "extra == 'wizper'", editable = "plugins/wizper" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "minimax", "mistral", "moondream", "nvidia", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "speechify", "telnyx", "tencent", "turbopuffer", "twelvelabs", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "minimax", "mistral", "moondream", "nvidia", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "speechify", "telnyx", "tencent", "turbopuffer", "twelvelabs", "twilio", "ultralytics", "vogent", "voxcpm", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anam"
@@ -7764,6 +7769,32 @@ dev = [
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
     { name = "vision-agents-plugins-deepgram", editable = "plugins/deepgram" },
+]
+
+[[package]]
+name = "vision-agents-plugins-voxcpm"
+source = { editable = "plugins/voxcpm" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.13.3" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]
 
 [[package]]
