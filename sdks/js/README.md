@@ -352,7 +352,8 @@ agent.tools.register<{ flight_id: string }>({
   longer fails.
 - `concurrency` caps how many calls to the tool run at once. A call over the cap waits its
   turn, and its timeout keeps counting while it waits. Every tool's calls together are capped
-  at 16 at once.
+  at 16 at once, which `agent.tools.setConcurrency(n)` changes. A `Dispatch` shares an agent's
+  `tools` across every session it hosts, so the cap is the worker's.
 - `approval` is asked before each call runs. In writing the call waits in `session.approvals`
   until `session.decide(id, { allowed })` answers it; a page follows the list in
   `session.conversation`, which says when it changes, a cancel by the model included.
