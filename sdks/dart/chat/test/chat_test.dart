@@ -1,12 +1,12 @@
 import 'package:stream_chat/stream_chat.dart' as stream;
 import 'package:test/test.dart';
-import 'package:vision_agents_chat/vision_agents_chat.dart';
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents_chat/stream_agents_chat.dart';
+import 'package:stream_agents_core/stream_agents_core.dart';
 
 void main() {
-  late VisionAgents agents;
+  late StreamAgents agents;
 
-  AgentSession sessionOf(VisionAgents agents, {String conversationId = 'messaging:s1'}) =>
+  AgentSession sessionOf(StreamAgents agents, {String conversationId = 'messaging:s1'}) =>
       AgentSession(
         Session(id: 's1', createdAt: DateTime.utc(2026), conversationId: conversationId),
         backend: agents.backend,
@@ -14,7 +14,7 @@ void main() {
       );
 
   setUp(() {
-    agents = VisionAgents(
+    agents = StreamAgents(
       url: Uri.parse('http://127.0.0.1:9'),
       apiKey: 'stream-key',
       userId: 'ada',
@@ -55,7 +55,7 @@ void main() {
     });
 
     test('needs the Stream app\'s key, which a customer id alone is not', () async {
-      final byCustomer = VisionAgents(url: Uri.parse('http://127.0.0.1:9'), customerId: 'acme');
+      final byCustomer = StreamAgents(url: Uri.parse('http://127.0.0.1:9'), customerId: 'acme');
 
       expect(sessionOf(byCustomer).chat(), throwsArgumentError);
       byCustomer.close();

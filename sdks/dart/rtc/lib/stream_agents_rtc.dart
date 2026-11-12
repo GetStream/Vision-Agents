@@ -1,4 +1,4 @@
-/// Talk to a Stream Vision Agent out loud, over Stream Video.
+/// Talk to a Stream agent out loud, over Stream Video.
 library;
 
 export 'src/agent_video_view.dart';

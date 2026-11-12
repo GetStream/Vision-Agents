@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 import 'package:stream_core_flutter/core.dart';
-import 'package:vision_agents_core/vision_agents_core.dart';
-import 'package:vision_agents_rtc/vision_agents_rtc.dart';
+import 'package:stream_agents_core/stream_agents_core.dart';
+import 'package:stream_agents_rtc/stream_agents_rtc.dart';
 
 import 'agent_chat.dart';
 import 'captions.dart';

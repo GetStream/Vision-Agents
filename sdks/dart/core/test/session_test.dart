@@ -3,19 +3,19 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:test/test.dart';
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents_core/stream_agents_core.dart';
 
 import 'support/fixtures.dart';
 import 'support/router.dart';
 
 void main() {
   late TestRouter router;
-  late VisionAgents agents;
+  late StreamAgents agents;
 
   setUp(() async {
     router = await TestRouter.start();
     router.answer('POST /v1/agents/sessions', Answer(201, sessionJson()));
-    agents = VisionAgents(url: router.url, customerId: 'acme');
+    agents = StreamAgents(url: router.url, customerId: 'acme');
   });
 
   tearDown(() async {
@@ -40,7 +40,7 @@ void main() {
     });
 
     test('opens the socket with a key as the proxy reads a device\'s credential', () async {
-      final keyed = VisionAgents(url: router.url, apiKey: 'key', token: () async => 'tok');
+      final keyed = StreamAgents(url: router.url, apiKey: 'key', token: () async => 'tok');
       final chat = await keyed.chat();
 
       expect(router.upgrades.single.query, {

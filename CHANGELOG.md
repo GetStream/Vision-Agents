@@ -528,6 +528,10 @@ The Swift SDK's product and module are `StreamAgents`, and its client is `Stream
 
 The Kotlin SDK's artifact is `io.getstream:stream-agents-android-core`, its package is `io.getstream.agents.android.core`, and its client is `StreamAgents`: `StreamAgents(backend)` where it was `VisionAgents(backend)`, with imports from `io.getstream.agents.android.core` where they were from `io.getstream.visionagents.android.core`. Nothing else in the API changed. The Gradle project is `stream-agents-kotlin`.
 
+### Dart: vision_agents_* are stream_agents_*
+
+The Dart packages are `stream_agents_core`, `stream_agents_chat` and `stream_agents_rtc`, and the client is `StreamAgents`: `StreamAgents(apiKey: ...)` where it was `VisionAgents(...)`, with imports from `package:stream_agents_core/stream_agents_core.dart`, `package:stream_agents_chat/stream_agents_chat.dart` and `package:stream_agents_rtc/stream_agents_rtc.dart`. Nothing else in the API changed. The live tests still read `VISION_AGENTS_*`, as every SDK's do (FLU-1245).
+
 ### The Go SDK's helpers take a Backend, not the generated client
 
 `agents.DefineAgent`, `agents.DefineSkills`, `agents.IngestKnowledge`, `agents.SubscribeKnowledgeURLs` and `stream.NewPhone` take a `stream.Backend` where they took the generated `*acceleration.ClientWithResponses`, so using them no longer means building the generated client first. `stream.NewPhone` now returns an error too, for a backend that does not resolve. `agents.Harness.VM` is `agents.Harness.Sandbox`, the name every other SDK and the docs use. Pass `stream.Backend{}` for the environment's router, or `api.Backend()` for a client's. `stream.Backend.Client()` and `agents.Agent.Client()` still hand out the generated client, for operations the SDK has no method for yet; its operation methods carry no compatibility promise (AI-1892).

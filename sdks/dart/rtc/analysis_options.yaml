@@ -1,6 +1,14 @@
 include: package:flutter_lints/flutter.yaml
 
 analyzer:
+  errors:
+    # Flutter 3.50 deprecates the material and cupertino imports.
+    # TODO: Remove once the imports are migrated to material_ui and cupertino_ui.
+    deprecated_member_use: ignore
+  # Flutter 3.47 adds this to a Flutter package's analysis options on `pub get` when it is
+  # missing, which leaves the package modified and fails `pub publish --dry-run`.
+  exclude:
+    - build/**
   language:
     strict-casts: true
     strict-raw-types: true

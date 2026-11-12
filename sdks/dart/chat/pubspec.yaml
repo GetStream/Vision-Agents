@@ -1,6 +1,6 @@
-name: vision_agents_chat
+name: stream_agents_chat
 description: >-
-  A Stream Vision Agents conversation kept in Stream Chat: the channel a session is kept in,
+  A Stream Agents conversation kept in Stream Chat: the channel a session is kept in,
   on one Stream Chat client shared by every session, or on the app's own.
 version: 0.1.0
 repository: https://github.com/GetStream/Vision-Agents/tree/accelerate/sdks/dart/chat
@@ -12,9 +12,9 @@ environment:
 
 dependencies:
   # A hosted constraint, resolved to ../core in this repository by pubspec_overrides.yaml.
-  vision_agents_core: ^0.1.0
+  stream_agents_core: ^0.1.0
   # Pure Dart, so this package is too, and the ui package's Flutter half stays optional.
-  stream_chat: 10.4.0
+  stream_chat: ^10.4.0
 
 dev_dependencies:
   lints: ^6.1.0

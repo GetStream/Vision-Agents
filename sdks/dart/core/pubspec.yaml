@@ -1,6 +1,6 @@
-name: vision_agents_core
+name: stream_agents_core
 description: >-
-  The state layer and client for Stream's Vision Agents: open a conversation with an agent,
+  The state layer and client for Stream Agents: open a conversation with an agent,
   follow it as it happens, answer its tool calls on the device, and look something up.
 version: 0.1.0
 repository: https://github.com/GetStream/Vision-Agents/tree/accelerate/sdks/dart/core
@@ -14,7 +14,7 @@ environment:
 
 dependencies:
   http: ^1.6.0
-  # Marks `AgentSession.camera` as vision_agents_rtc's, not an app's.
+  # Marks `AgentSession.camera` as stream_agents_rtc's, not an app's.
   meta: ^1.16.0
   web_socket: ^1.0.1
 

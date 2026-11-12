@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vision_agents_rtc/src/camera_shots.dart';
+import 'package:stream_agents_rtc/src/camera_shots.dart';
 
 void main() {
   group('CameraShots', () {
