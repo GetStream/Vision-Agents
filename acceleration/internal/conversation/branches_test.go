@@ -24,6 +24,8 @@ type BranchesSuite struct {
 	// session is the session's id, which its channel is named after, and cid the channel's.
 	session, cid string
 	conv         *conversation.Conversation
+	// branches keeps the conversation's switches, in memory.
+	branches *memoryBranches
 }
 
 func TestBranchesSuite(t *testing.T) {
@@ -34,8 +36,10 @@ func (s *BranchesSuite) SetupTest() {
 	s.chat = chattest.NewServer(s.T())
 	s.service = conversation.NewForChat(s.chat.Client)
 	s.T().Cleanup(s.service.Close)
-	s.ctx = context.Background()
+	s.branches = newMemoryBranches()
+	s.service.SetBranches(s.branches)
 	s.session = uuid.NewString()
+	s.ctx = conversation.WithSession(context.Background(), s.session)
 	s.cid = "agent:" + s.session
 	conv, _, _, err := s.service.CreateInApp(s.ctx, 0, "customer", "agent", s.cid, "", "", nil, "")
 	s.Require().NoError(err)

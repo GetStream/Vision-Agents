@@ -110,10 +110,12 @@ type Page struct {
 	// in, opened on its word (opensDispatched): the router never stamped it, so it holds no
 	// memory scope to keep, and its people's messages are read back as user turns.
 	dispatched bool
-	empty      bool
-	Messages   []Message `json:"messages"`
-	Before     string    `json:"before,omitempty"`
-	Truncated  bool      `json:"context_truncated"`
+	// sessionCommand is a page of a session's own channel (SessionCommandChannel).
+	sessionCommand bool
+	empty          bool
+	Messages       []Message `json:"messages"`
+	Before         string    `json:"before,omitempty"`
+	Truncated      bool      `json:"context_truncated"`
 }
 type Updated struct {
 	CID     string  `json:"conversation_id"`
@@ -204,7 +206,11 @@ type Service struct {
 	mu     sync.Mutex
 	chats  Chats
 	pins   Pins
-	all    map[known]*Conversation
+	// branches keeps what branch switches hide, and hooks finish one an earlier router left
+	// unfinished (branches.go).
+	branches Branches
+	hooks    SwitchHooks
+	all      map[known]*Conversation
 	// opening is the gate a conversation is opened behind, one per conversation being
 	// opened. Opening it asks Stream Chat three times and mu is not held across that, so
 	// the gate is what keeps two opens of one conversation apart, while opens of different
@@ -240,7 +246,16 @@ type Conversation struct {
 	shared  bool
 	// thread is a conversation the Router opened on a thread channel (RouterOpensThread),
 	// whose finished replies leave for the external thread.
-	thread   bool
+	thread bool
+	// dispatched is a conversation on a channel a worker was handed (RouterOpensDispatched), and
+	// sessionCommand one on a session's own channel (SessionCommandChannel).
+	dispatched, sessionCommand bool
+	// session is the session the conversation's branches are kept under (WithSession), and
+	// voiceAgent the voice transcript author its history was read with.
+	session, voiceAgent string
+	// hidden are the messages branch switches rewound away: no write of one is sent, and no
+	// read shows one, Chat's replicas included in the moments after the rewind.
+	hidden   map[string]bool
 	stopping bool
 	turns    map[string]string
 	created  map[string]bool
@@ -526,7 +541,7 @@ func (s *Service) opens(key known) func() {
 	}
 }
 func (s *Service) make(d ledger) *Conversation {
-	c := &Conversation{service: s, data: d, turns: map[string]string{}, created: map[string]bool{}, stopped: make(chan struct{}), done: make(chan struct{})}
+	c := &Conversation{service: s, data: d, turns: map[string]string{}, created: map[string]bool{}, hidden: map[string]bool{}, stopped: make(chan struct{}), done: make(chan struct{})}
 	s.all[known{d.Customer, d.CID}] = c
 	go c.run()
 	return c
@@ -635,18 +650,28 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 			c.mu.Unlock()
 			return nil, nil, false, stack.Wrap(errors.New("conversation is already open"))
 		}
-		// What the history is read against, copied so the conversation is free to be
-		// written while Stream answers.
-		in, unwritten := c.data.StreamApp, append([]operation(nil), c.data.Pending...)
+		in := c.data.StreamApp
 		c.mu.Unlock()
 
 		client, err := s.chats.ForApp(ctx, customer, in)
 		if err != nil {
 			return nil, nil, false, stack.Wrap(err)
 		}
-		page, err := s.historyIn(ctx, client, customer, agentID, cid, "", caller, unwritten, voiceAgent)
+		// What the history is read against, copied so the conversation is free to be
+		// written while Stream answers.
+		unwritten, hidden := s.unwritten(customer, cid)
+		page, err := s.historyIn(ctx, client, customer, agentID, cid, "", caller, unwritten, hidden, voiceAgent)
 		if err != nil {
 			return nil, nil, false, stack.Wrap(err)
+		}
+		// A switch an earlier attempt left unfinished is finished once the read has shown the
+		// channel is the caller's, and the history read again without what it hid.
+		if switched := s.resumeSwitches(ctx, client, customer, agentID, cid, sessionOf(ctx)); len(switched) > 0 {
+			c.hide(switched)
+			unwritten, hidden = s.unwritten(customer, cid)
+			if page, err = s.historyIn(ctx, client, customer, agentID, cid, "", caller, unwritten, hidden, voiceAgent); err != nil {
+				return nil, nil, false, stack.Wrap(err)
+			}
 		}
 		if !page.dispatched && !sameMemoryScope(page.memoryScope, scope) {
 			return nil, nil, false, stack.Wrap(errors.New("conversation belongs to another memory scope; reopen with its original organization"))
@@ -658,7 +683,8 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 			return nil, nil, false, stack.Wrap(errors.New("conversation belongs to another user"))
 		}
 		c.data.Owner = caller
-		c.shared, c.thread = page.shared, page.thread
+		c.shared, c.thread, c.dispatched, c.sessionCommand = page.shared, page.thread, page.dispatched, page.sessionCommand
+		c.session, c.voiceAgent = sessionOf(ctx), voiceAgent
 		c.active = true
 		h, tr := restored(ctx, cid, page)
 		return c, h, tr, nil
@@ -694,9 +720,21 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 			data.Team = &team
 		}
 	}
-	page, err := s.readPage(ctx, client, customer, agentID, cid, "", caller, nil, data, voiceAgent)
+	page, err := s.readPage(ctx, client, customer, agentID, cid, "", caller, nil, nil, data, voiceAgent)
 	if err != nil {
 		return nil, nil, false, stack.Wrap(err)
+	}
+	// A switch an earlier router left unfinished is finished once the read has shown the
+	// channel is the caller's, and the history read again without what it hid. A new channel
+	// has none.
+	var hidden map[string]bool
+	if !fresh {
+		hidden = s.resumeSwitches(ctx, client, customer, agentID, cid, sessionOf(ctx))
+	}
+	if len(hidden) > 0 {
+		if page, err = s.readPage(ctx, client, customer, agentID, cid, "", caller, nil, hidden, nil, voiceAgent); err != nil {
+			return nil, nil, false, stack.Wrap(err)
+		}
 	}
 	if !page.dispatched && !sameMemoryScope(page.memoryScope, scope) {
 		return nil, nil, false, stack.Wrap(errors.New("conversation belongs to another memory scope; reopen with its original organization"))
@@ -716,7 +754,9 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 	// Nobody here holds the conversation, so a reply Stream still shows as running was
 	// left by a process that stopped.
 	c.mu.Lock()
-	c.shared, c.thread = page.shared, page.thread
+	c.shared, c.thread, c.dispatched, c.sessionCommand = page.shared, page.thread, page.dispatched, page.sessionCommand
+	c.session, c.voiceAgent = sessionOf(ctx), voiceAgent
+	maps.Copy(c.hidden, hidden)
 	c.active = true
 	for _, m := range page.Messages {
 		if m.Role == "assistant" && m.FinishedAt == nil {
@@ -742,7 +782,8 @@ func (s *Service) Recall(ctx context.Context, customer, agentID, cid string) ([]
 }
 
 func (s *Service) HistoryForCaller(ctx context.Context, customer, agentID, cid, before, caller string) (Page, error) {
-	return s.history(ctx, customer, agentID, cid, before, caller, s.pending(customer, cid))
+	pending, hidden := s.unwritten(customer, cid)
+	return s.history(ctx, customer, agentID, cid, before, caller, pending, hidden)
 }
 
 // Writing is whether a held conversation has accepted something it has not yet written to
@@ -771,15 +812,22 @@ func (s *Service) Writing() bool {
 
 // pending is what a held conversation has accepted but not yet written to Stream.
 func (s *Service) pending(customer, cid string) []operation {
+	ops, _ := s.unwritten(customer, cid)
+	return ops
+}
+
+// unwritten is what a held conversation has accepted but not yet written to Stream, and the
+// messages its branch switches hid, which a read leaves out.
+func (s *Service) unwritten(customer, cid string) ([]operation, map[string]bool) {
 	s.mu.Lock()
 	c := s.all[known{customer, cid}]
 	s.mu.Unlock()
 	if c == nil {
-		return nil
+		return nil, nil
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return append([]operation(nil), c.data.Pending...)
+	return append([]operation(nil), c.data.Pending...), maps.Clone(c.hidden)
 }
 
 // ContextForCaller returns completed user and assistant turns for a voice
@@ -793,7 +841,8 @@ func (s *Service) ContextForCaller(ctx context.Context, customer, agentID, cid, 
 	if len(voiceAgent) > 1 || (len(voiceAgent) == 1 && voiceAgent[0] != "" && !validAuthorID.MatchString(voiceAgent[0])) {
 		return nil, false, stack.Wrap(errors.New("invalid voice transcript author"))
 	}
-	page, err := s.history(ctx, customer, agentID, cid, "", caller, s.pending(customer, cid), voiceAgent...)
+	pending, hidden := s.unwritten(customer, cid)
+	page, err := s.history(ctx, customer, agentID, cid, "", caller, pending, hidden, voiceAgent...)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1026,21 +1075,22 @@ func commandsIn(messages []Message) map[string]commandRecord {
 }
 
 // history reads a conversation back in the app it is kept in.
-func (s *Service) history(ctx context.Context, customer, agentID, cid, before, caller string, pending []operation, voiceAgent ...string) (Page, error) {
+func (s *Service) history(ctx context.Context, customer, agentID, cid, before, caller string, pending []operation, hidden map[string]bool, voiceAgent ...string) (Page, error) {
 	client, _, err := s.readerFor(ctx, customer, cid)
 	if err != nil {
 		return Page{}, stack.Wrap(err)
 	}
-	return s.historyIn(ctx, client, customer, agentID, cid, before, caller, pending, voiceAgent...)
+	return s.historyIn(ctx, client, customer, agentID, cid, before, caller, pending, hidden, voiceAgent...)
 }
 
-func (s *Service) historyIn(ctx context.Context, client *getstream.Stream, customer, agentID, cid, before, caller string, pending []operation, voiceAgent ...string) (Page, error) {
-	return s.readPage(ctx, client, customer, agentID, cid, before, caller, pending, nil, voiceAgent...)
+func (s *Service) historyIn(ctx context.Context, client *getstream.Stream, customer, agentID, cid, before, caller string, pending []operation, hidden map[string]bool, voiceAgent ...string) (Page, error) {
+	return s.readPage(ctx, client, customer, agentID, cid, before, caller, pending, hidden, nil, voiceAgent...)
 }
 
 // readPage reads a page of a conversation's channel. With data it is also the request that
-// creates the channel, so a new conversation is made and read back in one.
-func (s *Service) readPage(ctx context.Context, client *getstream.Stream, customer, agentID, cid, before, caller string, pending []operation, data *getstream.ChannelInput, voiceAgent ...string) (Page, error) {
+// creates the channel, so a new conversation is made and read back in one. Messages in hidden,
+// which branch switches rewound away, are left out, as are pending writes of them.
+func (s *Service) readPage(ctx context.Context, client *getstream.Stream, customer, agentID, cid, before, caller string, pending []operation, hidden map[string]bool, data *getstream.ChannelInput, voiceAgent ...string) (Page, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	channelType, id := channelOf(cid)
@@ -1089,7 +1139,8 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 			return Page{}, stack.Wrap(errors.New("conversation caller is not a channel member"))
 		}
 	}
-	p := Page{agent: stored, shared: Shared(r.Data.Channel.Custom), thread: thread, dispatched: dispatched, empty: len(r.Data.Messages) == 0, Messages: []Message{}, Truncated: len(r.Data.Messages) == limit}
+	p := Page{agent: stored, shared: Shared(r.Data.Channel.Custom), thread: thread, dispatched: dispatched, empty: len(r.Data.Messages) == 0, Messages: []Message{}, Truncated: len(r.Data.Messages) == limit,
+		sessionCommand: SessionCommandChannel(channelType, id, r.Data.Channel.Custom)}
 	if raw, ok := r.Data.Channel.Custom["support_memory_scope"]; ok {
 		b, err := json.Marshal(raw)
 		if err != nil {
@@ -1100,7 +1151,7 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 		}
 	}
 	for _, m := range r.Data.Messages {
-		if m.DeletedAt != nil {
+		if m.DeletedAt != nil || hidden[m.ID] {
 			continue
 		}
 		if len(voiceAgent) == 1 && voiceAgent[0] != "" {
@@ -1143,8 +1194,12 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 		}
 	}
 	if before == "" {
-		// Overlay pending writes so a reconnect sees unfinished retries truthfully.
+		// Overlay pending writes so a reconnect sees unfinished retries truthfully. One of a
+		// hidden message is not: it would bring the message back.
 		for _, op := range pending {
+			if hidden[op.Message.ID] {
+				continue
+			}
 			op.Message.authorID = op.Author
 			op.Message.Saved = false
 			op.Message.Error = "Pending Stream Chat save"
@@ -2021,6 +2076,11 @@ func (c *Conversation) enqueue(m Message, create bool) {
 	m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 	m.Files = append([]sandbox.Attachment{}, m.Files...)
 	m.ConnectorAuthorizations = append([]ConnectorAuthorization{}, m.ConnectorAuthorizations...)
+	// A write of a message a branch switch hid would be refused by Chat, and hold every write
+	// after it.
+	if c.hidden[m.ID] {
+		return
+	}
 	op := operation{Message: m, Create: create}
 	if m.Role == "user" {
 		op.Author = c.userAuthor()
@@ -2182,6 +2242,11 @@ func (c *Conversation) dropPending(ids map[string]bool) {
 	defer c.sendMu.Unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.dropLocked(ids)
+}
+
+// dropLocked is dropPending for a caller holding sendMu and mu.
+func (c *Conversation) dropLocked(ids map[string]bool) {
 	c.data.Pending = slices.DeleteFunc(c.data.Pending, func(op operation) bool { return ids[op.Message.ID] })
 }
 
@@ -2194,6 +2259,11 @@ func (c *Conversation) flushOne() (bool, *FinishedReply, error) {
 		return false, nil, nil
 	}
 	op := c.data.Pending[0]
+	if c.hidden[op.Message.ID] {
+		c.data.Pending = c.data.Pending[1:]
+		c.mu.Unlock()
+		return true, nil, nil
+	}
 	visible := c.data.VisibleTools
 	c.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

@@ -1,11 +1,21 @@
 package conversation
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
+	"maps"
+	"net/http"
 	"time"
 
+	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/google/uuid"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -175,4 +185,798 @@ func (c *Conversation) BeginRegenerate(turn Turn, id, questionID string) (Comman
 	c.data.Pending = append(c.data.Pending, operation{Message: a, Create: true})
 	c.publish(a)
 	return receipt, nil
+}
+
+// Branches keeps the copies of the messages branch switches hide and the journal of the
+// switches, so a router that stops partway is finished by the next open. *store.Store is one.
+type Branches interface {
+	SaveBranchMessages(ctx context.Context, messages []store.AgentBranchMessage) error
+	BranchMessages(ctx context.Context, customerID, sessionID string, responseIDs []string) ([]store.AgentBranchMessage, error)
+	StartBranchSwitch(ctx context.Context, branchSwitch *store.AgentBranchSwitch) error
+	AdvanceBranchSwitch(ctx context.Context, customerID, id, state string) error
+	AbandonBranchSwitch(ctx context.Context, customerID, sessionID, id string) error
+	CountBranchResent(ctx context.Context, customerID, id string) (int, error)
+	UnfinishedBranchSwitches(ctx context.Context, customerID, sessionID string) ([]store.AgentBranchSwitch, error)
+}
+
+// SwitchHooks are the session's part of finishing a switch an earlier router left unfinished,
+// which open runs.
+type SwitchHooks struct {
+	// Chosen is what an activation sends again, oldest first: the copies of the branch it
+	// brings back.
+	Chosen func(ctx context.Context, sw store.AgentBranchSwitch) ([]store.AgentBranchMessage, error)
+	// Switched is told once Chat shows the switch's branch, before the switch is done: the
+	// session moves which of its responses are on the active path.
+	Switched func(ctx context.Context, sw store.AgentBranchSwitch) error
+}
+
+// SetBranches says where conversations keep their branch switches. Without it a conversation
+// cannot switch branches.
+func (s *Service) SetBranches(branches Branches) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.branches = branches
+}
+
+// SetSwitchHooks says how a switch an earlier router left unfinished is finished.
+func (s *Service) SetSwitchHooks(hooks SwitchHooks) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hooks = hooks
+}
+
+type sessionKey struct{}
+
+// WithSession is ctx carrying the session a conversation opened under it keeps its branches
+// under (Branches): the switches an earlier router left unfinished are finished as it opens,
+// and its Rewind and Activate journal theirs there.
+func WithSession(ctx context.Context, sessionID string) context.Context {
+	return context.WithValue(ctx, sessionKey{}, sessionID)
+}
+
+func sessionOf(ctx context.Context) string {
+	id, _ := ctx.Value(sessionKey{}).(string)
+	return id
+}
+
+// Why a branch switch is refused. Each is matched with errors.Is; Chat's refusal, when there
+// was one, stays in the chain.
+var (
+	// ErrBranchesUnsupported is a conversation that cannot have branches. errors.As with a
+	// *BranchesUnsupportedError says why.
+	ErrBranchesUnsupported = errors.New("conversation: this conversation cannot have branches")
+	// ErrBranchLimit is a conversation with as many edit and regenerate points as Chat keeps
+	// for a channel. errors.As with a *TooManyRewindsError gives the limit.
+	ErrBranchLimit = errors.New("conversation: this conversation has as many edit and regenerate points as it can have; continue in a new chat")
+	// ErrBranchConflict is a conversation that changed while it was being switched: another
+	// rewind landed, the message rewound to is gone, or Chat could not tell it apart.
+	ErrBranchConflict = errors.New("conversation: the conversation changed while it was being switched to another branch")
+	// ErrBranchUnavailable is an app without Chat's rewind, or with it frozen.
+	ErrBranchUnavailable = errors.New("conversation: branches are not enabled for this conversation's app")
+	// ErrBranchTooLong is an activation that would send more than MaxResent messages again.
+	ErrBranchTooLong = errors.New("conversation: this branch is too long to bring back; continue in a new chat")
+	// ErrConversationUnwritable is a conversation whose queued writes cannot be written now,
+	// such as one whose app is out of reach: it cannot be rewound until they are. Nothing was
+	// changed, and the switch can be tried again later.
+	ErrConversationUnwritable = errors.New("conversation: the conversation's queued writes cannot be written now")
+)
+
+// Why a conversation cannot have branches (BranchesUnsupportedError).
+const (
+	// UnsupportedThread is a thread channel the channel bridge writes.
+	UnsupportedThread = "thread"
+	// UnsupportedDispatched is a channel a worker was handed.
+	UnsupportedDispatched = "dispatched"
+	// UnsupportedChannel is a channel that is not a session's own.
+	UnsupportedChannel = "channel"
+	// UnsupportedShared is a conversation open to every member of its channel.
+	UnsupportedShared = "shared"
+	// UnsupportedNotKept is a session whose conversation is not kept in Chat, which the
+	// session refuses with this error itself.
+	UnsupportedNotKept = "not_kept"
+)
+
+// BranchesUnsupportedError is ErrBranchesUnsupported with the reason.
+type BranchesUnsupportedError struct {
+	Reason string
+}
+
+func (e *BranchesUnsupportedError) Error() string {
+	return ErrBranchesUnsupported.Error() + " (" + e.Reason + ")"
+}
+func (e *BranchesUnsupportedError) Is(target error) bool { return target == ErrBranchesUnsupported }
+
+// MaxResent is the most messages an activation sends again.
+const MaxResent = 100
+
+// RewindTarget is where a switch rewinds the conversation's channel to.
+type RewindTarget struct {
+	// SwitchID names the switch in the journal. A switch tried again under the same id is
+	// finished from where it got to.
+	SwitchID string
+	// Kind is store.SwitchRegenerate, store.SwitchEdit or store.SwitchActivate.
+	Kind string
+	// TargetResponseID is the response the switch replaces or brings back.
+	TargetResponseID string
+	// MessageID is the message the channel is rewound to, hidden too when Inclusive.
+	MessageID string
+	Inclusive bool
+	// TurnResponses are the responses of replies written before messages carried their
+	// response id (BranchField), by turn id, for their copies to be found by.
+	TurnResponses map[string]string
+}
+
+// RewindOutcome is what a switch did, and what the session rebuilds its model's history from.
+type RewindOutcome struct {
+	// Rewound is whether Chat hid anything: not when the message rewound to was the newest,
+	// as a reply that never landed leaves it.
+	Rewound bool
+	// Hidden are the messages the switch hid, oldest first.
+	Hidden []string
+	// Resent are the messages an activation sent again, as Chat holds them now.
+	Resent []Message
+	// Page is the conversation as it is after the switch: what was read before the rewind, up
+	// to its point, then what was sent again. Chat is not read again after a rewind, whose
+	// replicas show what it hid for a moment.
+	Page Page
+	// History and Truncated are Page as a model is handed it, as Open hands it back.
+	History   []llm.Message
+	Truncated bool
+	// Switch is the switch's journal row, zero when nothing was hidden. Once the session has
+	// moved its responses' active path it calls FinishSwitch.
+	Switch store.AgentBranchSwitch
+}
+
+// Rewind quiesces the conversation and rewinds its channel to target, for a regenerate or an
+// edit. The caller holds the session's command lock, so no command begins meanwhile, and has
+// stopped the agent's reply: the reply being written is finished as interrupted, every queued
+// write is written, the messages the rewind hides are copied and the switch journaled before
+// Chat is asked, and only once Chat has hidden them are their queued writes dropped.
+func (c *Conversation) Rewind(ctx context.Context, target RewindTarget) (RewindOutcome, error) {
+	if target.Kind != store.SwitchRegenerate && target.Kind != store.SwitchEdit {
+		return RewindOutcome{}, stack.Wrap(fmt.Errorf("conversation: rewind: kind %q: want %s or %s", target.Kind, store.SwitchRegenerate, store.SwitchEdit))
+	}
+	return c.switchTo(ctx, target, nil)
+}
+
+// Activate brings back the branch whose copies chosen are, oldest first: as Rewind, it
+// rewinds the channel to target, copying the branch active until then, and then sends chosen
+// again under new ids, each derived from the switch and the message it copies so a switch
+// finished by a later open sends none twice. A person's message is sent under the request id
+// its reply names, the reply's question_id follows it, and turn_id, response_id and source
+// are kept; each carries custom.resent_from and is sent with skip_push. More than MaxResent
+// messages are refused before anything is written.
+func (c *Conversation) Activate(ctx context.Context, target RewindTarget, chosen []store.AgentBranchMessage) (RewindOutcome, error) {
+	if len(chosen) > MaxResent {
+		return RewindOutcome{}, stack.Wrap(ErrBranchTooLong)
+	}
+	target.Kind = store.SwitchActivate
+	return c.switchTo(ctx, target, chosen)
+}
+
+// FinishSwitch marks a switch done, once the session has moved its responses' active path.
+func (c *Conversation) FinishSwitch(ctx context.Context, switchID string) error {
+	c.service.mu.Lock()
+	branches := c.service.branches
+	c.service.mu.Unlock()
+	if branches == nil {
+		return stack.Wrap(errors.New("conversation: branch switches are not kept anywhere"))
+	}
+	return branches.AdvanceBranchSwitch(ctx, c.data.Customer, switchID, store.SwitchDone)
+}
+
+// hide drops the queued writes of ids and keeps them out of every read from now on.
+func (c *Conversation) hide(ids map[string]bool) {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	maps.Copy(c.hidden, ids)
+	c.dropLocked(ids)
+}
+
+// switcherFor is what switches the conversation's branches, or why it cannot.
+func (c *Conversation) switcherFor(ctx context.Context, target RewindTarget) (switcher, error) {
+	c.service.mu.Lock()
+	branches, hooks, logger := c.service.branches, c.service.hooks, c.service.logger
+	c.service.mu.Unlock()
+	c.mu.Lock()
+	active, thread, dispatched, own, shared := c.active, c.thread, c.dispatched, c.sessionCommand, c.shared
+	session, customer, agentID, cid := c.session, c.data.Customer, c.data.Agent, c.data.CID
+	c.mu.Unlock()
+	switch {
+	case !active:
+		return switcher{}, stack.Wrap(errors.New("conversation is not open"))
+	case thread:
+		return switcher{}, stack.Wrap(&BranchesUnsupportedError{Reason: UnsupportedThread})
+	case dispatched:
+		return switcher{}, stack.Wrap(&BranchesUnsupportedError{Reason: UnsupportedDispatched})
+	case !own:
+		return switcher{}, stack.Wrap(&BranchesUnsupportedError{Reason: UnsupportedChannel})
+	case shared:
+		return switcher{}, stack.Wrap(&BranchesUnsupportedError{Reason: UnsupportedShared})
+	case branches == nil:
+		return switcher{}, stack.Wrap(errors.New("conversation: branch switches are not kept anywhere"))
+	case session == "":
+		return switcher{}, stack.Wrap(errors.New("conversation: opened without a session to keep its branches under"))
+	case !validCommandID.MatchString(target.SwitchID) || target.MessageID == "" || len(target.MessageID) > 128:
+		return switcher{}, stack.Wrap(errors.New("conversation: invalid rewind target"))
+	}
+	client, err := c.chat(ctx)
+	if err != nil {
+		return switcher{}, err
+	}
+	return switcher{branches: branches, hooks: hooks, logger: logger, rewinder: NewRewinder(client), client: client,
+		customer: customer, session: session, cid: cid, agent: agentID}, nil
+}
+
+func (c *Conversation) switchTo(ctx context.Context, target RewindTarget, chosen []store.AgentBranchMessage) (RewindOutcome, error) {
+	sw, err := c.switcherFor(ctx, target)
+	if err != nil {
+		return RewindOutcome{}, err
+	}
+	// Nothing is written to the channel from here until the switch is over, so the newest
+	// message read is still the newest when Chat is asked to rewind.
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	c.mu.Lock()
+	c.finish("interrupted")
+	parkedUntil := c.parkedUntil
+	c.mu.Unlock()
+	if time.Now().Before(parkedUntil) {
+		return RewindOutcome{}, stack.Wrap(ErrConversationUnwritable)
+	}
+	// A conversation that switches branches is never on a thread channel, so none of these
+	// writes is a finished reply to hand on (OnFinishedReply).
+	for {
+		more, _, err := c.flushOne()
+		if err != nil {
+			return RewindOutcome{}, stack.Wrap(&rewindRefusal{sentinel: ErrConversationUnwritable, cause: err})
+		}
+		if !more {
+			break
+		}
+	}
+
+	unfinished, err := sw.branches.UnfinishedBranchSwitches(ctx, sw.customer, sw.session)
+	if err != nil {
+		return RewindOutcome{}, err
+	}
+	for _, row := range unfinished {
+		if row.ID != target.SwitchID {
+			continue
+		}
+		outcome, carried, err := c.finishTried(ctx, sw, row, chosen)
+		if err != nil || carried {
+			return outcome, err
+		}
+		// The earlier try never rewound the channel and was forgotten: this one starts afresh.
+	}
+
+	r, err := sw.rewind(ctx, target, func(before string, tail map[string]bool) (Page, error) {
+		return c.readUpTo(ctx, sw.client, before, tail)
+	})
+	if err != nil {
+		return RewindOutcome{}, err
+	}
+	hidden := map[string]bool{}
+	for _, id := range r.hidden {
+		hidden[id] = true
+	}
+	c.mu.Lock()
+	maps.Copy(c.hidden, hidden)
+	c.dropLocked(hidden)
+	c.mu.Unlock()
+	outcome := RewindOutcome{Rewound: r.rewound, Hidden: r.hidden, Page: r.page, Switch: r.row}
+	if target.Kind == store.SwitchActivate {
+		outcome.Switch.State = store.SwitchResending
+		resent, err := sw.resend(ctx, r.row, chosen)
+		if err != nil {
+			return RewindOutcome{}, err
+		}
+		c.resent(resent)
+		outcome.Resent = resent
+		outcome.Page.Messages = append(outcome.Page.Messages, resent...)
+	}
+	outcome.History, outcome.Truncated = restored(ctx, c.data.CID, outcome.Page)
+	return outcome, nil
+}
+
+// finishTried finishes a switch tried before under the same id, from where it got to, and
+// says whether it carried it on: not when its rewind never landed, which forgets it. The page
+// is read as Chat shows it now, without what the switch hid.
+func (c *Conversation) finishTried(ctx context.Context, sw switcher, row store.AgentBranchSwitch, chosen []store.AgentBranchMessage) (RewindOutcome, bool, error) {
+	if row.Kind == store.SwitchActivate && chosen == nil {
+		chosen = []store.AgentBranchMessage{}
+	}
+	finished, err := sw.resume(ctx, row, chosen, false)
+	if err != nil {
+		return RewindOutcome{}, false, err
+	}
+	if finished.state == "" {
+		return RewindOutcome{}, false, nil
+	}
+	hidden := map[string]bool{}
+	for _, id := range finished.hidden {
+		hidden[id] = true
+	}
+	c.mu.Lock()
+	maps.Copy(c.hidden, hidden)
+	c.dropLocked(hidden)
+	all := maps.Clone(c.hidden)
+	c.mu.Unlock()
+	c.resent(finished.resent)
+	page, err := c.readUpTo(ctx, sw.client, "", all)
+	if err != nil {
+		return RewindOutcome{}, false, err
+	}
+	row.State = finished.state
+	outcome := RewindOutcome{Rewound: len(finished.hidden) > 0, Hidden: finished.hidden, Resent: finished.resent, Page: page, Switch: row}
+	outcome.History, outcome.Truncated = restored(ctx, c.data.CID, page)
+	return outcome, true, nil
+}
+
+// readUpTo reads the conversation before the message before, or its newest page for none,
+// leaving out what it hid and the messages in tail, which a read that does not stop at before
+// may still show.
+func (c *Conversation) readUpTo(ctx context.Context, client *getstream.Stream, before string, tail map[string]bool) (Page, error) {
+	c.mu.Lock()
+	hidden := maps.Clone(c.hidden)
+	customer, agentID, cid, owner, voiceAgent := c.data.Customer, c.data.Agent, c.data.CID, c.data.Owner, c.voiceAgent
+	c.mu.Unlock()
+	maps.Copy(hidden, tail)
+	page, err := c.service.readPage(ctx, client, customer, agentID, cid, before, owner, nil, hidden, nil, voiceAgent)
+	if err != nil {
+		return Page{}, stack.Wrap(err)
+	}
+	return page, nil
+}
+
+// resent takes the commands of messages sent again into the ledger, so a retry of one is
+// known as it is after a reopen.
+func (c *Conversation) resent(messages []Message) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.data.Commands == nil {
+		c.data.Commands = map[string]commandRecord{}
+	}
+	for id, record := range commandsIn(messages) {
+		if _, known := c.data.Commands[id]; !known {
+			c.data.Commands[id] = record
+		}
+	}
+}
+
+// resumeSwitches finishes the switches of session an earlier router left unfinished, and
+// returns every message the session's switches hid. A switch it cannot finish now is left for
+// the next open, and the conversation opens as Chat shows it.
+func (s *Service) resumeSwitches(ctx context.Context, client *getstream.Stream, customer, agentID, cid, session string) map[string]bool {
+	s.mu.Lock()
+	branches, hooks, logger := s.branches, s.hooks, s.logger
+	s.mu.Unlock()
+	if branches == nil || session == "" {
+		return nil
+	}
+	sw := switcher{branches: branches, hooks: hooks, logger: logger, rewinder: NewRewinder(client), client: client,
+		customer: customer, session: session, cid: cid, agent: agentID}
+	hidden, err := sw.resumeAll(ctx)
+	if err != nil {
+		logger.Warn("could not finish a branch switch an earlier router left unfinished; the conversation opens as Chat shows it",
+			"customer", customer, "cid", cid, "session", session, "error", err)
+	}
+	return hidden
+}
+
+// switcher switches one session's conversation between branches in Chat.
+type switcher struct {
+	branches Branches
+	hooks    SwitchHooks
+	logger   *slog.Logger
+	rewinder Rewinder
+	client   *getstream.Stream
+	// The conversation's customer, session, channel and agent.
+	customer, session, cid, agent string
+}
+
+// rewound is what a rewind did.
+type rewound struct {
+	row     store.AgentBranchSwitch
+	hidden  []string
+	page    Page
+	rewound bool
+}
+
+// rewind copies what a rewind to target hides, journals the switch and has Chat make it,
+// reading the conversation up to the point with read first. A rewind Chat refuses forgets
+// the switch and its copies, which are of messages still visible.
+func (sw switcher) rewind(ctx context.Context, target RewindTarget, read func(before string, tail map[string]bool) (Page, error)) (rewound, error) {
+	channelType, id := channelOf(sw.cid)
+	tail, hidden, err := sw.tailFrom(ctx, target)
+	if err != nil {
+		return rewound{}, err
+	}
+	before := target.MessageID
+	if !target.Inclusive && len(hidden) > 0 {
+		before = hidden[0].ID
+	} else if !target.Inclusive {
+		before = ""
+	}
+	page, err := read(before, idsOf(hidden))
+	if err != nil {
+		return rewound{}, err
+	}
+	if len(hidden) == 0 && target.Kind != store.SwitchActivate {
+		// Nothing after the question: a reply that never landed is asked for again.
+		return rewound{page: page}, nil
+	}
+
+	row := store.AgentBranchSwitch{ID: target.SwitchID, SessionID: sw.session, CustomerID: sw.customer, Kind: target.Kind,
+		TargetResponseID: target.TargetResponseID, ForkMessageID: target.MessageID, Inclusive: target.Inclusive,
+		HiddenFrom: createdAt(tail.Messages[0]), State: store.SwitchSnapshotted}
+	if err := sw.branches.StartBranchSwitch(ctx, &row); err != nil {
+		return rewound{}, err
+	}
+	if err := sw.branches.SaveBranchMessages(ctx, copiesOf(row, hidden, target.TurnResponses)); err != nil {
+		return rewound{}, err
+	}
+	if len(hidden) > 0 {
+		for attempt := 0; ; attempt++ {
+			_, err = sw.rewinder.Rewind(ctx, channelType, id, target.MessageID, target.Inclusive, tail.LastID, sw.agent)
+			var conflict *RewindConflictError
+			if !errors.As(err, &conflict) {
+				break
+			}
+			// A rewind that already landed, ours retried or another to the same point.
+			if !target.Inclusive && conflict.LastMessageID == target.MessageID {
+				err = nil
+				break
+			}
+			if attempt > 0 {
+				break
+			}
+			// A message was written since the read, by another device or another router: copy
+			// the tail again and try once more.
+			if tail, hidden, err = sw.tailFrom(ctx, target); err != nil {
+				break
+			}
+			if err = sw.branches.SaveBranchMessages(ctx, copiesOf(row, hidden, target.TurnResponses)); err != nil {
+				return rewound{}, err
+			}
+		}
+		if errors.Is(err, ErrNothingToRewind) {
+			err = nil
+			hidden = nil
+		}
+		if refusal := branchRefusal(err); refusal != nil {
+			if abandonErr := sw.branches.AbandonBranchSwitch(ctx, sw.customer, sw.session, row.ID); abandonErr != nil {
+				// The next open finds the rewind never landed and forgets the switch then.
+				return rewound{}, errors.Join(stack.Wrap(refusal), abandonErr)
+			}
+			return rewound{}, stack.Wrap(refusal)
+		}
+		if err != nil {
+			// Whether Chat rewound is not known: the next open finds out from the channel.
+			return rewound{}, err
+		}
+	}
+	if err := sw.branches.AdvanceBranchSwitch(ctx, sw.customer, row.ID, store.SwitchRewound); err != nil {
+		return rewound{}, err
+	}
+	row.State = store.SwitchRewound
+	ids := make([]string, 0, len(hidden))
+	for _, m := range hidden {
+		ids = append(ids, m.ID)
+	}
+	return rewound{row: row, hidden: ids, page: page, rewound: len(ids) > 0}, nil
+}
+
+// tailFrom reads the channel from target's message to the end, and what a rewind to it
+// hides. A message no longer there is a conversation that changed under the switch.
+func (sw switcher) tailFrom(ctx context.Context, target RewindTarget) (Tail, []getstream.MessageResponse, error) {
+	channelType, id := channelOf(sw.cid)
+	tail, err := sw.rewinder.ReadFrom(ctx, channelType, id, target.MessageID, true)
+	if err != nil {
+		return Tail{}, nil, err
+	}
+	if len(tail.Messages) == 0 || tail.Messages[0].ID != target.MessageID {
+		return Tail{}, nil, stack.Wrap(&rewindRefusal{sentinel: ErrBranchConflict, cause: errors.New("the message to rewind to is no longer in the conversation")})
+	}
+	if target.Inclusive {
+		return tail, tail.Messages, nil
+	}
+	return tail, tail.Messages[1:], nil
+}
+
+// branchRefusal is the switch refusal err is, nil for an error that is none: one that leaves
+// it unknown whether Chat rewound.
+func branchRefusal(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, ErrTooManyRewinds):
+		return &rewindRefusal{sentinel: ErrBranchLimit, cause: err}
+	case errors.Is(err, ErrRewindUnavailable):
+		return &rewindRefusal{sentinel: ErrBranchUnavailable, cause: err}
+	case errors.Is(err, ErrRewindConflict), errors.Is(err, ErrRewindAmbiguous), errors.Is(err, ErrForkInProgress), errors.Is(err, ErrBranchConflict):
+		return &rewindRefusal{sentinel: ErrBranchConflict, cause: err}
+	}
+	// Chat answers a message to rewind to that another rewind hid with a plain input error.
+	if refused, ok := errors.AsType[*getstream.StreamError](err); ok && refused.StatusCode == http.StatusBadRequest {
+		return &rewindRefusal{sentinel: ErrBranchConflict, cause: err}
+	}
+	return nil
+}
+
+// finished is how far resume took a switch: its state, "" for a switch forgotten because its
+// rewind never landed, the messages it hid and those it sent again.
+type finished struct {
+	state  string
+	hidden []string
+	resent []Message
+}
+
+// resumeAll finishes the session's unfinished switches, oldest first, and returns every
+// message its switches hid, but those of a switch whose rewind is not known to have landed.
+func (sw switcher) resumeAll(ctx context.Context) (map[string]bool, error) {
+	unfinished, err := sw.branches.UnfinishedBranchSwitches(ctx, sw.customer, sw.session)
+	if err != nil {
+		return nil, err
+	}
+	var errs []error
+	unknown := map[string]bool{}
+	for _, row := range unfinished {
+		got, err := sw.resume(ctx, row, nil, true)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		if got.state == store.SwitchSnapshotted {
+			unknown[row.ID] = true
+		}
+	}
+	copies, err := sw.branches.BranchMessages(ctx, sw.customer, sw.session, nil)
+	if err != nil {
+		return nil, errors.Join(append(errs, err)...)
+	}
+	hidden := map[string]bool{}
+	for _, m := range copies {
+		if !unknown[m.SwitchID] {
+			hidden[m.OriginalMessageID] = true
+		}
+	}
+	return hidden, errors.Join(errs...)
+}
+
+// resume finishes a switch from where it got to. A switch still snapshotted is either rewound
+// or not, which the channel says: its rewind landed when none of the messages it copied is
+// visible, and is then carried on; otherwise it never landed, and the switch is forgotten.
+// chosen, when nil, is asked of the hooks. With done, the session is told the switch is over
+// (SwitchHooks.Switched) and it is marked done.
+func (sw switcher) resume(ctx context.Context, row store.AgentBranchSwitch, chosen []store.AgentBranchMessage, done bool) (finished, error) {
+	got := finished{state: row.State}
+	copies, err := sw.branches.BranchMessages(ctx, sw.customer, sw.session, nil)
+	if err != nil {
+		return got, err
+	}
+	for _, m := range copies {
+		if m.SwitchID == row.ID {
+			got.hidden = append(got.hidden, m.OriginalMessageID)
+		}
+	}
+	if row.State == store.SwitchSnapshotted {
+		landed, err := sw.landed(ctx, row, got.hidden)
+		if err != nil {
+			return got, err
+		}
+		if !landed {
+			if err := sw.branches.AbandonBranchSwitch(ctx, sw.customer, sw.session, row.ID); err != nil {
+				return got, err
+			}
+			return finished{}, nil
+		}
+		if err := sw.branches.AdvanceBranchSwitch(ctx, sw.customer, row.ID, store.SwitchRewound); err != nil {
+			return got, err
+		}
+		row.State, got.state = store.SwitchRewound, store.SwitchRewound
+	}
+	if row.Kind == store.SwitchActivate {
+		if chosen == nil {
+			if sw.hooks.Chosen == nil {
+				return got, stack.Wrap(errors.New("conversation: no way to find the branch an activation sends again"))
+			}
+			if chosen, err = sw.hooks.Chosen(ctx, row); err != nil {
+				return got, err
+			}
+		}
+		if got.resent, err = sw.resend(ctx, row, chosen); err != nil {
+			return got, err
+		}
+		got.state = store.SwitchResending
+	}
+	if !done {
+		return got, nil
+	}
+	if sw.hooks.Switched != nil {
+		if err := sw.hooks.Switched(ctx, row); err != nil {
+			return got, err
+		}
+	}
+	if err := sw.branches.AdvanceBranchSwitch(ctx, sw.customer, row.ID, store.SwitchDone); err != nil {
+		return got, err
+	}
+	got.state = store.SwitchDone
+	return got, nil
+}
+
+// landed is whether a journaled switch's rewind landed: none of the messages it copied is
+// visible. One with no copies never asked Chat.
+func (sw switcher) landed(ctx context.Context, row store.AgentBranchSwitch, copied []string) (bool, error) {
+	if len(copied) == 0 {
+		return row.Kind == store.SwitchActivate && row.Resent > 0, nil
+	}
+	channelType, id := channelOf(sw.cid)
+	tail, err := sw.rewinder.ReadFrom(ctx, channelType, id, row.ForkMessageID, true)
+	if err != nil {
+		return false, err
+	}
+	visible := idsOf(tail.Messages)
+	for _, copiedID := range copied {
+		if visible[copiedID] {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// resend sends chosen again, from the first the switch has not counted as sent.
+func (sw switcher) resend(ctx context.Context, row store.AgentBranchSwitch, chosen []store.AgentBranchMessage) ([]Message, error) {
+	if len(chosen) > MaxResent {
+		return nil, stack.Wrap(ErrBranchTooLong)
+	}
+	if err := sw.branches.AdvanceBranchSwitch(ctx, sw.customer, row.ID, store.SwitchResending); err != nil {
+		return nil, err
+	}
+	remap := make(map[string]string, len(chosen))
+	for _, m := range chosen {
+		remap[m.OriginalMessageID] = ResentID(row.ID, m.OriginalMessageID)
+	}
+	channelType, id := channelOf(sw.cid)
+	skip := true
+	var out []Message
+	for i, m := range chosen {
+		req := resentMessage(m, remap)
+		if i >= row.Resent {
+			_, err := sw.client.Chat().SendMessage(ctx, channelType, id, &getstream.SendMessageRequest{Message: req, SkipPush: &skip})
+			if err != nil && !sw.alreadyResent(ctx, *req.ID, m.OriginalMessageID) {
+				return out, stack.Wrap(err)
+			}
+			if _, err := sw.branches.CountBranchResent(ctx, sw.customer, row.ID); err != nil {
+				return out, err
+			}
+		}
+		if sent, ok := resentRead(req); ok {
+			out = append(out, sent)
+		}
+	}
+	return out, nil
+}
+
+// alreadyResent is whether the message id is in Chat as the copy of original: a switch that
+// stopped between sending it and counting it, finished again.
+func (sw switcher) alreadyResent(ctx context.Context, id, original string) bool {
+	existing, err := sw.client.Chat().GetMessage(ctx, id, &getstream.GetMessageRequest{})
+	return err == nil && existing.Data.Message.Custom[ResentFromField] == original
+}
+
+// ResentFromField names the message a message sent again copies, so a customer's backend can
+// tell the copy from a message somebody wrote.
+const ResentFromField = "resent_from"
+
+// ResentID is the id the message original is sent again under by the switch switchID. It is
+// the same every time, so a switch finished again finds what it sent.
+func ResentID(switchID, original string) string {
+	sum := sha256.Sum256([]byte(switchID + "\x00" + original))
+	return "rs" + hex.EncodeToString(sum[:])[:30]
+}
+
+// heldMessage is what a copy keeps of a Chat message (store.AgentBranchMessage.Message).
+type heldMessage struct {
+	Text        string                 `json:"text"`
+	Attachments []getstream.Attachment `json:"attachments,omitempty"`
+	Custom      map[string]any         `json:"custom"`
+}
+
+// copiesOf are the copies of the messages a switch hides. A message is listed under its
+// response (BranchField); one written before messages carried it, under the response of its
+// reply's turn, and a person's message under that of the reply that answers it.
+func copiesOf(row store.AgentBranchSwitch, messages []getstream.MessageResponse, turnResponses map[string]string) []store.AgentBranchMessage {
+	responses := map[string]string{}
+	answering := map[string]string{}
+	for _, m := range messages {
+		runtime, _ := m.Custom["support_runtime"].(map[string]any)
+		if b := branchFrom(m.Custom[BranchField]); b != nil {
+			responses[m.ID] = b.ResponseID
+		} else if turn, _ := runtime["turn_id"].(string); turn != "" && turnResponses[turn] != "" {
+			responses[m.ID] = turnResponses[turn]
+		}
+		if question, _ := runtime["question_id"].(string); question != "" && runtime["role"] == "assistant" && responses[m.ID] != "" {
+			answering[question] = responses[m.ID]
+		}
+	}
+	copies := make([]store.AgentBranchMessage, 0, len(messages))
+	for _, m := range messages {
+		response := responses[m.ID]
+		if response == "" {
+			response = answering[m.ID]
+		}
+		held, _ := toMap(heldMessage{Text: m.Text, Attachments: m.Attachments, Custom: m.Custom})
+		copies = append(copies, store.AgentBranchMessage{
+			SessionID: row.SessionID, OriginalMessageID: m.ID, CustomerID: row.CustomerID, ResponseID: response,
+			SwitchID: row.ID, ChatCreatedAt: createdAt(m), AuthorID: m.User.ID, Message: held,
+		})
+	}
+	return copies
+}
+
+// resentMessage is the copy m sent again: under its new id, with the request and question ids
+// of the branch's messages following theirs, and custom.resent_from naming it.
+func resentMessage(m store.AgentBranchMessage, remap map[string]string) getstream.MessageRequest {
+	var held heldMessage
+	// Through JSON, so the copy the caller holds is not written under it.
+	encoded, _ := json.Marshal(m.Message)
+	_ = json.Unmarshal(encoded, &held)
+	if held.Custom == nil {
+		held.Custom = map[string]any{}
+	}
+	for _, key := range []string{"support_runtime", "support_message"} {
+		fields, ok := held.Custom[key].(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, field := range []string{"command_id", "question_id"} {
+			if was, _ := fields[field].(string); remap[was] != "" {
+				fields[field] = remap[was]
+			}
+		}
+	}
+	held.Custom[ResentFromField] = m.OriginalMessageID
+	id, user := remap[m.OriginalMessageID], m.AuthorID
+	return getstream.MessageRequest{ID: &id, UserID: &user, Text: &held.Text, Custom: held.Custom, Attachments: held.Attachments}
+}
+
+// resentRead is a message sent again as a read gives it back, for one the router wrote.
+func resentRead(req getstream.MessageRequest) (Message, bool) {
+	m, err := messageFromWire(*req.ID, *req.Text, req.Custom)
+	if err != nil {
+		return Message{}, false
+	}
+	m.Artifacts = artifactsFromAttachments(req.Attachments)
+	m.Files = filesFromAttachments(req.Attachments)
+	m.ConnectorAuthorizations = connectorAuthorizationsFromAttachments(req.Attachments)
+	m.Refused = req.Custom[RefusedField] == true
+	m.authorID = *req.UserID
+	return m, true
+}
+
+func idsOf(messages []getstream.MessageResponse) map[string]bool {
+	ids := make(map[string]bool, len(messages))
+	for _, m := range messages {
+		ids[m.ID] = true
+	}
+	return ids
+}
+
+func createdAt(m getstream.MessageResponse) time.Time {
+	if m.CreatedAt.Time == nil {
+		return time.Time{}
+	}
+	return m.CreatedAt.Time.UTC()
+}
+
+func toMap(v any) (map[string]any, error) {
+	encoded, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	return out, json.Unmarshal(encoded, &out)
 }
