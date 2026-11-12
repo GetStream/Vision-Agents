@@ -25,12 +25,16 @@ class ChildAgent:
         timeout_ms (int | Unset): How long one call may take, two minutes when left out. A call never outlasts the run
             that made it: it gets this or what is left of the run, whichever is less. A call that runs out of time, or whose
             agent fails, is answered to the model as a failed tool call, and the run goes on.
+        max_tool_rounds (int | Unset): The reply to a tool result, counted since the agent was handed its input, that is
+            offered no more tools and made to answer from what it has. Zero is the default of 8; a negative number never
+            withdraws them, for an agent that chains many lookups.
     """
 
     config: str
     tool: str
     description: str | Unset = UNSET
     timeout_ms: int | Unset = UNSET
+    max_tool_rounds: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -41,6 +45,8 @@ class ChildAgent:
         description = self.description
 
         timeout_ms = self.timeout_ms
+
+        max_tool_rounds = self.max_tool_rounds
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -54,6 +60,8 @@ class ChildAgent:
             field_dict["description"] = description
         if timeout_ms is not UNSET:
             field_dict["timeout_ms"] = timeout_ms
+        if max_tool_rounds is not UNSET:
+            field_dict["max_tool_rounds"] = max_tool_rounds
 
         return field_dict
 
@@ -68,11 +76,14 @@ class ChildAgent:
 
         timeout_ms = d.pop("timeout_ms", UNSET)
 
+        max_tool_rounds = d.pop("max_tool_rounds", UNSET)
+
         child_agent = cls(
             config=config,
             tool=tool,
             description=description,
             timeout_ms=timeout_ms,
+            max_tool_rounds=max_tool_rounds,
         )
 
         child_agent.additional_properties = d
