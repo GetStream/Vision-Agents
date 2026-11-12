@@ -161,7 +161,7 @@ the other commands that read them there.
 | `TWILIO_WEBHOOK_AUTH_TOKEN` | Auth Token of the Twilio account whose webhooks the router checks (`X-Twilio-Signature`). It only checks signatures, and no route reads it yet. A token with whitespace in it stops the router at start |
 | `TELNYX_API_KEY`        | Telnyx credentials                                         |
 | `TELNYX_CONNECTION_ID`  | The Telnyx TeXML application numbers and calls are on. Calls to the webhook from any other application are hung up |
-| `TELNYX_PUBLIC_KEY`     | Telnyx's public key (base64), to check the calls it sends to `/v1/phone/hooks/telnyx`. Without it Telnyx numbers are not answered. Telnyx numbers also need `ROUTER_AUTH_KEK`: without a keyring they cannot be attached |
+| `TELNYX_PUBLIC_KEY`     | Telnyx's public key (base64), to check the calls it sends to `/v1/phone/hooks/telnyx` and the account events it sends to `/v1/phone/hooks/telnyx/events`. Without it Telnyx numbers are not answered and the events route answers 404. Telnyx numbers also need `ROUTER_AUTH_KEK`: without a keyring they cannot be attached |
 | `DEEPGRAM_API_KEY`      | Deepgram Flux credentials                                  |
 | `CARTESIA_API_KEY`      | Cartesia credentials, used by Sonic and the Ink 2 transcriber |
 | `CARTESIA_VOICE_ID`     | Optional default voice; a built-in one is used when unset  |

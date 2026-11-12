@@ -1388,6 +1388,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "receiveTelnyxEvent" => {
+          method: :post, path: "/v1/phone/hooks/telnyx/events",
+          path_params: [].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "recordSpeech" => {
           method: :post, path: "/v1/tts/recordings",
           path_params: [].freeze, query: [].freeze,

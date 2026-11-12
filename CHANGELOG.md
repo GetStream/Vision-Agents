@@ -2,6 +2,9 @@
 
 ## Features
 
+### The router counts Telnyx account events
+
+`POST /v1/phone/hooks/telnyx/events` takes the account events Telnyx signs, such as a port-out or a number order, and counts each in `vendor_account_events_total{vendor,event,level}`, with one log line. A port-out or a reached messaging spend limit is `page`, a number order that did not succeed is `warn`, and the rest is `info`; a type the router does not name is counted as `other`. The route answers 404 while `TELNYX_PUBLIC_KEY` is unset, and 401 to an event Telnyx did not sign. (#1985)
 ### The router reads a Twilio webhook Auth Token
 
 `TWILIO_WEBHOOK_AUTH_TOKEN` holds the Auth Token the router will check Twilio's `X-Twilio-Signature` with; no route reads it yet, and a token with whitespace in it stops the router at start (#1982).
