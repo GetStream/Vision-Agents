@@ -1,13 +1,152 @@
-# stream_agents_core
+# Official Dart client for [Stream Agents](https://getstream.io/agents/docs/)
 
-The client for talking to a Stream agent from Dart: sessions, responses, the session
-socket, and the conversation as state. Pure Dart, so it runs in Flutter, a CLI or a server.
+> Talk to a Stream agent from Dart: open a conversation, follow it as it happens, answer the
+> agent's tool calls on the device, and find past conversations. Pure Dart, so it runs in
+> Flutter on every platform, on the Dart VM and in a browser.
 
-```dart
-final agents = StreamAgents(apiKey: 'your_api_key', userId: 'jlahey', token: yourBackend.agentToken);
-final chat = await agents.agent('support').chat();
-await chat.responses.create('What are your opening hours?');
-chat.conversation.stream.listen((conversation) => print(conversation.turns.last.text));
+[![Pub](https://img.shields.io/pub/v/stream_agents_core.svg)](https://pub.dev/packages/stream_agents_core)
+[![CI](https://github.com/GetStream/Vision-Agents/actions/workflows/client-sdks.yml/badge.svg?branch=accelerate)](https://github.com/GetStream/Vision-Agents/actions/workflows/client-sdks.yml)
+
+**Quick Links**
+
+- [Register](https://dashboard.getstream.io/signup/) to get an API key for Stream
+- [Stream Agents documentation](https://getstream.io/agents/docs/)
+- [Quickstart](https://getstream.io/agents/docs/quickstart/)
+
+## Changelog
+
+Check out the [changelog on pub.dev](https://pub.dev/packages/stream_agents_core/changelog) to
+see the latest changes in the package.
+
+## Overview
+
+The agent runs in Stream's backend. This package is the client side of a conversation with it:
+the API client, the session socket, and the conversation as state an app can render. It ships
+no UI and needs no other Stream package.
+
+| Package | What it adds |
+| --- | --- |
+| **`stream_agents_core`** | The client and the conversation state. Pure Dart. |
+| [`stream_agents_chat`](https://pub.dev/packages/stream_agents_chat) | The Stream Chat channel a conversation is kept in. Pure Dart. |
+| [`stream_agents_rtc`](https://pub.dev/packages/stream_agents_rtc) | Talking to the agent out loud, over Stream Video. Flutter. |
+
+To show a conversation in Flutter, use Stream Chat's AI components,
+[`stream_chat_flutter_ai`](https://pub.dev/packages/stream_chat_flutter_ai).
+
+## Getting Started
+
+### Add dependency
+
+Add this to your `pubspec.yaml`, using the latest version
+[![Pub](https://img.shields.io/pub/v/stream_agents_core.svg)](https://pub.dev/packages/stream_agents_core):
+
+```yaml
+dependencies:
+  stream_agents_core: ^0.1.0
 ```
 
-See [the Dart SDKs](https://github.com/GetStream/Vision-Agents/tree/accelerate/sdks/dart) for the rest.
+Then run:
+
+```shell
+dart pub get
+```
+
+The package has no platform-specific setup.
+
+### Create the client
+
+Create one `StreamAgents` per signed-in user and reuse it. The token is a Stream user token
+from your backend, signed with your Stream secret. `token` is a function the SDK calls each time
+it needs one, for every request to the router and when Stream Chat or Stream Video need a fresh
+one, so cache the token in it rather than asking your backend each time.
+
+```dart
+import 'package:stream_agents_core/stream_agents_core.dart';
+
+final agents = StreamAgents(
+  apiKey: 'your_api_key',
+  userId: 'jlahey',
+  token: () => yourBackend.agentToken(),
+);
+```
+
+`StreamAgents` reaches Stream's hosted router in us-east4. For another region, pass
+`url: Backend.regionUrl('europe-west4')`.
+
+### Start a conversation
+
+```dart
+final session = await agents.agent('support').chat();
+await session.responses.create('What are your opening hours?');
+```
+
+`session.conversation` is a `LiveValue<Conversation>`: the current transcript and what the
+agent is doing, plus a stream of every change. A Flutter widget renders it with a
+`StreamBuilder`:
+
+```dart
+StreamBuilder<Conversation>(
+  stream: session.conversation.stream,
+  initialData: session.conversation.value,
+  builder: (context, snapshot) {
+    final turns = snapshot.requireData.turns;
+    return ListView(children: [for (final turn in turns) Text(turn.text)]);
+  },
+);
+```
+
+### Give the agent a tool that runs on the device
+
+```dart
+final lookup = AgentTool(
+  name: 'lookup_order',
+  description: "Look up one of the caller's orders by its order number.",
+  parameters: AgentTool.strings({'order_id': 'the order number'}, required: ['order_id']),
+  run: (arguments) async => orders.find('${arguments['order_id']}'),
+);
+
+final session = await agents.agent('support').chat(SessionOptions(tools: [lookup]));
+```
+
+The agent only sees what the tool returns.
+
+## Main types
+
+- `StreamAgents` - the client: `agent(name)`, `sessions`, `guestUser`, `withUser`, `disconnect`
+- `AgentSession` - one conversation: `responses`, `conversation`, `events()`, `decide`, `rewind`,
+  `fork`, `update`, `close`, `delete`
+- `Conversation`, `Turn`, `ConversationState` - the transcript and what the agent is doing
+- `LiveValue<T>` - a current value and a stream of its changes, with no state-management package
+- `AgentTool`, `ToolOutput` - tools the agent can call on the device
+- `Sessions`, `Responses` - past conversations and their turns
+- `SessionOptions` - tools, memory, time zone, incognito and the other settings for a session
+- `AgentsException` - what a failed call throws: `RouterException`, `TransportException` and
+  the others
+
+## Example Apps
+
+Two Flutter apps use this package together with `stream_agents_chat`, `stream_agents_rtc` and
+`stream_chat_flutter_ai`:
+
+- [`flutter_demo`](https://github.com/GetStream/Vision-Agents/tree/accelerate/examples/voice_agents/flutter_demo)
+  - a written and a spoken conversation with one agent
+- [`flutter_assistant`](https://github.com/GetStream/Vision-Agents/tree/accelerate/examples/voice_agents/flutter_assistant)
+  - an assistant with device tools, photos and past conversations
+
+## Contributing
+
+We welcome code changes that improve this library or fix a problem. Please follow the existing
+conventions and add tests before submitting a Pull Request on
+[GitHub](https://github.com/GetStream/Vision-Agents).
+
+```shell
+dart test
+```
+
+The API client in `lib/src/generated` is generated from the router's OpenAPI spec
+(`acceleration/api/openapi.yaml` in the repository) and committed. Regenerate it with
+`dart run tool/generate.dart`; `--check` verifies it is up to date.
+
+## License
+
+Apache License 2.0. See [LICENSE](https://github.com/GetStream/Vision-Agents/blob/accelerate/sdks/dart/core/LICENSE).
