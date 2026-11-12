@@ -79,6 +79,20 @@ void main() {
       expect(clients.every((client) => identical(client, clients.first)), isTrue);
     });
 
+    test('a session waiting while the clients are disconnected is not handed one', () async {
+      final peers = _Peers();
+      final backend = _signedIn('john');
+
+      final refused = expectLater(
+        backend.shared('chat', open: peers.open, disconnect: peers.disconnect),
+        throwsStateError,
+      );
+      await backend.disconnectStream();
+
+      await refused;
+      expect(peers.built.single.connected, isFalse);
+    });
+
     test('chat and video are a client each', () async {
       final peers = _Peers();
       final backend = _signedIn('john');

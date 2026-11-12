@@ -193,20 +193,28 @@ final class Backend {
         (client) => disconnect(client as T),
       ),
     );
+    final T client;
     try {
-      return await entry.opening as T;
+      client = await entry.opening as T;
     } catch (_) {
       if (identical(_clients.built[key], entry)) {
         _clients.built.remove(key);
       }
       rethrow;
     }
+    if (entry.disconnected) {
+      throw StateError('the Stream clients were disconnected while this one was opening');
+    }
+    return client;
   }
 
   /// Disconnects every Stream client built here, for every user, and none the app gave.
   Future<void> disconnectStream() async {
     final built = [..._clients.built.values];
     _clients.built.clear();
+    for (final entry in built) {
+      entry.disconnected = true;
+    }
     for (final entry in built) {
       final Object client;
       try {
@@ -254,6 +262,10 @@ final class _Built {
 
   final Future<Object> opening;
   final Future<void> Function(Object client) disconnect;
+
+  /// Set by [Backend.disconnectStream], so a session still waiting on the opening is not
+  /// handed a client being disconnected.
+  bool disconnected = false;
 }
 
 String _join(String base, String path) =>
