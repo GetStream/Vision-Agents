@@ -772,6 +772,9 @@ type AgentSettings struct {
 	Description string `yaml:"description"`
 	// TimeoutMs is how long one call may take. Zero is the router's default, two minutes.
 	TimeoutMs int `yaml:"timeout_ms"`
+	// MaxToolRounds is the reply to a tool result the agent must answer at rather than call
+	// another tool. Zero is the router's default of 8; negative is no limit.
+	MaxToolRounds int `yaml:"max_tool_rounds"`
 }
 
 // declare reads agent.yaml. A key nobody knows is refused rather than dropped, since a

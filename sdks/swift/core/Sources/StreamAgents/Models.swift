@@ -28,6 +28,8 @@ public struct Session: Sendable, Hashable, Identifiable {
     public let instructions: String
     public let llm: String
     public let createdAt: Date
+    /// When the conversation was pinned. Nil for one that is not pinned.
+    public let pinnedAt: Date?
 
     public enum State: String, Sendable {
         case live
@@ -59,6 +61,7 @@ public struct Session: Sendable, Hashable, Identifiable {
         instructions = schema.instructions ?? ""
         llm = schema.llm ?? ""
         createdAt = schema.createdAt
+        pinnedAt = schema.pinnedAt
     }
 }
 
@@ -104,45 +107,127 @@ public struct Page<Item: Sendable>: Sendable {
 extension Page: Equatable where Item: Equatable {}
 extension Page: Hashable where Item: Hashable {}
 
-/// Which of this caller's conversations to list.
+/// Which of this caller's conversations to list, written as the router reads it.
 ///
-/// `nil` leaves a filter out. A device is always narrowed to its own user's sessions.
-public struct SessionQuery: Sendable, Hashable {
-    /// Only this project's. A search covers every project, so it refuses this.
-    public var projectID: String?
-    /// Only the ones the user took part in this way.
-    public var modality: Session.Modality?
-    /// Only the ones still running, or only the ones over.
-    public var state: Session.State?
-    /// Only the ones created with this agent id.
-    public var agentID: String?
-    /// Only the ones whose usage is counted under this team.
-    public var team: String?
-    /// Only the ones started at or after this.
-    public var createdSince: Date?
-    /// Only the ones started before this.
-    public var createdBefore: Date?
-    /// Only the ones whose `custom` labels hold every one of these pairs.
-    public var custom: [String: String] = [:]
-    /// The order. Nil is most recently active first, or best match first for a search.
-    public var sort: Sort?
-    /// Up to 200. Nil is 25.
-    public var limit: Int?
-    /// The `nextCursor` of the page before, sent with the same filters. Nil is the first page.
-    public var cursor: String?
+/// Each case is one condition, and `and` and `or` put conditions together: each takes 1 to 10
+/// filters, and they nest at most 3 deep.
+///
+/// ```swift
+/// .or([.projectID("a"), .projectID("b")])
+/// .and([.projectIDIn(["a", "b"]), .agent("support")])
+/// ```
+///
+/// A device is always narrowed to its own user's sessions, so there is no filter by user, and
+/// none by review score, which only a server-side caller may read. Words are searched for with
+/// `Sessions.search`, which is why there is no text case either.
+public indirect enum SessionFilter: Sendable, Hashable, Encodable {
+    /// Only this project's: `{"project_id": {"$eq": id}}`.
+    case projectID(String)
+    /// Any of these projects', up to 50: `{"project_id": {"$in": ids}}`.
+    case projectIDIn([String])
+    /// Only the ones opened against the agent of this name: `{"agent": name}`. From
+    /// `Agent.sessions` the agent is already named, and naming another at the top of the
+    /// filter is overridden.
+    case agent(String)
+    /// Every one of these holds: `{"$and": [...]}`.
+    case and([SessionFilter])
+    /// At least one of these holds: `{"$or": [...]}`.
+    case or([SessionFilter])
 
-    /// Every order is descending: the router offers no ascending one.
-    public enum Sort: String, Sendable {
-        /// Most recently active first.
-        case updatedAt = "updated_at"
-        /// Best match first, which only sorts a search.
-        case relevance
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: WireKey.self)
+        try encode(into: &container)
     }
 
-    public init(limit: Int? = nil, cursor: String? = nil) {
-        self.limit = limit
-        self.cursor = cursor
+    /// Writes this condition's one key, so the top of a query can set its own keys beside it.
+    func encode(into container: inout KeyedEncodingContainer<WireKey>) throws {
+        switch self {
+        case .projectID(let id):
+            var match = container.nestedContainer(keyedBy: WireKey.self, forKey: "project_id")
+            try match.encode(id, forKey: "$eq")
+        case .projectIDIn(let ids):
+            var match = container.nestedContainer(keyedBy: WireKey.self, forKey: "project_id")
+            try match.encode(ids, forKey: "$in")
+        case .agent(let name):
+            try container.encode(name, forKey: "agent")
+        case .and(let filters):
+            try container.encode(filters, forKey: "$and")
+        case .or(let filters):
+            try container.encode(filters, forKey: "$or")
+        }
     }
+}
+
+/// One step of the order a query lists conversations in.
+///
+/// Leaving the sort out is `[.lastMessageAt()]`. `[.pinned]` or `[.pinned, .lastMessageAt()]`
+/// lists the pinned ones first. A device cannot sort by review score.
+public struct SessionSort: Sendable, Hashable, Encodable {
+    let field: String
+    let direction: Int
+
+    /// By when the agent last answered, or when the session began if it has not: most recent
+    /// first, or oldest first when `ascending`.
+    public static func lastMessageAt(ascending: Bool = false) -> SessionSort {
+        SessionSort(field: "last_message_at", direction: ascending ? 1 : -1)
+    }
+
+    /// The pinned conversations first. It comes first in a sort, and `lastMessageAt` may follow.
+    public static let pinned = SessionSort(field: "pinned", direction: -1)
+
+    /// Best match first. It only sorts a text search, which `Sessions.search` already sorts so.
+    public static let relevance = SessionSort(field: "relevance", direction: -1)
+}
+
+/// The body of `POST /v1/agents/sessions/query`.
+///
+/// Hand-written because the generated `SessionFilterPayload` cannot hold it: the generator
+/// drops a string-or-object field, which is every field condition there is. The caller's
+/// filter is one key at the top; the agent and the search text are set beside it rather than
+/// wrapped around it in an `$and`, since the router only reads `text` at the top.
+struct SessionQueryBody: Encodable, Sendable {
+    var filter: SessionFilter?
+    /// The agent an `Agent.sessions` query is narrowed to, which wins over one in `filter`.
+    var agent: String?
+    var text: String?
+    var sort: [SessionSort]?
+    var limit: Int?
+    var cursor: String?
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: WireKey.self)
+        if filter != nil || agent != nil || text != nil {
+            var top = container.nestedContainer(keyedBy: WireKey.self, forKey: "filter")
+            if let filter, !(agent != nil && filter.isAgent) {
+                try filter.encode(into: &top)
+            }
+            try top.encodeIfPresent(agent, forKey: "agent")
+            if let text {
+                var match = top.nestedContainer(keyedBy: WireKey.self, forKey: "text")
+                try match.encode(text, forKey: "$q")
+            }
+        }
+        if let sort, !sort.isEmpty { try container.encode(sort, forKey: "sort") }
+        try container.encodeIfPresent(limit, forKey: "limit")
+        try container.encodeIfPresent(cursor, forKey: "cursor")
+    }
+}
+
+extension SessionFilter {
+    fileprivate var isAgent: Bool {
+        if case .agent = self { return true }
+        return false
+    }
+}
+
+/// A key of the query's JSON, written as it goes on the wire.
+struct WireKey: CodingKey, ExpressibleByStringLiteral {
+    let stringValue: String
+    var intValue: Int? { nil }
+
+    init(stringValue: String) { self.stringValue = stringValue }
+    init?(intValue: Int) { nil }
+    init(stringLiteral value: String) { stringValue = value }
 }
 
 /// One turn of a session as the router wrote it down: what was asked, and how answering it

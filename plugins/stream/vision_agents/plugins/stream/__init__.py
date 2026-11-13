@@ -57,7 +57,6 @@ from .router import Router, define_router, sync_routers
 from .sessions import (
     ForkOptions,
     Participant,
-    Query,
     Session,
     SessionEvent,
     SessionOptions,
@@ -115,7 +114,6 @@ __all__ = [
     "PhoneCapability",
     "PhoneNumber",
     "PhoneNumberType",
-    "Query",
     "Responses",
     "Router",
     "RouterError",

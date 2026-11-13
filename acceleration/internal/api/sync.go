@@ -302,8 +302,8 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	} else if !ok {
 		return nil, invalidRequest(message)
 	}
-	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, stored); !ok {
-		return nil, invalidRequest(message)
+	if failure, refused := s.sandboxLimitsComplaint(ctx, customerID, config, stored); refused {
+		return nil, failure
 	}
 	// Asked of the knowledge base the sync is about to write, the one named after the agent.
 	documents := documentsOf(body.Knowledge)

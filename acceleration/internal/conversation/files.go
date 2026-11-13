@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -81,6 +82,25 @@ func (c *Conversation) PublishVoiceNote(ctx context.Context, note VoiceNote) (Ph
 	published := note.Sent()
 	published.Uploaded = uploaded
 	return published, nil
+}
+
+// PublishDocument uploads a file a person sent with a question to the conversation's channel,
+// as them, for their message to show.
+func (c *Conversation) PublishDocument(ctx context.Context, file sandbox.File) (Photo, error) {
+	uploaded, err := c.upload(ctx, file, c.userAuthor())
+	if err != nil {
+		return Photo{}, err
+	}
+	published := DocumentSent(file)
+	published.Uploaded = uploaded
+	return published, nil
+}
+
+// DocumentSent is a file sent with a question as a retry of it is matched on: by its digest,
+// so a retry holds no second copy of a file of megabytes.
+func DocumentSent(file sandbox.File) Photo {
+	digest := sha256.Sum256(file.Data)
+	return Photo{Sent: llm.ImagePart{MIME: file.MIME, Data: digest[:]}}
 }
 
 // upload stores a file on the conversation's channel as uploader.

@@ -84,6 +84,10 @@ type Message struct {
 	// tool's late result, a call silence declined or a summary of the call so far. No provider
 	// reads it: a model of the call's speech is told only what was said.
 	Typed bool
+	// Document marks a file the caller attached, which goes ahead of the conversation on
+	// every reply. No provider reads it: the file was screened once, when it arrived, so a
+	// reply's own screen leaves it out.
+	Document bool
 }
 
 // Tool is something the model may do instead of, or alongside, saying something.

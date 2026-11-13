@@ -255,6 +255,14 @@ type heldReply struct {
 func (a *Agent) hold(turnID string, request tts.Request, message MessageSpan, counted bool) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	// The turn can be given up on after the consumer read it as still spoken, as a voice lost
+	// drops the reply held for a greeting: sent now, it would go to the voice replacing that one.
+	if _, gone := a.abandoned[turnID]; gone {
+		if counted {
+			a.utterances = max(0, a.utterances-1)
+		}
+		return true
+	}
 	if !a.heldLocked(turnID) {
 		// A voice lost once it was told the utterance is over hands that on with it.
 		if heard := a.heard[request.ID]; heard != nil && request.Final && request.Text == "" {

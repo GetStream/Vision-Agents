@@ -1,9 +1,10 @@
 import 'dart:async';
 
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:stream_core_flutter/core.dart';
 import 'package:intl/intl.dart';
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents/stream_agents.dart';
 
 import 'assistant.dart';
 
@@ -32,10 +33,9 @@ class Conversations extends ChangeNotifier {
     _reads += 1;
     final read = _reads;
     try {
-      const query = SessionQuery(limit: 50);
       final page = searchText.isEmpty
-          ? await Assistant.sessions.query(query)
-          : await Assistant.sessions.search(searchText, query);
+          ? await Assistant.sessions.query(limit: 50)
+          : await Assistant.sessions.search(searchText, limit: 50);
       if (read != _reads) return;
       // Only the ones kept in writing can be opened again as a chat: a session that was only
       // ever a call, or incognito, has no channel to read back.

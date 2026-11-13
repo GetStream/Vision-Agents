@@ -234,7 +234,7 @@ Each rule names the test that fails when it breaks. Suites: `SchedulerSuite`
   (`Spec.ThreadDelivery`), which PATCH refuses to change. Quiet hours hold it as any task.
   Before the turn,
   `Bridge.Reachable` refuses: a removed connection (`connection_removed`, final), an opted-out
-  person (`channel_unreachable`, final), the sandbox gate (`channel_unreachable`), WhatsApp
+  person (`channel_unreachable`, final), the sandbox gate (`channel_unreachable`), a tier limit (`tier_limit_reached`), WhatsApp
   past 24 h since the person last wrote with no `after_window` template in the manifest
   (`outside_window`, final). A thread row that is gone, of another customer, or of another person is
   `thread_gone`, final. A task without `channel_thread` is delivered as before.

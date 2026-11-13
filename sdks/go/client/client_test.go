@@ -144,10 +144,18 @@ func newRouter(t *testing.T) *router {
 			answer(w, http.StatusBadRequest, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{Message: "nothing routes to nobody/nothing"}})
 			return
 		}
-		answer(w, http.StatusOK, acceleration.Session{
+		backend.mu.Lock()
+		pin := backend.bodies[r.Method+" "+r.URL.Path]["pinned"]
+		backend.mu.Unlock()
+		updated := acceleration.Session{
 			Id: r.PathValue("id"), AgentId: "agent-1", UserId: "jean", State: "running",
 			CreatedAt: time.Now(),
-		})
+		}
+		// A pinned session says when; one that is not carries no pinned_at at all.
+		if pin == true {
+			updated.PinnedAt = ptr(pinnedAt)
+		}
+		answer(w, http.StatusOK, updated)
 	})
 
 	mux.HandleFunc("POST /v1/agents/sessions/{id}/responses", func(w http.ResponseWriter, r *http.Request) {
@@ -739,134 +747,290 @@ func TestNoReturnURLSendsNone(t *testing.T) {
 	}
 }
 
-func TestQueryingNarrowsToTheAgentAndTheFiltersGiven(t *testing.T) {
-	backend := newRouter(t)
-	backend.sessions = []acceleration.Session{{Id: "session-1", State: "closed"}}
+// pinnedAt is when the fake router says a session was pinned.
+var pinnedAt = time.Date(2026, 11, 3, 9, 30, 0, 0, time.UTC)
 
-	listed, err := backend.client(t).Agent("docs").Sessions.Query(t.Context(), Query{
-		ProjectID: "docs",
-		UserID:    "jean",
-		Modality:  "video",
-		Limit:     50,
-	})
+// sentQuery checks the whole body of the last session query against want, written as JSON:
+// every key and value, and nothing besides.
+func sentQuery(t *testing.T, backend *router, want string) {
+	t.Helper()
+	var wanted map[string]any
+	if err := json.Unmarshal([]byte(want), &wanted); err != nil {
+		t.Fatalf("the wanted body does not parse: %v", err)
+	}
+	got := backend.body(t, "POST", "/v1/agents/sessions/query")
+	if !reflect.DeepEqual(got, wanted) {
+		sent, _ := json.Marshal(got)
+		t.Errorf("the query went over as\n  %s\nrather than\n  %s", sent, want)
+	}
+}
+
+func TestQueryBodies(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		query Query
+		want  string
+	}{
+		{
+			name:  "no filter is just the agent, with no sort, limit or cursor",
+			query: Query{},
+			want:  `{"filter": {"agent": "docs"}}`,
+		},
+		{
+			name:  "a project",
+			query: Query{Filter: Filter{"project_id": "docs"}, Limit: 50},
+			want:  `{"filter": {"agent": "docs", "project_id": "docs"}, "limit": 50}`,
+		},
+		{
+			name:  "either of two projects",
+			query: Query{Filter: Filter{"$or": []Filter{{"project_id": "docs"}, {"project_id": "blog"}}}},
+			want:  `{"filter": {"agent": "docs", "$or": [{"project_id": "docs"}, {"project_id": "blog"}]}}`,
+		},
+		{
+			name: "a nested $and and $or",
+			query: Query{Filter: Filter{"$and": []Filter{
+				{"user_id": "jean"},
+				{"$or": []Filter{
+					{"project_id": Filter{"$eq": "docs"}},
+					{"$and": []Filter{{"project_id": "blog"}, {"review_score": Filter{"$lte": 2}}}},
+				}},
+			}}},
+			want: `{"filter": {"agent": "docs", "$and": [
+				{"user_id": "jean"},
+				{"$or": [
+					{"project_id": {"$eq": "docs"}},
+					{"$and": [{"project_id": "blog"}, {"review_score": {"$lte": 2}}]}
+				]}
+			]}}`,
+		},
+		{
+			name:  "any of several projects",
+			query: Query{Filter: Filter{"project_id": Filter{"$in": []string{"docs", "blog", "help"}}}},
+			want:  `{"filter": {"agent": "docs", "project_id": {"$in": ["docs", "blog", "help"]}}}`,
+		},
+		{
+			name:  "one user's, as a backend asks",
+			query: Query{Filter: Filter{"user_id": "jean"}},
+			want:  `{"filter": {"agent": "docs", "user_id": "jean"}}`,
+		},
+		{
+			name:  "a review score",
+			query: Query{Filter: Filter{"review_score": 5}},
+			want:  `{"filter": {"agent": "docs", "review_score": 5}}`,
+		},
+		{
+			name:  "a range of review scores",
+			query: Query{Filter: Filter{"review_score": Filter{"$gte": 2, "$lt": 4}}},
+			want:  `{"filter": {"agent": "docs", "review_score": {"$gte": 2, "$lt": 4}}}`,
+		},
+		{
+			name:  "the agent asked overrules one written in the filter",
+			query: Query{Filter: Filter{"agent": "someone-else", "project_id": "docs"}},
+			want:  `{"filter": {"agent": "docs", "project_id": "docs"}}`,
+		},
+		{
+			name:  "last answered first",
+			query: Query{Sort: []Sort{{Field: SortLastMessageAt, Direction: -1}}},
+			want:  `{"filter": {"agent": "docs"}, "sort": [{"field": "last_message_at", "direction": -1}]}`,
+		},
+		{
+			name:  "last answered last",
+			query: Query{Sort: []Sort{{Field: SortLastMessageAt, Direction: 1}}},
+			want:  `{"filter": {"agent": "docs"}, "sort": [{"field": "last_message_at", "direction": 1}]}`,
+		},
+		{
+			name:  "pinned first, the direction left to the router",
+			query: Query{Sort: []Sort{{Field: SortPinned}}},
+			want:  `{"filter": {"agent": "docs"}, "sort": [{"field": "pinned"}]}`,
+		},
+		{
+			name:  "pinned first, then the oldest answer",
+			query: Query{Sort: []Sort{{Field: SortPinned, Direction: -1}, {Field: SortLastMessageAt, Direction: 1}}},
+			want: `{"filter": {"agent": "docs"}, "sort": [
+				{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": 1}]}`,
+		},
+		{
+			name:  "best reviewed first",
+			query: Query{Sort: []Sort{{Field: SortReviewScore, Direction: -1}}},
+			want:  `{"filter": {"agent": "docs"}, "sort": [{"field": "review_score", "direction": -1}]}`,
+		},
+		{
+			name:  "worst reviewed first",
+			query: Query{Sort: []Sort{{Field: SortReviewScore, Direction: 1}}},
+			want:  `{"filter": {"agent": "docs"}, "sort": [{"field": "review_score", "direction": 1}]}`,
+		},
+		{
+			name: "the next page, with the filter and sort it came from",
+			query: Query{
+				Filter: Filter{"project_id": "docs"},
+				Sort:   []Sort{{Field: SortPinned}},
+				Limit:  20,
+				Cursor: "next-page",
+			},
+			want: `{"filter": {"agent": "docs", "project_id": "docs"}, "sort": [{"field": "pinned"}],
+				"limit": 20, "cursor": "next-page"}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			backend := newRouter(t)
+			if _, err := backend.client(t).Agent("docs").Sessions.Query(t.Context(), test.query); err != nil {
+				t.Fatal(err)
+			}
+			sentQuery(t, backend, test.want)
+		})
+	}
+}
+
+func TestQueryingReturnsThePageAndLeavesTheFilterAsItWasGiven(t *testing.T) {
+	backend := newRouter(t)
+	backend.sessions = []acceleration.Session{{Id: "session-1", State: "closed", PinnedAt: ptr(pinnedAt)}, {Id: "session-2"}}
+
+	filter := Filter{"project_id": "docs"}
+	listed, err := backend.client(t).Agent("docs").Sessions.Query(t.Context(), Query{Filter: filter})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Items) != 1 || listed.Items[0].Id != "session-1" {
+	if len(listed.Items) != 2 || listed.Items[0].Id != "session-1" {
 		t.Fatalf("the list came back as %v", listed)
 	}
+	if at := listed.Items[0].PinnedAt; at == nil || !at.Equal(pinnedAt) {
+		t.Errorf("the pinned session came back pinned at %v, want %s", at, pinnedAt)
+	}
+	if at := listed.Items[1].PinnedAt; at != nil {
+		t.Errorf("a session nobody pinned came back pinned at %s", at)
+	}
+	// Narrowing to the agent is done on a copy: the caller's map is theirs.
+	if len(filter) != 1 {
+		t.Errorf("the caller's filter was changed to %v", filter)
+	}
+}
 
-	body := backend.body(t, "POST", "/v1/agents/sessions/query")
-	filter, _ := body["filter"].(map[string]any)
-	for field, want := range map[string]string{
-		"agent":      "docs",
-		"project_id": "docs",
-		"user_id":    "jean",
-		"modality":   "video",
+func TestSearchBodies(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		query Query
+		want  string
+	}{
+		{
+			name:  "the phrase alone",
+			query: Query{},
+			want:  `{"filter": {"agent": "docs", "text": {"$q": "sendbird comparison"}}}`,
+		},
+		{
+			name:  "the phrase within a project, a page at a time",
+			query: Query{Filter: Filter{"project_id": "docs"}, Limit: 10, Cursor: "next-page"},
+			want: `{"filter": {"agent": "docs", "project_id": "docs", "text": {"$q": "sendbird comparison"}},
+				"limit": 10, "cursor": "next-page"}`,
+		},
+		{
+			name:  "the phrase beside a top-level $and, which is not wrapped in another",
+			query: Query{Filter: Filter{"$and": []Filter{{"user_id": "jean"}, {"project_id": "docs"}}}},
+			want: `{"filter": {"agent": "docs", "text": {"$q": "sendbird comparison"},
+				"$and": [{"user_id": "jean"}, {"project_id": "docs"}]}}`,
+		},
 	} {
-		if got := filter[field]; got != want {
-			t.Errorf("%s went over as %v rather than %q", field, got, want)
-		}
-	}
-	if _, sent := filter["text"]; sent {
-		t.Error("a listing was sent as a search")
-	}
-	if body["limit"] != float64(50) {
-		t.Errorf("the limit went over as %v", body["limit"])
-	}
-	// The first page is asked for without a cursor rather than with an empty one.
-	if _, sent := body["cursor"]; sent {
-		t.Error("a cursor nobody asked for was sent")
+		t.Run(test.name, func(t *testing.T) {
+			backend := newRouter(t)
+			if _, err := backend.client(t).Agent("docs").Sessions.Search(t.Context(), "sendbird comparison", test.query); err != nil {
+				t.Fatal(err)
+			}
+			sentQuery(t, backend, test.want)
+		})
 	}
 }
 
-func TestQueryingByTeamLabelsWindowAndOrderSendsThemAll(t *testing.T) {
+func TestSearchingRefusesASecondPhraseAndASort(t *testing.T) {
 	backend := newRouter(t)
+	sessions := backend.client(t).Agent("docs").Sessions
 
-	if _, err := backend.client(t).Agent("docs").Sessions.Query(t.Context(), Query{
-		Team:          "finance",
-		ConfigID:      "cfg-docs",
-		Custom:        map[string]string{"ticket": "4721"},
-		CreatedAfter:  time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
-		CreatedBefore: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC),
-		Sort:          acceleration.UpdatedAt,
-	}); err != nil {
-		t.Fatal(err)
+	if _, err := sessions.Search(t.Context(), "sendbird", Query{Filter: Filter{"text": Filter{"$q": "other"}}}); err == nil {
+		t.Error("a filter that already had text was searched")
 	}
-
-	body := backend.body(t, "POST", "/v1/agents/sessions/query")
-	filter, _ := body["filter"].(map[string]any)
-	if filter["team"] != "finance" || filter["config_id"] != "cfg-docs" {
-		t.Errorf("the filters went over as %v", filter)
+	if _, err := sessions.Search(t.Context(), "sendbird", Query{Sort: []Sort{{Field: SortLastMessageAt}}}); err == nil {
+		t.Error("a search was given a sort")
 	}
-	if custom, _ := filter["custom"].(map[string]any); custom["ticket"] != "4721" || len(custom) != 1 {
-		t.Errorf("the labels went over as %v", filter["custom"])
-	}
-	window, _ := filter["created_at"].(map[string]any)
-	if window["$gte"] != "2026-10-01T00:00:00Z" || window["$lt"] != "2026-11-01T00:00:00Z" {
-		t.Errorf("the window went over as %v", filter["created_at"])
-	}
-	sort, _ := body["sort"].([]any)
-	if len(sort) != 1 || sort[0].(map[string]any)["field"] != "updated_at" {
-		t.Errorf("the order went over as %v", body["sort"])
+	if asked := backend.requests("POST", "/v1/agents/sessions/query"); asked != 0 {
+		t.Errorf("the router was asked %d times for searches that were refused", asked)
 	}
 }
 
-func TestAQueryWithNoOrderLeavesItToTheRouter(t *testing.T) {
-	backend := newRouter(t)
-
-	if _, err := backend.client(t).Agent("docs").Sessions.Query(t.Context(), Query{
-		CreatedBefore: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC),
-	}); err != nil {
+func TestARefusedFilterIsTheRoutersError(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		answer(w, http.StatusBadRequest, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+			Message: "unknown filter field modality"}})
+	}))
+	defer backend.Close()
+	api, err := New(stream.Backend{URL: backend.URL, CustomerID: "acme"})
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	body := backend.body(t, "POST", "/v1/agents/sessions/query")
-	if _, sent := body["sort"]; sent {
-		t.Errorf("an order nobody asked for was sent: %v", body["sort"])
-	}
-	filter, _ := body["filter"].(map[string]any)
-	window, _ := filter["created_at"].(map[string]any)
-	if _, sent := window["$gte"]; sent || window["$lt"] != "2026-11-01T00:00:00Z" {
-		t.Errorf("one end of the window went over as %v", filter["created_at"])
-	}
-	for _, field := range []string{"team", "custom", "config_id"} {
-		if _, sent := filter[field]; sent {
-			t.Errorf("%s was sent unasked", field)
-		}
+	_, err = api.Agent("docs").Sessions.Query(t.Context(), Query{Filter: Filter{"modality": "video"}})
+	if err == nil || !strings.Contains(err.Error(), "unknown filter field modality") {
+		t.Errorf("a refused filter came back as %v", err)
 	}
 }
 
-func TestQueryingTheNextPageSendsTheCursor(t *testing.T) {
+func TestPinningAndUnpinningById(t *testing.T) {
 	backend := newRouter(t)
+	sessions := backend.client(t).Agent("docs").Sessions
 
-	if _, err := backend.client(t).Agent("docs").Sessions.Query(t.Context(), Query{
-		Cursor: "next-page",
-	}); err != nil {
+	pinned, err := sessions.Pin(t.Context(), "session-1")
+	if err != nil {
 		t.Fatal(err)
 	}
+	if body := backend.body(t, "PATCH", "/v1/agents/sessions/session-1"); !reflect.DeepEqual(body, map[string]any{"pinned": true}) {
+		t.Errorf("the pin went over as %v", body)
+	}
+	if pinned.PinnedAt == nil || !pinned.PinnedAt.Equal(pinnedAt) {
+		t.Errorf("the pinned session came back pinned at %v, want %s", pinned.PinnedAt, pinnedAt)
+	}
 
-	if got := backend.body(t, "POST", "/v1/agents/sessions/query")["cursor"]; got != "next-page" {
-		t.Errorf("the cursor went over as %v", got)
+	unpinned, err := sessions.Unpin(t.Context(), "session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body := backend.body(t, "PATCH", "/v1/agents/sessions/session-1"); !reflect.DeepEqual(body, map[string]any{"pinned": false}) {
+		t.Errorf("the unpin went over as %v", body)
+	}
+	if unpinned.PinnedAt != nil {
+		t.Errorf("the unpinned session came back pinned at %s", unpinned.PinnedAt)
 	}
 }
 
-func TestSearchingCarriesThePhraseAlongsideTheFilters(t *testing.T) {
+func TestPinningAndUnpinningTheSessionHeld(t *testing.T) {
 	backend := newRouter(t)
-	backend.sessions = []acceleration.Session{{Id: "session-1", State: "closed"}}
+	session := open(t, backend)
+	path := "/v1/agents/sessions/" + session.ID()
 
-	if _, err := backend.client(t).Agent("docs").Sessions.Search(t.Context(),
-		"sendbird comparison", Query{UserID: "jean"}); err != nil {
+	pinned, err := session.Pin(t.Context())
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	filter, _ := backend.body(t, "POST", "/v1/agents/sessions/query")["filter"].(map[string]any)
-	text, _ := filter["text"].(map[string]any)
-	if text["$q"] != "sendbird comparison" {
-		t.Errorf("the phrase went over as %v", filter["text"])
+	if body := backend.body(t, "PATCH", path); !reflect.DeepEqual(body, map[string]any{"pinned": true}) {
+		t.Errorf("the pin went over as %v", body)
 	}
-	if filter["agent"] != "docs" || filter["user_id"] != "jean" {
-		t.Errorf("the filters went over as %v", filter)
+	if pinned.PinnedAt == nil {
+		t.Error("the pinned session came back without pinned_at")
+	}
+
+	if _, err := session.Unpin(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if body := backend.body(t, "PATCH", path); !reflect.DeepEqual(body, map[string]any{"pinned": false}) {
+		t.Errorf("the unpin went over as %v", body)
+	}
+}
+
+func TestPinningThroughUpdateSendsItWithTheRest(t *testing.T) {
+	backend := newRouter(t)
+
+	if _, err := backend.client(t).Agent("docs").Sessions.Update(t.Context(), "session-1",
+		SessionUpdate{Title: ptr("Pricing"), Pinned: ptr(true)}); err != nil {
+		t.Fatal(err)
+	}
+	if body := backend.body(t, "PATCH", "/v1/agents/sessions/session-1"); !reflect.DeepEqual(body, map[string]any{"title": "Pricing", "pinned": true}) {
+		t.Errorf("the update went over as %v", body)
 	}
 }
 
@@ -1012,6 +1176,44 @@ func TestAClipOnDiskIsSentInline(t *testing.T) {
 		if want := "data:" + kind + ";base64,Y2xpcA=="; clip.URL != want {
 			t.Errorf("%s went over as %q, want %q", name, clip.URL, want)
 		}
+	}
+}
+
+func TestADocumentGoesOverWithTheQuestionAndItsRequestID(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	if _, err := session.Responses.Create(t.Context(), "What is the deposit?",
+		Document{URL: "https://example.com/lease.pdf", Name: "lease.pdf"}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/session-1/responses")
+	files, _ := json.Marshal(body["files"])
+	if string(files) != `[{"name":"lease.pdf","url":"https://example.com/lease.pdf"}]` {
+		t.Errorf("the document went over as %s", files)
+	}
+	if id, _ := body["request_id"].(string); len(id) != 32 {
+		t.Errorf("a question with a document went with request id %v, so a personal conversation refuses it", body["request_id"])
+	}
+}
+
+func TestADocumentOnDiskIsSentInlineUnderItsName(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lease.pdf")
+	if err := os.WriteFile(path, []byte("%PDF-1.7"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	document, err := DocumentFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := "data:application/octet-stream;base64,JVBERi0xLjc="; document.URL != want {
+		t.Errorf("the file went over as %q, want %q", document.URL, want)
+	}
+	if document.Name != "lease.pdf" {
+		t.Errorf("the file is named %q", document.Name)
 	}
 }
 

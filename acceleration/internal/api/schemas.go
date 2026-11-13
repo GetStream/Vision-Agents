@@ -838,6 +838,7 @@ type Session struct {
 	Modality         SessionModality         `json:"modality"`
 	Mode             *SessionMode            `json:"mode,omitempty"`
 	ModelOverwrites  *ModelOverwrites        `json:"model_overwrites,omitempty"`
+	PinnedAt         *time.Time              `json:"pinned_at,omitempty" doc:"When the session was pinned. Absent for one that is not pinned."`
 	ProjectId        *string                 `json:"project_id,omitempty"`
 	ReviewNotes      *string                 `json:"review_notes,omitempty" doc:"Why the review scored the conversation as it did. Read by a backend only."`
 	ReviewScore      *int                    `json:"review_score,omitempty" doc:"How well the agent handled the conversation, from 1 to 5, written a few seconds after it ended. Read by a backend only."`

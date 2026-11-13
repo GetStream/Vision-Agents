@@ -81,7 +81,7 @@ Stream Chat unless it is opened with `incognito: true`. Neither can be rewound (
 answers 400): fork at the response instead. `$session->responses->rewind()` is for a call, and
 takes a response `id`, not a `turn_id`.
 
-One method changes a session: title, description, custom labels, models and
+One method changes a session: title, description, custom labels, pin, models and
 voice, from the next turn, for this session only. An ended session can still be renamed by id:
 
 ```php
@@ -89,20 +89,52 @@ $row = $session->update(title: 'Pricing', llm: 'llm-thinking', thinking: 'high')
 $client->agent('support')->sessions->update($sessionId, title: 'Pricing');
 ```
 
-Past conversations, by agent, a page at a time:
+Past conversations, by agent, a page at a time. The filter is the router's own, an array with
+the wire's keys, and is always narrowed to the agent it is asked of:
 
 ```php
 $sessions = $client->agent('support')->sessions;
-$page = $sessions->query(userId: 'u1', state: 'live');
-$next = $sessions->query(userId: 'u1', state: 'live', cursor: $page->nextCursor);
-$found = $sessions->search('pricing');
-$october = $sessions->query(
-    team: 'finance', // the team their usage is counted under
-    createdSince: new DateTimeImmutable('2026-10-01T00:00:00Z'),
-    createdBefore: new DateTimeImmutable('2026-11-01T00:00:00Z'),
-    custom: ['ticket' => '4721'],
-    sort: SessionSortField::UpdatedAt,
+$page = $sessions->query(filter: ['user_id' => 'u1'], limit: 20);
+$next = $sessions->query(filter: ['user_id' => 'u1'], limit: 20, cursor: $page->nextCursor);
+
+// One of two projects, the pinned sessions first and then the most recently answered.
+$mine = $sessions->query(
+    filter: ['$or' => [['project_id' => 'health'], ['project_id' => 'legal']]],
+    sort: [['field' => 'pinned'], ['field' => 'last_message_at', 'direction' => -1]],
 );
+
+// The badly reviewed ones in a set of projects, the worst first.
+$poor = $sessions->query(
+    filter: ['project_id' => ['$in' => ['health', 'legal']], 'review_score' => ['$lte' => 2]],
+    sort: [['field' => 'review_score', 'direction' => 1]],
+);
+
+// By title, description, project and agent name, best match first.
+$found = $sessions->search('pricing', filter: ['project_id' => 'health'], limit: 5);
+```
+
+| Filter key     | Takes                                                                    |
+| -------------- | ------------------------------------------------------------------------ |
+| `project_id`   | `'health'`, `['$eq' => 'health']` or `['$in' => [...]]` (1 to 50)          |
+| `text`         | `['$q' => 'words']`, once, at the top level or in the top-level `$and`    |
+| `review_score` | `4`, or `$eq`, `$gt`, `$gte`, `$lt`, `$lte`, ANDed: `['$gte' => 2, '$lt' => 4]` |
+| `user_id`      | `'u1'` or `['$eq' => 'u1']`, at the top level or in the top-level `$and`  |
+| `$and`, `$or`  | 1 to 10 filters each, nested up to 3 deep                                |
+
+The keys of one array are ANDed, and any other key is refused with a 400. `sort` is a list of
+`['field' => ..., 'direction' => -1 or 1]`, descending when the direction is left out:
+`last_message_at`; `pinned`, alone or followed by `last_message_at`; `review_score`; or
+`relevance`, only with a `text` filter. Left out, it is `last_message_at` descending. `limit` is
+1 to 200 (25 when left out), and a cursor is only good with the filter and sort it came from.
+
+Pinning keeps a session at the top of a `pinned` sort without changing when it was last
+answered. The row's `pinnedAt` is when it was pinned, null when it is not:
+
+```php
+$row = $session->pin();                    // $row->pinnedAt
+$session->unpin();
+$sessions->pin($sessionId);                // by id, running or ended
+$sessions->update($sessionId, pinned: false);
 ```
 
 `close()` stops a session and keeps what it recorded and remembered; `delete()` deletes it,

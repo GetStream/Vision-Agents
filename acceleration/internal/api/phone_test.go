@@ -111,6 +111,22 @@ func (s *PhoneSuite) TestANumberCannotBeBoughtWithLabelsTheRollupsCannotCarry() 
 	s.Contains(failure, "tag")
 }
 
+func (s *PhoneSuite) TestASearchOutsideTheUSAndCanadaIsTheClientsToChange() {
+	status, failure := s.serverClient.failure(http.MethodGet, "/v1/phone/numbers/available?country=GB", nil)
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "US and Canada")
+}
+
+func (s *PhoneSuite) TestANumberInJamaicaIsNotBoughtThoughTheRequestSaysUS() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/phone/numbers", BuyNumberRequest{
+		Vendor: "twilio", E164: "+18765551234", Country: pointerTo("US"),
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "US and Canada")
+}
+
 func (s *PhoneSuite) TestBuyingWithoutSayingWhatToBuyIsRefused() {
 	status, _ := s.serverClient.call(http.MethodPost, "/v1/phone/numbers", BuyNumberRequest{})
 

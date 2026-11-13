@@ -1,6 +1,7 @@
 import Foundation
 import StreamCore
 
+/// A full-text match, Stream's $q.
 final class TextMatch: Sendable, Codable, JSONEncodable {
     /// Quoted phrases and bare words both work, and punctuation is taken rather than refused.
     let q: String

@@ -1385,7 +1385,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 	logger.Info("management API, /v1/manage", "on", settings.Auth.ManageKey != "", "setting", "ROUTER_AUTH_MANAGE_KEY")
 
+	documents := api.NewDocumentReader(extract.Options{Logger: logger})
+	defer documents.Close()
 	options := api.Options{
+		Documents:             documents,
 		Routers:               routers,
 		Pricer:                prices,
 		Prices:                activePrices,

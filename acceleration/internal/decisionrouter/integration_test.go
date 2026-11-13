@@ -25,6 +25,7 @@ var keys = map[string]string{
 	"typesafe":   "TYPESAFE_API_KEY",
 	"openrouter": "OPENROUTER_API_KEY",
 	"perplexity": "PERPLEXITY_API_KEY",
+	"gemini":     "GOOGLE_API_KEY",
 }
 
 type DecisionModelIntegrationSuite struct {

@@ -16,10 +16,11 @@ var childToolName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
 // ChildAgent is the ChildAgent schema.
 type ChildAgent struct {
-	Config      string  `json:"config" minLength:"1" doc:"The agent config to hand work to: one of the app's text agents, by name or id. It is stored, and read back, by name."`
-	Tool        string  `json:"tool" pattern:"^[a-zA-Z0-9_-]{1,64}$" patternDescription:"up to 64 letters, digits, underscores and hyphens" doc:"The name the model calls it by, unique among the config's agents."`
-	Description *string `json:"description,omitempty" doc:"What the model is told the agent does, which is the whole of how it decides when to call it."`
-	TimeoutMs   *int    `json:"timeout_ms,omitempty" minimum:"1000" maximum:"600000" doc:"How long one call may take, two minutes when left out. A call never outlasts the run that made it: it gets this or what is left of the run, whichever is less. A call that runs out of time, or whose agent fails, is answered to the model as a failed tool call, and the run goes on."`
+	Config        string  `json:"config" minLength:"1" doc:"The agent config to hand work to: one of the app's text agents, by name or id. It is stored, and read back, by name."`
+	Tool          string  `json:"tool" pattern:"^[a-zA-Z0-9_-]{1,64}$" patternDescription:"up to 64 letters, digits, underscores and hyphens" doc:"The name the model calls it by, unique among the config's agents."`
+	Description   *string `json:"description,omitempty" doc:"What the model is told the agent does, which is the whole of how it decides when to call it."`
+	TimeoutMs     *int    `json:"timeout_ms,omitempty" minimum:"1000" maximum:"600000" doc:"How long one call may take, two minutes when left out. A call never outlasts the run that made it: it gets this or what is left of the run, whichever is less. A call that runs out of time, or whose agent fails, is answered to the model as a failed tool call, and the run goes on."`
+	MaxToolRounds *int    `json:"max_tool_rounds,omitempty" doc:"The reply to a tool result, counted since the agent was handed its input, that is offered no more tools and made to answer from what it has. Zero is the default of 8; a negative number never withdraws them, for an agent that chains many lookups."`
 }
 
 // childAgentsOf is agents as stored: nil when there are none.
@@ -31,6 +32,7 @@ func childAgentsOf(sent *[]ChildAgent) []store.ChildAgent {
 	for _, child := range *sent {
 		stored = append(stored, store.ChildAgent{
 			Config: child.Config, Tool: child.Tool, Description: value(child.Description), TimeoutMs: value(child.TimeoutMs),
+			MaxToolRounds: value(child.MaxToolRounds),
 		})
 	}
 	return stored
@@ -47,6 +49,10 @@ func renderedChildAgents(stored []store.ChildAgent) *[]ChildAgent {
 		if child.TimeoutMs > 0 {
 			timeout := child.TimeoutMs
 			one.TimeoutMs = &timeout
+		}
+		if child.MaxToolRounds != 0 {
+			rounds := child.MaxToolRounds
+			one.MaxToolRounds = &rounds
 		}
 		rendered = append(rendered, one)
 	}

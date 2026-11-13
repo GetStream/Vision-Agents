@@ -10,6 +10,7 @@ from aiohttp.test_utils import TestServer
 from vision_agents.plugins import stream
 
 WHEN = "2026-01-01T00:00:00Z"
+QUERY = "/v1/agents/sessions/query"
 
 
 class Router:
@@ -625,108 +626,267 @@ class TestSessions:
 
         assert "return_url" not in router.body("POST", "/v1/agents/sessions")
 
-    async def test_querying_narrows_to_the_agent_and_the_filters_given(
+    async def test_querying_without_a_filter_names_only_the_agent(
         self, api: stream.Client, router: Router
     ):
         router.sessions = [router._session("session-1")]
 
-        page = await api.agent("docs").sessions.query(
-            stream.Query(
-                project_id="docs",
-                user_id="jean",
-                modality="text",
-                state="live",
-                agent_id="agent-1",
-                limit=50,
-                cursor="page-1",
-            )
-        )
+        page = await api.agent("docs").sessions.query()
 
         assert [session.id for session in page.items] == ["session-1"]
         assert page.has_more and page.next_cursor == "page-2"
-        assert router.body("POST", "/v1/agents/sessions/query") == {
-            "filter": {
-                "agent": "docs",
-                "project_id": "docs",
-                "user_id": "jean",
-                "modality": "text",
-                "state": "live",
-                "agent_id": "agent-1",
-            },
-            "limit": 50,
-            "cursor": "page-1",
-        }
+        assert router.body("POST", QUERY) == {"filter": {"agent": "docs"}}
 
-    async def test_querying_by_team_window_labels_and_order(
+    @pytest.mark.parametrize(
+        "given, sent",
+        [
+            pytest.param(
+                {"project_id": "support"},
+                {"project_id": "support", "agent": "docs"},
+                id="a project",
+            ),
+            pytest.param(
+                {"$or": [{"project_id": "support"}, {"project_id": "sales"}]},
+                {
+                    "$or": [{"project_id": "support"}, {"project_id": "sales"}],
+                    "agent": "docs",
+                },
+                id="either of two projects",
+            ),
+            pytest.param(
+                {
+                    "$and": [
+                        {"user_id": "jean"},
+                        {
+                            "$or": [
+                                {"project_id": {"$eq": "support"}},
+                                {
+                                    "$and": [
+                                        {"project_id": "sales"},
+                                        {"review_score": 5},
+                                    ]
+                                },
+                            ]
+                        },
+                    ]
+                },
+                {
+                    "$and": [
+                        {"user_id": "jean"},
+                        {
+                            "$or": [
+                                {"project_id": {"$eq": "support"}},
+                                {
+                                    "$and": [
+                                        {"project_id": "sales"},
+                                        {"review_score": 5},
+                                    ]
+                                },
+                            ]
+                        },
+                    ],
+                    "agent": "docs",
+                },
+                id="nested $and and $or",
+            ),
+            pytest.param(
+                {"project_id": {"$in": ["support", "sales"]}},
+                {"project_id": {"$in": ["support", "sales"]}, "agent": "docs"},
+                id="any of several projects",
+            ),
+            pytest.param(
+                {"review_score": {"$gte": 2, "$lt": 5}, "user_id": {"$eq": "jean"}},
+                {
+                    "review_score": {"$gte": 2, "$lt": 5},
+                    "user_id": {"$eq": "jean"},
+                    "agent": "docs",
+                },
+                id="a review score range for one user",
+            ),
+            pytest.param(
+                {"review_score": 4},
+                {"review_score": 4, "agent": "docs"},
+                id="one review score",
+            ),
+            pytest.param(
+                {"agent": "somebody-elses", "project_id": "support"},
+                {"agent": "docs", "project_id": "support"},
+                id="another agent named at the top is overruled",
+            ),
+            pytest.param(
+                {"state": "live"},
+                {"state": "live", "agent": "docs"},
+                id="a field the router no longer filters on is left for it to refuse",
+            ),
+        ],
+    )
+    async def test_a_filter_is_sent_as_given_with_the_agent_at_the_top(
+        self,
+        api: stream.Client,
+        router: Router,
+        given: dict[str, Any],
+        sent: dict[str, Any],
+    ):
+        before = json.dumps(given)
+
+        await api.agent("docs").sessions.query(given)
+
+        assert router.body("POST", QUERY) == {"filter": sent}
+        # The caller's own dict is copied rather than written into.
+        assert json.dumps(given) == before
+
+    @pytest.mark.parametrize(
+        "sort",
+        [
+            [{"field": "last_message_at"}],
+            [{"field": "last_message_at", "direction": 1}],
+            [{"field": "pinned"}],
+            [
+                {"field": "pinned", "direction": -1},
+                {"field": "last_message_at", "direction": -1},
+            ],
+            [
+                {"field": "pinned", "direction": -1},
+                {"field": "last_message_at", "direction": 1},
+            ],
+            [{"field": "review_score", "direction": -1}],
+            [{"field": "review_score", "direction": 1}],
+        ],
+    )
+    async def test_a_sort_is_sent_as_given(
+        self, api: stream.Client, router: Router, sort: list[dict[str, Any]]
+    ):
+        await api.agent("docs").sessions.query(sort=sort)
+
+        assert router.body("POST", QUERY) == {"filter": {"agent": "docs"}, "sort": sort}
+
+    async def test_sorting_a_text_filter_by_relevance(
         self, api: stream.Client, router: Router
     ):
         await api.agent("docs").sessions.query(
-            stream.Query(
-                team="finance",
-                created_since=datetime(2026, 10, 1, tzinfo=timezone.utc),
-                created_before=datetime(2026, 11, 1, tzinfo=timezone.utc),
-                custom={"ticket": "4721"},
-                sort="updated_at",
-            )
+            filter={"text": {"$q": "lisbon"}},
+            sort=[{"field": "relevance", "direction": -1}],
         )
 
-        assert router.body("POST", "/v1/agents/sessions/query") == {
-            "filter": {
-                "agent": "docs",
-                "team": "finance",
-                "created_at": {
-                    "$gte": "2026-10-01T00:00:00+00:00",
-                    "$lt": "2026-11-01T00:00:00+00:00",
-                },
-                "custom": {"ticket": "4721"},
-            },
-            "sort": [{"field": "updated_at"}],
+        assert router.body("POST", QUERY) == {
+            "filter": {"text": {"$q": "lisbon"}, "agent": "docs"},
+            "sort": [{"field": "relevance", "direction": -1}],
         }
 
-    async def test_one_end_of_a_window_is_sent_alone_and_no_empty_labels(
+    async def test_the_next_page_is_asked_for_by_its_cursor(
+        self, api: stream.Client, router: Router
+    ):
+        sessions = api.agent("docs").sessions
+        filter = {"project_id": "support"}
+        sort = [{"field": "pinned"}]
+
+        page = await sessions.query(filter, sort, limit=50)
+        await sessions.query(filter, sort, limit=50, cursor=page.next_cursor)
+
+        assert router.body("POST", QUERY) == {
+            "filter": {"project_id": "support", "agent": "docs"},
+            "sort": [{"field": "pinned"}],
+            "limit": 50,
+            "cursor": "page-2",
+        }
+
+    async def test_a_filter_that_is_not_a_dict_is_refused_before_sending(
+        self, api: stream.Client, router: Router
+    ):
+        with pytest.raises(TypeError, match="a filter is a dict"):
+            await api.agent("docs").sessions.query("support")  # type: ignore[arg-type]
+
+        assert router.requests("POST", QUERY) == 0
+
+    async def test_searching_carries_the_phrase_alongside_the_filter(
         self, api: stream.Client, router: Router
     ):
         await api.agent("docs").sessions.search(
-            "lisbon",
-            stream.Query(
-                created_since=datetime(2026, 10, 1, tzinfo=timezone.utc),
-                custom={},
-                sort="relevance",
-            ),
+            "sendbird comparison",
+            {"project_id": "support"},
+            limit=10,
+            cursor="page-1",
         )
 
-        assert router.body("POST", "/v1/agents/sessions/query") == {
+        assert router.body("POST", QUERY) == {
             "filter": {
-                "agent": "docs",
-                "created_at": {"$gte": "2026-10-01T00:00:00+00:00"},
-                "text": {"$q": "lisbon"},
-            },
-            "sort": [{"field": "relevance"}],
-        }
-
-    async def test_an_unset_filter_is_left_to_the_router(
-        self, api: stream.Client, router: Router
-    ):
-        await api.agent("docs").sessions.query()
-
-        assert router.body("POST", "/v1/agents/sessions/query") == {
-            "filter": {"agent": "docs"}
-        }
-
-    async def test_searching_carries_the_phrase_alongside_the_filters(
-        self, api: stream.Client, router: Router
-    ):
-        await api.agent("docs").sessions.search(
-            "sendbird comparison", stream.Query(user_id="jean")
-        )
-
-        assert router.body("POST", "/v1/agents/sessions/query") == {
-            "filter": {
-                "agent": "docs",
-                "user_id": "jean",
+                "project_id": "support",
                 "text": {"$q": "sendbird comparison"},
-            }
+                "agent": "docs",
+            },
+            "limit": 10,
+            "cursor": "page-1",
         }
+
+    async def test_searching_without_a_filter_sends_the_phrase_and_the_agent(
+        self, api: stream.Client, router: Router
+    ):
+        await api.agent("docs").sessions.search("lisbon")
+
+        assert router.body("POST", QUERY) == {
+            "filter": {"text": {"$q": "lisbon"}, "agent": "docs"}
+        }
+
+    async def test_searching_a_filter_that_has_its_own_text_is_refused(
+        self, api: stream.Client, router: Router
+    ):
+        with pytest.raises(ValueError, match="already has a text condition"):
+            await api.agent("docs").sessions.search("lisbon", {"text": {"$q": "porto"}})
+
+        assert router.requests("POST", QUERY) == 0
+
+    async def test_pinning_and_unpinning_by_id(
+        self, api: stream.Client, router: Router
+    ):
+        sessions = api.agent("docs").sessions
+        path = "/v1/agents/sessions/session-9"
+
+        await sessions.pin("session-9")
+        assert router.body("PATCH", path) == {"pinned": True}
+
+        await sessions.unpin("session-9")
+        assert router.body("PATCH", path) == {"pinned": False}
+
+        await sessions.update("session-9", title="Pricing", pinned=True)
+        assert router.body("PATCH", path) == {"title": "Pricing", "pinned": True}
+
+    async def test_pinning_and_unpinning_a_held_session(
+        self, api: stream.Client, router: Router
+    ):
+        path = "/v1/agents/sessions/session-1"
+        session = await api.agent("docs").sessions.create()
+        try:
+            await session.pin()
+            assert router.body("PATCH", path) == {"pinned": True}
+
+            await session.unpin()
+            assert router.body("PATCH", path) == {"pinned": False}
+
+            await session.update(pinned=True)
+            assert router.body("PATCH", path) == {"pinned": True}
+        finally:
+            await session.close()
+
+    async def test_when_a_session_was_pinned_is_read_from_the_answer(
+        self, api: stream.Client, router: Router
+    ):
+        router.sessions = [
+            {**router._session("session-1"), "pinned_at": "2026-11-02T09:30:00Z"},
+            router._session("session-2"),
+        ]
+
+        page = await api.agent("docs").sessions.query(sort=[{"field": "pinned"}])
+
+        pinned, unpinned = page.items
+        assert pinned.pinned_at == datetime(2026, 11, 2, 9, 30, tzinfo=timezone.utc)
+        assert not unpinned.pinned_at
+
+        router.answered = {"pinned_at": "2026-11-02T09:30:00Z"}
+        row = await api.agent("docs").sessions.get("session-1")
+        assert row.pinned_at == datetime(2026, 11, 2, 9, 30, tzinfo=timezone.utc)
+
+    async def test_the_query_type_is_gone(self):
+        assert not hasattr(stream, "Query")
 
     async def test_deleting_a_session_deletes_it(
         self, api: stream.Client, router: Router

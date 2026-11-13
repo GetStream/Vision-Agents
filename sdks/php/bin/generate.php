@@ -201,7 +201,7 @@ function typeOf(string $owner, string $wire, array $property, array $schemas, ar
     }
 
     $type = $property['type'] ?? null;
-    if (isset($property['enum'])) {
+    if (isset($property['enum']) && $type !== 'integer' && $type !== 'number') {
         return ['string', 'string', 'Json::string($data, %s)', '%s'];
     }
     switch ($type) {
