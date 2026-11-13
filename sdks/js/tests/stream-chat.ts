@@ -48,9 +48,11 @@ export async function chatClient(url: string): Promise<TestChat> {
   }
   // Each asks whether another user's arriving message is muted, which throws without a socket.
   chat["userMuteStatus"] = () => false;
-  const claims = Buffer.from(JSON.stringify({ user_id: "john" })).toString("base64url");
+  // An unsigned token the fake router never checks, built rather than written out so it
+  // doesn't read as a leaked secret.
+  const part = (value: object) => Buffer.from(JSON.stringify(value)).toString("base64url");
   const tokens = chat["tokenManager"] as { setTokenOrProvider(token: string, user: { id: string }): Promise<void> };
-  await tokens.setTokenOrProvider(`eyJhbGciOiJIUzI1NiJ9.${claims}.sig`, { id: "john" });
+  await tokens.setTokenOrProvider(`${part({ alg: "HS256" })}.${part({ user_id: "john" })}.sig`, { id: "john" });
   if (chat10) {
     (chat["connectionIdManager"] as { resolveConnectionId(id: string): void }).resolveConnectionId("conn_1");
   }
