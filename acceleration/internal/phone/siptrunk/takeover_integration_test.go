@@ -454,6 +454,38 @@ func (s *TakeoverSuite) TestACallWhoseCredentialsFailToOpenOnceIsTakenLater() {
 	s.Eventually(func() bool { return s.get("owner:"+id) == "b" }, time.Second, 10*time.Millisecond)
 }
 
+func (s *TakeoverSuite) TestANodeThatDiesWhileResumingLeavesTheNextACSeqItDidNotSend() {
+	jump := sipbridge.ResumeConfig{}.WithDefaults().CSeqJump
+	a := s.node("a")
+	id := s.dial(a)
+	b := s.node("b")
+	release := make(chan struct{})
+	defer close(release)
+	// b hangs mid-resume, after its re-INVITEs may have gone out, as a node that died would.
+	hang := func() error {
+		<-release
+		return nil
+	}
+	b.takeover.before = hang
+
+	a.stop()
+
+	s.Eventually(func() bool { return b.takeover.resumes() == 1 }, 2*time.Second, 10*time.Millisecond)
+	rec := s.record(id)
+	s.Equal(1+jump, rec.State.Customer.LocalCSeq)
+	s.Equal(1+jump, rec.State.Stream.LocalCSeq)
+
+	c := s.node("c")
+	c.takeover.before = hang
+	s.Eventually(func() bool { return c.takeover.resumes() == 1 }, 2*time.Second, 10*time.Millisecond)
+	c.takeover.mu.Lock()
+	state := c.takeover.states[0]
+	c.takeover.mu.Unlock()
+	s.Equal(1+jump, state.Customer.LocalCSeq, "c sends past what b may have sent")
+	s.Equal(1+jump, state.Stream.LocalCSeq, "c sends past what b may have sent")
+	s.Equal(1+2*jump, s.record(id).State.Customer.LocalCSeq)
+}
+
 func (s *TakeoverSuite) TestAnUnusableRecordIsDropped() {
 	b := s.node("b")
 	id := uuid.NewString()

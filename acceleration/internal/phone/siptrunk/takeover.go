@@ -88,6 +88,20 @@ redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
 return 1
 `)
 
+// advanceScript rewrites a call's record for its owner, as writeScript does, but only while the
+// record is there: says -1 when the call ended meanwhile, so a node taking it over does not
+// bring it back.
+// KEYS: record, owner. ARGV: node, record, recordFor ms.
+var advanceScript = rueidis.NewLuaScript(`
+if redis.call('GET', KEYS[2]) ~= ARGV[1] then
+  return 0
+end
+if not redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3], 'XX') then
+  return -1
+end
+return 1
+`)
+
 // renewScript extends ARGV[1]'s claim, and says 0 when it holds the claim no more.
 // KEYS: owner, calls. ARGV: node, holdFor ms, lapse ms, id.
 var renewScript = rueidis.NewLuaScript(`
@@ -321,6 +335,28 @@ func (p *Provider) take(id string) {
 	if err := cfg.Validate(); err != nil {
 		log.Error("dropping a call through a customer's sip trunk no node can continue", "error", err)
 		p.forget(id, log)
+		return
+	}
+	// Recorded before any re-INVITE goes out: a node that took the call next with the old CSeqs
+	// would send the ones this node sent, which the peers refuse with a 500.
+	sent := rec
+	sent.State.Customer.LocalCSeq += cfg.CSeqJump
+	sent.State.Stream.LocalCSeq += cfg.CSeqJump
+	record, err := json.Marshal(sent)
+	if err != nil {
+		log.Warn("could not record the CSeqs a takeover sends", "error", err)
+		return
+	}
+	written, err := advanceScript.Exec(ctx, p.redis, []string{p.keys.record(id), p.keys.owner(id)},
+		[]string{p.node, string(record), ms(recordFor)}).AsInt64()
+	if err == nil && written == -1 {
+		log.Info("a call through a customer's sip trunk ended before it was taken over")
+		p.forget(id, log)
+		return
+	}
+	if err != nil || written == 0 {
+		// The claim lapses unrenewed, and the next scan tries again.
+		log.Warn("could not record the CSeqs a takeover sends", "error", err)
 		return
 	}
 
