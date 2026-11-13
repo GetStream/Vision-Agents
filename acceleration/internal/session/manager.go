@@ -1592,6 +1592,13 @@ func livePosition(live *Session) store.SessionPosition {
 // among the caller's sessions and never reaches another's.
 func matchesLive(live *Session, filter store.SessionFilter) bool {
 	spec := live.Spec()
+	var state string
+	switch live.State() {
+	case Live:
+		state = store.SessionRunning
+	case Ended:
+		state = store.SessionClosed
+	}
 	switch {
 	case filter.UserID != "" && spec.Caller.UserID != filter.UserID:
 		return false
@@ -1620,7 +1627,8 @@ func matchesLive(live *Session, filter store.SessionFilter) bool {
 		return false
 	// Nobody has reviewed a session that is still running, so it has no score.
 	case !filter.Where.Matches(store.SessionValues{
-		Project: spec.Project, Agent: spec.AgentName, UserID: spec.Caller.UserID,
+		Project: spec.Project, Agent: spec.AgentName, UserID: spec.Caller.UserID, ConfigID: spec.ConfigID,
+		State: state, CreatedAt: live.CreatedAt().Truncate(time.Microsecond), Custom: spec.Custom,
 	}):
 		return false
 	case filter.Cursor != nil && filter.Order.Compare(livePosition(live), *filter.Cursor) <= 0:

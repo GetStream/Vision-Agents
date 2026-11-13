@@ -8919,12 +8919,27 @@ components:
         agent:
           $ref: '#/components/schemas/Equals'
           description: The agent name the session was opened against.
+        config_id:
+          $ref: '#/components/schemas/Equals'
+          description: The agent config the session ran under, which stays the same when the agent is renamed.
+        created_at:
+          $ref: '#/components/schemas/TimeWindow'
+          description: When the session began.
+        custom:
+          additionalProperties:
+            type: string
+          description: 'Labels the session''s custom object holds, every one of them: {"origin": "test"} matches a session whose custom has origin set to the string "test".'
+          minProperties: 1
+          type: object
         project_id:
           $ref: '#/components/schemas/EqualsOrIn'
           description: The project the session belongs to.
         review_score:
           $ref: '#/components/schemas/ReviewScoreMatch'
           description: The score the review gave the conversation. A session with no review matches no condition on it. Only a server-side caller may use it.
+        state:
+          $ref: '#/components/schemas/SessionStateEquals'
+          description: Whether the agent is still in the call.
         text:
           $ref: '#/components/schemas/TextMatch'
           description: Full text over the title, description, project and agent name, sorted by relevance. Once per filter, at its top level or in a top-level $and, and never inside $or.
@@ -9102,6 +9117,17 @@ components:
         - live
         - ended
       type: string
+    SessionStateEquals:
+      description: 'Matches live or ended: "live" is short for {"$eq": "live"}.'
+      oneOf:
+        - $ref: '#/components/schemas/SessionState'
+        - additionalProperties: false
+          properties:
+            $eq:
+              $ref: '#/components/schemas/SessionState'
+          required:
+            - $eq
+          type: object
     SessionTool:
       description: One of the caller's own functions. The model is offered it by name and description; running it is the caller's business, over the events socket.
       properties:
@@ -10509,6 +10535,18 @@ components:
         - low-latency
         - high-quality
       type: string
+    TimeWindow:
+      additionalProperties: false
+      description: 'A window of time: $gte is its start, which it holds, and $lt its end, which it does not. Either may be left out, and $gte is before $lt.'
+      minProperties: 1
+      properties:
+        $gte:
+          format: date-time
+          type: string
+        $lt:
+          format: date-time
+          type: string
+      type: object
     TimelineEntry:
       properties:
         audio_out_ms:
@@ -19193,6 +19231,10 @@ paths:
         - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
         - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
         - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+        - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename leaves alone
+        - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+        - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+        - `custom`: an object of string labels the session's `custom` holds, every one of them
 
         Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
 

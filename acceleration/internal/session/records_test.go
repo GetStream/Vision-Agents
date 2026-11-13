@@ -512,6 +512,38 @@ func (s *RecordSuite) TestMatchesLiveAppliesTheRequestsFilterInsideTheCallersOwn
 	s.False(matchesLive(live, store.SessionFilter{UserID: "jlahey", CallerKinds: []string{"anonymous"}, Where: &widen}))
 }
 
+func (s *RecordSuite) TestMatchesLiveReadsTheConfigStateStartAndLabelsAsTheStore() {
+	// A time a row keeps to the microsecond, so a bound on it lands where the store's would.
+	began := time.Date(2026, 3, 1, 10, 0, 0, 1500, time.UTC)
+	live := &Session{
+		id:      "b",
+		created: began,
+		state:   Live,
+		spec: Spec{
+			ConfigID: "cfg-docs",
+			Custom:   map[string]any{"origin": "test"},
+		},
+	}
+	where := func(expr store.SessionExpr) store.SessionFilter { return store.SessionFilter{Where: &expr} }
+	config, state := store.SessionFieldConfig, store.SessionFieldState
+
+	s.True(matchesLive(live, where(store.SessionIs(config, "cfg-docs"))))
+	s.False(matchesLive(live, where(store.SessionIs(config, "cfg-sales"))))
+	s.True(matchesLive(live, where(store.SessionIs(state, store.SessionRunning))))
+	s.False(matchesLive(live, where(store.SessionIs(state, store.SessionClosed))))
+	s.True(matchesLive(live, where(store.CustomHolds(map[string]string{"origin": "test"}))))
+	s.False(matchesLive(live, where(store.CustomHolds(map[string]string{"origin": "production"}))))
+
+	kept := began.Truncate(time.Microsecond)
+	s.True(matchesLive(live, where(store.CreatedAtIs(store.SessionGte, kept))))
+	s.False(matchesLive(live, where(store.CreatedAtIs(store.SessionLt, kept))),
+		"a bound at the microsecond the row keeps is not after the session began")
+
+	live.state = Ended
+	s.True(matchesLive(live, where(store.SessionIs(state, store.SessionClosed))))
+	s.False(matchesLive(live, where(store.SessionIs(state, store.SessionRunning))))
+}
+
 func (s *RecordSuite) TestFramesOfTheUsersVideoMakeTheSessionAVideoOneOnce() {
 	held := &heldRecorder{}
 	live := &Session{id: "b", modality: store.ModalityVoice, records: held, recording: true}

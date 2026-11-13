@@ -22,6 +22,14 @@ const (
 	SessionFieldAgent SessionField = "agent"
 	// SessionFieldUser is whose session it is.
 	SessionFieldUser SessionField = "user_id"
+	// SessionFieldConfig is the agent config the session ran under, which a rename leaves alone.
+	SessionFieldConfig SessionField = "config_id"
+	// SessionFieldState is SessionRunning or SessionClosed.
+	SessionFieldState SessionField = "state"
+	// SessionFieldCreatedAt is when the session began.
+	SessionFieldCreatedAt SessionField = "created_at"
+	// SessionFieldCustom is the caller's own labels, matched by containment.
+	SessionFieldCustom SessionField = "custom"
 )
 
 // column is the agent_sessions column a field is kept in. Only these names are ever written
@@ -36,6 +44,8 @@ func (f SessionField) column() string {
 		return "agent_name"
 	case SessionFieldUser:
 		return "user_id"
+	case SessionFieldConfig, SessionFieldState, SessionFieldCreatedAt, SessionFieldCustom:
+		return string(f)
 	}
 	return ""
 }
@@ -87,6 +97,10 @@ type SessionExpr struct {
 	Strings []string
 	// Number is what review_score is compared with.
 	Number int
+	// Time is what created_at is compared with.
+	Time time.Time
+	// Labels are the pairs custom has to hold, every one of them.
+	Labels map[string]string
 }
 
 // AllOf is the expressions ANDed. None at all holds for every session.
@@ -110,11 +124,27 @@ func ReviewScoreIs(op SessionOperator, score int) SessionExpr {
 	return SessionExpr{Field: SessionFieldReviewScore, Op: op, Number: score}
 }
 
+// CreatedAtIs is when the session began compared with a time by $eq, $gt, $gte, $lt or $lte.
+func CreatedAtIs(op SessionOperator, at time.Time) SessionExpr {
+	return SessionExpr{Field: SessionFieldCreatedAt, Op: op, Time: at}
+}
+
+// CustomHolds is the session's custom object holding every one of the pairs.
+func CustomHolds(labels map[string]string) SessionExpr {
+	return SessionExpr{Field: SessionFieldCustom, Op: SessionEq, Labels: labels}
+}
+
 // SessionValues is what a filter reads of one session, for a session that has no row to ask.
 type SessionValues struct {
-	Project string
-	Agent   string
-	UserID  string
+	Project  string
+	Agent    string
+	UserID   string
+	ConfigID string
+	// State is SessionRunning or SessionClosed.
+	State string
+	// CreatedAt is cut to the microsecond, as a row keeps it.
+	CreatedAt time.Time
+	Custom    map[string]any
 	// ReviewScore is nil for a session nobody reviewed.
 	ReviewScore *int
 }
@@ -153,6 +183,32 @@ func (e *SessionExpr) Matches(values SessionValues) bool {
 		return false
 	}
 
+	switch e.Field {
+	case SessionFieldCreatedAt:
+		compared := values.CreatedAt.Compare(e.Time)
+		switch e.Op {
+		case SessionEq:
+			return compared == 0
+		case SessionGt:
+			return compared > 0
+		case SessionGte:
+			return compared >= 0
+		case SessionLt:
+			return compared < 0
+		case SessionLte:
+			return compared <= 0
+		}
+		return false
+	case SessionFieldCustom:
+		// Containment compares JSON values, so a number held is not the string it prints as.
+		for key, wanted := range e.Labels {
+			if held, ok := values.Custom[key].(string); !ok || held != wanted {
+				return false
+			}
+		}
+		return len(e.Labels) > 0
+	}
+
 	var held string
 	switch e.Field {
 	case SessionFieldProject:
@@ -161,6 +217,10 @@ func (e *SessionExpr) Matches(values SessionValues) bool {
 		held = values.Agent
 	case SessionFieldUser:
 		held = values.UserID
+	case SessionFieldConfig:
+		held = values.ConfigID
+	case SessionFieldState:
+		held = values.State
 	default:
 		return false
 	}
@@ -206,6 +266,16 @@ func (e *SessionExpr) where() (string, []any) {
 	case e.Field == SessionFieldReviewScore:
 		if comparison := e.Op.comparison(); comparison != "" {
 			return "(" + column + " " + comparison + " ?)", []any{e.Number}
+		}
+	case e.Field == SessionFieldCreatedAt:
+		if comparison := e.Op.comparison(); comparison != "" {
+			return "(" + column + " " + comparison + " ?)", []any{e.Time}
+		}
+	case e.Field == SessionFieldCustom:
+		// Containment, so the GIN index on custom serves it. The index is jsonb_path_ops,
+		// which serves @> and nothing else.
+		if len(e.Labels) > 0 {
+			return "(" + column + " @> ?::jsonb)", []any{jsonbOf(e.Labels)}
 		}
 	case e.Op == SessionEq && len(e.Strings) == 1:
 		return "(" + column + " = ?)", []any{e.Strings[0]}
