@@ -2134,7 +2134,7 @@ func (a *Agent) ask(ready candidate) {
 	// The flow controller is not told the hour: it rules on the words, and its prompt is
 	// cached by its prefix like any other.
 	instructions := a.prompted()
-	if line := severalPeople(len(a.speakers), a.writers, a.namesWriters); line != "" {
+	if line := severalPeople(len(a.speakers), a.writers); line != "" {
 		instructions += "\n\n" + line
 	}
 	// Pending tools still own the turn even after its spoken acknowledgement ends.
@@ -2850,7 +2850,7 @@ func (a *Agent) instructions() string { return a.instructionsFor(len(a.speakers)
 // through the harness: a native speech session, a composed line, an aside.
 func (a *Agent) instructionsFor(people int) string {
 	parts := []string{a.prompted()}
-	if line := severalPeople(people, a.writers, a.namesWriters); line != "" {
+	if line := severalPeople(people, a.writers); line != "" {
 		parts = append(parts, line)
 	}
 	parts = append(parts, clockLine(a.now(), a.zone))
@@ -2880,12 +2880,9 @@ func (a *Agent) prompted() string {
 	return strings.Join(parts, "\n\n")
 }
 
-// severalPeople is what the model is told about a conversation of that many people, named
-// saying its writers are named with their ids from the first (namedWriters).
-func severalPeople(people int, writers, named bool) string {
+// severalPeople is what the model is told about a conversation of that many people.
+func severalPeople(people int, writers bool) string {
 	switch {
-	case named:
-		return namedWriters
 	case people > 1 && writers:
 		return severalWriters
 	case people > 1:
@@ -2911,7 +2908,11 @@ func (a *Agent) tellLocked(turnID string, people int) string {
 		lines = append(lines, clockLine(a.now(), a.zone))
 	}
 	if now.several && !a.knows.several {
-		lines = append(lines, severalPeople(people, a.writers, a.namesWriters))
+		line := severalPeople(people, a.writers)
+		if a.namesWriters {
+			line = namedWriters
+		}
+		lines = append(lines, line)
 	}
 	if len(lines) == 0 {
 		return ""

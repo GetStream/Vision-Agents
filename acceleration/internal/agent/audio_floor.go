@@ -247,7 +247,7 @@ func (p pauseAsker) Moment(participant stt.Participant) harness.FlowTurn {
 	a.mu.Lock()
 	history := llm.OmitImages(harness.WithoutNotes(a.history))
 	instructions := a.prompted()
-	if line := severalPeople(len(a.speakers), a.writers, a.namesWriters); line != "" {
+	if line := severalPeople(len(a.speakers), a.writers); line != "" {
 		instructions += "\n\n" + line
 	}
 	speaking := a.generating || a.utterances > 0 || a.pendingTools > 0
