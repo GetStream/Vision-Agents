@@ -99,11 +99,10 @@ func newMessages(options Options) (*LLM, error) {
 // model, measured or not, is told on the user's side, as it always was.
 var systemTurnModels = []string{"claude-opus-5-5", "claude-opus-5"}
 
-// efforts are the output_config efforts a model takes: the Opus and Sonnet models, at
-// the three levels every one of them accepts. Haiku takes none, so a request naming one
-// is refused before it goes out.
+// efforts are the output_config efforts a model takes: low, medium and high, which Opus,
+// Sonnet and Haiku 5.5 each answered with a 200 on 2026-11-13.
 func efforts(model string) []string {
-	if strings.HasPrefix(model, "claude-opus-") || strings.HasPrefix(model, "claude-sonnet-") {
+	if strings.HasPrefix(model, "claude-") {
 		return []string{"low", "medium", "high"}
 	}
 	return nil

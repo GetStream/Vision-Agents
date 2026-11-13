@@ -148,14 +148,14 @@ func (s *AnthropicSuite) TestNoEffortSendsNoOutputConfig() {
 	s.NotContains(s.sent()[0].body, "output_config")
 }
 
-func (s *AnthropicSuite) TestAnEffortHaikuDoesNotTakeIsRefusedBeforeItIsSent() {
+func (s *AnthropicSuite) TestHaikuTakesAnEffortToo() {
 	_, err := s.collect(s.provider(Options{Model: "claude-haiku-5-5"}), llm.ResponseParams{
-		Input:     []llm.Message{{Role: llm.User, Content: "think hard"}},
-		Reasoning: llm.ReasoningParams{Effort: "high"},
+		Input:     []llm.Message{{Role: llm.User, Content: "think less"}},
+		Reasoning: llm.ReasoningParams{Effort: "low"},
 	})
+	s.Require().NoError(err)
 
-	s.ErrorContains(err, "does not reason")
-	s.Empty(s.sent())
+	s.Equal(map[string]any{"effort": "low"}, s.sent()[0].body["output_config"])
 }
 
 func (s *AnthropicSuite) TestAnEffortOutsideTheThreeLevelsIsRefused() {
