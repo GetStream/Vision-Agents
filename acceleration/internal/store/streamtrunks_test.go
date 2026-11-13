@@ -344,3 +344,16 @@ func (s *StoreSuite) TestANumberLinedOnlyToPlaceCallsHasNoInboundBridge() {
 
 	s.ErrorIs(err, ErrNoNumber)
 }
+
+func (s *StoreSuite) TestAStreamTrunkIsReadByIdForItsOwnCustomerOnly() {
+	s.savedTrunk(TrunkGroup{CustomerID: "acme", StreamAppPK: 7, Vendor: "twilio"}, "trunk-read")
+
+	trunk, err := s.store.StreamTrunk(s.ctx, "acme", "trunk-read")
+	s.Require().NoError(err)
+	s.Equal("sip:trunk-read@sip.example.test", trunk.BridgeURI)
+
+	_, err = s.store.StreamTrunk(s.ctx, "globex", "trunk-read")
+	s.ErrorIs(err, ErrNoStreamTrunk)
+	_, err = s.store.StreamTrunk(s.ctx, "acme", "missing")
+	s.ErrorIs(err, ErrNoStreamTrunk)
+}

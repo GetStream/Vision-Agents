@@ -34,6 +34,9 @@ type StreamTrunk struct {
 	CreatedAt                time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp"`
 }
 
+// ErrNoStreamTrunk says the customer has no Stream trunk with that id.
+var ErrNoStreamTrunk = errors.New("store: no such stream trunk")
+
 // TrunkGroup is the trunks numbers may share: one customer's, of one vendor, in one app.
 type TrunkGroup struct {
 	CustomerID string
@@ -62,6 +65,22 @@ type TrunkGroupTx struct {
 // trunkGroupLockSeed keeps the trunk group lock apart from other advisory locks hashed from
 // the same text.
 const trunkGroupLockSeed = 0
+
+// StreamTrunk returns one of a customer's Stream trunks by Stream's id.
+func (s *Store) StreamTrunk(ctx context.Context, customerID, id string) (StreamTrunk, error) {
+	var trunk StreamTrunk
+	err := s.db.NewSelect().Model(&trunk).
+		Where("customer_id = ?", customerID).
+		Where("id = ?", id).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return StreamTrunk{}, stack.Wrap(ErrNoStreamTrunk)
+	}
+	if err != nil {
+		return StreamTrunk{}, stack.Wrap(fmt.Errorf("store: stream trunk: %w", err))
+	}
+	return trunk, nil
+}
 
 // InTrunkGroup runs fn in a transaction that holds a lock on the group, so two numbers
 // joining at once do not both see room on a trunk and both open a new one.

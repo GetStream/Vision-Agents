@@ -438,6 +438,24 @@ type Outbound struct {
 	// Ended is told how a call through a customer's own SIP trunk ended, which only the
 	// router's own bridge sees. Nil tells nobody.
 	Ended func(CallStatus)
+	// Resume is what another node needs to continue a call through a customer's own SIP
+	// trunk if this one stops. Set whenever Trunk is.
+	Resume *TrunkCallRef
+}
+
+// TrunkCallRef names what a node taking over a call through a customer's own SIP trunk
+// reads fresh from the service. It holds no secret.
+type TrunkCallRef struct {
+	CustomerID string
+	SIPTrunkID string
+	// StreamTrunkID is the shared line's Stream trunk, empty when the call has a Stream
+	// trunk of its own.
+	StreamTrunkID string
+	BridgeURI     string
+	From          string
+	CallID        string
+	// Token is the call's outcome token, which Ended reports with.
+	Token string
 }
 
 // Features are the terms this call is placed on, which is what a vendor has to be able to

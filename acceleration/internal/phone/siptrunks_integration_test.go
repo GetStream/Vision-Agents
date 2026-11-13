@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -254,4 +255,76 @@ func (s *SIPTrunkSuite) TestABoughtNumberStillGoesThroughTheRegistry() {
 	allowed, err := s.service.allowlistFor(SIPTrunkVendor)
 	s.Require().NoError(err)
 	s.Empty(allowed, "the bridge presents the Stream trunk's password")
+}
+
+func (s *SIPTrunkSuite) TestResumingATrunkCallOpensItsTrunkPassword() {
+	trunk := s.create("acme", "s3cret")
+
+	resumed, err := s.service.ResumeTrunkCall(s.ctx, TrunkCallRef{CustomerID: "acme", SIPTrunkID: trunk.ID})
+
+	s.Require().NoError(err)
+	s.Equal("s3cret", resumed.Trunk.Password)
+}
+
+func (s *SIPTrunkSuite) TestResumingAnotherCustomersTrunkIsRefused() {
+	trunk := s.create("acme", "s3cret")
+
+	_, err := s.service.ResumeTrunkCall(s.ctx, TrunkCallRef{CustomerID: "globex", SIPTrunkID: trunk.ID})
+
+	s.ErrorIs(err, store.ErrNoSIPTrunk)
+}
+
+func (s *SIPTrunkSuite) TestResumingACallOnItsOwnStreamTrunkHasNoBridgePassword() {
+	trunk := s.create("acme", "s3cret")
+
+	resumed, err := s.service.ResumeTrunkCall(s.ctx, TrunkCallRef{
+		CustomerID: "acme", SIPTrunkID: trunk.ID, BridgeURI: "sip:+15125550100@per-call.example.test",
+	})
+
+	s.Require().NoError(err)
+	s.Equal("sip:+15125550100@per-call.example.test", resumed.Bridge.URI)
+	s.Empty(resumed.Bridge.Password)
+}
+
+func (s *SIPTrunkSuite) TestResumingACallOnASharedLineOpensItsBridgePassword() {
+	trunk := s.create("acme", "s3cret")
+	sealed, err := s.service.sealer.SealWithAAD("bridge-secret", trunkAAD("acme", "stream-trunk-1"))
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.InTrunkGroup(s.ctx, store.TrunkGroup{CustomerID: "acme", Vendor: SIPTrunkVendor},
+		func(_ context.Context, tx *store.TrunkGroupTx) error {
+			return tx.SaveTrunk(store.StreamTrunk{
+				ID: "stream-trunk-1", Numbers: []string{"+15125550100"}, BridgeURI: "sip:old@shared.example.test",
+				BridgeUsername: "bridge-user", BridgePasswordSealed: sealed,
+				BridgePasswordKEKVersion: s.service.sealer.CurrentVersion(),
+			})
+		}))
+
+	resumed, err := s.service.ResumeTrunkCall(s.ctx, TrunkCallRef{
+		CustomerID: "acme", SIPTrunkID: trunk.ID, StreamTrunkID: "stream-trunk-1", From: "+15125550100",
+	})
+
+	s.Require().NoError(err)
+	s.Equal(Bridge{URI: "sip:+15125550100@shared.example.test", Username: "bridge-user", Password: "bridge-secret"}, resumed.Bridge)
+}
+
+func (s *SIPTrunkSuite) TestAResumedCallReportsHowItEndedWithItsToken() {
+	trunk := s.create("acme", "s3cret")
+	token, err := s.service.outcomes.Placed(s.ctx, outcome.Call{
+		Key: outcome.Key{
+			CustomerID: "acme", CallType: "default", CallID: "session-resumed",
+			Local: "+15125550100", Remote: "+15125550101",
+		},
+		Vendor: SIPTrunkVendor, Reports: true,
+	})
+	s.Require().NoError(err)
+	resumed, err := s.service.ResumeTrunkCall(s.ctx, TrunkCallRef{
+		CustomerID: "acme", SIPTrunkID: trunk.ID, CallID: "session-resumed", Token: token,
+	})
+	s.Require().NoError(err)
+
+	resumed.Ended(CallStatus{Result: CallCompleted, Word: "bye", SIPCode: 200})
+
+	call, err := s.service.outcomes.ByToken(s.ctx, token)
+	s.Require().NoError(err)
+	s.Equal(outcome.Completed, call.Outcome)
 }
