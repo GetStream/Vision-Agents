@@ -61,6 +61,29 @@ func (s *AppHooksSuite) TestTheAppsBackendMayAnswerAWritersApproval() {
 	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP), "declined, nothing reached the provider")
 }
 
+// The session holding Anya's call runs on the node that took the hook; her answer, and the
+// backend's, may land on another node, as a load balancer sends it with two replicas: the other
+// node carries it to the holding one (onOwningNode), and the call runs.
+func (s *AppHooksSuite) TestAnApprovalAnsweredOnAnotherNodeReachesTheCall() {
+	other := s.otherNode()
+	s.holdsType("callouts", memberWrites)
+	s.approvingIn("callouts")
+	anya, ben := s.person("Anya"), s.person("Ben")
+	channel := s.teamChannel("callouts", anya, ben)
+	cid := "callouts:" + channel
+	s.says("callouts", channel, anya, "can you check the crm for my shift?", "")
+	step, request := s.awaitingIn(cid)
+	before := s.provider.Hits(fakeprovider.PathMCP)
+
+	s.Equal(http.StatusForbidden, s.approves(s.data.signedInAs(ben).on(other), cid, step, request, true),
+		"another member, from the other node")
+	s.Equal(http.StatusNoContent, s.approves(s.data.signedInAs(anya).on(other), cid, step, request, true),
+		"her answer from the other node never reached the call")
+	s.Require().NotNil(s.replyIn(cid), "the reply never finished")
+	s.Greater(s.provider.Hits(fakeprovider.PathMCP), before, "allowed, the call ran")
+	s.Equal(http.StatusNotFound, s.approves(s.serverClient.on(other), cid, step, request, true), "answered already")
+}
+
 // Anya's and Ben's calls wait at once, each in a channel of the type: each asks its own writer,
 // and neither may answer the other's.
 func (s *AppHooksSuite) TestEachWritersApprovalGoesToThem() {

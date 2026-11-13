@@ -60,6 +60,7 @@ type Directory struct {
 	shard    string
 	sessions string
 	agents   string
+	channels string
 	workers  string
 	hosted   string
 	shards   string
@@ -68,9 +69,9 @@ type Directory struct {
 	cancel   context.CancelFunc
 
 	mu sync.Mutex
-	// held maps a session this node is running to the agent it writes as, which is empty
-	// for a session that writes to nobody.
-	held map[string]string
+	// held maps a session this node is running to the agent it writes as and the
+	// conversation it answers in, each empty for a session without one.
+	held map[string]claim
 	// waiting counts the dispatch workers connected here, by customer.
 	waiting map[string]int
 	// offered is what the workers here host, by customer and agent.
@@ -78,6 +79,9 @@ type Directory struct {
 }
 
 type offerKey struct{ customerID, agentID string }
+
+// claim is what a session this node holds is found by besides its own id.
+type claim struct{ agentID, conversationID string }
 
 // offerEntry is one node's offer as Redis holds it. A hash cannot expire its fields one at
 // a time, so each says when it lapses.
@@ -110,13 +114,14 @@ func NewDirectory(options DirectoryOptions) (*Directory, error) {
 		shard:    options.Shard,
 		sessions: prefix + ":session:",
 		agents:   prefix + ":agent:",
+		channels: prefix + ":channel:",
 		workers:  prefix + ":workers:",
 		hosted:   prefix + ":hosted:",
 		shards:   prefix + ":shard:",
 		handouts: prefix + ":handout:",
 		logger:   logger,
 		cancel:   cancel,
-		held:     map[string]string{},
+		held:     map[string]claim{},
 		waiting:  map[string]int{},
 		offered:  map[offerKey][]byte{},
 	}
@@ -155,20 +160,24 @@ func (d *Directory) sayShard(ctx context.Context) {
 //
 // The agent id is held beside it because an arriving message names a channel and no
 // session at all, so the node that can answer it has to be findable by the agent writing
-// there.
-func (d *Directory) Hold(ctx context.Context, sessionID, agentID string) {
+// there. The conversation id (the channel's cid) is held too, because a person's answer to
+// a call held for their approval names the conversation and no session either: the
+// Router's own session in a channel of a type an agent config answers in runs on whichever
+// node took the hook.
+func (d *Directory) Hold(ctx context.Context, sessionID, agentID, conversationID string) {
 	d.mu.Lock()
-	d.held[sessionID] = agentID
+	d.held[sessionID] = claim{agentID, conversationID}
 	d.mu.Unlock()
 
-	d.write(ctx, sessionID, agentID)
+	d.write(ctx, sessionID, claim{agentID, conversationID})
 }
 
 // Release says this node is not running a session any more.
 //
-// Only the session's own claim is dropped. The agent's is left to expire, because a
-// second session for the same agent may have started on another node and overwritten it,
-// and deleting that would leave the agent unreachable rather than merely stale.
+// Only the session's own claim is dropped. The agent's and the conversation's are left to
+// expire, because a second session for the same agent or conversation may have started on
+// another node and overwritten them, and deleting that would leave it unreachable rather
+// than merely stale.
 func (d *Directory) Release(ctx context.Context, sessionID string) {
 	d.mu.Lock()
 	_, held := d.held[sessionID]
@@ -194,6 +203,12 @@ func (d *Directory) Node(ctx context.Context, sessionID string) (string, error) 
 // message has to be answered by.
 func (d *Directory) NodeByAgent(ctx context.Context, agentID string) (string, error) {
 	return d.lookup(ctx, d.agents+agentID)
+}
+
+// NodeByConversation is the same for the session answering in a conversation, by the
+// channel's cid, which is what an answer to a call held for a person's approval names.
+func (d *Directory) NodeByConversation(ctx context.Context, conversationID string) (string, error) {
+	return d.lookup(ctx, d.channels+conversationID)
 }
 
 // Wait says this node has a dispatch worker connected for a customer, and goes on saying
@@ -319,13 +334,17 @@ func (d *Directory) lookup(ctx context.Context, key string) (string, error) {
 }
 
 // write says this node holds a session, for holdFor.
-func (d *Directory) write(ctx context.Context, sessionID, agentID string) {
+func (d *Directory) write(ctx context.Context, sessionID string, held claim) {
 	commands := []rueidis.Completed{
 		d.redis.B().Set().Key(d.sessions + sessionID).Value(d.address).Ex(holdFor).Build(),
 	}
-	if agentID != "" {
+	if held.agentID != "" {
 		commands = append(commands,
-			d.redis.B().Set().Key(d.agents+agentID).Value(d.address).Ex(holdFor).Build())
+			d.redis.B().Set().Key(d.agents+held.agentID).Value(d.address).Ex(holdFor).Build())
+	}
+	if held.conversationID != "" {
+		commands = append(commands,
+			d.redis.B().Set().Key(d.channels+held.conversationID).Value(d.address).Ex(holdFor).Build())
 	}
 	for _, result := range d.redis.DoMulti(ctx, commands...) {
 		if err := result.Error(); err != nil {
@@ -406,8 +425,8 @@ func (d *Directory) renew(ctx context.Context) {
 		offered := maps.Clone(d.offered)
 		d.mu.Unlock()
 
-		for sessionID, agentID := range held {
-			d.write(ctx, sessionID, agentID)
+		for sessionID, claimed := range held {
+			d.write(ctx, sessionID, claimed)
 		}
 		for customerID := range waiting {
 			d.advertise(ctx, customerID)
