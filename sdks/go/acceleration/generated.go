@@ -14861,7 +14861,7 @@ type ClientInterface interface {
 
 	// ReceiveTwilioEvent Receive a Twilio account event
 	//
-	// Where the Twilio account sends its Monitor alerts (the Debugger webhook) and its usage triggers' callbacks, as form posts. Unauthenticated because Twilio is not a customer: each event is checked against X-Twilio-Signature, made with the account's Auth Token over ROUTER_PUBLIC_URL and this path, then logged and counted in vendor_account_events_total by its error code or usage category and its level. A deployment with no Twilio webhook token or no public URL answers 404, so nobody else can raise the count.
+	// Where the Twilio account sends its Monitor alerts (the Debugger webhook) and its usage triggers' callbacks, as form posts. Unauthenticated because Twilio is not a customer: each event is checked against X-Twilio-Signature, made with the account's Auth Token over ROUTER_PUBLIC_URL and this path, then logged and counted in vendor_account_events_total by its error code or usage category and its level. An alert whose Sid was counted in the last hour is answered 204 and not counted again. A deployment with no Twilio webhook token or no public URL answers 404, so nobody else can raise the count.
 	//
 	// Corresponds with POST /v1/phone/hooks/twilio/events (the `ReceiveTwilioEvent` operationId).
 	ReceiveTwilioEvent(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -20539,7 +20539,7 @@ func (c *Client) ReceiveTelnyxEvent(ctx context.Context, reqEditors ...RequestEd
 
 // ReceiveTwilioEvent Receive a Twilio account event
 //
-// Where the Twilio account sends its Monitor alerts (the Debugger webhook) and its usage triggers' callbacks, as form posts. Unauthenticated because Twilio is not a customer: each event is checked against X-Twilio-Signature, made with the account's Auth Token over ROUTER_PUBLIC_URL and this path, then logged and counted in vendor_account_events_total by its error code or usage category and its level. A deployment with no Twilio webhook token or no public URL answers 404, so nobody else can raise the count.
+// Where the Twilio account sends its Monitor alerts (the Debugger webhook) and its usage triggers' callbacks, as form posts. Unauthenticated because Twilio is not a customer: each event is checked against X-Twilio-Signature, made with the account's Auth Token over ROUTER_PUBLIC_URL and this path, then logged and counted in vendor_account_events_total by its error code or usage category and its level. An alert whose Sid was counted in the last hour is answered 204 and not counted again. A deployment with no Twilio webhook token or no public URL answers 404, so nobody else can raise the count.
 //
 // Corresponds with POST /v1/phone/hooks/twilio/events (the `ReceiveTwilioEvent` operationId).
 func (c *Client) ReceiveTwilioEvent(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -37317,7 +37317,7 @@ type ClientWithResponsesInterface interface {
 
 	// ReceiveTwilioEventWithResponse Receive a Twilio account event
 	//
-	// Where the Twilio account sends its Monitor alerts (the Debugger webhook) and its usage triggers' callbacks, as form posts. Unauthenticated because Twilio is not a customer: each event is checked against X-Twilio-Signature, made with the account's Auth Token over ROUTER_PUBLIC_URL and this path, then logged and counted in vendor_account_events_total by its error code or usage category and its level. A deployment with no Twilio webhook token or no public URL answers 404, so nobody else can raise the count.
+	// Where the Twilio account sends its Monitor alerts (the Debugger webhook) and its usage triggers' callbacks, as form posts. Unauthenticated because Twilio is not a customer: each event is checked against X-Twilio-Signature, made with the account's Auth Token over ROUTER_PUBLIC_URL and this path, then logged and counted in vendor_account_events_total by its error code or usage category and its level. An alert whose Sid was counted in the last hour is answered 204 and not counted again. A deployment with no Twilio webhook token or no public URL answers 404, so nobody else can raise the count.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -68799,7 +68799,7 @@ func (c *ClientWithResponses) ReceiveTelnyxEventWithResponse(ctx context.Context
 
 // ReceiveTwilioEventWithResponse Receive a Twilio account event
 //
-// Where the Twilio account sends its Monitor alerts (the Debugger webhook) and its usage triggers' callbacks, as form posts. Unauthenticated because Twilio is not a customer: each event is checked against X-Twilio-Signature, made with the account's Auth Token over ROUTER_PUBLIC_URL and this path, then logged and counted in vendor_account_events_total by its error code or usage category and its level. A deployment with no Twilio webhook token or no public URL answers 404, so nobody else can raise the count.
+// Where the Twilio account sends its Monitor alerts (the Debugger webhook) and its usage triggers' callbacks, as form posts. Unauthenticated because Twilio is not a customer: each event is checked against X-Twilio-Signature, made with the account's Auth Token over ROUTER_PUBLIC_URL and this path, then logged and counted in vendor_account_events_total by its error code or usage category and its level. An alert whose Sid was counted in the last hour is answered 204 and not counted again. A deployment with no Twilio webhook token or no public URL answers 404, so nobody else can raise the count.
 //
 // Returns a wrapper object for the known response body format(s).
 //

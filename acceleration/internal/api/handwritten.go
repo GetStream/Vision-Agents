@@ -746,12 +746,13 @@ func documentHandWritten(api huma.API) {
 			"usage triggers' callbacks, as form posts. Unauthenticated because Twilio is not a " +
 			"customer: each event is checked against X-Twilio-Signature, made with the account's " +
 			"Auth Token over ROUTER_PUBLIC_URL and this path, then logged and counted in " +
-			"vendor_account_events_total by its error code or usage category and its level. A " +
+			"vendor_account_events_total by its error code or usage category and its level. An " +
+			"alert whose Sid was counted in the last hour is answered 204 and not counted again. A " +
 			"deployment with no Twilio webhook token or no public URL answers 404, so nobody else " +
 			"can raise the count.",
 		Security: []map[string][]string{},
 		Responses: map[string]*huma.Response{
-			"204": {Description: "The event is counted"},
+			"204": {Description: "The event is counted, or is an alert already counted in the last hour"},
 			"400": {Description: "The signed form is not a Monitor alert or a usage trigger"},
 			"401": {Description: "The event is not signed by Twilio"},
 			"404": {Description: "Twilio events are not configured"},

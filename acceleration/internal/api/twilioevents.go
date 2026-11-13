@@ -137,7 +137,7 @@ func (s *Server) firstTwilioAlert(ctx context.Context, sid string) bool {
 	if s.twilioAlertSids == nil || len(sid) > twilioAlertSidLimit {
 		return true
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), twilioAlertMarkTimeout)
+	ctx, cancel := context.WithTimeout(ctx, twilioAlertMarkTimeout)
 	defer cancel()
 	mark := s.twilioAlertSids.B().Set().Key(twilioAlertKey + sid).Value("1").Nx().Ex(twilioAlertRepeatsFor).Build()
 	err := s.twilioAlertSids.Do(ctx, mark).Error()
