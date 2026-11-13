@@ -7,9 +7,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -319,6 +321,10 @@ func (s *TwilioEventsSuite) TestAResentAlertIsCountedOnce() {
 	s.Equal(1, s.loggedLines("level=DEBUG", "received a twilio alert already counted", "event=error.10001", "sid="+sid))
 	// The mark lasts the hour the ticket names, written out so a changed expiry fails here.
 	left := s.markLeft(sid)
+	redis := s.live.Redis()
+	literal, err := redis.Do(context.Background(), redis.B().Pttl().Key("vendorevent:twilio:alert:"+sid).Build()).AsInt64()
+	s.Require().NoError(err)
+	s.Positive(literal)
 	s.Greater(left, 59*time.Minute)
 	s.LessOrEqual(left, time.Hour)
 }
@@ -387,7 +393,7 @@ func (s *TwilioEventsSuite) TestWhenRedisFailsEveryCopyIsCountedAndWarned() {
 	}
 
 	s.Equal(2.0, accountEvents("twilio", "error.10001", "page")-before)
-	s.Equal(2, s.loggedLines("level=WARN", "could not mark a twilio alert as counted", "sid="+sid))
+	s.Equal(2, s.loggedLines("level=WARN", "could not mark a twilio alert as counted", "sid="+sid, "error="))
 	s.Equal(2, s.loggedLines("level=INFO", "received a twilio account event", "sid="+sid))
 }
 
@@ -574,4 +580,57 @@ func (s *TwilioEventsUnconfiguredSuite) TestWithoutATokenNoEventIsCounted() {
 	s.Contains(answer, `"type":"not_found"`)
 	s.Contains(answer, "Twilio events are not configured")
 	s.Zero(accountEvents("twilio", "error.20003", "warn") - before)
+}
+
+// A Redis that takes the SET and answers nothing must not hold the alert past the mark
+// timeout: the alert is counted and warned within it, not after rueidis' own 10 s.
+func (s *TwilioEventsSuite) TestAnAlertIsCountedWhenRedisAnswersNothing() {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { listener.Close() })
+	var silent atomic.Bool
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				upstream, err := net.Dial("tcp", s.redisAddr)
+				if err != nil {
+					return
+				}
+				defer upstream.Close()
+				go io.Copy(conn, upstream)
+				buf := make([]byte, 4096)
+				for {
+					n, err := conn.Read(buf)
+					if err != nil {
+						return
+					}
+					if !silent.Load() {
+						upstream.Write(buf[:n])
+					}
+				}
+			}()
+		}
+	}()
+	hung, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{listener.Addr().String()}, DisableCache: true})
+	s.Require().NoError(err)
+	s.T().Cleanup(hung.Close)
+	sids := s.router.twilioAlertSids
+	s.T().Cleanup(func() { s.router.twilioAlertSids = sids })
+	s.router.twilioAlertSids = hung
+	silent.Store(true)
+	sid := twilioAlertSid()
+	before := accountEvents("twilio", "error.10001", "page")
+
+	started := time.Now()
+	status, _ := s.deliver(twilioAlert(sid, `{"error_code":"10001"}`), "", s.signed(twilioSignedURL))
+
+	s.Equal(http.StatusNoContent, status)
+	s.Less(time.Since(started), 5*time.Second)
+	s.Equal(1.0, accountEvents("twilio", "error.10001", "page")-before)
+	s.Equal(1, s.loggedLines("level=WARN", "could not mark a twilio alert as counted", "sid="+sid))
 }
