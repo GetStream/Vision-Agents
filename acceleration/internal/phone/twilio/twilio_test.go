@@ -915,6 +915,40 @@ func (s *TwilioSuite) TestARefusedHangUpIsAVendorError() {
 	s.Equal("20404", refused.Code)
 }
 
+// completeAnswering answers a cancel that left the call up, then the complete after it with
+// status and body.
+func (s *TwilioSuite) completeAnswering(status int, body string) *int {
+	var posts int
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		posts++
+		if posts == 1 {
+			_, _ = w.Write([]byte(`{"sid":"CA123","status":"in-progress"}`))
+			return
+		}
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}
+	return &posts
+}
+
+func (s *TwilioSuite) TestACallThatEndsBetweenCancelAndCompleteIsNoFailure() {
+	posts := s.completeAnswering(http.StatusBadRequest, `{"code":21220,"message":"Call is not in-progress. Cannot redirect."}`)
+
+	s.NoError(s.provider.HangUp(s.ctx, "CA123"))
+	s.Equal(2, *posts)
+}
+
+func (s *TwilioSuite) TestARefusedCompleteIsAVendorError() {
+	posts := s.completeAnswering(http.StatusNotFound, `{"code":20404,"message":"not found"}`)
+
+	err := s.provider.HangUp(s.ctx, "CA123")
+
+	s.Equal(2, *posts)
+	refused, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok, err)
+	s.Equal("20404", refused.Code)
+}
+
 func (s *TwilioSuite) TestHangingUpWithoutACallIsRejected() {
 	s.ErrorContains(s.provider.HangUp(s.ctx, ""), "call to hang up")
 }

@@ -1992,7 +1992,7 @@ func (s *Service) HangUpUnanswered(ctx context.Context, customerID, callID strin
 	if err != nil {
 		return fmt.Errorf("phone: read the call to hang up: %w", err)
 	}
-	if call.AnsweredAt != nil || call.EndedAt != nil || call.Outcome != "" || call.VendorCallID == "" {
+	if call.AnsweredAt != nil || call.Outcome != "" || call.VendorCallID == "" {
 		return nil
 	}
 	provider, err := s.provider(call.Vendor)

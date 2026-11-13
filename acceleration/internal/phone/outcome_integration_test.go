@@ -599,6 +599,30 @@ func (s *OutcomeSuite) TestAVendorThatCannotHangUpSaysSo() {
 	s.Empty(s.read(placed.CallID).Outcome, "the phone may still be ringing")
 }
 
+func (s *OutcomeSuite) TestARowNeverDialledIsNotHungUp() {
+	callID := uuid.NewString()
+	_, err := s.service.Outcomes().Placed(s.ctx, outcome.Call{
+		Key:    outcome.Key{CustomerID: s.customer, CallType: "default", CallID: callID, Local: s.e164, Remote: "+15125550123"},
+		Vendor: "telnyx",
+	})
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.service.HangUpUnanswered(s.ctx, s.customer, callID))
+
+	s.Empty(s.vendor.hungUp, "the vendor has no call to hang up")
+	s.Empty(s.read(callID).Outcome)
+}
+
+func (s *OutcomeSuite) TestAHangUpTheVendorRefusesKeepsNoOutcome() {
+	placed := s.place()
+	s.vendor.err = errors.New("vendor down")
+
+	err := s.service.HangUpUnanswered(s.ctx, s.customer, placed.CallID)
+
+	s.ErrorContains(err, "vendor down")
+	s.Empty(s.read(placed.CallID).Outcome, "the phone may still be ringing")
+}
+
 func (s *OutcomeSuite) TestASessionWithNoPlacedCallHangsUpNothing() {
 	s.Require().NoError(s.service.HangUpUnanswered(s.ctx, s.customer, "never-placed"))
 
