@@ -261,25 +261,43 @@ describe("agentChatTransport, branching", () => {
     assert.equal(again?.["request_id"], "ctl_again");
   });
 
+  it("regenerates a version still shown through its own response, not the one the last regenerate started", async () => {
+    const { transport, feed } = await connected();
+    // Answered without hiding anything, so r2 is still shown under its own mark, as a version the
+    // arrows show again keeps its id.
+    router.serve("POST", responsesPath, answering(undefined));
+    const target = feed.find("r2");
+    await transport.send(request({ kind: "regenerate", message: target, messageId: "ctl_1" }));
+
+    await transport.send(request({ kind: "regenerate", message: feed.find("r2"), messageId: "ctl_2" }));
+
+    const replaces = router.requestsTo("POST", responsesPath).map((one) => (one.body as Record<string, unknown>)["replaces"]);
+    assert.deepEqual(replaces, ["resp_2", "resp_2"], "the response the shown version carries");
+  });
+
   it("forgets the response remembered for a target once the router says it is no longer there", async () => {
     const { transport, feed } = await connected();
     router.serve("POST", responsesPath, (_request, calls) =>
-      calls === 1 ? refusal(409, "conflict") : answering(undefined),
+      calls === 1 ? refusal(409, "conflict") : answering({ message_id: "q1", inclusive: false }),
     );
     const target = feed.find("r2");
     await transport.send(request({ kind: "regenerate", message: target, messageId: "ctl_1" }));
     await assert.rejects(transport.send(request({ kind: "regenerate", message: target, messageId: "ctl_2" })));
 
-    await transport.send(request({ kind: "regenerate", message: target, messageId: "ctl_3" }));
+    // r2 is hidden and nothing is remembered for it any more.
+    await assert.rejects(
+      transport.send(request({ kind: "regenerate", message: target, messageId: "ctl_3" })),
+      (error: unknown) => error instanceof AgentBranchError && error.code === "not_branchable",
+    );
 
     const replaces = router.requestsTo("POST", responsesPath).map((one) => (one.body as Record<string, unknown>)["replaces"]);
-    assert.deepEqual(replaces, ["resp_2", "resp_9", "resp_2"], "read from the conversation again after the refusal");
+    assert.deepEqual(replaces, ["resp_2", "resp_9"]);
   });
 
   it("keeps the response remembered for a target while the router finishes an unsettled switch", async () => {
     const { transport, feed } = await connected();
     router.serve("POST", responsesPath, (_request, calls) =>
-      calls === 1 ? refusal(409, "switch_unfinished") : answering(undefined),
+      calls === 1 ? refusal(409, "switch_unfinished") : answering({ message_id: "q1", inclusive: false }),
     );
     const target = feed.find("r2");
     await transport.send(request({ kind: "regenerate", message: target, messageId: "ctl_1" }));

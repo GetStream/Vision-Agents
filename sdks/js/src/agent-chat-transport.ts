@@ -440,7 +440,9 @@ export function agentChatTransport<M extends AgentChatMessage, Message>(
         const source = sourceOf(request.message);
         const place = source ? supportBranchOf(source) : undefined;
         const targetId = idOf(request.message);
-        const retried = targetId !== undefined && lastBranch?.targetId === targetId ? lastBranch.responseId : undefined;
+        // A retry of a branch whose message is no longer shown goes through the response it
+        // started; a version still shown, as the arrows show one again, through its own.
+        const retried = !source && targetId !== undefined && lastBranch?.targetId === targetId ? lastBranch.responseId : undefined;
         let responseId: string;
         if (retried !== undefined) {
           responseId = retried;
