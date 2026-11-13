@@ -6,7 +6,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -19,6 +22,12 @@ func TestTools(t *testing.T) {
 	suite.Run(t, new(ToolsSuite))
 }
 
+// The two pages list_agent_feedback walks when the fake Stream is left on its default.
+const (
+	feedbackPageOne = `{"feedback":[{"id":"fb-1","item_id":"item-1","agent_review_id":"rev-1","nora_action":"remove","moderator_action":"keep","reason":"the phrase is allowed in this app","improvement":"do not remove this phrase when it targets nobody","labels":["profanity"],"entity_type":"stream:chat:v1:message","content_excerpt":"This market is fucking wild.","created_by":"mod-1","created_at":"2026-10-01T00:00:00Z"}],"next":"page-2"}`
+	feedbackPageTwo = `{"feedback":[{"id":"fb-2","item_id":"item-2","agent_review_id":"rev-2","nora_action":"flag","moderator_action":"keep","reason":"quoted from a headline","improvement":"allow a quoted headline","labels":["harassment"],"entity_type":"stream:chat:v1:message","content_excerpt":"you idiot","created_by":"mod-2","created_at":"2026-10-02T00:00:00Z"}],"next":""}`
+)
+
 // ToolsSuite runs the tools against a Stream that answers every moderation read and keeps
 // what it was asked.
 type ToolsSuite struct {
@@ -27,9 +36,12 @@ type ToolsSuite struct {
 	runner *Runner
 	next   *passedOn
 
-	mu     sync.Mutex
-	asked  []string
-	bodies []map[string]any
+	mu        sync.Mutex
+	asked     []string
+	queries   []string
+	authTypes []string
+	bodies    []map[string]any
+	forever   atomic.Bool
 }
 
 // passedOn is the runner a call that is not a moderation tool reaches.
@@ -41,15 +53,23 @@ func (p *passedOn) Run(_ context.Context, call llm.ToolCall) ([]llm.ContentPart,
 }
 
 func (s *ToolsSuite) SetupTest() {
-	s.asked, s.bodies = nil, nil
+	s.asked, s.queries, s.authTypes, s.bodies = nil, nil, nil, nil
+	s.forever.Store(false)
 	s.stream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
 		body := map[string]any{}
 		_ = json.Unmarshal(raw, &body)
 		s.mu.Lock()
 		s.asked = append(s.asked, r.Method+" "+r.URL.Path)
+		s.queries = append(s.queries, r.URL.RawQuery)
+		s.authTypes = append(s.authTypes, r.Header.Get("Stream-Auth-Type"))
 		s.bodies = append(s.bodies, body)
 		s.mu.Unlock()
+		if r.URL.Path == "/api/v2/moderation/agent_feedback" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, s.feedbackPage(r))
+			return
+		}
 		answers := map[string]string{
 			"/api/v2/moderation/review_queue":        `{"duration":"1ms","items":[{"id":"item-1","status":"pending"}],"next":"page-2"}`,
 			"/api/v2/moderation/review_queue/item-1": `{"duration":"1ms","item":{"id":"item-1","flags":[{"reason":"spam"}],"actions":[{"type":"mark_reviewed"}]}}`,
@@ -73,6 +93,33 @@ func (s *ToolsSuite) SetupTest() {
 }
 
 func (s *ToolsSuite) TearDownTest() { s.stream.Close() }
+
+// feedbackPage is the agent_feedback body. The default is two pages. forever keeps handing
+// back a new cursor so a walk with no cap cannot pass by luck.
+func (s *ToolsSuite) feedbackPage(r *http.Request) string {
+	if s.forever.Load() {
+		n := 1
+		if next := r.URL.Query().Get("next"); next != "" {
+			parsed, err := strconv.Atoi(strings.TrimPrefix(next, "page-"))
+			if err == nil && parsed > 0 {
+				n = parsed
+			}
+		}
+		if n > 40 {
+			return `{"feedback":[],"next":""}`
+		}
+		id := strconv.Itoa(n)
+		return `{"feedback":[{"id":"fb-` + id + `","nora_action":"remove","moderator_action":"keep","reason":"allowed","improvement":"allow it","labels":["profanity"],"content_excerpt":"phrase"}],"next":"page-` + strconv.Itoa(n+1) + `"}`
+	}
+	switch r.URL.Query().Get("next") {
+	case "":
+		return feedbackPageOne
+	case "page-2":
+		return feedbackPageTwo
+	default:
+		return `{"feedback":[],"next":""}`
+	}
+}
 
 // run calls a tool and reads its answer back as JSON.
 func (s *ToolsSuite) run(name, arguments string) map[string]any {
@@ -154,6 +201,58 @@ func (s *ToolsSuite) TestAStreamFailureIsTheToolsError() {
 	_, err := s.runner.Run(context.Background(), llm.ToolCall{ID: "1", Name: QueryModerationLogsTool})
 
 	s.ErrorContains(err, QueryModerationLogsTool)
+}
+
+func (s *ToolsSuite) TestModeratorFeedbackIsListedAcrossPages() {
+	answer := s.run(ListAgentFeedbackTool, `{}`)
+
+	feedback := answer["feedback"].([]any)
+	s.Require().Len(feedback, 2)
+	first := feedback[0].(map[string]any)
+	s.Equal("fb-1", first["id"])
+	s.Equal("This market is fucking wild.", first["content_excerpt"])
+	s.Equal("remove", first["nora_action"])
+	s.Equal("keep", first["moderator_action"])
+	s.Equal("the phrase is allowed in this app", first["reason"])
+	s.Equal("do not remove this phrase when it targets nobody", first["improvement"])
+	s.Equal([]any{"profanity"}, first["labels"])
+	s.Equal("fb-2", feedback[1].(map[string]any)["id"])
+	s.Equal([]string{
+		"GET /api/v2/moderation/agent_feedback",
+		"GET /api/v2/moderation/agent_feedback",
+	}, s.asked)
+	s.Contains(s.queries[0], "limit=25")
+	s.Contains(s.queries[0], "api_key=acme-key")
+	s.NotContains(s.queries[0], "next=")
+	s.Contains(s.queries[1], "next=page-2")
+	s.Contains(s.queries[1], "limit=24")
+	s.Equal([]string{"jwt", "jwt"}, s.authTypes)
+	s.NotContains(answer, "next")
+}
+
+func (s *ToolsSuite) TestModeratorFeedbackStopsAtTheAskedLimit() {
+	answer := s.run(ListAgentFeedbackTool, `{"limit":1}`)
+
+	s.Len(answer["feedback"].([]any), 1)
+	s.Equal([]string{"GET /api/v2/moderation/agent_feedback"}, s.asked)
+	s.Contains(s.queries[0], "limit=1")
+}
+
+func (s *ToolsSuite) TestModeratorFeedbackStopsWhenTheCursorNeverEnds() {
+	s.forever.Store(true)
+
+	answer := s.run(ListAgentFeedbackTool, `{"limit":25}`)
+
+	s.Len(answer["feedback"].([]any), maxLimit)
+	s.Len(s.asked, maxLimit)
+}
+
+func (s *ToolsSuite) TestAModeratorFeedbackFailureIsTheToolsError() {
+	s.stream.Close()
+
+	_, err := s.runner.Run(context.Background(), llm.ToolCall{ID: "1", Name: ListAgentFeedbackTool})
+
+	s.ErrorContains(err, ListAgentFeedbackTool)
 }
 
 func (s *ToolsSuite) TestAnyOtherToolIsPassedOn() {
