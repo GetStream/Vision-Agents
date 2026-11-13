@@ -406,8 +406,9 @@ func (s *Session) rewindKept(ctx context.Context, keptID string) error {
 	if err := s.refuseBranches(ctx); err != nil {
 		return err
 	}
-	if err := s.checkSettled(ctx, ""); err != nil {
-		return err
+	// The turns are read from the tree below: the newest may not be written to it yet.
+	if err := s.records.Flush(ctx); err != nil {
+		return stack.Wrap(err)
 	}
 	customer := s.spec.CustomerID
 	kept, err := s.tree.SessionResponse(ctx, customer, s.id, keptID)
@@ -425,16 +426,28 @@ func (s *Session) rewindKept(ctx context.Context, keptID string) error {
 		return err
 	}
 	if !after {
-		return nil
+		return s.checkSettled(ctx, "")
+	}
+	// The same rewind asked again is the same switch, which a retry finishes from the message
+	// it rewound to: Chat may hide that message by now.
+	switchedID := switchID(s.id, "rewind\x00"+next.ID)
+	if err := s.checkSettled(ctx, switchedID); err != nil {
+		return err
+	}
+	earlier, err := s.unfinishedSwitch(ctx, switchedID, next.ID)
+	if err != nil {
+		return err
 	}
 
 	s.current().Interrupt()
 	if err := s.records.Flush(ctx); err != nil {
 		return stack.Wrap(err)
 	}
-	found, err := s.persisted.ResponseMessages(ctx, next.ID, next.QuestionResponseID)
-	if err != nil {
-		return err
+	found := persistent.ResponseMessages{Question: earlier.ForkMessageID}
+	if earlier.ID == "" {
+		if found, err = s.persisted.ResponseMessages(ctx, next.ID, next.QuestionResponseID); err != nil {
+			return err
+		}
 	}
 	if next.QuestionResponseID == "" || found.Question == "" {
 		return stack.Wrap(&persistent.BranchesUnsupportedError{Reason: persistent.UnsupportedUnmarked})
@@ -445,7 +458,7 @@ func (s *Session) rewindKept(ctx context.Context, keptID string) error {
 	}
 	// Journaled as an edit of the next turn: a router that stops partway is finished by the
 	// next open the same way, leaving the conversation at that turn's parent, kept.
-	rewind := persistent.RewindTarget{SwitchID: switchID(s.id, "rewind\x00"+newID()), Kind: store.SwitchEdit,
+	rewind := persistent.RewindTarget{SwitchID: switchedID, Kind: store.SwitchEdit,
 		TargetResponseID: next.ID, MessageID: found.Question, Inclusive: true}
 	reading, err := s.restoring(ctx)
 	if err != nil {
@@ -457,8 +470,14 @@ func (s *Session) rewindKept(ctx context.Context, keptID string) error {
 			return err
 		}
 	}
+	// The next question is asked beside the turn hidden, so it carries its place among them.
+	questions, err := s.tree.Siblings(ctx, customer, s.id, next.ID, store.SiblingsOfQuestion)
+	if err != nil {
+		return err
+	}
 	s.turnsMu.Lock()
 	s.leaf = keptID
+	s.afterRewind.parent, s.afterRewind.place = keptID, placeOf(len(questions)+1, len(questions)+1)
 	s.turnsMu.Unlock()
 	history, _ := s.persisted.HistoryOf(reading, outcome.Page)
 	s.carryOnFrom(history)

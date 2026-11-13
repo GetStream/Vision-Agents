@@ -330,6 +330,13 @@ type Session struct {
 	// leaf is the newest response on the conversation, which the next turn is answered after
 	// (its parent_response_id). Guarded by turnsMu.
 	leaf string
+	// afterRewind is where the next question asked after a rewind of a kept conversation
+	// stands among the questions asked at the same point: beside the turn the rewind hid. It
+	// holds for the question asked after parent alone. Guarded by turnsMu.
+	afterRewind struct {
+		parent string
+		place  persistent.Place
+	}
 	// claimed is the response the next question asked of the model is recorded as, allocated
 	// before its messages were written so they carry its id. Guarded by turnsMu.
 	claimed *persistent.Turn
@@ -2092,7 +2099,12 @@ func (s *Session) nextTurn() persistent.Turn {
 	s.turnsMu.Lock()
 	defer s.turnsMu.Unlock()
 	id := newID()
-	return persistent.Turn{ResponseID: id, ParentResponseID: s.leaf, QuestionResponseID: id}
+	turn := persistent.Turn{ResponseID: id, ParentResponseID: s.leaf, QuestionResponseID: id}
+	if s.afterRewind.parent == s.leaf {
+		turn.Question = s.afterRewind.place
+	}
+	s.afterRewind.parent, s.afterRewind.place = "", persistent.Place{}
+	return turn
 }
 
 // claim has the next asked turn opened (openAskedTurn) recorded as turn. A zero turn claims
