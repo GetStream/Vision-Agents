@@ -1585,3 +1585,44 @@ func (s *ChatLogSuite) TestAReplySpokenInPiecesKeepsEveryPiece() {
 
 	s.Equal([]string{"One. Two."}, chat.Messages(s.log.channel))
 }
+
+func (s *ChatLogSuite) TestAVoiceReplyWithUIDeltasStoresAndPatchesGeneratedUIInChat() {
+	s.useChat()
+	writer := newWriter(s.log)
+
+	s.play(
+		writer,
+		agent.Responding{TurnID: "turn-1"},
+		agent.ResponseDelta{TurnID: "turn-1", Text: "Kaneo has a table at seven fifteen."},
+		agent.UIDelta{TurnID: "turn-1", Format: "openui", Mode: "replace", Delta: "$party = 2\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"},
+		agent.UICompleted{TurnID: "turn-1", Format: "openui", Mode: "replace", Content: "$party = 2\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"},
+	)
+	writer.show()
+	s.play(
+		writer,
+		agent.Responded{TurnID: "turn-1", Text: "Kaneo has a table at seven fifteen."},
+		agent.Spoke{TurnID: "turn-1"},
+	)
+
+	s.play(
+		writer,
+		agent.Responding{TurnID: "turn-2"},
+		agent.ResponseDelta{TurnID: "turn-2", Text: "Changed to four guests."},
+		agent.UIDelta{TurnID: "turn-2", Format: "openui", Mode: "patch", Delta: "$party = 4"},
+		agent.UICompleted{TurnID: "turn-2", Format: "openui", Mode: "patch", Content: "$party = 4"},
+		agent.Responded{TurnID: "turn-2", Text: "Changed to four guests."},
+		agent.Spoke{TurnID: "turn-2"},
+	)
+
+	stored := s.channel()
+	s.Require().Len(stored, 2)
+	ui1, ok := stored[0].Custom["ai_ui"].(map[string]any)
+	s.Require().True(ok)
+	s.Equal("complete", ui1["status"])
+	s.Equal("$party = 2\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")", ui1["content"])
+
+	ui2, ok := stored[1].Custom["ai_ui"].(map[string]any)
+	s.Require().True(ok)
+	s.Equal("complete", ui2["status"])
+	s.Equal("$party = 4\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")", ui2["content"])
+}
