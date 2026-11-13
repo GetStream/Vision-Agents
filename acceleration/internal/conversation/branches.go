@@ -781,7 +781,13 @@ func (sw switcher) rewind(ctx context.Context, target RewindTarget, read func(be
 			// runs. Chat then refuses this rewind, as a conflict or, an inclusive one, as a
 			// message to rewind to that no longer exists. The copies are what that rewind hid,
 			// and abandoning the switch would delete the only ones.
-			if landed, _, landedErr := sw.landed(ctx, row, copied); landedErr == nil && landed {
+			landed, _, landedErr := sw.landed(ctx, row, copied)
+			if landedErr != nil {
+				// Whether the earlier rewind landed is not known: the next open finds out from
+				// the channel, with the copies still there.
+				return rewound{}, landedErr
+			}
+			if landed {
 				err = nil
 			}
 		}
