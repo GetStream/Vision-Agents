@@ -13070,6 +13070,24 @@ namespace GetStream.VisionAgents.Models
         public string? Agent { get; set; } = default!;
 
         /// <summary>
+        /// The agent config the session ran under, which stays the same when the agent is renamed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("config_id")]
+        public string? ConfigId { get; set; } = default!;
+
+        /// <summary>
+        /// When the session began.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("created_at")]
+        public TimeWindow? CreatedAt { get; set; } = default!;
+
+        /// <summary>
+        /// Labels the session's custom object holds, every one of them: {"origin": "test"} matches a session whose custom has origin set to the string "test".
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("custom")]
+        public System.Collections.Generic.Dictionary<string, string>? Custom { get; set; } = default!;
+
+        /// <summary>
         /// The project the session belongs to.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("project_id")]
@@ -13080,6 +13098,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("review_score")]
         public int? ReviewScore { get; set; } = default!;
+
+        /// <summary>
+        /// Whether the agent is still in the call.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("state")]
+        public string? State { get; set; } = default!;
 
         /// <summary>
         /// Full text over the title, description, project and agent name, sorted by relevance. Once per filter, at its top level or in a top-level $and, and never inside $or.
@@ -13332,6 +13356,26 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("field")]
         public string Field { get; set; } = default!;
+
+    }
+
+    /// <summary>
+    /// Whether the agent is still in the call.
+    /// <br/>
+    /// <br/>One of `live`, `ended`.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class SessionStateEquals
+    {
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
 
     }
 
@@ -15420,6 +15464,21 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("$q")]
         public string Q { get; set; } = default!;
+
+    }
+
+    /// <summary>
+    /// A window of time: $gte is its start, which it holds, and $lt its end, which it does not. Either may be left out, and $gte is before $lt.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class TimeWindow
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("$gte")]
+        public System.DateTimeOffset? Gte { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("$lt")]
+        public System.DateTimeOffset? Lt { get; set; } = default!;
 
     }
 

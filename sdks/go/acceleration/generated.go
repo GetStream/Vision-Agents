@@ -9028,11 +9028,23 @@ type SessionFilter struct {
 	// Agent Matches one value exactly: "value" is short for {"$eq": "value"}.
 	Agent *Equals `json:"agent,omitempty"`
 
+	// ConfigId Matches one value exactly: "value" is short for {"$eq": "value"}.
+	ConfigId *Equals `json:"config_id,omitempty"`
+
+	// CreatedAt A window of time: $gte is its start, which it holds, and $lt its end, which it does not. Either may be left out, and $gte is before $lt.
+	CreatedAt *TimeWindow `json:"created_at,omitempty"`
+
+	// Custom Labels the session's custom object holds, every one of them: {"origin": "test"} matches a session whose custom has origin set to the string "test".
+	Custom *map[string]string `json:"custom,omitempty"`
+
 	// ProjectId Matches one value exactly, written "value" or {"$eq": "value"}, or any of up to 50 values, written {"$in": ["a", "b"]}. An object holds one of $eq and $in.
 	ProjectId *EqualsOrIn `json:"project_id,omitempty"`
 
 	// ReviewScore Matches a review score from 1 to 5: a number, which is short for $eq, or an object of $eq, $gt, $gte, $lt and $lte, every one of which has to hold.
 	ReviewScore *ReviewScoreMatch `json:"review_score,omitempty"`
+
+	// State Matches live or ended: "live" is short for {"$eq": "live"}.
+	State *SessionStateEquals `json:"state,omitempty"`
 
 	// Text A full-text match, Stream's $q.
 	Text *TextMatch `json:"text,omitempty"`
@@ -9152,6 +9164,17 @@ type SessionSortField string
 
 // SessionState Whether the agent is still in the call.
 type SessionState string
+
+// SessionStateEquals Matches live or ended: "live" is short for {"$eq": "live"}.
+type SessionStateEquals struct {
+	union json.RawMessage
+}
+
+// SessionStateEquals1 defines model for SessionStateEquals.1.
+type SessionStateEquals1 struct {
+	// Eq Whether the agent is still in the call.
+	Eq SessionState `json:"$eq"`
+}
 
 // SessionTool One of the caller's own functions. The model is offered it by name and description; running it is the caller's business, over the events socket.
 type SessionTool struct {
@@ -10082,6 +10105,12 @@ type TextMatch struct {
 
 // Tier What the model optimises for.
 type Tier string
+
+// TimeWindow A window of time: $gte is its start, which it holds, and $lt its end, which it does not. Either may be left out, and $gte is before $lt.
+type TimeWindow struct {
+	Gte *time.Time `json:"$gte,omitempty"`
+	Lt  *time.Time `json:"$lt,omitempty"`
+}
 
 // TimelineEntry defines model for TimelineEntry.
 type TimelineEntry struct {
@@ -12368,6 +12397,68 @@ func (t *ReviewScoreMatch) UnmarshalJSON(b []byte) error {
 	return err
 }
 
+// AsSessionState returns the union data inside the SessionStateEquals as a SessionState
+func (t SessionStateEquals) AsSessionState() (SessionState, error) {
+	var body SessionState
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromSessionState overwrites any union data inside the SessionStateEquals as the provided SessionState
+func (t *SessionStateEquals) FromSessionState(v SessionState) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeSessionState performs a merge with any union data inside the SessionStateEquals, using the provided SessionState
+func (t *SessionStateEquals) MergeSessionState(v SessionState) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsSessionStateEquals1 returns the union data inside the SessionStateEquals as a SessionStateEquals1
+func (t SessionStateEquals) AsSessionStateEquals1() (SessionStateEquals1, error) {
+	var body SessionStateEquals1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromSessionStateEquals1 overwrites any union data inside the SessionStateEquals as the provided SessionStateEquals1
+func (t *SessionStateEquals) FromSessionStateEquals1(v SessionStateEquals1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeSessionStateEquals1 performs a merge with any union data inside the SessionStateEquals, using the provided SessionStateEquals1
+func (t *SessionStateEquals) MergeSessionStateEquals1(v SessionStateEquals1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t SessionStateEquals) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *SessionStateEquals) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
 // AsSyncAgentRequestPlugins0 returns the union data inside the SyncAgentRequest_Plugins_Item as a SyncAgentRequestPlugins0
 func (t SyncAgentRequest_Plugins_Item) AsSyncAgentRequestPlugins0() (SyncAgentRequestPlugins0, error) {
 	var body SyncAgentRequestPlugins0
@@ -13868,6 +13959,10 @@ type ClientInterface interface {
 	// - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
 	// - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
 	// - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+	// - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename leaves alone
+	// - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+	// - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+	// - `custom`: an object of string labels the session's `custom` holds, every one of them
 	//
 	// Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
 	//
@@ -13917,6 +14012,10 @@ type ClientInterface interface {
 	// - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
 	// - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
 	// - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+	// - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename leaves alone
+	// - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+	// - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+	// - `custom`: an object of string labels the session's `custom` holds, every one of them
 	//
 	// Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
 	//
@@ -18542,6 +18641,10 @@ func (c *Client) CreateSession(ctx context.Context, body CreateSessionJSONReques
 // - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
 // - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
 // - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+// - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename leaves alone
+// - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+// - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+// - `custom`: an object of string labels the session's `custom` holds, every one of them
 //
 // Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
 //
@@ -18601,6 +18704,10 @@ func (c *Client) QuerySessionsWithBody(ctx context.Context, contentType string, 
 // - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
 // - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
 // - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+// - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename leaves alone
+// - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+// - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+// - `custom`: an object of string labels the session's `custom` holds, every one of them
 //
 // Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
 //
@@ -36142,6 +36249,10 @@ type ClientWithResponsesInterface interface {
 	// - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
 	// - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
 	// - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+	// - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename leaves alone
+	// - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+	// - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+	// - `custom`: an object of string labels the session's `custom` holds, every one of them
 	//
 	// Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
 	//
@@ -36191,6 +36302,10 @@ type ClientWithResponsesInterface interface {
 	// - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
 	// - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
 	// - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+	// - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename leaves alone
+	// - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+	// - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+	// - `custom`: an object of string labels the session's `custom` holds, every one of them
 	//
 	// Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
 	//
@@ -66930,6 +67045,10 @@ func (c *ClientWithResponses) CreateSessionWithResponse(ctx context.Context, bod
 // - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
 // - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
 // - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+// - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename leaves alone
+// - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+// - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+// - `custom`: an object of string labels the session's `custom` holds, every one of them
 //
 // Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
 //
@@ -66985,6 +67104,10 @@ func (c *ClientWithResponses) QuerySessionsWithBodyWithResponse(ctx context.Cont
 // - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
 // - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
 // - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+// - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename leaves alone
+// - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+// - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+// - `custom`: an object of string labels the session's `custom` holds, every one of them
 //
 // Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
 //
