@@ -769,6 +769,16 @@ func (s *RoutingSuite) TestTierNarrowsTheCandidates() {
 	s.Equal([]string{"lush/multi"}, names(candidates), "only one model is high-quality")
 }
 
+func (s *RoutingSuite) TestMembersAreWhatAShortcutResolvesOver() {
+	var members []string
+	for _, provider := range s.config().Members("multilingual-low-latency") {
+		members = append(members, provider.Name())
+	}
+
+	s.Equal([]string{"quick/multi"}, members)
+	s.Nil(s.config().Members("quick/en"), "a model is not a shortcut")
+}
+
 func (s *RoutingSuite) TestMultilingualAliasExcludesSingleLanguageModels() {
 	candidates, err := s.newRouter().Resolve(s.ctx, "multilingual-low-latency", nil)
 	s.Require().NoError(err)
