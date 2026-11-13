@@ -110,6 +110,8 @@ func (s *ChannelTypeTurnSuite) BeforeTest(suiteName, testName string) {
 // 404, and nothing reaches the provider. The operation's description and the connectors skill
 // say two minutes.
 func (s *ChannelTypeTurnSuite) TestAWritersApprovalAfterTheTurnEndsIsTooLate() {
+	// What the docs say, not askTimeout, so a change to the turn budget fails here first.
+	const twoMinutes = 2 * time.Minute
 	s.holdsType("callouts", memberWrites)
 	s.approvingIn("callouts")
 	anya := s.person("Anya")
@@ -121,9 +123,9 @@ func (s *ChannelTypeTurnSuite) TestAWritersApprovalAfterTheTurnEndsIsTooLate() {
 	before := s.provider.Hits(fakeprovider.PathMCP)
 
 	s.Require().Eventually(func() bool { return s.stepIn(cid)["status"] == "cancelled" },
-		askTimeout+30*time.Second, time.Second, "the call outlived the turn")
+		twoMinutes+30*time.Second, time.Second, "the call outlived the two minutes the docs give")
 	s.T().Logf("the call was stopped %s after Anya wrote", time.Since(start).Round(time.Second))
-	s.GreaterOrEqual(time.Since(start), askTimeout, "the call was stopped before the turn ended")
+	s.GreaterOrEqual(time.Since(start), twoMinutes, "the call was stopped before the two minutes the docs give")
 	s.Equal(http.StatusNotFound, s.approves(s.data.signedInAs(anya), cid, step, request, true))
 	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP), "nothing reached the provider")
 }
