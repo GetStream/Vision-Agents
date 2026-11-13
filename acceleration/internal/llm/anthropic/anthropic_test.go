@@ -129,13 +129,42 @@ func (s *AnthropicSuite) TestTheKeyAndWorkspaceAreNamedOnEveryRequest() {
 	s.Empty(header.Get("Authorization"))
 }
 
-func (s *AnthropicSuite) TestAReasoningEffortIsRefusedBeforeItIsSent() {
+func (s *AnthropicSuite) TestAReasoningEffortGoesOutAsOutputConfig() {
 	_, err := s.collect(s.provider(Options{}), llm.ResponseParams{
+		Input:     []llm.Message{{Role: llm.User, Content: "think less"}},
+		Reasoning: llm.ReasoningParams{Effort: "low"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal(map[string]any{"effort": "low"}, s.sent()[0].body["output_config"])
+}
+
+func (s *AnthropicSuite) TestNoEffortSendsNoOutputConfig() {
+	_, err := s.collect(s.provider(Options{}), llm.ResponseParams{
+		Input: []llm.Message{{Role: llm.User, Content: "hi"}},
+	})
+	s.Require().NoError(err)
+
+	s.NotContains(s.sent()[0].body, "output_config")
+}
+
+func (s *AnthropicSuite) TestAnEffortHaikuDoesNotTakeIsRefusedBeforeItIsSent() {
+	_, err := s.collect(s.provider(Options{Model: "claude-haiku-5-5"}), llm.ResponseParams{
 		Input:     []llm.Message{{Role: llm.User, Content: "think hard"}},
 		Reasoning: llm.ReasoningParams{Effort: "high"},
 	})
 
 	s.ErrorContains(err, "does not reason")
+	s.Empty(s.sent())
+}
+
+func (s *AnthropicSuite) TestAnEffortOutsideTheThreeLevelsIsRefused() {
+	_, err := s.collect(s.provider(Options{}), llm.ResponseParams{
+		Input:     []llm.Message{{Role: llm.User, Content: "think hardest"}},
+		Reasoning: llm.ReasoningParams{Effort: "max"},
+	})
+
+	s.ErrorContains(err, "is not one of")
 	s.Empty(s.sent())
 }
 

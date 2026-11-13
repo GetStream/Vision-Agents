@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"regexp"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -37,8 +38,8 @@ const defaultMaxTokens = 64000
 // the turn being answered each end on a cache_control breakpoint (see breakpoints), so a
 // tool loop reads each earlier round from the cache instead of paying for it again.
 //
-// It does what the compatibility endpoint did and no more. Not carried over: a reasoning
-// effort (refused, as before), a replayed turn's thinking (dropped, as before; adaptive
+// A reasoning effort goes out as output_config.effort on the models that take one
+// (efforts). Not carried over from the compatibility endpoint: a replayed turn's thinking (dropped, as before; adaptive
 // thinking does not require it), temperature (Claude 4.7 and later refuse any but the
 // default), JSON modes (the endpoint ignored them; callers already check what comes back),
 // and the one-hour cache TTL (its writes bill at twice the input rate, which Price does
@@ -83,9 +84,9 @@ func newMessages(options Options) (*LLM, error) {
 	return &LLM{
 		model:  options.Model,
 		client: anthropic.NewClient(clientOptions...),
-		// Every current Claude model reads images. No effort is declared yet, so a request
-		// naming one is refused rather than answered at the model's default.
-		capabilities: llm.Capabilities{InputModalities: []string{llm.ModalityImage}},
+		// Every current Claude model reads images. No DefaultEffort: a request naming no
+		// effort sends none and gets the model's own.
+		capabilities: llm.Capabilities{InputModalities: []string{llm.ModalityImage}, ReasoningEfforts: efforts(options.Model)},
 		systemTurns:  takesSystemTurns(options.Model),
 		inFlight:     map[uint64]context.CancelFunc{},
 	}, nil
@@ -97,6 +98,16 @@ func newMessages(options Options) (*LLM, error) {
 // try when it was told on the user's side; the Opus models followed every one. Any other
 // model, measured or not, is told on the user's side, as it always was.
 var systemTurnModels = []string{"claude-opus-5-5", "claude-opus-5"}
+
+// efforts are the output_config efforts a model takes: the Opus and Sonnet models, at
+// the three levels every one of them accepts. Haiku takes none, so a request naming one
+// is refused before it goes out.
+func efforts(model string) []string {
+	if strings.HasPrefix(model, "claude-opus-") || strings.HasPrefix(model, "claude-sonnet-") {
+		return []string{"low", "medium", "high"}
+	}
+	return nil
+}
 
 // datedModel is a model name pinned to a snapshot date, which is the same model.
 var datedModel = regexp.MustCompile(`-\d{8}$`)
@@ -337,6 +348,9 @@ func (l *LLM) params(request llm.ResponseParams) anthropic.MessageNewParams {
 	}
 	if request.Instructions != "" {
 		params.System = append(params.System, anthropic.TextBlockParam{Text: request.Instructions})
+	}
+	if effort := l.capabilities.Effort(request); effort != "" {
+		params.OutputConfig = anthropic.OutputConfigParam{Effort: anthropic.OutputConfigEffort(effort)}
 	}
 
 	input := openaicompat.StrictToolOrder(request.Input)
