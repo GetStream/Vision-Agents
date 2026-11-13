@@ -1,6 +1,7 @@
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
-import 'package:stream_agents_core/stream_agents_core.dart';
+import 'package:stream_agents/stream_agents.dart';
 
 /// What a caption says, and whether the person said it.
 @immutable
@@ -97,7 +98,7 @@ class Captions {
     var said = text.substring(0, count);
     if (count < text.length) {
       // Hold back a word until all of it has been said.
-      final space = said.lastIndexOf(RegExp(r'\s'));
+      final space = said.lastIndexOf(_space);
       said = space < 0 ? '' : said.substring(0, space);
     }
     var start = 0;
@@ -107,6 +108,8 @@ class Captions {
     }
     return said.substring(start).trim();
   }
+
+  static final _space = RegExp(r'\s');
 
   /// The end of [text] that fits in [maxLines] laid out by [painter]: the words before it are
   /// cut, behind an ellipsis, so the newest words always show.
@@ -144,7 +147,7 @@ class Captions {
 
 /// A caption, white on a dark band at the bottom of the screen like a film's. What the person
 /// said is in italics.
-class CaptionView extends StatelessWidget {
+class CaptionView extends StatefulWidget {
   const CaptionView({
     super.key,
     required this.caption,
@@ -156,8 +159,74 @@ class CaptionView extends StatelessWidget {
 
   static const _maxLines = 2;
 
+  /// The end of [text] that fits in two lines of [maxWidth] in [style], led by an ellipsis
+  /// when its start is left out.
+  static String tail(
+    String text, {
+    required TextStyle? style,
+    required double maxWidth,
+    TextScaler textScaler = TextScaler.noScaling,
+    TextDirection textDirection = TextDirection.ltr,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(style: style),
+      textAlign: TextAlign.center,
+      textDirection: textDirection,
+      textScaler: textScaler,
+    );
+    final result = Captions.fitEnd(
+      text,
+      painter: painter,
+      width: maxWidth,
+      maxLines: _maxLines,
+    );
+    painter.dispose();
+    return result;
+  }
+
+  @override
+  State<CaptionView> createState() => _CaptionViewState();
+}
+
+class _CaptionViewState extends State<CaptionView> {
+  ({
+    String text,
+    TextStyle style,
+    double width,
+    TextScaler scaler,
+    TextDirection direction,
+  })?
+  _last;
+  var _shown = '';
+
+  String _tail(
+    String text, {
+    required TextStyle style,
+    required double width,
+    required TextScaler scaler,
+    required TextDirection direction,
+  }) {
+    final key = (
+      text: text,
+      style: style,
+      width: width,
+      scaler: scaler,
+      direction: direction,
+    );
+    if (_last == key) return _shown;
+    _last = key;
+    return _shown = CaptionView.tail(
+      text,
+      style: style,
+      maxWidth: width,
+      textScaler: scaler,
+      textDirection: direction,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final caption = widget.caption;
     final style = context.streamTextTheme.bodyEmphasis;
     // Two lines' room whether or not a caption is up, so the glow never moves.
     return SizedBox(
@@ -166,7 +235,7 @@ class CaptionView extends StatelessWidget {
       child: Align(
         alignment: Alignment.bottomCenter,
         child: AnimatedOpacity(
-          opacity: isVisible ? 1 : 0,
+          opacity: widget.isVisible ? 1 : 0,
           duration: const Duration(milliseconds: 350),
           curve: Curves.easeOut,
           child: Container(
@@ -186,22 +255,15 @@ class CaptionView extends StatelessWidget {
                       ? FontStyle.italic
                       : FontStyle.normal,
                 );
-                final painter = TextPainter(
-                  text: TextSpan(style: textStyle),
-                  textAlign: TextAlign.center,
-                  textDirection: Directionality.of(context),
-                  textScaler: MediaQuery.textScalerOf(context),
-                );
-                final text = Captions.fitEnd(
-                  caption?.text ?? '',
-                  painter: painter,
-                  width: constraints.maxWidth,
-                  maxLines: _maxLines,
-                );
-                painter.dispose();
                 return Text(
-                  text,
-                  maxLines: _maxLines,
+                  _tail(
+                    caption?.text ?? '',
+                    style: textStyle,
+                    width: constraints.maxWidth,
+                    scaler: MediaQuery.textScalerOf(context),
+                    direction: Directionality.of(context),
+                  ),
+                  maxLines: CaptionView._maxLines,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.center,
                   style: textStyle,

@@ -37,6 +37,105 @@ Backend: Go, Python, .NET, Ruby, Rust, PHP, JS (Node)
 Do deep research on SDK best practices. Use OpenAI sol for this using the tokens available in .env
 Based on this deep research create an sdk-mylanguage skill in this repo
 
+## Security
+
+These rules hold for every SDK, client and server side. Reject a change that breaks one,
+whatever the language skill says. A change to credentials, tokens, signing or what a device
+may reach also gets a review with the [security](../security/SKILL.md) skill.
+
+### Dependencies
+
+1. Audit every dependency before adding it: who maintains it, when it last released, its open
+   advisories, its licence, and how many packages it pulls in. Write the reason in the
+   language skill's Dependencies section.
+2. Prefer the standard library. If no dependency is good enough, write the code instead, but
+   never hand-roll TLS, WebSocket framing, or a cryptographic primitive. Signing an HS256 JWT
+   with the standard library's HMAC is fine; implementing HMAC is not.
+3. Keep the dependency list clean. Remove a dependency once nothing uses it, and keep test and
+   build tools out of runtime dependencies.
+4. Hide dependencies from the SDK's public API: no dependency's type in a public signature, so
+   one can be swapped without breaking callers. The exceptions are standard interfaces
+   (`ILogger`, PSR-3, PSR-18, `slog`).
+5. Make heavy or optional dependencies optional, as PHP's socket worker sits under `suggest`.
+6. CI scans for known vulnerabilities on every PR and on a schedule: `govulncheck`,
+   `pip-audit`, `npm audit`, `dotnet list package --vulnerable`, `bundle-audit`,
+   `cargo audit`, `composer audit`. A high or critical advisory fails the build.
+7. Pin what CI builds with (lockfiles, `go.sum`, `go mod verify`), but give a library a version
+   range its users can resolve. Never run an install script: no `postinstall`, and no
+   Composer plugins allowed.
+
+### Credentials
+
+1. The API secret exists only in server-side SDKs. A client-side SDK never takes one, never
+   mints a server token, and only reaches operations marked `x-client-accessible`. It works
+   with a user token that the app's backend minted.
+2. Credentials travel in headers, never in a URL, query string or WebSocket subprotocol: URLs
+   end up in logs, proxies and browser history. A URL that has to carry a token, such as a
+   monitor link, is short-lived, documented as a secret, and never logged.
+3. Tokens are short-lived by default. A minted user token has an expiry unless the caller asks
+   for none.
+4. A credential is never printed. A type that holds one masks it in every rendering the
+   language has: `String()`/`LogValue()` in Go, `__repr__` in Python, `Debug` in Rust,
+   `ToString()` in .NET, `inspect` in Ruby, `__debugInfo` in PHP, `toJSON` and `inspect` in JS.
+   Logging follows the "Logging (server-side SDKs)" section.
+5. No credential is written to disk by the SDK. `.agent_sync` holds a hash and a time. A
+   client-side SDK keeps a user token in the platform's keystore (Keychain, Android
+   Keystore), or in memory in a browser, never in `localStorage` or plain preferences.
+6. An error never carries a credential or a full request: no headers, no body that held a
+   secret. It carries the status, the operation and `request_id`.
+7. Compare secrets and signatures in constant time (`hmac.Equal`, `hmac.compare_digest`,
+   `CryptographicOperations.FixedTimeEquals`, `OpenSSL.fixed_length_secure_compare`,
+   `hash_equals`, `crypto.timingSafeEqual`). An SDK that verifies a signed payload, such as a
+   webhook, also refuses one whose timestamp is outside its tolerance, so it cannot be replayed.
+
+### Transport
+
+1. HTTPS and WSS only, with certificate and hostname verification always on and no option to
+   turn it off. Plain `http`/`ws` is allowed only for a URL the caller named explicitly, such
+   as a local router.
+2. Never send `Authorization` across origins: a redirect to another host drops it or fails.
+3. Every request and socket has a timeout, and every read has a size limit: response body,
+   socket frame, downloaded file. A hostile or broken server must not exhaust memory.
+4. Escape every value placed in a path (`/v1/agents/sessions/{id}`), so an id cannot reach
+   another endpoint.
+
+### Untrusted input
+
+1. Treat everything the router, a provider or a model sends as untrusted. Read it tolerantly,
+   but within bounds. An unknown frame is skipped; nothing is evaluated.
+2. No unsafe deserialisation: YAML is safe-loaded with aliases off (`Psych.safe_load`,
+   `yaml.safe_load`), and never `pickle`, `Marshal`, `unserialize` or `BinaryFormatter`.
+3. Folder sync reads only inside the agent folder: refuse `..`, absolute paths, and symlinks
+   that leave it, cap file sizes, and read only text.
+4. Tool arguments come from a model, which a user can steer. Check them against the tool's
+   schema before the tool runs, keep tool results bounded, and document that a tool must check
+   permissions itself. `require_approval` exists for tools that change things.
+5. A browser SDK posts and accepts `postMessage` only for an exact origin, never `*`. The
+   connector handoff comes only from the `return_url`'s origin or the dashboard's.
+
+### Release
+
+1. Publish from CI with trusted publishing (OIDC) and provenance where the registry supports
+   it, never with a token stored in a repo or on a laptop. Registry accounts require MFA
+   (`rubygems_mfa_required`).
+2. A fork's pull request never sees a publishing secret.
+3. Check what a package contains before publishing: no `.env`, no test credentials, no local
+   config. Install the built artifact into an empty project and import it.
+4. Generated code is committed and CI regenerates it to check, so a hand edit or a tampered
+   generator shows up as a diff.
+5. A vulnerability is reported through `SECURITY.md`, and a fixed version is released for
+   every supported major. A Go version found broken is retracted, never moved.
+
+### Tests
+
+Every SDK tests these, against its stand-in router:
+
+1. A planted secret and token never appear in an error, a log record or a printed client.
+2. A certificate the client does not trust is refused.
+3. A redirect to another origin does not carry `Authorization`.
+4. An oversized response or frame fails cleanly, without exhausting memory.
+5. A client-side SDK cannot reach an operation that is not `x-client-accessible`.
+
 ## Where to place the SDK
 
 sdks/mylanguage
@@ -89,9 +188,9 @@ What each ships:
   components (`StreamChatAI`).
 * Kotlin: one module, `core` (`io.getstream.agents.android.core`), with voice and chat in it. Its views
   are Stream Chat's AI components (`stream-chat-android-ai-compose`).
-* Dart: `core` (state and API), `rtc` (voice and video over Stream Video) and `chat` (the conversation's
-  Stream Chat channel). Its views are Stream Chat's AI components (`stream_chat_flutter_ai`), composed in
-  `examples/voice_agents/flutter_demo`.
+* Dart: one Flutter package, `stream_agents`, with core (state and API), chat (the conversation's Stream
+  Chat channel) and rtc (voice and video over Stream Video) kept apart inside it. Its views are Stream
+  Chat's AI components (`stream_chat_flutter_ai`), composed in `examples/voice_agents/flutter_demo`.
 
 Swift, Kotlin and Dart generate only the operations the spec marks `x-client-accessible`: each generator audits
 its list against the spec, and posture tests check what the generated client can reach. JS types every
@@ -763,3 +862,6 @@ Swift's `agents.attach(sessionID:)` now starts the session it returns, as Kotlin
 JavaScript has `AgentChat` and `agentChatTransport` in `@stream-io/stream-agents/chat`: a conversation held in writing for Stream's AI components (the channel's messages on stream-chat 9 or 10, each reply's whole thinking from `LiveReasoning`, `thinking`/`working`/`failed` activity from `session.state` and `session.conversation`, `send`/`stop`/`loadOlderMessages`, a session opened lazily and deleted on `close` when a new conversation's was never asked anything), and the transport of the AI components' conversation state (`AIConversationController` in stream-chat-react-native). The transport sends the controller's message id as `requestId`, a generated-UI action from `custom.uiAction`, a `regenerate` as a new question, and a failed reply as an `AI_STATE_ERROR` activity with no text. Swift (`StreamAgents`, with an `AIConversationTransport` conformance on `StreamChatAI`), Kotlin (`core`, with a transport for `AIConversationState` once stream-chat-android#7004 matches Swift and React Native) and Dart still need the same; the server-side SDKs need nothing.
 A response takes a file (AI-3197): `CreateResponseRequest` gains `files` (`FileSource[]`, at most 1: `url`, a data URI or an HTTPS URL, and an optional `name`), a PDF or a Word document the agent answers from on this turn and every later one. `createResponse` is client-accessible, so a device may send one. `ErrorDetail.code` gains `document_too_large` (413) and `document_unreadable` (400). Every generated client is regenerated. Other SDKs need to update: each `responses.create` wrapper (Go first; then JavaScript, Python, Swift, Kotlin, Dart, .NET, Ruby, Rust, PHP) should take a file, send it as a data URI with its file name, and leave its type to the router, which reads the bytes. A composer that attaches files (Stream Chat's AI components) sends at most one per message, and not with a voice note.
 A response takes a file (AI-3197): `CreateResponseRequest` gains `files` (`FileSource[]`, at most 1: `url`, a data URI or an HTTPS URL, and an optional `name`), a PDF or a Word document the agent answers from on this turn and every later one. `createResponse` is client-accessible, so a device may send one. `ErrorDetail.code` gains `document_too_large` (413) and `document_unreadable` (400). Every generated client is regenerated. Go has `client.Document{URL, Name}` and `client.DocumentFile(path)` as `Responses.Create` inputs (`sdks/go/client/responses.go`), and a question with one keeps its request id. Other SDKs need to update: each `responses.create` wrapper (JavaScript, Python, Swift, Kotlin, Dart, .NET, Ruby, Rust, PHP) should take a file, send it as a data URI with its file name, and leave its type to the router, which reads the bytes. A composer that attaches files (Stream Chat's AI components) sends at most one per message, and not with a voice note.
+Go keeps phone numbers and end-user ids out of Info logs (AI-3210, no spec change): a dispatch worker's "answering a call" and an agent's "ringing" carry the last four characters of each number (`***0111`, from `sdks/go/internal/redact`), and "answering a message" names who wrote it only at Debug. Other SDKs need to update: Python's client (`plugins/stream/vision_agents/plugins/stream/dispatch.py`, the "answering a call" and "answering a message" lines) logs both numbers and the user id at INFO and needs the same. JavaScript, .NET, Ruby, Rust, PHP, Swift, Kotlin and Dart log neither, so they need nothing.
+
+Dart is one package now. `sdks/dart/stream_agents` (`stream_agents`) replaces `stream_agents_core`, `stream_agents_chat` and `stream_agents_rtc`, with the same API behind one import, `package:stream_agents/stream_agents.dart`. It is a Flutter package, since rtc needs Stream Video; core, chat and rtc stay apart inside it as `lib/src/core`, `lib/src/chat` and `lib/src/rtc`, each with a barrel, and `test/area_boundaries_test.dart` keeps core pure Dart and the areas apart. The Dart floor is 3.12 and the Flutter floor 3.44, Stream Chat 10.4's. No wire change; the other SDKs have nothing to do.

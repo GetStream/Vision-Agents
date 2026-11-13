@@ -68,6 +68,7 @@ from ..utils.exceptions import log_exceptions
 from ..utils.logging import (
     CallContextToken,
 )
+from ..utils.text import mask_phone_number
 from ..utils.utils import cancel_and_wait
 from ..utils.video_forwarder import VideoForwarder
 from ..utils.video_track import VideoFileTrack
@@ -975,8 +976,10 @@ class Agent:
         joined = await self.create_call(call.call_type or "agent", call.call_id)
         self.logger.info(
             "answering %s on %s, call %s",
-            call.caller_number or "a caller",
-            call.called_number or "an unknown number",
+            mask_phone_number(call.caller_number) if call.caller_number else "a caller",
+            mask_phone_number(call.called_number)
+            if call.called_number
+            else "an unknown number",
             call.call_id,
         )
         async with self._join(

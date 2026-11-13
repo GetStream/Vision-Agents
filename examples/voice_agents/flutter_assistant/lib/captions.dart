@@ -1,6 +1,7 @@
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
-import 'package:stream_agents_core/stream_agents_core.dart';
+import 'package:stream_agents/stream_agents.dart';
 
 /// What a caption says, and whether the person said it.
 @immutable
@@ -95,7 +96,7 @@ class Captions {
     var said = text.substring(0, count);
     if (count < text.length) {
       // Hold back a word until all of it has been said.
-      final space = said.lastIndexOf(RegExp(r'\s'));
+      final space = said.lastIndexOf(_space);
       said = space < 0 ? '' : said.substring(0, space);
     }
     var start = 0;
@@ -105,6 +106,8 @@ class Captions {
     }
     return said.substring(start).trim();
   }
+
+  static final _space = RegExp(r'\s');
 }
 
 /// A caption, white on a dark band at the bottom of the screen like a film's.
@@ -139,11 +142,21 @@ class CaptionView extends StatelessWidget {
 
     if (fits(text)) return text;
     final words = text.split(' ');
-    for (var start = 1; start < words.length; start++) {
-      final candidate = '…${words.sublist(start).join(' ')}';
-      if (fits(candidate)) return candidate;
+    String from(int start) => '…${words.sublist(start).join(' ')}';
+    // Leaving out more words never takes more lines, so the first start that fits is found
+    // by halving, and the last word alone when none does.
+    var low = 1;
+    var high = words.length - 1;
+    if (high < low) return from(high);
+    while (low < high) {
+      final middle = (low + high) ~/ 2;
+      if (fits(from(middle))) {
+        high = middle;
+      } else {
+        low = middle + 1;
+      }
     }
-    return '…${words.last}';
+    return from(low);
   }
 
   @override

@@ -3,6 +3,29 @@ import cv2
 import numpy as np
 import torch
 
+DEFAULT_MODEL_NAME = "moondream/moondream3-preview"
+# Commit of DEFAULT_MODEL_NAME on Hugging Face that the default model is pinned to.
+DEFAULT_MODEL_REVISION = "5112966d1a723413b1c9a1e8bea272b72e647b35"
+
+
+def resolve_revision(model_name: str, revision: Optional[str]) -> str:
+    """Return the model revision to load.
+
+    Moondream runs code from the model repo, so the default model is pinned
+    to a commit and any other model must come with a revision.
+
+    Raises:
+        ValueError: If a custom model is given without a revision.
+    """
+    if revision is not None:
+        return revision
+    if model_name != DEFAULT_MODEL_NAME:
+        raise ValueError(
+            f"Moondream runs code from the model repo, so model_name={model_name!r} "
+            "needs a revision. Pass revision=<commit hash>."
+        )
+    return DEFAULT_MODEL_REVISION
+
 
 def handle_device():
     if torch.cuda.is_available():

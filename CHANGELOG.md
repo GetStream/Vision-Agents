@@ -6,6 +6,10 @@
 
 `ChildAgent` (an agent config's `agents`, and agent.yaml's `agents:`) gains `max_tool_rounds`: the reply to a tool result, counted since the child was handed its input, at which it is offered no more tools and made to answer. Zero or left out is the default of 8, as before, and a negative number never withdraws them, as `max_tool_rounds` on `createSession` does. A child that chains many lookups, such as a reviewer reading through a diff, no longer has to answer after 8.
 
+### Python: local model plugins take a `revision`, and Vogent's model is pinned
+
+`huggingface.TransformersLLM`, `TransformersVLM` and `TransformersDetectionProcessor` take a `revision` argument (a commit hash, tag or branch) and pass it to every `from_pretrained` call. `moondream.LocalVLM` and `LocalDetectionProcessor` take `revision` too. `vogent.TurnDetection` loads `vogent/Vogent-Turn-80M` at a pinned commit; before, it followed the `main` branch.
+
 ### The router reaches Gemini Decision 1
 
 `gemini/gemini-decision-1` is a decision model on Google's Decisions API, read with `GOOGLE_API_KEY` like the other Gemini models. It answers the same noul, choice and score questions, at $0.10 per million input tokens and nothing for output. It is in the fast tier with every other decision model, and the guardrail route still prefers Jev.
@@ -18,6 +22,10 @@
 - It opens its session only when something needs it, and deletes a new conversation's session that was never asked anything.
 - `agentChatTransport` is the transport of an `AIConversationController` from `stream-chat-react-native`. It sends the controller's message id as the question's `requestId`, carries a generated-UI action as `custom.uiAction`, and asks a `regenerate` again as a new question.
 - `chat.state` has `StateStore`'s shape, for `useStateStore`. The package still has no runtime dependencies.
+
+### React Native apps for swift_assistant and crew_assistant
+
+`examples/voice_agents/react_native_assistant` is Juno in an Expo app on iOS and Android, with swift_assistant's agent, `configure` and backend. `examples/voice_agents/crew_assistant/app` is the crew assistant's app, which lived in stream-chat-react-native until now. Both hold their conversations in `AgentChat` and show them with the AI components of `stream-chat-expo`, and both have Jest tests of their agent code.
 
 ### JavaScript: a tool caps how many of its calls run at once
 
@@ -510,6 +518,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### Dart: stream_agents_core, _chat and _rtc are one package, stream_agents
+
+`stream_agents` (`sdks/dart/stream_agents`) replaces `stream_agents_core`, `stream_agents_chat` and `stream_agents_rtc`: an app depends on `stream_agents` and imports `package:stream_agents/stream_agents.dart` where it depended on and imported the three. Nothing else in the API changed. Its floors are Stream Chat 10.4's, Dart 3.12 and Flutter 3.44. Core, chat and rtc stay apart inside it, and `area_boundaries_test.dart` keeps core pure Dart.
+
 ### A tool is handed its ToolCallContext as an argument
 
 A tool function that needs the call it runs for (who asked, its id, `update`, `say`, `disallow_interruptions`) now takes it as an argument, a `ToolCallContext` (formerly `ToolCall`). A tool that does not need it takes only its arguments. Go is unchanged.
@@ -520,6 +532,12 @@ A tool function that needs the call it runs for (who asked, its id, `update`, `s
 - PHP: a callable that takes two arguments, or a `ToolCallContext` first, gets `(ToolCallContext $toolCallContext, array $args)`; one that takes one gets `(array $args)`.
 - Rust: `register_with_tool_call_context` hands its function `(tool_call_context: ToolCallContext, arguments)`.
 - C#: the overloads that take the context are `(ToolCallContext toolCallContext, arguments, cancellationToken)`.
+
+### Python: remote code is off by default in `huggingface`, and Moondream needs a pinned revision
+
+`huggingface.TransformersVLM` now defaults to `trust_remote_code=False` (was `True`), the same as `TransformersLLM`. Models that `transformers` supports natively, such as LLaVA, Qwen2-VL and SmolVLM2, load as before. A VLM whose repo ships its own model code no longer loads with the defaults; opt in and pin the repo to a commit with the new `revision` argument: `TransformersVLM(model="org/model", trust_remote_code=True, revision="<commit hash>")`.
+
+`moondream.LocalVLM` and `moondream.LocalDetectionProcessor` always run code from the model repo. The default model, `moondream/moondream3-preview`, is now loaded at a pinned commit. A custom `model_name` with no `revision` raises `ValueError`: pass `revision="<commit hash>"`.
 
 ### A worker cannot host tools for an agent the app does not have
 
@@ -604,10 +622,13 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### Demo link token and phone numbers kept out of logs
+
+The demo join link was logged with its API key and a one-hour user token in the query string; it is now logged without the query string, and printed to the terminal in full only when the browser fails to open. `Agent.answer` and `twilio.TwilioCallRegistry` log the caller and called numbers masked down to their last four digits.
+
 ### A call placed for a session that ends while it rings is hung up
 
 Ending a session while the outbound call it placed still rings now hangs that call up at Twilio and Telnyx, and the call's outcome is `canceled`. A session ends when it is closed or deleted, when its start timeout passes, or when the router shuts down. At Twilio the call is canceled, or completed if it was just answered. Before, the phone kept ringing, and a person who picked up joined a call with no agent and was billed until they hung up. A call already answered is left as it is. So is a call the session hands to the agent's next session in the same call. Other vendors cannot hang up a placed call yet: the router logs that, and the call rings until the vendor gives up (#1987).
-
 ### Call minutes are priced for Twilio in the US and Canada, and for Telnyx calls to Canada
 
 Twilio is priced at $0.018 a minute outbound and $0.0125 inbound in both countries: its local rate plus the SIP leg to the Stream trunk. A Telnyx call placed to Canada is priced at $0.022 a minute. A database gets these with the next release's start, which adds the items it has never priced. Telnyx calls arriving on a Canadian number, other countries and toll-free numbers are not priced yet (#1965).
@@ -1386,6 +1407,10 @@ When the provider lists a granted tool with another schema than the one approved
 ### An app chat card's summary keeps the person's first message, and a group channel writes no card
 
 A chat episode now starts when Stream made the message that opened it. Before, it started when the router opened it, a moment later, so the summary left out that message: a one-message chat was summed up as "the user wrote nothing". A message in a channel with a member other than the person and the agent now opens no episode and writes no card, the rule a session already reads cards by. Without members in what Stream sends, the message opens none. A config with `episode_cards` off writes and reads nothing new (AI-2632).
+
+### Go SDK: phone numbers and end-user ids stay out of Info logs
+
+A dispatch worker's `answering a call` line and an agent's `ringing` line carry the last four characters of each number (`***0111`) where they carried the whole number. `answering a message` no longer says who wrote it; the user id is logged at Debug. The doc of `edge.MonitorURL` and `Session.MonitorURL` says the link carries a token and should be kept out of logs, and the voice example says it prints the caller's speech.
 
 ## Breaking Changes
 

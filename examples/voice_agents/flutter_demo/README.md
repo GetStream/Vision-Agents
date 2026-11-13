@@ -29,19 +29,16 @@ The iOS simulator reaches your Mac's localhost, and the Android emulator reaches
 `--dart-define=BACKEND_URL=...` with your Mac's address on the network, for example
 `http://192.168.1.20:8080` and `http://192.168.1.20:8099`.
 
-The app depends on `sdks/dart/core`, `chat` and `rtc` by path, so a change to the SDK shows up in
-the app without publishing it. Stream Chat's AI components come from `stream-chat-flutter-ai`'s
+The app depends on `sdks/dart/stream_agents` by path, so a change to the SDK shows up in the
+app without publishing it. Stream Chat's AI components come from `stream-chat-flutter-ai`'s
 `main`, pinned to a commit, until they are released. To try the app against a branch of them,
 point it at a local checkout in a `pubspec_overrides.yaml` next to `pubspec.yaml`, which git
-ignores. Its `dependency_overrides` replace the ones in `pubspec.yaml`, so keep
-`stream_agents_core` there too:
+ignores:
 
 ```yaml
 dependency_overrides:
   stream_chat_flutter_ai:
     path: ../../../../stream-chat-flutter-ai/packages/stream_chat_flutter_ai
-  stream_agents_core:
-    path: ../../../sdks/dart/core
 ```
 
 The Chat tab asks for `xai/grok-4.7`, a model that streams its reasoning, so the router needs
