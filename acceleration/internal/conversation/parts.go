@@ -1,6 +1,7 @@
 package conversation
 
 import (
+	"cmp"
 	"encoding/json"
 	"strconv"
 	"strings"
@@ -212,9 +213,12 @@ func (c *Conversation) called(m *Message, e toolCall) {
 	// A call a person must allow first waits for the one whose command it answers, with
 	// the question their client asks. A client tool with no install to address runs
 	// nowhere, so nobody is asked.
+	// In a channel of a type an agent config answers in, that is the writer of the message the
+	// reply answers (askedFor).
 	if approval := display.Approval; approval != nil && (!display.Client || part.Status == "awaiting_client") {
-		if initiator := c.data.Commands[m.CommandID].Initiator; initiator != "" {
-			part.TargetUserID = initiator
+		record := c.data.Commands[m.CommandID]
+		if asked := cmp.Or(record.Writer, record.Initiator); asked != "" {
+			part.TargetUserID = asked
 			part.Status = "awaiting_approval"
 			part.Approval = &Approval{
 				Title:        capRunes(strings.TrimSpace(approval.Title), maxApprovalTitle),
@@ -376,21 +380,24 @@ func shownStep(m *Message, id string) *Part {
 // approval's question and the call's arguments on its step, which DecideApproval settles. The
 // arguments are shown as a client tool's are: valid JSON up to maxClientArguments; any other
 // arguments show as a cut preview in the approval's message, so none is approved blind. The step is
-// shown whatever the agent config shows, since somebody is waiting on it. It returns the
-// command the reply answers, which the answer names, and false when owner cannot be asked here
-// (CanAskToConnect) or the reply made no such call.
-func (c *Conversation) AwaitApproval(owner, id, arguments string, approval ToolApproval) (string, bool) {
+// shown whatever the agent config shows, since somebody is waiting on it. The person asked is
+// the writer of the message the reply answers in a channel of a type an agent config answers
+// in, and otherwise owner (askedFor). It returns the command the reply answers, which the
+// answer names, and who was asked, and false when nobody can be asked here or the reply made
+// no such call.
+func (c *Conversation) AwaitApproval(owner, id, arguments string, approval ToolApproval) (string, string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.canAsk(owner) {
-		return "", false
+	asked := c.askedFor(owner)
+	if asked == "" {
+		return "", "", false
 	}
 	m := c.data.Current
 	part := shownStep(m, id)
 	if part == nil {
-		return "", false
+		return "", "", false
 	}
-	part.Status, part.TargetUserID = "awaiting_approval", owner
+	part.Status, part.TargetUserID = "awaiting_approval", asked
 	part.Approval = &Approval{Title: capRunes(strings.TrimSpace(approval.Title), maxApprovalTitle)}
 	if raw := json.RawMessage(arguments); len(raw) <= maxClientArguments && json.Valid(raw) {
 		part.Arguments = raw
@@ -400,7 +407,22 @@ func (c *Conversation) AwaitApproval(owner, id, arguments string, approval ToolA
 	m.Sequence++
 	c.save()
 	c.publish(*m)
-	return m.CommandID, true
+	return m.CommandID, asked, true
+}
+
+// askedFor is whom the reply being written asks to allow a call, with c.mu held: the writer of
+// the message it answers in a channel of a type an agent config answers in, where each turn is
+// a different person's, and otherwise owner, the session's user, when canAsk. Empty for nobody.
+func (c *Conversation) askedFor(owner string) string {
+	if m := c.data.Current; m != nil && m.FinishedAt == nil && m.Role == "assistant" {
+		if writer := c.data.Commands[m.CommandID].Writer; writer != "" {
+			return writer
+		}
+	}
+	if !c.canAsk(owner) {
+		return ""
+	}
+	return owner
 }
 
 // AwaitsApproval reports whether the step of the call id in the reply being written still

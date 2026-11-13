@@ -2527,6 +2527,13 @@ func WithWriter(ctx context.Context, userID, name string) context.Context {
 	return context.WithValue(ctx, writerKey{}, writer{id: userID, name: name})
 }
 
+// WriterOf is the Stream user id of the person WithWriter says wrote the text a turn on ctx
+// answers, and empty for a turn nobody wrote in such a channel.
+func WriterOf(ctx context.Context) string {
+	written, _ := ctx.Value(writerKey{}).(writer)
+	return written.id
+}
+
 // Authored is a person's message as the model reads it where it must know who wrote what: a
 // shared conversation's history (internal/conversation) and every person's message in a channel
 // of a type an agent config answers in (WithWriter). Example:

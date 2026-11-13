@@ -947,6 +947,24 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		result["users"] = users
+	case strings.HasSuffix(r.URL.Path, "/chat/members") && r.Method == http.MethodGet:
+		// A query of a channel's members, by the user id its filter names ($eq), as
+		// conversation.Service.Member asks.
+		var payload struct {
+			Type             string         `json:"type"`
+			ID               string         `json:"id"`
+			FilterConditions map[string]any `json:"filter_conditions"`
+		}
+		_ = json.Unmarshal([]byte(r.URL.Query().Get("payload")), &payload)
+		wanted, _ := payload.FilterConditions["id"].(map[string]any)
+		listed, _ := db.channels[payload.Type+":"+payload.ID]["members"].([]any)
+		members := []any{}
+		for _, member := range listed {
+			if named, _ := member.(map[string]any); wanted["$eq"] != nil && named["user_id"] == wanted["$eq"] {
+				members = append(members, member)
+			}
+		}
+		result["members"] = members
 	case strings.HasSuffix(r.URL.Path, "/users") && r.Method == http.MethodPost:
 		// An upsert replaces the user whole, which is what Chat does.
 		written, _ := body["users"].(map[string]any)

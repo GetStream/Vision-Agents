@@ -1063,7 +1063,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	// Said after the session is here to be found, so a peer that forwards a request on
 	// the strength of it has somewhere to forward it to.
 	if m.options.Directory != nil {
-		m.options.Directory.Hold(ctx, created.id, spec.AgentID)
+		m.options.Directory.Hold(ctx, created.id, spec.AgentID, spec.ConversationID)
 	}
 	// Asked again now the session is held: a status that came while the call was being
 	// joined found no session to end, and one that comes after this finds it. The session
