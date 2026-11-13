@@ -270,6 +270,12 @@ type Options struct {
 	// SearchTarget routes the search, and is a target on that router the way LLMTarget is
 	// on its own.
 	SearchTarget string
+	// Draws queues the pictures the agent is asked for, to be drawn after the turn and posted
+	// into the conversation when ready. Nil, or no ImageTarget, offers no generate_image: the
+	// session sets it only for a conversation kept in a channel, on a deployment that draws.
+	Draws Drawer
+	// ImageTarget routes the drawing, a target on the image router.
+	ImageTarget string
 	// Guardrail screens what a caller asks before the agent answers it. Nil is an agent
 	// that answers everything, which is every agent that declared no policy.
 	Guardrail guardrail.Guardrail
@@ -316,6 +322,9 @@ type Agent struct {
 	// when the call arrives: the caller can be heard before it runs, and what it hands over is
 	// still that turn's.
 	toolScheduled map[string]bool
+	// drawnTurn and drawnCount are the pictures the latest reply drew (drawAllowed).
+	drawnTurn  string
+	drawnCount int
 	// toolUpdates is what whoever runs a call last said about it, waiting for the line.
 	toolUpdates map[string]toolUpdate
 	// approvals are the calls waiting for a voice caller's yes, by call id (approval.go).

@@ -554,8 +554,10 @@ type AgentConfig struct {
 	VideoSource    string `bun:"video_source,notnull"`
 	VideoMaxFrames int    `bun:"video_max_frames,notnull"`
 	Search         string `bun:"search,notnull"`
-	Instructions   string `bun:"instructions,notnull"`
-	Greeting       string `bun:"greeting,notnull"`
+	// Image is what the agent draws pictures with. Empty offers no drawing tool.
+	Image        string `bun:"image,notnull"`
+	Instructions string `bun:"instructions,notnull"`
+	Greeting     string `bun:"greeting,notnull"`
 
 	// LLMFallbacks are the targets a turn falls back to, in order, when LLM fails it. LLM
 	// is still the first choice; nil falls back only among LLM's own candidates.

@@ -184,6 +184,9 @@ type Settings struct {
 	// llm alone, and the router refuses one that names it.
 	Subagent string `yaml:"subagent"`
 	Search   string `yaml:"search"`
+	// Image is what the agent draws pictures with, such as image-fast. Nil, a file that names
+	// none, leaves the stored one; an empty string, image: "", turns drawing off.
+	Image *string `yaml:"image"`
 	// Greeting is what the agent opens the call with. Nil leaves the stored one.
 	Greeting *GreetingSettings `yaml:"greeting"`
 	Sandbox  string            `yaml:"sandbox"`

@@ -4774,6 +4774,7 @@ export type components = {
             readonly guardrail?: string;
             readonly harness?: components["schemas"]["Harness"];
             readonly id: string;
+            readonly image?: string;
             readonly instructions?: string;
             readonly keyterms?: readonly string[];
             readonly knowledge_namespace?: string;
@@ -4835,6 +4836,8 @@ export type components = {
             /** @description A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail. */
             readonly guardrail?: string;
             readonly harness?: components["schemas"]["Harness"];
+            /** @description An empty string removes it, and the agent stops being offered generate_image. */
+            readonly image?: string;
             readonly instructions?: string;
             readonly keyterms?: readonly string[];
             readonly knowledge_namespace?: string;
@@ -4911,6 +4914,8 @@ export type components = {
             /** @description A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered. */
             readonly guardrail?: string;
             readonly harness?: components["schemas"]["Harness"];
+            /** @description What the agent draws pictures with, as a provider/model or a capability shortcut such as image-fast. Naming one offers a text agent with a Chat channel the generate_image tool, whose pictures are drawn after the turn and posted into the conversation when ready, billed like POST /v1/image/generations. Empty offers no such tool: unlike search there is no default. */
+            readonly image?: string;
             readonly instructions?: string;
             /** @description Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them. */
             readonly keyterms?: readonly string[];
@@ -10461,6 +10466,8 @@ export type components = {
             readonly harness?: components["schemas"]["Harness"];
             /** @description A fingerprint of the directory. A second sync with the same hash does nothing. */
             readonly hash: string;
+            /** @description agent.yaml's image: what the agent draws pictures with. Left out, the stored one stays; an empty string removes it. */
+            readonly image?: string;
             readonly instructions?: string;
             readonly keyterms?: readonly string[];
             readonly knowledge?: readonly components["schemas"]["KnowledgeDocument"][];

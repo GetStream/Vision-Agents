@@ -777,6 +777,9 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("id")]
         public string Id { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("image")]
+        public string? Image { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("instructions")]
         public string? Instructions { get; set; } = default!;
 
@@ -950,6 +953,12 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("harness")]
         public string? Harness { get; set; } = default!;
+
+        /// <summary>
+        /// An empty string removes it, and the agent stops being offered generate_image.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("image")]
+        public string? Image { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("instructions")]
         public string? Instructions { get; set; } = default!;
@@ -1127,6 +1136,12 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("harness")]
         public string? Harness { get; set; } = default!;
+
+        /// <summary>
+        /// What the agent draws pictures with, as a provider/model or a capability shortcut such as image-fast. Naming one offers a text agent with a Chat channel the generate_image tool, whose pictures are drawn after the turn and posted into the conversation when ready, billed like POST /v1/image/generations. Empty offers no such tool: unlike search there is no default.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("image")]
+        public string? Image { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("instructions")]
         public string? Instructions { get; set; } = default!;
@@ -15346,6 +15361,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("hash")]
         public string Hash { get; set; } = default!;
+
+        /// <summary>
+        /// agent.yaml's image: what the agent draws pictures with. Left out, the stored one stays; an empty string removes it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("image")]
+        public string? Image { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("instructions")]
         public string? Instructions { get; set; } = default!;

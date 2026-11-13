@@ -80,6 +80,8 @@ final readonly class AgentConfigPatch
         // Replaces the list whole. An empty list removes it.
         /** @var list<ChildAgent>|null */
         public ?array $agents = null,
+        // An empty string removes it, and the agent stops being offered generate_image.
+        public ?string $image = null,
     ) {
     }
 
@@ -128,6 +130,7 @@ final readonly class AgentConfigPatch
             llmFallbacks: array_key_exists('llm_fallbacks', $data) && $data['llm_fallbacks'] !== null ? Json::strings($data, 'llm_fallbacks') : null,
             chatChannels: array_key_exists('chat_channels', $data) && $data['chat_channels'] !== null ? array_map(AgentChatChannel::fromArray(...), Json::objects($data, 'chat_channels')) : null,
             agents: array_key_exists('agents', $data) && $data['agents'] !== null ? array_map(ChildAgent::fromArray(...), Json::objects($data, 'agents')) : null,
+            image: array_key_exists('image', $data) && $data['image'] !== null ? Json::string($data, 'image') : null,
         );
     }
 
@@ -255,6 +258,9 @@ final readonly class AgentConfigPatch
         }
         if ($this->agents !== null) {
             $out['agents'] = array_map(static fn (ChildAgent $each): array => $each->toArray(), $this->agents);
+        }
+        if ($this->image !== null) {
+            $out['image'] = $this->image;
         }
         return $out;
     }

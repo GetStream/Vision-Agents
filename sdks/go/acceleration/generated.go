@@ -3635,6 +3635,7 @@ type AgentConfig struct {
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
 	Harness            *Harness  `json:"harness,omitempty"`
 	Id                 string    `json:"id"`
+	Image              *string   `json:"image,omitempty"`
 	Instructions       *string   `json:"instructions,omitempty"`
 	Keyterms           *[]string `json:"keyterms,omitempty"`
 	KnowledgeNamespace *string   `json:"knowledge_namespace,omitempty"`
@@ -3728,7 +3729,10 @@ type AgentConfigPatch struct {
 	Guardrail *string `json:"guardrail,omitempty"`
 
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
-	Harness            *Harness  `json:"harness,omitempty"`
+	Harness *Harness `json:"harness,omitempty"`
+
+	// Image An empty string removes it, and the agent stops being offered generate_image.
+	Image              *string   `json:"image,omitempty"`
 	Instructions       *string   `json:"instructions,omitempty"`
 	Keyterms           *[]string `json:"keyterms,omitempty"`
 	KnowledgeNamespace *string   `json:"knowledge_namespace,omitempty"`
@@ -3842,8 +3846,11 @@ type AgentConfigRequest struct {
 	Guardrail *string `json:"guardrail,omitempty"`
 
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
-	Harness      *Harness `json:"harness,omitempty"`
-	Instructions *string  `json:"instructions,omitempty"`
+	Harness *Harness `json:"harness,omitempty"`
+
+	// Image What the agent draws pictures with, as a provider/model or a capability shortcut such as image-fast. Naming one offers a text agent with a Chat channel the generate_image tool, whose pictures are drawn after the turn and posted into the conversation when ready, billed like POST /v1/image/generations. Empty offers no such tool: unlike search there is no default.
+	Image        *string `json:"image,omitempty"`
+	Instructions *string `json:"instructions,omitempty"`
 
 	// Keyterms Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
 	Keyterms *[]string `json:"keyterms,omitempty"`
@@ -10071,7 +10078,10 @@ type SyncAgentRequest struct {
 	Harness *Harness `json:"harness,omitempty"`
 
 	// Hash A fingerprint of the directory. A second sync with the same hash does nothing.
-	Hash         string               `json:"hash"`
+	Hash string `json:"hash"`
+
+	// Image agent.yaml's image: what the agent draws pictures with. Left out, the stored one stays; an empty string removes it.
+	Image        *string              `json:"image,omitempty"`
 	Instructions *string              `json:"instructions,omitempty"`
 	Keyterms     *[]string            `json:"keyterms,omitempty"`
 	Knowledge    *[]KnowledgeDocument `json:"knowledge,omitempty"`

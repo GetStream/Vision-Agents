@@ -564,6 +564,7 @@ const SCALARS = new Set([
   "harness",
   "subagent",
   "search",
+  "image",
   "sandbox",
 ]);
 const LISTS = new Set(["keyterms"]);
@@ -637,7 +638,8 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
         throw new ConfigurationError(`${where}: ${key} is one value, not a list`);
       }
       const value = scalar(inline);
-      if (value !== undefined && (value || key === "sts")) {
+      // An empty sts or image is sent, since that is how a file turns either off.
+      if (value !== undefined && (value || key === "sts" || key === "image")) {
         assign(declared, key, value, where);
       }
     } else if (LISTS.has(key)) {
