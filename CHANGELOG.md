@@ -86,6 +86,8 @@ An agent config's `chat_channels` names Stream Chat channel types of the app's o
 
 Each entry may say `answer: mentioned` (`always` when left out, as before): a message in a channel of that type is then answered only when it mentions the agent, by `mentioned_users` holding the config's id or by `@` and the config's id or name in its text. Any other message gets no reply and starts no model; the next message the agent answers reads it as what was said before. `agent.yaml` takes it too, as `answer` on a `chat_channels` entry (AI-3152).
 
+The model answering in a channel of a named type sees each person's message under their name and Stream user id, `Anya (user anya-1): ...`, from the first message, both live and read back from the channel, and is told that only that opening label says who wrote a message and that the id grants no access. A name is cut at 256 characters, and a colon, a bracket, a line break or an invisible format character in a name or id becomes a space. `agent` channels and thread channels are labelled as before (AI-3153).
+
 ### The router counts the voice sessions judged for silence
 
 `/metrics` serves `router_voice_sessions_judged_total{kind}`: each voice session somebody besides the agent joined, once at its end, whether or not it is in a silent case. `kind` is `phone` or `web`, as in `router_silent_sessions_total`. A case's count divided by it is at most 1, so it is the denominator of the silent share. A session nobody joined counts in neither. Nothing else changes (AI-3156).

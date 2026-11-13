@@ -33,9 +33,11 @@ import (
 //	      FromConfig(that config), Text, Dispatched,         opened on the Router's word
 //	      ConversationID callouts:team-1                     (RouterOpensDispatched), whatever
 //	                                                         the channel's custom data says
-//	    Session.FollowUp(text, photos)                     the person's message is already
-//	    wait until the turn is over; close the session      in the channel: only the reply is
-//	    it opened; let go of the lease                       written, as the config's id
+//	    Session.FollowUp(text, photos), its writer's        the person's message is already
+//	      name and id (agent.WithWriter), as every          in the channel: only the reply is
+//	      person's message read back goes                   written, as the config's id
+//	    wait until the turn is over; close the session
+//	    it opened; let go of the lease
 
 // addressedIn is addressed for a channel of any type: one of a type other than agent is
 // written to an agent only when a config of the hook's app's own customer answers in channels
