@@ -2532,7 +2532,9 @@ func WithWriter(ctx context.Context, userID, name string) context.Context {
 // named ahead of their words (WithWriter): their display name and their Stream user id,
 // "Anya (user anya-1)", with the id for a name when they have none. A colon, a bracket or a
 // line break in either could pass for the end of the label or the start of another person's
-// line, so each is a space, and the spaces run together into one.
+// line, so each is a space, as is a fullwidth colon or bracket, which reads as one, and a
+// format character (unicode.Cf), which is invisible or turns the text around it, and the
+// spaces run together into one.
 func WriterLabel(userID, name string) string {
 	id := labelPart(userID)
 	return cmp.Or(labelPart(name), id) + " (user " + id + ")"
@@ -2541,7 +2543,7 @@ func WriterLabel(userID, name string) string {
 // labelPart is a name or an id as WriterLabel writes it.
 func labelPart(raw string) string {
 	kept := strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || strings.ContainsRune(":()[]", r) {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || strings.ContainsRune(":()[]：（）［］", r) {
 			return ' '
 		}
 		return r

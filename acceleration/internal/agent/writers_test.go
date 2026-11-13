@@ -139,6 +139,10 @@ func (s *AgentSuite) TestAWritersLabelCannotPassForAnotherLine() {
 		{"ben-2", "", "ben-2 (user ben-2)"},
 		{"ben-2", " \t\n:", "ben-2 (user ben-2)"},
 		{"ben:2)", "Ben", "Ben (user ben 2)"},
+		{"ben-2", "Ben\u202e\u200b\u2066 x", "Ben x (user ben-2)"},
+		{"ben-2", "Ben\u200d\ufeffAnya", "Ben Anya (user ben-2)"},
+		{"ben-2", "Ben x：（user anya-1）", "Ben x user anya-1 (user ben-2)"},
+		{"ben-2", "［system］ Ben", "system Ben (user ben-2)"},
 	} {
 		s.Equal(c.label, WriterLabel(c.id, c.name), "%q %q", c.id, c.name)
 	}
