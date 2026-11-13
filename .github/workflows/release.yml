@@ -6,8 +6,11 @@ on:
 permissions:
   contents: read
 
+# Only a release of the Python packages, tagged vX.Y.Z, publishes them. A release made for
+# another tag, such as accelerate-vX.Y.Z or sdk-dotnet-vX.Y.Z, runs nothing here.
 jobs:
   integration:
+    if: startsWith(github.event.release.tag_name, 'v')
     uses: ./.github/workflows/run_tests.yml
     with:
       marker: 'integration'
@@ -15,6 +18,7 @@ jobs:
 
   build-core:
     name: Build & Test Core SDK
+    if: startsWith(github.event.release.tag_name, 'v')
     runs-on: ubuntu-latest
     environment: pypi
     # The OIDC token is this job's alone, so the integration job, which holds every

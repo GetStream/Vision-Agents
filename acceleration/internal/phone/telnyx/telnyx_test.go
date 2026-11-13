@@ -808,3 +808,39 @@ func (s *TelnyxSuite) TestAnAnswerThatIsNotJSONIsAVendorErrorWithoutTheBody() {
 	s.Equal("could not read the answer", vendorErr.Message)
 	s.Equal(http.StatusOK, vendorErr.Status)
 }
+
+func (s *TelnyxSuite) TestARingingCallIsHungUpThroughCallControl() {
+	s.answer(`{"data":{"result":"ok"}}`)
+
+	s.Require().NoError(s.provider.HangUp(s.ctx, "v3:abc"))
+
+	s.Equal(http.MethodPost, s.seen.method)
+	s.Equal("/v2/calls/v3:abc/actions/hangup", s.seen.path)
+}
+
+func (s *TelnyxSuite) TestACallAlreadyEndedIsNoFailure() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"errors":[{"code":"90018","title":"Call has already ended",` +
+			`"detail":"This call is no longer active and can't receive commands."}]}`))
+	}
+
+	s.NoError(s.provider.HangUp(s.ctx, "v3:abc"))
+}
+
+func (s *TelnyxSuite) TestARefusedHangUpIsAVendorError() {
+	s.respond = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"errors":[{"code":"90034","title":"Invalid call control id"}]}`))
+	}
+
+	err := s.provider.HangUp(s.ctx, "v3:abc")
+
+	refused, ok := errors.AsType[*phone.VendorError](err)
+	s.Require().True(ok)
+	s.Equal("90034", refused.Code)
+}
+
+func (s *TelnyxSuite) TestHangingUpWithoutACallIsRejected() {
+	s.ErrorContains(s.provider.HangUp(s.ctx, ""), "call to hang up")
+}

@@ -1,6 +1,6 @@
 {
-  "spec_sha256": "e10783c9f0e915a65e0fb5e1d821bcee1fa8d01b45181ce72f56398c66ff6cb7",
-  "client_sha256": "be2e8343dae6a7638b2528822076de6c96675ee480609c0da657b27b1d1be636",
+  "spec_sha256": "3ba1bb48751c0608bb1628956df95641583f8a1a872eab7020949aad1ecc872d",
+  "client_sha256": "5644e7ba5b2b303c48ac51beb12a58cd5cf4023415b88b917440d57ab389c255",
   "options": [
     "access_modifier=internal",
     "immutable_models=true",

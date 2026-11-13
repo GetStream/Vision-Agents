@@ -342,8 +342,10 @@ if recent.HasMore {
 ```
 
 The fields are `project_id` (a string, `{"$eq": s}` or `{"$in": [...]}`), `review_score` (a
-number 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt`, `$lte`), `user_id` and `text`, combined with
-`$and` and `$or`; the router refuses any other with a 400 that names it. `Search` writes
+number 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt`, `$lte`), `user_id`, `text`, `config_id`,
+`state` (`live` or `ended`), `created_at` (`{"$gte": t, "$lt": t}`, RFC 3339) and `custom` (a map
+of string labels the session holds), combined with `$and` and `$or`; the router refuses any other
+with a 400 that names it. `Search` writes
 `text` itself and takes no `Sort`. A sort is `client.SortLastMessageAt` either way,
 `client.SortPinned` alone or followed by `client.SortLastMessageAt`, or
 `client.SortReviewScore` either way; a cursor only continues the sort it came from.

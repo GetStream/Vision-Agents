@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents/stream_agents.dart';
 
 import 'device_tools.dart';
 
@@ -66,7 +66,7 @@ abstract final class Assistant {
   static const userId = 'juno-owner';
   static const userName = 'Alex';
 
-  static final agents = VisionAgents(
+  static final agents = StreamAgents(
     url: routerUrl,
     customerId: customerId,
     apiKey: streamApiKey,
@@ -82,11 +82,13 @@ abstract final class Assistant {
 
   /// Asks the backend for a Stream user token, which opens the chat and joins the call.
   static Future<String> _streamToken() async {
-    final response = await http.post(
-      backendUrl.resolve('/stream-token'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'user_id': userId}),
-    );
+    final response = await http
+        .post(
+          backendUrl.resolve('/stream-token'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'user_id': userId}),
+        )
+        .timeout(const Duration(seconds: 15));
     if (response.statusCode != 200) {
       throw StateError('the backend would not mint a Stream token (${response.statusCode})');
     }

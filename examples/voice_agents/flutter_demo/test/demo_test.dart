@@ -1,6 +1,6 @@
 import 'package:flutter_demo/demo.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents/stream_agents.dart';
 
 void main() {
   test('lookup_order finds an order whatever the case of its number', () async {

@@ -607,3 +607,23 @@ func (s *BranchesSuite) TestALateWriteOfARewoundReplyIsNeverQueued() {
 
 	s.Equal([]string{"Is it raining?", "No.", "Post it in Slack", "Posted."}, s.visibleTexts())
 }
+
+// A request whose messages an edit hid, retried after another router reopened the conversation,
+// is answered as the duplicate it is, as the router that hid it answers it: its question cannot
+// be written again under the same id, so a new command would leave a reply with no question.
+func (s *BranchesSuite) TestARequestAnEditHidRetriedAfterARestartIsADuplicate() {
+	_, second := s.twoTurns()
+	_, err := s.conv.Rewind(s.ctx, edit("sw-1", second))
+	s.Require().NoError(err)
+	s.Require().NoError(s.conv.FinishSwitch(s.ctx, "sw-1"))
+	conv, _, _ := s.reopened(nil)
+	before := s.chat.Visible(s.session)
+
+	retry, err := conv.BeginCommand(second.CommandID, "And tomorrow?", "")
+
+	s.Require().NoError(err)
+	s.True(retry.Duplicate)
+	s.Equal(second.UserMessageID, retry.UserMessageID)
+	s.written()
+	s.Equal(before, s.chat.Visible(s.session), "nothing is written: no reply without its question")
+}

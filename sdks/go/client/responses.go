@@ -176,8 +176,8 @@ type Responses struct {
 }
 
 // Input is something sent along with what is asked: an Image or a Clip to show the agent, a
-// VoiceNote to answer, the RequestID it answers, or a MaxOutputTokens or ReasoningEffort for
-// this answer alone.
+// Document to answer from, a VoiceNote to answer, the RequestID it answers, or a
+// MaxOutputTokens or ReasoningEffort for this answer alone.
 type Input interface {
 	attachTo(request *acceleration.CreateResponseRequest)
 }
@@ -226,6 +226,36 @@ type VoiceNote struct {
 
 func (n VoiceNote) attachTo(request *acceleration.CreateResponseRequest) {
 	request.Audio = &acceleration.AudioSource{Url: n.URL}
+}
+
+// Document is a file to answer questions about: a PDF or a Word document (DOCX or DOC), by
+// HTTPS URL, at most 20 MiB, or as a base64 data URI, at most 8 MiB. The router reads it as
+// text before the agent answers, and the agent answers from it on this turn and every later
+// one of the conversation. One goes with a question, and not with a VoiceNote. A conversation
+// kept in Stream Chat shows it on the person's message.
+type Document struct {
+	URL string
+	// Name is what the file is called, shown on the person's message and to the model.
+	// Empty takes it from the URL.
+	Name string
+}
+
+func (d Document) attachTo(request *acceleration.CreateResponseRequest) {
+	source := acceleration.FileSource{Url: d.URL}
+	if d.Name != "" {
+		source.Name = &d.Name
+	}
+	request.Files = appended(request.Files, source)
+}
+
+// DocumentFile is a PDF or a Word document on disk, sent inline under its own name so the
+// router needs no way to reach it. The router reads what it is from its bytes.
+func DocumentFile(path string) (Document, error) {
+	file, err := os.ReadFile(path)
+	if err != nil {
+		return Document{}, fmt.Errorf("client: reading %s: %w", path, err)
+	}
+	return Document{URL: "data:application/octet-stream;base64," + base64.StdEncoding.EncodeToString(file), Name: filepath.Base(path)}, nil
 }
 
 // RequestID is the request a dispatch worker was handed, passed back with the text it was
@@ -288,8 +318,8 @@ func appended[T any](list *[]T, item T) *[]T {
 	return list
 }
 
-// Create asks the agent something and names the turn it answers as, showing it any images
-// and videos given.
+// Create asks the agent something and names the turn it answers as, showing it any images,
+// videos and document given.
 //
 // It returns once the agent has started answering. An incognito session records nothing, so
 // the turn it hands back has no id: there is nothing to read back afterwards, which is what

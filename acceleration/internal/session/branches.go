@@ -237,6 +237,15 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 	if err := s.current().CheckAsked(asked); err != nil {
 		return Branched{}, stack.Wrap(err)
 	}
+	// Refused before anything is paused or hidden: once Chat hid the old turn, a command that
+	// cannot begin leaves the conversation without it and without its replacement.
+	question := text
+	if !edit {
+		question = "regenerate"
+	}
+	if err := persistent.ValidCommand(id, question, 0); err != nil {
+		return Branched{}, err
+	}
 	if err := s.checkSettled(ctx, switchID(s.id, id)); err != nil {
 		return Branched{}, err
 	}
@@ -524,6 +533,12 @@ func (s *Session) settle(ctx context.Context, target persistent.RewindTarget, ch
 		return persistent.RewindOutcome{}, stack.Wrap(errors.Join(ErrSwitchUnfinished, cause, err))
 	}
 	if !carried {
+		// A switch still journaled is one whose rewind may land later: the next turn looks
+		// again (checkSettled) rather than answering from a conversation Chat may have cut.
+		if unfinished, err := s.tree.UnfinishedBranchSwitches(ctx, s.spec.CustomerID, s.id); err == nil &&
+			slices.ContainsFunc(unfinished, func(sw store.AgentBranchSwitch) bool { return sw.ID == target.SwitchID }) {
+			s.unsettled = target.SwitchID
+		}
 		return persistent.RewindOutcome{}, cause
 	}
 	return outcome, nil
@@ -820,6 +835,15 @@ func chosenFor(ctx context.Context, tree *store.Store, target store.AgentRespons
 		return id
 	}
 	newest := map[string]store.AgentBranchMessage{}
+	// writtenAt is when each message was first written, its original's time: a copy sent again
+	// is newer than messages of the branch that were never sent again.
+	writtenAt := map[string]time.Time{}
+	for _, m := range copies {
+		root := origin(m.OriginalMessageID)
+		if at, ok := writtenAt[root]; !ok || m.ChatCreatedAt.Before(at) {
+			writtenAt[root] = m.ChatCreatedAt
+		}
+	}
 	ownCopied := false
 	for _, m := range copies {
 		user := roleOf(m) == "user"
@@ -842,8 +866,22 @@ func chosenFor(ctx context.Context, tree *store.Store, target store.AgentRespons
 	for _, m := range newest {
 		chosen = append(chosen, m)
 	}
+	// The order is the tree's: each response where it stands on tail, after the question it
+	// answers when another response asked it, and within a response the order its messages were
+	// first written in. A message of no response is at the head of what was hidden.
+	rank := map[string]int{"": -1}
+	for _, response := range tail {
+		if q := response.QuestionResponseID; questionsOnly[q] {
+			if _, ok := rank[q]; !ok {
+				rank[q] = len(rank)
+			}
+		}
+		rank[response.ID] = len(rank)
+	}
 	slices.SortFunc(chosen, func(a, b store.AgentBranchMessage) int {
-		return cmp.Or(a.ChatCreatedAt.Compare(b.ChatCreatedAt), strings.Compare(a.OriginalMessageID, b.OriginalMessageID))
+		ra, rb := origin(a.OriginalMessageID), origin(b.OriginalMessageID)
+		return cmp.Or(cmp.Compare(rank[a.ResponseID], rank[b.ResponseID]),
+			writtenAt[ra].Compare(writtenAt[rb]), strings.Compare(ra, rb))
 	})
 
 	marks, err := marksOf(ctx, tree, customer, session, rows, chosen)

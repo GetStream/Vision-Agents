@@ -827,7 +827,7 @@ describe("Agent", () => {
           ["floor_control: {model: stream/chorus-asr}\n", { model: "stream/chorus-asr" }],
           // Sent rather than dropped: the router refuses what it does not know, naming why.
           ["floor_control: {model: other, max_wait_ms: 0}\n", { model: "other", max_wait_ms: 0 }],
-          // An empty one is the default flow controller again.
+          // An empty one is no choice again, which the router's default rules.
           ["floor_control: {}\n", {}],
           ["llm: llm-fast\n", undefined],
           ["floor_control:\n", undefined],

@@ -315,7 +315,7 @@ module GetStream
       end
 
       # The model that controls the agent's floor and, optionally, how long a caller may wait
-      # once they stop, as written: {} is the default flow controller again, and a key whose
+      # once they stop, as written: {} is no choice again, which the router's default rules, and a key whose
       # value is null is left out. Only the shape is read here; which models there are, and
       # whether a wait names one, is the router's to say.
       def self.floor_control(value, file)

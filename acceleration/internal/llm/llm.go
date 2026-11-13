@@ -72,8 +72,10 @@ type Message struct {
 	Reasoning string
 	// ToolCallID names the call a ToolResult message answers.
 	ToolCallID string
-	// Speaker names who said a User turn once more than one person has spoken. No provider
-	// reads it: the agent writes it into the words it sends, and keeps Content as said.
+	// Speaker names who said a User turn once more than one person has spoken, or, in a
+	// channel of a type an agent config answers in, who wrote it, from the first message
+	// (agent.WriterLabel). No provider reads it: the agent writes it into the words it sends,
+	// and keeps Content as said.
 	Speaker string
 	// Author is the Stream user who wrote a User turn read back from a thread channel, which
 	// several people may write in. No provider reads it: the agent counts each author as it

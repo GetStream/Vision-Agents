@@ -320,6 +320,15 @@ func (t *Transcriber) step(speech bool, participant stt.Participant) {
 	switch {
 	case !t.voiced:
 		t.start = max(heard-int64(preroll/frame), t.ended)
+		if t.words != nil && t.words.stray(runLead) {
+			// A floor that rules alone has words the other transcriber settled with no voice
+			// heard since: of a run that came in after the floor gave up waiting for it, or
+			// too quiet for the speech gate. No pause will end an utterance on them, as none
+			// began, so they are a turn of their own once no voice has begun runLead after
+			// them, rather than the next utterance's, which may never come.
+			t.endOnWords(participant, heard)
+			t.nextUtterance(heard)
+		}
 	case t.checksPause(participant, heard):
 		// An agent's checks of the pause end the utterance, with its words.
 	case t.quiet >= endAfter || heard-t.start >= int64(maxUtterance/frame) || t.wordsEnded():
@@ -331,11 +340,7 @@ func (t *Transcriber) step(speech bool, participant stt.Participant) {
 			// may not have asked for them yet, so the end takes the audio either way.
 			t.ask(request{participant: participant, utterance: t.utterance + 1, audio: utterance(), final: true, fresh: t.fresh})
 		}
-		t.utterance++
-		t.start, t.ended, t.voiced, t.fresh, t.quiet, t.spoken, t.talked = heard, heard, false, false, 0, 0, 0
-		t.mu.Lock()
-		t.newUtteranceLocked()
-		t.mu.Unlock()
+		t.nextUtterance(heard)
 	case t.quiet >= writeAfter && t.fresh:
 		// A floor that rules alone shows the other transcriber's words as they come.
 		if t.words == nil {
@@ -350,6 +355,16 @@ func (t *Transcriber) step(speech bool, participant stt.Participant) {
 		t.interim(participant, heard)
 	}
 	t.hearing(participant, heard)
+}
+
+// nextUtterance begins the next utterance after the one being heard ended at frame heard,
+// with no audio and no speech yet. It runs on the session's goroutine.
+func (t *Transcriber) nextUtterance(heard int64) {
+	t.utterance++
+	t.start, t.ended, t.voiced, t.fresh, t.quiet, t.spoken, t.talked = heard, heard, false, false, 0, 0, 0
+	t.mu.Lock()
+	t.newUtteranceLocked()
+	t.mu.Unlock()
 }
 
 // hearing tells the asker the caller is in an utterance, every interval of the policy while

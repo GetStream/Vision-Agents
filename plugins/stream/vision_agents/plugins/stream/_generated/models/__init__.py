@@ -135,6 +135,7 @@ from .channel_kind import ChannelKind
 from .channel_limits import ChannelLimits
 from .channel_line_request import ChannelLineRequest
 from .channel_link import ChannelLink
+from .chat_channel_answer import ChatChannelAnswer
 from .chat_token import ChatToken
 from .chat_token_request import ChatTokenRequest
 from .child_agent import ChildAgent
@@ -499,6 +500,7 @@ from .session_end_fault import SessionEndFault
 from .session_end_reason import SessionEndReason
 from .session_end_stage import SessionEndStage
 from .session_filter import SessionFilter
+from .session_filter_custom import SessionFilterCustom
 from .session_memory import SessionMemory
 from .session_memory_filter import SessionMemoryFilter
 from .session_modality import SessionModality
@@ -515,6 +517,7 @@ from .session_sort import SessionSort
 from .session_sort_direction import SessionSortDirection
 from .session_sort_field import SessionSortField
 from .session_state import SessionState
+from .session_state_equals_type_1 import SessionStateEqualsType1
 from .session_tool import SessionTool
 from .session_tool_approval import SessionToolApproval
 from .session_tool_executor import SessionToolExecutor
@@ -582,6 +585,7 @@ from .text_content_part import TextContentPart
 from .text_content_part_type import TextContentPartType
 from .text_match import TextMatch
 from .tier import Tier
+from .time_window import TimeWindow
 from .timeline_entry import TimelineEntry
 from .tool_approval_command import ToolApprovalCommand
 from .tool_approval_command_type import ToolApprovalCommandType
@@ -780,6 +784,7 @@ __all__ = (
     "ChannelLimits",
     "ChannelLineRequest",
     "ChannelLink",
+    "ChatChannelAnswer",
     "ChatToken",
     "ChatTokenRequest",
     "ChildAgent",
@@ -1142,6 +1147,7 @@ __all__ = (
     "SessionEndReason",
     "SessionEndStage",
     "SessionFilter",
+    "SessionFilterCustom",
     "SessionMemory",
     "SessionMemoryFilter",
     "SessionModality",
@@ -1158,6 +1164,7 @@ __all__ = (
     "SessionSortDirection",
     "SessionSortField",
     "SessionState",
+    "SessionStateEqualsType1",
     "SessionTool",
     "SessionToolApproval",
     "SessionToolExecutor",
@@ -1225,6 +1232,7 @@ __all__ = (
     "TextContentPartType",
     "TextMatch",
     "Tier",
+    "TimeWindow",
     "TimelineEntry",
     "ToolApprovalCommand",
     "ToolApprovalCommandType",

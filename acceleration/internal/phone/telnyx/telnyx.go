@@ -37,6 +37,9 @@ const (
 // errorBodyLimit caps how much of a failed response is read into an error message.
 const errorBodyLimit = 2048
 
+// callEnded is Telnyx refusing a command for a call that is already over.
+const callEnded = "90018"
+
 // microsPerDollar converts Telnyx's dollar strings into the micros used everywhere else.
 const microsPerDollar = 1_000_000
 
@@ -383,6 +386,23 @@ func (p *Provider) SendDigits(ctx context.Context, vendorCallID, digits string) 
 	}
 	p.logger.Info("telnyx sent digits", "call_control_id", vendorCallID, "count", len(digits))
 	return nil
+}
+
+// HangUp ends a call placed by Dial, ringing or answered. The TeXML call's call_sid is its
+// call control id, as SendDigits uses, so call control's hangup reaches it
+// (https://developers.telnyx.com/api-reference/call-commands/hangup-call). A call that has
+// already ended is not a failure: Telnyx refuses it with 90018.
+func (p *Provider) HangUp(ctx context.Context, vendorCallID string) error {
+	if vendorCallID == "" {
+		return stack.Wrap(errors.New("telnyx: hanging up needs the call to hang up"))
+	}
+
+	path := "/v2/calls/" + url.PathEscape(vendorCallID) + "/actions/hangup"
+	err := p.do(ctx, http.MethodPost, path, nil, struct{}{}, nil)
+	if refused, ok := errors.AsType[*phone.VendorError](err); ok && refused.Code == callEnded {
+		return nil
+	}
+	return err
 }
 
 // Vendor is the name this provider is recorded under.
