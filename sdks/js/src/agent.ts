@@ -85,6 +85,10 @@ export interface Pipeline {
   /** Murmur while a caller is still talking, the way a person does. */
   backchannel?: boolean;
   maxTokens?: number;
+  /**
+   * How long the model waits for one of your tools, in milliseconds. Left out, the router waits
+   * 30 seconds. A tool's own `timeoutMs` replaces it for that tool.
+   */
   toolTimeoutMs?: number;
   video?: Schemas["SessionVideo"];
 }

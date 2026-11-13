@@ -6162,7 +6162,7 @@ type CreateSessionRequest struct {
 	// Title What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.
 	Title *string `json:"title,omitempty"`
 
-	// ToolTimeoutMs How long the model waits for a tool result. Zero is the default.
+	// ToolTimeoutMs How long the model waits for the result of a tool the caller or a worker runs, in milliseconds. Zero or omitted is 30 seconds. A tool's own timeout_ms replaces it for that tool, which is how one slow tool, such as one that draws a picture, gets longer without every tool waiting as long.
 	ToolTimeoutMs *int           `json:"tool_timeout_ms,omitempty"`
 	Tools         *[]SessionTool `json:"tools,omitempty"`
 
@@ -6621,6 +6621,9 @@ type ForkSessionRequest struct {
 	// ResponseId Carry the parent's history only up to the end of this response, so the fork continues from that point rather than from where the parent is now. The history is read from what the parent recorded, which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with messages false.
 	ResponseId *string `json:"response_id,omitempty"`
 	Title      *string `json:"title,omitempty"`
+
+	// ToolTimeoutMs How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds, since its row does not keep one. Zero is 30 seconds, as on createSession.
+	ToolTimeoutMs *int `json:"tool_timeout_ms,omitempty"`
 }
 
 // GeneratedImage defines model for GeneratedImage.

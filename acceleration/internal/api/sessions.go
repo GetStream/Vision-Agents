@@ -1158,6 +1158,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config, current 
 		fresh.Project, fresh.Custom = spec.Project, spec.Custom
 		fresh.ConnectorSelections = spec.ConnectorSelections
 		fresh.ReturnURL = spec.ReturnURL
+		fresh.ToolTimeoutMs = spec.ToolTimeoutMs
 		spec = fresh
 	}
 
@@ -1165,6 +1166,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config, current 
 	spec.Title = override(spec.Title, request.Title)
 	spec.Description = override(spec.Description, request.Description)
 	spec.Project = override(spec.Project, request.ProjectId)
+	spec.ToolTimeoutMs = override(spec.ToolTimeoutMs, request.ToolTimeoutMs)
 	spec.Incognito = value(request.Incognito)
 	if request.Custom != nil {
 		spec.Custom = *request.Custom
@@ -1516,6 +1518,7 @@ type ForkSessionRequest struct {
 	Custom          *map[string]interface{} `json:"custom,omitempty"`
 	Description     *string                 `json:"description,omitempty"`
 	Incognito       *bool                   `json:"incognito,omitempty" doc:"Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept."`
+	ToolTimeoutMs   *int                    `json:"tool_timeout_ms,omitempty" doc:"How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds, since its row does not keep one. Zero is 30 seconds, as on createSession."`
 	Messages        *bool                   `json:"messages,omitempty" doc:"Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants." default:"true"`
 	ModelOverwrites *ModelOverwrites        `json:"model_overwrites,omitempty"`
 	ProjectId       *string                 `json:"project_id,omitempty"`
@@ -1524,6 +1527,7 @@ type ForkSessionRequest struct {
 }
 
 func (*ForkSessionRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["tool_timeout_ms"].Format = ""
 	schema.Description = "Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model."
 	return schema
 }

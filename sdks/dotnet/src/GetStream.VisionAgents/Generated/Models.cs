@@ -6609,7 +6609,7 @@ namespace GetStream.VisionAgents.Models
         public string? Title { get; set; } = default!;
 
         /// <summary>
-        /// How long the model waits for a tool result. Zero is the default.
+        /// How long the model waits for the result of a tool the caller or a worker runs, in milliseconds. Zero or omitted is 30 seconds. A tool's own timeout_ms replaces it for that tool, which is how one slow tool, such as one that draws a picture, gets longer without every tool waiting as long.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tool_timeout_ms")]
         public int? ToolTimeoutMs { get; set; } = default!;
@@ -7613,6 +7613,12 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("title")]
         public string? Title { get; set; } = default!;
+
+        /// <summary>
+        /// How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds, since its row does not keep one. Zero is 30 seconds, as on createSession.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tool_timeout_ms")]
+        public int? ToolTimeoutMs { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 

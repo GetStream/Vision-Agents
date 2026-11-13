@@ -2448,7 +2448,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "ForkSessionRequest" => {
-          properties: %w[agent config_id custom description incognito messages model_overwrites project_id response_id title].freeze,
+          properties: %w[agent config_id custom description incognito messages model_overwrites project_id response_id title tool_timeout_ms].freeze,
           required: [].freeze, open: false
         }.freeze,
         "GeneratedImage" => {

@@ -893,6 +893,7 @@ final class ForkSessionRequest {
     this.projectId,
     this.responseId,
     this.title,
+    this.toolTimeoutMs,
   });
 
   factory ForkSessionRequest.fromJson(Object? value) {
@@ -938,6 +939,10 @@ final class ForkSessionRequest {
         null => null,
         final Object value => _string(value, 'ForkSessionRequest.title'),
       },
+      toolTimeoutMs: switch (json['tool_timeout_ms']) {
+        null => null,
+        final Object value => _int(value, 'ForkSessionRequest.tool_timeout_ms'),
+      },
     );
   }
 
@@ -951,6 +956,7 @@ final class ForkSessionRequest {
   final String? projectId;
   final String? responseId;
   final String? title;
+  final int? toolTimeoutMs;
 
   Map<String, Object?> toJson() => {
     'agent': ?agent,
@@ -963,6 +969,7 @@ final class ForkSessionRequest {
     'project_id': ?projectId,
     'response_id': ?responseId,
     'title': ?title,
+    'tool_timeout_ms': ?toolTimeoutMs,
   };
 }
 
