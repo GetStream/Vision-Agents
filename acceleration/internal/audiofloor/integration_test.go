@@ -76,7 +76,7 @@ func TestARealServerRulesAndTranscribes(t *testing.T) {
 			took = append(took, time.Since(start))
 		}
 		slices.Sort(took)
-		body, _, err := decisionBody(turnOf(turn), turn.Audio)
+		body, _, err := decisionBody(turnOf(turn), turn.Audio, nil)
 		require.NoError(t, err)
 		t.Logf("%s decision: median %v over %d, server %.0f ms, %d bytes; answer %s %.3f, p_eot %.4f, bar %.3f, ruling %+v",
 			format, took[len(took)/2], len(took), check.Answer.DecideMs, len(body), check.Answer.Answer, check.Answer.AnswerProbability,
