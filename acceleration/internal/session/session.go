@@ -1194,9 +1194,9 @@ type Recorded interface {
 // had been said. The reply being spoken is abandoned and the model's history is rebuilt from
 // what was recorded up to that response.
 //
-// A persistent conversation is refused because its transcript lives in Chat, and reopening
-// it would bring the rewound turns back; forking it at the response is what keeps both. A
-// native model is refused because it holds its own context, which this cannot reach.
+// A conversation kept in Chat is rewound there too (rewindKept), so reopening it does not
+// bring the rewound turns back. A native model is refused because it holds its own context,
+// which this cannot reach.
 func (s *Session) Rewind(ctx context.Context, recorded Recorded, responseID string) error {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
@@ -1206,7 +1206,7 @@ func (s *Session) Rewind(ctx context.Context, recorded Recorded, responseID stri
 	case s.Spec().Native():
 		return stack.Wrap(fmt.Errorf("%w: a speech-to-speech model keeps its own context", ErrCannotRewind))
 	case s.persisted != nil:
-		return stack.Wrap(fmt.Errorf("%w: a persistent conversation keeps its transcript in Chat; fork it at the response instead", ErrCannotRewind))
+		return s.rewindKept(ctx, responseID)
 	}
 
 	s.current().Interrupt()

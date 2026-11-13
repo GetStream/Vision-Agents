@@ -119,8 +119,8 @@ module GetStream
       # Goes back to a response and carries on from there.
       #
       # The reply being spoken is abandoned and later turns are no longer listed. The response
-      # itself is kept. A conversation kept in Stream Chat cannot be rewound, because the
-      # channel would still hold the later turns: fork it at the response instead.
+      # itself is kept. A conversation kept in Stream Chat is rewound there too: the later
+      # turns are hidden in the channel and kept as a branch that can be brought back.
       #
       # @param to [AgentResponse, Hash, String] the response, a response row, any item of it,
       #   or its id.

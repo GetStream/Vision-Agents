@@ -353,6 +353,10 @@ func (s *Server) rewindSession(ctx context.Context, request *rewindSessionReques
 	}
 
 	err := found.Rewind(ctx, s.store, request.Body.ResponseId)
+	// A conversation kept in Chat is rewound the way an edit is, and refused the same ways.
+	if refused := branchRefused(err); refused != nil {
+		return nil, refused
+	}
 	switch {
 	case errors.Is(err, store.ErrUnknownResponse):
 		return nil, notFound(err.Error())
@@ -1320,15 +1324,22 @@ func (s *Server) registerSessions(api huma.API) {
 			"The history is rebuilt from what the session recorded, the question and the answer of " +
 			"each turn, so a session that recorded nothing cannot be rewound: an incognito one, one " +
 			"on a deployment with no store, and a native speech-to-speech one, whose model keeps its " +
-			"own context. A persistent conversation is refused as well, because its transcript lives " +
-			"in Chat and would bring the rewound turns back the next time it opened; fork it at the " +
-			"response instead.",
+			"own context.\n" +
+			"A conversation kept in Stream Chat is rewound there too, the way an edit of the turn " +
+			"after the named response is: every later message is hidden from every read of the " +
+			"channel, so reopening the conversation does not bring the rewound turns back, and they " +
+			"are kept as a branch that listResponseSiblings, getResponseBranch and " +
+			"activateResponse read and bring back. It counts toward the conversation's 100 edit " +
+			"and regenerate points (409 branch_limit_reached), and is refused as an edit is: in a " +
+			"thread, dispatched or shared conversation, on a call, for a response answered before " +
+			"responses could be regenerated or edited, and while an earlier switch is unfinished " +
+			"(409 switch_unfinished). Rewinding to the newest response changes nothing.",
 		Extensions:    map[string]any{clientAccessibleExtension: true},
 		DefaultStatus: http.StatusNoContent,
 		Responses: map[string]*huma.Response{
 			"204": {Description: "The conversation carries on from the end of that response"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusConflict},
 	}, s.rewindSession)
 	huma.Register(api, huma.Operation{
 		OperationID: "saySession",

@@ -207,6 +207,28 @@ func (s *Store) SessionResponse(ctx context.Context, customerID, sessionID, resp
 	return s.sessionResponse(ctx, customerID, sessionID, responseID)
 }
 
+// ActiveChild is the response after parentID on a session's conversation: the one under it
+// that is not rewound. ok is false when parentID is the newest response on the conversation.
+// A response the session does not have is ErrUnknownResponse.
+func (s *Store) ActiveChild(ctx context.Context, customerID, sessionID, parentID string) (child AgentResponse, ok bool, err error) {
+	if customerID == "" || sessionID == "" || parentID == "" {
+		return AgentResponse{}, false, stack.Wrap(errors.New("store: a customer, a session and a response id are required"))
+	}
+	tree, err := s.responseTree(ctx, customerID, sessionID)
+	if err != nil {
+		return AgentResponse{}, false, err
+	}
+	if _, known := tree.byID[parentID]; !known {
+		return AgentResponse{}, false, stack.Wrap(ErrUnknownResponse)
+	}
+	for _, candidate := range tree.children[parentID] {
+		if candidate.RewoundAt == nil {
+			return candidate, true, nil
+		}
+	}
+	return AgentResponse{}, false, nil
+}
+
 // ActiveLeaf is the newest of a session's responses on its conversation, the one the next
 // turn is answered after, or empty for a session with none.
 func (s *Store) ActiveLeaf(ctx context.Context, customerID, sessionID string) (string, error) {

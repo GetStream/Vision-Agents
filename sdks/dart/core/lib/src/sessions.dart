@@ -347,8 +347,8 @@ final class Responses {
   /// Goes back to a response and carries on from there, as though nothing after it was said.
   ///
   /// The model forgets the later turns and they drop out of [list] and [items]. A
-  /// conversation kept in Stream Chat is refused with a 400, because the channel would still
-  /// hold the later turns: fork it at the response instead.
+  /// conversation kept in Stream Chat is rewound there too: the later turns are hidden in
+  /// the channel and kept as a branch that can be brought back.
   Future<void> rewind(String responseId) {
     if (responseId.isEmpty) {
       throw ArgumentError.value(responseId, 'responseId', 'a response that was never recorded');

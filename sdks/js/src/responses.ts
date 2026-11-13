@@ -177,8 +177,8 @@ export class Responses {
    *
    * The model forgets the later turns and they drop out of `list` and `items`. An item
    * stands for the response it belongs to, so the thing a transcript renders is enough to
-   * rewind to. A conversation kept in Stream Chat cannot be rewound, because the channel
-   * would still hold the later turns: fork it at the response instead.
+   * rewind to. A conversation kept in Stream Chat is rewound there too: the later turns
+   * are hidden in the channel and kept as a branch that can be brought back.
    */
   async rewind(
     to: AgentResponse | Schemas["AgentResponse"] | Schemas["AgentResponseItem"] | string,

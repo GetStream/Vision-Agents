@@ -393,8 +393,9 @@ func (r *Responses) List(ctx context.Context, limit int, cursor string) (*accele
 // The reply being spoken is abandoned and the conversation continues as though nothing after
 // that response had been said: later turns are no longer listed, and the next question is
 // answered from that point. The response itself is kept. Pass a response's ID, or an item's
-// ResponseId to go back to the turn it was part of. A text conversation cannot be rewound,
-// because its transcript lives in Chat; fork it at the response instead.
+// ResponseId to go back to the turn it was part of. A conversation kept in Stream Chat is
+// rewound there too: the later turns are hidden in the channel and kept as a branch that can
+// be brought back.
 func (r *Responses) Rewind(ctx context.Context, responseID string) error {
 	if responseID == "" {
 		return fmt.Errorf("client: rewinding %s: that response has no id, which is what a "+

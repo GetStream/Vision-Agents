@@ -388,6 +388,79 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 	return branched, nil
 }
 
+// rewindKept carries a conversation kept in Chat on from the end of response keptID, as Rewind
+// does for one that is not: the turn after it on the conversation, and everything after that,
+// is hidden in Chat the way an edit of that turn hides it, and kept as a branch that can be
+// read and brought back. Nothing is asked. Rewinding to the newest response hides nothing.
+// The caller holds commandMu.
+func (s *Session) rewindKept(ctx context.Context, keptID string) error {
+	if err := s.refuseBranches(ctx); err != nil {
+		return err
+	}
+	if err := s.checkSettled(ctx, ""); err != nil {
+		return err
+	}
+	customer := s.spec.CustomerID
+	kept, err := s.tree.SessionResponse(ctx, customer, s.id, keptID)
+	if err != nil {
+		return err
+	}
+	if kept.QuestionResponseID == "" {
+		return stack.Wrap(&persistent.BranchesUnsupportedError{Reason: persistent.UnsupportedUnmarked})
+	}
+	if kept.RewoundAt != nil {
+		return stack.Wrap(fmt.Errorf("%w: response %s is not on the conversation; activate its branch first", persistent.ErrBranchConflict, keptID))
+	}
+	next, after, err := s.tree.ActiveChild(ctx, customer, s.id, keptID)
+	if err != nil {
+		return err
+	}
+	if !after {
+		return nil
+	}
+
+	s.current().Interrupt()
+	if err := s.records.Flush(ctx); err != nil {
+		return stack.Wrap(err)
+	}
+	found, err := s.persisted.ResponseMessages(ctx, next.ID, next.QuestionResponseID)
+	if err != nil {
+		return err
+	}
+	if next.QuestionResponseID == "" || found.Question == "" {
+		return stack.Wrap(&persistent.BranchesUnsupportedError{Reason: persistent.UnsupportedUnmarked})
+	}
+	documents, err := s.branchDocuments(ctx, next, true)
+	if err != nil {
+		return err
+	}
+	// Journaled as an edit of the next turn: a router that stops partway is finished by the
+	// next open the same way, leaving the conversation at that turn's parent, kept.
+	rewind := persistent.RewindTarget{SwitchID: switchID(s.id, "rewind\x00"+newID()), Kind: store.SwitchEdit,
+		TargetResponseID: next.ID, MessageID: found.Question, Inclusive: true}
+	reading, err := s.restoring(ctx)
+	if err != nil {
+		return err
+	}
+	outcome, err := s.persisted.Rewind(reading, rewind)
+	if err != nil {
+		if outcome, err = s.settle(reading, rewind, nil, err); err != nil {
+			return err
+		}
+	}
+	s.turnsMu.Lock()
+	s.leaf = keptID
+	s.turnsMu.Unlock()
+	history, _ := s.persisted.HistoryOf(reading, outcome.Page)
+	s.carryOnFrom(history)
+	s.current().ReplaceDocuments(pinnable(documents)...)
+	if err := s.moveActivePath(ctx, keptID, outcome.Switch); err != nil {
+		return err
+	}
+	s.countRanges(ctx, "rewind")
+	return nil
+}
+
 // lastQuestion is the newest person's message of page, the question a regenerate answers
 // again.
 func lastQuestion(page persistent.Page) (persistent.Message, bool) {

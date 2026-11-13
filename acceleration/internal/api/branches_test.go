@@ -7,9 +7,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 )
 
 // ResponseBranchesSuite covers regenerating and editing an earlier response of a conversation
@@ -354,6 +357,35 @@ func (s *ResponseBranchesSuite) TestARegenerateLeftUnfinishedRefusesQuestionsUnt
 }
 
 // opens a conversation kept in Stream Chat, for as.
+// AI-3209: a default session keeps its conversation in Chat, which made every rewind a 400.
+// The channel is rewound too, so the later turn leaves the responses and the transcript.
+func (s *ResponseBranchesSuite) TestADeviceRewindsAConversationKeptInChat() {
+	s.rewindsAKeptConversation(s.client)
+}
+
+func (s *ResponseBranchesSuite) TestAServerRewindsAConversationKeptInChat() {
+	s.rewindsAKeptConversation(s.serverClient)
+}
+
+func (s *ResponseBranchesSuite) rewindsAKeptConversation(as *testClient) {
+	opened := s.opens(as)
+	first := s.asks(as, opened, "Is it raining?")
+	second := s.asks(as, opened, "And tomorrow?")
+
+	status, body := as.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/rewind", RewindSessionRequest{ResponseId: first})
+
+	s.Require().Equal(http.StatusNoContent, status, string(body))
+	var page AgentResponsePage
+	s.Require().Equal(http.StatusOK, as.do(http.MethodGet, responsesPath(opened), nil, &page))
+	s.Require().Len(page.Items, 1, "the later turn is no longer part of the conversation")
+	s.Equal(first, page.Items[0].Id)
+	s.True(slices.ContainsFunc(s.chat.Requests(suiteStreamKey), func(r chattest.Request) bool {
+		return r.Method == http.MethodPost && strings.HasSuffix(r.Path, "/rewind")
+	}), "the session's channel is rewound in Chat")
+	status, body = as.call(http.MethodGet, responsesPath(opened)+"/"+second+"/branch", nil)
+	s.Equal(http.StatusOK, status, "the rewound turn is a branch that can be read: %s", body)
+}
+
 func (s *ResponseBranchesSuite) opens(as *testClient) Session {
 	return as.createSession(CreateSessionRequest{Llm: pointerTo("noted/noted-model")})
 }

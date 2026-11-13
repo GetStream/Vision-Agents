@@ -280,7 +280,8 @@ by `pinned` for that. `UpdateAsync(new UpdateSessionRequest { Pinned = true })` 
 
 Lists come a page at a time: `Items`, and `NextCursor` while `HasMore`. A text conversation
 is kept in Stream Chat unless it is `Incognito`, which keeps nothing. One kept in Stream Chat
-cannot be rewound, since the channel still holds the later turns: fork it at the response instead.
+is rewound there too: the later turns are hidden in the channel and kept as a branch that can be
+brought back.
 
 `CloseAsync` stops a session and keeps what it recorded. `DeleteAsync` deletes it with its turns
 and memories, `DeleteMemoriesAsync` only what it remembered, and
