@@ -491,7 +491,9 @@ def _declare(path: Path) -> Settings:
         elif field_name == "search":
             settings.search = _word(value)
         elif field_name == "image":
-            settings.image = _word(value)
+            # A bare image: leaves the stored one, as in Go and JavaScript; image: "" turns
+            # drawing off.
+            settings.image = None if value is None else _word(value)
         elif field_name == "greeting":
             settings.greeting = _greeting(path, value)
         elif field_name == "sandbox":

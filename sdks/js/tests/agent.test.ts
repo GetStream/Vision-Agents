@@ -656,10 +656,12 @@ describe("Agent", () => {
         const drawing = await syncedFrom("name: jean\nmode: text\nimage: image-fast\n");
         const off = await syncedFrom('name: jean\nmode: text\nimage: ""\n');
         const unsaid = await syncedFrom("name: jean\nmode: text\n");
+        const bare = await syncedFrom("name: jean\nmode: text\nimage:\n");
 
         assert.equal(drawing["image"], "image-fast");
         assert.equal(off["image"], "", "an empty image is how a file turns drawing off");
         assert.equal("image" in unsaid, false, "a file that names none leaves the stored one");
+        assert.equal("image" in bare, false, "a bare image: says nothing, as in Go and Python");
       });
 
       it("sends sandbox and require_approval from agent.yaml on each binding that sets them", async () => {
