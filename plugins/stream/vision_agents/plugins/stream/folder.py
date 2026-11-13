@@ -233,6 +233,9 @@ class Settings:
     subagent: str = ""
     """The model a voice agent hands its skills to. A text agent runs on its llm alone."""
     search: str = ""
+    image: str | None = None
+    """What the agent draws pictures with, such as image-fast, which offers it generate_image. An
+    empty string turns drawing off; None leaves the stored one."""
     greeting: GreetingSettings | None = None
     """What the agent opens the call with. None leaves the stored one."""
     sandbox: str = ""
@@ -487,6 +490,8 @@ def _declare(path: Path) -> Settings:
             settings.subagent = _word(value)
         elif field_name == "search":
             settings.search = _word(value)
+        elif field_name == "image":
+            settings.image = _word(value)
         elif field_name == "greeting":
             settings.greeting = _greeting(path, value)
         elif field_name == "sandbox":

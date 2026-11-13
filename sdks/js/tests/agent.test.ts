@@ -652,6 +652,16 @@ describe("Agent", () => {
         return router.requestsTo("POST", "/v1/agents/sync").at(-1)?.body as Record<string, unknown>;
       }
 
+      it("sends agent.yaml's image as written, an empty one that turns drawing off included", async () => {
+        const drawing = await syncedFrom("name: jean\nmode: text\nimage: image-fast\n");
+        const off = await syncedFrom('name: jean\nmode: text\nimage: ""\n');
+        const unsaid = await syncedFrom("name: jean\nmode: text\n");
+
+        assert.equal(drawing["image"], "image-fast");
+        assert.equal(off["image"], "", "an empty image is how a file turns drawing off");
+        assert.equal("image" in unsaid, false, "a file that names none leaves the stored one");
+      });
+
       it("sends sandbox and require_approval from agent.yaml on each binding that sets them", async () => {
         router.serve("GET", "/v1/agents/connections", { body: { items: [connection("conn-1", "company")], has_more: false } });
 
