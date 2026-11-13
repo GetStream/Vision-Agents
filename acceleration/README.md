@@ -1198,9 +1198,10 @@ a request row's `latency_ms` holds both.
 **Limits.** At most 4 pictures a request, each at most 10 MiB and 4096 pixels a side, checked
 by decoding the picture before it is returned.
 
-**Billing.** Per picture at the model's price (see [Prices](#prices)): Qwen Image 3 is priced
-at FAL's $0.04 a picture, and Gemini at $0.0672 a picture plus its prompt and thinking tokens.
-`cost_micros` is what the request cost. The money is held before the job is submitted, so a
+**Billing.** Per picture, at the model's entry in the price list (see [Prices](#prices)). The
+vendor rates behind them, in `prices/vendor.json`, are $0.04 a picture for Qwen Image 3 on FAL
+and $0.0672 a picture for Gemini plus its prompt and thinking tokens. `cost_micros` is what the
+request cost the customer. The money is held before the job is submitted, so a
 spend limit that covers the caller refuses a draw it cannot pay for, and a failed draw costs
 nothing. A request is one row in `requests` counting its pictures.
 
