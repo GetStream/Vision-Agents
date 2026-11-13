@@ -80,6 +80,11 @@ var modelCapabilities = map[string]llm.Capabilities{
 		DefaultEffort:    "high",
 		StreamsReasoning: false,
 	},
+	"gemini-4-hydrogen": {
+		ReasoningEfforts: []string{lowEffort, "medium", "high", "xhigh"},
+		DefaultEffort:    "high",
+		StreamsReasoning: false,
+	},
 }
 
 // fallbackCapabilities is the older Gemini 3 line, where minimal is still the floor. There
