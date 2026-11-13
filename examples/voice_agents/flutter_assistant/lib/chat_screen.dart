@@ -10,6 +10,7 @@ import 'package:stream_agents/stream_agents.dart';
 
 import 'agent_chat.dart';
 import 'assistant.dart';
+import 'brand_theme.dart';
 import 'sign_in.dart';
 import 'voice_screen.dart';
 
@@ -245,17 +246,19 @@ class _ChatScreenState extends State<ChatScreen> {
                     }
                     return false;
                   },
-                  child: AIConversationView.conversation(
-                    conversation: _conversation,
-                    ui: _chat.ui,
-                    footer: _conversation.status.isAnswering && activity?.text != null
-                        ? AITypingIndicatorView(text: activity!.text!)
-                        : null,
-                    emptyContent: Padding(
-                      padding: EdgeInsets.only(bottom: _barHeight),
-                      child: const _Welcome(),
+                  child: BrandThemeScope(
+                    child: AIConversationView.conversation(
+                      conversation: _conversation,
+                      ui: _chat.ui,
+                      footer: _conversation.status.isAnswering && activity?.text != null
+                          ? AITypingIndicatorView(text: activity!.text!)
+                          : null,
+                      emptyContent: Padding(
+                        padding: EdgeInsets.only(bottom: _barHeight),
+                        child: const _Welcome(),
+                      ),
+                      padding: EdgeInsets.fromLTRB(16, 0, 16, 16 + _barHeight),
                     ),
-                    padding: EdgeInsets.fromLTRB(16, 0, 16, 16 + _barHeight),
                   ),
                 ),
               ),

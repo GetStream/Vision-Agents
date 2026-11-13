@@ -945,3 +945,122 @@ button {
   color: var(--muted);
   font-size: 0.75rem;
 }
+
+.reply-format-divider {
+  margin: 10px 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+.place-card,
+.trip-map,
+.calendar-check,
+.restaurant-card,
+.availability-gauge,
+.seat-selector {
+  border-radius: var(--brand-radius, 16px);
+}
+
+.restaurant-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  text-align: left;
+}
+
+.restaurant-card:hover {
+  border-color: var(--accent);
+}
+
+.restaurant-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.restaurant-card-rating {
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.restaurant-card-cuisine {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.availability-gauge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.availability-gauge-svg {
+  width: 148px;
+  height: 86px;
+}
+
+.availability-gauge-value {
+  fill: var(--text);
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.availability-gauge-label {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.seat-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.seat-selector-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.seat-selector-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.seat-pill {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--brand-radius, 10px);
+  background: var(--bg);
+  font-size: 0.8rem;
+}
+
+.seat-pill.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.seat-pill:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.voice-live-ui {
+  width: min(100%, 540px);
+  max-height: 42vh;
+  margin: 0 auto;
+  padding: 0 16px;
+  overflow-y: auto;
+}
