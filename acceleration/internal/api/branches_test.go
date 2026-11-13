@@ -403,8 +403,9 @@ func (s *ResponseBranchesSuite) TestAnEndedConversationKeptInChatIsRewound() {
 	s.Equal(first, page.Items[0].Id)
 }
 
-// A turn sent through /respond carries no branch mark, so it cannot be rewound to.
-func (s *ResponseBranchesSuite) TestARewindToATurnSentThroughRespondIsRefusedAsUnmarked() {
+// A turn sent through /respond is written with its response's marks, as one from
+// createResponse is, so it can be rewound to.
+func (s *ResponseBranchesSuite) TestATurnSentThroughRespondCanBeRewoundTo() {
 	opened := s.opens(s.serverClient)
 	for i, said := range []string{"First question", "Second question"} {
 		s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
@@ -422,8 +423,10 @@ func (s *ResponseBranchesSuite) TestARewindToATurnSentThroughRespondIsRefusedAsU
 	status, body := s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/rewind",
 		RewindSessionRequest{ResponseId: page.Items[0].Id})
 
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(string(body), "not asked through createResponse", string(body))
+	s.Require().Equal(http.StatusNoContent, status, string(body))
+	page = AgentResponsePage{}
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, responsesPath(opened), nil, &page))
+	s.Len(page.Items, 1)
 }
 
 func (s *ResponseBranchesSuite) opens(as *testClient) Session {

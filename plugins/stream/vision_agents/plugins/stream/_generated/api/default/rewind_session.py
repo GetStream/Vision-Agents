@@ -117,9 +117,9 @@ def sync_detailed(
     conversation does not bring the rewound turns back, and they are kept as a branch that
     listResponseSiblings, getResponseBranch and activateResponse read and bring back. It counts toward
     the conversation's 100 edit and regenerate points (409 branch_limit_reached), and is refused as an
-    edit is: in a thread, dispatched or shared conversation, on a call, for a turn sent through /respond
-    or a spoken one, whose messages carry no branch mark, and while an earlier switch is unfinished (409
-    switch_unfinished). Rewinding to the newest response changes nothing.
+    edit is: in a thread, dispatched or shared conversation, on a call, for a response whose messages
+    carry no branch mark, such as a turn spoken on a call, and while an earlier switch is unfinished
+    (409 switch_unfinished). Rewinding to the newest response changes nothing.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -165,9 +165,9 @@ def sync(
     conversation does not bring the rewound turns back, and they are kept as a branch that
     listResponseSiblings, getResponseBranch and activateResponse read and bring back. It counts toward
     the conversation's 100 edit and regenerate points (409 branch_limit_reached), and is refused as an
-    edit is: in a thread, dispatched or shared conversation, on a call, for a turn sent through /respond
-    or a spoken one, whose messages carry no branch mark, and while an earlier switch is unfinished (409
-    switch_unfinished). Rewinding to the newest response changes nothing.
+    edit is: in a thread, dispatched or shared conversation, on a call, for a response whose messages
+    carry no branch mark, such as a turn spoken on a call, and while an earlier switch is unfinished
+    (409 switch_unfinished). Rewinding to the newest response changes nothing.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -208,9 +208,9 @@ async def asyncio_detailed(
     conversation does not bring the rewound turns back, and they are kept as a branch that
     listResponseSiblings, getResponseBranch and activateResponse read and bring back. It counts toward
     the conversation's 100 edit and regenerate points (409 branch_limit_reached), and is refused as an
-    edit is: in a thread, dispatched or shared conversation, on a call, for a turn sent through /respond
-    or a spoken one, whose messages carry no branch mark, and while an earlier switch is unfinished (409
-    switch_unfinished). Rewinding to the newest response changes nothing.
+    edit is: in a thread, dispatched or shared conversation, on a call, for a response whose messages
+    carry no branch mark, such as a turn spoken on a call, and while an earlier switch is unfinished
+    (409 switch_unfinished). Rewinding to the newest response changes nothing.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -254,9 +254,9 @@ async def asyncio(
     conversation does not bring the rewound turns back, and they are kept as a branch that
     listResponseSiblings, getResponseBranch and activateResponse read and bring back. It counts toward
     the conversation's 100 edit and regenerate points (409 branch_limit_reached), and is refused as an
-    edit is: in a thread, dispatched or shared conversation, on a call, for a turn sent through /respond
-    or a spoken one, whose messages carry no branch mark, and while an earlier switch is unfinished (409
-    switch_unfinished). Rewinding to the newest response changes nothing.
+    edit is: in a thread, dispatched or shared conversation, on a call, for a response whose messages
+    carry no branch mark, such as a turn spoken on a call, and while an earlier switch is unfinished
+    (409 switch_unfinished). Rewinding to the newest response changes nothing.
 
     Args:
         id (str): The session, as returned when it was created.

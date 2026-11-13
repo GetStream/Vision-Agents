@@ -3,6 +3,7 @@
 package session
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -267,4 +268,23 @@ func (s *BranchesSuite) TestARewindWaitsForTheNextTurnsMessagesToReachChat() {
 	s.written()
 	s.Equal([]string{"Is it raining?", "Answer 1 to Is it raining?"}, s.texts(session))
 	s.NotNil(s.response(session, second).RewoundAt)
+}
+
+// A rewind that would hide a response whose messages carry no branch mark, as a turn spoken on
+// a call writes them, is refused: nothing finds its messages in Chat to hide them by.
+func (s *BranchesSuite) TestARewindThatWouldHideAnUnmarkedResponseIsRefused() {
+	session := s.opens()
+	first := s.asks(session, "Is it raining?")
+	spoken := store.AgentResponse{ID: uuid.NewString(), SessionID: session.ID(), CustomerID: s.customer,
+		ParentResponseID: first, Said: "Said on a call", CreatedAt: time.Now().UTC()}
+	s.Require().NoError(s.store.StartResponse(s.ctx, &spoken))
+	before := s.texts(session)
+
+	err := session.Rewind(s.ctx, s.store, first)
+
+	unsupported, ok := errors.AsType[*persistent.BranchesUnsupportedError](err)
+	s.Require().True(ok, "%v", err)
+	s.Equal(persistent.UnsupportedUnmarked, unsupported.Reason)
+	s.Equal(before, s.texts(session))
+	s.False(s.rewound())
 }
