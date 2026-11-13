@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
@@ -108,4 +109,25 @@ func (s *AppHooksSuite) TestAWritersNameCannotPassForAnotherLine() {
 		"the unanswered messages are read back labelled, then the one answered")
 	s.False(slices.ContainsFunc(harness.WithoutNotes(request.Input), func(m llm.Message) bool { return strings.Contains(m.Content, "\n") }),
 		"a label made a line of its own: %+v", request.Input)
+}
+
+// A name longer than MaxAuthorName is cut there in the writer's label, live and read back, as
+// a shared conversation's author's is.
+func (s *AppHooksSuite) TestAWritersLongNameIsCutInTheirLabel() {
+	s.forgetNoted()
+	s.holdsType("callouts", memberWrites)
+	config := s.mentionedIn("callouts")
+	channel := s.emptyChannel("callouts")
+	ben := s.person(strings.Repeat("B", 300))
+	short := "the 6pm shift is short " + s.utils.uuid()
+	asked := "@" + config.Name + " can you cover it? " + s.utils.uuid()
+	s.says("callouts", channel, ben, short, "")
+	time.Sleep(dropped)
+
+	s.says("callouts", channel, ben, asked, "")
+
+	s.Require().NotNil(s.replyIn("callouts:"+channel), "the mention was not answered")
+	request, _ := s.askedWith(asked)
+	label := strings.Repeat("B", conversation.MaxAuthorName) + " (user " + ben + "): "
+	s.Equal([]string{label + short, label + asked}, contentsOf(request.Input), "read back, then live")
 }

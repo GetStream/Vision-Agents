@@ -174,7 +174,7 @@ func (s *Server) answerHosted(origin hookOrigin, cid, customer string, event mes
 	attributed := routing.WithAttribution(context.Background(), chatHookAttribution(customer, event))
 	written := agent.WithAuthor(attributed, event.Message.User.ID)
 	if event.ChannelType != chatlog.ChannelType {
-		written = agent.WithWriter(attributed, event.Message.User.ID, event.Message.User.Name)
+		written = agent.WithWriter(attributed, event.Message.User.ID, conversation.AuthorName(event.Message.User.Name))
 	}
 	turn, cancelTurn := context.WithTimeout(written, askTimeout)
 	defer cancelTurn()

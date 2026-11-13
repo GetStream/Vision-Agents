@@ -137,7 +137,7 @@ func (r Restore) history(p Page, rounds map[string][]llm.Message, opening string
 			if e.message.Content == "" {
 				continue
 			}
-			n := utf8.RuneCountInString(e.message.Content)
+			n := utf8.RuneCountInString(e.message.Content) + utf8.RuneCountInString(e.message.Speaker)
 			if size+n > budget || len(out) == limit {
 				tr = true
 				break
@@ -164,7 +164,7 @@ type told struct {
 }
 
 func (t told) size() int {
-	n := utf8.RuneCountInString(t.message.Content)
+	n := utf8.RuneCountInString(t.message.Content) + utf8.RuneCountInString(t.message.Speaker)
 	for _, m := range t.rounds {
 		n += utf8.RuneCountInString(m.Content)
 		for _, call := range m.ToolCalls {

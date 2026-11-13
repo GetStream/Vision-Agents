@@ -281,3 +281,58 @@ func TestAnOpeningAlreadyReadBeforeLaterTurnsIsHandedBackOnce(t *testing.T) {
 		{Role: llm.Assistant, Content: "Friday."},
 	}, h)
 }
+
+// writes is a message a person wrote in a channel of a type an agent config answers in. One
+// after the last reply is the session's to be told (entries), so each page here ends on one.
+func writes(userID, name, text string) Message {
+	return Message{Role: "user", Text: text, State: "completed", written: true, authorID: userID, authorName: name}
+}
+
+// AI-3153: a writer's name is cut at MaxAuthorName in their label, as a shared conversation's
+// author's is, whatever length they set it to.
+func TestAWritersLongNameIsCutInTheirLabel(t *testing.T) {
+	p := Page{named: true, Messages: []Message{writes("ben-2", strings.Repeat("B", 300), "the 6pm shift is short"), turn("assistant", "Noted.", "")}}
+
+	h, _ := Restore{}.history(p, nil, "")
+
+	require.Equal(t, []llm.Message{
+		{Role: llm.User, Content: "the 6pm shift is short", Speaker: strings.Repeat("B", MaxAuthorName) + " (user ben-2)"},
+		{Role: llm.Assistant, Content: "Noted."},
+	}, h)
+}
+
+// AI-3153: a writer's label is handed to the model with their words, so it counts in the size
+// history is read back under: the 21 runes of text fit in 50, but not with their 52 of labels.
+func TestAWritersLabelCountsInTheSizeOfHistory(t *testing.T) {
+	p := Page{named: true, Messages: []Message{
+		writes("anya-1", "Anya", "task"),
+		turn("assistant", "ok", ""),
+		writes("ben-2", "Ben", "older"),
+		writes("anya-1", "Anya", "latest"),
+		turn("assistant", "done", ""),
+	}}
+	anya, ben := "Anya (user anya-1)", "Ben (user ben-2)"
+	for _, c := range []struct {
+		name     string
+		recorded Recorded
+		kept     []llm.Message
+	}{
+		{"newest first", nil, []llm.Message{
+			{Role: llm.User, Content: "older", Speaker: ben},
+			{Role: llm.User, Content: "latest", Speaker: anya},
+			{Role: llm.Assistant, Content: "done"},
+		}},
+		{"with tool rounds, the first message pinned", &recorded{}, []llm.Message{
+			{Role: llm.User, Content: "task", Speaker: anya},
+			{Role: llm.User, Content: "latest", Speaker: anya},
+			{Role: llm.Assistant, Content: "done"},
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h, tr := Restore{MaxRunes: 50, Recorded: c.recorded}.history(p, nil, "")
+
+			require.True(t, tr)
+			require.Equal(t, c.kept, h)
+		})
+	}
+}
