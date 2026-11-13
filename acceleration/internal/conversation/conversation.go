@@ -11,6 +11,7 @@ import (
 	"maps"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -140,6 +141,10 @@ type commandRecord struct {
 	CommandReceipt
 	Digest    string
 	Initiator string `json:",omitempty"`
+	// Writer is the person whose message a follow-up answers in a channel of a type an agent
+	// config answers in (BeginFollowUp), whom its reply asks to allow a call (askedFor) in place
+	// of the Initiator. The Initiator stays whose the command is.
+	Writer string `json:",omitempty"`
 	// ClientID is the install the command came from; a client tool call is addressed to it.
 	ClientID string `json:",omitempty"`
 	// Reply is what a follow-up's reply said when it finished, for the follow-up delivered
@@ -900,6 +905,29 @@ func ownedBy(custom map[string]any, customer, agentID, caller string) error {
 		return stack.Wrap(errors.New("conversation belongs to another user"))
 	}
 	return nil
+}
+
+// Member reports whether user is a member of the channel cid now, in the app the customer's
+// conversation there is kept in: a person a reply there asked to allow a call who has left the
+// channel since may not answer it (api answerToolApproval).
+func (s *Service) Member(ctx context.Context, customer, cid, user string) (bool, error) {
+	channelType, id := channelOf(cid)
+	lookup, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	client, _, err := s.readerFor(lookup, customer, cid)
+	if err != nil {
+		return false, stack.Wrap(err)
+	}
+	// Asked of the one user, which a channel of any size answers; its state lists only the
+	// first members.
+	r, err := client.Chat().QueryMembers(lookup, &getstream.QueryMembersRequest{Payload: &getstream.QueryMembersPayload{
+		Type: channelType, ID: &id, FilterConditions: map[string]any{"id": map[string]any{"$eq": user}}}})
+	if err != nil {
+		return false, stack.Wrap(err)
+	}
+	return slices.ContainsFunc(r.Data.Members, func(m getstream.ChannelMemberResponse) bool {
+		return m.UserID != nil && *m.UserID == user
+	}), nil
 }
 
 // CommandForCaller reports what one command ended as without opening its conversation,

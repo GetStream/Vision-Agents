@@ -36,8 +36,9 @@ func (m Message) MarshalJSON() ([]byte, error) {
 // the conversation never shows. The id is the caller's own, chosen so that a follow-up
 // delivered twice (a worker that died mid-delivery and was replaced) is answered Duplicate
 // and started once: the ledger holds it in this process, and after a restart commandsIn
-// rebuilds it from the reply Stream holds.
-func (c *Conversation) BeginFollowUp(id, text string) (CommandReceipt, error) {
+// rebuilds it from the reply Stream holds. writer is the Stream user whose message it answers
+// in a channel of a type an agent config answers in (agent.WriterOf), empty otherwise.
+func (c *Conversation) BeginFollowUp(id, text, writer string) (CommandReceipt, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.active {
@@ -64,7 +65,7 @@ func (c *Conversation) BeginFollowUp(id, text string) (CommandReceipt, error) {
 	if c.data.Commands == nil {
 		c.data.Commands = map[string]commandRecord{}
 	}
-	c.data.Commands[id] = commandRecord{CommandReceipt: receipt, Digest: fmt.Sprintf("%x", sha256.Sum256([]byte(text))), Initiator: c.data.Owner}
+	c.data.Commands[id] = commandRecord{CommandReceipt: receipt, Digest: fmt.Sprintf("%x", sha256.Sum256([]byte(text))), Initiator: c.data.Owner, Writer: writer}
 	c.data.Current = &a
 	c.reasoning = liveReasoning{}
 	c.data.Pending = append(c.data.Pending, operation{Message: a, Create: true})

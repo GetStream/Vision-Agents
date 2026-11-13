@@ -2528,6 +2528,13 @@ func WithWriter(ctx context.Context, userID, name string) context.Context {
 	return context.WithValue(ctx, writerKey{}, writer{id: userID, name: name})
 }
 
+// WriterOf is the Stream user id of the person WithWriter says wrote the text a turn on ctx
+// answers, and empty for a turn nobody wrote in such a channel.
+func WriterOf(ctx context.Context) string {
+	written, _ := ctx.Value(writerKey{}).(writer)
+	return written.id
+}
+
 // WriterLabel is how a person writing in a channel of a type an agent config answers in is
 // named ahead of their words (WithWriter): their display name and their Stream user id,
 // "Anya (user anya-1)", with the id for a name when they have none. A colon, a bracket or a

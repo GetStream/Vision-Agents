@@ -985,7 +985,8 @@ func (s *Session) chose(name, connectionID string) {
 // id is the caller's own, so a follow-up delivered twice is started once: when the
 // conversation already holds it, nothing more is done. images go to the model with this
 // reply alone, as RespondCommand's do; none are uploaded, since the message they came on is
-// already in the channel.
+// already in the channel. The writer ctx names (agent.WithWriter) is whom the reply asks to
+// allow a call, in place of the session's user.
 func (s *Session) FollowUp(ctx context.Context, id, text string, images []llm.ImagePart) error {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
@@ -1003,7 +1004,7 @@ func (s *Session) followUp(ctx context.Context, id, text string, images []llm.Im
 	if nothingToAnswer(text, images) {
 		return persistent.CommandReceipt{}, "", stack.Wrap(errNothingToAnswer)
 	}
-	receipt, err := s.persisted.BeginFollowUp(id, text)
+	receipt, err := s.persisted.BeginFollowUp(id, text, agent.WriterOf(ctx))
 	if err != nil {
 		return receipt, "", stack.Wrap(err)
 	}

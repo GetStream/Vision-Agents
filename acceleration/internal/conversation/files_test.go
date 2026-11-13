@@ -355,7 +355,7 @@ func TestAFollowUpsFilesAreReadBackLiveAndAcrossRestart(t *testing.T) {
 	service := NewForChat(client)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
-	_, err = c.BeginFollowUp("st_run", "the task is due")
+	_, err = c.BeginFollowUp("st_run", "the task is due", "")
 	require.NoError(t, err)
 	render := sandbox.Attachment{Name: "teapot.png", MIME: "image/png", URL: "https://cdn.fake/image/teapot.png", Size: 3}
 	c.Observe(agent.ToolStarted{ID: "run-1", Tool: sandbox.ToolName, StartedAt: time.Now().UTC()})
@@ -385,10 +385,10 @@ func TestARetriedFollowUpsFilesAreReadBackAcrossRestart(t *testing.T) {
 	service := NewForChat(client)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
-	_, err = c.BeginFollowUp("st_run", "the task is due")
+	_, err = c.BeginFollowUp("st_run", "the task is due", "")
 	require.NoError(t, err)
 	c.AbandonFollowUp("st_run")
-	_, err = c.BeginFollowUp("st_run", "the task is due")
+	_, err = c.BeginFollowUp("st_run", "the task is due", "")
 	require.NoError(t, err)
 	render := sandbox.Attachment{Name: "teapot.png", MIME: "image/png", URL: "https://cdn.fake/image/teapot.png", Size: 3}
 	c.Observe(agent.ToolStarted{ID: "run-1", Tool: sandbox.ToolName, StartedAt: time.Now().UTC()})
@@ -416,7 +416,7 @@ func TestAFollowUpNobodyReadsBackKeepsNoCopyOfItsReply(t *testing.T) {
 			service := NewForChat(client)
 			c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 			require.NoError(t, err)
-			_, err = c.BeginFollowUp(id, "carry on")
+			_, err = c.BeginFollowUp(id, "carry on", "")
 			require.NoError(t, err)
 			render := sandbox.Attachment{Name: "teapot.png", MIME: "image/png", URL: "https://cdn.fake/image/teapot.png", Size: 3}
 			c.Observe(agent.ToolStarted{ID: "run-1", Tool: sandbox.ToolName, StartedAt: time.Now().UTC()})
@@ -452,10 +452,10 @@ func TestARetriedFollowUpNobodyReadsBackKeepsNoCopyAcrossRestart(t *testing.T) {
 	service := NewForChat(client)
 	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
 	require.NoError(t, err)
-	_, err = c.BeginFollowUp("thread_message", "carry on")
+	_, err = c.BeginFollowUp("thread_message", "carry on", "")
 	require.NoError(t, err)
 	c.AbandonFollowUp("thread_message")
-	_, err = c.BeginFollowUp("thread_message", "carry on")
+	_, err = c.BeginFollowUp("thread_message", "carry on", "")
 	require.NoError(t, err)
 	render := sandbox.Attachment{Name: "teapot.png", MIME: "image/png", URL: "https://cdn.fake/image/teapot.png", Size: 3}
 	c.Observe(agent.ToolStarted{ID: "run-1", Tool: sandbox.ToolName, StartedAt: time.Now().UTC()})

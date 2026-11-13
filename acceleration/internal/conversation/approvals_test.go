@@ -18,7 +18,7 @@ func (s *DisplaySuite) TestAHeldCallAsksTheOwnerOnItsStepAndRunsOnceAllowed() {
 	s.Require().NoError(err)
 	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "crm__echo", StartedAt: time.Now().UTC()})
 
-	command, asked := c.AwaitApproval("employee", "call-1", `{"text":"secret plan"}`, allowEcho)
+	command, _, asked := c.AwaitApproval("employee", "call-1", `{"text":"secret plan"}`, allowEcho)
 
 	s.Require().True(asked)
 	s.Equal("command-a", command)
@@ -45,7 +45,7 @@ func (s *DisplaySuite) TestAHeldCallsQuestionIsWrittenToChat() {
 	s.Require().NoError(err)
 	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "crm__echo", StartedAt: time.Now().UTC()})
 
-	_, asked := c.AwaitApproval("employee", "call-1", "", allowEcho)
+	_, _, asked := c.AwaitApproval("employee", "call-1", "", allowEcho)
 	s.Require().True(asked)
 	saved(s.T(), c)
 
@@ -61,7 +61,7 @@ func (s *DisplaySuite) TestAShownCallWaitsOnTheStepItHas() {
 	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "crm__echo", StartedAt: time.Now().UTC()})
 	s.Require().Len(current(c).Parts, 1)
 
-	_, asked := c.AwaitApproval("employee", "call-1", "", allowEcho)
+	_, _, asked := c.AwaitApproval("employee", "call-1", "", allowEcho)
 
 	s.Require().True(asked)
 	s.Require().Len(current(c).Parts, 1)
@@ -75,7 +75,7 @@ func (s *DisplaySuite) TestAHeldCallsQuestionIsCutToTheTitlesLength() {
 	s.Require().NoError(err)
 	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "crm__echo", StartedAt: time.Now().UTC()})
 
-	_, asked := c.AwaitApproval("employee", "call-1", "", ToolApproval{Title: " Allow crm to run " + strings.Repeat("e", 100) + "? "})
+	_, _, asked := c.AwaitApproval("employee", "call-1", "", ToolApproval{Title: " Allow crm to run " + strings.Repeat("e", 100) + "? "})
 
 	s.Require().True(asked)
 	s.Equal("Allow crm to run "+strings.Repeat("e", 62)+"…", current(c).Parts[0].Approval.Title)
@@ -87,7 +87,7 @@ func (s *DisplaySuite) TestADeclinedHeldCallsStepIsCancelled() {
 	_, err := c.BeginCommand("command-a", "Tell Nash a joke on the crm", "")
 	s.Require().NoError(err)
 	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "crm__echo", StartedAt: time.Now().UTC()})
-	_, asked := c.AwaitApproval("employee", "call-1", "", allowEcho)
+	_, _, asked := c.AwaitApproval("employee", "call-1", "", allowEcho)
 	s.Require().True(asked)
 
 	c.Observe(agent.ToolApprovalDecided{ID: "call-1", Summary: "Not now"})
@@ -102,11 +102,11 @@ func (s *DisplaySuite) TestADeclinedHeldCallsStepIsCancelled() {
 // A scheduled task's reply is a follow-up of the owner's, so its held call is asked of them.
 func (s *DisplaySuite) TestAFollowUpsHeldCallIsAskedOfTheOwner() {
 	c := s.open("on_call")
-	_, err := c.BeginFollowUp("follow-up-a", "Remind me to tell Nash a joke")
+	_, err := c.BeginFollowUp("follow-up-a", "Remind me to tell Nash a joke", "")
 	s.Require().NoError(err)
 	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "crm__echo", StartedAt: time.Now().UTC()})
 
-	command, asked := c.AwaitApproval("employee", "call-1", "", allowEcho)
+	command, _, asked := c.AwaitApproval("employee", "call-1", "", allowEcho)
 
 	s.True(asked)
 	s.Equal("follow-up-a", command)
@@ -120,9 +120,9 @@ func (s *DisplaySuite) TestAHeldCallIsAskedOnlyOfTheOwnerForACallOfTheReply() {
 	s.Require().NoError(err)
 	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "crm__echo", StartedAt: time.Now().UTC()})
 
-	_, asked := c.AwaitApproval("someone-else", "call-1", "", allowEcho)
+	_, _, asked := c.AwaitApproval("someone-else", "call-1", "", allowEcho)
 	s.False(asked, "not the owner")
-	_, asked = c.AwaitApproval("employee", "call-2", "", allowEcho)
+	_, _, asked = c.AwaitApproval("employee", "call-2", "", allowEcho)
 	s.False(asked, "a call the reply did not make")
 	s.Empty(current(c).Parts)
 	s.False(c.AwaitsApproval("call-1"))
@@ -134,7 +134,7 @@ func (s *DisplaySuite) TestAHeldCallStopsWaitingWhenItsReplyEnds() {
 	_, err := c.BeginCommand("command-a", "Tell Nash a joke on the crm", "")
 	s.Require().NoError(err)
 	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "crm__echo", StartedAt: time.Now().UTC()})
-	_, asked := c.AwaitApproval("employee", "call-1", "", allowEcho)
+	_, _, asked := c.AwaitApproval("employee", "call-1", "", allowEcho)
 	s.Require().True(asked)
 
 	c.Cancel()
@@ -153,7 +153,7 @@ func (s *DisplaySuite) TestAHeldCallShowsLargeOrInvalidArgumentsAsAPreview() {
 	padded := strings.Repeat("\n", maxApprovalMessage+60) + `{"to":"x"`
 	for id, arguments := range map[string]string{"call-1": `{"text":`, "call-2": large, "call-3": padded} {
 		c.Observe(agent.ToolStarted{ID: id, Tool: "crm__echo", StartedAt: time.Now().UTC()})
-		_, asked := c.AwaitApproval("employee", id, arguments, allowEcho)
+		_, _, asked := c.AwaitApproval("employee", id, arguments, allowEcho)
 		s.Require().True(asked)
 	}
 
@@ -180,7 +180,7 @@ func (s *DisplaySuite) TestAnAnswerAfterTheReplyEndedSettlesNothing() {
 	_, err := c.BeginCommand("command-a", "Tell Nash a joke on the crm", "")
 	s.Require().NoError(err)
 	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "crm__echo", StartedAt: time.Now().UTC()})
-	_, asked := c.AwaitApproval("employee", "call-1", "", allowEcho)
+	_, _, asked := c.AwaitApproval("employee", "call-1", "", allowEcho)
 	s.Require().True(asked)
 
 	c.Cancel()

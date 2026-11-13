@@ -499,7 +499,7 @@ func (s *SessionSuite) TestAWorkersVideosAreNotRefusedForTheLimitOfATextItsFollo
 	s.Require().NoError(err)
 	s.True(sample)
 
-	_, err = worker.persisted.BeginFollowUp("running", "A follow-up")
+	_, err = worker.persisted.BeginFollowUp("running", "A follow-up", "")
 	s.Require().NoError(err)
 	_, err = worker.SampleVideos(s.ctx, "another", "")
 	s.ErrorIs(err, persistent.ErrResponseRunning, "a follow-up waits for the answer running as well")
