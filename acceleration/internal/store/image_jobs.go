@@ -47,7 +47,7 @@ type ImageJob struct {
 	CallID      string            `bun:"call_id,notnull"`
 	Region      string            `bun:"region,notnull"`
 	Target      string            `bun:"target,notnull"`
-	Tags        map[string]string `bun:"tags,type:jsonb"`
+	Tags        map[string]string `bun:"tags,type:jsonb,nullzero"`
 	Attribution json.RawMessage   `bun:"attribution,type:jsonb,notnull"`
 	Prompt      string            `bun:"prompt,notnull"`
 	AspectRatio string            `bun:"aspect_ratio,notnull"`
@@ -57,7 +57,7 @@ type ImageJob struct {
 	// NextAttemptAt is when the job is due; on a claimed row, the end of the claim's lease.
 	NextAttemptAt time.Time `bun:"next_attempt_at,notnull"`
 	// Picture is the uploaded picture once drawn, a sandbox.Attachment as JSON. Nil until then.
-	Picture    json.RawMessage `bun:"picture,type:jsonb"`
+	Picture    json.RawMessage `bun:"picture,type:jsonb,nullzero"`
 	Outcome    string          `bun:"outcome,notnull"`
 	CreatedAt  time.Time       `bun:"created_at,notnull"`
 	FinishedAt *time.Time      `bun:"finished_at"`

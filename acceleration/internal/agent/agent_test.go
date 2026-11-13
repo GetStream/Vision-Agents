@@ -23,7 +23,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -944,13 +943,9 @@ type AgentSuite struct {
 	// finds is what the agent may find out about now, when a test gives it a search
 	// provider.
 	finds *stubSearch
-	// drawer draws the pictures the agent is asked for, when a test gives it an image
-	// provider.
-	drawer *stubDrawer
-	// drawGate admits or refuses each picture's work, and drawStore records it, when a test
-	// gives the image router one.
-	drawGate  routing.Gate
-	drawStore *store.Store
+	// drawings is where the agent queues the pictures it is asked for, when a test gives it
+	// an image target.
+	drawings *drawQueue
 	// attribution is who the conversation's work is for.
 	attribution routing.Attribution
 	// guards screens what the agent may be asked, when a test gives it a policy.
@@ -1017,8 +1012,7 @@ func (s *AgentSuite) SetupTest() {
 	s.knows = nil
 	s.namespace = ""
 	s.finds = nil
-	s.drawer = nil
-	s.drawGate, s.drawStore = nil, nil
+	s.drawings = nil
 	s.attribution = routing.Attribution{}
 	s.guards = nil
 	s.subagent = nil
@@ -1128,16 +1122,16 @@ func (s *AgentSuite) joinText() {
 	if s.shelf != nil {
 		publish = s.shelf.publish
 	}
-	var drawing *imagerouter.Router
+	var draws Drawer
 	imageTarget := ""
-	if s.drawer != nil {
-		drawing = s.imageRouter()
-		imageTarget = "stub/draw"
+	if s.drawings != nil {
+		draws = s.drawings.queue
+		imageTarget = "image-fast"
 	}
 
 	agent, err := New(Options{
 		Text:               true,
-		Image:              drawing,
+		Draws:              draws,
 		ImageTarget:        imageTarget,
 		Sandbox:            box,
 		Publish:            publish,

@@ -663,7 +663,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	} else if requested.Call.Name == GenerateImageTool && a.draws() {
 		var said string
 		ran = true
-		said, files, err = a.generateImage(ctx, requested.Call)
+		said, err = a.generateImage(ctx, requested.Call)
 		parts = llm.TextParts(said)
 	} else if question := a.approvalQuestion(tool); question != "" {
 		parts = a.askApproval(requested.Call, question)

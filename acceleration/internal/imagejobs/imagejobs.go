@@ -122,17 +122,20 @@ type Options struct {
 	// Lease is how far a claim pushes a job's next attempt. Zero is Lease. Tests shorten it.
 	Lease time.Duration
 	// Poll is the shortest wait between looks while jobs are queued. Zero is defaultPoll.
-	Poll   time.Duration
-	Logger *slog.Logger
+	Poll time.Duration
+	// PostRetry is how long a job whose post failed waits. Zero is retryPost. Tests shorten it.
+	PostRetry time.Duration
+	Logger    *slog.Logger
 }
 
 // Service queues the pictures agents are asked for and, once started, draws and posts them.
 type Service struct {
-	store  *store.Store
-	images *imagerouter.Router
-	lease  time.Duration
-	poll   time.Duration
-	logger *slog.Logger
+	store     *store.Store
+	images    *imagerouter.Router
+	lease     time.Duration
+	poll      time.Duration
+	postRetry time.Duration
+	logger    *slog.Logger
 
 	// kick wakes the loop: a job was queued, or a slot freed.
 	kick chan struct{}
@@ -152,13 +155,16 @@ func New(options Options) (*Service, error) {
 	}
 	s := &Service{
 		store: options.Store, images: options.Images, lease: options.Lease, poll: options.Poll,
-		logger: options.Logger, kick: make(chan struct{}, 1), slots: make(chan struct{}, inFlight),
+		postRetry: options.PostRetry, logger: options.Logger, kick: make(chan struct{}, 1), slots: make(chan struct{}, inFlight),
 	}
 	if s.lease <= 0 {
 		s.lease = Lease
 	}
 	if s.poll <= 0 {
 		s.poll = defaultPoll
+	}
+	if s.postRetry <= 0 {
+		s.postRetry = retryPost
 	}
 	if s.logger == nil {
 		s.logger = slog.Default()
@@ -402,11 +408,11 @@ func (s *Service) post(log *slog.Logger, job store.ImageJob, state, text string,
 	}
 }
 
-// retry makes the job due again after retryPost.
+// retry makes the job due again after the post retry wait.
 func (s *Service) retry(log *slog.Logger, job store.ImageJob) {
 	writing, done := context.WithTimeout(context.WithoutCancel(s.ctx), recordTimeout)
 	defer done()
-	if _, err := s.store.RetryImageJob(writing, job, time.Now().Add(retryPost)); err != nil {
+	if _, err := s.store.RetryImageJob(writing, job, time.Now().Add(s.postRetry)); err != nil {
 		log.Error("could not make an image job due again; its lease runs out instead", "error", err)
 	}
 }

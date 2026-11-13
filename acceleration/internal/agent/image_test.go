@@ -4,74 +4,40 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"sync"
-	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
 
-// stubDrawer is an image provider with no model behind it: it draws a fixed picture, or fails
-// as the test says, and records what it was asked and how long it was given.
-type stubDrawer struct {
+// drawQueue stands in for the session's queue of pictures: it records what it was asked to
+// queue, or refuses as the test says.
+type drawQueue struct {
 	err error
 
-	mu       sync.Mutex
-	asked    []imagegen.Request
-	deadline time.Duration
+	mu     sync.Mutex
+	queued []DrawRequest
 }
 
-func (d *stubDrawer) Generate(ctx context.Context, request imagegen.Request) (imagegen.Result, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.asked = append(d.asked, request)
-	if until, ok := ctx.Deadline(); ok {
-		d.deadline = time.Until(until)
+func (q *drawQueue) queue(_ context.Context, request DrawRequest) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.err != nil {
+		return q.err
 	}
-	if d.err != nil {
-		return imagegen.Result{}, d.err
-	}
-	return imagegen.Result{Images: []imagegen.Image{{Data: []byte("png"), MediaType: "image/png", Width: 1024, Height: 1024}}}, nil
+	q.queued = append(q.queued, request)
+	return nil
 }
 
-func (d *stubDrawer) Start(context.Context) error { return nil }
-func (d *stubDrawer) Close() error                { return nil }
-func (d *stubDrawer) Provider() string            { return "stub" }
-func (d *stubDrawer) Model() string               { return "draw" }
-
-func (d *stubDrawer) requests() []imagegen.Request {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return append([]imagegen.Request(nil), d.asked...)
-}
-
-// imageRouter routes stub/draw to s.drawer.
-func (s *AgentSuite) imageRouter() *imagerouter.Router {
-	registry := imagerouter.NewRegistry()
-	registry.Register("stub", func(routing.Spec) (imagegen.Provider, error) { return s.drawer, nil })
-	router, err := imagerouter.New(imagerouter.Options{
-		Config: routing.ModalityConfig{Providers: []routing.ProviderConfig{{
-			Provider: "stub", Model: "draw", Languages: []string{"en"}, Tier: routing.LowLatency,
-			Price: routing.Price{PerImage: 0.04},
-		}}},
-		Registry: registry,
-		Gate:     s.drawGate,
-		Store:    s.drawStore,
-		Logger:   slog.New(slog.DiscardHandler),
-	})
-	s.Require().NoError(err)
-	s.T().Cleanup(router.Close)
-	return router
+func (q *drawQueue) requests() []DrawRequest {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return append([]DrawRequest(nil), q.queued...)
 }
 
 func drawCall(id, prompt string) llm.ToolCall {
-	return llm.ToolCall{ID: id, Name: GenerateImageTool, Arguments: fmt.Sprintf(`{"prompt":%q}`, prompt)}
+	return llm.ToolCall{ID: id, Name: GenerateImageTool, Arguments: fmt.Sprintf(`{"prompt":%q,"aspect_ratio":"16:9"}`, prompt)}
 }
 
 func (s *AgentSuite) offersDrawing() bool {
@@ -79,9 +45,10 @@ func (s *AgentSuite) offersDrawing() bool {
 	return offered
 }
 
-func (s *AgentSuite) TestAWrittenConversationWithAnImageTargetDrawsAndAttachesThePicture() {
-	s.drawer = &stubDrawer{}
-	s.shelf = &codeShelf{}
+func (s *AgentSuite) TestAPictureIsQueuedAndTheTurnIsAnsweredAtOnce() {
+	// A picture takes a minute or two; the turn ends now and the picture is posted when ready.
+	s.drawings = &drawQueue{}
+	s.attribution = routing.Attribution{APIKey: "key-1", UserID: "ana", SessionID: "session-1"}
 	s.joinText()
 	s.Require().True(s.offersDrawing())
 	s.NoError(s.agent.availableTools().Validate())
@@ -89,49 +56,38 @@ func (s *AgentSuite) TestAWrittenConversationWithAnImageTargetDrawsAndAttachesTh
 	ran := s.runsTool(drawCall("draw-1", "a yellow watering can"), 1)
 
 	s.Require().NoError(ran.Err)
-	s.Equal([]sandbox.Attachment{{Name: "picture-1.png", MIME: "image/png", URL: "https://cdn.example/picture-1.png", Size: 3}}, ran.Files)
-	s.Contains(ran.Result, "attached to your reply")
-	s.NotContains(ran.Result, "png", "the model is told about the picture, never handed it")
-	asked := s.drawer.requests()
-	s.Require().Len(asked, 1)
-	s.Equal("a yellow watering can", asked[0].Prompt)
-	s.Equal(1, asked[0].N, "one call is one picture")
+	s.Empty(ran.Files, "nothing is attached to this reply: the picture comes as its own message")
+	s.Contains(ran.Result, "being drawn")
+	s.Contains(ran.Result, "posted in this conversation")
+	queued := s.drawings.requests()
+	s.Require().Len(queued, 1)
+	s.Equal(DrawRequest{
+		ToolCallID: "draw-1", Prompt: "a yellow watering can", AspectRatio: "16:9", Target: "image-fast",
+		AgentID: s.agentID, Attribution: routing.Attribution{APIKey: "key-1", UserID: "ana", SessionID: "session-1"},
+	}, queued[0], "billed under the session that asked, once it is drawn")
 }
 
-func (s *AgentSuite) TestADrawIsGivenTheImageDeadlineNotTheCallersToolTimeout() {
-	// A picture takes one to two minutes; the 30 s a caller's tool gets would fail most.
-	s.drawer = &stubDrawer{}
-	s.shelf = &codeShelf{}
+func (s *AgentSuite) TestAPictureThatCouldNotBeQueuedIsAFailedCall() {
+	// The person would wait for a picture nobody is drawing.
+	s.drawings = &drawQueue{err: errors.New("postgres is down")}
 	s.joinText()
 
-	s.Require().NoError(s.runsTool(drawCall("draw-1", "a field"), 1).Err)
+	ran := s.runsTool(drawCall("draw-1", "a field"), 1)
 
-	s.drawer.mu.Lock()
-	given := s.drawer.deadline
-	s.drawer.mu.Unlock()
-	s.Greater(given, imagerouter.Deadline-10*time.Second)
-	s.LessOrEqual(given, imagerouter.Deadline)
+	s.Error(ran.Err)
+	s.NotContains(ran.Result, "being drawn")
 }
 
 func (s *AgentSuite) TestAnAgentWithoutAnImageTargetIsNotOfferedDrawing() {
-	s.shelf = &codeShelf{}
 	s.joinText()
 
 	s.False(s.offersDrawing())
 }
 
-func (s *AgentSuite) TestAConversationWithNowhereToPutAPictureIsNotOfferedDrawing() {
-	s.drawer = &stubDrawer{}
-	s.joinText()
-
-	s.False(s.offersDrawing(), "a picture nobody can see is paid for and lost")
-}
-
 func (s *AgentSuite) TestAnImageTargetReplacesACallersOwnGenerateImage() {
 	// The caller's tool is the workaround customers wrote before drawing was built in: it asked
 	// their own backend to draw, and needed a longer tool timeout to do it.
-	s.drawer = &stubDrawer{}
-	s.shelf = &codeShelf{}
+	s.drawings = &drawQueue{}
 	s.ownsTools("drawn by the caller")
 	s.tools.Tools = append(s.tools.Tools, harness.Tool{Name: GenerateImageTool, Description: "mine"})
 	s.joinText()
@@ -144,13 +100,11 @@ func (s *AgentSuite) TestAnImageTargetReplacesACallersOwnGenerateImage() {
 
 	ran := s.runsTool(drawCall("draw-1", "a field"), 1)
 	s.Require().NoError(ran.Err)
-	s.Len(ran.Files, 1)
-	s.Len(s.drawer.requests(), 1)
+	s.Len(s.drawings.requests(), 1)
 	s.Empty(s.runner.asked(), "the caller's own tool is not asked")
 }
 
 func (s *AgentSuite) TestWithoutAnImageTargetACallersOwnGenerateImageRunsUnchanged() {
-	s.shelf = &codeShelf{}
 	s.ownsTools("drawn by the caller")
 	s.tools.Tools = append(s.tools.Tools, harness.Tool{Name: GenerateImageTool, Description: "mine"})
 	s.joinText()
@@ -164,59 +118,8 @@ func (s *AgentSuite) TestWithoutAnImageTargetACallersOwnGenerateImageRunsUnchang
 	s.Len(s.runner.asked(), 1)
 }
 
-func (s *AgentSuite) TestAPictureTheSafetyFilterRefusedIsToldInWordsNotAsAFailure() {
-	// An error tells the model the tool broke, and it rewords the prompt to get past the filter.
-	s.drawer = &stubDrawer{err: imagegen.Fail(imagegen.ContentFiltered, true, errors.New("refused"))}
-	s.shelf = &codeShelf{}
-	s.joinText()
-
-	ran := s.runsTool(drawCall("draw-1", "something refused"), 1)
-
-	s.NoError(ran.Err)
-	s.Empty(ran.Files)
-	s.Contains(ran.Result, "safety filter refused")
-	s.Contains(ran.Result, "do not try again")
-	s.NotContains(ran.Result, didNotWork)
-}
-
-// refusingDraws refuses every picture's work with err, as a spent limit does.
-type refusingDraws struct{ err error }
-
-func (g refusingDraws) Admit(context.Context, routing.Owner) (routing.Admission, error) {
-	return routing.Admission{}, g.err
-}
-
-func (s *AgentSuite) TestASpentLimitIsToldInWordsAndDrawsNothing() {
-	// A failed tool reads as broken, and the model asks again: each try would be refused, and
-	// the person would hear nothing about why.
-	s.drawer = &stubDrawer{}
-	s.drawGate = refusingDraws{err: fmt.Errorf("policy: %w", policy.ErrBudgetSpent)}
-	s.shelf = &codeShelf{}
-	s.joinText()
-
-	ran := s.runsTool(drawCall("draw-1", "a field"), 1)
-
-	s.NoError(ran.Err)
-	s.Empty(ran.Files)
-	s.Contains(ran.Result, "spending limit")
-	s.Contains(ran.Result, "do not try again")
-	s.Empty(s.drawer.requests(), "nothing was asked of the provider")
-}
-
-func (s *AgentSuite) TestAProviderThatBrokeIsAFailedCall() {
-	s.drawer = &stubDrawer{err: imagegen.Fail(imagegen.ProviderFailed, true, errors.New("upstream 500"))}
-	s.shelf = &codeShelf{}
-	s.joinText()
-
-	ran := s.runsTool(drawCall("draw-1", "a field"), 1)
-
-	s.Error(ran.Err)
-	s.Empty(ran.Files)
-}
-
-func (s *AgentSuite) TestOneReplyDrawsAtMostFourPictures() {
-	s.drawer = &stubDrawer{}
-	s.shelf = &codeShelf{}
+func (s *AgentSuite) TestOneReplyQueuesAtMostFourPictures() {
+	s.drawings = &drawQueue{}
 	s.joinText()
 
 	for n := 1; n <= maxDrawsPerTurn+1; n++ {
@@ -226,11 +129,10 @@ func (s *AgentSuite) TestOneReplyDrawsAtMostFourPictures() {
 	}
 
 	ran := toolsRanIn(s.reported())
-	s.Len(s.drawer.requests(), maxDrawsPerTurn)
-	s.Empty(ran[maxDrawsPerTurn].Files)
+	s.Len(s.drawings.requests(), maxDrawsPerTurn)
 	s.Contains(ran[maxDrawsPerTurn].Result, "at most 4 pictures")
 
 	s.agent.runTool(harness.ToolRequested{TurnID: "next-reply", Call: drawCall("draw-next", "a field")})
 	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == maxDrawsPerTurn+2 }, "the tool never settled")
-	s.Len(s.drawer.requests(), maxDrawsPerTurn+1, "the next reply may draw again")
+	s.Len(s.drawings.requests(), maxDrawsPerTurn+1, "the next reply may draw again")
 }

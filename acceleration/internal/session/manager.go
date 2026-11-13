@@ -24,7 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/imagejobs"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -97,9 +97,9 @@ type ManagerOptions struct {
 	Knowledge *metered.Knowledge
 	// Search is optional, and is what every session finds out what is true now with.
 	Search *searchrouter.Router
-	// Image is optional, and is what a session whose config names an image target draws
-	// pictures with.
-	Image *imagerouter.Router
+	// Drawings is optional, and is where a session whose config names an image target queues
+	// the pictures it is asked for, to be drawn after the turn and posted into its conversation.
+	Drawings *imagejobs.Service
 	// Classifier is optional, and is what a session with a guardrail asks whether a turn
 	// may be answered. Without it a session declaring a guardrail that needs one is
 	// refused rather than held unguarded.
@@ -885,7 +885,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 			KnowledgeNamespace: spec.KnowledgeNamespace,
 			Search:             m.options.Search,
 			SearchTarget:       spec.SearchTarget,
-			Image:              m.options.Image,
+			Draws:              m.drawer(spec, conv),
 			ImageTarget:        spec.ImageTarget,
 			Guardrail:          screening,
 			SpeculativeReplies: m.options.SpeculativeReplies,
@@ -2483,6 +2483,23 @@ func (m *Manager) Conversations() (*persistent.Service, error) {
 		m.conversations = service
 	}
 	return m.conversations, nil
+}
+
+// drawer queues the pictures a session is asked for into its conversation, as the agent's
+// messages. Nil, which offers no generate_image, without a deployment that draws, a
+// conversation kept in a channel to post into, or an image target.
+func (m *Manager) drawer(spec Spec, conv *persistent.Conversation) agent.Drawer {
+	if m.options.Drawings == nil || conv == nil || spec.ImageTarget == "" {
+		return nil
+	}
+	return func(ctx context.Context, request agent.DrawRequest) error {
+		return m.options.Drawings.Queue(ctx, imagejobs.Request{
+			CustomerID: spec.CustomerID, StreamApp: conv.StreamApp(), CID: conv.CID(), AgentUser: conv.Agent(),
+			ToolCallID: request.ToolCallID, AgentID: request.AgentID, CallID: request.CallID, Region: request.Region,
+			Target: request.Target, Tags: request.Tags, Attribution: request.Attribution,
+			Prompt: request.Prompt, AspectRatio: request.AspectRatio,
+		})
+	}
 }
 
 // publisher is where files the subagent's code hands back are shown: the conversation's
