@@ -101,6 +101,27 @@ func (s *AppHooksSuite) TestAMessageNobodyAnsweredIsReadWithTheNextMention() {
 	s.Equal(1, s.count(input, asked), "the message answered was handed twice: %+v", input)
 }
 
+// A message written after Anya's mention and before its session reads the channel, as when
+// the session waits for the channel's turn, is no message nobody answered: Anya's mention is
+// handed once, as the message answered, and Ben's later words not at all.
+func (s *AppHooksSuite) TestAMessageWrittenAfterTheMentionIsNotReadBeforeIt() {
+	s.forgetNoted()
+	s.holdsType("callouts", memberWrites)
+	config := s.mentionedIn("callouts")
+	channel := s.emptyChannel("callouts")
+	asked := "@" + config.Name + " I'm sick, I can't come at 6"
+	mention := s.writes("callouts", channel, "anya", asked)
+	later := "ok noted " + s.utils.uuid()
+	s.writes("callouts", channel, "ben", later)
+
+	s.delivers("callouts", channel, mention, "anya", asked, "")
+
+	s.Require().NotNil(s.replyIn("callouts:"+channel), "the mention was not answered")
+	request, _ := s.askedWith(asked)
+	s.Equal(1, s.count(request.Input, asked), "the message answered was handed twice: %+v", request.Input)
+	s.Zero(s.count(request.Input, later), "a message written after the mention was read before it: %+v", request.Input)
+}
+
 // A config answering only its mentions in one type answers every message in another it names
 // with no answer, as before.
 func (s *AppHooksSuite) TestATypeWithNoAnswerAnswersEveryMessageBesideAMentionsOnlyOne() {
@@ -136,10 +157,22 @@ func (s *AppHooksSuite) emptyChannel(channelType string) string {
 // says writes text in channelType:channel as the user given and delivers its message.new, with
 // mentioned_users as given (raw JSON, none when empty), under the id Stream stored it by.
 func (s *AppHooksSuite) says(channelType, channel, user, text, mentioned string) {
+	s.delivers(channelType, channel, s.writes(channelType, channel, user, text), user, text, mentioned)
+}
+
+// writes stores text in channelType:channel as the user given, delivering no message.new, and
+// is the id Stream stored it by.
+func (s *AppHooksSuite) writes(channelType, channel, user, text string) string {
 	id := "message-" + s.utils.uuid()
 	_, err := s.chat.Client.Chat().SendMessage(context.Background(), channelType, channel,
 		&getstream.SendMessageRequest{Message: getstream.MessageRequest{ID: &id, Text: &text, UserID: &user}})
 	s.Require().NoError(err)
+	return id
+}
+
+// delivers the message.new of the message id the user wrote in channelType:channel, with
+// mentioned_users as given (raw JSON, none when empty).
+func (s *AppHooksSuite) delivers(channelType, channel, id, user, text, mentioned string) {
 	listed := ""
 	if mentioned != "" {
 		listed = `, "mentioned_users": ` + mentioned
