@@ -324,11 +324,16 @@ export class AgentChat<M extends AgentChatMessage = AgentChatMessage> {
   /**
    * Answers a tool call the conversation shows waiting for the person, such as an approval card's
    * Allow or Not now. The call is read from the loaded messages, so one asked before the session
-   * was opened here, after a restart or on another device, is answered too.
+   * was opened here, after a restart or on another device, is answered too. Rejects when neither
+   * the session nor a loaded message has the call waiting, so the card can offer to try again.
    */
   async decide(toolCallId: string, answer: { allowed: boolean; summary?: string }): Promise<void> {
     const session = await this.session();
-    session.decide(toolCallId, { ...answer, ...callShown(this.state.getLatestValue().messages, toolCallId) });
+    const shown = callShown(this.state.getLatestValue().messages, toolCallId);
+    if (!shown.call && !session.approvals.some((request) => request.id === toolCallId)) {
+      throw new Error(`No loaded message shows the tool call ${toolCallId} waiting for an answer`);
+    }
+    session.decide(toolCallId, { ...answer, ...shown });
   }
 
   /** Loads the messages before the oldest one loaded. Rejects when they couldn't load. */

@@ -209,6 +209,8 @@ export class Session {
   /** Aborts when the socket ends, which stops even a call that asked to be held. */
   private readonly ending = new AbortController();
   private readonly asking = new Map<string, { request: ToolApprovalRequest; frame: Frame }>();
+  /** The calls answered here, so answering one shown from the conversation again sends nothing. */
+  private readonly answered = new Set<string>();
   private readonly finished: Promise<void>;
   private ended = false;
   private stopped = false;
@@ -367,6 +369,7 @@ export class Session {
       ...ids,
     });
     this.asking.delete(id);
+    this.answered.add(id);
     this.approvalsChanged();
     if (answer.allowed) {
       void this.runTool(waiting.frame);
@@ -381,21 +384,34 @@ export class Session {
   }
 
   /**
-   * Answers a call that never reached this socket, from what the conversation shows of it. The
-   * router settles a client call only with its result, so a declined one is answered with the
-   * same error a waiting one gets, and an allowed one is run here when it is one of this
-   * session's tools.
+   * Answers a call that never reached this socket, from what the conversation shows of it, once.
+   * The router settles a client call only with its result, so a declined one is answered with
+   * the same error a waiting one gets, and an allowed one of this session's tools is run here,
+   * or failed when the conversation left out its arguments, so the model isn't left waiting.
    */
   private decideShown(id: string, call: NonNullable<ToolDecision["call"]>, { allowed, summary }: ToolDecision): void {
+    if (this.answered.has(id)) {
+      return;
+    }
     const ids = {
       ...(call.requestId ? { request_id: call.requestId } : {}),
       ...(call.turnId ? { turn_id: call.turnId } : {}),
     };
     this.held().send({ type: "tool_approval", tool_call_id: id, allowed, ...(summary ? { summary } : {}), ...ids });
+    this.answered.add(id);
     if (!allowed) {
       this.held().send({ type: "tool_result", tool_call_id: id, ...ids, error: "The person declined this call." });
-    } else if (call.arguments !== undefined && this.tools?.has(call.name)) {
-      void this.runTool({ type: "tool_call", id, name: call.name, arguments: call.arguments, ...ids });
+    } else if (this.tools?.has(call.name)) {
+      if (call.arguments === undefined) {
+        this.held().send({
+          type: "tool_result",
+          tool_call_id: id,
+          ...ids,
+          error: "The call's arguments were too long for the conversation to keep, so it could not run.",
+        });
+      } else {
+        void this.runTool({ type: "tool_call", id, name: call.name, arguments: call.arguments, ...ids });
+      }
     }
   }
 

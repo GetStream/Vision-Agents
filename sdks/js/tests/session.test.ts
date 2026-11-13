@@ -797,15 +797,51 @@ describe("Session", () => {
         await session.close();
       });
 
-      it("allowed with its arguments too long for the conversation to show, answers it and runs nothing", async () => {
+      it("allowed with its arguments too long for the conversation to show, tells the model it couldn't run", async () => {
         const [session, connection] = await opened(refunds());
 
         session.decide("call_1", { allowed: true, call: { name: "issue_refund", requestId: "m1", turnId: "t1" } });
-        session.say("still there?");
 
         assert.equal((await connection.next()).type, "tool_approval");
-        assert.deepEqual(await connection.next(), { type: "say", text: "still there?" });
+        assert.deepEqual(await connection.next(), {
+          type: "tool_result",
+          tool_call_id: "call_1",
+          request_id: "m1",
+          turn_id: "t1",
+          error: "The call's arguments were too long for the conversation to keep, so it could not run.",
+        });
         assert.deepEqual(ran, []);
+        await session.close();
+      });
+
+      it("answered twice, such as a double tap on Allow, sends one answer and runs once", async () => {
+        const [session, connection] = await opened(refunds());
+
+        session.decide("call_1", { allowed: true, call: shown });
+        session.decide("call_1", { allowed: true, call: shown });
+        session.decide("call_1", { allowed: false, call: shown });
+
+        assert.equal((await connection.next()).type, "tool_approval");
+        assert.equal((await connection.next()).type, "tool_result");
+        session.say("still there?");
+        assert.deepEqual(await connection.next(), { type: "say", text: "still there?" });
+        assert.deepEqual(ran, ["A-1042"]);
+        await session.close();
+      });
+
+      it("sends nothing for one it already answered from its own socket", async () => {
+        const [session, connection] = await opened(refunds());
+
+        connection.send(refundCall);
+        await waiting(session);
+        session.decide("call_1", { allowed: true });
+        assert.equal((await connection.next()).type, "tool_approval");
+        assert.equal((await connection.next()).type, "tool_result");
+
+        session.decide("call_1", { allowed: true, call: shown });
+        session.say("still there?");
+        assert.deepEqual(await connection.next(), { type: "say", text: "still there?" });
+        assert.deepEqual(ran, ["A-1042"]);
         await session.close();
       });
     });

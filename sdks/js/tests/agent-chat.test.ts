@@ -39,6 +39,7 @@ class FakeSession {
   failChat: Error | undefined;
   readonly asked: { text: string; options: CreateResponseOptions }[] = [];
   readonly decided: { id: string; answer: ToolDecision }[] = [];
+  approvals: { id: string }[] = [];
   readonly state = store<{ kind: string; skills: readonly string[] }>({ kind: "idle", skills: [] });
   readonly conversation = store({ failure: "", failureContext: "", failureAt: 0 });
   readonly responses = {
@@ -291,7 +292,7 @@ describe("AgentChat", () => {
       });
     });
 
-    it("passes no call for one the conversation no longer shows waiting", async () => {
+    it("rejects, answering nothing, for a call no loaded message shows waiting, so the card can try again", async () => {
       const channel = new ChannelV9();
       channel.latest = [
         {
@@ -303,6 +304,18 @@ describe("AgentChat", () => {
       const { open, sessions } = opener(channel);
       const chat = new AgentChat<Message>({ sessionId: "s1", open });
       await chat.prepare();
+
+      await assert.rejects(chat.decide("call_1", { allowed: true }), /call_1/);
+      await assert.rejects(chat.decide("call_9", { allowed: true }), /call_9/);
+      assert.deepEqual(sessions[0]?.decided, []);
+    });
+
+    it("answers a call its session holds before the channel shows it", async () => {
+      const channel = new ChannelV9();
+      const { open, sessions } = opener(channel);
+      const chat = new AgentChat<Message>({ sessionId: "s1", open });
+      await chat.prepare();
+      sessions[0]!.approvals = [{ id: "call_1" }];
 
       await chat.decide("call_1", { allowed: true });
 
