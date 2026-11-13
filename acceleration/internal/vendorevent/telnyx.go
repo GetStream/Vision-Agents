@@ -1,6 +1,7 @@
 package vendorevent
 
-// VendorTelnyx is the vendor label of Telnyx's events.
+// VendorTelnyx is the vendor label of Telnyx's events. It is also the vendor name a 10DLC registrar
+// stores (dlc.Registrar.Name()), so changing it orphans stored rows.
 const VendorTelnyx = "telnyx"
 
 // telnyxLevels is every Telnyx event type the router names, with its level. A deleted number
