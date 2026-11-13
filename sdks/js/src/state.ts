@@ -64,6 +64,7 @@ export class ConversationState {
         break;
       case "responding":
       case "response_delta":
+      case "ui_delta":
         this.change(snapshots.responding);
         break;
       case "responded":

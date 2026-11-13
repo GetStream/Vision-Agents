@@ -15,6 +15,7 @@ export {
   SKILLS_DIR,
   SKILL_FILE,
   loadFolder,
+  parseBlueprints,
   parseDeclaration,
   parsePages,
   parseSimulations,

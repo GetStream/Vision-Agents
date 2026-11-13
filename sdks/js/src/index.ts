@@ -134,9 +134,24 @@ export {
 } from "./tools.js";
 
 export { LiveReasoning } from "./reasoning.js";
+export { LiveUI } from "./live-ui.js";
+export {
+  compileUIPrompt,
+  uiPascalName,
+  validateOpenUIProgram,
+  type UIBlueprint,
+  type UIDeclaration,
+  type UIPortableComponent,
+} from "./ui-catalog.js";
 
 export { ConversationState, type AgentState, type ConversationSnapshot } from "./state.js";
-export { Conversation, type ConversationRecord, type Turn } from "./conversation.js";
+export {
+  Conversation,
+  mergeOpenUIStatements,
+  type ConversationRecord,
+  type Turn,
+  type TurnUI,
+} from "./conversation.js";
 
 export { CameraFrames, NoFrames, type CameraFrame } from "./frames.js";
 
