@@ -277,6 +277,20 @@ func (s *DLCSuite) TestACampaignTheVendorRejectedIsCountedOnce() {
 	s.Equal(1, lines)
 }
 
+// A rejection the hook missed is found by the poller, and it counts the same.
+// Catches the count made only on the hook's report.
+func (s *DLCSuite) TestARejectionThePollerFindsIsCountedOnce() {
+	id, campaign := s.pendingWithTheVendor()
+	before := campaignsFailed()
+	s.registry.set(campaign, "MNO_REJECTED")
+	s.registrar10DLC.Poll(context.Background())
+	s.registrar10DLC.Poll(context.Background())
+	var rejected UseCase
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/phone/use-cases/"+id, nil, &rejected))
+	s.Equal(UseCaseStatus(dlc.VendorRejected), rejected.Status)
+	s.Equal(1.0, campaignsFailed()-before)
+}
+
 // Telnyx retries a report and the poller reads the same campaign, so several refreshes can
 // find the use case pending at once; only the one whose move is stored counts. Catches the
 // count made before the move, or after a move another refresh won.
