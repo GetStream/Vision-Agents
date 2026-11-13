@@ -88,18 +88,61 @@ def sync_detailed(
 ) -> Response[ErrorResponse | SessionPage]:
     """List or search the caller's sessions
 
-     Three queries are supported, each over the sessions still running and the ones that ended:
+     Lists the caller's sessions, the ones still running and the ones that ended, narrowed by a filter
+    and in the order of a sort.
 
-    - every session, sorted by `updated_at`
-    - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
-    - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+    A filter is an object of fields. The keys of one object are ANDed, and `$and` and `$or` each take a
+    list of filters, so conditions combine and nest:
 
-    `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `created_at` and `custom` narrow
-    any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask
-    for, and an anonymous caller who named nobody gets none.
+    - `project_id`: a value, `{"$eq": value}` or `{"$in": [values]}`
+    - `agent`: a value or `{"$eq": value}`, the agent name the session was opened against
+    - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
+    - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side
+    caller's only
+    - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
 
-    The search reads what a person named the conversation, not what was said in it. There is no total:
-    counting every conversation costs more than the page.
+    Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or`
+    take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30
+    field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside
+    `$or`; `user_id` is placed the same way.
+
+    Every session, pinned first:
+
+    ```json
+    {"sort": [{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": -1}]}
+    ```
+
+    One agent's sessions in either of two projects:
+
+    ```json
+    {"filter": {"agent": "support", "$or": [{"project_id": "health"}, {"project_id": "billing"}]}}
+    ```
+
+    A search within one project:
+
+    ```json
+    {"filter": {"text": {"$q": "refund"}, "project_id": "billing"}}
+    ```
+
+    A backend's badly reviewed sessions and everything in two projects, the lowest score first:
+
+    ```json
+    {"filter": {"$or": [{"review_score": {"$lte": 2}}, {"project_id": {"$in": ["vip", "pilot"]}}]},
+    "sort": [{"field": "review_score", "direction": 1}]}
+    ```
+
+    `sort` is `last_message_at` (the default, descending: when the agent last answered, or when the
+    session began), `pinned` followed by `last_message_at`, `review_score` for a server-side caller,
+    with the sessions nobody reviewed last, or `relevance`, which is how a `text` search is sorted and
+    the only way it is. A session is pinned and unpinned by updating it.
+
+    A backend gets its customer's sessions; an end user gets their own, whatever the filter says: an
+    `$or` chooses among the sessions the caller may see and never adds to them. An anonymous caller who
+    named nobody gets none.
+
+    The search reads what a person named the conversation, not what was said in it. Pages are followed
+    by `next_cursor`, sent back with the same filter and sort. There is no total: counting every
+    conversation costs more than the page.
 
     Args:
         body (SessionQuery | Unset):
@@ -130,18 +173,61 @@ def sync(
 ) -> ErrorResponse | SessionPage | None:
     """List or search the caller's sessions
 
-     Three queries are supported, each over the sessions still running and the ones that ended:
+     Lists the caller's sessions, the ones still running and the ones that ended, narrowed by a filter
+    and in the order of a sort.
 
-    - every session, sorted by `updated_at`
-    - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
-    - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+    A filter is an object of fields. The keys of one object are ANDed, and `$and` and `$or` each take a
+    list of filters, so conditions combine and nest:
 
-    `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `created_at` and `custom` narrow
-    any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask
-    for, and an anonymous caller who named nobody gets none.
+    - `project_id`: a value, `{"$eq": value}` or `{"$in": [values]}`
+    - `agent`: a value or `{"$eq": value}`, the agent name the session was opened against
+    - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
+    - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side
+    caller's only
+    - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
 
-    The search reads what a person named the conversation, not what was said in it. There is no total:
-    counting every conversation costs more than the page.
+    Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or`
+    take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30
+    field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside
+    `$or`; `user_id` is placed the same way.
+
+    Every session, pinned first:
+
+    ```json
+    {"sort": [{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": -1}]}
+    ```
+
+    One agent's sessions in either of two projects:
+
+    ```json
+    {"filter": {"agent": "support", "$or": [{"project_id": "health"}, {"project_id": "billing"}]}}
+    ```
+
+    A search within one project:
+
+    ```json
+    {"filter": {"text": {"$q": "refund"}, "project_id": "billing"}}
+    ```
+
+    A backend's badly reviewed sessions and everything in two projects, the lowest score first:
+
+    ```json
+    {"filter": {"$or": [{"review_score": {"$lte": 2}}, {"project_id": {"$in": ["vip", "pilot"]}}]},
+    "sort": [{"field": "review_score", "direction": 1}]}
+    ```
+
+    `sort` is `last_message_at` (the default, descending: when the agent last answered, or when the
+    session began), `pinned` followed by `last_message_at`, `review_score` for a server-side caller,
+    with the sessions nobody reviewed last, or `relevance`, which is how a `text` search is sorted and
+    the only way it is. A session is pinned and unpinned by updating it.
+
+    A backend gets its customer's sessions; an end user gets their own, whatever the filter says: an
+    `$or` chooses among the sessions the caller may see and never adds to them. An anonymous caller who
+    named nobody gets none.
+
+    The search reads what a person named the conversation, not what was said in it. Pages are followed
+    by `next_cursor`, sent back with the same filter and sort. There is no total: counting every
+    conversation costs more than the page.
 
     Args:
         body (SessionQuery | Unset):
@@ -167,18 +253,61 @@ async def asyncio_detailed(
 ) -> Response[ErrorResponse | SessionPage]:
     """List or search the caller's sessions
 
-     Three queries are supported, each over the sessions still running and the ones that ended:
+     Lists the caller's sessions, the ones still running and the ones that ended, narrowed by a filter
+    and in the order of a sort.
 
-    - every session, sorted by `updated_at`
-    - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
-    - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+    A filter is an object of fields. The keys of one object are ANDed, and `$and` and `$or` each take a
+    list of filters, so conditions combine and nest:
 
-    `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `created_at` and `custom` narrow
-    any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask
-    for, and an anonymous caller who named nobody gets none.
+    - `project_id`: a value, `{"$eq": value}` or `{"$in": [values]}`
+    - `agent`: a value or `{"$eq": value}`, the agent name the session was opened against
+    - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
+    - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side
+    caller's only
+    - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
 
-    The search reads what a person named the conversation, not what was said in it. There is no total:
-    counting every conversation costs more than the page.
+    Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or`
+    take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30
+    field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside
+    `$or`; `user_id` is placed the same way.
+
+    Every session, pinned first:
+
+    ```json
+    {"sort": [{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": -1}]}
+    ```
+
+    One agent's sessions in either of two projects:
+
+    ```json
+    {"filter": {"agent": "support", "$or": [{"project_id": "health"}, {"project_id": "billing"}]}}
+    ```
+
+    A search within one project:
+
+    ```json
+    {"filter": {"text": {"$q": "refund"}, "project_id": "billing"}}
+    ```
+
+    A backend's badly reviewed sessions and everything in two projects, the lowest score first:
+
+    ```json
+    {"filter": {"$or": [{"review_score": {"$lte": 2}}, {"project_id": {"$in": ["vip", "pilot"]}}]},
+    "sort": [{"field": "review_score", "direction": 1}]}
+    ```
+
+    `sort` is `last_message_at` (the default, descending: when the agent last answered, or when the
+    session began), `pinned` followed by `last_message_at`, `review_score` for a server-side caller,
+    with the sessions nobody reviewed last, or `relevance`, which is how a `text` search is sorted and
+    the only way it is. A session is pinned and unpinned by updating it.
+
+    A backend gets its customer's sessions; an end user gets their own, whatever the filter says: an
+    `$or` chooses among the sessions the caller may see and never adds to them. An anonymous caller who
+    named nobody gets none.
+
+    The search reads what a person named the conversation, not what was said in it. Pages are followed
+    by `next_cursor`, sent back with the same filter and sort. There is no total: counting every
+    conversation costs more than the page.
 
     Args:
         body (SessionQuery | Unset):
@@ -207,18 +336,61 @@ async def asyncio(
 ) -> ErrorResponse | SessionPage | None:
     """List or search the caller's sessions
 
-     Three queries are supported, each over the sessions still running and the ones that ended:
+     Lists the caller's sessions, the ones still running and the ones that ended, narrowed by a filter
+    and in the order of a sort.
 
-    - every session, sorted by `updated_at`
-    - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
-    - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+    A filter is an object of fields. The keys of one object are ANDed, and `$and` and `$or` each take a
+    list of filters, so conditions combine and nest:
 
-    `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `created_at` and `custom` narrow
-    any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask
-    for, and an anonymous caller who named nobody gets none.
+    - `project_id`: a value, `{"$eq": value}` or `{"$in": [values]}`
+    - `agent`: a value or `{"$eq": value}`, the agent name the session was opened against
+    - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
+    - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side
+    caller's only
+    - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
 
-    The search reads what a person named the conversation, not what was said in it. There is no total:
-    counting every conversation costs more than the page.
+    Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or`
+    take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30
+    field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside
+    `$or`; `user_id` is placed the same way.
+
+    Every session, pinned first:
+
+    ```json
+    {"sort": [{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": -1}]}
+    ```
+
+    One agent's sessions in either of two projects:
+
+    ```json
+    {"filter": {"agent": "support", "$or": [{"project_id": "health"}, {"project_id": "billing"}]}}
+    ```
+
+    A search within one project:
+
+    ```json
+    {"filter": {"text": {"$q": "refund"}, "project_id": "billing"}}
+    ```
+
+    A backend's badly reviewed sessions and everything in two projects, the lowest score first:
+
+    ```json
+    {"filter": {"$or": [{"review_score": {"$lte": 2}}, {"project_id": {"$in": ["vip", "pilot"]}}]},
+    "sort": [{"field": "review_score", "direction": 1}]}
+    ```
+
+    `sort` is `last_message_at` (the default, descending: when the agent last answered, or when the
+    session began), `pinned` followed by `last_message_at`, `review_score` for a server-side caller,
+    with the sessions nobody reviewed last, or `relevance`, which is how a `text` search is sorted and
+    the only way it is. A session is pinned and unpinned by updating it.
+
+    A backend gets its customer's sessions; an end user gets their own, whatever the filter says: an
+    `$or` chooses among the sessions the caller may see and never adds to them. An anonymous caller who
+    named nobody gets none.
+
+    The search reads what a person named the conversation, not what was said in it. Pages are followed
+    by `next_cursor`, sent back with the same filter and sort. There is no total: counting every
+    conversation costs more than the page.
 
     Args:
         body (SessionQuery | Unset):

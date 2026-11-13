@@ -309,5 +309,5 @@ func (s *SessionOwnershipSuite) titled(title string) CreateSessionRequest {
 
 // searchingFor is a query for the sessions whose title holds the words.
 func (s *SessionOwnershipSuite) searchingFor(words string) SessionQuery {
-	return SessionQuery{Filter: &SessionFilter{Text: &TextMatch{Q: words}}}
+	return SessionQuery{Filter: sessionFilter(map[string]any{"text": map[string]any{"$q": words}})}
 }

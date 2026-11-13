@@ -756,7 +756,7 @@ class TestSyncAgent:
                 "floor_control: {model: stream/chorus-asr}\n",
                 {"model": "stream/chorus-asr"},
             ),
-            # The default flow controller again.
+            # No choice again, which the router's default rules.
             ("floor_control: {}\n", {}),
         ],
     )

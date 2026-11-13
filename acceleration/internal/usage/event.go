@@ -89,7 +89,8 @@ type Event struct {
 	Success   bool              `json:"success"`
 	ErrorCode string            `json:"error_code,omitempty"`
 	Tags      map[string]string `json:"tags,omitempty"`
-	// Source names the producer, for finding where an event came from: "router/<shard>/<pod>".
+	// Source names the producer, for finding where an event came from: "router/<shard>/<pod>", or
+	// "job/<shard>/<pod>" for a job.
 	Source string `json:"source"`
 }
 

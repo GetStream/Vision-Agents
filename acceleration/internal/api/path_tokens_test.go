@@ -1,0 +1,250 @@
+//go:build integration
+
+package api
+
+import (
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/getsentry/sentry-go"
+	"github.com/go-chi/chi/v5"
+	"github.com/stretchr/testify/suite"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+)
+
+// PathTokensSuite reads what the router's log and spans say of routes whose secret is in the path.
+type PathTokensSuite struct {
+	RouterSuite
+	logged *lockedLog
+	spans  *tracetest.SpanRecorder
+}
+
+// Not parallel: the tracer provider is process-wide, and another suite installing its own
+// while this one builds its handler would take this suite's spans.
+func TestPathTokens(t *testing.T) {
+	suite.Run(t, new(PathTokensSuite))
+}
+
+func (s *PathTokensSuite) SetupSuite() {
+	s.logged = &lockedLog{}
+	s.logs = s.logged
+	// Installed before the harness: otelhttp takes the provider when the handler is built.
+	s.spans = tracetest.NewSpanRecorder()
+	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(s.spans)))
+	s.RouterSuite.SetupSuite()
+}
+
+func (s *PathTokensSuite) SetupTest() {
+	s.useFixture("standard")
+}
+
+func (s *PathTokensSuite) requireLogged(want string) {
+	s.Require().Eventually(func() bool { return strings.Contains(s.logged.String(), want) },
+		5*time.Second, 20*time.Millisecond, want)
+}
+
+func (s *PathTokensSuite) TestATokenRouteIsLoggedWithItsTokenTakenOut() {
+	for _, route := range []struct{ method, prefix string }{
+		{http.MethodGet, "/v1/phone/answer/"},
+		{http.MethodPost, "/v1/phone/answer/"},
+		{http.MethodPost, "/v1/phone/status/"},
+		{http.MethodPost, "/v1/phone/machine/"},
+		{http.MethodPost, "/v1/connectors/mcp-events/"},
+		{http.MethodGet, "/v1/agents/channels/hooks/"},
+		{http.MethodPost, "/v1/agents/channels/hooks/"},
+	} {
+		token := s.utils.uuid()
+		before := strings.Count(s.logged.String(), "path="+route.prefix+"{token}")
+		s.unauthenticatedClient.do(route.method, route.prefix+token, nil, nil)
+
+		// The same line is logged for each method of a route, so wait for this request's own.
+		line := "path=" + route.prefix + "{token}"
+		want := before + 1
+		s.Require().Eventually(func() bool { return strings.Count(s.logged.String(), line) >= want },
+			5*time.Second, 20*time.Millisecond, line)
+		s.NotContains(s.logged.String(), token)
+	}
+}
+
+func (s *PathTokensSuite) TestATokenRouteSpanHoldsNoToken() {
+	for _, route := range []struct{ method, prefix string }{
+		{http.MethodGet, "/v1/phone/answer/"},
+		{http.MethodPost, "/v1/phone/answer/"},
+		{http.MethodPost, "/v1/phone/status/"},
+		{http.MethodPost, "/v1/phone/machine/"},
+		{http.MethodPost, "/v1/connectors/mcp-events/"},
+		{http.MethodGet, "/v1/agents/channels/hooks/"},
+		{http.MethodPost, "/v1/agents/channels/hooks/"},
+	} {
+		token := s.utils.uuid()
+		s.spans.Reset()
+		s.unauthenticatedClient.do(route.method, route.prefix+token, nil, nil)
+
+		var path string
+		s.Require().Eventually(func() bool {
+			for _, span := range s.spans.Ended() {
+				if span.SpanKind() != trace.SpanKindServer {
+					continue
+				}
+				for _, attr := range span.Attributes() {
+					if attr.Key == "url.path" {
+						path = attr.Value.Emit()
+					}
+				}
+			}
+			return path != ""
+		}, 5*time.Second, 20*time.Millisecond, route.prefix)
+		s.Equal(route.prefix+"{token}", path)
+
+		for _, span := range s.spans.Ended() {
+			s.NotContains(span.Name(), token)
+			for _, attr := range span.Attributes() {
+				s.NotContains(attr.Value.Emit(), token, attr.Key)
+			}
+		}
+	}
+}
+
+func (s *PathTokensSuite) TestATokenSentWithAMethodTheRouteDoesNotServeIsStillTakenOut() {
+	token := s.utils.uuid()
+
+	s.unauthenticatedClient.do(http.MethodGet, "/v1/phone/status/"+token, nil, nil)
+
+	s.requireLogged("path=/v1/phone/status/{token}")
+	s.NotContains(s.logged.String(), token)
+}
+
+func (s *PathTokensSuite) TestATokenPatternIsPreferredOverAnotherMethodsPattern() {
+	// The real routes never put a token-less pattern for the same path under another method.
+	routes := chi.NewRouter()
+	routes.Get("/v1/phone/{kind}/{id}", func(http.ResponseWriter, *http.Request) {})
+	routes.Post("/v1/phone/status/{token}", func(http.ResponseWriter, *http.Request) {})
+	token := s.utils.uuid()
+
+	path := loggedPath(routes, httptest.NewRequest(http.MethodPut, "/v1/phone/status/"+token, nil))
+
+	s.Equal("/v1/phone/status/{token}", path)
+}
+
+func (s *PathTokensSuite) TestAPanickingTokenRouteIsLoggedWithItsTokenTakenOut() {
+	routes := chi.NewRouter()
+	routes.Post("/v1/phone/status/{token}", func(http.ResponseWriter, *http.Request) { panic("boom") })
+	logged := &lockedLog{}
+	server := &Server{logger: slog.New(slog.NewTextHandler(logged, nil))}
+	token := s.utils.uuid()
+
+	s.Panics(func() {
+		withTrace(routes, server.withRequestLog(routes, routes)).ServeHTTP(httptest.NewRecorder(),
+			httptest.NewRequest(http.MethodPost, "/v1/phone/status/"+token, nil))
+	})
+
+	s.Contains(logged.String(), "path=/v1/phone/status/{token}")
+	s.NotContains(logged.String(), token)
+}
+
+func (s *PathTokensSuite) TestAnEncodedTokenIsTakenOut() {
+	token := s.utils.uuid()
+
+	s.unauthenticatedClient.do(http.MethodPost, "/v1/phone/status/"+token+"%2Fx", nil, nil)
+
+	s.requireLogged("path=/v1/phone/status/{token}")
+	s.NotContains(s.logged.String(), token)
+	s.NotContains(s.logged.String(), "%2Fx")
+}
+
+func (s *PathTokensSuite) TestARouteWithoutATokenIsLoggedAsItWasSent() {
+	path := "/v1/agents/sessions/" + s.utils.uuid() + "/events"
+
+	s.unauthenticatedClient.do(http.MethodGet, path, nil, nil)
+
+	s.requireLogged("path=" + path)
+}
+
+func (s *PathTokensSuite) TestARouteWithAnEncodedSegmentIsLoggedDecodedAsBefore() {
+	s.unauthenticatedClient.do(http.MethodGet, "/v1/agents/sessions/a%2Fb/events", nil, nil)
+
+	s.requireLogged("path=/v1/agents/sessions/a/b/events")
+}
+
+func (s *PathTokensSuite) TestASpanOfAPanickingTokenRouteHoldsNoToken() {
+	routes := chi.NewRouter()
+	routes.Post("/v1/phone/status/{token}", func(http.ResponseWriter, *http.Request) { panic("boom") })
+	token := s.utils.uuid()
+	s.spans.Reset()
+
+	s.Panics(func() {
+		withTrace(routes, routes).ServeHTTP(httptest.NewRecorder(),
+			httptest.NewRequest(http.MethodPost, "/v1/phone/status/"+token, nil))
+	})
+
+	var path string
+	s.Require().Eventually(func() bool {
+		for _, span := range s.spans.Ended() {
+			if span.SpanKind() != trace.SpanKindServer {
+				continue
+			}
+			for _, attr := range span.Attributes() {
+				if attr.Key == "url.path" {
+					path = attr.Value.Emit()
+				}
+			}
+		}
+		return path != ""
+	}, 5*time.Second, 20*time.Millisecond)
+	s.Equal("/v1/phone/status/{token}", path)
+	for _, span := range s.spans.Ended() {
+		s.NotContains(span.Name(), token)
+		for _, attr := range span.Attributes() {
+			s.NotContains(attr.Value.Emit(), token, attr.Key)
+		}
+	}
+}
+
+// Not driven through the whole router: no token route of it can be made to panic from outside,
+// and a panic is the event that carries the request.
+func (s *PathTokensSuite) TestASentryEventFromATokenRouteHoldsNoToken() {
+	transport := &sentry.MockTransport{}
+	client, err := sentry.NewClient(sentry.ClientOptions{
+		Transport:        transport,
+		BeforeSend:       store.RedactSentryEvent,
+		EnableTracing:    true,
+		TracesSampleRate: 1,
+	})
+	s.Require().NoError(err)
+	hub := sentry.CurrentHub()
+	previous := hub.Client()
+	hub.BindClient(client)
+	s.T().Cleanup(func() { hub.BindClient(previous) })
+
+	routes := chi.NewRouter()
+	routes.Post("/v1/phone/status/{token}", func(http.ResponseWriter, *http.Request) { panic("boom") })
+	token := s.utils.uuid()
+	request := httptest.NewRequest(http.MethodPost, "/v1/phone/status/"+token, nil)
+	withSentry(routes, routes).ServeHTTP(httptest.NewRecorder(), request)
+	s.Require().True(sentry.Flush(5 * time.Second))
+
+	events := transport.Events()
+	s.Require().NotEmpty(events)
+	var transactions int
+	for _, event := range events {
+		if event.Type == "transaction" {
+			transactions++
+		}
+		s.NotContains(event.Request.URL, token)
+		s.Contains(event.Request.URL, "/v1/phone/status/{token}")
+		s.NotContains(event.Transaction, token)
+		for _, breadcrumb := range event.Breadcrumbs {
+			s.NotContains(breadcrumb.Message, token)
+		}
+	}
+	s.NotZero(transactions, "no transaction event arrived")
+}

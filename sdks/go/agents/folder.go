@@ -216,10 +216,15 @@ type Settings struct {
 	// wait once they stop. Nil leaves the stored choice; an empty mapping ({}) is the default
 	// flow controller again, which an agent that never chose has.
 	FloorControl *FloorControlSettings `yaml:"floor_control"`
-	Keyterms     []string              `yaml:"keyterms"`
-	Tags         map[string]string     `yaml:"tags"`
-	Video        *VideoSettings        `yaml:"video"`
-	Dispatch     *DispatchSettings     `yaml:"dispatch"`
+	// Agents are the app's other text agents this one may hand work to, each offered to its
+	// model as a tool. Nil when the declaration says nothing, which leaves the stored list;
+	// empty when the file lists none, which removes it. Only a text agent has them, and each
+	// one named must already be synced.
+	Agents   *[]AgentSettings  `yaml:"agents"`
+	Keyterms []string          `yaml:"keyterms"`
+	Tags     map[string]string `yaml:"tags"`
+	Video    *VideoSettings    `yaml:"video"`
+	Dispatch *DispatchSettings `yaml:"dispatch"`
 	// App is the application's own section of the declaration, which this SDK never reads
 	// and the backend is never sent. It is the one place an unknown key is not refused.
 	App map[string]any `yaml:"app"`
@@ -413,9 +418,11 @@ type TransferDestination struct {
 //
 // Each is nil when the file doesn't name it, and both are sent as written: which models there
 // are, and whether a wait needs one, is the router's to say, and it refuses stream/chorus-asr
-// when it has no chorus-asr server. An empty mapping is the default flow controller again.
+// when it has no chorus-asr server. An empty mapping is no choice again, which the router's
+// default rules; {model: flow-controller} keeps the flow controller whatever that default.
 type FloorControlSettings struct {
-	// Model is the model that controls the floor; stream/chorus-asr is the one there is.
+	// Model is the model that controls the floor: stream/chorus-asr, or flow-controller for the
+	// flow controller.
 	Model *string
 	// MaxWaitMs is the most a caller who has finished may wait for the answer, in
 	// milliseconds: the server's measured point with the fewest cut-ins within it.
@@ -753,6 +760,21 @@ func WriteStamp(path, hash string) error {
 		return fmt.Errorf("agents: writing %s: %w", AgentStamp, err)
 	}
 	return nil
+}
+
+// AgentSettings is one of agent.yaml's agents: another of the app's text agents, offered to
+// this one's model as a tool that hands it work and answers with what it said.
+type AgentSettings struct {
+	// Config is the agent's name.
+	Config string `yaml:"config"`
+	// Tool is the name the model calls it by.
+	Tool        string `yaml:"tool"`
+	Description string `yaml:"description"`
+	// TimeoutMs is how long one call may take. Zero is the router's default, two minutes.
+	TimeoutMs int `yaml:"timeout_ms"`
+	// MaxToolRounds is the reply to a tool result the agent must answer at rather than call
+	// another tool. Zero is the router's default of 8; negative is no limit.
+	MaxToolRounds int `yaml:"max_tool_rounds"`
 }
 
 // declare reads agent.yaml. A key nobody knows is refused rather than dropped, since a

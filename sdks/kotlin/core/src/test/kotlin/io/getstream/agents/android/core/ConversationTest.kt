@@ -113,6 +113,130 @@ class ConversationTest {
     }
 
     @Test
+    fun `the model failing mid-reply ends the turn and keeps the failure`() {
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"response_delta","turn_id":"t1","text":"Let me"}""",
+            """{"type":"error","context":"llm","error":"the model is overloaded"}""",
+        )
+
+        assertEquals(Conversation.State.Idle, conversation.state)
+        assertEquals("the model is overloaded", conversation.failure)
+        assertEquals(listOf("Let me"), conversation.turns.map { it.text })
+    }
+
+    @Test
+    fun `the speech model failing ends the turn too`() {
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"error","context":"sts","error":"the session dropped"}""",
+        )
+
+        assertEquals(Conversation.State.Idle, conversation.state)
+    }
+
+    @Test
+    fun `the model failing while skills work ends the turn`() {
+        val conversation = Conversation().after(
+            """{"type":"delegated","task_id":"k1","skill":"lookup_order","turn_id":"t1"}""",
+            """{"type":"error","context":"llm","error":"the model is overloaded"}""",
+        )
+
+        assertEquals(Conversation.State.Idle, conversation.state)
+        assertEquals("the model is overloaded", conversation.failure)
+    }
+
+    @Test
+    fun `a failure elsewhere leaves the reply going`() {
+        val responding = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"error","context":"tool","error":"tool_result output is not a string or parts"}""",
+            """{"type":"error","context":"tts","error":"the voice is unknown"}""",
+        )
+        val working = Conversation().after(
+            """{"type":"delegated","task_id":"k1","skill":"think"}""",
+            """{"type":"error","context":"command","error":"unknown command \"wave\""}""",
+        )
+
+        assertEquals(Conversation.State.Responding, responding.state)
+        assertEquals("the voice is unknown", responding.failure)
+        assertEquals(Conversation.State.Working(listOf("think")), working.state)
+    }
+
+    @Test
+    fun `a failure after the conversation ended leaves it ended`() {
+        val conversation = Conversation().after(
+            """{"type":"left","at":"2026-09-02T17:05:00Z"}""",
+            """{"type":"error","context":"llm","error":"agent: not joined"}""",
+        )
+
+        assertEquals(Conversation.State.Ended, conversation.state)
+        assertEquals("agent: not joined", conversation.failure)
+    }
+
+    @Test
+    fun `the turn after a failure runs as any other and clears the failure`() {
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"error","context":"llm","error":"the model is overloaded"}""",
+            """{"type":"responding","turn_id":"t2"}""",
+        )
+        assertEquals(Conversation.State.Responding, conversation.state)
+        assertNull(conversation.failure)
+
+        val answered = conversation.after("""{"type":"responded","turn_id":"t2","text":"Here it is."}""")
+        assertEquals(Conversation.State.Idle, answered.state)
+        assertEquals(listOf("", "Here it is."), answered.turns.map { it.text })
+    }
+
+    @Test
+    fun `a failure lasts until the agent hears, answers or speaks`() {
+        val failed = Conversation().after("""{"type":"error","context":"stt","error":"the transcriber is gone"}""")
+
+        val stillFailed = failed.after(
+            """{"type":"hearing","participant":{"id":"p1","user_id":"u1","name":""},"text":"wh","language":"en"}""",
+            """{"type":"response_delta","turn_id":"t1","text":"Hi"}""",
+            """{"type":"responded","turn_id":"t1","text":"Hi"}""",
+            """{"type":"interrupted","turn_id":"t1"}""",
+        )
+        assertEquals("the transcriber is gone", stillFailed.failure)
+    }
+
+    @Test
+    fun `hearing someone clears the failure`() {
+        val conversation = Conversation().after(
+            """{"type":"error","context":"stt","error":"the transcriber is gone"}""",
+            """{"type":"heard","participant":{"id":"p1","user_id":"u1","name":""},"text":"hello","language":"en"}""",
+        )
+
+        assertNull(conversation.failure)
+        assertEquals(listOf("hello"), conversation.turns.map { it.text })
+    }
+
+    @Test
+    fun `starting to answer clears the failure`() {
+        val conversation = Conversation().after(
+            """{"type":"error","context":"llm","error":"the model is overloaded"}""",
+            """{"type":"responding","turn_id":"t2","participant":{"id":"","user_id":"","name":""},"prompt":"hi"}""",
+        )
+
+        assertNull(conversation.failure)
+        assertEquals(Conversation.State.Responding, conversation.state)
+    }
+
+    @Test
+    fun `speaking clears the failure`() {
+        val conversation = Conversation().after(
+            """{"type":"responding","turn_id":"t1"}""",
+            """{"type":"error","context":"tts","error":"the voice is unknown"}""",
+            """{"type":"spoke","turn_id":"t1","synthesis_id":"s1","characters":5,"audio_duration_ms":400,"time_to_first_byte_ms":90}""",
+        )
+
+        assertNull(conversation.failure)
+        assertEquals(Conversation.State.Responding, conversation.state)
+    }
+
+    @Test
     fun `an interruption leaves the agent waiting to be spoken to`() {
         val conversation = Conversation().after(
             """{"type":"responding","turn_id":"t1"}""",

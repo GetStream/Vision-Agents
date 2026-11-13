@@ -192,8 +192,13 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	if message, ok := s.llmFallbacksComplaint(config, nil); !ok {
 		return nil, invalidRequest(message)
 	}
-	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, nil); !ok {
+	if message, ok, err := s.childAgentsComplaint(ctx, customerID, &config, nil); err != nil {
+		return nil, err
+	} else if !ok {
 		return nil, invalidRequest(message)
+	}
+	if failure, refused := s.sandboxLimitsComplaint(ctx, customerID, config, nil); refused {
+		return nil, failure
 	}
 	if message, ok, err := s.regionComplaint(ctx, config, nil); err != nil {
 		return nil, err
@@ -294,6 +299,11 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if request.Body.LlmFallbacks == nil {
 		config.LLMFallbacks = existing.LLMFallbacks
 	}
+	// Kept for the same reason: a client that does not know the list must not take away the
+	// agents this one hands work to by saving.
+	if request.Body.Agents == nil {
+		config.Agents = existing.Agents
+	}
 	// Only a sync writes them, so a save from the dashboard keeps them.
 	config.LeftOutConnectors = existing.LeftOutConnectors
 	config.ProgressiveTools = progressiveOf(existing.ProgressiveTools, request.Body.Tools)
@@ -347,8 +357,13 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if message, ok := s.llmFallbacksComplaint(config, existing.LLMFallbacks); !ok {
 		return nil, invalidRequest(message)
 	}
-	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, sandboxOfConfig(existing)); !ok {
+	if message, ok, err := s.childAgentsComplaint(ctx, customerID, &config, &existing); err != nil {
+		return nil, err
+	} else if !ok {
 		return nil, invalidRequest(message)
+	}
+	if failure, refused := s.sandboxLimitsComplaint(ctx, customerID, config, sandboxOfConfig(existing)); refused {
+		return nil, failure
 	}
 	if message, ok, err := s.regionComplaint(ctx, config, &existing); err != nil {
 		return nil, err
@@ -387,6 +402,13 @@ func (s *Server) deleteAgentConfig(ctx context.Context, request *deleteAgentConf
 	}
 	if len(answering) > 0 {
 		return nil, configAnswersNumbers(answering)
+	}
+	// Children are named by name, so one deleted would leave its parent calling whichever
+	// config takes the name next.
+	if parent, err := s.parentOf(ctx, customerID, existing.Name, existing.ID); err != nil {
+		return nil, err
+	} else if parent != "" {
+		return nil, conflict(fmt.Sprintf("%q hands work to this agent: take it out of %q's agents first", parent, parent))
 	}
 	if err := s.configs.DeleteAgentConfig(ctx, customerID, request.Id); err != nil {
 		return nil, errUnknownConfig
@@ -950,20 +972,21 @@ func (s *Server) sandboxBindingsComplaint(ctx context.Context, customerID string
 // than finding the session without its sandbox. was is the sandbox the config had before this
 // save, nil for a new config: a sandbox the save leaves as it was is not refused, so a config
 // stored before its organization's limits tightened stays editable, and its sessions still run
-// without the sandbox. Limits that cannot be read now refuse nothing here.
-func (s *Server) sandboxLimitsComplaint(ctx context.Context, customerID string, config store.AgentConfig, was *savedSandbox) (string, bool) {
+// without the sandbox. Limits that cannot be read now refuse nothing here. The refusal is a
+// tier_limit_reached naming the limit.
+func (s *Server) sandboxLimitsComplaint(ctx context.Context, customerID string, config store.AgentConfig, was *savedSandbox) (APIError, bool) {
 	if config.Sandbox == "" || s.policies == nil {
-		return "", true
+		return APIError{}, false
 	}
 	now := sandboxOfConfig(config)
 	if was != nil && reflect.DeepEqual(*was, *now) {
-		return "", true
+		return APIError{}, false
 	}
 	err := s.policies.SandboxAllowed(ctx, routing.Owner{CustomerID: customerID}, now.ask)
 	if err == nil || policy.Transient(err) {
-		return "", true
+		return APIError{}, false
 	}
-	return err.Error(), false
+	return APIError{Type: ErrorTypeInvalidRequest, Code: codeTierLimitReached, Message: err.Error(), Limit: policy.SandboxLimit(err)}, true
 }
 
 // savedSandbox is the sandbox a config's sessions ask for, copied from the config.
@@ -1560,6 +1583,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		Voice:              value(request.Voice),
 		LLM:                value(request.Llm),
 		LLMFallbacks:       fallbacksOf(request.LlmFallbacks),
+		Agents:             childAgentsOf(request.Agents),
 		Subagent:           value(request.Subagent),
 		Search:             value(request.Search),
 		Instructions:       value(request.Instructions),
@@ -1663,6 +1687,7 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	if len(config.LLMFallbacks) > 0 {
 		rendered.LlmFallbacks = &config.LLMFallbacks
 	}
+	rendered.Agents = renderedChildAgents(config.Agents)
 	rendered.Subagent = optional(config.Subagent)
 	frames := config.VideoMaxFrames
 	if frames == 0 {
@@ -1953,6 +1978,7 @@ type deleteAgentConfigRequest struct {
 
 // AgentConfigRequest is the AgentConfigRequest schema.
 type AgentConfigRequest struct {
+	Agents             *[]ChildAgent            `json:"agents,omitempty" maxItems:"16" doc:"The app's other text agents this one may hand work to, each offered to its model as a tool that takes one string, input, and answers with what that agent said last. Several called in one reply run at once, at most 8 at a time. Each runs as an incognito run of its own, on its own llm, instructions, connectors and sandbox, and its spend is added to the parent run's usage. Only a text agent has them, and an agent named here must be a text agent with no agents of its own and not this one. Omitted or null on an update, the list stored stays as it is; an empty list removes it."`
 	ChatChannels       *[]AgentChatChannel      `json:"chat_channels,omitempty" maxItems:"16" doc:"Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels, such as the type the app's group channels are made with. A message in a channel of a type named here is answered by the router's own session in that channel, under this agent, and the reply is written there as the Stream user whose id is this config's id. Who answers comes from this list alone, never from the channel's custom data, and the oldest config naming a type answers in it. Only a message in the app's own Stream app is answered: the router's shared app answers no type named here. The type's grants must not let a user, guest or member make, change or join a channel of it, or let a user or guest read one they are not a member of; members writing in it is expected. A type whose grants do, or that the app does not have, is not answered. agent is answered already and cannot be named, and each type is named once. Left out on an update, the stored list stays; an empty list removes it."`
 	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
 	EpisodeCards       *EpisodeCardsMode        `json:"episode_cards,omitempty" doc:"What this agent does with episode cards, for each phone call under it, each run of messages a Stream user writes to it in an agent channel of the app chat, and each thread of its SMS, WhatsApp, iMessage and Slack channel connections. record and on write the conversation's card, and its summary once it ends, into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number, the app chat's Stream user id or the Slack user. Only on reads them: a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any. off by default, and then a conversation writes no card and a session runs as it always did. Left out on an update, the stored setting stays."`
@@ -1973,7 +1999,7 @@ type AgentConfigRequest struct {
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. Left out on an update, the stored settings stay."`
 	Calls              *AgentCalls              `json:"calls,omitempty" doc:"The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and press are on and end_call is off. On an update, a tool left out keeps its stored settings and a tool sent replaces its settings whole."`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty" doc:"How a conversation is handed back to the model when a session under this agent carries it on: reopened, resumed by id, joined by voice or forked. Each field set here wins over the app's and the organization's policy, and a session request's wins over this; a field set nowhere is the router's default: replies as text, the newest 100 turns within 60000 characters. Left out on an update, the stored settings stay."`
-	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. A session request's wins over this. Left out or null on a create, the default flow controller; left out or null on an update, the stored choice stays; an empty object is the default flow controller again."`
+	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. A session request's wins over this. Left out or null on a create, no choice: the router's default rules, the flow controller or stream/chorus-asr where the router defaults every agent to it; left out or null on an update, the stored choice stays; an empty object is no choice again; {model: flow-controller} keeps the flow controller whatever the router's default."`
 	EndOfTurn          any                      `json:"end_of_turn,omitempty" hidden:"true"` // refused: floor_control's max_wait_ms replaced it
 	Plugins            *[]retiredPlugin         `json:"plugins,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
 	PluginEvents       *[]map[string]any        `json:"plugin_events,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
@@ -1996,6 +2022,7 @@ type AgentConfigRequest struct {
 
 // AgentConfig is the AgentConfig schema.
 type AgentConfig struct {
+	Agents             *[]ChildAgent            `json:"agents,omitempty" doc:"The app's other text agents this one may hand work to, each as a tool. Absent when there are none."`
 	ChatChannels       *[]AgentChatChannel      `json:"chat_channels,omitempty" doc:"The Stream Chat channel types of the app's own Stream app this agent answers in besides agent channels. Absent when there are none."`
 	CreatedAt          time.Time                `json:"created_at"`
 	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
@@ -2018,7 +2045,7 @@ type AgentConfig struct {
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
 	Calls              *AgentCalls              `json:"calls,omitempty"`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty"`
-	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. Absent for the default flow controller."`
+	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop, as the agent chose it: stream/chorus-asr, or flow-controller for the flow controller whatever the router's default. Absent when it chose none, which the router's default rules."`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" doc:"The bindings exactly as they were written. Absent when there are none."`
 	LeftOutConnectors  *[]LeftOutConnector      `json:"left_out_connectors,omitempty" readOnly:"true" doc:"The connectors agent.yaml names that the last sync left out, because the app has no connection by the id or label they name: an agent that runs without them until the connection exists and it syncs again. Only a sync writes them. Absent when there are none."`
 	Channels           *AgentChannels           `json:"channels,omitempty"`

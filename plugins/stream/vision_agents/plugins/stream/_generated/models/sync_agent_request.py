@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from ..models.agent_dispatch import AgentDispatch
     from ..models.agent_scheduling import AgentScheduling
     from ..models.agent_tools import AgentTools
+    from ..models.child_agent import ChildAgent
     from ..models.floor_control import FloorControl
     from ..models.greeting import Greeting
     from ..models.knowledge_document import KnowledgeDocument
@@ -72,7 +73,9 @@ class SyncAgentRequest:
             dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
                 /v1/dispatch. Omitted settings are disabled.
             floor_control (FloorControl | Unset): The model that controls an agent's floor, and how long a caller may wait
-                once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again;
+                once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the
+                router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router
+                defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default;
                 anything else replaces the stored choice whole.
             greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
             guardrail (str | Unset): The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the
@@ -144,6 +147,9 @@ class SyncAgentRequest:
                 app's own Stream app this agent answers in besides agent channels, as AgentConfigRequest's chat_channels names
                 them, with the same rules. Sent, they replace the stored list whole, an empty list removing it. Left out, the
                 stored list stays.
+            agents (list[ChildAgent] | Unset): agent.yaml's agents: the app's other text agents this one may hand work to,
+                each as a tool, by name. Sent, they replace the stored list whole, an empty list removing it; left out, the
+                stored list stays. An agent named must already exist, so a directory is synced after the agents it names.
     """
 
     hash_: str
@@ -186,6 +192,7 @@ class SyncAgentRequest:
     video: SessionVideo | Unset = UNSET
     voice: str | Unset = UNSET
     chat_channels: list[AgentChatChannel] | Unset = UNSET
+    agents: list[ChildAgent] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -359,6 +366,13 @@ class SyncAgentRequest:
                 chat_channels_item = chat_channels_item_data.to_dict()
                 chat_channels.append(chat_channels_item)
 
+        agents: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.agents, Unset):
+            agents = []
+            for agents_item_data in self.agents:
+                agents_item = agents_item_data.to_dict()
+                agents.append(agents_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -443,6 +457,8 @@ class SyncAgentRequest:
             field_dict["voice"] = voice
         if chat_channels is not UNSET:
             field_dict["chat_channels"] = chat_channels
+        if agents is not UNSET:
+            field_dict["agents"] = agents
 
         return field_dict
 
@@ -455,6 +471,7 @@ class SyncAgentRequest:
         from ..models.agent_dispatch import AgentDispatch
         from ..models.agent_scheduling import AgentScheduling
         from ..models.agent_tools import AgentTools
+        from ..models.child_agent import ChildAgent
         from ..models.floor_control import FloorControl
         from ..models.greeting import Greeting
         from ..models.knowledge_document import KnowledgeDocument
@@ -728,6 +745,15 @@ class SyncAgentRequest:
 
                 chat_channels.append(chat_channels_item)
 
+        _agents = d.pop("agents", UNSET)
+        agents: list[ChildAgent] | Unset = UNSET
+        if _agents is not UNSET:
+            agents = []
+            for agents_item_data in _agents:
+                agents_item = ChildAgent.from_dict(agents_item_data)
+
+                agents.append(agents_item)
+
         sync_agent_request = cls(
             hash_=hash_,
             name=name,
@@ -769,6 +795,7 @@ class SyncAgentRequest:
             video=video,
             voice=voice,
             chat_channels=chat_channels,
+            agents=agents,
         )
 
         sync_agent_request.additional_properties = d

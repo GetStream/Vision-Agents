@@ -4778,7 +4778,7 @@ pub struct SearchPhoneNumbersQuery {
     /// One vendor to search. Absent searches every usable vendor.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vendor: Option<String>,
-    /// ISO 3166-1 alpha-2 country code.
+    /// ISO 3166-1 alpha-2 country code. Numbers are sold only in the US (US) and Canada (CA); any other country is refused.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub country: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

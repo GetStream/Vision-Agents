@@ -132,6 +132,7 @@ from .channel_line_request import ChannelLineRequest
 from .channel_link import ChannelLink
 from .chat_token import ChatToken
 from .chat_token_request import ChatTokenRequest
+from .child_agent import ChildAgent
 from .claim_guest_request import ClaimGuestRequest
 from .claim_guest_result import ClaimGuestResult
 from .classify_answer import ClassifyAnswer
@@ -257,10 +258,12 @@ from .effective_quota import EffectiveQuota
 from .end_call_settings import EndCallSettings
 from .endpointing import Endpointing
 from .episode_cards_mode import EpisodeCardsMode
+from .equals_or_in_type_1 import EqualsOrInType1
 from .equals_type_1 import EqualsType1
 from .error_detail import ErrorDetail
 from .error_response import ErrorResponse
 from .error_type import ErrorType
+from .file_source import FileSource
 from .floor_control import FloorControl
 from .fork_session_request import ForkSessionRequest
 from .fork_session_request_custom import ForkSessionRequestCustom
@@ -441,6 +444,7 @@ from .review_cause import ReviewCause
 from .review_decision import ReviewDecision
 from .review_page import ReviewPage
 from .review_queue import ReviewQueue
+from .review_score_match_type_1 import ReviewScoreMatchType1
 from .review_use_case_request import ReviewUseCaseRequest
 from .rewind_session_request import RewindSessionRequest
 from .rollup_request import RollupRequest
@@ -449,6 +453,7 @@ from .route import Route
 from .router_config import RouterConfig
 from .router_config_request import RouterConfigRequest
 from .run import Run
+from .run_children import RunChildren
 from .sandbox import Sandbox
 from .sandbox_limits import SandboxLimits
 from .sandbox_limits_network import SandboxLimitsNetwork
@@ -483,7 +488,6 @@ from .session_end_fault import SessionEndFault
 from .session_end_reason import SessionEndReason
 from .session_end_stage import SessionEndStage
 from .session_filter import SessionFilter
-from .session_filter_custom import SessionFilterCustom
 from .session_memory import SessionMemory
 from .session_memory_filter import SessionMemoryFilter
 from .session_modality import SessionModality
@@ -567,7 +571,6 @@ from .text_content_part import TextContentPart
 from .text_content_part_type import TextContentPartType
 from .text_match import TextMatch
 from .tier import Tier
-from .time_range import TimeRange
 from .timeline_entry import TimelineEntry
 from .tool_approval_command import ToolApprovalCommand
 from .tool_approval_command_type import ToolApprovalCommandType
@@ -763,6 +766,7 @@ __all__ = (
     "ChannelLink",
     "ChatToken",
     "ChatTokenRequest",
+    "ChildAgent",
     "ClaimGuestRequest",
     "ClaimGuestResult",
     "ClassifyAnswer",
@@ -888,10 +892,12 @@ __all__ = (
     "EndCallSettings",
     "Endpointing",
     "EpisodeCardsMode",
+    "EqualsOrInType1",
     "EqualsType1",
     "ErrorDetail",
     "ErrorResponse",
     "ErrorType",
+    "FileSource",
     "FloorControl",
     "ForkSessionRequest",
     "ForkSessionRequestCustom",
@@ -1070,6 +1076,7 @@ __all__ = (
     "ReviewDecision",
     "ReviewPage",
     "ReviewQueue",
+    "ReviewScoreMatchType1",
     "ReviewUseCaseRequest",
     "RewindSessionRequest",
     "RollupRequest",
@@ -1078,6 +1085,7 @@ __all__ = (
     "RouterConfig",
     "RouterConfigRequest",
     "Run",
+    "RunChildren",
     "Sandbox",
     "SandboxLimits",
     "SandboxLimitsNetwork",
@@ -1112,7 +1120,6 @@ __all__ = (
     "SessionEndReason",
     "SessionEndStage",
     "SessionFilter",
-    "SessionFilterCustom",
     "SessionMemory",
     "SessionMemoryFilter",
     "SessionModality",
@@ -1196,7 +1203,6 @@ __all__ = (
     "TextContentPartType",
     "TextMatch",
     "Tier",
-    "TimeRange",
     "TimelineEntry",
     "ToolApprovalCommand",
     "ToolApprovalCommandType",

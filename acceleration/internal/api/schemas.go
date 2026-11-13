@@ -277,7 +277,7 @@ type CreateSessionRequest struct {
 	Memory               *SessionMemory     `json:"memory,omitempty"`
 	MinConfidence        *float64           `json:"min_confidence,omitempty" doc:"How sure the transcriber must be before the agent answers rather than checks what was meant."`
 	ModelOverwrites      *ModelOverwrites   `json:"model_overwrites,omitempty"`
-	FloorControl         *FloorControl      `json:"floor_control,omitempty" doc:"The model that controls the floor in this session, and how long a caller may wait once they stop, over the agent config's. Left out or null, the config's; an empty object is the default flow controller. The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide."`
+	FloorControl         *FloorControl      `json:"floor_control,omitempty" doc:"The model that controls the floor in this session, and how long a caller may wait once they stop, over the agent config's. Left out or null, the config's; an empty object is no choice, which the router's default rules; {model: flow-controller} keeps the flow controller whatever that default. A model the session was opened with, named here or the config's then, is its for its life, reopened included; no choice is stored as none, so a reopened session takes its config's choice as it is then, and the router's default after it. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide."`
 	EndOfTurn            any                `json:"end_of_turn,omitempty" hidden:"true"` // refused: floor_control's max_wait_ms replaced it
 	ResumeHistory        *ResumeHistory     `json:"resume_history,omitempty" doc:"How a conversation this session carries on is handed back to the model, over the agent config's and the app's and organization's policy, field by field: a field given here wins, one left out keeps the next level's. The session keeps what it was opened with, so reopening it after it ended reads the conversation the same way. Server-side only: a device sending it is refused with a 403, because what the model is sent is billed to the app."`
 	Navigating           *bool              `json:"navigating,omitempty" doc:"The agent placed this call, so let recordings finish and answer their menus." default:"false"`
@@ -838,6 +838,7 @@ type Session struct {
 	Modality         SessionModality         `json:"modality"`
 	Mode             *SessionMode            `json:"mode,omitempty"`
 	ModelOverwrites  *ModelOverwrites        `json:"model_overwrites,omitempty"`
+	PinnedAt         *time.Time              `json:"pinned_at,omitempty" doc:"When the session was pinned. Absent for one that is not pinned."`
 	ProjectId        *string                 `json:"project_id,omitempty"`
 	ReviewNotes      *string                 `json:"review_notes,omitempty" doc:"Why the review scored the conversation as it did. Read by a backend only."`
 	ReviewScore      *int                    `json:"review_score,omitempty" doc:"How well the agent handled the conversation, from 1 to 5, written a few seconds after it ended. Read by a backend only."`
@@ -846,6 +847,7 @@ type Session struct {
 	Stt              *string                 `json:"stt,omitempty" doc:"The provider and model transcribing, once somebody has been heard."`
 	Subagent         *string                 `json:"subagent,omitempty" doc:"The provider and model delegated work runs on."`
 	Summary          *string                 `json:"summary,omitempty" doc:"What a model made of the conversation, written a few seconds after it ended. A session nobody spoke in has none. Read by a backend only."`
+	Team             *string                 `json:"team,omitempty" doc:"The team the session's usage is counted under: the team the caller's token was signed for, else the one the session was opened with, else its agent config's tags: team. Absent for a session counted under none."`
 	Text             *bool                   `json:"text,omitempty" doc:"The conversation is held in writing rather than on a call."`
 	Title            *string                 `json:"title,omitempty"`
 	Tts              *string                 `json:"tts,omitempty" doc:"The provider and model speaking."`

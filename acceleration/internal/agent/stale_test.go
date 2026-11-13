@@ -446,6 +446,26 @@ func (s *AgentSuite) TestAVoiceLostWhileAReplyIsHeldForAGreetingDropsIt() {
 		5*time.Millisecond, "the dropped reply went out in the next voice")
 }
 
+// The reply's text can be on its way to the voice, past the check that the turn is still
+// being spoken, while the voice is lost and the reply held for the greeting dropped with it.
+func (s *AgentSuite) TestTextOnItsWayWhenAVoiceLostDropsAHeldReplyIsNotSentToTheNextVoice() {
+	s.logs = &logLines{}
+	s.join(true)
+	s.replacement = newStubTTS(true)
+	turn := s.answering("Hello? Hello. Hello.")
+	s.greetedOver(turn, s.mutters, "Hello?")
+
+	s.voice.emitter.Send(tts.Error{Provider: "stub", Model: "stub-tts", Err: errors.New("quota exceeded"), Fatal: true})
+	s.eventually(func() bool { return len(s.logs.records("the voice was lost, speaking in another")) > 0 },
+		"the voice was never replaced")
+	s.Require().True(s.agent.abandonedTurn(turn))
+
+	s.agent.say(turn, "Hi, yes, I can hear you.")
+
+	s.Empty(s.replacement.spoken(), "the dropped reply was sent to the next voice")
+	s.Empty(s.edge.heard())
+}
+
 // Acting on chorus-asr, the floor model rules on the greeting too, and a stop on it would cut
 // the reply that answers it.
 func (s *AgentSuite) TestTheFloorModelStoppingOnAHeldGreetingLeavesTheReply() {
@@ -1338,4 +1358,28 @@ func (s *AgentSuite) TestWritingAResponseStillBeingOpenedWaitsForIt() {
 	}
 	s.Equal("Two of what?", text)
 	_ = model.Close()
+}
+
+// What the floor ruled no turn of the caller's, kept aside (converse.keepAside), reaches the
+// next reply to them as a note, and a line the agent says of its own accord before that, a
+// check-in after a silence, is written in view of it without spending it: a caller who gave
+// their zip over the agent and went quiet is not asked whether they are still there as if
+// they had said nothing, and the reply to their next words still sees the zip.
+func (s *AgentSuite) TestAnAsideReachesACheckInAndThenTheNextReply() {
+	s.join(true)
+	s.model.composes = []string{"Did I catch that zip code right?"}
+	s.speak(nash)
+	s.agent.converse.keepAside(nash.ID, "Yeah, zip is 46281.")
+
+	s.agent.checkIn(nash, idlePurpose)
+	s.eventually(func() bool { return len(s.model.composeRequests()) == 1 }, "the check-in was never written")
+	input := harness.WithoutNotes(s.model.composeRequests()[0].Input)
+	s.Contains(input[len(input)-1].Content, asideNote("Yeah, zip is 46281."), "the check-in is written in view of the aside")
+	s.Equal("Yeah, zip is 46281.", s.agent.converse.peekAside(nash.ID), "which it does not spend")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the check-in was never said")
+
+	s.says(nash, "and the street is Cedar Lane")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the caller was never answered")
+	s.Contains(shown(s.model.requests()[0]), asideNote("Yeah, zip is 46281."), "the reply sees the aside")
+	s.Empty(s.agent.converse.peekAside(nash.ID), "seen by a reply once")
 }

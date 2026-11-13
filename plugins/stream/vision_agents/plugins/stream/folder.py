@@ -193,8 +193,9 @@ class GreetingSettings:
 class FloorControlSettings:
     """The model that controls the agent's floor, and how long a caller may wait once they
     stop, each None when the file does not name it, and both sent as written: which models
-    there are, and whether a wait needs one, is the router's to say. Neither named is the
-    default flow controller again."""
+    there are, and whether a wait needs one, is the router's to say. Neither named is no
+    choice again, which the router's default rules; model flow-controller keeps the flow
+    controller whatever that default."""
 
     model: str | None = None
     """The model that controls the floor; stream/chorus-asr is the one there is."""
@@ -251,7 +252,7 @@ class Settings:
     floor_control: FloorControlSettings | None = None
     """The model that controls the agent's floor, and how long a caller may wait once they
     stop. None when the file says nothing about it, which leaves the stored choice; an empty
-    one is the default flow controller again."""
+    one is no choice again, which the router's default rules."""
     keyterms: list[str] = field(default_factory=list)
     tags: dict[str, str] = field(default_factory=dict)
     video_source: str = ""

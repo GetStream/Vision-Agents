@@ -23,6 +23,7 @@ type AgentConfigPatch struct {
 	Voice              *string                  `json:"voice,omitempty" doc:"The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead."`
 	Llm                *string                  `json:"llm,omitempty"`
 	LlmFallbacks       *[]string                `json:"llm_fallbacks,omitempty" maxItems:"5" doc:"Replaces the list whole. An empty list removes it."`
+	Agents             *[]ChildAgent            `json:"agents,omitempty" maxItems:"16" doc:"Replaces the list whole. An empty list removes it."`
 	Subagent           *string                  `json:"subagent,omitempty" doc:"Only a voice agent names one. Switching an agent to text drops it."`
 	Search             *string                  `json:"search,omitempty"`
 	Instructions       *string                  `json:"instructions,omitempty"`
@@ -47,7 +48,7 @@ type AgentConfigPatch struct {
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
 	Calls              *AgentCalls              `json:"calls,omitempty"`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty"`
-	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"Replaces the choice whole. Left out or null, the stored choice stays; an empty object is the default flow controller again."`
+	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"Replaces the choice whole. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules; {model: flow-controller} keeps the flow controller whatever that default."`
 	EndOfTurn          any                      `json:"end_of_turn,omitempty" hidden:"true"` // refused: floor_control's max_wait_ms replaced it
 	Tags               *map[string]string       `json:"tags,omitempty"`
 	Video              *SessionVideo            `json:"video,omitempty"`
@@ -189,6 +190,9 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if patch.LlmFallbacks != nil {
 		config.LLMFallbacks = fallbacksOf(patch.LlmFallbacks)
 	}
+	if patch.Agents != nil {
+		config.Agents = childAgentsOf(patch.Agents)
+	}
 	config.Subagent = override(config.Subagent, patch.Subagent)
 	config.Search = override(config.Search, patch.Search)
 	config.Instructions = override(config.Instructions, patch.Instructions)
@@ -284,8 +288,13 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if message, ok := s.llmFallbacksComplaint(config, original.LLMFallbacks); !ok {
 		return nil, invalidRequest(message)
 	}
-	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, was); !ok {
+	if message, ok, err := s.childAgentsComplaint(ctx, customerID, &config, &original); err != nil {
+		return nil, err
+	} else if !ok {
 		return nil, invalidRequest(message)
+	}
+	if failure, refused := s.sandboxLimitsComplaint(ctx, customerID, config, was); refused {
+		return nil, failure
 	}
 	if message, ok, err := s.regionComplaint(ctx, config, &original); err != nil {
 		return nil, err

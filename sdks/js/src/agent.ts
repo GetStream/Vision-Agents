@@ -149,7 +149,8 @@ export interface Declaration {
   /**
    * The model that controls the agent's floor, and how long a caller may wait once they stop:
    * `model` and `max_wait_ms`, as written. Undefined leaves the stored choice; an empty object
-   * is the default flow controller again.
+   * is no choice again, which the router's default rules; `{model: "flow-controller"}` keeps
+   * the flow controller whatever that default.
    */
   floorControl?: Schemas["FloorControl"];
 }

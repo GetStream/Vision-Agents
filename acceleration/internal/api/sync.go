@@ -56,11 +56,12 @@ type SyncAgentRequest struct {
 	// SandboxOptions is how the sandbox is built. Left out keeps what is stored.
 	SandboxOptions *SandboxOptions    `json:"sandbox_options,omitempty"`
 	Tags           *map[string]string `json:"tags,omitempty"`
+	Agents         *[]ChildAgent      `json:"agents,omitempty" maxItems:"16" doc:"agent.yaml's agents: the app's other text agents this one may hand work to, each as a tool, by name. Sent, they replace the stored list whole, an empty list removing it; left out, the stored list stays. An agent named must already exist, so a directory is synced after the agents it names."`
 	Tools          *AgentTools        `json:"tools,omitempty" doc:"How connector tools are offered. A setting left out keeps what is stored."`
 	Calls          *AgentCalls        `json:"calls,omitempty" doc:"The tools an agent on a phone call is offered: end the call, press keys, transfer. A tool left out keeps what is stored; a tool sent replaces its settings whole."`
 	Scheduling     *AgentScheduling   `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. A setting left out keeps what is stored."`
 	ResumeHistory  *ResumeHistory     `json:"resume_history,omitempty" doc:"How a conversation is handed back to the model when a session carries it on. A setting left out keeps what is stored."`
-	FloorControl   *FloorControl      `json:"floor_control,omitempty" doc:"agent.yaml's floor_control: the model that controls the agent's floor, and how long a caller may wait once they stop. Sent, it replaces the stored choice whole, and an empty object is the default flow controller again; left out or null, the stored one stays, and an agent that never chose has the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400), and so is a max_wait_ms shorter than every point the chorus-asr server publishes, before anything is written. When the server cannot be asked the wait is kept and a warning says so, as it does of a point that fails the server's dictation guard."`
+	FloorControl   *FloorControl      `json:"floor_control,omitempty" doc:"agent.yaml's floor_control: the model that controls the agent's floor, and how long a caller may wait once they stop. Sent, it replaces the stored choice whole, and an empty object is no choice again; left out or null, the stored one stays. An agent that chose none gets the router's default: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever that default. stream/chorus-asr on a router without a chorus-asr server is refused (400), and so is a max_wait_ms shorter than every point the chorus-asr server publishes, before anything is written. When the server cannot be asked the wait is kept and a warning says so, as it does of a point that fails the server's dictation guard."`
 	EndOfTurn      any                `json:"end_of_turn,omitempty" hidden:"true"` // refused: floor_control's max_wait_ms replaced it
 }
 
@@ -292,8 +293,17 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok := s.liveSTTComplaint(config, existing.STT); !ok {
 		return nil, invalidRequest(message)
 	}
-	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, stored); !ok {
+	var prior *store.AgentConfig
+	if found {
+		prior = &existing
+	}
+	if message, ok, err := s.childAgentsComplaint(ctx, customerID, &config, prior); err != nil {
+		return nil, err
+	} else if !ok {
 		return nil, invalidRequest(message)
+	}
+	if failure, refused := s.sandboxLimitsComplaint(ctx, customerID, config, stored); refused {
+		return nil, failure
 	}
 	// Asked of the knowledge base the sync is about to write, the one named after the agent.
 	documents := documentsOf(body.Knowledge)
@@ -302,10 +312,6 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	regional.KnowledgeNamespace = ""
 	if knows {
 		regional.KnowledgeNamespace = name
-	}
-	var prior *store.AgentConfig
-	if found {
-		prior = &existing
 	}
 	if message, ok, err := s.regionComplaint(ctx, regional, prior); err != nil {
 		return nil, err
@@ -615,6 +621,9 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	}
 	if body.Tags != nil {
 		config.Tags = *body.Tags
+	}
+	if body.Agents != nil {
+		config.Agents = childAgentsOf(body.Agents)
 	}
 }
 

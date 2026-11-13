@@ -107,7 +107,7 @@ public sealed class LiveTests : IAsyncLifetime
         var session = Remember(await agent.ChatAsync(new SessionOptions { Title = title }, Cancel));
         await session.CloseAsync(Cancel);
 
-        var found = await EventuallyAsync(() => _client.Sessions.SearchAsync(title, new SessionQuery { Limit = 50 }, Cancel),
+        var found = await EventuallyAsync(() => _client.Sessions.SearchAsync(title, limit: 50, cancellationToken: Cancel),
             found => found.Items.Exists(each => each.Id == session.Id));
 
         Assert.Contains(found.Items, each => each.Id == session.Id);

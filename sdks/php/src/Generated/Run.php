@@ -17,8 +17,11 @@ final readonly class Run
         public string $modelRoute,
         // The session the run held. It ended with the run, and being incognito, it cannot be read back.
         public string $sessionId,
-        // What the run's model calls spent.
+        // What the run's model calls spent, the runs of the child agents it called included.
         public CallUsage $usage,
+        // What the runs of the child agents it called spent, by the tool each was called by. Absent when it called none.
+        /** @var array<string, mixed>|null */
+        public ?array $children = null,
     ) {
     }
 
@@ -32,6 +35,7 @@ final readonly class Run
             modelRoute: Json::string($data, 'model_route'),
             sessionId: Json::string($data, 'session_id'),
             usage: CallUsage::fromArray(Json::object($data, 'usage')),
+            children: array_key_exists('children', $data) && $data['children'] !== null ? Json::object($data, 'children') : null,
         );
     }
 
@@ -47,6 +51,9 @@ final readonly class Run
         $out['model_route'] = $this->modelRoute;
         $out['session_id'] = $this->sessionId;
         $out['usage'] = $this->usage->toArray();
+        if ($this->children !== null) {
+            $out['children'] = Json::objectValue($this->children);
+        }
         return $out;
     }
 }
