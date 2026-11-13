@@ -3,10 +3,8 @@
 package session
 
 import (
-	"context"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -123,43 +121,6 @@ func (s *BranchesSuite) TestARewindChatHasTurnedOffIsRefusedAndTheConversationIs
 	s.True(persistent.Refused(err), "Chat refused: nothing changed, nothing is left to settle")
 	s.Len(s.texts(session), 4)
 	s.Equal(s.texts(session), history(session))
-}
-
-// gatedRecords holds back the turns a session records until it is flushed, as a writer that
-// has not caught up yet does.
-type gatedRecords struct {
-	sessionRecords
-	mu   sync.Mutex
-	held []func()
-}
-
-func (g *gatedRecords) hold(write func()) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.held = append(g.held, write)
-}
-
-func (g *gatedRecords) Responding(row store.AgentResponse) {
-	g.hold(func() { g.sessionRecords.Responding(row) })
-}
-
-func (g *gatedRecords) Responded(id, status, failure string, at time.Time) {
-	g.hold(func() { g.sessionRecords.Responded(id, status, failure, at) })
-}
-
-func (g *gatedRecords) Item(item store.AgentResponseItem) {
-	g.hold(func() { g.sessionRecords.Item(item) })
-}
-
-func (g *gatedRecords) Flush(ctx context.Context) error {
-	g.mu.Lock()
-	held := g.held
-	g.held = nil
-	g.mu.Unlock()
-	for _, write := range held {
-		write()
-	}
-	return g.sessionRecords.Flush(ctx)
 }
 
 // A rewind right after a turn, whose response the writer has not recorded yet, still hides
