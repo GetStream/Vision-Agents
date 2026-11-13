@@ -1212,6 +1212,8 @@ func (s *SessionSuite) TestATextSessionCannotAlsoJoinACall() {
 // them for a rewind to read back and cut.
 type recordedTurns struct {
 	exchanges []store.Exchange
+	// documents are the files kept, each under the turn it was sent with.
+	documents []store.ConversationDocument
 }
 
 func (r *recordedTurns) Exchanges(_ context.Context, _, _, upTo string) ([]store.Exchange, error) {
@@ -1224,6 +1226,20 @@ func (r *recordedTurns) Exchanges(_ context.Context, _, _, upTo string) ([]store
 		}
 	}
 	return nil, store.ErrUnknownResponse
+}
+
+func (r *recordedTurns) ConversationDocuments(_ context.Context, _ string, scope store.DocumentScope) ([]store.ConversationDocument, error) {
+	until := len(r.exchanges) - 1
+	if scope.UntilResponse != "" {
+		until = slices.IndexFunc(r.exchanges, func(exchange store.Exchange) bool { return exchange.ResponseID == scope.UntilResponse })
+	}
+	var kept []store.ConversationDocument
+	for _, document := range r.documents {
+		if at := slices.IndexFunc(r.exchanges, func(exchange store.Exchange) bool { return exchange.ResponseID == document.ResponseID }); at >= 0 && at <= until {
+			kept = append(kept, document)
+		}
+	}
+	return kept, nil
 }
 
 func (r *recordedTurns) RewindResponses(_ context.Context, _, _, kept string, _ time.Time) error {
@@ -1251,6 +1267,24 @@ func (s *SessionSuite) TestARewoundSessionCarriesOnFromTheKeptResponse() {
 		{Role: llm.Assistant, Content: "Yes."},
 	}, created.current().History())
 	s.Len(recorded.exchanges, 1, "the later turn is no longer part of the conversation")
+}
+
+func (s *SessionSuite) TestARewindTakesBackTheFilesSentAfterTheKeptResponse() {
+	s.manages()
+	s.manager.records = &heldRecorder{}
+	created := s.writes(Spec{})
+	created.current().PinDocuments(agent.Document{ID: "lease", Name: "lease.pdf", Text: "two months"},
+		agent.Document{ID: "menu", Name: "menu.pdf", Text: "margherita"})
+	recorded := &recordedTurns{
+		exchanges: []store.Exchange{{ResponseID: "first", Said: "Read this", Answer: "Done."}, {ResponseID: "second", Said: "And this", Answer: "Done."}},
+		documents: []store.ConversationDocument{{ID: "lease", ResponseID: "first", Name: "lease.pdf", Markdown: "two months"},
+			{ID: "menu", ResponseID: "second", Name: "menu.pdf", Markdown: "margherita"}},
+	}
+
+	s.Require().NoError(created.Rewind(s.ctx, recorded, "first"))
+
+	s.Equal([]agent.Document{{ID: "lease", Name: "lease.pdf", Text: "two months"}}, created.current().Documents(),
+		"the file sent with a turn taken back is no longer read")
 }
 
 func (s *SessionSuite) TestARewindPastARefusedTurnCarriesOnWithItWithheld() {

@@ -44,7 +44,9 @@ type Account struct {
 	Status               string               `json:"status" enum:"active,suspended" doc:"suspended: Stream refuses every request of the organization, free work included, until it restores it."`
 	Tier                 string               `json:"tier" doc:"The tier the organization is billed on."`
 	BalanceMicros        int64                `json:"balance_micros" doc:"What the organization has to spend now, in millionths of a dollar: its credit less what it spent and what work in flight holds, the figure every answer's X-Stream-Balance-Micros says."`
-	GrantedMicros        int64                `json:"granted_micros" doc:"Every credit entry summed: top-ups, grants, refunds and adjustments."`
+	GrantedMicros        int64                `json:"granted_micros" doc:"Every credit entry summed: top-ups, grants, trial credit, refunds and adjustments."`
+	TrialMicros          int64                `json:"trial_micros" doc:"What of granted_micros is the trial credit Stream gave the organization to try it with."`
+	Funded               bool                 `json:"funded" doc:"The organization has credit that is not trial credit: a top-up, net of its refunds and disputes, or credit from Stream's staff. Until it has, buying numbers and registering for 10DLC are refused with top_up_required."`
 	SpentMicros          int64                `json:"spent_micros" doc:"Every billable unit of work recorded, summed."`
 	BalanceWarningMicros int64                `json:"balance_warning_micros" doc:"The balance at or below which the organization is warned: X-Stream-Balance-Warning says low, and its stream event destinations get account.balance_low. 0 when nothing sets one."`
 	BalanceWarningSource string               `json:"balance_warning_source" enum:"tier,account,organization_policy" doc:"Whose threshold it is: the tier's, the one Stream set for this organization, or the organization policy's balance_warning_micros, which wins over both."`
@@ -64,7 +66,7 @@ func (*Account) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Sche
 // CreditEntry is one change to the organization's credit.
 type CreditEntry struct {
 	Id           int64     `json:"id"`
-	Kind         string    `json:"kind" enum:"top_up,grant,refund,dispute,dispute_reversal,adjustment"`
+	Kind         string    `json:"kind" enum:"top_up,grant,trial,refund,dispute,dispute_reversal,adjustment"`
 	AmountMicros int64     `json:"amount_micros" doc:"Signed: what the entry added to the credit, in millionths of a dollar."`
 	Reference    string    `json:"reference,omitempty" doc:"The payment's own reference, such as a top-up's payment id. Absent on entries Stream's staff wrote."`
 	CreatedAt    time.Time `json:"created_at"`
@@ -286,7 +288,8 @@ func (s *Server) getAccount(ctx context.Context, _ *struct{}) (*accountResponse,
 	balance := read.BalanceMicros - held.BalanceMicros
 	account := Account{
 		OrganizationId: organization, Status: string(read.Status), Tier: cmp.Or(read.OrganizationTier, read.Tier.Name),
-		BalanceMicros: balance, GrantedMicros: read.GrantedMicros, SpentMicros: read.SpentMicros,
+		BalanceMicros: balance, GrantedMicros: read.GrantedMicros, TrialMicros: read.TrialMicros, Funded: read.Funded,
+		SpentMicros:          read.SpentMicros,
 		BalanceWarningSource: source, BalanceState: string(policy.StateOf(balance, threshold)),
 		Limits: read.Limits, OwnLimits: read.OwnLimits,
 		SpendHardLimit: hardLimitUsage(read.Limits, read.SpendWindows, held, time.Now()),

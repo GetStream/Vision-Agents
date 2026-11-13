@@ -210,6 +210,67 @@ func (s *Store) CustomerTurnStats(
 	return buckets, nil
 }
 
+// turnLegs are the legs a turn's latency is counted for, in the order a turn runs them.
+var turnLegs = []string{legSTTLatency, legLLMTTFT, legTTSTTFB, legRoundtrip}
+
+// LegLatency is how long one leg of some apps' turns took: how many turns it was counted for,
+// and its percentiles in milliseconds, within 5% of the true ones and nil when no turn had it.
+type LegLatency struct {
+	Leg   string
+	Turns int64
+	P50Ms *float64
+	P95Ms *float64
+	P99Ms *float64
+}
+
+// TurnLatency is how long the turns apps started from the hour of since on took, every agent
+// of theirs and every shard summed, one per leg in the order of turnLegs.
+func (s *Store) TurnLatency(ctx context.Context, apps []string, since time.Time) ([]LegLatency, error) {
+	type binRow struct {
+		Leg   string `bun:"leg"`
+		Bin   int    `bun:"bin"`
+		Count int64  `bun:"count"`
+	}
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]binRow, error) {
+		var bins []binRow
+		err := db.NewSelect().
+			Table("turn_latency_hourly").
+			ColumnExpr("leg, bin, SUM(count) AS count").
+			Where("customer_id IN (?)", bun.In(apps)).
+			Where("bucket >= ?", since.UTC().Truncate(time.Hour)).
+			GroupExpr("leg, bin").
+			Scan(ctx, &bins)
+		return bins, err
+	})
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: turn latency: %w", err))
+	}
+	// A histogram takes its bins in ascending order, where a bin two shards both counted is
+	// two entries side by side.
+	var counted []binRow
+	for _, list := range lists {
+		counted = append(counted, list...)
+	}
+	slices.SortStableFunc(counted, func(a, b binRow) int { return cmp.Compare(a.Bin, b.Bin) })
+	histograms := map[string]*histogram{}
+	for _, row := range counted {
+		if histograms[row.Leg] == nil {
+			histograms[row.Leg] = &histogram{}
+		}
+		histograms[row.Leg].add(row.Bin, row.Count)
+	}
+	legs := make([]LegLatency, 0, len(turnLegs))
+	for _, leg := range turnLegs {
+		h := histograms[leg]
+		latency := LegLatency{Leg: leg, P50Ms: h.percentile(0.5), P95Ms: h.percentile(0.95), P99Ms: h.percentile(0.99)}
+		if h != nil {
+			latency.Turns = h.total
+		}
+		legs = append(legs, latency)
+	}
+	return legs, nil
+}
+
 // latencyBin is the histogram bin a latency falls in: bin b holds (growth^(b-1), growth^b]
 // ms, and anything up to a millisecond is bin 0.
 func latencyBin(ms float64) int {

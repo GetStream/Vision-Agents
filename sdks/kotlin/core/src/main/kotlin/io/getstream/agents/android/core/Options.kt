@@ -1,18 +1,17 @@
 package io.getstream.agents.android.core
 
 import io.getstream.agents.android.core.generated.Equals
+import io.getstream.agents.android.core.generated.EqualsOrIn
 import io.getstream.agents.android.core.generated.Greeting as GreetingSchema
 import io.getstream.agents.android.core.generated.GreetingMode
-import io.getstream.agents.android.core.generated.SessionFilter
+import io.getstream.agents.android.core.generated.SessionFilter as FilterSchema
 import io.getstream.agents.android.core.generated.SessionMemory
-import io.getstream.agents.android.core.generated.SessionQuery as QuerySchema
-import io.getstream.agents.android.core.generated.SessionSort
-import io.getstream.agents.android.core.generated.SessionSortField
+import io.getstream.agents.android.core.generated.SessionSort as SortSchema
+import io.getstream.agents.android.core.generated.SessionSortField as SortFieldSchema
 import io.getstream.agents.android.core.generated.TextMatch
-import io.getstream.agents.android.core.generated.TimeRange
 import java.util.TimeZone
-import kotlin.time.Instant
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 
 /**
  * What a session should be, for the cases the shorthands do not cover.
@@ -170,77 +169,89 @@ public data class ForkOptions(
 )
 
 /**
- * Which conversations to list.
+ * Which conversations to list, in the shape the router takes.
  *
  * Only ever this caller's own, whatever is asked for: the router narrows a device to its own
- * sessions, so this cannot be widened to anybody else's.
+ * sessions, so this cannot be widened to anybody else's. A device filters on the project, the
+ * agent and a text search, combined with [And] and [Or]:
+ *
+ *     SessionFilter.Or(SessionFilter.ProjectId("a"), SessionFilter.ProjectId("b"))
+ *     SessionFilter.And(SessionFilter.ProjectIdIn(listOf("a", "b")), SessionFilter.Text("billing"))
+ *
+ * [And] and [Or] each take 1 to 10 filters and nest up to 3 deep. [toJson] is what is sent.
  */
-public data class SessionQuery(
-    /** Only those opened against this agent name. */
-    val agent: String? = null,
-    /** Only those created with this agent id, which names their transcript channel. */
-    val agentId: String? = null,
-    /** Only this project's. A search covers every project, so the router refuses it there. */
-    val projectId: String? = null,
-    /** Only those the user took part in this way. Omitted is every way. */
-    val modality: Session.Modality? = null,
-    /** Only the live ones, or only the ended ones. Omitted is both. */
-    val state: Session.State? = null,
-    /** Up to 200. Omitted is 25. */
-    val limit: Int? = null,
-    /** The [Page.nextCursor] of the page before, asked with the same filters. Omitted is the first page. */
-    val cursor: String? = null,
-    /** Only those started at or after this. */
-    val createdSince: Instant? = null,
-    /** Only those started before this. */
-    val createdBefore: Instant? = null,
-    /** Only those whose [SessionOptions.custom] labels hold every one of these pairs. */
-    val custom: Map<String, String> = emptyMap(),
-    /** The order. Omitted is most recently active first, or best match first for a search. */
-    val sort: Sort? = null,
-) {
-    /** An order to list in. Every one is descending: the router offers no ascending one. */
-    public enum class Sort {
-        /** Most recently active first. */
-        UpdatedAt,
+public sealed class SessionFilter {
+    internal abstract fun schema(): FilterSchema
 
-        /** Best match first, which only sorts a search. */
-        Relevance,
+    /** The filter as it goes on the wire, with the router's own key names. */
+    public fun toJson(): JsonObject = wire.encodeToJsonElement(FilterSchema.serializer(), schema()).jsonObject
+
+    /** Only this project's: `{"project_id": {"$eq": eq}}`. */
+    public data class ProjectId(val eq: String) : SessionFilter() {
+        override fun schema(): FilterSchema = FilterSchema(projectId = EqualsOrIn(dollarEq = eq))
     }
 
-    internal fun schema(text: String): QuerySchema = QuerySchema(
-        filter = SessionFilter(
-            agent = equals(agent),
-            agentId = equals(agentId),
-            createdAt = if (createdSince == null && createdBefore == null) {
-                null
-            } else {
-                TimeRange(dollarGte = createdSince?.toString(), dollarLt = createdBefore?.toString())
-            },
-            custom = custom.ifEmpty { null },
-            projectId = equals(projectId),
-            modality = equals(
-                when (modality) {
-                    Session.Modality.Unknown -> throw AgentsException.Configuration("an unknown modality cannot be asked for")
-                    else -> modality?.name?.lowercase()
-                },
-            ),
-            state = equals(state?.name?.lowercase()),
-            text = text.ifEmpty { null }?.let(::TextMatch),
-        ),
-        limit = limit?.toLong(),
-        cursor = cursor?.ifEmpty { null },
-        sort = sort?.let {
-            listOf(
-                SessionSort(
-                    when (it) {
-                        Sort.UpdatedAt -> SessionSortField.updated_at
-                        Sort.Relevance -> SessionSortField.relevance
-                    },
-                ),
-            )
+    /** Only those in one of these projects, 1 to 50 of them: `{"project_id": {"$in": [...]}}`. */
+    public data class ProjectIdIn(val values: List<String>) : SessionFilter() {
+        override fun schema(): FilterSchema = FilterSchema(projectId = EqualsOrIn(dollarIn = values))
+    }
+
+    /**
+     * Only those opened against this agent name: `{"agent": {"$eq": eq}}`. From the sessions
+     * of [StreamAgents.agent] the agent is that one, whatever is said here.
+     */
+    public data class Agent(val eq: String) : SessionFilter() {
+        override fun schema(): FilterSchema = FilterSchema(agent = Equals(eq))
+    }
+
+    /**
+     * Only those whose title, description, project or agent name match these words:
+     * `{"text": {"$q": q}}`. Once per filter, on its own or as a direct item of the outermost
+     * [And], and never inside an [Or]. [Sessions.search] sets it for you.
+     */
+    public data class Text(val q: String) : SessionFilter() {
+        override fun schema(): FilterSchema = FilterSchema(text = TextMatch(q))
+    }
+
+    /** Every one of these holds: `{"$and": [...]}`. */
+    public data class And(val filters: List<SessionFilter>) : SessionFilter() {
+        public constructor(vararg filters: SessionFilter) : this(filters.toList())
+
+        override fun schema(): FilterSchema = FilterSchema(dollarAnd = filters.map { it.schema() })
+    }
+
+    /** At least one of these holds: `{"$or": [...]}`. */
+    public data class Or(val filters: List<SessionFilter>) : SessionFilter() {
+        public constructor(vararg filters: SessionFilter) : this(filters.toList())
+
+        override fun schema(): FilterSchema = FilterSchema(dollarOr = filters.map { it.schema() })
+    }
+}
+
+/** What a list of conversations can be ordered by. */
+public enum class SessionSortField {
+    /** When the last message was sent. This is the order when no sort is given. */
+    LastMessageAt,
+
+    /** Pinned conversations first. Only descending, alone or followed by [LastMessageAt]. */
+    Pinned,
+
+    /** Best match first, which only sorts a filter holding [SessionFilter.Text]. Only descending. */
+    Relevance,
+}
+
+/** One key to order by: [direction] is -1 for descending, the default, or 1 for ascending. */
+public data class SessionSort(val field: SessionSortField, val direction: Int = -1) {
+    internal fun schema(): SortSchema = SortSchema(
+        field = when (field) {
+            SessionSortField.LastMessageAt -> SortFieldSchema.last_message_at
+            SessionSortField.Pinned -> SortFieldSchema.pinned
+            SessionSortField.Relevance -> SortFieldSchema.relevance
+        },
+        direction = when (direction) {
+            -1 -> SortSchema.Direction.Minus1
+            1 -> SortSchema.Direction._1
+            else -> throw AgentsException.Configuration("a sort direction is -1 or 1, not $direction")
         },
     )
-
-    private fun equals(value: String?): Equals? = value?.ifEmpty { null }?.let(::Equals)
 }

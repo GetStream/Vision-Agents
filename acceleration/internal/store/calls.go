@@ -133,6 +133,20 @@ func (s *Store) ReviewCall(ctx context.Context, customerID, id, summary string, 
 	if affected == 0 {
 		return unknownCall(id)
 	}
+
+	// The session recorded under the call carries the score too, so a session list filters
+	// and sorts on it without a join. A call with no session row, an incognito one or a
+	// call from before sessions were kept, has nothing to write to, which is not a failure.
+	_, err = onEveryShard(ctx, s, func(ctx context.Context, db bun.IDB) (sql.Result, error) {
+		return db.NewUpdate().Model((*AgentSession)(nil)).
+			Set("review_score = ?", score).
+			Where("id = ?", id).
+			Where("customer_id = ?", customerID).
+			Exec(ctx)
+	})
+	if err != nil {
+		return fmt.Errorf("store: review call: session score: %w", err)
+	}
 	return nil
 }
 

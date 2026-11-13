@@ -1,0 +1,1224 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:test/test.dart';
+import 'package:stream_agents/src/core/core.dart';
+
+import 'support/fixtures.dart';
+import 'support/router.dart';
+
+void main() {
+  late TestRouter router;
+  late StreamAgents agents;
+
+  setUp(() async {
+    router = await TestRouter.start();
+    router.answer('POST /v1/agents/sessions', Answer(201, sessionJson()));
+    agents = StreamAgents(url: router.url, customerId: 'acme');
+  });
+
+  tearDown(() async {
+    agents.close();
+    await router.close();
+  });
+
+  group('AgentSession', () {
+    test('opens the socket as a device, with decisions off, before it returns', () async {
+      final chat = await agents.withUser('ada').chat();
+
+      expect(chat.isConnected, isTrue);
+      final upgrade = router.upgrades.single;
+      expect(upgrade.path, '/v1/agents/sessions/s1/events');
+      expect(upgrade.query, {
+        'decisions': 'false',
+        'customer_id': 'acme',
+        'user_id': 'ada',
+        'stream-auth-type': 'jwt',
+      });
+      await chat.close();
+    });
+
+    test('opens the socket with a key as the proxy reads a device\'s credential', () async {
+      final keyed = StreamAgents(url: router.url, apiKey: 'key', token: () async => 'tok');
+      final chat = await keyed.chat();
+
+      expect(router.upgrades.single.query, {
+        'decisions': 'false',
+        'api_key': 'key',
+        'token': 'tok',
+        'authorization': 'tok',
+        'stream-auth-type': 'jwt',
+      });
+      await chat.close();
+      keyed.close();
+    });
+
+    test('shows what was asked at once, and asks with a request rather than a frame', () async {
+      router.answer(
+        'POST /v1/agents/sessions/s1/responses',
+        Answer(202, responseJson('r1', status: 'running')),
+      );
+      final chat = await agents.chat();
+
+      final asked = chat.responses.create('What are your hours?');
+
+      expect(chat.turns.single.text, 'What are your hours?');
+      expect((await asked).id, 'r1');
+      expect(router.last('POST /v1/agents/sessions/s1/responses').json, {
+        'text': 'What are your hours?',
+        'request_id': matches(RegExp(r'^[0-9a-f]{32}$')),
+      });
+      await chat.close();
+    });
+
+    test('takes a question back out of the transcript when the router refuses it', () async {
+      router.answer(
+        'POST /v1/agents/sessions/s1/responses',
+        Answer(429, errorJson('rate_limited', 'rate_limited', 'slow down')),
+      );
+      final chat = await agents.chat();
+
+      await expectLater(
+        chat.responses.create('What are your hours?'),
+        throwsA(isA<RouterException>().having((e) => e.status, 'status', 429)),
+      );
+
+      expect(chat.turns, isEmpty);
+      await chat.close();
+    });
+
+    test('names each question with a fresh request id, one that shows an image too', () async {
+      router.answer('POST /v1/agents/sessions/s1/responses', Answer(202, responseJson('r1')));
+      final chat = await agents.chat();
+
+      await chat.responses.create('Hello');
+      final first = router.last('POST /v1/agents/sessions/s1/responses').json as Map;
+      await chat.responses.create('Hello');
+      final again = router.last('POST /v1/agents/sessions/s1/responses').json as Map;
+      await chat.responses.create('Look', images: [const AgentImage('data:image/png;base64,AAAA')]);
+      final shown = router.last('POST /v1/agents/sessions/s1/responses').json as Map;
+
+      expect(first['request_id'], matches(RegExp(r'^[0-9a-f]{32}$')));
+      expect(again['request_id'], matches(RegExp(r'^[0-9a-f]{32}$')));
+      expect(again['request_id'], isNot(first['request_id']));
+      expect(shown['request_id'], matches(RegExp(r'^[0-9a-f]{32}$')));
+      expect(shown['request_id'], isNot(again['request_id']));
+      await chat.close();
+    });
+
+    test('folds the router frames into the transcript and the state', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+
+      socket
+        ..send('{"type":"responding","turn_id":"t1","participant":{},"prompt":"hi"}')
+        ..send('{"type":"response_delta","turn_id":"t1","text":"Nine"}')
+        ..send(
+          '{"pending_work":false,"type":"responded","turn_id":"t1","text":"Nine to five.","time_to_first_token_ms":90}',
+        );
+
+      await until(() => chat.turns.isNotEmpty && chat.state == ConversationState.idle);
+      expect(chat.turns.single.text, 'Nine to five.');
+      await chat.close();
+    });
+
+    test('a widget building from the conversation sees each change as it lands', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+      final states = <ConversationState>[];
+      final subscription = chat.conversation.stream.listen((c) => states.add(c.state));
+
+      socket.send('{"type":"responding","turn_id":"t1"}');
+      socket.send('{"type":"responded","turn_id":"t1","text":"Hi."}');
+
+      await until(() => states.length >= 3);
+      expect(states, [
+        ConversationState.idle,
+        ConversationState.responding,
+        ConversationState.idle,
+      ]);
+      await subscription.cancel();
+      await chat.close();
+    });
+
+    test('skips a frame it cannot read rather than ending the conversation', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+
+      socket
+        ..send('not json')
+        ..send('{"no":"type"}')
+        ..send('{"type":"response_delta","turn_id":"t1","text":"still here"}');
+
+      await until(() => chat.turns.isNotEmpty);
+      expect(chat.turns.single.text, 'still here');
+      expect(chat.isConnected, isTrue);
+      await chat.close();
+    });
+
+    test('runs a tool on this side and answers the model with what it returned', () async {
+      final asked = <Object?>[];
+      final chat = await agents.chat(
+        SessionOptions(
+          tools: [
+            AgentTool(
+              name: 'lookup_order',
+              description: 'Look up an order.',
+              run: (arguments) async {
+                asked.add(arguments['order_id']);
+                return 'Order A-1042: 2 wool throws.';
+              },
+            ),
+          ],
+        ),
+      );
+      final socket = await router.socket();
+
+      socket.send(
+        '{"type":"tool_call","id":"c1","name":"lookup_order",'
+        r'"arguments":"{\"order_id\":\"A-1042\"}","request_id":"","turn_id":"t1"}',
+      );
+
+      expect(await socket.next(), {
+        'type': 'tool_result',
+        'tool_call_id': 'c1',
+        'output': 'Order A-1042: 2 wool throws.',
+        'error': '',
+      });
+      expect(asked, ['A-1042']);
+      await chat.close();
+    });
+
+    test('tells the model a tool did not work, since it is mid-sentence waiting', () async {
+      final chat = await agents.chat(
+        SessionOptions(
+          tools: [
+            AgentTool(
+              name: 'lookup_order',
+              description: 'Look up an order.',
+              run: (_) async => throw StateError('the order service is down'),
+            ),
+          ],
+        ),
+      );
+      final socket = await router.socket();
+
+      socket.send('{"type":"tool_call","id":"c1","name":"lookup_order","arguments":"{}"}');
+
+      final result = await socket.next();
+      expect(result['output'], '');
+      expect(result['error'], contains('the order service is down'));
+      await chat.close();
+    });
+
+    test('answers with pictures as parts beside the words', () async {
+      final chat = await agents.chat(
+        SessionOptions(
+          tools: [
+            AgentTool.withPictures(
+              name: 'photograph_room',
+              description: 'Take a photo of the room.',
+              run: (_) async => const ToolOutput(
+                text: 'the room',
+                images: [
+                  AgentImage('data:image/jpeg;base64,AAAA', detail: 'low'),
+                  AgentImage('https://example.com/room.jpg'),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+      final socket = await router.socket();
+
+      socket.send('{"type":"tool_call","id":"c1","name":"photograph_room","arguments":"{}"}');
+
+      expect(await socket.next(), {
+        'type': 'tool_result',
+        'tool_call_id': 'c1',
+        'output': [
+          {'type': 'text', 'text': 'the room'},
+          {
+            'type': 'image_url',
+            'image_url': {'url': 'data:image/jpeg;base64,AAAA', 'detail': 'low'},
+          },
+          {
+            'type': 'image_url',
+            'image_url': {'url': 'https://example.com/room.jpg'},
+          },
+        ],
+        'error': '',
+      });
+      await chat.close();
+    });
+
+    test(
+      'a picture tool with nothing to show answers in words, and with no words in pictures alone',
+      () async {
+        final chat = await agents.chat(
+          SessionOptions(
+            tools: [
+              AgentTool.withPictures(
+                name: 'words',
+                description: 'Words only.',
+                run: (_) async => const ToolOutput(text: 'nothing in view'),
+              ),
+              AgentTool.withPictures(
+                name: 'picture',
+                description: 'A picture only.',
+                run: (_) async =>
+                    const ToolOutput(images: [AgentImage('https://example.com/a.jpg')]),
+              ),
+            ],
+          ),
+        );
+        final socket = await router.socket();
+
+        socket.send('{"type":"tool_call","id":"c1","name":"words","arguments":"{}"}');
+        final words = await socket.next();
+        socket.send('{"type":"tool_call","id":"c2","name":"picture","arguments":"{}"}');
+
+        expect(words['output'], 'nothing in view');
+        expect((await socket.next())['output'], [
+          {
+            'type': 'image_url',
+            'image_url': {'url': 'https://example.com/a.jpg'},
+          },
+        ]);
+        await chat.close();
+      },
+    );
+
+    test('a picture tool that asks first sends its pictures once allowed', () async {
+      final chat = await agents.chat(
+        SessionOptions(
+          tools: [
+            AgentTool.withPictures(
+              name: 'photograph_room',
+              description: 'Take a photo of the room.',
+              approval: const ToolApproval(title: 'Share a photo of the room?'),
+              run: (_) async =>
+                  const ToolOutput(images: [AgentImage('data:image/jpeg;base64,AAAA')]),
+            ),
+          ],
+        ),
+      );
+      final socket = await router.socket();
+
+      socket.send(
+        '{"type":"tool_call","id":"c1","name":"photograph_room","arguments":"{}",'
+        '"request_id":"m1","turn_id":"t1"}',
+      );
+      await until(() => chat.approvals.value.isNotEmpty);
+      chat.decide('c1', allowed: true);
+
+      expect((await socket.next())['type'], 'tool_approval');
+      expect(await socket.next(), {
+        'type': 'tool_result',
+        'tool_call_id': 'c1',
+        'output': [
+          {
+            'type': 'image_url',
+            'image_url': {'url': 'data:image/jpeg;base64,AAAA'},
+          },
+        ],
+        'error': '',
+        'request_id': 'm1',
+        'turn_id': 't1',
+      });
+      await chat.close();
+    });
+
+    test('a picture tool that throws tells the model it did not work', () async {
+      final chat = await agents.chat(
+        SessionOptions(
+          tools: [
+            AgentTool.withPictures(
+              name: 'photograph_room',
+              description: 'Take a photo of the room.',
+              run: (_) async => throw StateError('the camera is off'),
+            ),
+          ],
+        ),
+      );
+      final socket = await router.socket();
+
+      socket.send('{"type":"tool_call","id":"c1","name":"photograph_room","arguments":"{}"}');
+
+      final result = await socket.next();
+      expect(result['output'], '');
+      expect(result['error'], contains('the camera is off'));
+      await chat.close();
+    });
+
+    test("repeats a request's ids, so no other request can adopt the result", () async {
+      final chat = await agents.chat(
+        SessionOptions(
+          tools: [AgentTool(name: 'now', description: 'The time.', run: (_) async => 'noon')],
+        ),
+      );
+      final socket = await router.socket();
+
+      socket.send(
+        '{"type":"tool_call","id":"c1","name":"now","arguments":"{}","request_id":"cmd-1","turn_id":"t1"}',
+      );
+
+      expect(await socket.next(), {
+        'type': 'tool_result',
+        'tool_call_id': 'c1',
+        'output': 'noon',
+        'error': '',
+        'request_id': 'cmd-1',
+        'turn_id': 't1',
+      });
+      await chat.close();
+    });
+
+    test('leaves a tool it does not have for whoever does, rather than answering first', () async {
+      final chat = await agents.chat(
+        SessionOptions(
+          tools: [AgentTool(name: 'mine', description: 'Mine.', run: (_) async => 'mine')],
+        ),
+      );
+      final socket = await router.socket();
+
+      socket
+        ..send('{"type":"tool_call","id":"c1","name":"somebody_elses","arguments":"{}"}')
+        ..send('{"type":"tool_call","id":"c2","name":"mine","arguments":"{}"}');
+
+      expect((await socket.next())['tool_call_id'], 'c2');
+      await chat.close();
+    });
+
+    test('a tool call the router cancelled is not answered', () async {
+      final release = Completer<String>();
+      final chat = await agents.chat(
+        SessionOptions(
+          tools: [
+            AgentTool(name: 'slow', description: 'Slow.', run: (_) => release.future),
+            AgentTool(name: 'fast', description: 'Fast.', run: (_) async => 'fast'),
+          ],
+        ),
+      );
+      final socket = await router.socket();
+      final cancelled = chat.events().firstWhere(
+        (event) => event.kind == AgentEventKind.toolCancel,
+      );
+
+      socket
+        ..send('{"type":"tool_call","id":"c1","name":"slow","arguments":"{}"}')
+        ..send('{"type":"tool_cancel","id":"c1","request_id":"","turn_id":""}');
+      await cancelled;
+      release.complete('too late');
+      socket.send('{"type":"tool_call","id":"c2","name":"fast","arguments":"{}"}');
+
+      expect((await socket.next())['tool_call_id'], 'c2');
+      await chat.close();
+    });
+
+    test('answering a tool does not depend on anybody reading events', () async {
+      final chat = await agents.chat(
+        SessionOptions(
+          tools: [AgentTool(name: 'now', description: 'The time.', run: (_) async => 'noon')],
+        ),
+      );
+      final socket = await router.socket();
+
+      socket.send('{"type":"tool_call","id":"c1","name":"now","arguments":"{}"}');
+
+      expect((await socket.next())['output'], 'noon');
+      await chat.close();
+    });
+
+    group('a tool that asks first', () {
+      const refundCall =
+          '{"type":"tool_call","id":"c1","name":"issue_refund",'
+          r'"arguments":"{\"order_id\":\"A-1042\",\"reason\":\"it arrived unopened\"}",'
+          '"request_id":"m1","turn_id":"t1"}';
+      late List<Object?> ran;
+
+      Future<AgentSession> open() => agents.chat(
+        SessionOptions(
+          tools: [
+            AgentTool(
+              name: 'issue_refund',
+              description: 'Refund an order.',
+              approval: const ToolApproval(
+                title: 'Refund order A-1042?',
+                reasonArgument: 'reason',
+                allowTitle: 'Refund',
+              ),
+              run: (arguments) async {
+                ran.add(arguments['order_id']);
+                return 'Refunded ${arguments['order_id']}';
+              },
+            ),
+          ],
+        ),
+      );
+
+      setUp(() => ran = []);
+
+      test('declares its question and waits for the person before it runs', () async {
+        final chat = await open();
+        final declared = (router.last('POST /v1/agents/sessions').json as Map)['tools'] as List;
+        expect((declared.single as Map)['approval'], {
+          'title': 'Refund order A-1042?',
+          'allow_title': 'Refund',
+          'reason_argument': 'reason',
+        });
+        final socket = await router.socket();
+
+        socket.send(refundCall);
+        await until(() => chat.approvals.value.isNotEmpty);
+        final waiting = chat.approvals.value.single;
+        expect(waiting.approval.title, 'Refund order A-1042?');
+        expect(waiting.reason, 'it arrived unopened');
+        expect(ran, isEmpty);
+
+        chat.decide('c1', allowed: true);
+
+        expect(chat.approvals.value, isEmpty);
+        expect(await socket.next(), {
+          'type': 'tool_approval',
+          'tool_call_id': 'c1',
+          'allowed': true,
+          'request_id': 'm1',
+          'turn_id': 't1',
+        });
+        expect(await socket.next(), {
+          'type': 'tool_result',
+          'tool_call_id': 'c1',
+          'output': 'Refunded A-1042',
+          'error': '',
+          'request_id': 'm1',
+          'turn_id': 't1',
+        });
+        expect(ran, ['A-1042']);
+        await chat.close();
+      });
+
+      test('declined, never runs, tells the model so, and a second answer does nothing', () async {
+        final chat = await open();
+        final socket = await router.socket();
+
+        socket.send(refundCall);
+        await until(() => chat.approvals.value.isNotEmpty);
+        chat
+          ..decide('c1', allowed: false, summary: 'Kept the order')
+          ..decide('c1', allowed: true)
+          ..say('still there?');
+
+        expect(await socket.next(), {
+          'type': 'tool_approval',
+          'tool_call_id': 'c1',
+          'allowed': false,
+          'summary': 'Kept the order',
+          'request_id': 'm1',
+          'turn_id': 't1',
+        });
+        expect(await socket.next(), {
+          'type': 'tool_result',
+          'tool_call_id': 'c1',
+          'output': '',
+          'error': 'The person declined this call.',
+          'request_id': 'm1',
+          'turn_id': 't1',
+        });
+        expect(await socket.next(), {'type': 'say', 'text': 'still there?'});
+        expect(ran, isEmpty);
+        await chat.close();
+      });
+
+      test('stops waiting when the router cancels the call', () async {
+        final chat = await open();
+        final socket = await router.socket();
+
+        socket.send(refundCall);
+        await until(() => chat.approvals.value.isNotEmpty);
+        socket.send('{"type":"tool_cancel","id":"c1","request_id":"m1","turn_id":"t1"}');
+        await until(() => chat.approvals.value.isEmpty);
+        chat
+          ..decide('c1', allowed: true)
+          ..say('still there?');
+
+        expect(await socket.next(), {'type': 'say', 'text': 'still there?'});
+        await chat.close();
+      });
+    });
+
+    test('declining a sign-in says only that the call is not allowed', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+
+      // As the router's ChatLoginsSuite declines a call waiting for its login.
+      chat
+        ..declineLogin('call-linear')
+        ..say('still there?');
+
+      expect(await socket.next(), {
+        'type': 'tool_approval',
+        'tool_call_id': 'call-linear',
+        'allowed': false,
+      });
+      expect(await socket.next(), {'type': 'say', 'text': 'still there?'});
+      await chat.close();
+    });
+
+    group('the request for frames', () {
+      // The moment the router took the question, and its request for frames as `frameOf`
+      // writes the vision skill's call.
+      final asked = DateTime.utc(2026, 10, 27, 12);
+      String request({
+        Map<String, Object?>? arguments,
+        bool run = true,
+        String requestId = '',
+        String turnId = '',
+      }) => jsonEncode({
+        'type': 'tool_call',
+        'id': 'task-1-capture',
+        'name': 'get_video_frames',
+        'arguments': jsonEncode(
+          arguments ?? {'at_ms': asked.millisecondsSinceEpoch, 'limit': 2, 'source': 'camera'},
+        ),
+        'request_id': requestId,
+        'turn_id': turnId,
+        'session_id': 's1',
+        'run': run,
+      });
+      ({Uint8List jpeg, DateTime capturedAt}) picture(List<int> bytes, DateTime capturedAt) =>
+          (jpeg: Uint8List.fromList(bytes), capturedAt: capturedAt);
+      String frameIds(Map<String, Object?> result) {
+        final output = result['output']! as List<Object?>;
+        final words = jsonDecode((output.first! as Map)['text'] as String) as Map;
+        return [for (final frame in words['frames'] as List) (frame as Map)['frame_id']].join(',');
+      }
+
+      test('is answered with the pictures the camera takes, words first', () async {
+        final chat = await agents.chat();
+        final before = picture([1], asked.subtract(const Duration(milliseconds: 500)));
+        final after = picture([2], asked);
+        chat.camera = (_, _) async => [before, after];
+        final socket = await router.socket();
+
+        socket.send(request());
+
+        expect(await socket.next(), {
+          'type': 'tool_result',
+          'tool_call_id': 'task-1-capture',
+          'output': [
+            {
+              'type': 'text',
+              'text': jsonEncode({
+                'clock': 'device_unix_ms',
+                'frames': [
+                  {
+                    'captured_at_ms': before.capturedAt.millisecondsSinceEpoch,
+                    'frame_id': 'camera-1',
+                  },
+                  {
+                    'captured_at_ms': after.capturedAt.millisecondsSinceEpoch,
+                    'frame_id': 'camera-2',
+                  },
+                ],
+                'source': 'camera',
+              }),
+            },
+            for (final shown in [before, after])
+              {
+                'type': 'image_url',
+                'image_url': {'url': 'data:image/jpeg;base64,${base64Encode(shown.jpeg)}'},
+              },
+          ],
+          'error': '',
+        });
+        await chat.close();
+      });
+
+      test("repeats a request's ids, as any tool result does", () async {
+        final chat = await agents.chat();
+        chat.camera = (_, _) async => [
+          picture([1], asked),
+        ];
+        final socket = await router.socket();
+
+        socket.send(request(requestId: 'cmd-1', turnId: 't1'));
+
+        final result = await socket.next();
+        expect((result['request_id'], result['turn_id']), ('cmd-1', 't1'));
+        await chat.close();
+      });
+
+      test('asks the camera for the moment and the number of pictures named', () async {
+        final chat = await agents.chat();
+        (DateTime, int)? asking;
+        chat.camera = (at, limit) async {
+          asking = (at, limit);
+          return const [];
+        };
+        final socket = await router.socket();
+
+        socket.send(request());
+        await socket.next();
+
+        final (at, limit) = asking!;
+        expect((at.millisecondsSinceEpoch, limit), (asked.millisecondsSinceEpoch, 2));
+        await chat.close();
+      });
+
+      test('asks for one picture of now when the router names neither', () async {
+        final chat = await agents.chat();
+        (DateTime, int)? asking;
+        chat.camera = (at, limit) async {
+          asking = (at, limit);
+          return const [];
+        };
+        final socket = await router.socket();
+        final sent = DateTime.now();
+
+        socket.send(request(arguments: {}));
+        await socket.next();
+
+        final (at, limit) = asking!;
+        expect(limit, 1);
+        expect(at.isBefore(sent), isFalse);
+        await chat.close();
+      });
+
+      test('asks for at most eight pictures', () async {
+        final chat = await agents.chat();
+        int? asking;
+        chat.camera = (_, limit) async {
+          asking = limit;
+          return const [];
+        };
+        final socket = await router.socket();
+
+        socket.send(request(arguments: {'at_ms': asked.millisecondsSinceEpoch, 'limit': 20}));
+        await socket.next();
+
+        expect(asking, 8);
+        await chat.close();
+      });
+
+      test('asks for eight pictures when the number is past what a double holds', () async {
+        final chat = await agents.chat();
+        int? asking;
+        chat.camera = (_, limit) async {
+          asking = limit;
+          return const [];
+        };
+        final socket = await router.socket();
+
+        // 1e400 decodes as infinity, which jsonEncode refuses to write.
+        socket.send(request().replaceFirst(r'\"limit\":2', r'\"limit\":1e400'));
+        await socket.next();
+
+        expect(asking, 8);
+        await chat.close();
+      });
+
+      test('asks for at least one picture', () async {
+        final chat = await agents.chat();
+        int? asking;
+        chat.camera = (_, limit) async {
+          asking = limit;
+          return const [];
+        };
+        final socket = await router.socket();
+
+        socket.send(request(arguments: {'at_ms': asked.millisecondsSinceEpoch, 'limit': 0}));
+        await socket.next();
+
+        expect(asking, 1);
+        await chat.close();
+      });
+
+      test('takes a moment past what a date holds as now, rather than failing', () async {
+        final chat = await agents.chat();
+        DateTime? asking;
+        chat.camera = (at, _) async {
+          asking = at;
+          return const [];
+        };
+        final socket = await router.socket();
+        final sent = DateTime.now();
+
+        socket.send(request(arguments: {'at_ms': 1e20, 'limit': 1}));
+        await socket.next();
+
+        expect(asking!.isBefore(sent), isFalse);
+        await chat.close();
+      });
+
+      test('sends the pictures oldest first, however the camera ordered them', () async {
+        final chat = await agents.chat();
+        chat.camera = (_, _) async => [
+          picture([2], asked),
+          picture([1], asked.subtract(const Duration(seconds: 1))),
+        ];
+        final socket = await router.socket();
+
+        socket.send(request());
+
+        final output = (await socket.next())['output']! as List<Object?>;
+        expect(output.skip(1), [
+          for (final bytes in [
+            [1],
+            [2],
+          ])
+            {
+              'type': 'image_url',
+              'image_url': {'url': 'data:image/jpeg;base64,${base64Encode(bytes)}'},
+            },
+        ]);
+        await chat.close();
+      });
+
+      test('numbers the frames on from one request to the next', () async {
+        final chat = await agents.chat();
+        chat.camera = (_, _) async => [
+          picture([1], asked),
+        ];
+        final socket = await router.socket();
+
+        socket.send(request());
+        await socket.next();
+        socket.send(request());
+
+        expect(frameIds(await socket.next()), 'camera-2');
+        await chat.close();
+      });
+
+      test('says the camera showed nothing recent when it took no picture', () async {
+        final chat = await agents.chat();
+        chat.camera = (_, _) async => const [];
+        final socket = await router.socket();
+
+        socket.send(request());
+
+        expect(await socket.next(), {
+          'type': 'tool_result',
+          'tool_call_id': 'task-1-capture',
+          'output':
+              'The camera has shown nothing in the last few seconds; ask them to point it at '
+              'what they mean again.',
+          'error': '',
+        });
+        await chat.close();
+      });
+
+      test('says the camera showed nothing recent when it could not look', () async {
+        final chat = await agents.chat();
+        chat.camera = (_, _) async => throw StateError('no camera');
+        final socket = await router.socket();
+
+        socket.send(request());
+
+        expect(
+          (await socket.next())['output'],
+          'The camera has shown nothing in the last few seconds; ask them to point it at what '
+          'they mean again.',
+        );
+        await chat.close();
+      });
+
+      test('is not answered once the router cancelled it', () async {
+        final looked = Completer<List<({Uint8List jpeg, DateTime capturedAt})>>();
+        final chat = await agents.chat(
+          SessionOptions(
+            tools: [AgentTool(name: 'now', description: 'The time.', run: (_) async => 'noon')],
+          ),
+        );
+        chat.camera = (_, _) => looked.future;
+        final socket = await router.socket();
+        final cancelled = chat.events().firstWhere(
+          (event) => event.kind == AgentEventKind.toolCancel,
+        );
+
+        socket
+          ..send(request())
+          ..send('{"type":"tool_cancel","id":"task-1-capture","request_id":"","turn_id":""}');
+        await cancelled;
+        looked.complete([
+          picture([1], asked),
+        ]);
+        socket.send('{"type":"tool_call","id":"c2","name":"now","arguments":"{}"}');
+
+        expect((await socket.next())['tool_call_id'], 'c2');
+        await chat.close();
+      });
+
+      test('finishing looking after the session closed sends nothing and throws nothing', () async {
+        final asking = Completer<void>();
+        final looked = Completer<List<({Uint8List jpeg, DateTime capturedAt})>>();
+        final chat = await agents.chat();
+        chat.camera = (_, _) {
+          asking.complete();
+          return looked.future;
+        };
+        final socket = await router.socket();
+
+        socket.send(request());
+        await asking.future;
+        await chat.close();
+        looked.complete([
+          picture([1], asked),
+        ]);
+        await pumpEventQueue();
+
+        // The socket closed before the camera finished, so the close is the last frame.
+        expect(await socket.next(), {'type': 'close'});
+        await socket.done;
+      });
+
+      test('is left to whoever the router says runs it', () async {
+        final chat = await agents.chat(
+          SessionOptions(
+            tools: [AgentTool(name: 'now', description: 'The time.', run: (_) async => 'noon')],
+          ),
+        );
+        chat.camera = (_, _) async => [
+          picture([1], asked),
+        ];
+        final socket = await router.socket();
+
+        socket
+          ..send(request(run: false))
+          ..send('{"type":"tool_call","id":"c2","name":"now","arguments":"{}"}');
+
+        expect((await socket.next())['tool_call_id'], 'c2');
+        await chat.close();
+      });
+
+      test('with no camera, is left alone like any tool this app does not have', () async {
+        final chat = await agents.chat(
+          SessionOptions(
+            tools: [AgentTool(name: 'now', description: 'The time.', run: (_) async => 'noon')],
+          ),
+        );
+        final socket = await router.socket();
+
+        socket
+          ..send(request())
+          ..send('{"type":"tool_call","id":"c2","name":"now","arguments":"{}"}');
+
+        expect((await socket.next())['tool_call_id'], 'c2');
+        await chat.close();
+      });
+
+      test("with no camera, goes to the app's own tool of that name as before", () async {
+        final chat = await agents.chat(
+          SessionOptions(
+            tools: [
+              AgentTool(
+                name: 'get_video_frames',
+                description: 'What the doorbell saw.',
+                run: (_) async => 'a parcel',
+              ),
+            ],
+          ),
+        );
+        final socket = await router.socket();
+
+        socket.send(request());
+
+        expect((await socket.next())['output'], 'a parcel');
+        await chat.close();
+      });
+    });
+
+    test('two readers of events each get every event', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+      final first = chat.events().map((event) => event.type).take(2).toList();
+      final second = chat.events().map((event) => event.type).take(2).toList();
+
+      socket
+        ..send('{"type":"joined","at":"2026-09-24T15:54:56Z"}')
+        ..send('{"type":"astonished"}');
+
+      expect(await first, ['joined', 'astonished']);
+      expect(await second, ['joined', 'astonished']);
+      await chat.close();
+    });
+
+    test('a reader that falls far behind is finished rather than buffered forever', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+      final slow = chat.events();
+
+      for (var i = 0; i < 300; i++) {
+        socket.send('{"type":"response_delta","turn_id":"t1","text":"."}');
+      }
+      await until(() => chat.turns.isNotEmpty && chat.turns.single.text.length == 300);
+
+      expect(await slow.length, 256);
+      expect(chat.isConnected, isTrue);
+      await chat.close();
+    });
+
+    test('a session the router ended is over, with no failure to report', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+
+      socket.send('{"type":"left","at":"2026-09-24T15:54:56Z"}');
+      await socket.close(1000, 'the session ended');
+
+      await until(() => chat.connection.value is Disconnected);
+      expect(chat.failure, isNull);
+      expect(chat.state, ConversationState.ended);
+    });
+
+    test('a socket lost mid-conversation reports why, with its close code', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+
+      await socket.close(4000, 'draining');
+
+      await until(() => chat.connection.value is Disconnected);
+      expect(
+        chat.failure,
+        isA<SocketClosedException>()
+            .having((e) => e.code, 'code', 4000)
+            .having((e) => e.reason, 'reason', 'draining'),
+      );
+      expect(() => chat.say('anyone?'), throwsA(isA<SocketClosedException>()));
+    });
+
+    test('closing says so over the socket and is safe to repeat', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+
+      await chat.close();
+      await chat.close();
+
+      expect(await socket.next(), {'type': 'close'});
+      await socket.done;
+      expect(socket.closeCode, 1000);
+      expect(chat.connection.value, const Disconnected());
+    });
+
+    test('closing keeps reading until the router hangs up', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+      socket.onClose = () async {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        socket.send('{"type":"left","at":"2026-09-24T15:54:56Z"}');
+        await socket.close(1000, 'the session ended');
+      };
+      final seen = chat.events().map((event) => event.type).toList();
+
+      await chat.close();
+
+      expect(await seen, ['left']);
+      expect(chat.failure, isNull);
+    });
+
+    test('closing gives up waiting on a router that never hangs up', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+      socket.onClose = () async {};
+      final watch = Stopwatch()..start();
+
+      await chat.close();
+
+      expect(watch.elapsed, greaterThanOrEqualTo(const Duration(seconds: 5)));
+      await socket.done;
+      expect(chat.connection.value, const Disconnected());
+    });
+
+    test('closing a session whose socket dropped stops it with a request', () async {
+      router.answer('POST /v1/agents/sessions/s1/stop', const Answer(204));
+      final chat = await agents.chat();
+      final socket = await router.socket();
+      await socket.close(4000, 'draining');
+      await until(() => chat.connection.value is Disconnected);
+
+      await chat.close();
+
+      expect(router.last('POST /v1/agents/sessions/s1/stop').method, 'POST');
+    });
+
+    test('closing a session the router no longer has is not a failure', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+      await socket.close(4000, 'draining');
+      await until(() => chat.connection.value is Disconnected);
+
+      await chat.close();
+
+      expect(router.last('POST /v1/agents/sessions/s1/stop').method, 'POST');
+    });
+
+    group('an unstarted session', () {
+      late AgentSession chat;
+
+      setUp(() {
+        chat = AgentSession(
+          Session(id: 's1', createdAt: DateTime.utc(2026)),
+          backend: agents.backend,
+          sessions: agents.sessions,
+        );
+      });
+
+      test('started twice at once opens one socket', () async {
+        await Future.wait([chat.start(), chat.start()]);
+        await router.socket();
+        await pumpEventQueue();
+
+        expect(router.upgrades, hasLength(1));
+        expect(chat.isConnected, isTrue);
+        await chat.close();
+      });
+
+      test('closed while starting opens no socket and stays closed', () async {
+        router.answer('POST /v1/agents/sessions/s1/stop', const Answer(204));
+
+        final started = chat.start();
+        await chat.close();
+        await started;
+        await pumpEventQueue();
+
+        expect(router.upgrades, isEmpty);
+        expect(chat.connection.value, const Disconnected());
+        expect(router.last('POST /v1/agents/sessions/s1/stop').method, 'POST');
+      });
+    });
+
+    test(
+      'a session whose socket cannot open is stopped rather than left holding the agent',
+      () async {
+        router
+          ..answer('POST /v1/agents/sessions/s1/stop', const Answer(204))
+          ..refuseSockets = true;
+
+        await expectLater(agents.chat(), throwsA(isA<TransportException>()));
+        expect(router.last('POST /v1/agents/sessions/s1/stop').method, 'POST');
+        expect(router.arrived.where((request) => request.method == 'DELETE'), isEmpty);
+      },
+    );
+
+    test('a socket that cannot open says why without the token', () async {
+      router
+        ..answer('POST /v1/agents/sessions/s1/stop', const Answer(204))
+        ..refuseSockets = true;
+      final keyed = StreamAgents(url: router.url, apiKey: 'key', token: () async => 'secret-tok');
+      addTearDown(keyed.close);
+
+      final error = await keyed.chat().then<Object>(
+        (_) => fail('the socket opened'),
+        onError: (Object error) => error,
+      );
+
+      expect(error, isA<TransportException>());
+      expect('$error', allOf(contains('was not upgraded'), isNot(contains('secret-tok'))));
+      expect('${(error as TransportException).cause}', isNot(contains('secret-tok')));
+    });
+
+    test('a frame over 16 MiB ends the conversation rather than being read', () async {
+      final chat = await agents.chat();
+      final socket = await router.socket();
+
+      socket.send('{"type":"response_delta","turn_id":"t1","text":"${'a' * (17 * 1024 * 1024)}"}');
+
+      await until(() => chat.connection.value is Disconnected);
+      expect(chat.failure, isA<SocketClosedException>());
+      expect(chat.turns, isEmpty);
+    });
+
+    test('deleting takes the conversation away and ends it here', () async {
+      router.answer('DELETE /v1/agents/sessions/s1', const Answer(204));
+      final chat = await agents.chat();
+      final socket = await router.socket();
+
+      await chat.delete();
+
+      expect(router.last('DELETE /v1/agents/sessions/s1').method, 'DELETE');
+      await socket.done;
+      expect(chat.connection.value, const Disconnected());
+    });
+
+    test('renaming refreshes the session and keeps the conversation open', () async {
+      router.answer(
+        'PATCH /v1/agents/sessions/s1',
+        Answer(200, {...sessionJson(), 'title': 'Billing', 'description': 'Refund'}),
+      );
+      final chat = await agents.chat();
+
+      final renamed = await chat.update(title: 'Billing', description: 'Refund');
+
+      expect(router.last('PATCH /v1/agents/sessions/s1').json, {
+        'title': 'Billing',
+        'description': 'Refund',
+      });
+      expect(renamed.title, 'Billing');
+      expect(chat.session.title, 'Billing');
+      expect(chat.session.description, 'Refund');
+      expect(chat.isConnected, isTrue);
+      await chat.close();
+    });
+
+    test('pinning and unpinning refresh the session and keep the conversation open', () async {
+      router.answerInTurn('PATCH /v1/agents/sessions/s1', [
+        Answer(200, {...sessionJson(), 'pinned_at': '2026-11-11T10:00:00Z'}),
+        Answer(200, sessionJson()),
+      ]);
+      final chat = await agents.chat();
+
+      final pinned = await chat.pin();
+      final pin = router.last('PATCH /v1/agents/sessions/s1').json;
+      final during = chat.session.pinnedAt;
+      final unpinned = await chat.unpin();
+
+      expect(pin, {'pinned': true});
+      expect(pinned.pinnedAt, DateTime.utc(2026, 11, 11, 10));
+      expect(during, DateTime.utc(2026, 11, 11, 10));
+      expect(router.last('PATCH /v1/agents/sessions/s1').json, {'pinned': false});
+      expect(unpinned.pinnedAt, isNull);
+      expect(chat.session.pinnedAt, isNull);
+      expect(chat.isConnected, isTrue);
+      await chat.close();
+    });
+
+    test('voice puts a written conversation on its call and takes it off again', () async {
+      router
+        ..answer(
+          'POST /v1/agents/sessions/s1/voice',
+          Answer(200, {...sessionJson(), 'call_id': 's1', 'text': false}),
+        )
+        ..answer('DELETE /v1/agents/sessions/s1/voice', Answer(200, sessionJson()));
+      final chat = await agents.chat();
+
+      await chat.startVoice();
+      expect(chat.session.callId, 's1');
+      expect(chat.session.isText, isFalse);
+
+      await chat.stopVoice();
+      expect(chat.session.callId, isEmpty);
+      expect(chat.session.isText, isTrue);
+      expect(chat.isConnected, isTrue);
+      await chat.close();
+    });
+
+    test('a fork keeps the tools, since they are here in this process', () async {
+      router.answer('POST /v1/agents/sessions/s1/fork', Answer(201, sessionJson(id: 's2')));
+      final chat = await agents.chat(
+        SessionOptions(
+          tools: [AgentTool(name: 'now', description: 'The time.', run: (_) async => 'noon')],
+        ),
+      );
+
+      final fork = await chat.fork(const ForkOptions(responseId: 'r1'));
+      await fork.start();
+      final socket = await router.socket(1);
+      socket.send('{"type":"tool_call","id":"c1","name":"now","arguments":"{}"}');
+
+      expect(fork.id, 's2');
+      expect((await socket.next())['output'], 'noon');
+      await fork.close();
+      await chat.close();
+    });
+  });
+}

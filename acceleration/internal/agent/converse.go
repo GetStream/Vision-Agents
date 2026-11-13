@@ -53,6 +53,12 @@ const (
 	ActDelegate ActionKind = "delegate"
 	// ActSettle is delegated work coming back, answered or not.
 	ActSettle ActionKind = "settle"
+	// ActHoldUnheard keeps an unheard reply from the voice while the lone greeting its caller
+	// said over it may still grow into more.
+	ActHoldUnheard ActionKind = "hold_unheard"
+	// ActReleaseUnheard lets the reply held for a lone greeting go out once the greeting has
+	// settled: it is the answer to it.
+	ActReleaseUnheard ActionKind = "release_unheard"
 	// ActFail is a judgement that could not be made.
 	ActFail ActionKind = "fail"
 )
@@ -127,8 +133,13 @@ type Action struct {
 	// Unanswered is what the same participant said in a turn queued before this one, which
 	// this answer is for too. Empty when nothing was waiting.
 	Unanswered string
+	// Aside is what was heard on the participant's line that the floor ruled no turn of
+	// theirs, kept for this answer to see (keepAside). Empty when nothing was kept.
+	Aside string
 	// Err is why a judgement could not be made.
 	Err error
+	// At is when a held reply may go out: the caller holds the floor until then.
+	At time.Time
 }
 
 // floor is what the agent is doing at the moment a judgement has to be made.
@@ -251,6 +262,12 @@ type converse struct {
 	// stops is, for each participant, the utterance a check over the agent stopped it on
 	// while they talked on, and the words it was ruled on (Overheard): spent on the stop.
 	stops map[string]stoppedOn
+	// greeted is the turn whose unheard reply each participant's lone greeting holds, until
+	// the greeting settles or they go on.
+	greeted map[string]string
+	// asides is, for each participant, what was heard on their line that the floor ruled was
+	// no turn of theirs, kept for the next reply to them to see (keepAside).
+	asides map[string]string
 }
 
 // stoppedOn is an utterance a stop over the agent was ruled on, and the words so far it was
@@ -353,6 +370,8 @@ func newConverse(
 		queuedSaid:   map[string]string{},
 		repeated:     map[string]string{},
 		stops:        map[string]stoppedOn{},
+		greeted:      map[string]string{},
+		asides:       map[string]string{},
 	}
 }
 
@@ -614,15 +633,29 @@ func (c *converse) overlap(transcript stt.Transcript, saying string, state floor
 // stale abandons the reply to a caller's turn once the same caller says more before any of it
 // has gone out: it answers words they moved on from, over them. What they say next is answered
 // with those words in the history. A murmur or a lone word that is no interruption is somebody
-// waiting to be answered, and leaves it.
+// waiting to be answered, and leaves it. A lone greeting holds it instead: it is as often
+// them waiting for it as the start of something new, and only what comes next tells.
 func (c *converse) stale(transcript stt.Transcript, saying string, state floor) (Action, bool) {
-	if state.Unheard.turnID == "" || transcript.Participant.ID != state.Unheard.participant ||
-		!takesFloor(unrepeated(saying, c.cadence.Repeating(transcript.Participant.ID))) {
+	if state.Unheard.turnID == "" || transcript.Participant.ID != state.Unheard.participant {
 		return Action{}, false
 	}
-	c.mu.Lock()
-	c.wentOn[transcript.Participant.ID] = time.Now()
-	c.mu.Unlock()
+	said := unrepeated(saying, c.cadence.Repeating(transcript.Participant.ID))
+	if !takesFloor(said) {
+		return Action{}, false
+	}
+	if greetsAlone(said) {
+		c.mu.Lock()
+		c.greeted[transcript.Participant.ID] = state.Unheard.turnID
+		c.mu.Unlock()
+		return c.decide(Action{
+			Kind:        ActHoldUnheard,
+			Reason:      "the caller said a lone greeting before hearing any of the reply, which may be them waiting for it",
+			Participant: transcript.Participant,
+			TurnID:      state.Unheard.turnID,
+			Text:        saying,
+		}), true
+	}
+	c.wentOnUnheard(transcript.Participant.ID)
 	return c.decide(Action{
 		Kind:         ActInterrupt,
 		Reason:       "the caller said more before hearing any of the reply, so it answers words they have moved on from",
@@ -650,6 +683,65 @@ func takesFloor(saying string) bool {
 	})
 }
 
+// wentOnUnheard records a participant going on talking before hearing any of the reply to them.
+func (c *converse) wentOnUnheard(participantID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.wentOn[participantID] = time.Now()
+	delete(c.greeted, participantID)
+}
+
+// greetsAlone reports whether words are nothing but a greeting that takes the floor alone,
+// said once or more, with any murmur around it.
+func greetsAlone(saying string) bool {
+	fields := slices.DeleteFunc(wordList(saying), func(field string) bool { return murmurs[field] })
+	return len(fields) > 0 && !slices.ContainsFunc(fields, func(field string) bool { return field != "hello" && field != "hey" })
+}
+
+// answeredByHeld deals with a lone greeting that settled while the reply its caller had heard
+// none of was held for it: the reply is the answer to it. The controller is not asked, as
+// every ruling it gives breaks that: stop cuts the reply, continue answers the greeting a
+// second time, wait lets the reply go and may then cut it.
+// Words that are not that, or a reply no longer unheard, are a turn as any other: words that
+// grew dropped the reply as they came (stale), and the hold's own deadline ends it otherwise.
+func (c *converse) answeredByHeld(ready candidate, state floor) (Action, bool) {
+	participantID := ready.Participant.ID
+	turnID := c.greetedBy(participantID)
+	if turnID == "" || turnID != state.Unheard.turnID ||
+		!greetsAlone(unrepeated(ready.Text, c.cadence.Repeating(participantID))) {
+		return Action{}, false
+	}
+	if !c.cadence.Resolve(ready.ID, false) {
+		return Action{}, true
+	}
+	c.mu.Lock()
+	delete(c.greeted, participantID)
+	c.mu.Unlock()
+	shown, line := c.closeLine(participantID, ready.Text, true)
+	sendHeard(c.emitter, c.onHeard, Heard{
+		Participant: ready.Participant,
+		Text:        shown,
+		Language:    ready.Language,
+		LineID:      line,
+	})
+	return c.decide(Action{
+		Kind:        ActReleaseUnheard,
+		Reason:      "the caller's lone greeting settled, and the reply held for it answers it",
+		Participant: ready.Participant,
+		TurnID:      turnID,
+		Text:        shown,
+		LineID:      line,
+		At:          ready.RevisedAt.Add(callerHold),
+	}), true
+}
+
+// greetedBy is the turn whose unheard reply a participant's lone greeting holds, if any.
+func (c *converse) greetedBy(participantID string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.greeted[participantID]
+}
+
 // supersede abandons a ruling asked for about words that have since changed.
 func (c *converse) supersede(participant stt.Participant, candidateID string) Action {
 	return c.decide(Action{
@@ -662,6 +754,10 @@ func (c *converse) supersede(participant stt.Participant, candidateID string) Ac
 
 // Settled registers a turn whose words have stopped changing and asks for a ruling on it.
 func (c *converse) Settled(ready candidate, state floor) Action {
+	// Ahead of a stop's words: a stop on a greeting a held reply answers is not acted on.
+	if released, ok := c.answeredByHeld(ready, state); ok {
+		return released
+	}
 	if spent, ok := c.stopSpent(ready); ok {
 		return spent
 	}
@@ -816,6 +912,19 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 		clarified = "the caller went quiet on an unfinished thought, so what was heard may not be what was said"
 	}
 
+	// A floor that heard the audio (chorus-asr, Ruler Heard) rules on when the agent speaks,
+	// never on whether the caller's words count. Its ignore says the words were no turn for
+	// the agent: a murmur over it ("yeah", "mm-hmm"), or a voice that was not the caller's
+	// (the room, a radio), over it or not. They are heard, as said, and kept for the next
+	// reply to the caller to see, as context and no turn of their own (keepAside): the agent
+	// is not interrupted, and nothing is said to them alone, as answering a radio is worse
+	// than hearing a caller's aside late. Made a turn to answer once the agent was quiet, as
+	// the default flow controller's queue is, a radio's "Thank you so much" over the agent
+	// was answered "You're welcome" while the caller spelled a name. A cough or a lone "uh"
+	// is no words, and stays ignored.
+	aside := ruling.Ruler == harness.Heard && ruling.Disposition == harness.Ignore &&
+		words(ready.Text) != "" && !overlapNoise(ready.Text)
+
 	queue := !state.Quiet && !overlapNoise(ready.Text) && ruling.Disposition != harness.Ignore &&
 		(state.Recovering || ruling.Floor != harness.Stop)
 	var resolved bool
@@ -844,6 +953,30 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 	switch {
 	case !state.Quiet && overlapNoise(ready.Text):
 		ignore = "a cough or other non-speech noise overlapping the reply, so the agent keeps talking"
+	case aside:
+		// Heard, as the caller said it, and the next reply to them sees it; nothing is said
+		// to it alone.
+		shown, line := c.closeLine(ready.Participant.ID, ready.Text, true)
+		c.keepAside(ready.Participant.ID, ready.Text)
+		sendHeard(c.emitter, c.onHeard, Heard{
+			Participant: ready.Participant,
+			Text:        shown,
+			Language:    ready.Language,
+			LineID:      line,
+		})
+		reason := "words the floor ruled were no turn for the agent: heard, and kept for the next reply to see, as no turn of their own"
+		if !state.Quiet {
+			reason = "words the floor let the agent talk through: heard, and kept for the next reply to see, as no turn of their own"
+		}
+		return []Action{c.decide(Action{
+			Kind:        ActIgnore,
+			Reason:      reason,
+			Candidate:   ready,
+			Participant: ready.Participant,
+			Text:        shown,
+			LatencyMs:   ruling.TookMs,
+			LineID:      line,
+		})}
 	case ruling.Disposition == harness.Ignore:
 		ignore = "this was background speech or meant for somebody else"
 	}
@@ -902,6 +1035,7 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 	}
 
 	if state.Quiet {
+		answer.Aside = c.takeAside(ready.Participant.ID)
 		return []Action{c.decide(answer)}
 	}
 
@@ -924,6 +1058,8 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 			answering.Kind = ActQueue
 			answering.Reason = "the voice is being replaced, so the caller's answer waits until it is ready"
 			c.hold(queuedCandidate{candidate: ready, clarify: clarify, heard: true, line: line})
+		} else {
+			answering.Aside = c.takeAside(ready.Participant.ID)
 		}
 		return []Action{
 			c.decide(Action{
@@ -1222,6 +1358,7 @@ func (c *converse) Waiting(state floor) (Action, bool) {
 		Text:        held.candidate.Text,
 		Clarify:     held.clarify,
 		LineID:      line,
+		Aside:       c.takeAside(held.candidate.Participant.ID),
 	}), true
 }
 
@@ -1601,6 +1738,34 @@ func joinOverlapping(held, more string) string {
 		}
 	}
 	return held + " " + more
+}
+
+// keepAside keeps words heard on participant's line that the floor ruled were no turn of
+// theirs, for the next reply to them to see (takeAside): the newest missedWords of them, as a
+// dropped reply's note carries.
+func (c *converse) keepAside(participantID, text string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.asides[participantID] = newestWords(strings.TrimSpace(c.asides[participantID]+" "+strings.TrimSpace(text)), missedWords)
+}
+
+// takeAside is what was kept for the next reply to participant to see (keepAside), taken: a
+// reply sees it once. Empty when nothing was kept.
+func (c *converse) takeAside(participantID string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	aside := c.asides[participantID]
+	delete(c.asides, participantID)
+	return aside
+}
+
+// peekAside is what takeAside would take, left kept: for a line the agent says of its own
+// accord, a check-in after a silence, which sees it without spending it, as the reply to the
+// caller's next turn is still to see it.
+func (c *converse) peekAside(participantID string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.asides[participantID]
 }
 
 // hold keeps a turn until the agent has stopped talking. Only one is kept: a caller who

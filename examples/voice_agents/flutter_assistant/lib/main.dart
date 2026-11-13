@@ -1,5 +1,6 @@
 import 'dart:io' show InternetAddress, InternetAddressType, Platform;
 
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:stream_core_flutter/core.dart';
 import 'package:flutter/services.dart';

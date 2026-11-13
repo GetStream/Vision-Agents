@@ -270,6 +270,9 @@ func (s *Service) Registry() *Registry { return s.registry }
 
 // Search returns the numbers one vendor is offering.
 func (s *Service) Search(ctx context.Context, vendor string, search Search) ([]Available, error) {
+	if err := sold(search.Country); err != nil {
+		return nil, err
+	}
 	provider, err := s.registry.Open(vendor)
 	if err != nil {
 		return nil, err
@@ -305,6 +308,9 @@ type Offers struct {
 // are different: every vendor reports what a number carries even when it cannot filter on it,
 // so those are checked here on the results.
 func (s *Service) SearchAll(ctx context.Context, search Search) (Offers, error) {
+	if err := sold(search.Country); err != nil {
+		return Offers{}, err
+	}
 	usable := s.registry.Available()
 	if len(usable) == 0 {
 		return Offers{}, stack.Wrap(NotConfigured(errors.New("phone: no vendor has the credentials to be searched")))
@@ -420,6 +426,21 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 	if purchase.Owner.CustomerID == "" {
 		return store.PhoneNumber{}, stack.Wrap(errors.New("phone: a number must belong to a customer"))
 	}
+	// Refused before anything is changed or paid for, since a number in another form would not be
+	// recorded.
+	if !store.IsE164(purchase.E164) {
+		return store.PhoneNumber{}, stack.Wrap(fmt.Errorf("phone: %w: %q", store.ErrNotE164, purchase.E164))
+	}
+	// The number's own country, not only the one the request names, since +1 is also Jamaica,
+	// Puerto Rico and the Bahamas.
+	if purchase.Country != "" {
+		if err := sold(purchase.Country); err != nil {
+			return store.PhoneNumber{}, err
+		}
+	}
+	if err := sold(Country(purchase.E164)); err != nil {
+		return store.PhoneNumber{}, err
+	}
 	if err := s.Suspended(ctx, purchase.Owner.CustomerID); err != nil {
 		return store.PhoneNumber{}, err
 	}
@@ -438,10 +459,6 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 		if err := s.pointCallHook(ctx, stream, app); err != nil {
 			return store.PhoneNumber{}, err
 		}
-	}
-	// Refused before the vendor is paid, since a number in another form would not be recorded.
-	if !store.IsE164(purchase.E164) {
-		return store.PhoneNumber{}, stack.Wrap(fmt.Errorf("phone: %w: %q", store.ErrNotE164, purchase.E164))
 	}
 	provider, err := s.registry.Open(purchase.Vendor)
 	if err != nil {
@@ -1959,4 +1976,38 @@ func names(capabilities []Capability) []string {
 		rendered = append(rendered, string(capability))
 	}
 	return rendered
+}
+
+// HangUpUnanswered hangs up the call placed into the customer's Stream call callID when nobody
+// answered it, and keeps its outcome canceled. A call answered, ended or decided, and a Stream
+// call nothing was placed into, are left as they are.
+func (s *Service) HangUpUnanswered(ctx context.Context, customerID, callID string) error {
+	if s.outcomes == nil {
+		return nil
+	}
+	call, err := s.outcomes.Read(ctx, customerID, callID)
+	if errors.Is(err, outcome.ErrUnknownCall) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("phone: read the call to hang up: %w", err)
+	}
+	if call.AnsweredAt != nil || call.Outcome != "" || call.VendorCallID == "" {
+		return nil
+	}
+	provider, err := s.provider(call.Vendor)
+	if err != nil {
+		return err
+	}
+	hanger, ok := provider.(Hanger)
+	if !ok {
+		return stack.Wrap(fmt.Errorf("%w: %s cannot hang up a call it placed", ErrNotImplemented, call.Vendor))
+	}
+	if err := hanger.HangUp(ctx, call.VendorCallID); err != nil {
+		return err
+	}
+	if _, err := s.outcomes.Canceled(ctx, call.Key); err != nil {
+		return fmt.Errorf("phone: keep a hung-up call canceled: %w", err)
+	}
+	return nil
 }

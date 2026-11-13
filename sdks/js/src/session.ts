@@ -46,6 +46,23 @@ export interface ToolApprovalRequest {
   readonly reason: string;
 }
 
+/** A person's answer to a call that asks first, for `Session.decide`. */
+export interface ToolDecision {
+  readonly allowed: boolean;
+  /** What a declined call's step shows. */
+  readonly summary?: string;
+  /**
+   * The call as the conversation shows it, for one this session was not asked on its own
+   * socket: its function, its arguments as JSON, and the request and turn it is part of.
+   */
+  readonly call?: {
+    readonly name: string;
+    readonly arguments?: string;
+    readonly requestId?: string;
+    readonly turnId?: string;
+  };
+}
+
 /** Somebody on the call, as the backend reports them. */
 export interface Participant {
   readonly id: string;
@@ -192,6 +209,8 @@ export class Session {
   /** Aborts when the socket ends, which stops even a call that asked to be held. */
   private readonly ending = new AbortController();
   private readonly asking = new Map<string, { request: ToolApprovalRequest; frame: Frame }>();
+  /** The calls answered here, so answering one shown from the conversation again sends nothing. */
+  private readonly answered = new Set<string>();
   private readonly finished: Promise<void>;
   private ended = false;
   private stopped = false;
@@ -316,16 +335,24 @@ export class Session {
   }
 
   /**
-   * Answers a call waiting in `approvals`.
+   * Answers a call waiting in `approvals`, or one the conversation shows waiting.
    *
    * Allowed, the function runs and its result goes back as it would have. Declined, it never
-   * runs: the model is told the person declined, and the call's step shows `summary`. A call
-   * that is not waiting is left alone, so answering twice does nothing. If the answer cannot
-   * be sent, the call goes on waiting.
+   * runs: the model is told the person declined, and the call's step shows `summary`.
+   *
+   * A call this session was not asked on its own socket, such as one shown from the channel
+   * after `sessions.resume` or a restart, is answered when `call` says what the conversation
+   * shows of it, which `AgentChat.decide` reads for you: an allowed call of one of this
+   * session's tools then runs here. Without `call`, such a call is left alone, so answering
+   * twice does nothing; the router ignores an answer that reaches no waiting call. If the answer
+   * cannot be sent, the call goes on waiting.
    */
-  decide(id: string, answer: { allowed: boolean; summary?: string }): void {
+  decide(id: string, answer: ToolDecision): void {
     const waiting = this.asking.get(id);
     if (!waiting) {
+      if (answer.call) {
+        this.decideShown(id, answer.call, answer);
+      }
       return;
     }
     const ids: Record<string, string> = {};
@@ -342,6 +369,7 @@ export class Session {
       ...ids,
     });
     this.asking.delete(id);
+    this.answered.add(id);
     this.approvalsChanged();
     if (answer.allowed) {
       void this.runTool(waiting.frame);
@@ -352,6 +380,38 @@ export class Session {
         ...ids,
         error: "The person declined this call.",
       });
+    }
+  }
+
+  /**
+   * Answers a call that never reached this socket, from what the conversation shows of it, once.
+   * The router settles a client call only with its result, so a declined one is answered with
+   * the same error a waiting one gets, and an allowed one of this session's tools is run here,
+   * or failed when the conversation left out its arguments, so the model isn't left waiting.
+   */
+  private decideShown(id: string, call: NonNullable<ToolDecision["call"]>, { allowed, summary }: ToolDecision): void {
+    if (this.answered.has(id)) {
+      return;
+    }
+    const ids = {
+      ...(call.requestId ? { request_id: call.requestId } : {}),
+      ...(call.turnId ? { turn_id: call.turnId } : {}),
+    };
+    this.held().send({ type: "tool_approval", tool_call_id: id, allowed, ...(summary ? { summary } : {}), ...ids });
+    this.answered.add(id);
+    if (!allowed) {
+      this.held().send({ type: "tool_result", tool_call_id: id, ...ids, error: "The person declined this call." });
+    } else if (this.tools?.has(call.name)) {
+      if (call.arguments === undefined) {
+        this.held().send({
+          type: "tool_result",
+          tool_call_id: id,
+          ...ids,
+          error: "The call's arguments were too long for the conversation to keep, so it could not run.",
+        });
+      } else {
+        void this.runTool({ type: "tool_call", id, name: call.name, arguments: call.arguments, ...ids });
+      }
     }
   }
 
@@ -416,18 +476,34 @@ export class Session {
   }
 
   /**
-   * Changes this session alone: its title, description, custom labels, models or voice.
+   * Changes this session alone: its title, description, custom labels, whether it is pinned,
+   * its models or its voice.
    *
-   * Server side only. The agent config it started from is untouched and a field left out is
-   * left as it is. A session that ended can still be renamed and relabelled; the rest needs
-   * it running and takes over from its next turn, so a reply being spoken finishes on what it
-   * started with. A target that does not route is refused and the conversation carries on.
+   * A person's device may change the title, description and custom labels and pin or unpin
+   * the session; the models and the voice are server side only. The agent config it started
+   * from is untouched and a field left out is left as it is. A session that ended can still be
+   * renamed, relabelled and pinned; the rest needs it running and takes over from its next
+   * turn, so a reply being spoken finishes on what it started with. A target that does not
+   * route is refused and the conversation carries on.
    */
   update(changes: Schemas["UpdateSessionRequest"]): Promise<Schemas["Session"]> {
     return this.client.patch("/v1/agents/sessions/{id}", {
       path: { id: this.id },
       body: changes,
     });
+  }
+
+  /**
+   * Pins this conversation, which a query sorted by `pinned` lists first, and answers it with
+   * its `pinned_at`. It moves nothing else. See `sessions.pin`.
+   */
+  pin(): Promise<Schemas["Session"]> {
+    return this.update({ pinned: true });
+  }
+
+  /** Unpins this conversation, and answers it without a `pinned_at`. */
+  unpin(): Promise<Schemas["Session"]> {
+    return this.update({ pinned: false });
   }
 
   /**

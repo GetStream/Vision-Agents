@@ -1758,8 +1758,8 @@ module GetStream
 
       SCHEMAS = {
         "Account" => {
-          properties: %w[balance_micros balance_state balance_warning_micros balance_warning_source granted_micros limits organization_id own_limits spend_hard_limit spent_micros status tier].freeze,
-          required: %w[organization_id status tier balance_micros granted_micros spent_micros balance_warning_micros balance_warning_source balance_state limits].freeze, open: false
+          properties: %w[balance_micros balance_state balance_warning_micros balance_warning_source funded granted_micros limits organization_id own_limits spend_hard_limit spent_micros status tier trial_micros].freeze,
+          required: %w[organization_id status tier balance_micros granted_micros trial_micros funded spent_micros balance_warning_micros balance_warning_source balance_state limits].freeze, open: false
         }.freeze,
         "ActivityArea" => {
           properties: %w[area client first_at last_at last_refusal_code refused requests].freeze,
@@ -1769,9 +1769,25 @@ module GetStream
           properties: %w[active_users bucket calls messages phone_minutes sessions voice_minutes].freeze,
           required: %w[active_users bucket calls messages phone_minutes sessions voice_minutes].freeze, open: false
         }.freeze,
+        "ActivityEnding" => {
+          properties: %w[end_reason sessions].freeze,
+          required: %w[sessions].freeze, open: false
+        }.freeze,
+        "ActivityLatency" => {
+          properties: %w[leg p50_ms p95_ms p99_ms turns].freeze,
+          required: %w[leg turns].freeze, open: false
+        }.freeze,
         "ActivityMeter" => {
           properties: %w[audio_ms characters cost_micros duration_ms input_tokens meter output_tokens requests].freeze,
           required: %w[meter requests input_tokens output_tokens audio_ms characters duration_ms cost_micros].freeze, open: false
+        }.freeze,
+        "ActivitySession" => {
+          properties: %w[agent_name app_id closed_at created_at end_reason id modality].freeze,
+          required: %w[id app_id agent_name modality created_at].freeze, open: false
+        }.freeze,
+        "ActivitySessions" => {
+          properties: %w[ended latest opened running].freeze,
+          required: %w[opened running ended latest].freeze, open: false
         }.freeze,
         "AddContactsRequest" => {
           properties: %w[contacts default_country].freeze,
@@ -1802,15 +1818,15 @@ module GetStream
           required: %w[type].freeze, open: false
         }.freeze,
         "AgentConfig" => {
-          properties: %w[calls channels chat_channels connectors created_at dispatch episode_cards floor_control greeting guardrail harness id instructions keyterms knowledge_namespace left_out_connectors llm llm_fallbacks mode name region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent sync_hash tags tools tts updated_at video visible_tools voice].freeze,
+          properties: %w[agents calls channels chat_channels connectors created_at dispatch episode_cards floor_control greeting guardrail harness id instructions keyterms knowledge_namespace left_out_connectors llm llm_fallbacks mode name region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent sync_hash tags tools tts updated_at video visible_tools voice].freeze,
           required: %w[created_at id mode name region updated_at].freeze, open: false
         }.freeze,
         "AgentConfigPatch" => {
-          properties: %w[calls channels chat_channels connectors dispatch episode_cards floor_control greeting guardrail harness instructions keyterms knowledge_namespace llm llm_fallbacks mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
+          properties: %w[agents calls channels chat_channels connectors dispatch episode_cards floor_control greeting guardrail harness instructions keyterms knowledge_namespace llm llm_fallbacks mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "AgentConfigRequest" => {
-          properties: %w[calls channels chat_channels connectors dispatch episode_cards floor_control greeting guardrail harness instructions keyterms knowledge_namespace llm llm_fallbacks mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
+          properties: %w[agents calls channels chat_channels connectors dispatch episode_cards floor_control greeting guardrail harness instructions keyterms knowledge_namespace llm llm_fallbacks mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
           required: %w[name].freeze, open: false
         }.freeze,
         "AgentConnectorBinding" => {
@@ -2061,6 +2077,10 @@ module GetStream
           properties: %w[agent_id user_id user_name].freeze,
           required: %w[agent_id].freeze, open: false
         }.freeze,
+        "ChildAgent" => {
+          properties: %w[config description max_tool_rounds timeout_ms tool].freeze,
+          required: %w[config tool].freeze, open: false
+        }.freeze,
         "ClaimGuestRequest" => {
           properties: %w[guest_id user_id].freeze,
           required: %w[guest_id user_id].freeze, open: false
@@ -2278,7 +2298,7 @@ module GetStream
           required: %w[recipient channel].freeze, open: false
         }.freeze,
         "CreateResponseRequest" => {
-          properties: %w[audio images max_output_tokens reasoning_effort request_id text ui_action videos].freeze,
+          properties: %w[audio files images max_output_tokens reasoning_effort request_id text ui_action videos].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
         "CreateRunRequest" => {
@@ -2370,12 +2390,16 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "ErrorDetail" => {
-          properties: %w[code doc_url message type].freeze,
+          properties: %w[code doc_url limit message type].freeze,
           required: %w[message type code doc_url].freeze, open: false
         }.freeze,
         "ErrorResponse" => {
           properties: %w[error].freeze,
           required: %w[error].freeze, open: false
+        }.freeze,
+        "FileSource" => {
+          properties: %w[name url].freeze,
+          required: %w[url].freeze, open: false
         }.freeze,
         "FloorControl" => {
           properties: %w[max_wait_ms model].freeze,
@@ -2610,8 +2634,8 @@ module GetStream
           required: %w[has_more items].freeze, open: false
         }.freeze,
         "OrganizationActivity" => {
-          properties: %w[areas first_seen furthest_step last_seen meters organization_id shards since].freeze,
-          required: %w[organization_id since furthest_step areas meters shards].freeze, open: false
+          properties: %w[areas first_seen furthest_step last_seen latency meters organization_id sessions shards since].freeze,
+          required: %w[organization_id since furthest_step areas meters shards sessions latency].freeze, open: false
         }.freeze,
         "PhoneNumber" => {
           properties: %w[agent_config_id capabilities country e164 monthly_cost_micros purchased_at released_at sip_trunk_id stream_trunk_id tags vendor].freeze,
@@ -2814,7 +2838,7 @@ module GetStream
           required: %w[name].freeze, open: false
         }.freeze,
         "Run" => {
-          properties: %w[final_text model_route session_id usage].freeze,
+          properties: %w[children final_text model_route session_id usage].freeze,
           required: %w[final_text model_route session_id usage].freeze, open: false
         }.freeze,
         "SandboxLimits" => {
@@ -2874,7 +2898,7 @@ module GetStream
           required: %w[url].freeze, open: false
         }.freeze,
         "Session" => {
-          properties: %w[agent agent_id call_id call_outcome call_type closed_at config_id context_truncated conversation_id created_at custom description end_fault end_reason end_stage forked_from id incognito instructions last_response_at llm modality mode model_overwrites project_id review_notes review_score state sts stt subagent summary text title tts usage user_id video voice].freeze,
+          properties: %w[agent agent_id call_id call_outcome call_type closed_at config_id context_truncated conversation_id created_at custom description end_fault end_reason end_stage forked_from id incognito instructions last_response_at llm modality mode model_overwrites pinned_at project_id review_notes review_score state sts stt subagent summary team text title tts usage user_id video voice].freeze,
           required: %w[agent_id call_id call_type created_at id modality state user_id].freeze, open: false
         }.freeze,
         "SessionCall" => {
@@ -2890,7 +2914,7 @@ module GetStream
           required: %w[name connection_id].freeze, open: false
         }.freeze,
         "SessionFilter" => {
-          properties: %w[agent agent_id config_id created_at custom modality project_id state text user_id].freeze,
+          properties: %w[$and $or agent project_id review_score text user_id].freeze,
           required: [].freeze, open: false
         }.freeze,
         "SessionMemory" => {
@@ -3042,7 +3066,7 @@ module GetStream
           required: %w[reason suspended_by].freeze, open: false
         }.freeze,
         "SyncAgentRequest" => {
-          properties: %w[base_change calls channels chat_channels check_changes connectors dispatch floor_control greeting guardrail harness hash instructions keyterms knowledge knowledge_urls left_out_connectors llm mcp_servers mode name plugin_events plugins region resume_history role sandbox sandbox_options scheduling search simulations skills sts stt subagent tags tools tts video voice].freeze,
+          properties: %w[agents base_change calls channels chat_channels check_changes connectors dispatch floor_control greeting guardrail harness hash instructions keyterms knowledge knowledge_urls left_out_connectors llm mcp_servers mode name plugin_events plugins region resume_history role sandbox sandbox_options scheduling search simulations skills sts stt subagent tags tools tts video voice].freeze,
           required: %w[name hash].freeze, open: false
         }.freeze,
         "SyncAgentResult" => {
@@ -3076,10 +3100,6 @@ module GetStream
         "TextMatch" => {
           properties: %w[$q].freeze,
           required: %w[$q].freeze, open: false
-        }.freeze,
-        "TimeRange" => {
-          properties: %w[$gte $lt].freeze,
-          required: [].freeze, open: false
         }.freeze,
         "TimelineEntry" => {
           properties: %w[audio_out_ms cadence_ms decision_ms first_audible_frame_ms first_frame_queued_ms heard interrupted llm_ttft_ms model_calls model_to_first_text_ms roundtrip_ms said speech_end_to_audible_ms speech_end_to_audio_ms started_at stt_latency_ms text_to_tts_ms tts_to_audio_ms tts_ttfb_ms turn_id].freeze,
@@ -3146,7 +3166,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "UpdateSessionRequest" => {
-          properties: %w[custom description llm max_output_tokens sts stt temperature thinking title tts verbosity voice].freeze,
+          properties: %w[custom description llm max_output_tokens pinned sts stt temperature thinking title tts verbosity voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "UpdateSipTrunkRequest" => {

@@ -22,7 +22,7 @@ final readonly class AgentConfigPatch
         public ?array $connectors = null,
         public ?AgentDispatch $dispatch = null,
         public EpisodeCardsMode|string|null $episodeCards = null,
-        // Replaces the choice whole. Left out or null, the stored choice stays; an empty object is the default flow c...
+        // Replaces the choice whole. Left out or null, the stored choice stays; an empty object is no choice again, w...
         public ?FloorControl $floorControl = null,
         // Replaces the greeting whole. An empty text removes it.
         public ?Greeting $greeting = null,
@@ -77,6 +77,9 @@ final readonly class AgentConfigPatch
         // Replaces the list whole. An empty list removes it.
         /** @var list<AgentChatChannel>|null */
         public ?array $chatChannels = null,
+        // Replaces the list whole. An empty list removes it.
+        /** @var list<ChildAgent>|null */
+        public ?array $agents = null,
     ) {
     }
 
@@ -124,6 +127,7 @@ final readonly class AgentConfigPatch
             voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
             llmFallbacks: array_key_exists('llm_fallbacks', $data) && $data['llm_fallbacks'] !== null ? Json::strings($data, 'llm_fallbacks') : null,
             chatChannels: array_key_exists('chat_channels', $data) && $data['chat_channels'] !== null ? array_map(AgentChatChannel::fromArray(...), Json::objects($data, 'chat_channels')) : null,
+            agents: array_key_exists('agents', $data) && $data['agents'] !== null ? array_map(ChildAgent::fromArray(...), Json::objects($data, 'agents')) : null,
         );
     }
 
@@ -248,6 +252,9 @@ final readonly class AgentConfigPatch
         }
         if ($this->chatChannels !== null) {
             $out['chat_channels'] = array_map(static fn (AgentChatChannel $each): array => $each->toArray(), $this->chatChannels);
+        }
+        if ($this->agents !== null) {
+            $out['agents'] = array_map(static fn (ChildAgent $each): array => $each->toArray(), $this->agents);
         }
         return $out;
     }

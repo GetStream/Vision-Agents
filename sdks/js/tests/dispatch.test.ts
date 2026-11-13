@@ -612,17 +612,11 @@ describe("Dispatch", () => {
 
   it("stops a hosted call the router cancels, and answers nothing for it", async () => {
     const agent = api.agent("support");
-    let stopped = false;
+    let release = (): void => undefined;
     agent.tools.register({
       name: "investigate",
       description: "Investigate for a long time",
-      run: (_input, signal) =>
-        new Promise((resolve) => {
-          signal.addEventListener("abort", () => {
-            stopped = true;
-            resolve("abandoned");
-          });
-        }),
+      run: () => new Promise((resolve) => (release = () => resolve("found it"))),
     });
     agent.tools.register({ name: "ping", description: "Answer at once", run: () => "pong" });
     const dispatch = new Dispatch({ client: api }).host(agent);
@@ -632,11 +626,13 @@ describe("Dispatch", () => {
     connection.send({ type: "tool_call", id: "call_1", session_id: "s1", name: "investigate" });
     connection.send({ type: "tool_cancel", id: "call_1", session_id: "s2" });
     await new Promise((resolve) => setTimeout(resolve, 20));
-    assert.equal(stopped, false, "another session's call of the same id");
+    release();
+    assert.equal((await connection.next())["output"], "found it", "another session's call of the same id");
+
+    connection.send({ type: "tool_call", id: "call_1", session_id: "s1", name: "investigate" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
     connection.send({ type: "tool_cancel", id: "call_1", session_id: "s1" });
     await new Promise((resolve) => setTimeout(resolve, 20));
-    assert.equal(stopped, true);
-
     connection.send({ type: "tool_call", id: "call_2", session_id: "s1", name: "ping" });
     assert.equal((await connection.next())["tool_call_id"], "call_2", "the cancelled call was not answered");
     dispatch.stop();
@@ -649,7 +645,7 @@ describe("Dispatch", () => {
     agent.tools.register({
       name: "investigate",
       description: "Investigate",
-      run: (_input, _signal, toolCallContext) => {
+      run: (_input, toolCallContext) => {
         seen = {
           id: toolCallContext.id,
           sessionId: toolCallContext.sessionId,

@@ -20,6 +20,10 @@ const (
 	activityHorizon = 90 * 24 * time.Hour
 )
 
+// latestSessions is how many of an organization's newest sessions an activity read lists: a
+// page a person reads at a glance. A judgement, not a measurement.
+const latestSessions = 20
+
 // steadyDays is how many days with conversations or model calls make an organization a
 // steady user rather than one trying it out. A judgement, not a measurement.
 const steadyDays = 3
@@ -76,17 +80,53 @@ type ActivityMeter struct {
 	CostMicros   int64  `json:"cost_micros" doc:"What it is charged, in millionths of a dollar."`
 }
 
+// ActivitySessions is the sessions an organization's apps opened, on every shard.
+type ActivitySessions struct {
+	Opened  int64             `json:"opened" doc:"How many sessions were opened, running ones included."`
+	Running int64             `json:"running" doc:"How many of them have not ended."`
+	Ended   []ActivityEnding  `json:"ended" doc:"How many of them ended for each reason, by reason, the ones with no reason kept first."`
+	Latest  []ActivitySession `json:"latest" doc:"The 20 opened last, newest first."`
+}
+
+// ActivityEnding is how many of an organization's sessions ended for one reason.
+type ActivityEnding struct {
+	EndReason *SessionEndReason `json:"end_reason,omitempty" doc:"Why they ended. Absent for the sessions that ended with no reason kept, as before reasons were."`
+	Sessions  int64             `json:"sessions" doc:"How many ended so."`
+}
+
+// ActivitySession is one session of an organization's, enough to find it by.
+type ActivitySession struct {
+	ID        string            `json:"id" doc:"The session."`
+	AppID     string            `json:"app_id" doc:"The app it was opened in."`
+	AgentName string            `json:"agent_name" doc:"The name of the agent config it was opened with."`
+	Modality  string            `json:"modality" doc:"text, voice or video."`
+	CreatedAt time.Time         `json:"created_at" doc:"When it was opened."`
+	ClosedAt  *time.Time        `json:"closed_at,omitempty" doc:"When it ended. Absent while it runs."`
+	EndReason *SessionEndReason `json:"end_reason,omitempty" doc:"Why it ended. Absent while it runs, and for one that ended with no reason kept."`
+}
+
+// ActivityLatency is how long one leg of an organization's turns took.
+type ActivityLatency struct {
+	Leg   string   `json:"leg" doc:"The leg: stt_latency, the speech-to-text vendor's decode of the transcript that settled the turn; llm_ttft, asking the model to its first token; tts_ttfb, the first sentence sent to its first audio; roundtrip, the settled transcript to the first audio published."`
+	Turns int64    `json:"turns" doc:"How many turns the leg was counted for."`
+	P50Ms *float64 `json:"p50_ms,omitempty" nullable:"true" doc:"The median, in milliseconds. Absent when no turn had the leg."`
+	P95Ms *float64 `json:"p95_ms,omitempty" nullable:"true" doc:"The 95th percentile, in milliseconds. Absent when no turn had the leg."`
+	P99Ms *float64 `json:"p99_ms,omitempty" nullable:"true" doc:"The 99th percentile, in milliseconds. Absent when no turn had the leg."`
+}
+
 // OrganizationActivity is whether an organization tried Agents, how far it got and how much
 // it used.
 type OrganizationActivity struct {
-	OrganizationId string          `json:"organization_id" doc:"The organization."`
-	Since          time.Time       `json:"since" doc:"The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on."`
-	FurthestStep   ActivityStep    `json:"furthest_step"`
-	FirstSeen      *time.Time      `json:"first_seen,omitempty" doc:"When the first request of any area arrived, absent when none did."`
-	LastSeen       *time.Time      `json:"last_seen,omitempty" doc:"When the last request of any area arrived, absent when none did."`
-	Areas          []ActivityArea  `json:"areas" doc:"Every area and client the organization's apps made requests in, by area then client."`
-	Meters         []ActivityMeter `json:"meters" doc:"What the organization's apps' work came to, by modality, from the shards listed in shards."`
-	Shards         []string        `json:"shards" doc:"The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them."`
+	OrganizationId string            `json:"organization_id" doc:"The organization."`
+	Since          time.Time         `json:"since" doc:"The start of what was read. Areas are kept by UTC day, so they count the whole day it falls on."`
+	FurthestStep   ActivityStep      `json:"furthest_step"`
+	FirstSeen      *time.Time        `json:"first_seen,omitempty" doc:"When the first request of any area arrived, absent when none did."`
+	LastSeen       *time.Time        `json:"last_seen,omitempty" doc:"When the last request of any area arrived, absent when none did."`
+	Areas          []ActivityArea    `json:"areas" doc:"Every area and client the organization's apps made requests in, by area then client."`
+	Meters         []ActivityMeter   `json:"meters" doc:"What the organization's apps' work came to, by modality, from the shards listed in shards."`
+	Shards         []string          `json:"shards" doc:"The names of the shards whose requests the meters sum, this one's first. A deployment that sets no postgres.shards lists only its own shard, named by a digest, and its meters cover that shard alone. Areas are read from the database every shard shares and cover all of them."`
+	Sessions       ActivitySessions  `json:"sessions" doc:"The sessions the organization's apps opened from since on, from the shards listed in shards."`
+	Latency        []ActivityLatency `json:"latency" doc:"How long the turns of the organization's apps took, every agent summed, one item per leg: stt_latency, llm_ttft, tts_ttfb, then roundtrip. Turns are kept by the hour they started in, so they count the whole hour since falls in. The percentiles are read off bins 5% wide, so they are within 5% of the true ones."`
 }
 
 type organizationActivityRequest struct {
@@ -128,6 +168,18 @@ func (s *Server) getOrganizationActivity(ctx context.Context, request *organizat
 	if err != nil {
 		return nil, err
 	}
+	endings, err := s.store.SessionEndings(ctx, apps, since)
+	if err != nil {
+		return nil, err
+	}
+	latest, err := s.store.LatestSessions(ctx, apps, since, latestSessions)
+	if err != nil {
+		return nil, err
+	}
+	legs, err := s.store.TurnLatency(ctx, apps, since)
+	if err != nil {
+		return nil, err
+	}
 
 	answer := OrganizationActivity{
 		OrganizationId: request.OrgID,
@@ -136,6 +188,11 @@ func (s *Server) getOrganizationActivity(ctx context.Context, request *organizat
 		Areas:          make([]ActivityArea, 0, len(areas)),
 		Meters:         make([]ActivityMeter, 0, len(uses)),
 		Shards:         s.store.MeterShards(),
+		Sessions:       activitySessions(endings, latest),
+		Latency:        make([]ActivityLatency, 0, len(legs)),
+	}
+	for _, leg := range legs {
+		answer.Latency = append(answer.Latency, ActivityLatency(leg))
 	}
 	for _, area := range areas {
 		answer.Areas = append(answer.Areas, ActivityArea(area))
@@ -154,6 +211,38 @@ func (s *Server) getOrganizationActivity(ctx context.Context, request *organizat
 		})
 	}
 	return &organizationActivityResponse{Body: answer}, nil
+}
+
+// activitySessions is the sessions counted in endings, with latest listed.
+func activitySessions(endings []store.SessionEnding, latest []store.AgentSession) ActivitySessions {
+	sessions := ActivitySessions{
+		Ended:  make([]ActivityEnding, 0, len(endings)),
+		Latest: make([]ActivitySession, 0, len(latest)),
+	}
+	for _, ending := range endings {
+		sessions.Opened += ending.Sessions
+		if ending.Running {
+			sessions.Running += ending.Sessions
+			continue
+		}
+		sessions.Ended = append(sessions.Ended, ActivityEnding{EndReason: endReasonOf(ending.EndReason), Sessions: ending.Sessions})
+	}
+	for _, row := range latest {
+		sessions.Latest = append(sessions.Latest, ActivitySession{
+			ID: row.ID, AppID: row.CustomerID, AgentName: row.AgentName, Modality: row.Modality,
+			CreatedAt: row.CreatedAt, ClosedAt: row.ClosedAt, EndReason: endReasonOf(row.EndReason),
+		})
+	}
+	return sessions
+}
+
+// endReasonOf is a row's end reason, nil for the empty one a row keeps when none was.
+func endReasonOf(reason string) *SessionEndReason {
+	if reason == "" {
+		return nil
+	}
+	named := SessionEndReason(reason)
+	return &named
 }
 
 // furthestStep is the furthest step areas reached, given how many days had conversations or
@@ -184,7 +273,8 @@ func (s *Server) registerOrganizationActivity(api huma.API) {
 		Summary:     "Get an organization's Agents activity",
 		Description: "Whether an organization tried Agents, how far it got and how much it used: what " +
 			"its apps did in each area of the API, from each client, and what their work came to by " +
-			"modality, summed over every shard in postgres.shards, which the answer names. An " +
+			"modality, summed over every shard in postgres.shards, which the answer names, with the " +
+			"sessions they opened, how those ended and how long their turns took. An " +
 			"organization with nothing recorded is answered with empty lists and furthest_step none. " +
 			"Every area and client is one item, so the lists are short and have no cursor. Areas, " +
 			"first_seen, last_seen and furthest_step come from counts kept since they were first " +

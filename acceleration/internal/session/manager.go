@@ -104,9 +104,14 @@ type ManagerOptions struct {
 	// language model. Empty keeps the language model.
 	FlowJudge string
 	// AudioFloor is optional, and is the chorus-asr model an agent's flow controller asks as
-	// its own floor control says (Spec.FloorControl). An agent that chose none asks it
-	// nothing about turns.
+	// its own floor control says (Spec.FloorControl), or FloorControlDefault where it chose
+	// none. Without one no session asks about turns.
 	AudioFloor *audiofloor.Client
+	// FloorControlDefault is what controls the floor of an agent that chose no floor control
+	// of its own (config.Agent.FloorControlDefault): empty, the flow controller, or
+	// store.FloorControlChorusASR, chorus-asr at the server's default point when AudioFloor
+	// is set, and nothing when it is not (FloorControlOf). An agent's own choice wins.
+	FloorControlDefault string
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
 	// SpeculativeReplies has every agent start its reply before the flow controller has
@@ -270,6 +275,12 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		sessions:      map[string]*Session{},
 		conversations: options.Conversations,
 	}
+	// Once, here, rather than for each session it would have ruled: the router runs, and the
+	// flow controller rules every floor that chose nothing, as it would with no default.
+	if options.FloorControlDefault == store.FloorControlChorusASR && options.AudioFloor == nil {
+		options.Logger.Warn("agent.floor_control_default (ROUTER_FLOOR_CONTROL_DEFAULT) is stream/chorus-asr, and this router has " +
+			"no chorus-asr server (ROUTER_CHORUS_ASR_URL): the flow controller rules the floor of every agent that chose none")
+	}
 	// written is the recorder behind records, which titles are written through too.
 	var written *sessionRecorder
 	if options.Store != nil {
@@ -348,11 +359,15 @@ func (m *Manager) startRuntime(spec Spec) *routing.Slices {
 // newSession is the session spec opens, timed from now by runtime, which every session is
 // given so that none is open unbilled.
 func (m *Manager) newSession(spec Spec, conv *persistent.Conversation, skills harness.Skills, opening time.Time, runtime *routing.Slices) *Session {
+	// The files a fork carried are pinned and kept below, and are not the session's to hand
+	// on: a spec read off it (a fork, a reopen) reads its own files by their owner.
+	held := spec
+	held.Documents = nil
 	created := &Session{
 		logs:      m.logs,
 		persisted: conv,
 		id:        spec.ID,
-		spec:      spec,
+		spec:      held,
 		// Postgres keeps microseconds. The live session sorts by the same instant as its
 		// row, or a cursor taken from one would hand the other back on the next page.
 		created:       opening.Truncate(time.Microsecond),
@@ -749,6 +764,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	}
 	created.connectorsUnavailable = connectorsUnavailable
 	created.toolSources = sources
+	// Last, so every other tool's name is taken first and a child cannot shadow one.
+	tools, runner = m.childAgents(spec, created, tools, runner)
 	if spec.ProgressiveTools {
 		tools, runner = progressively(tools, connectorTools, runner)
 	}
@@ -804,6 +821,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 			}
 			edge = opened
 		}
+		// What controls the floor: the spec's own choice, else the router's default.
+		ruling := m.floorControl(spec)
 		return agent.New(agent.Options{
 			OnToolStarted: toolStarted,
 			OnHeard:       created.heardCaller,
@@ -836,8 +855,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 			Judge:              m.options.Classifier,
 			JudgeTarget:        m.options.FlowJudge,
 			AudioFloor:         m.options.AudioFloor,
-			AudioFloorMode:     m.floorMode(created.id, spec),
-			EndOfTurn:          EndOfTurnOf(spec.FloorControl),
+			AudioFloorMode:     m.floorMode(created.id, ruling),
+			EndOfTurn:          EndOfTurnOf(ruling),
 			Skills:             skills,
 			Telephony:          line,
 			Destinations:       spec.destinations(),
@@ -935,6 +954,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		created.cardsFor = person
 	}
 	built.RestoreHistory(append(cards, previous...))
+	if !spec.Native() {
+		built.PinDocuments(m.documents(ctx, spec)...)
+	}
 	// A reopened chat is reviewed again when it ends, and its summary is of all of it.
 	if !spec.Reopened.IsZero() {
 		earlier := spokenOf(previous)
@@ -985,6 +1007,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		}
 	}
 
+	if spec.Phone != nil && m.options.Phone != nil {
+		created.closers = append(created.closers, func() { m.hangUpRinging(created, spec) })
+	}
+
 	// The row is queued before the session is reachable, so the call cannot be recorded
 	// as ending before it is recorded as starting. An incognito session has none: the row
 	// names the session, its caller and the instructions it ran with.
@@ -1016,12 +1042,16 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	if m.closed {
 		m.mu.Unlock()
 		turnedAway = true
+		// Left ringing as a failed create leaves it: a hangup now would join m.ended after
+		// Shutdown has stopped waiting on it.
+		created.handedOver.Store(true)
 		fail()
 		return nil, stack.Wrap(errors.New("session: the manager is shut down"))
 	}
 	if held, raced := m.sessions[created.id]; raced && !replaces(spec, held) {
 		m.mu.Unlock()
 		turnedAway = true
+		created.handedOver.Store(true)
 		fail()
 		return nil, stack.Wrap(ErrSessionExists)
 	}
@@ -1132,6 +1162,7 @@ func (m *Manager) supersede(spec Spec) {
 	for _, found := range left {
 		m.logger.Info("ending the session this agent left behind in the call",
 			"session", found.id, "call", spec.CallID, "user", spec.UserID)
+		found.handedOver.Store(true)
 		if err := found.Close(); err != nil {
 			m.logger.Warn("the session left behind did not end cleanly",
 				"session", found.id, "error", err)
@@ -1465,10 +1496,17 @@ func (m *Manager) find(ctx context.Context, owner Owner, text string, filter sto
 		filter.CallerKinds = owner.reachedKinds()
 	}
 
+	// A search is sorted by relevance and nothing else, as the store sorts it.
+	if text != "" {
+		filter.Order = store.SessionOrder{By: store.SessionSortRelevance}
+	} else if filter.Order.By == store.SessionSortRelevance {
+		filter.Order.By = store.SessionSortLastMessage
+	}
+
 	found := make([]Found, 0, filter.Limit)
 	seen := map[string]int{}
 	// Only a live session nothing records is listed from memory. A recorded one is listed
-	// by its row, so it sorts and pages on the row's updated_at like every other.
+	// by its row, so it sorts and pages on the row's keys like every other.
 	for _, live := range m.List(owner) {
 		// A live session has no title to search, so a search skips them unless the row
 		// behind them matches. Whatever the store turns up is merged in below.
@@ -1514,17 +1552,12 @@ func (m *Manager) find(ctx context.Context, owner Owner, text string, filter sto
 		}
 	}
 
-	// A search is already ranked by the store, so only a plain query is sorted here, on
-	// the same keys as the store so a cursor from either half holds for both.
-	if text == "" {
-		sort.Slice(found, func(i, j int) bool {
-			a, b := found[i].updatedAt(), found[j].updatedAt()
-			if !a.Equal(b) {
-				return a.After(b)
-			}
-			return found[i].ID() > found[j].ID()
-		})
-	}
+	// Both halves are sorted here on the same keys as the store, so a cursor from either
+	// half holds for both. The sort is stable and the store's rows arrive in this order
+	// already, so it only places the sessions nothing records among them.
+	sort.SliceStable(found, func(i, j int) bool {
+		return filter.Order.Compare(found[i].Position(), found[j].Position()) < 0
+	})
 	// One more than the page, which is how the caller tells there is another.
 	if limit := store.SessionLimit(filter.Limit) + 1; len(found) > limit {
 		found = found[:limit]
@@ -1533,33 +1566,36 @@ func (m *Manager) find(ctx context.Context, owner Owner, text string, filter sto
 }
 
 // Position is where the session sits in the list it was found in, which is what a cursor
-// holds.
+// holds: the row's keys, or for a session nothing records, when it began, which has no
+// later message, pin or review written anywhere to sort by.
 func (f Found) Position() store.SessionPosition {
-	position := store.SessionPosition{UpdatedAt: f.updatedAt(), ID: f.ID()}
 	if f.Stored != nil {
-		position.Rank = f.Stored.Rank
-	}
-	return position
-}
-
-// updatedAt is what the list sorts on: the row's updated_at, or when it began for a session
-// nothing records, which has no later change written anywhere to sort by.
-func (f Found) updatedAt() time.Time {
-	if f.Stored != nil {
-		return f.Stored.UpdatedAt
+		return f.Stored.Position()
 	}
 	if f.Live != nil {
-		return f.Live.CreatedAt()
+		return livePosition(f.Live)
 	}
-	return time.Time{}
+	return store.SessionPosition{}
+}
+
+// livePosition is where a session nothing records sits. Its time is cut to the microsecond
+// a row's is kept to, so a cursor on it compares the same way here and in the store.
+func livePosition(live *Session) store.SessionPosition {
+	return store.SessionPosition{LastMessageAt: live.CreatedAt().Truncate(time.Microsecond), ID: live.ID()}
 }
 
 // matchesLive applies the filter to a session that has not been written down, so a query
 // answers the same way with a store and without one.
+//
+// The filter's own fields are who the caller may see, and what the request spelled out is
+// its Where. They are ANDed here as the store ANDs them, so an $or in the request chooses
+// among the caller's sessions and never reaches another's.
 func matchesLive(live *Session, filter store.SessionFilter) bool {
 	spec := live.Spec()
 	switch {
 	case filter.UserID != "" && spec.Caller.UserID != filter.UserID:
+		return false
+	case len(filter.CallerKinds) > 0 && !slices.Contains(filter.CallerKinds, string(spec.CallerKind)):
 		return false
 	case filter.ConfigID != "" && spec.ConfigID != filter.ConfigID:
 		return false
@@ -1571,6 +1607,8 @@ func matchesLive(live *Session, filter store.SessionFilter) bool {
 		return false
 	case filter.AgentID != "" && spec.AgentID != filter.AgentID:
 		return false
+	case filter.Team != "" && usage.Team(spec.Attribution.UsageCategories) != filter.Team:
+		return false
 	case filter.State == store.SessionRunning && live.State() != Live,
 		filter.State == store.SessionClosed && live.State() != Ended:
 		return false
@@ -1580,7 +1618,12 @@ func matchesLive(live *Session, filter store.SessionFilter) bool {
 		return false
 	case !contains(spec.Custom, filter.Custom):
 		return false
-	case filter.Cursor != nil && !before(live.CreatedAt(), live.ID(), *filter.Cursor):
+	// Nobody has reviewed a session that is still running, so it has no score.
+	case !filter.Where.Matches(store.SessionValues{
+		Project: spec.Project, Agent: spec.AgentName, UserID: spec.Caller.UserID,
+	}):
+		return false
+	case filter.Cursor != nil && filter.Order.Compare(livePosition(live), *filter.Cursor) <= 0:
 		return false
 	}
 	return true
@@ -1597,14 +1640,25 @@ func contains(custom map[string]any, wanted map[string]string) bool {
 	return true
 }
 
-// before is the store's (updated_at, id) < (?, ?), for a session that has no row to ask.
-// Ids are lowercase hex, which Postgres collates the same way Go compares bytes.
-func before(updated time.Time, id string, cursor store.SessionPosition) bool {
-	if !updated.Equal(cursor.UpdatedAt) {
-		return updated.Before(cursor.UpdatedAt)
+// ErrNotRecorded is a session nothing records, which has no row to keep a pin on.
+var ErrNotRecorded = errors.New("session: nothing records this session, so it cannot be pinned")
+
+// Pin pins a running session, or unpins it, and returns when it was pinned: nil once it is
+// not. The pin is kept on the session's row, which is written behind the conversation, so
+// the writer is waited for first. A session nothing records is ErrNotRecorded.
+func (m *Manager) Pin(ctx context.Context, live *Session, pinned bool) (*time.Time, error) {
+	if live.records == nil || m.options.Store == nil {
+		return nil, stack.Wrap(ErrNotRecorded)
 	}
-	return id < cursor.ID
+	if err := live.records.Flush(ctx); err != nil {
+		return nil, stack.Wrap(err)
+	}
+	return m.options.Store.PinSession(ctx, live.spec.CustomerID, live.id, pinned, time.Now().UTC())
 }
+
+// Recorded reports whether the session has a row: false for an incognito one and for a
+// deployment that keeps nothing.
+func (s *Session) Recorded() bool { return s.records != nil }
 
 // Close ends a session its owner may have, reporting whether they had one by that id.
 func (m *Manager) Close(id string, owner Owner) (bool, error) {
@@ -1770,7 +1824,26 @@ func (m *Manager) leaveVoicemail(found *Session, spec Spec, message string) {
 	m.hangUp(found, EndVoicemail)
 }
 
-// hangUpTimeout bounds ending a call at Stream once the voicemail is left.
+// hangUpRinging hangs up the call created placed when it ends before anybody answered,
+// which would otherwise ring on with no agent to answer it. In the background, so a slow
+// vendor holds up neither the rest of the close nor a shutdown closing the next session.
+func (m *Manager) hangUpRinging(created *Session, spec Spec) {
+	if created.CallerJoined() || created.handedOver.Load() {
+		return
+	}
+	m.ended.Add(1)
+	go func() {
+		defer m.ended.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), hangUpTimeout)
+		defer cancel()
+		if err := m.options.Phone.HangUpUnanswered(ctx, spec.CustomerID, spec.CallID); err != nil {
+			m.logger.Warn("could not hang up the call its session left ringing", "session", created.id, "call", spec.CallID, "customer", spec.CustomerID, "error", err)
+		}
+	}()
+}
+
+// hangUpTimeout bounds ending a call: at Stream once the voicemail is left, or at the vendor
+// while it still rings.
 const hangUpTimeout = 5 * time.Second
 
 // releaseTimeout bounds taking back this node's claim on a session. Short, because a

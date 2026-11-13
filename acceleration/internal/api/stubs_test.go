@@ -991,6 +991,8 @@ type knowledgeBase struct {
 	passages map[string]map[string]knowledge.Document
 	// down makes every write fail, naming the namespace as turbopuffer's errors do.
 	down bool
+	// writesLeft, when set, is how many writes succeed before down is set.
+	writesLeft *int
 }
 
 func newKnowledgeBase() *knowledgeBase {
@@ -1002,6 +1004,14 @@ func (b *knowledgeBase) failWrites(down bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.down = down
+	b.writesLeft = nil
+}
+
+// refuseWritesAfter lets n more writes through, then fails every write until failWrites(false).
+func (b *knowledgeBase) refuseWritesAfter(n int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.writesLeft = &n
 }
 
 // knowledgeQueried is what the stub bills a query as having searched: the least a small
@@ -1017,6 +1027,12 @@ func (b *knowledgeBase) Upsert(_ context.Context, namespace string, documents []
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	if b.writesLeft != nil {
+		if *b.writesLeft == 0 {
+			b.down = true
+		}
+		*b.writesLeft--
+	}
 	if b.down {
 		return knowledge.Billed{}, fmt.Errorf("turbopuffer: write to %s: 503 Service Unavailable", namespace)
 	}

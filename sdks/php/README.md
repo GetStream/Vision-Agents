@@ -81,7 +81,7 @@ Stream Chat unless it is opened with `incognito: true`. Neither can be rewound (
 answers 400): fork at the response instead. `$session->responses->rewind()` is for a call, and
 takes a response `id`, not a `turn_id`.
 
-One method changes a session: title, description, custom labels, models and
+One method changes a session: title, description, custom labels, pin, models and
 voice, from the next turn, for this session only. An ended session can still be renamed by id:
 
 ```php
@@ -89,13 +89,52 @@ $row = $session->update(title: 'Pricing', llm: 'llm-thinking', thinking: 'high')
 $client->agent('support')->sessions->update($sessionId, title: 'Pricing');
 ```
 
-Past conversations, by agent, a page at a time:
+Past conversations, by agent, a page at a time. The filter is the router's own, an array with
+the wire's keys, and is always narrowed to the agent it is asked of:
 
 ```php
 $sessions = $client->agent('support')->sessions;
-$page = $sessions->query(userId: 'u1', state: 'live');
-$next = $sessions->query(userId: 'u1', state: 'live', cursor: $page->nextCursor);
-$found = $sessions->search('pricing');
+$page = $sessions->query(filter: ['user_id' => 'u1'], limit: 20);
+$next = $sessions->query(filter: ['user_id' => 'u1'], limit: 20, cursor: $page->nextCursor);
+
+// One of two projects, the pinned sessions first and then the most recently answered.
+$mine = $sessions->query(
+    filter: ['$or' => [['project_id' => 'health'], ['project_id' => 'legal']]],
+    sort: [['field' => 'pinned'], ['field' => 'last_message_at', 'direction' => -1]],
+);
+
+// The badly reviewed ones in a set of projects, the worst first.
+$poor = $sessions->query(
+    filter: ['project_id' => ['$in' => ['health', 'legal']], 'review_score' => ['$lte' => 2]],
+    sort: [['field' => 'review_score', 'direction' => 1]],
+);
+
+// By title, description, project and agent name, best match first.
+$found = $sessions->search('pricing', filter: ['project_id' => 'health'], limit: 5);
+```
+
+| Filter key     | Takes                                                                    |
+| -------------- | ------------------------------------------------------------------------ |
+| `project_id`   | `'health'`, `['$eq' => 'health']` or `['$in' => [...]]` (1 to 50)          |
+| `text`         | `['$q' => 'words']`, once, at the top level or in the top-level `$and`    |
+| `review_score` | `4`, or `$eq`, `$gt`, `$gte`, `$lt`, `$lte`, ANDed: `['$gte' => 2, '$lt' => 4]` |
+| `user_id`      | `'u1'` or `['$eq' => 'u1']`, at the top level or in the top-level `$and`  |
+| `$and`, `$or`  | 1 to 10 filters each, nested up to 3 deep                                |
+
+The keys of one array are ANDed, and any other key is refused with a 400. `sort` is a list of
+`['field' => ..., 'direction' => -1 or 1]`, descending when the direction is left out:
+`last_message_at`; `pinned`, alone or followed by `last_message_at`; `review_score`; or
+`relevance`, only with a `text` filter. Left out, it is `last_message_at` descending. `limit` is
+1 to 200 (25 when left out), and a cursor is only good with the filter and sort it came from.
+
+Pinning keeps a session at the top of a `pinned` sort without changing when it was last
+answered. The row's `pinnedAt` is when it was pinned, null when it is not:
+
+```php
+$row = $session->pin();                    // $row->pinnedAt
+$session->unpin();
+$sessions->pin($sessionId);                // by id, running or ended
+$sessions->update($sessionId, pinned: false);
 ```
 
 `close()` stops a session and keeps what it recorded and remembered; `delete()` deletes it,
@@ -143,8 +182,10 @@ floor_control:
   max_wait_ms: 800      # optional; the server's default point otherwise
 ```
 
-It is sent as written, and `{}` is the default flow controller again. Left out, the stored choice
-stays, and an agent that never chose has the default flow controller; the router refuses
+It is sent as written: `{}` is no choice, which follows the router's default (the flow
+controller, or `stream/chorus-asr` where the router defaults every agent to it), and
+`{model: flow-controller}` keeps the flow controller whatever that default. Left out, the stored
+choice stays; the router refuses
 `stream/chorus-asr` without a chorus-asr server, and a `max_wait_ms` shorter than every point it
 measured.
 
@@ -185,15 +226,15 @@ model as the tool's error. `register` also takes `displayTitle:`, what the reply
 shows, and `executor: 'client'` for a tool a person's device runs instead.
 
 A tool can say how the backend treats its calls, and its callable can take the call it runs
-for as a second argument:
+for as its first argument, ahead of the arguments:
 
 ```php
-use GetStream\VisionAgents\ToolCall;
+use GetStream\VisionAgents\ToolCallContext;
 
 $agent->tools->register('book_flight', 'Book a flight for the caller', [
     'type' => 'object',
     'properties' => ['flight_id' => ['type' => 'string']],
-], function (array $args, ToolCall $toolCallContext): string {
+], function (ToolCallContext $toolCallContext, array $args): string {
     $toolCallContext->update('checking seats');
     $toolCallContext->disallowInterruptions();
     return $bookings->book($args['flight_id'], user: $toolCallContext->user->id, key: $toolCallContext->id);

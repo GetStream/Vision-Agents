@@ -207,6 +207,10 @@ type Spec struct {
 	// first response, where a resumed conversation's history goes, and it is recorded
 	// nowhere: not as turns, not in a transcript, not in Chat.
 	History []persistent.HistoryLine
+	// Documents are files carried into this session from the conversation it forks, read
+	// as text, the caller's own (store.DocumentScope). They are pinned ahead of every reply
+	// and kept under this session as well, so a fork of it carries them on.
+	Documents []store.ConversationDocument `json:"-"`
 
 	Instructions string
 	// Greeting is said on joining without going through the model. Empty means the agent
@@ -227,8 +231,14 @@ type Spec struct {
 	// LLMFallbacks are tried in order when LLMTarget fails a turn, from the config's
 	// llm_fallbacks.
 	LLMFallbacks []string
-	STTTarget    string
-	TTSTarget    string
+	// Agents are the app's other text agents a text session may hand work to as tools,
+	// from the config's agents.
+	Agents []store.ChildAgent
+	// RunDeadline is when the run this session answers is given up, and zero for a session
+	// that is no run. Nothing it hands work to is given longer.
+	RunDeadline time.Time
+	STTTarget   string
+	TTSTarget   string
 	// STSTarget routes one native audio model that hears and speaks for itself. Naming
 	// one makes this a native session: the agent opens that model and no transcriber,
 	// conversation model or voice, so the three targets above are left as they are.
@@ -278,8 +288,8 @@ type Spec struct {
 	// model: the session request's, else the agent config's. Zero is the router's default.
 	ResumeHistory store.ResumeHistory
 	// FloorControl is the model that controls the floor, and how long a caller may wait once
-	// they stop: the session request's, else the agent config's. Zero is the default flow
-	// controller.
+	// they stop: the session request's, else the agent config's. Zero is no choice, which the
+	// router's default rules (FloorControlOf).
 	FloorControl store.FloorControl
 	// Scheduling is the agent config's scheduled-task settings: whether the
 	// scheduling tools are offered, and the defaults a task takes.
@@ -410,6 +420,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		Voice:          config.Voice,
 		LLMTarget:      config.LLM,
 		LLMFallbacks:   config.LLMFallbacks,
+		Agents:         config.Agents,
 		SubagentTarget: config.Subagent,
 		VideoSource:    config.VideoSource, VideoMaxFrames: config.VideoMaxFrames,
 		SearchTarget:       config.Search,

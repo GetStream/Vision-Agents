@@ -44,7 +44,7 @@ func (s *HTTPMetricsSuite) SetupTest() {
 // serve answers a request through the chain, the way Handler orders it.
 func (s *HTTPMetricsSuite) serve(method, path string) *httptest.ResponseRecorder {
 	response := httptest.NewRecorder()
-	withTrace(withMetrics(s.mux, withTiming(s.mux))).ServeHTTP(response, httptest.NewRequest(method, path, nil))
+	withTrace(s.mux, withMetrics(s.mux, withTiming(s.mux))).ServeHTTP(response, httptest.NewRequest(method, path, nil))
 	return response
 }
 
@@ -214,7 +214,7 @@ func (s *HTTPMetricsSuite) TestARefusalBeforeTheMuxIsCountedUnderItsRoute() {
 	})
 	response := httptest.NewRecorder()
 
-	withTrace(withMetrics(s.mux, refusing)).ServeHTTP(response,
+	withTrace(s.mux, withMetrics(s.mux, refusing)).ServeHTTP(response,
 		httptest.NewRequest(http.MethodGet, s.prefix+"/sessions/"+rand.Text(), nil))
 
 	s.Equal(http.StatusTooManyRequests, response.Code)
@@ -232,7 +232,7 @@ func (s *HTTPMetricsSuite) TestARefusalOfAnEscapedPathIsCountedUnderTheRouteTheM
 	path := s.prefix + "/sessions/" + rand.Text() + "%2F" + rand.Text()
 	s.Equal(http.StatusOK, s.serve(http.MethodGet, path).Code, "the mux serves the escaped path")
 
-	withTrace(withMetrics(s.mux, refusing)).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, nil))
+	withTrace(s.mux, withMetrics(s.mux, refusing)).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, nil))
 
 	s.Equal(1.0, s.count(route, "4xx"))
 }
@@ -330,7 +330,7 @@ func (s *HTTPMetricsSuite) TestAStreamedAnswerIsCountedAndNotTimed() {
 		}
 		_, _ = io.WriteString(w, "second\n")
 	})
-	server := httptest.NewServer(withTrace(withMetrics(s.mux, withTiming((&Server{logger: slog.New(slog.DiscardHandler)}).withRequestLog(s.mux, s.mux)))))
+	server := httptest.NewServer(withTrace(s.mux, withMetrics(s.mux, withTiming((&Server{logger: slog.New(slog.DiscardHandler)}).withRequestLog(s.mux, s.mux)))))
 	s.T().Cleanup(server.Close)
 	classBefore := statusSamples(s.T(), "2xx")
 
@@ -365,7 +365,7 @@ func (s *HTTPMetricsSuite) TestASocketIsCountedAsAnUpgradeAndNotTimed() {
 		_ = connection.WriteMessage(websocket.TextMessage, []byte("hello"))
 		_ = connection.Close()
 	})
-	server := httptest.NewServer(withTrace(withMetrics(s.mux, withTiming((&Server{logger: slog.New(slog.DiscardHandler)}).withRequestLog(s.mux, s.mux)))))
+	server := httptest.NewServer(withTrace(s.mux, withMetrics(s.mux, withTiming((&Server{logger: slog.New(slog.DiscardHandler)}).withRequestLog(s.mux, s.mux)))))
 	s.T().Cleanup(server.Close)
 
 	connection, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+route, nil)
@@ -387,7 +387,7 @@ func (s *HTTPMetricsSuite) TestAPanicNothingAnsweredIsCountedAsAServerError() {
 	s.mux.Get(route, func(http.ResponseWriter, *http.Request) { panic("synthetic handler failure") })
 	recovered := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() { _ = recover() }()
-		withTrace(withMetrics(s.mux, s.mux)).ServeHTTP(w, r)
+		withTrace(s.mux, withMetrics(s.mux, s.mux)).ServeHTTP(w, r)
 	})
 
 	recovered.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, route, nil))
@@ -402,7 +402,7 @@ func (s *HTTPMetricsSuite) TestAPanicTheRequestLogAnsweredIsCountedAsItsAnswer()
 	s.mux.Get(route, func(http.ResponseWriter, *http.Request) { panic("synthetic handler failure") })
 	recovered := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() { _ = recover() }()
-		withTrace(withMetrics(s.mux, (&Server{logger: slog.New(slog.DiscardHandler)}).withRequestLog(s.mux, s.mux))).ServeHTTP(w, r)
+		withTrace(s.mux, withMetrics(s.mux, (&Server{logger: slog.New(slog.DiscardHandler)}).withRequestLog(s.mux, s.mux))).ServeHTTP(w, r)
 	})
 	response := httptest.NewRecorder()
 
@@ -423,7 +423,7 @@ func (s *HTTPMetricsSuite) TestAPanicAfterTheAnswerBeganIsCountedAsTheAnswer() {
 	})
 	recovered := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() { _ = recover() }()
-		withTrace(withMetrics(s.mux, s.mux)).ServeHTTP(w, r)
+		withTrace(s.mux, withMetrics(s.mux, s.mux)).ServeHTTP(w, r)
 	})
 
 	recovered.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, route, nil))
@@ -443,7 +443,7 @@ func (s *HTTPMetricsSuite) TestASocketThatPanicsOnceUpgradedIsCountedAsAnUpgrade
 		}
 		panic(http.ErrAbortHandler)
 	})
-	server := httptest.NewServer(withTrace(withMetrics(s.mux, s.mux)))
+	server := httptest.NewServer(withTrace(s.mux, withMetrics(s.mux, s.mux)))
 	s.T().Cleanup(server.Close)
 
 	connection, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+route, nil)
@@ -462,7 +462,7 @@ func (s *HTTPMetricsSuite) TestARequestAPeerHandedOverIsCountedOnlyWhereItArrive
 	arrived, handed := s.prefix+"/sessions/{id}", s.prefix+"/{resource}/{id}"
 	s.mux.Get(handed, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	credential := []byte(rand.Text())
-	owner := httptest.NewServer(node.Serve(withTrace(withMetrics(s.mux, s.mux)), [][]byte{credential}))
+	owner := httptest.NewServer(node.Serve(withTrace(s.mux, withMetrics(s.mux, s.mux)), [][]byte{credential}))
 	s.T().Cleanup(owner.Close)
 	forwarder := node.NewForwarder(slog.New(slog.DiscardHandler), credential)
 	entry := chi.NewRouter()
@@ -474,7 +474,7 @@ func (s *HTTPMetricsSuite) TestARequestAPeerHandedOverIsCountedOnlyWhereItArrive
 	path := s.prefix + "/sessions/" + rand.Text()
 
 	response := httptest.NewRecorder()
-	withTrace(withMetrics(entry, entry)).ServeHTTP(response, httptest.NewRequestWithContext(ctx, http.MethodGet, path, nil))
+	withTrace(entry, withMetrics(entry, entry)).ServeHTTP(response, httptest.NewRequestWithContext(ctx, http.MethodGet, path, nil))
 
 	s.Equal(http.StatusOK, response.Code)
 	s.Equal(1.0, s.count(arrived, "2xx"))

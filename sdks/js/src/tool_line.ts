@@ -1,5 +1,5 @@
 import { type Frame, nested, text } from "./socket.js";
-import { ToolCall, type ToolLine } from "./tools.js";
+import { ToolCallContext, type ToolLine } from "./tools.js";
 
 /** The calls that asked to be held, waiting on the router's `tool_held` or `tool_cancel`. */
 export class Holds {
@@ -70,10 +70,10 @@ export function toolCallContextOf(
   sessionId: string,
   line: ToolLine,
   lasting: AbortSignal,
-): ToolCall {
+): ToolCallContext {
   const user = nested(frame, "user");
   const conversation = nested(frame, "conversation");
-  return new ToolCall(
+  return new ToolCallContext(
     {
       id: text(frame, "id"),
       sessionId: text(frame, "session_id") || sessionId,

@@ -120,7 +120,7 @@ the other commands that read them there.
 | `ROUTER_AUTH_KEK_VERSION` | Which keyring version seals new connector credentials, defaults to `1`. Every `ROUTER_AUTH_KEK_V<n>` that is set still opens its rows, so moving this back to an older version is safe |
 | `ROUTER_CONNECTORS_ENABLED` | `true` turns connectors on. The router then needs the keyring version `ROUTER_AUTH_KEK_VERSION` names, in every auth mode, and refuses to start without it. Off by default |
 | `ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE` | Direct calls one app may send to one connector through the connection proxy in a minute, counted in Redis across routers, defaults to `60`. A call over it is a 429 with `Retry-After`. `0` turns it off, and so does a router with no Redis |
-| `ROUTER_RUNS_CONCURRENT_PER_APP` | Headless runs (`POST /v1/agents/runs`) one app may have in flight, counted in Redis across routers, defaults to `20`. A run over it is a 429 `concurrency_limited` with `Retry-After`. `0` turns it off, and so does a router with no Redis |
+| `ROUTER_RUNS_CONCURRENT_PER_APP` | Headless runs (`POST /v1/agents/runs`) one app may have in flight, counted in Redis across routers, defaults to `20`. A run over it is a 429 `concurrency_limited` with `Retry-After`. `0` turns it off, and so does a router with no Redis. The child agents a run calls take no slot: at most 8 run at once inside their parent's |
 | `ROUTER_CODE_SANDBOX_BROKER` | What holds a connector's credential for code in a sandbox: `daytona` (Daytona Secrets), the default, or `proxy`, the egress proxy (`internal/sandbox/egress`), which needs Redis, `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL`, `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`, and the proxy served by the same router (`ROUTER_CODE_SANDBOX_PROXY_ADDR`, `ROUTER_CODE_SANDBOX_PROXY_CA_KEY`). Behind the proxy a sandbox reaches the proxy alone, and the proxy reaches its grants' hosts and the config's `allowed_domains`; a config with `network: true` and no `allowed_domains`, or with a `network_allow_list`, is refused when a session with a sandbox binding starts |
 | `ROUTER_CODE_SANDBOX_SECRET_PREFIX` | Names this router's environment in every Daytona secret it makes, such as `stg` on staging (lowercase letters and digits only), since routers sharing a Daytona organization must never touch each other's. A session with a `sandbox: true` binding is refused without it. A prefix belongs to one deployment (one Redis): routers that share a prefix delete each other's secrets, so never use `stg` locally |
 | `ROUTER_CODE_SANDBOX_TARGETS` | `code_sandbox.targets`: each region sandboxes run in and the Daytona target they are made on, as `region=target` pairs, comma separated, such as `eu=eu`. `us` is always served: left out, on `DAYTONA_TARGET`, then the organization's default, as before. See [Regions](#regions) |
@@ -141,7 +141,8 @@ the other commands that read them there.
 | `ROUTER_CHAT_TIMINGS` | For development: each voice reply in the session's chat channel gets a line after its text with how long its turn took, and the same figures as a `timings` field on the message. See [Transcripts](#transcripts-memory-and-phone). Anything that reads the conversation back leaves the line out. Off by default; `cmd/agent` takes it as `-chat-timings` |
 | `ROUTER_REPLY_HEDGE` | How long a reply may say nothing, neither text nor a tool call, before the same request is also asked of another candidate of its target, and whichever says something first is kept. The other candidate is on a different model when the target has one, and on a different provider when it has one, and is never one the router has found unavailable. The one that loses is cancelled the moment it does and still read out, so both calls are reported as model calls and recorded, the cancelled one as any cancelled call is. A reply is hedged once, and a hedge that fails leaves the first request going. Only replies and the flow controller's decisions (`ROUTER_FLOW_HEDGE`) are hedged, not the guardrails or background work, nor a reply that continues from a response the provider holds. A target with no other candidate is asked once. Defaults to `1200ms`; `0` turns it off. `cmd/agent` takes it as `-reply-hedge` |
 | `ROUTER_FLOW_HEDGE` | `ROUTER_REPLY_HEDGE` for the flow controller's decisions, which the caller waits on in silence before the reply is asked for. A decision is a few tokens, so one that has said nothing by then has stalled rather than thought, and the same request is asked of another candidate of `llm-flow` as well; whichever says something first rules on the turn. Without it a stalled decision waits out the controller's 3 s deadline and the turn is answered unruled. Defaults to `400ms`; `0` turns it off. `cmd/agent` takes it as `-flow-hedge` |
-| `ROUTER_CHORUS_ASR_URL` | A chorus-asr server, such as `http://floor:8080` ([deploy/chorus-asr](deploy/chorus-asr/README.md)). Makes chorus-asr available: the `stream/chorus-asr` transcriber, and floor control for an agent that opts in with `floor_control: {model: stream/chorus-asr}`, which is refused on a router without it. It rules no agent's floor of its own accord. `ROUTER_CHORUS_ASR_MODE`, which once did, is no longer read, and a router started with it warns once naming `floor_control` |
+| `ROUTER_CHORUS_ASR_URL` | A chorus-asr server, such as `http://floor:8080` ([deploy/chorus-asr](deploy/chorus-asr/README.md)). Makes chorus-asr available: the `stream/chorus-asr` transcriber, and floor control for an agent that opts in with `floor_control: {model: stream/chorus-asr}`, which is refused on a router without it. It rules the floor of no other agent unless `ROUTER_FLOOR_CONTROL_DEFAULT` says so. `ROUTER_CHORUS_ASR_MODE`, which once did, is no longer read, and a router started with it warns once naming `floor_control` |
+| `ROUTER_FLOOR_CONTROL_DEFAULT` | What controls the floor of an agent that chose no `floor_control` of its own: empty (default) or `flow-controller`, the flow controller; or `stream/chorus-asr`, chorus-asr at its server's default point, for every such agent on the router. An agent's own choice always wins, on its config or its session: `{model: stream/chorus-asr}` with its own `max_wait_ms`, or `{model: flow-controller}` to keep the flow controller whatever this says. `{}` is no choice. Without `ROUTER_CHORUS_ASR_URL` it warns once at start and the flow controller rules; no session is refused for it. Floor control only: which transcriber writes the words does not change |
 | `ROUTER_CHORUS_ASR_API_KEY` | Optional. Sent as a bearer token on every request to a chorus-asr server behind a gateway that asks for a key |
 | `ROUTER_CHORUS_ASR_AUDIO` | How the chorus-asr model's audio is sent: `opus` (default), encoded once as it arrives, or `pcm`, for debugging. `cmd/agent` reads the `ROUTER_CHORUS_ASR_*` variables too, and its agent opts in with `-floor-control stream/chorus-asr` |
 | `ROUTER_MOCK_PROVIDERS` | `true` adds `mock/mock-stt`, `mock/mock-tts` and `mock/mock-llm`, which answer from nothing, reach no vendor and bill nothing, for load testing the router itself (see `performance_benchmark/`). No capability alias routes to one, so a session only gets a mock by naming it. Off by default |
@@ -1628,6 +1629,38 @@ resolved once when the session is created: the customer's own rows, or the built
 because a model offered a skill nobody implements is worse than one offered none. The
 runtime lookup is unchanged.
 
+**A text agent can hand work to the app's other text agents.** A config's `agents` names
+them, each with the tool its model calls it by:
+
+```yaml
+mode: text
+llm: anthropic/claude-sonnet-5-5
+agents:
+  - config: security-lens        # another text agent of the app, by name (an id is stored as its name)
+    tool: security
+    description: Reviews a diff for security bugs and lists each candidate finding.
+  - config: ranker
+    tool: rank
+    timeout_ms: 90000             # two minutes when left out
+```
+
+Each is offered as a tool taking one string, `input`. A call runs that agent as an incognito
+run of its own (`session.Manager.Run`, what `POST /v1/agents/runs` runs on) on its own llm,
+instructions, connectors and sandbox, and the tool result is what it said last. The calls in
+one reply already ran at once, a goroutine each; a parent runs at most 8 children at a time
+and the rest wait their turn within their deadline. A child gets its own timeout or what is
+left of the parent's run, whichever is less, and ends with the parent's tool call, so it never
+outlives the parent. A child that fails or runs out of time is a failed tool call the parent's
+model answers around, not a failed run. What the children spend is added to the run's `usage`
+and broken down by tool in its `children`.
+
+Children are one level deep: the parent and every child are text agents, and a child has no
+`agents` of its own and is not the parent. A save is refused that would break that from either
+side, including a child gaining agents or stopping being a text agent. A parent names a child
+by name, so a child cannot be renamed or deleted while a parent names it. The child is checked
+again when it runs, and a child tool whose name another tool of the session has is not offered. A child takes none of the app's run slots (`ROUTER_RUNS_CONCURRENT_PER_APP`): the parent's
+slot covers it.
+
 **Knowledge is what the business wrote down.** With `TURBOPUFFER_API_KEY` set, a config's
 `knowledge_namespace` gives the model a `lookup` tool over full-text search, so a caller's
 question about prices or opening hours is answered out of the handbook rather than guessed
@@ -2029,6 +2062,12 @@ with empty lists. `shards` names the shards whose `requests` the meters sum, thi
 first. A deployment that leaves `postgres.shards` unset reads its own shard's `requests` alone
 and lists only that shard, named by a digest of its DSN, so its meters are not the organization's
 whole use; areas are kept in the database every shard shares and are complete (see Shards).
+
+`sessions` reads `agent_sessions` on every shard in `shards`, from `since`: `opened` and
+`running` count the sessions the organization's apps opened, `ended` counts the others by end
+reason, and `latest` lists the 20 newest. `latency` reads `turn_latency_hourly` on every shard,
+from the hour `since` falls in, one item per leg with `turns` and the `p50_ms`, `p95_ms` and
+`p99_ms` read off bins 5% wide.
 
 The endpoint sums the rows of the organization's current apps, including rows the sweeper has
 not processed yet, while the cost-anomaly check sums `requests.organization_id` over swept

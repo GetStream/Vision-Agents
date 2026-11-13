@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from ..models.agent_review import AgentReview
     from ..models.agent_scheduling import AgentScheduling
     from ..models.agent_tools import AgentTools
+    from ..models.child_agent import ChildAgent
     from ..models.floor_control import FloorControl
     from ..models.greeting import Greeting
     from ..models.resume_history import ResumeHistory
@@ -66,7 +67,9 @@ class AgentConfigRequest:
             channel, and no session reads them. on writes them as record does, and a session starts with the person's other
             cards. Turning record into on reads what record wrote.
         floor_control (FloorControl | Unset): The model that controls an agent's floor, and how long a caller may wait
-            once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again;
+            once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the
+            router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router
+            defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default;
             anything else replaces the stored choice whole.
         greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
         guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or
@@ -160,6 +163,12 @@ class AgentConfigRequest:
             member of; members writing in it is expected. A type whose grants do, or that the app does not have, is not
             answered. agent is answered already and cannot be named, and each type is named once. Left out on an update, the
             stored list stays; an empty list removes it.
+        agents (list[ChildAgent] | Unset): The app's other text agents this one may hand work to, each offered to its
+            model as a tool that takes one string, input, and answers with what that agent said last. Several called in one
+            reply run at once, at most 8 at a time. Each runs as an incognito run of its own, on its own llm, instructions,
+            connectors and sandbox, and its spend is added to the parent run's usage. Only a text agent has them, and an
+            agent named here must be a text agent with no agents of its own and not this one. Omitted or null on an update,
+            the list stored stays as it is; an empty list removes it.
     """
 
     name: str
@@ -200,6 +209,7 @@ class AgentConfigRequest:
     voice: str | Unset = UNSET
     llm_fallbacks: list[str] | Unset = UNSET
     chat_channels: list[AgentChatChannel] | Unset = UNSET
+    agents: list[ChildAgent] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -354,6 +364,13 @@ class AgentConfigRequest:
                 chat_channels_item = chat_channels_item_data.to_dict()
                 chat_channels.append(chat_channels_item)
 
+        agents: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.agents, Unset):
+            agents = []
+            for agents_item_data in self.agents:
+                agents_item = agents_item_data.to_dict()
+                agents.append(agents_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -435,6 +452,8 @@ class AgentConfigRequest:
             field_dict["llm_fallbacks"] = llm_fallbacks
         if chat_channels is not UNSET:
             field_dict["chat_channels"] = chat_channels
+        if agents is not UNSET:
+            field_dict["agents"] = agents
 
         return field_dict
 
@@ -458,6 +477,7 @@ class AgentConfigRequest:
         from ..models.agent_review import AgentReview
         from ..models.agent_scheduling import AgentScheduling
         from ..models.agent_tools import AgentTools
+        from ..models.child_agent import ChildAgent
         from ..models.floor_control import FloorControl
         from ..models.greeting import Greeting
         from ..models.resume_history import ResumeHistory
@@ -681,6 +701,15 @@ class AgentConfigRequest:
 
                 chat_channels.append(chat_channels_item)
 
+        _agents = d.pop("agents", UNSET)
+        agents: list[ChildAgent] | Unset = UNSET
+        if _agents is not UNSET:
+            agents = []
+            for agents_item_data in _agents:
+                agents_item = ChildAgent.from_dict(agents_item_data)
+
+                agents.append(agents_item)
+
         agent_config_request = cls(
             name=name,
             calls=calls,
@@ -720,6 +749,7 @@ class AgentConfigRequest:
             voice=voice,
             llm_fallbacks=llm_fallbacks,
             chat_channels=chat_channels,
+            agents=agents,
         )
 
         agent_config_request.additional_properties = d

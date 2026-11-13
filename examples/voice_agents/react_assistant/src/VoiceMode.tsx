@@ -10,7 +10,7 @@ import {
   type VoiceAgentState,
 } from "stream-chat-react/ai-components";
 
-import type { AgentChat } from "./agentChat";
+import type { Session } from "@stream-io/stream-agents";
 import { Captions, type Caption } from "./captions";
 import { CameraIcon, CameraOffIcon, CloseIcon, HangUpIcon, MicIcon, MicOffIcon } from "./icons";
 import type { ChatScreen } from "./chatScreen";
@@ -34,7 +34,8 @@ const NOT_JOINED = new Store<VoiceSnapshot>({ muted: false, cameraEnabled: false
  * The camera button shows Juno what the camera is pointing at: the session answers the vision
  * skill's requests to look with what the camera showed, and the preview is that view.
  */
-export function VoiceMode({ screen, chat }: { screen: ChatScreen; chat: AgentChat }) {
+export function VoiceMode({ screen, session }: { screen: ChatScreen; session: Session }) {
+  const chat = { session };
   const { voice, voiceFailure, voiceOpenedAt } = useStore(screen);
   const snapshot = useStore<VoiceSnapshot>(voice ?? NOT_JOINED);
   // Only the parts this shows, so the reply streaming into the transcript redraws none of it.
@@ -148,7 +149,7 @@ function CallControl({
  * speaks, with theirs in red. The levels are read thirty times a second, into a ref the glow reads
  * once a frame, so they redraw the glow and nothing else.
  */
-function AgentPresence({ call, chat, isStarting }: { call: Call | undefined; chat: AgentChat; isStarting: boolean }) {
+function AgentPresence({ call, chat, isStarting }: { call: Call | undefined; chat: { session: Session }; isStarting: boolean }) {
   const [phase, setPhase] = useState<Phase>({ kind: "ready" });
   const [caption, setCaption] = useState<{ caption: Caption | undefined; visible: boolean }>({
     caption: undefined,
@@ -304,7 +305,7 @@ function ParticipantAudio({ call, sessionId }: { call: Call; sessionId: string }
  * A tool's question, asked over the call with Stream's approval card. The tool runs only once it
  * is allowed, and the agent is told when it is not.
  */
-function ApprovalCard({ request, chat }: { request: ToolApprovalRequest; chat: AgentChat }) {
+function ApprovalCard({ request, chat }: { request: ToolApprovalRequest; chat: { session: Session } }) {
   const [state, setState] = useState<AIToolApprovalState>({ isSending: false, failed: false });
   return (
     <AIToolApprovalCard
