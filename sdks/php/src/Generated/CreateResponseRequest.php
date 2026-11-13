@@ -32,6 +32,8 @@ final readonly class CreateResponseRequest
         // A file to answer questions about: a PDF or a Word document. The router reads it as text before the turn sta...
         /** @var list<FileSource>|null */
         public ?array $files = null,
+        // An earlier response of a conversation kept in Stream Chat to regenerate or edit. With no text its question...
+        public ?string $replaces = null,
     ) {
     }
 
@@ -50,6 +52,7 @@ final readonly class CreateResponseRequest
             uiAction: array_key_exists('ui_action', $data) && $data['ui_action'] !== null ? Json::object($data, 'ui_action') : null,
             videos: array_key_exists('videos', $data) && $data['videos'] !== null ? array_map(VideoSource::fromArray(...), Json::objects($data, 'videos')) : null,
             files: array_key_exists('files', $data) && $data['files'] !== null ? array_map(FileSource::fromArray(...), Json::objects($data, 'files')) : null,
+            replaces: array_key_exists('replaces', $data) && $data['replaces'] !== null ? Json::string($data, 'replaces') : null,
         );
     }
 
@@ -85,6 +88,9 @@ final readonly class CreateResponseRequest
         }
         if ($this->files !== null) {
             $out['files'] = array_map(static fn (FileSource $each): array => $each->toArray(), $this->files);
+        }
+        if ($this->replaces !== null) {
+            $out['replaces'] = $this->replaces;
         }
         return $out;
     }

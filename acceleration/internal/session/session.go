@@ -23,6 +23,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
@@ -225,7 +227,12 @@ type Session struct {
 	// awaiting are the commands accepted for a dispatch worker and not yet answered, which
 	// the server may still have the model answer. Guarded by commandMu.
 	awaiting map[string]struct{}
-	mu       sync.Mutex
+	// unsettled is the switch to another branch the session began and could not finish once
+	// Chat may have rewound, which leaves it unsure what the person sees. Every turn but the
+	// retry of that switch's own request tries to finish it first, and is refused only while
+	// that fails (ErrSwitchUnfinished). Guarded by commandMu.
+	unsettled string
+	mu        sync.Mutex
 	// watchers are the connections being fanned out to, keyed so one can detach without
 	// disturbing the others.
 	watchers    map[uint64]*watcher
@@ -320,6 +327,23 @@ type Session struct {
 	// turns maps a turn id to the response row it is being recorded as, so the events of
 	// one turn -- which arrive interleaved with another's -- land on the right one.
 	turns map[string]*recordedTurn
+	// leaf is the newest response on the conversation, which the next turn is answered after
+	// (its parent_response_id). Guarded by turnsMu.
+	leaf string
+	// claimed is the response the next question asked of the model is recorded as, allocated
+	// before its messages were written so they carry its id. Guarded by turnsMu.
+	claimed *persistent.Turn
+
+	// tree is where the session's responses and the copies of its hidden branches are kept,
+	// nil when nothing is. Set once, before the session can be reached.
+	tree *store.Store
+	// restoring is ctx with the session's resume_history (Manager.restoring), which a branch
+	// switch reads the conversation back with, as a reopen does. Set once, before the session
+	// can be reached.
+	restoring func(ctx context.Context) (context.Context, error)
+	// cards are the person's other episodes the model's history opens with (callCards.read).
+	// Set once, before the session can be reached.
+	cards []llm.Message
 
 	// closers undo what Create wired up, in reverse.
 	closers   []func()
@@ -680,6 +704,9 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 	if err := s.current().CheckAsked(asked); err != nil {
 		return "", stack.Wrap(err)
 	}
+	if err := s.checkSettled(ctx, ""); err != nil {
+		return "", err
+	}
 	// What a worker hands on from a channel it answers is already there, written by the
 	// person, so only the reply is (Spec.Dispatched).
 	if s.persisted != nil && s.spec.Text && s.spec.Dispatched {
@@ -691,23 +718,27 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 		if s.spec.Caller.UserID != "" {
 			return "", stack.Wrap(errPersonalNeedsCommand)
 		}
-		if err := s.persisted.Begin(text, shown...); err != nil {
+		turn := s.nextTurn()
+		if _, err := s.persisted.BeginCommandWithTurn(turn, uuid.NewString(), text, "", nil, shown...); err != nil {
 			return "", stack.Wrap(err)
 		}
+		s.claim(turn)
 	}
 	turnID, err := s.current().RespondTo(ctx, text, images, asked)
 	if err != nil {
+		s.unclaim()
 		if s.persisted != nil && s.spec.Text {
 			s.persisted.Cancel()
 		}
 		return "", stack.Wrap(err)
 	}
 	if turnID == "" {
+		s.unclaim()
 		return "", nil
 	}
 	// Opening the turn here as well as on the event is what makes the id available to whoever
 	// asked for the answer. It happens once whichever way round the two arrive.
-	return s.openTurn(turnID, text), nil
+	return s.openAskedTurn(turnID, text), nil
 }
 
 // errNothingToAnswer is a follow-up with no text and no images.
@@ -842,6 +873,13 @@ func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, client
 	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
 		return persistent.CommandReceipt{}, "", stack.Wrap(err)
 	}
+	if _, err := s.persisted.Command(id); err != nil {
+		// A retry of a command already taken is answered with its receipt, which changes
+		// nothing.
+		if err := s.checkSettled(ctx, ""); err != nil {
+			return persistent.CommandReceipt{}, "", err
+		}
+	}
 	told := text
 	if note := persistent.DescribeUIAction(action, s.persisted.ActedOn(ctx, action)); note != "" {
 		told += "\n\n" + note
@@ -849,7 +887,8 @@ func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, client
 	if handedOn {
 		return s.followUp(ctx, id, told, images, asked, true)
 	}
-	receipt, err := s.persisted.BeginCommandWithAction(id, text, clientID, action, photos...)
+	turn := s.nextTurn()
+	receipt, err := s.persisted.BeginCommandWithTurn(turn, id, text, clientID, action, photos...)
 	if err != nil {
 		return receipt, "", stack.Wrap(err)
 	}
@@ -861,20 +900,25 @@ func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, client
 			return receipt, "", nil
 		}
 		delete(s.awaiting, id)
+		// Its messages carry the response id they were first written with, not this one.
+		turn = persistent.Turn{}
 	}
 	if !s.spec.Text {
 		s.typeInto(text)
 	}
+	s.claim(turn)
 	turnID, err := s.current().RespondTo(ctx, told, images, asked)
 	if err != nil {
+		s.unclaim()
 		s.persisted.Cancel()
 		return receipt, "", stack.Wrap(err)
 	}
 	s.persisted.BindTurn(receipt.CommandID, turnID)
 	if turnID == "" {
+		s.unclaim()
 		return receipt, "", nil
 	}
-	return receipt, s.openTurn(turnID, text), nil
+	return receipt, s.openAskedTurn(turnID, text), nil
 }
 
 // reachesModel is whether the command under id would be shown to the model: one not taken
@@ -999,6 +1043,9 @@ func (s *Session) followUp(ctx context.Context, id, text string, images []llm.Im
 	}
 	if nothingToAnswer(text, images) {
 		return persistent.CommandReceipt{}, "", stack.Wrap(errNothingToAnswer)
+	}
+	if err := s.checkSettled(ctx, ""); err != nil {
+		return persistent.CommandReceipt{}, "", err
 	}
 	receipt, err := s.persisted.BeginFollowUp(id, text)
 	if err != nil {
@@ -1141,38 +1188,28 @@ type Recorded interface {
 	Exchanges(ctx context.Context, customerID, sessionID, upTo string) ([]store.Exchange, error)
 	RewindResponses(ctx context.Context, customerID, sessionID, kept string, at time.Time) error
 	ConversationDocuments(ctx context.Context, customerID string, scope store.DocumentScope) ([]store.ConversationDocument, error)
-	// ResponseChatMessage is the Stream Chat message a response's answer was written to,
-	// which a conversation kept in Chat is rewound to.
-	ResponseChatMessage(ctx context.Context, customerID, sessionID, responseID string) (string, error)
 }
 
 // Rewind carries the conversation on from the end of a response, as though nothing after it
 // had been said. The reply being spoken is abandoned and the model's history is rebuilt from
 // what was recorded up to that response.
 //
-// A persistent conversation's transcript lives in Chat, so its channel is rewound to the
-// message carrying the response's answer first: every later message is hidden from every
-// read, and reopening the conversation does not bring the rewound turns back. A shared,
-// dispatched or thread conversation is refused, because other sessions and people write to
-// its channel and a rewind would hide what they said too. A native model is refused because
-// it holds its own context, which this cannot reach.
+// A persistent conversation is refused because its transcript lives in Chat, and reopening
+// it would bring the rewound turns back; forking it at the response is what keeps both. A
+// native model is refused because it holds its own context, which this cannot reach.
 func (s *Session) Rewind(ctx context.Context, recorded Recorded, responseID string) error {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
-	spec := s.Spec()
 	switch {
 	case s.records == nil:
 		return stack.Wrap(fmt.Errorf("%w: nothing was recorded to go back to", ErrCannotRewind))
-	case spec.Native():
+	case s.Spec().Native():
 		return stack.Wrap(fmt.Errorf("%w: a speech-to-speech model keeps its own context", ErrCannotRewind))
-	case s.persisted != nil && (spec.Shared() || spec.Dispatched || s.persisted.Threaded()):
-		return stack.Wrap(fmt.Errorf("%w: others write to this conversation's channel; fork it at the response instead", ErrCannotRewind))
+	case s.persisted != nil:
+		return stack.Wrap(fmt.Errorf("%w: a persistent conversation keeps its transcript in Chat; fork it at the response instead", ErrCannotRewind))
 	}
 
 	s.current().Interrupt()
-	if s.persisted != nil {
-		s.persisted.Interrupt()
-	}
 	if err := s.records.Flush(ctx); err != nil {
 		return stack.Wrap(err)
 	}
@@ -1187,25 +1224,12 @@ func (s *Session) Rewind(ctx context.Context, recorded Recorded, responseID stri
 	if err != nil {
 		return stack.Wrap(err)
 	}
-	// A conversation kept in Chat is rewound there first, once everything above has been
-	// read: a refusal leaves the session and its records as they were.
-	if s.persisted != nil {
-		messageID, err := recorded.ResponseChatMessage(ctx, s.spec.CustomerID, s.id, responseID)
-		if err != nil {
-			return stack.Wrap(err)
-		}
-		if messageID == "" {
-			// A line said as written, such as the greeting, writes no Chat message, and a
-			// response recorded before the message was kept has none on its row.
-			return stack.Wrap(fmt.Errorf("%w: that response has no Chat message to go back to: it wrote none, such as a greeting, or it was recorded before rewind could reach Chat", ErrCannotRewind))
-		}
-		if err := s.persisted.Rewind(ctx, messageID); err != nil {
-			return stack.Wrap(err)
-		}
-	}
 	if err := recorded.RewindResponses(ctx, s.spec.CustomerID, s.id, responseID, time.Now().UTC()); err != nil {
 		return stack.Wrap(err)
 	}
+	s.turnsMu.Lock()
+	s.leaf = responseID
+	s.turnsMu.Unlock()
 	s.current().RestoreHistory(HistoryOf(exchanges))
 	s.current().ReplaceDocuments(pinnable(documents)...)
 	return nil
@@ -1941,7 +1965,11 @@ func (s *Session) startRecording() {
 func (s *Session) write(event Event) {
 	switch typed := event.(type) {
 	case agent.Responding:
-		if !s.continueTurn(typed.TurnID, typed.Continues) {
+		switch {
+		case s.continueTurn(typed.TurnID, typed.Continues):
+		case typed.Continues == "":
+			s.openAskedTurn(typed.TurnID, typed.Prompt)
+		default:
 			s.openTurn(typed.TurnID, typed.Prompt)
 		}
 	case agent.ToolStarted:
@@ -1976,7 +2004,6 @@ func (s *Session) write(event Event) {
 		// The turn id is what the reply's transcript message is written under, which is how
 		// a resumed conversation finds the tool calls behind it.
 		s.item(typed.TurnID, kind, typed.Text, "", map[string]any{"turn_id": typed.TurnID})
-		s.answeredIn(typed.TurnID)
 		if !typed.PendingWork {
 			s.endTurn(typed.TurnID, store.ResponseCompleted, "")
 		}
@@ -2008,7 +2035,19 @@ func (s *Session) write(event Event) {
 // A turn can also start responding more than once without being new: work handed to a
 // subagent comes back and the agent speaks again under the same turn id. That is one response
 // with more items in it, not two.
+//
+// Every turn is answered after the newest response on the conversation, and becomes it.
 func (s *Session) openTurn(turnID, said string) string {
+	return s.openTurnAs(turnID, said, false)
+}
+
+// openAskedTurn is openTurn for a turn answering a question somebody asked: the first one
+// opened takes the response the question's messages were written with (claim).
+func (s *Session) openAskedTurn(turnID, said string) string {
+	return s.openTurnAs(turnID, said, true)
+}
+
+func (s *Session) openTurnAs(turnID, said string, asked bool) string {
 	if s.records == nil {
 		return ""
 	}
@@ -2021,18 +2060,54 @@ func (s *Session) openTurn(turnID, said string) string {
 		s.turnsMu.Unlock()
 		return held.id
 	}
-	turn := &recordedTurn{id: newID()}
+	row := store.AgentResponse{ID: newID(), ParentResponseID: s.leaf}
+	if claimed := s.claimed; asked && claimed != nil {
+		row.ID, row.ParentResponseID, row.QuestionResponseID = claimed.ResponseID, claimed.ParentResponseID, claimed.QuestionResponseID
+		s.claimed = nil
+	}
+	turn := &recordedTurn{id: row.ID}
 	s.turns[turnID] = turn
+	s.leaf = row.ID
 	s.turnsMu.Unlock()
 
-	s.records.Responding(store.AgentResponse{
-		ID: turn.id, SessionID: s.id, CustomerID: s.spec.CustomerID,
-		Said: said, CreatedAt: time.Now().UTC(),
-	})
+	row.SessionID, row.CustomerID, row.Said, row.CreatedAt = s.id, s.spec.CustomerID, said, time.Now().UTC()
+	s.records.Responding(row)
 	if said != "" {
 		s.item(turnID, store.ItemSaid, said, "", nil)
 	}
 	return turn.id
+}
+
+// nextTurn is the response the next question is recorded as, allocated now so the messages
+// the question is written with carry its id: answered after the conversation's newest
+// response, asking its own question. The zero Turn when nothing is recorded, or on a call,
+// where a turn somebody said aloud could open first and take it.
+func (s *Session) nextTurn() persistent.Turn {
+	if s.records == nil || s.Voicing() {
+		return persistent.Turn{}
+	}
+	s.turnsMu.Lock()
+	defer s.turnsMu.Unlock()
+	id := newID()
+	return persistent.Turn{ResponseID: id, ParentResponseID: s.leaf, QuestionResponseID: id}
+}
+
+// claim has the next asked turn opened (openAskedTurn) recorded as turn. A zero turn claims
+// nothing.
+func (s *Session) claim(turn persistent.Turn) {
+	if turn.ResponseID == "" {
+		return
+	}
+	s.turnsMu.Lock()
+	defer s.turnsMu.Unlock()
+	s.claimed = &turn
+}
+
+// unclaim drops a claim no turn took, as a question the model refused leaves.
+func (s *Session) unclaim() {
+	s.turnsMu.Lock()
+	defer s.turnsMu.Unlock()
+	s.claimed = nil
 }
 
 // continueTurn records a reply delivering an earlier turn's tools or delegated work as more
@@ -2048,27 +2123,6 @@ func (s *Session) continueTurn(turnID, continues string) bool {
 		s.turns[turnID] = held
 	}
 	return open
-}
-
-// answeredIn records the Stream Chat message a reply was written to, against the response
-// its turn is recorded as, which is what a rewind to the response rewinds the channel to. A
-// reply that continues an earlier turn is written to a message of its own, so it replaces
-// the earlier one: the turn's answer ends there.
-func (s *Session) answeredIn(turnID string) {
-	if s.persisted == nil {
-		return
-	}
-	messageID, bound := s.persisted.MessageForTurn(turnID)
-	if !bound {
-		return
-	}
-	s.turnsMu.Lock()
-	turn, open := s.turns[turnID]
-	s.turnsMu.Unlock()
-	if !open {
-		return
-	}
-	s.records.AnsweredIn(turn.id, messageID)
 }
 
 // item queues one thing that happened, against whichever response the turn is being

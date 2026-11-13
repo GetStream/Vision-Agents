@@ -356,11 +356,7 @@ func (s *Server) rewindSession(ctx context.Context, request *rewindSessionReques
 	switch {
 	case errors.Is(err, store.ErrUnknownResponse):
 		return nil, notFound(err.Error())
-	case errors.Is(err, conversation.ErrRewindConflict):
-		return nil, conflict(conversation.ErrRewindConflict.Error() + "; rewind again")
-	case errors.Is(err, session.ErrCannotRewind),
-		errors.Is(err, conversation.ErrRewindOff),
-		errors.Is(err, conversation.ErrRewindRefused):
+	case errors.Is(err, session.ErrCannotRewind):
 		return nil, invalidRequest(err.Error())
 	case err != nil:
 		return nil, err
@@ -1324,19 +1320,13 @@ func (s *Server) registerSessions(api huma.API) {
 			"The history is rebuilt from what the session recorded, the question and the answer of " +
 			"each turn, so a session that recorded nothing cannot be rewound: an incognito one, one " +
 			"on a deployment with no store, and a native speech-to-speech one, whose model keeps its " +
-			"own context.\n" +
-			"A conversation kept in Chat is rewound there too: every message after the response's " +
-			"answer is hidden from every read, so reopening the conversation does not bring the " +
-			"rewound turns back. A shared, dispatched or thread conversation is refused, because " +
-			"others write to its channel; fork it at the response instead. A response recorded " +
-			"before its Chat message was kept cannot be rewound to. If something is written to the " +
-			"channel while it is being rewound, nothing is hidden and the call answers 409: rewind " +
-			"again.",
+			"own context. A persistent conversation is refused as well, because its transcript lives " +
+			"in Chat and would bring the rewound turns back the next time it opened; fork it at the " +
+			"response instead.",
 		Extensions:    map[string]any{clientAccessibleExtension: true},
 		DefaultStatus: http.StatusNoContent,
 		Responses: map[string]*huma.Response{
 			"204": {Description: "The conversation carries on from the end of that response"},
-			"409": errorResponse("The channel moved on while it was being rewound; nothing was hidden"),
 		},
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
 	}, s.rewindSession)

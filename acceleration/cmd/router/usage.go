@@ -481,19 +481,25 @@ func (f forgetting) count(ctx context.Context) error {
 			keys += int(found)
 		}
 	}
+	branches, err := f.store.CountUserBranchMessages(ctx, f.app, f.user)
+	if err != nil {
+		return err
+	}
 	settings, err := f.store.CountUserSettings(ctx, f.app, f.user)
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(f.out, "dry run, nothing is changed\nrequests: %d rows\nusage service: %d events, %d windows\nredis: %d keys\n"+
+	_, err = fmt.Fprintf(f.out, "dry run, nothing is changed\nrequests: %d rows\nbranch snapshots: %d messages to delete\n"+
+		"usage service: %d events, %d windows\nredis: %d keys\n"+
 		"shared database: %d policies and %d limits to delete; %d resets, %d grants and %d campaigns to rewrite\n",
-		requests, service.Events, service.Windows, keys,
+		requests, branches, service.Events, service.Windows, keys,
 		settings.Policies, settings.Limits, settings.Resets, settings.Grants, settings.Campaigns)
 	return err
 }
 
 // forget replaces the id, in the order each step needs: the shards first, so nothing ships the
-// id again; the usage service twice, the second after settle, for a batch read before the
+// id again, and with them the snapshots of messages a rewind hid, which hold the user's words;
+// the usage service twice, the second after settle, for a batch read before the
 // shards were rewritten; Redis once the service writes no counter of the id any more; and the
 // shared database last, with the audit row in the same transaction.
 func (f forgetting) forget(ctx context.Context, settle time.Duration) error {
@@ -509,6 +515,13 @@ func (f forgetting) forget(ctx context.Context, settle time.Duration) error {
 		return err
 	}
 	if _, err := fmt.Fprintf(f.out, "requests: %d rows rewritten\n", requests); err != nil {
+		return err
+	}
+	branches, err := f.store.DeleteUserBranchMessages(ctx, f.app, f.user)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(f.out, "branch snapshots: %d messages deleted\n", branches); err != nil {
 		return err
 	}
 	forget := usageservice.ForgetUser{AppID: f.app, UserID: f.user, Replacement: f.replacement}
@@ -548,7 +561,7 @@ func (f forgetting) forget(ctx context.Context, settle time.Duration) error {
 		CustomerID: f.app, ResourceType: store.AuditEndUser, ResourceID: f.replacement,
 		Action: store.AuditUpdated, Source: store.AuditSourceCLI, ActorID: f.actor,
 		Changes: []store.AuditChange{
-			{Field: "requests", After: requests}, {Field: "events", After: first.Events + second.Events},
+			{Field: "requests", After: requests}, {Field: "branch_messages", After: branches}, {Field: "events", After: first.Events + second.Events},
 			{Field: "windows", After: first.Windows + second.Windows}, {Field: "redis_keys", After: keys},
 		},
 	}

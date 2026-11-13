@@ -5,12 +5,10 @@ package api
 import (
 	"context"
 	"net/http"
-	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -392,43 +390,10 @@ func (s *SessionVerbsSuite) TestRewindingNeedsAResponseToCarryOnFrom() {
 func (s *SessionVerbsSuite) TestRewindingToATurnNobodyTookIsRefused() {
 	opened := s.serverClient.createSession(textSession(nil))
 
-	status, body := s.serverClient.call(http.MethodPost,
+	status, _ := s.serverClient.call(http.MethodPost,
 		"/v1/agents/sessions/"+opened.Id+"/rewind", RewindSessionRequest{ResponseId: s.utils.uuid()})
 
-	// Not found rather than the 400 every persistent session got before it could be rewound.
-	s.Equal(http.StatusNotFound, status, string(body))
-}
-
-// A default session keeps its conversation in Chat, which is what used to make every rewind
-// a 400 (AI-3209): the channel is rewound too, so the later turn leaves the responses and
-// the transcript both.
-func (s *SessionVerbsSuite) TestRewindingADefaultSessionCarriesOnFromTheKeptResponse() {
-	opened := s.serverClient.createSession(textSession(nil))
-	for i, said := range []string{"First question", "Second question"} {
-		s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
-			"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: said}, nil))
-		s.Require().Eventually(func() bool {
-			_, answered := s.serverClient.call(http.MethodGet, "/v1/agents/sessions/"+opened.Id+"/responses", nil)
-			return strings.Count(string(answered), `"completed"`) == i+1
-		}, settleFor, 10*time.Millisecond, "the session answers")
-	}
-	var page AgentResponsePage
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/sessions/"+opened.Id+"/responses", nil, &page))
-	s.Require().Len(page.Items, 2)
-	slices.SortFunc(page.Items, func(a, b AgentResponse) int { return a.CreatedAt.Compare(b.CreatedAt) })
-	kept := page.Items[0].Id
-
-	status := s.serverClient.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/rewind",
-		RewindSessionRequest{ResponseId: kept}, nil)
-
-	s.Require().Equal(http.StatusNoContent, status)
-	page = AgentResponsePage{}
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/sessions/"+opened.Id+"/responses", nil, &page))
-	s.Require().Len(page.Items, 1, "the later turn is no longer part of the conversation")
-	s.Equal(kept, page.Items[0].Id)
-	s.True(slices.ContainsFunc(s.chat.Requests(suiteStreamKey), func(r chattest.Request) bool {
-		return r.Method == http.MethodPost && strings.HasSuffix(r.Path, "/rewind")
-	}), "the session's channel is rewound in Chat")
+	s.Equal(http.StatusBadRequest, status)
 }
 
 func (s *SessionVerbsSuite) TestAnotherAppCannotRewindASession() {

@@ -8,6 +8,12 @@ module GetStream
       SPEC_VERSION = "0.2.0"
 
       OPERATIONS = {
+        "activateResponse" => {
+          method: :post, path: "/v1/agents/sessions/{id}/responses/{response_id}/activate",
+          path_params: %w[id response_id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: true
+        }.freeze,
         "addCampaignContacts" => {
           method: :post, path: "/v1/agents/campaigns/{id}/contacts",
           path_params: %w[id].freeze, query: [].freeze,
@@ -680,6 +686,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: true
         }.freeze,
+        "getResponseBranch" => {
+          method: :get, path: "/v1/agents/sessions/{id}/responses/{response_id}/branch",
+          path_params: %w[id response_id].freeze, query: %w[limit cursor].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: true
+        }.freeze,
         "getRouterConfig" => {
           method: :get, path: "/v1/router/configs/{id}",
           path_params: %w[id].freeze, query: [].freeze,
@@ -1031,6 +1043,12 @@ module GetStream
         "listResponseItems" => {
           method: :get, path: "/v1/agents/sessions/{id}/responses/items",
           path_params: %w[id].freeze, query: %w[response_id limit cursor].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: true
+        }.freeze,
+        "listResponseSiblings" => {
+          method: :get, path: "/v1/agents/sessions/{id}/responses/{response_id}/siblings",
+          path_params: %w[id response_id].freeze, query: %w[of limit cursor].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: true
         }.freeze,
@@ -1761,6 +1779,10 @@ module GetStream
           properties: %w[balance_micros balance_state balance_warning_micros balance_warning_source funded granted_micros limits organization_id own_limits spend_hard_limit spent_micros status tier trial_micros].freeze,
           required: %w[organization_id status tier balance_micros granted_micros trial_micros funded spent_micros balance_warning_micros balance_warning_source balance_state limits].freeze, open: false
         }.freeze,
+        "ActivatedBranch" => {
+          properties: %w[already_active leaf_response_id resent rewound_to].freeze,
+          required: %w[leaf_response_id already_active resent].freeze, open: false
+        }.freeze,
         "ActivityArea" => {
           properties: %w[area client first_at last_at last_refusal_code refused requests].freeze,
           required: %w[area client first_at last_at requests refused last_refusal_code].freeze, open: false
@@ -1850,7 +1872,7 @@ module GetStream
           required: %w[coverage dropped_logs has_more items next_cursor resume_cursor].freeze, open: false
         }.freeze,
         "AgentResponse" => {
-          properties: %w[created_at error finished_at id said session_id status].freeze,
+          properties: %w[branch created_at error finished_at id parent_response_id rewound_to said session_id status].freeze,
           required: %w[created_at id session_id status].freeze, open: false
         }.freeze,
         "AgentResponseItem" => {
@@ -1948,6 +1970,14 @@ module GetStream
         "AvailableNumber" => {
           properties: %w[capabilities country e164 locality monthly_cost_micros number_type region vendor].freeze,
           required: %w[capabilities country e164 vendor].freeze, open: false
+        }.freeze,
+        "BranchMessage" => {
+          properties: %w[attachments created_at custom id role text user_id].freeze,
+          required: %w[id text attachments custom created_at user_id].freeze, open: false
+        }.freeze,
+        "BranchMessagePage" => {
+          properties: %w[active has_more items next_cursor].freeze,
+          required: %w[active has_more items].freeze, open: false
         }.freeze,
         "BusinessProfile" => {
           properties: %w[authorized_contact_email authorized_contact_first_name authorized_contact_last_name authorized_contact_phone authorized_contact_title brand_id brand_name brand_status business_registration_country business_verification_documents created_at industry legal_business_name legal_entity_type organization_type privacy_policy_url registered_address stock_exchange stock_symbol tax_id tax_id_issuing_country terms_and_conditions_url updated_at website_url].freeze,
@@ -2298,7 +2328,7 @@ module GetStream
           required: %w[recipient channel].freeze, open: false
         }.freeze,
         "CreateResponseRequest" => {
-          properties: %w[audio files images max_output_tokens reasoning_effort request_id text ui_action videos].freeze,
+          properties: %w[audio files images max_output_tokens reasoning_effort replaces request_id text ui_action videos].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
         "CreateRunRequest" => {
@@ -2789,6 +2819,18 @@ module GetStream
           properties: %w[audio client_id images request_id text].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
+        "ResponseBranch" => {
+          properties: %w[count index of].freeze,
+          required: %w[of index count].freeze, open: false
+        }.freeze,
+        "ResponseSibling" => {
+          properties: %w[active created_at id index said].freeze,
+          required: %w[id created_at active index].freeze, open: false
+        }.freeze,
+        "ResponseSiblingPage" => {
+          properties: %w[has_more items next_cursor].freeze,
+          required: %w[has_more items].freeze, open: false
+        }.freeze,
         "ResumeHistory" => {
           properties: %w[include_tools max_characters max_messages].freeze,
           required: [].freeze, open: false
@@ -2816,6 +2858,10 @@ module GetStream
         "RewindSessionRequest" => {
           properties: %w[response_id].freeze,
           required: %w[response_id].freeze, open: false
+        }.freeze,
+        "RewoundTo" => {
+          properties: %w[inclusive message_id].freeze,
+          required: %w[message_id inclusive].freeze, open: false
         }.freeze,
         "RollupRequest" => {
           properties: %w[from granularity to].freeze,

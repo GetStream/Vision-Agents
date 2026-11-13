@@ -63,13 +63,6 @@ type recordWrite struct {
 	voiced *voiced
 	// chose is a connection a login in the conversation chose for a binding, nil otherwise.
 	chose *chose
-	// answered is the Chat message a turn's answer was written to, nil otherwise.
-	answered *chatAnswer
-}
-
-// chatAnswer is a response and the Stream Chat message carrying its answer.
-type chatAnswer struct {
-	id, chatMessageID string
 }
 
 // recorder is what a session needs of the writer behind it, which is less than the writer
@@ -81,8 +74,6 @@ type recorder interface {
 	Responding(row store.AgentResponse)
 	// Responded says how it ended.
 	Responded(id, status, failure string, at time.Time)
-	// AnsweredIn says which Stream Chat message carries its answer.
-	AnsweredIn(id, chatMessageID string)
 	// Item says one thing that happened during it.
 	Item(item store.AgentResponseItem)
 	// Described says the session was renamed. A nil custom leaves the labels as they were.
@@ -195,12 +186,6 @@ func (r *sessionRecorder) Voiced(id, callID, callType string) {
 // Responding queues a turn that has just begun.
 func (r *sessionRecorder) Responding(row store.AgentResponse) {
 	r.queueWrite(recordWrite{response: &row})
-}
-
-// AnsweredIn queues the Stream Chat message a turn's answer was written to, behind the
-// response row it is set on.
-func (r *sessionRecorder) AnsweredIn(id, chatMessageID string) {
-	r.queueWrite(recordWrite{answered: &chatAnswer{id, chatMessageID}})
 }
 
 // Responded queues how a turn ended.
@@ -378,10 +363,6 @@ func (r *sessionRecorder) write(write recordWrite) {
 	case write.response != nil:
 		if err := r.store.StartResponse(ctx, write.response); err != nil {
 			r.logger.Error("could not record the turn starting", "error", err)
-		}
-	case write.answered != nil:
-		if err := r.store.AnsweredIn(ctx, write.answered.id, write.answered.chatMessageID); err != nil {
-			r.logger.Error("could not record the chat message of the turn's answer", "error", err)
 		}
 	case write.finished != "":
 		if err := r.store.FinishResponse(ctx, write.finished, write.status, write.failure, write.finishedAt); err != nil {

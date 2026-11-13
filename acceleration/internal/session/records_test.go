@@ -29,8 +29,6 @@ type heldRecorder struct {
 	finished  []finishedTurn
 	items     []store.AgentResponseItem
 	videos    []string
-	// answered is the Stream Chat message each response's answer was written to.
-	answered map[string]string
 }
 
 type finishedTurn struct {
@@ -49,15 +47,6 @@ func (r *heldRecorder) Responded(id, status, failure string, _ time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.finished = append(r.finished, finishedTurn{id: id, status: status, failure: failure})
-}
-
-func (r *heldRecorder) AnsweredIn(id, chatMessageID string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.answered == nil {
-		r.answered = map[string]string{}
-	}
-	r.answered[id] = chatMessageID
 }
 
 func (r *heldRecorder) Item(item store.AgentResponseItem) {

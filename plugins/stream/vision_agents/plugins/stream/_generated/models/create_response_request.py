@@ -57,6 +57,9 @@ class CreateResponseRequest:
             in a person's own conversation: refused in a thread, in a channel others write in, in a session a worker opened
             for a channel's message, and by a speech-to-speech session. Not with a voice note. Refused before any turn
             starts when it cannot be read, is too large, or reads as a prompt injection under the organization's policy.
+        replaces (str | Unset): An earlier response of a conversation kept in Stream Chat to regenerate or edit. With no
+            text its question is answered again; with text, the text is asked in its place. Requires request_id, and takes
+            no images, audio, videos, files or ui_action.
     """
 
     text: str
@@ -68,6 +71,7 @@ class CreateResponseRequest:
     ui_action: CreateResponseRequestUiAction | Unset = UNSET
     videos: list[VideoSource] | Unset = UNSET
     files: list[FileSource] | Unset = UNSET
+    replaces: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -108,6 +112,8 @@ class CreateResponseRequest:
                 files_item = files_item_data.to_dict()
                 files.append(files_item)
 
+        replaces = self.replaces
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -131,6 +137,8 @@ class CreateResponseRequest:
             field_dict["videos"] = videos
         if files is not UNSET:
             field_dict["files"] = files
+        if replaces is not UNSET:
+            field_dict["replaces"] = replaces
 
         return field_dict
 
@@ -194,6 +202,8 @@ class CreateResponseRequest:
 
                 files.append(files_item)
 
+        replaces = d.pop("replaces", UNSET)
+
         create_response_request = cls(
             text=text,
             audio=audio,
@@ -204,6 +214,7 @@ class CreateResponseRequest:
             ui_action=ui_action,
             videos=videos,
             files=files,
+            replaces=replaces,
         )
 
         create_response_request.additional_properties = d

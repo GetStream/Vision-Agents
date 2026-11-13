@@ -35,11 +35,9 @@ type store struct {
 	callMembers map[string][]string
 	// made are the bodies calls were created with, by "<type>:<id>", with the custom an
 	// update merged in.
-	made  map[string]map[string]any
-	rules map[string]map[string]any
-	order []string
-	// rewound are the messages a channel rewind hid, which no read returns again.
-	rewound  map[string]bool
+	made     map[string]map[string]any
+	rules    map[string]map[string]any
+	order    []string
 	now      func() time.Time
 	app      App
 	appReads int
@@ -75,6 +73,8 @@ type store struct {
 	uploads []Upload
 	// events are the events sent to each channel, by channel id, in the order they came.
 	events map[string][]map[string]any
+	// rewind is what the channel rewind endpoint holds and is steered by; see rewind.go.
+	rewind rewindState
 }
 
 // Upload is one file stored on a channel: the channel's type and id, which endpoint took it
@@ -653,21 +653,11 @@ func numberTimes(hook json.RawMessage) json.RawMessage {
 func (db *store) messagesIn(cid string) []map[string]any {
 	messages := []map[string]any{}
 	for _, mid := range db.order {
-		if db.rewound[mid] {
-			continue
-		}
 		if written, _ := db.messages[mid]["cid"].(string); written == cid {
 			messages = append(messages, db.messages[mid])
 		}
 	}
 	return messages
-}
-
-// Rewound reports whether a channel rewind hid the message.
-func (s *Server) Rewound(id string) bool {
-	s.db.mu.Lock()
-	defer s.db.mu.Unlock()
-	return s.db.rewound[id]
 }
 
 // Uploads are the files stored on channels so far, in the order they came.
@@ -745,6 +735,14 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(r.URL.Path, "/")
 	result := map[string]any{}
 	switch {
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/rewind"):
+		// The path is .../channels/<type>/<id>/rewind.
+		status, answer := db.rewindChannel(parts[len(parts)-3], parts[len(parts)-2], body)
+		if status != http.StatusCreated {
+			w.WriteHeader(status)
+		}
+		_ = json.NewEncoder(w).Encode(answer)
+		return
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/event"):
 		// The path is .../channels/<type>/<id>/event.
 		cid := parts[len(parts)-3] + ":" + parts[len(parts)-2]
@@ -968,38 +966,6 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		result["users"] = written
-	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/rewind"):
-		// A rewind hides every message after message_id from every read, as Chat's does,
-		// once the newest visible message is the one the caller expected; otherwise it is
-		// Chat's rewind_conflict. The path is .../channels/<type>/<id>/rewind.
-		cid := parts[len(parts)-3] + ":" + parts[len(parts)-2]
-		target, _ := body["message_id"].(string)
-		expected, _ := body["expected_last_message_id"].(string)
-		visible := db.messagesIn(cid)
-		at := slices.IndexFunc(visible, func(m map[string]any) bool { return m["id"] == target })
-		switch {
-		case at < 0:
-			refuse(w, "Message with id "+target+" doesn't exist")
-			return
-		case len(visible) == 0 || visible[len(visible)-1]["id"] != expected:
-			last, _ := visible[len(visible)-1]["id"].(string)
-			w.WriteHeader(http.StatusConflict)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"code": 125, "message": "the channel has newer messages", "StatusCode": http.StatusConflict,
-				"exception_fields": map[string]string{"last_message_id": last},
-			})
-			return
-		case at == len(visible)-1:
-			refuse(w, "nothing to rewind")
-			return
-		}
-		if db.rewound == nil {
-			db.rewound = map[string]bool{}
-		}
-		for _, m := range visible[at+1:] {
-			db.rewound[m["id"].(string)] = true
-		}
-		result["rewind"] = map[string]any{"message_id": target, "hidden_count_at_rewind": len(visible) - at - 1}
 	case r.Method == http.MethodPatch && len(parts) >= 3 && parts[len(parts)-3] == "channels":
 		// A partial update sets the fields it names on the channel. The path is
 		// .../channels/<type>/<id>.
@@ -1037,7 +1003,7 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		if cid, ok := filter["cid"].(string); ok {
 			if data, exists := db.channels[cid]; exists {
 				channels = append(channels, map[string]any{
-					"channel": data, "members": data["members"], "messages": db.messagesIn(cid),
+					"channel": data, "members": data["members"], "messages": db.visibleIn(cid),
 				})
 			}
 		}
@@ -1068,7 +1034,13 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			result["channel"] = channel
 		}
 		result["members"] = db.channels[id]["members"]
-		result["messages"] = db.messagesIn(id)
+		messages, refused := db.pageAfter(id, body)
+		if refused != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(refused)
+			return
+		}
+		result["messages"] = messages
 	case strings.HasSuffix(r.URL.Path, "/message"):
 		message := body["message"].(map[string]any)
 		id, _ := message["id"].(string)
@@ -1086,7 +1058,7 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		db.order = append(db.order, id)
 		// The path is .../channels/<type>/<id>/message.
 		message["cid"] = parts[len(parts)-3] + ":" + parts[len(parts)-2]
-		message["created_at"] = db.now().UnixNano()
+		message["created_at"] = db.afterHiddenRanges(message["cid"].(string), db.now()).UnixNano()
 		// Chat answers with the author it resolved the id to, which is how a reader
 		// learns who spoke: a stored message carries a user, not a user id. A user
 		// nobody named comes back named after their own id.
@@ -1094,8 +1066,18 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		if _, ok := message["custom"].(map[string]any); !ok {
 			message["custom"] = map[string]any{}
 		}
+		// skip_push is a field of the send, not of the message; it is kept on the message so a
+		// test can read what it was sent with.
+		if skip, _ := body["skip_push"].(bool); skip {
+			message["skip_push"] = true
+		}
 		db.messages[id] = message
 		result["message"] = db.messages[id]
+	case strings.Contains(r.URL.Path, "/messages/") && r.Method == http.MethodGet && db.hidden(db.messages[parts[len(parts)-1]]):
+		// Chat answers a read by id of a rewound message as one of a message it does not have.
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 16, "message": "message " + parts[len(parts)-1] + " does not exist", "StatusCode": http.StatusNotFound})
+		return
 	case strings.Contains(r.URL.Path, "/messages/") && r.Method == http.MethodDelete:
 		id := parts[len(parts)-1]
 		result["message"] = db.messages[id]
@@ -1116,7 +1098,15 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		// is deliberately not stored: only the durable update is history.
 		if id == "ephemeral" {
 			id = parts[len(parts)-2]
-		} else if r.Method == http.MethodPut {
+		}
+		// Chat answers an update of a rewound message as one of a message it does not have.
+		// The status and wording are unverified.
+		if db.hidden(db.messages[id]) {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 16, "message": "message " + id + " does not exist", "StatusCode": http.StatusNotFound})
+			return
+		}
+		if r.Method == http.MethodPut && parts[len(parts)-1] != "ephemeral" {
 			if author, _ := body["user_id"].(string); db.knownAuthors && db.users[author] == nil {
 				refuse(w, "UpdateMessagePartial failed with error: \"the user "+author+" does not exist\"")
 				return
