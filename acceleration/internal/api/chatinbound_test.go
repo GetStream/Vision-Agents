@@ -353,10 +353,9 @@ func TestChatInboundLeaseSuite(t *testing.T) {
 	suite.Run(t, new(ChatInboundLeaseSuite))
 }
 
-// A thread's answer waits up to askTimeout for the turn and up to drawingAskTimeout for the
-// reply of an agent that draws, then lets go of the turn (answerThread): a lease shorter than
-// that has a second router answer the message again
-// (TestAnAnswerThatOutlastsItsLeaseIsAnsweredAgainAndSaysSo).
+// A thread's answer waits up to askTimeout for the turn and up to askTimeout for the reply,
+// then lets go of the turn (answerThread): a lease shorter than that has a second router
+// answer the message again (TestAnAnswerThatOutlastsItsLeaseIsAnsweredAgainAndSaysSo).
 func (s *ChatInboundLeaseSuite) TestTheLeaseOutlastsTheLongestAnswer() {
-	s.Greater(chatinbound.Lease, askTimeout+drawingAskTimeout+20*threadTurnPoll)
+	s.Greater(chatinbound.Lease, 2*askTimeout+20*threadTurnPoll)
 }

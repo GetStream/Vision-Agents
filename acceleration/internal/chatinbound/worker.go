@@ -13,11 +13,11 @@ import (
 
 // Lease is how far a claim pushes a queued message's next attempt: no other router takes it
 // while this one answers it. It outlasts the longest answer, a thread channel's, which waits
-// up to askTimeout (2 min) for the thread's turn and up to drawingAskTimeout (6 min, for an
-// agent that draws) for the reply (api.answerThread), plus a minute for closing the session it
-// opened. A lease that runs out mid-answer gives no second answer: a session or dispatch answer
-// settled the row as it started, and a thread channel's turn is claimed (AGENTS.md «Rules»).
-const Lease = 9 * time.Minute
+// up to askTimeout (2 min) for the thread's turn and up to another for the reply
+// (api.answerThread), plus a minute for closing the session it opened. A lease that runs out
+// mid-answer gives no second answer: a session or dispatch answer settled the row as it started,
+// and a thread channel's turn is claimed (AGENTS.md «Rules»).
+const Lease = 5 * time.Minute
 
 // look is the longest wait between looks for due messages, so a message another router
 // queued or leased and then stopped with is answered within about a lease and a look.

@@ -90,14 +90,12 @@ func (s *Server) answerChatChannel(ctx context.Context, origin hookOrigin, event
 // (store.TakeChatChannelTurn), and a message that arrives while another router answers waits
 // for it, so the session opened for it reads that router's reply from the channel.
 func (s *Server) answerChatChannelTurn(origin hookOrigin, config store.AgentConfig, cid string, event messageEvent) {
-	// Every turn on the channel is this config's, so the wait for one is as long as one may take.
-	ctx, cancel := context.WithTimeout(context.Background(), askTimeoutFor(session.FromConfig(config)))
+	ctx, cancel := context.WithTimeout(context.Background(), askTimeout)
 	defer cancel()
 	holder := uuid.NewString()
-	take := func(ctx context.Context, until time.Time) (bool, error) {
+	if err := takeTurn(ctx, func(ctx context.Context, until time.Time) (bool, error) {
 		return s.store.TakeChatChannelTurn(ctx, origin.app, cid, holder, until)
-	}
-	if err := takeTurn(ctx, take); err != nil {
+	}); err != nil {
 		s.logger.Error("a message in a channel the Router answers in waited too long for the channel's turn", "channel", cid, "error", err)
 		return
 	}
@@ -112,7 +110,7 @@ func (s *Server) answerChatChannelTurn(origin hookOrigin, config store.AgentConf
 	s.answerHosted(origin, cid, config.CustomerID, event,
 		func(turn context.Context) (*session.Session, error) {
 			return s.chatChannelSession(turn, origin, config, cid, event)
-		}, take)
+		})
 }
 
 // chatChannelSession opens the Router's own session on the channel cid, under the config that
