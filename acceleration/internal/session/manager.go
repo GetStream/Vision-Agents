@@ -1604,15 +1604,7 @@ func matchesLive(live *Session, filter store.SessionFilter) bool {
 		return false
 	case len(filter.CallerKinds) > 0 && !slices.Contains(filter.CallerKinds, string(spec.CallerKind)):
 		return false
-	case filter.AgentName != "" && spec.AgentName != filter.AgentName:
-		return false
-	case filter.Project != "" && spec.Project != filter.Project:
-		return false
-	case filter.Modality != "" && live.Modality() != filter.Modality:
-		return false
 	case filter.AgentID != "" && spec.AgentID != filter.AgentID:
-		return false
-	case filter.Team != "" && usage.Team(spec.Attribution.UsageCategories) != filter.Team:
 		return false
 	// Nobody has reviewed a session that is still running, so it has no score.
 	case !filter.Where.Matches(store.SessionValues{

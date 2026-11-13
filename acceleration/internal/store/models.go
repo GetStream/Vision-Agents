@@ -2029,17 +2029,12 @@ type ItemPosition struct {
 // anybody who is not the app's own backend, because a filter a user could widen is not a
 // filter at all.
 type SessionFilter struct {
-	UserID    string
-	AgentName string
-	AgentID   string
-	Project   string
-	Modality  string
+	UserID  string
+	AgentID string
 	// CallerKinds, when set, admits only the sessions opened by one of these kinds of
 	// caller. A user id is only worth what proved it, so an end user is narrowed by both
 	// halves of who they are, the same as a session they reach by id.
 	CallerKinds []string
-	// Team is the team the session's usage is counted under.
-	Team string
 	// Where is the filter the request spelled out, with its $and and $or. Nil admits every
 	// session. It is ANDed with every field above, so nothing in it reaches past them: an
 	// end user's UserID and CallerKinds hold whatever the expression says.

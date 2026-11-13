@@ -416,27 +416,14 @@ func (s *RecordSuite) TestTheRowSaysWhoseSessionItIsRatherThanWhoTheAgentJoinedA
 func (s *RecordSuite) TestMatchesLiveAnswersTheSameFiltersAsTheStore() {
 	created := time.Now()
 	live := &Session{
-		id:       "b",
-		created:  created,
-		modality: store.ModalityVoice,
-		spec: Spec{
-			Caller:    routing.Caller{UserID: "jlahey"},
-			AgentName: "docs",
-			Project:   "Health",
-			// The team the session is counted under is its attribution's, as on its row.
-			Team:        "sales",
-			Attribution: routing.Attribution{UsageCategories: []string{"team:finance"}},
-		},
+		id:      "b",
+		created: created,
+		spec:    Spec{Caller: routing.Caller{UserID: "jlahey"}},
 	}
 
 	s.True(matchesLive(live, store.SessionFilter{}))
-	s.True(matchesLive(live, store.SessionFilter{UserID: "jlahey", AgentName: "docs", Project: "Health", Modality: store.ModalityVoice, Team: "finance"}))
-	s.False(matchesLive(live, store.SessionFilter{Team: "sales"}))
-
+	s.True(matchesLive(live, store.SessionFilter{UserID: "jlahey"}))
 	s.False(matchesLive(live, store.SessionFilter{UserID: "randy"}))
-	s.False(matchesLive(live, store.SessionFilter{AgentName: "sales"}))
-	s.False(matchesLive(live, store.SessionFilter{Project: "Docs"}))
-	s.False(matchesLive(live, store.SessionFilter{Modality: store.ModalityVideo}))
 
 	// A session nothing records sorts by when it began, the same as its cursor.
 	at := created.Truncate(time.Microsecond)

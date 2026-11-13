@@ -528,20 +528,8 @@ func narrowSessions(query *bun.SelectQuery, filter SessionFilter) *bun.SelectQue
 	if len(filter.CallerKinds) > 0 {
 		query = query.Where("caller_kind IN (?)", bun.In(filter.CallerKinds))
 	}
-	if filter.AgentName != "" {
-		query = query.Where("agent_name = ?", filter.AgentName)
-	}
-	if filter.Project != "" {
-		query = query.Where("project = ?", filter.Project)
-	}
-	if filter.Modality != "" {
-		query = query.Where("modality = ?", filter.Modality)
-	}
 	if filter.AgentID != "" {
 		query = query.Where("agent_id = ?", filter.AgentID)
-	}
-	if filter.Team != "" {
-		query = query.Where("team = ?", filter.Team)
 	}
 	// What the request asked for goes in last and as one parenthesised condition, ANDed with
 	// everything above: an $or in it chooses among the sessions the caller may see, and
