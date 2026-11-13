@@ -638,10 +638,10 @@ func (s *BranchesSuite) TestAnEditRetriedWhileItsFirstRewindLandsKeepsItsCopies(
 	s.Require().Error(err)
 	s.chat.Heal(http.MethodPost, "/rewind")
 	waiting, release := s.chat.Hold("/rewind")
-	retried := make(chan error, 1)
+	retried := make(chan retriedRewind, 1)
 	go func() {
-		_, err := s.conv.Rewind(s.ctx, edit("sw-1", second))
-		retried <- err
+		out, err := s.conv.Rewind(s.ctx, edit("sw-1", second))
+		retried <- retriedRewind{out, err}
 	}()
 	<-waiting
 	// The first try's rewind lands after all, before the retry's reaches Chat.
@@ -649,11 +649,50 @@ func (s *BranchesSuite) TestAnEditRetriedWhileItsFirstRewindLandsKeepsItsCopies(
 	s.Require().NoError(err)
 	release()
 
-	s.Require().NoError(<-retried)
+	out := <-retried
+	s.Require().NoError(out.err)
+	s.True(out.Rewound)
+	s.ElementsMatch([]string{second.UserMessageID, second.AssistantMessageID}, out.Hidden, "what the earlier rewind hid")
 	copies, err := s.branches.BranchMessages(s.ctx, "customer", s.session, []string{"resp-2"})
 	s.Require().NoError(err)
 	s.Len(copies, 2, "the hidden question and reply are still copied")
 	_, journaled := s.branches.row("sw-1")
 	s.True(journaled)
 	s.NotContains(s.chat.Visible(s.session), second.UserMessageID)
+}
+
+// retriedRewind is what a rewind run in the background answered.
+type retriedRewind struct {
+	conversation.RewindOutcome
+	err error
+}
+
+// An edit retried while its first rewind lands, whose check of the channel then fails, is left
+// for the next open with its copies: whether the earlier rewind landed is not known.
+func (s *BranchesSuite) TestAnEditRetriedWhoseCheckOfTheChannelFailsKeepsItsCopies() {
+	_, second := s.twoTurns()
+	s.chat.FailWith(http.MethodPost, "/rewind", http.StatusGatewayTimeout)
+	_, err := s.conv.Rewind(s.ctx, edit("sw-1", second))
+	s.Require().Error(err)
+	s.chat.Heal(http.MethodPost, "/rewind")
+	waiting, release := s.chat.Hold("/rewind")
+	retried := make(chan error, 1)
+	go func() {
+		_, err := s.conv.Rewind(s.ctx, edit("sw-1", second))
+		retried <- err
+	}()
+	<-waiting
+	_, err = conversation.NewRewinder(s.chat.Client).Rewind(s.ctx, "agent", s.session, second.UserMessageID, true, second.AssistantMessageID, "agent")
+	s.Require().NoError(err)
+	// Chat cannot be read once the retry's rewind is refused.
+	s.chat.Fail(http.MethodPost, "/query")
+	release()
+
+	s.Require().Error(<-retried)
+	s.chat.Heal(http.MethodPost, "/query")
+	copies, err := s.branches.BranchMessages(s.ctx, "customer", s.session, []string{"resp-2"})
+	s.Require().NoError(err)
+	s.Len(copies, 2, "the copies of what Chat hid are kept")
+	_, journaled := s.branches.row("sw-1")
+	s.True(journaled)
 }
