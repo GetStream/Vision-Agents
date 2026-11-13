@@ -1085,8 +1085,8 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 		}
 	}
 	// A conversation opened by its id alone is that of the agent its channel was made for
-	// (ownedBy), who writes its replies. A channel of another type is not read for it: its custom
-	// data is whatever whoever made the channel wrote (opensDispatched).
+	// (ownedBy), who writes its replies. A dispatched channel, which the router never stamped, is
+	// not read for it: its custom data is whatever whoever made the channel wrote (opensDispatched).
 	writer := agentID
 	if writer == "" && !dispatched {
 		writer = stored
