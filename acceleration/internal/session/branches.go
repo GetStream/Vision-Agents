@@ -451,6 +451,12 @@ func (s *Session) settle(ctx context.Context, target persistent.RewindTarget, ch
 		return persistent.RewindOutcome{}, stack.Wrap(errors.Join(ErrSwitchUnfinished, cause, err))
 	}
 	if !carried {
+		// A switch still journaled is one whose rewind may land later: the next turn looks
+		// again (checkSettled) rather than answering from a conversation Chat may have cut.
+		if unfinished, err := s.tree.UnfinishedBranchSwitches(ctx, s.spec.CustomerID, s.id); err == nil &&
+			slices.ContainsFunc(unfinished, func(sw store.AgentBranchSwitch) bool { return sw.ID == target.SwitchID }) {
+			s.unsettled = target.SwitchID
+		}
 		return persistent.RewindOutcome{}, cause
 	}
 	return outcome, nil

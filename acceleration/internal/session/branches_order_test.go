@@ -3,10 +3,12 @@
 package session
 
 import (
+	"net/http"
 	"time"
 
 	"github.com/google/uuid"
 
+	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 )
 
@@ -52,4 +54,32 @@ func (s *BranchesSuite) TestABranchBroughtBackUnderAnAncestorSentAgainKeepsTheTr
 // written waits until the conversation's writes reached Chat.
 func (s *BranchesSuite) written() {
 	s.Require().Eventually(func() bool { return !s.service.Writing() }, 5*time.Second, 5*time.Millisecond)
+}
+
+// A regenerate whose rewind Chat did not answer is kept while that rewind can still land. When
+// it lands after all, the next question finds it and answers from the conversation Chat shows,
+// rather than after the reply Chat hid.
+func (s *BranchesSuite) TestARewindThatLandsLateIsFoundByTheNextQuestion() {
+	session := s.opens()
+	first := s.asks(session, "Is it raining?")
+	second := s.asks(session, "And tomorrow?")
+	onScreen := s.visible(session)
+	question, reply := onScreen[2].id, onScreen[3].id
+	s.chat.FailWith(http.MethodPost, "/rewind", http.StatusGatewayTimeout)
+
+	_, err := session.Regenerate(s.ctx, uuid.NewString(), second, options.LLM{})
+
+	s.Require().Error(err)
+	s.False(settledSwitch(session), "the switch may still land, so the next turn looks again")
+	s.chat.Heal(http.MethodPost, "/rewind")
+	// The rewind the router sent lands after all.
+	_, err = persistent.NewRewinder(s.chat.Client).Rewind(s.ctx, "agent", session.ID(), question, false, reply, "agent")
+	s.Require().NoError(err)
+
+	third := s.asks(session, "And Sunday?")
+
+	s.Equal(first, s.response(session, third).ParentResponseID, "the hidden reply is off the conversation")
+	s.NotNil(s.response(session, second).RewoundAt)
+	s.Equal(s.texts(session), history(session), "the model holds what Chat shows")
+	s.True(settledSwitch(session))
 }
