@@ -276,6 +276,21 @@ describe("agentChatTransport, branching", () => {
     assert.deepEqual(replaces, ["resp_2", "resp_9", "resp_2"], "read from the conversation again after the refusal");
   });
 
+  it("keeps the response remembered for a target while the router finishes an unsettled switch", async () => {
+    const { transport, feed } = await connected();
+    router.serve("POST", responsesPath, (_request, calls) =>
+      calls === 1 ? refusal(409, "switch_unfinished") : answering(undefined),
+    );
+    const target = feed.find("r2");
+    await transport.send(request({ kind: "regenerate", message: target, messageId: "ctl_1" }));
+    await assert.rejects(transport.send(request({ kind: "regenerate", message: target, messageId: "ctl_2" })));
+
+    await transport.send(request({ kind: "regenerate", message: target, messageId: "ctl_3" }));
+
+    const replaces = router.requestsTo("POST", responsesPath).map((one) => (one.body as Record<string, unknown>)["replaces"]);
+    assert.deepEqual(replaces, ["resp_2", "resp_9", "resp_9"], "switch_unfinished clears on a retry: the conversation did not change");
+  });
+
   it("regenerates a reply with no alternatives yet, whose mark has no place", async () => {
     const { transport, feed } = await connected();
     router.serve("POST", responsesPath, answering({ message_id: "q0", inclusive: false }));

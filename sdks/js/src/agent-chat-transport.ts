@@ -674,7 +674,12 @@ function idOf(message: unknown): string | undefined {
  * known (404).
  */
 function stale(error: unknown): boolean {
-  return error instanceof RouterError && ((error.status === 409 && branchErrorOf(error) === undefined) || error.status === 404);
+  // switch_unfinished is the router finishing an earlier switch, which a retry clears: the
+  // conversation the remembered response is on did not change.
+  return (
+    error instanceof RouterError &&
+    ((error.status === 409 && branchErrorOf(error) === undefined && error.code !== "switch_unfinished") || error.status === 404)
+  );
 }
 
 /** A router refusal of a branch in the person's words, or the error as it was. */
