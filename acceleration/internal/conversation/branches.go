@@ -373,6 +373,23 @@ func (c *Conversation) FinishSwitch(ctx context.Context, switchID string) error 
 	return branches.AdvanceBranchSwitch(ctx, c.data.Customer, switchID, store.SwitchDone)
 }
 
+// Drain writes everything the conversation has queued for Stream Chat, so a read of the
+// channel after it shows every message the session has written. A write Chat refuses is
+// ErrConversationUnwritable, as for a switch.
+func (c *Conversation) Drain() error {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	for {
+		more, _, err := c.flushOne()
+		if err != nil {
+			return stack.Wrap(&rewindRefusal{sentinel: ErrConversationUnwritable, cause: err})
+		}
+		if !more {
+			return nil
+		}
+	}
+}
+
 // hide drops the queued writes of ids and keeps them out of every read from now on.
 func (c *Conversation) hide(ids map[string]bool) {
 	c.sendMu.Lock()
