@@ -84,9 +84,9 @@ func newMessages(options Options) (*LLM, error) {
 	return &LLM{
 		model:  options.Model,
 		client: anthropic.NewClient(clientOptions...),
-		// Every current Claude model reads images. No DefaultEffort: a request naming no
-		// effort sends none and gets the model's own.
-		capabilities: llm.Capabilities{InputModalities: []string{llm.ModalityImage}, ReasoningEfforts: efforts(options.Model)},
+		// Every current Claude model reads images. High is the API's own default effort,
+		// so naming it changes nothing for a request that names none.
+		capabilities: llm.Capabilities{InputModalities: []string{llm.ModalityImage}, ReasoningEfforts: efforts(options.Model), DefaultEffort: defaultEffort(options.Model)},
 		systemTurns:  takesSystemTurns(options.Model),
 		inFlight:     map[uint64]context.CancelFunc{},
 	}, nil
@@ -107,6 +107,14 @@ func efforts(model string) []string {
 		return []string{"low", "medium", "high"}
 	}
 	return nil
+}
+
+// defaultEffort is the API's own default for a model that takes an effort.
+func defaultEffort(model string) string {
+	if efforts(model) == nil {
+		return ""
+	}
+	return "high"
 }
 
 // datedModel is a model name pinned to a snapshot date, which is the same model.
@@ -349,7 +357,8 @@ func (l *LLM) params(request llm.ResponseParams) anthropic.MessageNewParams {
 	if request.Instructions != "" {
 		params.System = append(params.System, anthropic.TextBlockParam{Text: request.Instructions})
 	}
-	if effort := l.capabilities.Effort(request); effort != "" {
+	// Only a named effort goes out: unnamed, the API applies its own (DefaultEffort).
+	if effort := request.Reasoning.Effort; effort != "" {
 		params.OutputConfig = anthropic.OutputConfigParam{Effort: anthropic.OutputConfigEffort(effort)}
 	}
 
