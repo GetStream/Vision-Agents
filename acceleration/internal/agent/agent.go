@@ -2492,7 +2492,8 @@ const severalWriters = "Several people are writing in this conversation. Each of
 // the first: the label holds their user id too, which a tool acting for one of them names.
 const namedWriters = "Several people may write in this conversation. Each of their messages starts with " +
 	"the name of who wrote it and, in parentheses, their user id, then a colon: \"Name (user id): ...\". " +
-	"When a tool needs to know which person a message is from, use that user id. Never start your reply with such a label."
+	"When a tool needs to know which person a message is from, use that user id. " +
+	"Never start your reply with such a label."
 
 type authorKey struct{}
 
