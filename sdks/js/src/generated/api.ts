@@ -6712,7 +6712,7 @@ export type components = {
             };
             /** @description A longer note about the conversation, searched alongside the title. */
             readonly description?: string;
-            /** @description The model that controls the floor in this session, and how long a caller may wait once they stop, over the agent config's. Left out or null, the config's; an empty object is no choice, which the router's default rules; {model: flow-controller} keeps the flow controller whatever that default. The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide. */
+            /** @description The model that controls the floor in this session, and how long a caller may wait once they stop, over the agent config's. Left out or null, the config's; an empty object is no choice, which the router's default rules; {model: flow-controller} keeps the flow controller whatever that default. A model the session was opened with, named here or the config's then, is its for its life, reopened included; no choice is stored as none, so a reopened session takes its config's choice as it is then, and the router's default after it. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide. */
             readonly floor_control?: components["schemas"]["FloorControl"];
             /** @description What the agent opens the call with, over what the config says. */
             readonly greeting?: components["schemas"]["Greeting"];

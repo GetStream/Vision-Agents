@@ -6297,7 +6297,7 @@ namespace GetStream.VisionAgents.Models
         public string? Description { get; set; } = default!;
 
         /// <summary>
-        /// The model that controls the floor in this session, and how long a caller may wait once they stop, over the agent config's. Left out or null, the config's; an empty object is no choice, which the router's default rules; {model: flow-controller} keeps the flow controller whatever that default. The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide.
+        /// The model that controls the floor in this session, and how long a caller may wait once they stop, over the agent config's. Left out or null, the config's; an empty object is no choice, which the router's default rules; {model: flow-controller} keeps the flow controller whatever that default. A model the session was opened with, named here or the config's then, is its for its life, reopened included; no choice is stored as none, so a reopened session takes its config's choice as it is then, and the router's default after it. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("floor_control")]
         public FloorControl? FloorControl { get; set; } = default!;
