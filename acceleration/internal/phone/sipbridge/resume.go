@@ -92,6 +92,8 @@ func Resume(ctx context.Context, cfg ResumeConfig, state CallState) (*Call, erro
 	customer.username, customer.password = cfg.CustomerTrunk.Username, cfg.CustomerTrunk.Password
 	stream, err := resumedLeg(streamSide, streamClient, state.Stream, cfg.CSeqJump, cfg.Logger)
 	if err != nil {
+		// A literal nil: a nil *sipLeg would be a non-nil leg to hangUp.
+		hangUp(ctx, cfg.Logger, customer, nil)
 		ua.Close()
 		return nil, err
 	}
@@ -108,10 +110,7 @@ func Resume(ctx context.Context, cfg ResumeConfig, state CallState) (*Call, erro
 
 	for _, l := range []*sipLeg{customer, stream} {
 		if err := l.resume(ctx); err != nil {
-			cctx, cancel := cleanupContext(ctx)
-			_ = customer.Bye(cctx)
-			_ = stream.Bye(cctx)
-			cancel()
+			hangUp(ctx, cfg.Logger, customer, stream)
 			ua.Close()
 			return nil, err
 		}

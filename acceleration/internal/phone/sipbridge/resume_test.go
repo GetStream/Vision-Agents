@@ -180,6 +180,16 @@ func (s *ResumeSuite) TestResumeEndsBothSidesWhenOneSideRefuses() {
 	s.Eventually(func() bool { return len(s.stream.requests(sip.BYE, streamCallID)) == 1 }, 2*time.Second, 10*time.Millisecond)
 }
 
+func (s *ResumeSuite) TestResumeEndsTheCustomerWhenTheStreamStateIsUnreadable() {
+	s.state.Stream.RemoteTarget = "sip:stream-sip@[::1"
+
+	call, err := Resume(s.T().Context(), s.cfg, s.state)
+
+	s.Nil(call)
+	s.ErrorContains(err, "stream leg remote target")
+	s.Eventually(func() bool { return len(s.customer.requests(sip.BYE, customerCallID)) == 1 }, 2*time.Second, 10*time.Millisecond)
+}
+
 func (s *ResumeSuite) TestReleaseOfAResumedCallSendsNoBye() {
 	call, err := Resume(s.T().Context(), s.cfg, s.state)
 	s.Require().NoError(err)
