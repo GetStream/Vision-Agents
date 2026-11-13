@@ -496,6 +496,20 @@ func (s *HarnessSuite) TestAReplyToAToolResultThinksAndACallerTurnDoesNot() {
 		"at none the model asks to book a free table instead of booking it")
 }
 
+func (s *HarnessSuite) TestAReplyToAToolResultKeepsADefaultThatThinksHarder() {
+	s.build(false)
+	s.fast.capabilities = llm.Capabilities{ReasoningEfforts: []string{"low", "medium", "high"}, DefaultEffort: "high"}
+
+	s.answer(Turn{
+		ID:        "tool-1",
+		History:   []llm.Message{{Role: llm.User, Content: "a table for three at 6:15"}},
+		AfterTool: true,
+	})
+
+	s.Require().Len(s.fast.requests(), 1)
+	s.Empty(s.fast.requests()[0].Reasoning.Effort, "low is a floor: Claude's high default is not turned down")
+}
+
 func (s *HarnessSuite) TestACallerTurnKeepsTheModelsDefaultEvenWhenThatIsNoThinking() {
 	s.build(false)
 	s.fast.capabilities = llm.Capabilities{ReasoningEfforts: []string{"none", "low", "medium"}, DefaultEffort: "none"}
