@@ -94,6 +94,9 @@ type Message struct {
 	// written is a person's message the channel bridge wrote into a thread channel, read
 	// back as a user turn (messageFromThread).
 	written bool
+	// mentioned are the ids of the users a person's message mentions, from its
+	// mentioned_users (messageFromPerson).
+	mentioned []string
 }
 type Page struct {
 	memoryScope memory.Scope
@@ -110,6 +113,11 @@ type Page struct {
 	Messages   []Message `json:"messages"`
 	Before     string    `json:"before,omitempty"`
 	Truncated  bool      `json:"context_truncated"`
+
+	// answering is the message a session is about to be told, when its history is read for it,
+	// and addressed which of the people's messages are addressed to the agent (Answering).
+	answering string
+	addressed func(text string, mentioned []string) bool
 }
 type Updated struct {
 	CID     string  `json:"conversation_id"`
@@ -355,14 +363,21 @@ func Openable(ctx context.Context, cid string) bool {
 	return channelType == streamapp.AgentChannelType || validChannelType.MatchString(channelType) && vouched == cid
 }
 
-// writtenByAgent is whether a message the user author wrote in the channel cid may carry the
-// conversation's own fields (messageFromWire): any message of an agent channel, as it always
-// was, but in a channel of another type, a customer's group channel whose members set custom
-// data of their own, only one written as the agent, agentID. Ben's message carrying the fields
-// of the agent's reply is his, not a turn of the agent's.
-func writtenByAgent(cid, agentID, author string) bool {
+// readsAsWritten is whether a message the user author wrote in the channel cid is read as the
+// turn its own fields say it is, role (messageFromWire). Anybody who writes in a channel may set
+// those fields: a member of a shared conversation or of a dispatched channel, the caller with a
+// token of their own. So a turn of the agent's, its reply, is only one the agent, agentID,
+// wrote, as the router writes every reply (sendWith). In an agent channel a person's turn is
+// read as written too, as the router writes it there as that person; in a channel of another
+// type, a customer's group channel, a message not written as the agent is its writer's,
+// whatever it carries. Ben's message carrying the fields of the agent's reply is his, not a
+// turn of the agent's.
+func readsAsWritten(cid, agentID, author, role string) bool {
+	if author == agentID {
+		return true
+	}
 	channelType, _ := channelOf(cid)
-	return channelType == streamapp.AgentChannelType || author == agentID
+	return channelType == streamapp.AgentChannelType && role == "user"
 }
 
 // validChannelType is the type part of a cid as Stream Chat checks it, [\w-]+ (GetStream/chat
@@ -943,10 +958,7 @@ func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, 
 	}
 	var stored []Message
 	for _, m := range r.Data.Messages {
-		if !writtenByAgent(cid, agentID, m.User.ID) {
-			continue
-		}
-		if msg, err := messageFromWire(m.ID, m.Text, m.Custom); err == nil {
+		if msg, err := messageFromWire(m.ID, m.Text, m.Custom); err == nil && readsAsWritten(cid, agentID, m.User.ID, msg.Role) {
 			msg.authorID = m.User.ID
 			stored = append(stored, msg)
 		}
@@ -1080,6 +1092,13 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 			return Page{}, stack.Wrap(err)
 		}
 	}
+	// A conversation opened by its id alone is that of the agent its channel was made for
+	// (ownedBy), who writes its replies. A dispatched channel, which the router never stamped, is
+	// not read for it: its custom data is whatever whoever made the channel wrote (opensDispatched).
+	writer := agentID
+	if writer == "" && !dispatched {
+		writer = stored
+	}
 	for _, m := range r.Data.Messages {
 		if m.DeletedAt != nil {
 			continue
@@ -1090,7 +1109,8 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 				continue
 			}
 		}
-		if !writtenByAgent(cid, agentID, m.User.ID) {
+		// Of a channel of another type, a message is its writer's unless the agent wrote it.
+		if !readsAsWritten(cid, writer, m.User.ID, "user") {
 			if written, ok := messageFromPerson(m); ok {
 				p.Messages = append(p.Messages, written)
 			}
@@ -1109,6 +1129,12 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 			b, _ := json.Marshal(raw)
 			msg = Message{}
 			err = json.Unmarshal(b, &msg)
+		}
+		if err == nil && !readsAsWritten(cid, writer, m.User.ID, msg.Role) {
+			if written, ok := messageFromPerson(m); ok {
+				p.Messages = append(p.Messages, written)
+			}
+			continue
 		}
 		if err == nil {
 			msg.Artifacts = artifactsFromAttachments(m.Attachments)
@@ -1187,6 +1213,11 @@ func entries(p Page) []entry {
 	// (Session.FollowUp), so they are not history yet: read here too, the model would see
 	// each one twice.
 	replied := false
+	// unanswered is whether the message being read was written before the one the session is
+	// about to be told (Page.answering) and after the last reply: one nobody answered, unless
+	// it is addressed to the agent too (Page.addressed), which gets a turn of its own, maybe
+	// after this one, as turns can take the channel out of order.
+	unanswered := false
 	// withheld is whether the message being read was judged with a reply the prompt
 	// injection screen refused: every turn since the last reply a model is handed back, as
 	// agent.Withheld does in the live agent's history.
@@ -1202,7 +1233,13 @@ func entries(p Page) []entry {
 				withheld = false
 			}
 		}
-		if m.written && !replied {
+		if m.written && p.answering != "" && m.ID == p.answering {
+			// The session is about to be told it, even when a reply to a later message came
+			// first.
+			unanswered = true
+			continue
+		}
+		if m.written && !replied && (!unanswered || p.addressed != nil && p.addressed(m.Text, m.mentioned)) {
 			continue
 		}
 		if m.State != "completed" {
