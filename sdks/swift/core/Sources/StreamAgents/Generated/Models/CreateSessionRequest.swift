@@ -20,7 +20,7 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
     let custom: [String: RawJSON]?
     /// A longer note about the conversation, searched alongside the title.
     let description: String?
-    /// The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole.
+    /// The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default; anything else replaces the stored choice whole.
     let floorControl: FloorControl?
     /// What the agent says as it joins, before anyone speaks.
     let greeting: GreetingPayload?

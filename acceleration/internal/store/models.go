@@ -645,8 +645,8 @@ type AgentConfig struct {
 	ResumeHistory ResumeHistory `bun:"resume_history,type:jsonb,notnull"`
 	// FloorControl is the model that controls the floor in the config's sessions, and how
 	// long a caller may wait once they stop, as the config chose
-	// (20261221090000_floor_control_max_wait.sql). The zero value, NULL, is the default flow
-	// controller.
+	// (20261221090000_floor_control_max_wait.sql). The zero value, NULL, is no choice: the
+	// router's default rules (session.FloorControlOf).
 	FloorControl FloorControl `bun:"floor_control,type:jsonb,nullzero"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
 	// if it was never synced from a directory.
@@ -1147,12 +1147,14 @@ type KnowledgeDocument struct {
 	CustomerID string `bun:"customer_id,notnull"`
 	Namespace  string `bun:"namespace,notnull"`
 	// Source is what the passages are keyed by, and what a reader would call the document.
-	Source   string `bun:"source,notnull"`
-	Passages int    `bun:"passages,notnull"`
+	Source string `bun:"source,notnull"`
+	// Passages covers every passage that may be stored for the document: while its passages
+	// are written, and after that write failed, both the old version's and the new one's.
+	Passages int `bun:"passages,notnull"`
 	// Text is the document as it was posted, or as its file was read. Listings leave it out.
 	Text string `bun:"text,notnull"`
-	// State is pending while an uploaded file waits to be read, failed when it could not
-	// be, and indexed otherwise. Error says why it failed.
+	// State is pending while an uploaded file waits to be read or posted text is written,
+	// failed when that could not be done, and indexed otherwise. Error says why it failed.
 	State string `bun:"state,notnull"`
 	Error string `bun:"error,notnull"`
 	// Pages is how many pages the uploaded file had, 0 for text and for a file without pages.
@@ -1171,11 +1173,14 @@ type KnowledgeDocument struct {
 
 // Where a knowledge document has got to.
 const (
-	// KnowledgeDocumentPending is an uploaded file not read yet.
+	// KnowledgeDocumentPending is an uploaded file not read yet, or posted text whose
+	// passages are being written.
 	KnowledgeDocumentPending = "pending"
 	// KnowledgeDocumentIndexed is a document whose passages can be looked up.
 	KnowledgeDocumentIndexed = "indexed"
-	// KnowledgeDocumentFailed is an uploaded file that could not be read, and Error says why.
+	// KnowledgeDocumentFailed is an uploaded file that could not be read, or posted text
+	// whose write stopped part way, and Error says why. The passages written before the
+	// failure can still be looked up.
 	KnowledgeDocumentFailed = "failed"
 )
 
@@ -1835,11 +1840,14 @@ func (m ModelOverwrites) Empty() bool {
 }
 
 // FloorControl is the model that controls an agent's floor, hearing the audio: when a
-// caller's turn has ended, and what is done about speech over the agent. The zero value is the
-// default flow controller, which every agent has until it opts in. MaxWaitMs is the most a
-// caller who has finished may wait for the answer: the point of the server's measured
-// trade-off with the fewest cut-ins whose p90 wait is within it (audiofloor.Policy.Resolve).
-// Zero is the server's default point.
+// caller's turn has ended, and what is done about speech over the agent. The zero value is no
+// choice: the agent gets the router's default, the flow controller unless the router defaults
+// every agent to chorus-asr (config.Agent.FloorControlDefault). An agent that chose decides for
+// itself whatever the router's default is: FloorControlChorusASR, or FloorControlFlowController
+// to keep the flow controller. MaxWaitMs is the most a caller who has finished may wait for the
+// answer: the point of the server's measured trade-off with the fewest cut-ins whose p90 wait
+// is within it (audiofloor.Policy.Resolve). Zero is the server's default point. It is
+// chorus-asr's alone.
 type FloorControl struct {
 	Model     string `json:"model,omitempty"`
 	MaxWaitMs int    `json:"max_wait_ms,omitempty"`
@@ -1849,8 +1857,14 @@ type FloorControl struct {
 // the stream/chorus-asr transcriber is.
 const FloorControlChorusASR = "stream/chorus-asr"
 
-// IsZero reports whether no model was chosen, which is the default flow controller. It is
-// also what the nullzero columns read.
+// FloorControlFlowController keeps the flow controller, which rules the floor where no model
+// does, whatever the router's default: the explicit opt-out, as distinct from no choice. It is
+// named for what rules the floor, as FloorControlChorusASR is, and not "default", which would
+// now mean two things.
+const FloorControlFlowController = "flow-controller"
+
+// IsZero reports whether no model was chosen, which leaves the choice to the router's default.
+// It is also what the nullzero columns read: an opt-out is stored, and is not zero.
 func (f FloorControl) IsZero() bool {
 	return f == FloorControl{}
 }
@@ -1953,7 +1967,7 @@ type AgentSession struct {
 	// takes the config's.
 	ResumeHistory ResumeHistory `bun:"resume_history,type:jsonb,nullzero"`
 	// FloorControl is what the session was opened with over its config's, which reopening
-	// it keeps. Zero takes the config's.
+	// it keeps. Zero takes the config's, and the router's default after it.
 	FloorControl FloorControl `bun:"floor_control,type:jsonb,nullzero"`
 	State        string       `bun:"state,notnull"`
 	// Modality is ModalityText, ModalityVoice or ModalityVideo.
