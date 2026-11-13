@@ -1540,7 +1540,7 @@ namespace GetStream.VisionAgents.Models
         public string Id { get; set; } = default!;
 
         /// <summary>
-        /// The response this one was answered after, absent for a session's first and for one answered before responses were kept as a tree.
+        /// The response this one was answered after, absent for a session's first.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("parent_response_id")]
         public string? ParentResponseId { get; set; } = default!;

@@ -4019,7 +4019,7 @@ type AgentResponse struct {
 	FinishedAt *time.Time      `json:"finished_at,omitempty"`
 	Id         string          `json:"id"`
 
-	// ParentResponseId The response this one was answered after, absent for a session's first and for one answered before responses were kept as a tree.
+	// ParentResponseId The response this one was answered after, absent for a session's first.
 	ParentResponseId *string    `json:"parent_response_id,omitempty"`
 	RewoundTo        *RewoundTo `json:"rewound_to,omitempty"`
 
@@ -14293,7 +14293,7 @@ type ClientInterface interface {
 	// ListResponseSiblings The alternatives to one response: its regenerations, or the edits of its question
 	//
 	// What a ‹ i/n › control pages through. of=reply lists every answer to the response's question, the response's own included; of=question lists the questions asked at the same point of the conversation, the original and its edits, each as the first response that answered it. Oldest first, which is the order of their index.
-	// active marks the one the conversation goes through now. Reading a sibling's messages is getResponseBranch, and making it the conversation is activateResponse. A response answered before branches were kept has no siblings but itself.
+	// active marks the one the conversation goes through now. Reading a sibling's messages is getResponseBranch, and making it the conversation is activateResponse. A response not asked through createResponse, such as a turn sent through /respond or a spoken one, has no siblings but itself.
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/siblings (the `ListResponseSiblings` operationId).
 	ListResponseSiblings(ctx context.Context, id string, responseId string, params *ListResponseSiblingsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -19194,7 +19194,7 @@ func (c *Client) GetResponseBranch(ctx context.Context, id string, responseId st
 // ListResponseSiblings The alternatives to one response: its regenerations, or the edits of its question
 //
 // What a ‹ i/n › control pages through. of=reply lists every answer to the response's question, the response's own included; of=question lists the questions asked at the same point of the conversation, the original and its edits, each as the first response that answered it. Oldest first, which is the order of their index.
-// active marks the one the conversation goes through now. Reading a sibling's messages is getResponseBranch, and making it the conversation is activateResponse. A response answered before branches were kept has no siblings but itself.
+// active marks the one the conversation goes through now. Reading a sibling's messages is getResponseBranch, and making it the conversation is activateResponse. A response not asked through createResponse, such as a turn sent through /respond or a spoken one, has no siblings but itself.
 //
 // Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/siblings (the `ListResponseSiblings` operationId).
 func (c *Client) ListResponseSiblings(ctx context.Context, id string, responseId string, params *ListResponseSiblingsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -36884,7 +36884,7 @@ type ClientWithResponsesInterface interface {
 	// ListResponseSiblingsWithResponse The alternatives to one response: its regenerations, or the edits of its question
 	//
 	// What a ‹ i/n › control pages through. of=reply lists every answer to the response's question, the response's own included; of=question lists the questions asked at the same point of the conversation, the original and its edits, each as the first response that answered it. Oldest first, which is the order of their index.
-	// active marks the one the conversation goes through now. Reading a sibling's messages is getResponseBranch, and making it the conversation is activateResponse. A response answered before branches were kept has no siblings but itself.
+	// active marks the one the conversation goes through now. Reading a sibling's messages is getResponseBranch, and making it the conversation is activateResponse. A response not asked through createResponse, such as a turn sent through /respond or a spoken one, has no siblings but itself.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -68170,7 +68170,7 @@ func (c *ClientWithResponses) GetResponseBranchWithResponse(ctx context.Context,
 // ListResponseSiblingsWithResponse The alternatives to one response: its regenerations, or the edits of its question
 //
 // What a ‹ i/n › control pages through. of=reply lists every answer to the response's question, the response's own included; of=question lists the questions asked at the same point of the conversation, the original and its edits, each as the first response that answered it. Oldest first, which is the order of their index.
-// active marks the one the conversation goes through now. Reading a sibling's messages is getResponseBranch, and making it the conversation is activateResponse. A response answered before branches were kept has no siblings but itself.
+// active marks the one the conversation goes through now. Reading a sibling's messages is getResponseBranch, and making it the conversation is activateResponse. A response not asked through createResponse, such as a turn sent through /respond or a spoken one, has no siblings but itself.
 //
 // Returns a wrapper object for the known response body format(s).
 //
