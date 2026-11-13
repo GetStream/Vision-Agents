@@ -3,6 +3,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -38,7 +39,8 @@ func (s *RouterSuite) forgetNoted() {
 }
 
 // askedWith is the request a noted model was sent for the turn text was written in, and every
-// request any noted model was sent, as one string.
+// request any noted model was sent, as one string. A turn in an envelope (agent.Authored) is
+// matched by the text it holds.
 func (s *RouterSuite) askedWith(text string) (llm.ResponseParams, string) {
 	s.notedMu.Lock()
 	defer s.notedMu.Unlock()
@@ -51,7 +53,15 @@ func (s *RouterSuite) askedWith(text string) (llm.ResponseParams, string) {
 			if len(said) == 0 {
 				continue
 			}
-			if last := said[len(said)-1]; last.Role == llm.User && strings.HasSuffix(last.Content, text) {
+			last := said[len(said)-1]
+			written := last.Content
+			var envelope struct {
+				Text string `json:"text"`
+			}
+			if json.Unmarshal([]byte(written), &envelope) == nil {
+				written = envelope.Text
+			}
+			if last.Role == llm.User && strings.HasSuffix(written, text) {
 				found = append(found, request)
 			}
 		}
