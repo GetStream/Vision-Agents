@@ -41,6 +41,8 @@ A signed `messaging-profile.spend-limit-reached` on an SMS line's hook adds 1 to
 
 `gemini/gemini-4-hydrogen` is Google's cheaper Gemini 4, in the high-quality tier beside Gemini 4 Argon, read with `GOOGLE_API_KEY`. It reads images, has a 1M-token context, thinks at `high` unless asked for `low`, `medium` or `xhigh`, and costs $1.50 per million input tokens, $0.075 cached and $7.50 output, thinking included. No shortcut prefers it: it is a member of `llm-smart`, `llm-thinking` and the other high-quality groups, ordered by health.
 
+JavaScript has `responses.regenerate`, `edit`, `siblings`, `branch` and `activate`, with `branchErrorOf` and `supportBranchOf`; a session drops what a rewind hid from its channel, and `agentChatTransport` regenerates, edits and pages ‹ i/n › (`switchBranch`) for `AIConversationController` (AI-3198). Because the transport now always has `switchBranch`, the controller offers regenerate and edit on every message that has a `support_branch` mark, and a message without one is refused with `AgentBranchError` `not_branchable` rather than asked again. An app that hid those actions with `actions: { edit: false, regenerate: false }` keeps hiding them.
+
 ### The router reaches Gemini Decision 1
 
 `gemini/gemini-decision-1` is a decision model on Google's Decisions API, read with `GOOGLE_API_KEY` like the other Gemini models. It answers the same noul, choice and score questions, at $0.10 per million input tokens and nothing for output. It is in the fast tier with every other decision model, and the guardrail route still prefers Jev.

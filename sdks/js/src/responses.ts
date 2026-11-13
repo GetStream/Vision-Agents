@@ -1,3 +1,4 @@
+import type { RewoundTo } from "./branches.js";
 import { onRetry, type Client, type Schemas } from "./client.js";
 import { ConfigurationError } from "./errors.js";
 
@@ -33,6 +34,21 @@ export interface CreateResponseOptions {
 
 /** What the person did in a reply's generated UI, as the router takes it. */
 export type UIAction = NonNullable<Schemas["CreateResponseRequest"]["ui_action"]>;
+
+/**
+ * What may go with a regenerate or an edit. Images and a UI action may not: the router refuses
+ * them beside `replaces`, since the question asked again is text alone.
+ */
+export type BranchResponseOptions = Pick<CreateResponseOptions, "maxOutputTokens" | "reasoningEffort" | "requestId">;
+
+/** A response named by its handle, its record, one of its items, or its id. */
+export type ResponseRef = AgentResponse | Schemas["AgentResponse"] | Schemas["AgentResponseItem"] | string;
+
+/**
+ * Called before a regenerate, an edit or an activation is sent, and answering what to do with
+ * the `rewound_to` it comes back with: the session drops the hidden messages from its channel.
+ */
+export type Branching = () => (rewoundTo: RewoundTo | undefined) => void;
 
 /**
  * The things one turn was made of, in the order they happened.
@@ -138,15 +154,23 @@ export class Responses {
   private readonly client: Client;
   private readonly sessionId: string;
   private readonly asked: ((text: string) => () => void) | undefined;
+  private readonly branching: Branching | undefined;
 
   /**
    * `asked` hears each question as it goes, for a transcript that shows it before the router
-   * does, and returns what takes it back when the question could not be asked.
+   * does, and returns what takes it back when the question could not be asked. `branching`
+   * hears a regenerate, an edit or an activation, and where it rewound the channel to.
    */
-  constructor(client: Client, sessionId: string, asked?: (text: string) => () => void) {
+  constructor(
+    client: Client,
+    sessionId: string,
+    asked?: (text: string) => () => void,
+    branching?: Branching,
+  ) {
     this.client = client;
     this.sessionId = sessionId;
     this.asked = asked;
+    this.branching = branching;
     this.items = new Items(client, sessionId);
   }
 
@@ -180,11 +204,8 @@ export class Responses {
    * rewind to. A conversation kept in Stream Chat cannot be rewound, because the channel
    * would still hold the later turns: fork it at the response instead.
    */
-  async rewind(
-    to: AgentResponse | Schemas["AgentResponse"] | Schemas["AgentResponseItem"] | string,
-  ): Promise<void> {
-    const responseId =
-      typeof to === "string" ? to : "response_id" in to ? to.response_id : to.id;
+  async rewind(to: ResponseRef): Promise<void> {
+    const responseId = responseIdOf(to);
     if (!responseId) {
       throw new ConfigurationError("a response that was never recorded cannot be rewound to");
     }
@@ -201,6 +222,157 @@ export class Responses {
       query: { limit: options.limit, cursor: options.cursor },
     });
   }
+
+  /**
+   * Answers the question of an earlier response again, as a new response beside it, in a
+   * conversation kept in Stream Chat. The reply and everything after it are hidden in Chat and
+   * kept as a branch, which `siblings` lists, `branch` reads and `activate` brings back.
+   *
+   * Returns as `create` does, once the agent has started answering: the answer arrives the same
+   * way, in the channel and through `session.events()`. Its handle's `created.branch` says where
+   * it stands among its alternatives. The session's channel, once `session.chat()` has opened it,
+   * drops what was hidden as soon as this returns, from `created.rewound_to`, so the old and the
+   * new answer are never shown together.
+   *
+   * Refused with a `RouterError` whose code is `branch_limit_reached` once the conversation has
+   * used its 100 edit and regenerate points, and with a 400 for a conversation that cannot have
+   * branches: shared, in a thread, answered by a dispatch worker, on a call, or a response from
+   * before branches or typed during a call.
+   */
+  regenerate(response: ResponseRef, options: BranchResponseOptions = {}): Promise<AgentResponse> {
+    return this.replace(response, "", options);
+  }
+
+  /**
+   * Asks `text` in place of the question of an earlier response, as a new question beside it.
+   * The question, its reply and everything after them are hidden in Chat and kept as a branch.
+   * Otherwise as `regenerate`.
+   */
+  async edit(response: ResponseRef, text: string, options: BranchResponseOptions = {}): Promise<AgentResponse> {
+    if (!text) {
+      throw new ConfigurationError("an edit asks text in place of the question: regenerate answers it again as it was");
+    }
+    return this.replace(response, text, options);
+  }
+
+  /**
+   * A page of the alternatives to a response, oldest first, itself among them: with `of: "reply"`
+   * (the default) the answers to its question, its regenerations; with `of: "question"` the
+   * questions asked in its place, its edits, each named by the first response that answered it.
+   * Each has its `index`, the i of ‹ i/n ›, and whether it is `active`, on the conversation now.
+   * `signal` abandons the read.
+   */
+  async siblings(
+    response: ResponseRef,
+    options: { of?: "reply" | "question"; limit?: number; cursor?: string; signal?: AbortSignal } = {},
+  ): Promise<Schemas["ResponseSiblingPage"]> {
+    return this.client.get("/v1/agents/sessions/{id}/responses/{response_id}/siblings", {
+      path: { id: this.sessionId, response_id: recorded(response, "listed the siblings of") },
+      query: { of: options.of, limit: options.limit, cursor: options.cursor },
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
+  }
+
+  /** Every alternative to a response, oldest first, fetching a page at a time. See `siblings`. */
+  async *unwindSiblings(
+    response: ResponseRef,
+    options: { of?: "reply" | "question"; limit?: number; signal?: AbortSignal } = {},
+  ): AsyncGenerator<Schemas["ResponseSibling"]> {
+    let cursor: string | undefined;
+    while (true) {
+      const page = await this.siblings(response, { ...options, ...(cursor ? { cursor } : {}) });
+      yield* page.items;
+      if (!page.has_more || !page.next_cursor) {
+        return;
+      }
+      cursor = page.next_cursor;
+    }
+  }
+
+  /**
+   * A page of the messages a hidden branch shows, oldest first, from where it leaves the
+   * conversation down to the newest response under `response`, shaped as Stream Chat messages
+   * so they render in place of the channel's own. Nothing is written to Chat and the model is
+   * not told: this is what a ‹ i/n › control shows. A response on the conversation answers
+   * `active: true` and no items, since the channel already shows it. A branch whose copies were
+   * deleted is a `RouterError` with code `branch_unavailable`. `signal` abandons the read.
+   */
+  async branch(
+    response: ResponseRef,
+    options: { limit?: number; cursor?: string; signal?: AbortSignal } = {},
+  ): Promise<Schemas["BranchMessagePage"]> {
+    return this.client.get("/v1/agents/sessions/{id}/responses/{response_id}/branch", {
+      path: { id: this.sessionId, response_id: recorded(response, "read the branch of") },
+      query: { limit: options.limit, cursor: options.cursor },
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
+  }
+
+  /** Every message of a hidden branch, oldest first, fetching a page at a time. See `branch`. */
+  async *unwindBranch(
+    response: ResponseRef,
+    options: { limit?: number; signal?: AbortSignal } = {},
+  ): AsyncGenerator<Schemas["BranchMessage"]> {
+    let cursor: string | undefined;
+    while (true) {
+      const page = await this.branch(response, { ...options, ...(cursor ? { cursor } : {}) });
+      yield* page.items;
+      if (page.active || !page.has_more || !page.next_cursor) {
+        return;
+      }
+      cursor = page.next_cursor;
+    }
+  }
+
+  /**
+   * Makes the hidden branch of `response` the conversation again: call it before asking
+   * anything while a hidden branch is shown. The branch on the conversation from where the two
+   * part is hidden and kept, and this one is sent again, ending at the newest response under
+   * `response`, as new messages with new ids that carry `custom.resent_from` and fire
+   * `message.new` again. A branch already on the conversation changes nothing
+   * (`already_active`), so a retry is safe. The session's channel drops what was hidden as
+   * `regenerate` does.
+   *
+   * At most 100 messages are sent again; a longer branch is a `RouterError` with code
+   * `branch_too_long`, and a conversation with no room for another hidden range
+   * `branch_limit_reached`.
+   */
+  async activate(response: ResponseRef): Promise<Schemas["ActivatedBranch"]> {
+    const responseId = recorded(response, "activated");
+    const rewound = this.branching?.();
+    const activated = await this.client.post("/v1/agents/sessions/{id}/responses/{response_id}/activate", {
+      path: { id: this.sessionId, response_id: responseId },
+      // Activating what is already active changes nothing, so asking again is safe.
+      idempotent: true,
+    });
+    rewound?.(activated.rewound_to);
+    return activated;
+  }
+
+  /** A regenerate without text, an edit with it. */
+  private async replace(response: ResponseRef, text: string, options: BranchResponseOptions): Promise<AgentResponse> {
+    const replaces = recorded(response, text ? "edited" : "regenerated");
+    const rewound = this.branching?.();
+    const created = await createResponse(this.client, this.sessionId, text, { ...options, replaces });
+    rewound?.(created.created.rewound_to);
+    return created;
+  }
+}
+
+/** The id of the response `ref` names, or the empty string for one that was never recorded. */
+function responseIdOf(ref: ResponseRef): string {
+  return typeof ref === "string" ? ref : "response_id" in ref ? ref.response_id : ref.id;
+}
+
+/** The id of a response that has one, or the error saying a response with none cannot be `done`. */
+function recorded(ref: ResponseRef, done: string): string {
+  const id = responseIdOf(ref);
+  if (!id) {
+    throw new ConfigurationError(
+      `a response that was never recorded cannot be ${done}: a session that records nothing hands back no id`,
+    );
+  }
+  return id;
 }
 
 /**
@@ -213,7 +385,7 @@ export async function createResponse(
   client: Client,
   sessionId: string,
   text: string,
-  options: CreateResponseOptions = {},
+  options: CreateResponseOptions & { replaces?: string } = {},
 ): Promise<AgentResponse> {
   const id = options.requestId || crypto.randomUUID();
   let resent = false;
@@ -230,10 +402,13 @@ export async function createResponse(
       ...(options.maxOutputTokens !== undefined ? { max_output_tokens: options.maxOutputTokens } : {}),
       ...(options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {}),
       ...(options.uiAction && Object.keys(options.uiAction).length ? { ui_action: options.uiAction } : {}),
+      ...(options.replaces ? { replaces: options.replaces } : {}),
       request_id: id,
     },
   });
-  if (created.id || !resent) {
+  // A regenerate asks nothing to look its turn up by, and an edit's text may have been asked
+  // before, so a lost answer to either is handed back as the router gave it, with no id.
+  if (created.id || !resent || options.replaces) {
     return new AgentResponse(client, created);
   }
   // The router answers a question it already took with no id: the first send reached it and
