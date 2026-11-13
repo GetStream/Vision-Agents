@@ -947,6 +947,12 @@ type AgentSuite struct {
 	// drawer draws the pictures the agent is asked for, when a test gives it an image
 	// provider.
 	drawer *stubDrawer
+	// drawGate admits or refuses each picture's work, and drawStore records it, when a test
+	// gives the image router one.
+	drawGate  routing.Gate
+	drawStore *store.Store
+	// attribution is who the conversation's work is for.
+	attribution routing.Attribution
 	// guards screens what the agent may be asked, when a test gives it a policy.
 	guards *stubGuardrail
 	// performing is what a voice that acts stage directions asks to have said about it.
@@ -1012,6 +1018,8 @@ func (s *AgentSuite) SetupTest() {
 	s.namespace = ""
 	s.finds = nil
 	s.drawer = nil
+	s.drawGate, s.drawStore = nil, nil
+	s.attribution = routing.Attribution{}
 	s.guards = nil
 	s.subagent = nil
 	s.sees = false
@@ -1138,6 +1146,7 @@ func (s *AgentSuite) joinText() {
 		MaxToolRounds:      s.toolRoundLimit,
 		CustomerID:         "acme",
 		AgentID:            s.agentID,
+		Attribution:        s.attribution,
 		SubagentTarget:     subagentTarget,
 		Skills:             s.skills,
 		Tools:              s.tools,

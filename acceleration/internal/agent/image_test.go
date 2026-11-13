@@ -12,6 +12,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
@@ -60,6 +61,8 @@ func (s *AgentSuite) imageRouter() *imagerouter.Router {
 			Price: routing.Price{PerImage: 0.04},
 		}}},
 		Registry: registry,
+		Gate:     s.drawGate,
+		Store:    s.drawStore,
 		Logger:   slog.New(slog.DiscardHandler),
 	})
 	s.Require().NoError(err)
@@ -174,6 +177,30 @@ func (s *AgentSuite) TestAPictureTheSafetyFilterRefusedIsToldInWordsNotAsAFailur
 	s.Contains(ran.Result, "safety filter refused")
 	s.Contains(ran.Result, "do not try again")
 	s.NotContains(ran.Result, didNotWork)
+}
+
+// refusingDraws refuses every picture's work with err, as a spent limit does.
+type refusingDraws struct{ err error }
+
+func (g refusingDraws) Admit(context.Context, routing.Owner) (routing.Admission, error) {
+	return routing.Admission{}, g.err
+}
+
+func (s *AgentSuite) TestASpentLimitIsToldInWordsAndDrawsNothing() {
+	// A failed tool reads as broken, and the model asks again: each try would be refused, and
+	// the person would hear nothing about why.
+	s.drawer = &stubDrawer{}
+	s.drawGate = refusingDraws{err: fmt.Errorf("policy: %w", policy.ErrBudgetSpent)}
+	s.shelf = &codeShelf{}
+	s.joinText()
+
+	ran := s.runsTool(drawCall("draw-1", "a field"), 1)
+
+	s.NoError(ran.Err)
+	s.Empty(ran.Files)
+	s.Contains(ran.Result, "spending limit")
+	s.Contains(ran.Result, "do not try again")
+	s.Empty(s.drawer.requests(), "nothing was asked of the provider")
 }
 
 func (s *AgentSuite) TestAProviderThatBrokeIsAFailedCall() {

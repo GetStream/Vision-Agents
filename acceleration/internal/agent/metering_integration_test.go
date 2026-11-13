@@ -94,6 +94,35 @@ func (s *AgentMeteringSuite) TestALookupRecordsItsBytes() {
 	}, row.Quantities(), "what the store billed, not a row at $0 with nothing on it")
 }
 
+func (s *AgentMeteringSuite) TestADrawIsOneRowUnderTheConversationsAttribution() {
+	// The row is what spend limits sum: one missing the user, team or session is spent by
+	// nobody those limits count.
+	s.drawer = &stubDrawer{}
+	s.drawStore = s.pgStore
+	s.shelf = &codeShelf{}
+	s.attribution = routing.Attribution{
+		OrganizationID: "org-1", APIKey: "key-1", UserID: "ana", UsageCategories: []string{"team:design"}, SessionID: "session-1",
+	}
+	s.joinText()
+
+	s.Require().NoError(s.runsTool(drawCall("draw-1", "a yellow watering can"), 1).Err)
+	s.agent.options.Image.Close()
+
+	var rows []store.Request
+	s.Require().NoError(s.pgStore.DB().NewSelect().Model(&rows).
+		Where("started_at >= ? AND modality = ?", s.since, string(routing.Image)).Scan(context.Background()))
+	s.Require().Len(rows, 1, "one picture, one row")
+	row := rows[0]
+	s.Equal("acme", row.CustomerID)
+	s.Equal(s.agentID, row.AgentID)
+	s.Equal("key-1", row.APIKey)
+	s.Equal("ana", row.UserID)
+	s.Equal("session-1", row.SessionID)
+	s.Equal([]string{"team:design"}, row.UsageCategories)
+	s.EqualValues(1, row.Quantities()[pricing.Images], "billed per picture, as the endpoint bills it")
+	s.True(row.Success)
+}
+
 func (s *AgentMeteringSuite) TestAMemorySearchIsOneRequest() {
 	s.remembers = &stubMemory{knows: []memory.Memory{{Text: "Prefers to be called Al"}}}
 	s.join(false)
