@@ -51,7 +51,7 @@ func TestLegStateKeepsTheDialogHeadersAndTransport(t *testing.T) {
 	invite.AppendHeader(sip.NewHeader("CSeq", "1 INVITE"))
 	answer := sip.NewResponseFromRequest(invite, 200, "OK", nil)
 	answer.To().Params.Add("tag", "rt")
-	answer.AppendHeader(sip.NewHeader("Contact", "<sip:stream-sip@3.70.175.189:5060;alias=10.21.119.123~5060~1>"))
+	answer.AppendHeader(sip.NewHeader("Contact", "<sip:stream-sip@203.0.113.10:5060;alias=10.0.0.7~5060~1>"))
 
 	got := legState(invite, answer, 1, nil, "tcp", "stream.example.com")
 
@@ -59,5 +59,5 @@ func TestLegStateKeepsTheDialogHeadersAndTransport(t *testing.T) {
 	require.Equal(t, "<sip:+15550002@a.example>;tag=rt", got.To)
 	require.Equal(t, "tcp", got.Transport)
 	require.Equal(t, "stream.example.com", got.ReinviteHost)
-	require.Equal(t, "sip:stream-sip@3.70.175.189:5060;alias=10.21.119.123~5060~1", got.RemoteTarget)
+	require.Equal(t, "sip:stream-sip@203.0.113.10:5060;alias=10.0.0.7~5060~1", got.RemoteTarget)
 }

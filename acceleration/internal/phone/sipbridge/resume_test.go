@@ -56,7 +56,7 @@ func (s *ResumeSuite) setup(customer, stream peerOptions) {
 			Transport:    "tcp",
 			ReinviteHost: "127.0.0.1",
 			LocalCSeq:    22180,
-			RemoteTarget: "sip:stream-sip@10.9.9.9:5060;alias=10.21.119.123~5060~1",
+			RemoteTarget: "sip:stream-sip@10.9.9.9:5060;alias=10.0.0.7~5060~1",
 			RouteSet:     []string{fmt.Sprintf("<sip:127.0.0.1:%d;transport=tcp;lr;did=1.2>", s.stream.port)},
 			LastSDP:      []byte("v=0 to stream\r\n"),
 		},
@@ -117,7 +117,7 @@ func (s *ResumeSuite) TestResumeKeepsTheStreamTargetParameters() {
 
 	invites := s.stream.requests(sip.INVITE, streamCallID)
 	s.Require().Len(invites, 1)
-	s.Equal("sip:stream-sip@127.0.0.1:5060;alias=10.21.119.123~5060~1", invites[0].Recipient.String())
+	s.Equal("sip:stream-sip@127.0.0.1:5060;alias=10.0.0.7~5060~1", invites[0].Recipient.String())
 	route := invites[0].GetHeader("Route")
 	s.Require().NotNil(route)
 	s.Equal(s.state.Stream.RouteSet[0], route.Value())
@@ -213,7 +213,7 @@ func (s *ResumeSuite) TestStateOfAResumedCallCarriesItsDialog() {
 	s.Equal(streamCallID, state.Stream.CallID)
 	s.Equal("st-local", state.Stream.LocalTag)
 	s.Equal("st-remote", state.Stream.RemoteTag)
-	s.Equal("sip:stream-sip@10.9.9.9:5060;alias=10.21.119.123~5060~1", state.Stream.RemoteTarget)
+	s.Equal("sip:stream-sip@10.9.9.9:5060;alias=10.0.0.7~5060~1", state.Stream.RemoteTarget)
 	s.Equal(s.state.Stream.RouteSet, state.Stream.RouteSet)
 	s.GreaterOrEqual(state.Stream.LocalCSeq, uint32(23180))
 }

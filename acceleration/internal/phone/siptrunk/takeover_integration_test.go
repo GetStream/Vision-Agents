@@ -184,7 +184,7 @@ func callState(tag string) sipbridge.CallState {
 		Stream: sipbridge.LegState{
 			CallID: "stream-call", LocalTag: "s-" + tag, RemoteTag: "stream", Transport: "tcp",
 			From: "<sip:+15550000302@bridge.sip.example.com>;tag=s-" + tag, To: "<sip:+15550000301@bridge.sip.example.com>;tag=stream",
-			LocalCSeq: 1, RemoteTarget: "sip:+15550000301@10.21.119.123:5060;transport=tcp;alias=10.21.119.123~5060~1",
+			LocalCSeq: 1, RemoteTarget: "sip:+15550000301@10.0.0.7:5060;transport=tcp;alias=10.0.0.7~5060~1",
 			RouteSet: []string{"<sip:203.0.113.10;lr>"}, LastSDP: []byte("v=0 stream " + tag),
 		},
 		Media: sipbridge.MediaAddrs{Customer: "198.51.100.7", Stream: "203.0.113.10"},
