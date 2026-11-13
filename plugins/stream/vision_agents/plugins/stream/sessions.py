@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Optional, Union
+from typing import Any, AsyncIterator, Mapping, Optional, Sequence, Union
 
 from vision_agents.core.llm.function_registry import FunctionRegistry, ToolPolicy
 
@@ -32,14 +32,12 @@ from ._generated.models import (
     ModelOverwrites,
     Session as SessionRow,
     SessionConnectorBinding,
-    SessionFilter,
     SessionPage,
     SessionPhone,
     SessionQuery,
     SessionTool,
     SessionToolApproval,
     SessionToolParameters,
-    TextMatch,
     UpdateSessionRequest,
     UpdateSessionRequestCustom,
     UpdateSessionRequestThinking,
@@ -192,29 +190,21 @@ class ForkOptions:
     decisions: bool = False
 
 
-@dataclass
-class Query:
-    """Which of an agent's conversations to list.
+class _WireQuery(SessionQuery):
+    """A session query sent exactly as it was built here.
 
-    Attributes:
-        project_id: Only this project's. A search covers every project, so it refuses one.
-        user_id: Only this user's, which only a server-side caller may ask for: anybody else
-            is narrowed to their own whatever they send.
-        modality: How the user took part: ``text``, ``voice`` or ``video``.
-        state: ``live`` or ``ended``. Empty is both.
-        agent_id: Only the sessions created with this agent id.
-        limit: Up to 200. Zero is 25.
-        cursor: The ``next_cursor`` of the page before, with the same filters. Empty is the
-            first page.
+    The generated ``SessionFilter`` reads a filter into typed fields and would quietly drop a
+    key it does not list, so a misspelt condition would widen a listing instead of being
+    refused. This carries the caller's filter to the router untouched, through the generated
+    call, and the router is what says no.
     """
 
-    project_id: str = ""
-    user_id: str = ""
-    modality: str = ""
-    state: str = ""
-    agent_id: str = ""
-    limit: int = 0
-    cursor: str = ""
+    def __init__(self, wire: dict[str, Any]):
+        super().__init__()
+        self._wire = wire
+
+    def to_dict(self) -> dict[str, Any]:
+        return self._wire
 
 
 class Sessions:
@@ -251,30 +241,70 @@ class Sessions:
             self._backend, row, self._functions, options or SessionOptions()
         )
 
-    async def query(self, query: Optional[Query] = None) -> SessionPage:
-        """A page of the agent's conversations, most recently updated first, the ones that
-        ended included. Pass the page's ``next_cursor`` as ``Query.cursor`` for the next one.
+    async def query(
+        self,
+        filter: Optional[Mapping[str, Any]] = None,
+        sort: Optional[Sequence[Mapping[str, Any]]] = None,
+        limit: int = 0,
+        cursor: str = "",
+    ) -> SessionPage:
+        """A page of the agent's conversations, the ones that ended included.
 
         What comes back are the rows rather than live handles: reading a conversation back is
         not the same as holding one, and most of these are over.
+
+        Args:
+            filter: Which ones, as the router reads it, keys and operators spelt as on the
+                wire. The keys of one dict are ANDed, and ``$and`` and ``$or`` each take 1
+                to 10 filters, nested up to 3 deep. The fields are ``project_id`` (a value,
+                ``{"$eq": value}`` or ``{"$in": [values]}``), ``text`` (``{"$q": "words"}``,
+                once, at the top level or in the top-level ``$and``), ``review_score`` (1 to
+                5, or ``$eq``, ``$gt``, ``$gte``, ``$lt`` and ``$lte``) and ``user_id`` (a
+                value or ``{"$eq": value}``, placed as ``text`` is). The last two are a
+                server-side caller's only. Anything else is refused by the router. The
+                top-level ``agent`` is always this agent, whatever is passed.
+            sort: A list of ``{"field": ..., "direction": ...}``, direction -1 (the default,
+                descending) or 1. One of ``last_message_at``; ``pinned``, alone or followed
+                by ``last_message_at``, which lists the pinned ones first; ``review_score``,
+                server side only; ``relevance``, with a ``text`` filter only. None is
+                ``last_message_at`` descending, or relevance when there is a ``text`` filter.
+            limit: Up to 200. Zero is 25.
+            cursor: The ``next_cursor`` of the page before, with the same filter and sort.
+                Empty is the first page.
         """
         return await _unwrapped(
             query_sessions.asyncio(
-                client=self._backend.client(), body=self._query("", query or Query())
+                client=self._backend.client(),
+                body=self._query(filter, sort, limit, cursor),
             ),
             f"listing the sessions of {self._agent}",
         )
 
-    async def search(self, text: str, query: Optional[Query] = None) -> SessionPage:
+    async def search(
+        self,
+        text: str,
+        filter: Optional[Mapping[str, Any]] = None,
+        limit: int = 0,
+        cursor: str = "",
+    ) -> SessionPage:
         """Find a conversation by what it was called, best match first.
 
-        It reads the title, the description and the opening question, which is what a person
-        remembers a conversation by. An incognito conversation is never found: nothing about
-        it was written down to search. It pages the same way ``query`` does.
+        It reads the title, the description, the project and the agent name. An incognito
+        conversation is never found: nothing about it was written down to search. It takes
+        the filter ``query`` does, which may not hold a ``text`` of its own, and pages the
+        same way. There is no sort: a search is in order of relevance.
         """
+        if filter is not None and "text" in filter:
+            raise ValueError(
+                "the filter already has a text condition, and a search sets its own: "
+                "pass the words as text, or call query with the filter"
+            )
         return await _unwrapped(
             query_sessions.asyncio(
-                client=self._backend.client(), body=self._query(text, query or Query())
+                client=self._backend.client(),
+                body=self._query(
+                    {**(filter or {}), "text": {"$q": text}}, None, limit, cursor
+                ),
             ),
             f"searching the sessions of {self._agent}",
         )
@@ -293,6 +323,7 @@ class Sessions:
         title: Optional[str] = None,
         description: Optional[str] = None,
         custom: Optional[dict[str, Any]] = None,
+        pinned: Optional[bool] = None,
         llm: Optional[str] = None,
         stt: Optional[str] = None,
         tts: Optional[str] = None,
@@ -305,13 +336,15 @@ class Sessions:
     ) -> SessionRow:
         """Change one conversation, whether or not it is still being held.
 
-        Server side only. A field left as None is left as it is; an empty ``sts`` makes the
-        session a cascade again, and an empty ``voice`` returns to the provider's default.
-        One that ended can still be renamed and relabelled; models and voice need it
-        running, and take over from its next turn. The agent config it started from is
-        untouched.
+        Server side only, except ``pinned``, which a user may set on their own. A field left
+        as None is left as it is; an empty ``sts`` makes the session a cascade again, and an
+        empty ``voice`` returns to the provider's default. One that ended can still be
+        renamed, relabelled and pinned; models and voice need it running, and take over from
+        its next turn. The agent config it started from is untouched.
 
         Args:
+            pinned: True pins it and False unpins it. The row's ``pinned_at`` says when it
+                was pinned, and a pin does not move it in a ``last_message_at`` sort.
             thinking: ``none``, ``minimal``, ``low``, ``medium`` or ``high``.
             verbosity: ``low``, ``medium`` or ``high``.
         """
@@ -319,6 +352,7 @@ class Sessions:
         for name, value in (
             ("title", title),
             ("description", description),
+            ("pinned", pinned),
             ("llm", llm),
             ("stt", stt),
             ("tts", tts),
@@ -340,6 +374,15 @@ class Sessions:
             update_session.asyncio(id, client=self._backend.client(), body=request),
             f"updating the session {id}",
         )
+
+    async def pin(self, id: str) -> SessionRow:
+        """Pin a conversation, so a query sorted by ``pinned`` lists it first. Pinning one
+        that is already pinned keeps the time it was first pinned."""
+        return await self.update(id, pinned=True)
+
+    async def unpin(self, id: str) -> SessionRow:
+        """Unpin a conversation. Its row no longer carries a ``pinned_at``."""
+        return await self.update(id, pinned=False)
 
     async def delete(self, id: str) -> None:
         """Delete a conversation, running or ended: it is stopped, and its turns and what it
@@ -410,27 +453,32 @@ class Sessions:
             request.tools = declared
         return request
 
-    def _query(self, text: str, query: Query) -> SessionQuery:
-        """The query the listing and the search share, narrowed to this agent. Text makes
-        it a search.
+    def _query(
+        self,
+        filter: Optional[Mapping[str, Any]],
+        sort: Optional[Sequence[Mapping[str, Any]]],
+        limit: int,
+        cursor: str,
+    ) -> SessionQuery:
+        """The query the listing and the search share, narrowed to this agent.
 
-        One function rather than two, so the two cannot drift apart in what they honour: a
-        filter respected by one and forgotten by the other would be a surprise at best, and at
-        worst a list somebody reads another user's conversations out of.
+        One function rather than two, so the two cannot drift apart in what they honour. The
+        agent is set as a top-level key of the caller's filter rather than by wrapping it in
+        an ``$and``: ``text`` and ``user_id`` are only accepted at the top, and a wrapper
+        would push them a level down.
         """
-        narrowed = SessionFilter(agent=self._agent)
-        for name in ("project_id", "user_id", "modality", "state", "agent_id"):
-            if getattr(query, name):
-                setattr(narrowed, name, getattr(query, name))
-        if text:
-            narrowed.text = TextMatch(q=text)
-
-        body = SessionQuery(filter_=narrowed)
-        if query.limit:
-            body.limit = query.limit
-        if query.cursor:
-            body.cursor = query.cursor
-        return body
+        if filter is not None and not isinstance(filter, Mapping):
+            raise TypeError(
+                f"a filter is a dict of the router's filter fields, not {type(filter).__name__}"
+            )
+        body: dict[str, Any] = {"filter": {**(filter or {}), "agent": self._agent}}
+        if sort:
+            body["sort"] = [dict(order) for order in sort]
+        if limit:
+            body["limit"] = limit
+        if cursor:
+            body["cursor"] = cursor
+        return _WireQuery(body)
 
 
 class Voice:
@@ -621,6 +669,7 @@ class Session:
         title: Optional[str] = None,
         description: Optional[str] = None,
         custom: Optional[dict[str, Any]] = None,
+        pinned: Optional[bool] = None,
         llm: Optional[str] = None,
         stt: Optional[str] = None,
         tts: Optional[str] = None,
@@ -631,13 +680,14 @@ class Session:
         max_output_tokens: Optional[int] = None,
         verbosity: Optional[str] = None,
     ) -> SessionRow:
-        """Change this conversation: its title, description, custom labels, models or
+        """Change this conversation: its title, description, custom labels, pin, models or
         voice. See ``Sessions.update``."""
         return await self._sessions().update(
             self.id,
             title=title,
             description=description,
             custom=custom,
+            pinned=pinned,
             llm=llm,
             stt=stt,
             tts=tts,
@@ -648,6 +698,14 @@ class Session:
             max_output_tokens=max_output_tokens,
             verbosity=verbosity,
         )
+
+    async def pin(self) -> SessionRow:
+        """Pin this conversation. See ``Sessions.pin``."""
+        return await self._sessions().pin(self.id)
+
+    async def unpin(self) -> SessionRow:
+        """Unpin this conversation. See ``Sessions.unpin``."""
+        return await self._sessions().unpin(self.id)
 
     async def delete(self) -> None:
         """Delete this conversation. See ``Sessions.delete``."""

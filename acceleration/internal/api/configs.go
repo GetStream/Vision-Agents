@@ -197,8 +197,8 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	} else if !ok {
 		return nil, invalidRequest(message)
 	}
-	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, nil); !ok {
-		return nil, invalidRequest(message)
+	if failure, refused := s.sandboxLimitsComplaint(ctx, customerID, config, nil); refused {
+		return nil, failure
 	}
 	if message, ok, err := s.regionComplaint(ctx, config, nil); err != nil {
 		return nil, err
@@ -362,8 +362,8 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	} else if !ok {
 		return nil, invalidRequest(message)
 	}
-	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, sandboxOfConfig(existing)); !ok {
-		return nil, invalidRequest(message)
+	if failure, refused := s.sandboxLimitsComplaint(ctx, customerID, config, sandboxOfConfig(existing)); refused {
+		return nil, failure
 	}
 	if message, ok, err := s.regionComplaint(ctx, config, &existing); err != nil {
 		return nil, err
@@ -972,20 +972,21 @@ func (s *Server) sandboxBindingsComplaint(ctx context.Context, customerID string
 // than finding the session without its sandbox. was is the sandbox the config had before this
 // save, nil for a new config: a sandbox the save leaves as it was is not refused, so a config
 // stored before its organization's limits tightened stays editable, and its sessions still run
-// without the sandbox. Limits that cannot be read now refuse nothing here.
-func (s *Server) sandboxLimitsComplaint(ctx context.Context, customerID string, config store.AgentConfig, was *savedSandbox) (string, bool) {
+// without the sandbox. Limits that cannot be read now refuse nothing here. The refusal is a
+// tier_limit_reached naming the limit.
+func (s *Server) sandboxLimitsComplaint(ctx context.Context, customerID string, config store.AgentConfig, was *savedSandbox) (APIError, bool) {
 	if config.Sandbox == "" || s.policies == nil {
-		return "", true
+		return APIError{}, false
 	}
 	now := sandboxOfConfig(config)
 	if was != nil && reflect.DeepEqual(*was, *now) {
-		return "", true
+		return APIError{}, false
 	}
 	err := s.policies.SandboxAllowed(ctx, routing.Owner{CustomerID: customerID}, now.ask)
 	if err == nil || policy.Transient(err) {
-		return "", true
+		return APIError{}, false
 	}
-	return err.Error(), false
+	return APIError{Type: ErrorTypeInvalidRequest, Code: codeTierLimitReached, Message: err.Error(), Limit: policy.SandboxLimit(err)}, true
 }
 
 // savedSandbox is the sandbox a config's sessions ask for, copied from the config.
@@ -2000,7 +2001,7 @@ type AgentConfigRequest struct {
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. Left out on an update, the stored settings stay."`
 	Calls              *AgentCalls              `json:"calls,omitempty" doc:"The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and press are on and end_call is off. On an update, a tool left out keeps its stored settings and a tool sent replaces its settings whole."`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty" doc:"How a conversation is handed back to the model when a session under this agent carries it on: reopened, resumed by id, joined by voice or forked. Each field set here wins over the app's and the organization's policy, and a session request's wins over this; a field set nowhere is the router's default: replies as text, the newest 100 turns within 60000 characters. Left out on an update, the stored settings stay."`
-	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. A session request's wins over this. Left out or null on a create, the default flow controller; left out or null on an update, the stored choice stays; an empty object is the default flow controller again."`
+	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. A session request's wins over this. Left out or null on a create, no choice: the router's default rules, the flow controller or stream/chorus-asr where the router defaults every agent to it; left out or null on an update, the stored choice stays; an empty object is no choice again; {model: flow-controller} keeps the flow controller whatever the router's default."`
 	EndOfTurn          any                      `json:"end_of_turn,omitempty" hidden:"true"` // refused: floor_control's max_wait_ms replaced it
 	Plugins            *[]retiredPlugin         `json:"plugins,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
 	PluginEvents       *[]map[string]any        `json:"plugin_events,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
@@ -2047,7 +2048,7 @@ type AgentConfig struct {
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
 	Calls              *AgentCalls              `json:"calls,omitempty"`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty"`
-	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. Absent for the default flow controller."`
+	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop, as the agent chose it: stream/chorus-asr, or flow-controller for the flow controller whatever the router's default. Absent when it chose none, which the router's default rules."`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" doc:"The bindings exactly as they were written. Absent when there are none."`
 	LeftOutConnectors  *[]LeftOutConnector      `json:"left_out_connectors,omitempty" readOnly:"true" doc:"The connectors agent.yaml names that the last sync left out, because the app has no connection by the id or label they name: an agent that runs without them until the connection exists and it syncs again. Only a sync writes them. Absent when there are none."`
 	Channels           *AgentChannels           `json:"channels,omitempty"`

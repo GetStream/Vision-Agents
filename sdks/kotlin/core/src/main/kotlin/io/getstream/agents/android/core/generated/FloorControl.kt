@@ -34,20 +34,20 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
 /**
- * The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole.
+ * The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default; anything else replaces the stored choice whole.
  *
- * @param maxWaitMs The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point.
- * @param model The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one there is. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured).
+ * @param maxWaitMs The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point. It is stream/chorus-asr's: with flow-controller it is refused (400).
+ * @param model The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one model there is; flow-controller keeps the flow controller, which rules the floor where no model does, whatever the router defaults an agent that chose none to. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured).
  */
 @Serializable
 
 internal data class FloorControl (
 
-    /* The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point. */
+    /* The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point. It is stream/chorus-asr's: with flow-controller it is refused (400). */
     @SerialName(value = "max_wait_ms")
     val maxWaitMs: kotlin.Long? = null,
 
-    /* The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one there is. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured). */
+    /* The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one model there is; flow-controller keeps the flow controller, which rules the floor where no model does, whatever the router defaults an agent that chose none to. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured). */
     @SerialName(value = "model")
     val model: kotlin.String? = null
 

@@ -9,6 +9,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -174,6 +175,8 @@ func threadUnreachable(err error) error {
 		return undeliveredFinally(scheduling.ReasonConnectionRemoved, err)
 	case errors.Is(err, channelbridge.ErrOptedOut):
 		return undeliveredFinally(scheduling.ReasonUnreachable, err)
+	case dlc.TierLimit(err) != "":
+		return overTier(err)
 	case errors.Is(err, channelbridge.ErrHeldBack):
 		return undelivered(scheduling.ReasonUnreachable, err)
 	case errors.Is(err, channelbridge.ErrOutsideWindow):

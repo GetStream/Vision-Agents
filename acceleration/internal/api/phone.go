@@ -431,6 +431,9 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 	}
 
 	placed, err := s.phone.Call(ctx, call)
+	if failure, over := tierLimitReached(err); over {
+		return nil, failure
+	}
 	if errors.Is(err, dlc.ErrRefused) || errors.Is(err, phone.ErrDestinationRefused) {
 		return nil, forbidden(err.Error())
 	}
@@ -448,6 +451,16 @@ func (s *Server) placePhoneCall(ctx context.Context, request *placePhoneCallRequ
 		Status:    placed.Status,
 		Vendor:    &placed.Vendor,
 		SessionId: &placed.SessionID}}, nil
+}
+
+// tierLimitReached is the answer to a call or a transfer its organization's tier limits refuse,
+// naming the limit, and false for any other error, the gate's other refusals among them.
+func tierLimitReached(err error) (APIError, bool) {
+	limit := dlc.TierLimit(err)
+	if limit == "" {
+		return APIError{}, false
+	}
+	return APIError{Type: ErrorTypePermission, Code: codeTierLimitReached, Message: err.Error(), Limit: limit}, true
 }
 
 // answerPhoneCall serves the call plan a vendor fetches when the person it called picks up.
@@ -573,6 +586,9 @@ func (s *Server) transferPhoneCall(ctx context.Context, request *transferPhoneCa
 	transfer.StreamApp = app
 
 	placed, err := s.phone.Transfer(ctx, transfer)
+	if failure, over := tierLimitReached(err); over {
+		return nil, failure
+	}
 	if errors.Is(err, phone.ErrDestinationRefused) {
 		return nil, forbidden(err.Error())
 	}
@@ -1072,6 +1088,7 @@ func (s *Server) registerPhone(api huma.API) {
 		Method:        http.MethodPost,
 		Path:          "/v1/phone/numbers",
 		Summary:       "Buy a number, which starts its monthly charge",
+		Description:   "Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.",
 		DefaultStatus: http.StatusCreated,
 		Responses: map[string]*huma.Response{
 			"201": {Description: "The number is bought and recorded"},
@@ -1258,7 +1275,7 @@ type listPhoneVendorsResponse struct {
 
 type searchPhoneNumbersRequest struct {
 	Vendor             optionalParam[string]            `query:"vendor" doc:"One vendor to search. Absent searches every usable vendor."`
-	Country            string                           `query:"country" doc:"ISO 3166-1 alpha-2 country code." required:"true"`
+	Country            string                           `query:"country" doc:"ISO 3166-1 alpha-2 country code. Numbers are sold only in the US (US) and Canada (CA); any other country is refused." required:"true"`
 	AreaCode           optionalParam[string]            `query:"area_code"`
 	Contains           optionalParam[string]            `query:"contains" doc:"Digits the number must contain, anywhere in it."`
 	Prefix             optionalParam[string]            "query:\"prefix\" doc:\"Digits the number must start with, matched after the country dial code. This differs from `contains` in where the digits have to fall.\""

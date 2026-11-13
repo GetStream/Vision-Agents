@@ -2078,7 +2078,7 @@ module GetStream
           required: %w[agent_id].freeze, open: false
         }.freeze,
         "ChildAgent" => {
-          properties: %w[config description timeout_ms tool].freeze,
+          properties: %w[config description max_tool_rounds timeout_ms tool].freeze,
           required: %w[config tool].freeze, open: false
         }.freeze,
         "ClaimGuestRequest" => {
@@ -2298,7 +2298,7 @@ module GetStream
           required: %w[recipient channel].freeze, open: false
         }.freeze,
         "CreateResponseRequest" => {
-          properties: %w[audio images max_output_tokens reasoning_effort request_id text ui_action videos].freeze,
+          properties: %w[audio files images max_output_tokens reasoning_effort request_id text ui_action videos].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
         "CreateRunRequest" => {
@@ -2390,12 +2390,16 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "ErrorDetail" => {
-          properties: %w[code doc_url message type].freeze,
+          properties: %w[code doc_url limit message type].freeze,
           required: %w[message type code doc_url].freeze, open: false
         }.freeze,
         "ErrorResponse" => {
           properties: %w[error].freeze,
           required: %w[error].freeze, open: false
+        }.freeze,
+        "FileSource" => {
+          properties: %w[name url].freeze,
+          required: %w[url].freeze, open: false
         }.freeze,
         "FloorControl" => {
           properties: %w[max_wait_ms model].freeze,
@@ -2894,7 +2898,7 @@ module GetStream
           required: %w[url].freeze, open: false
         }.freeze,
         "Session" => {
-          properties: %w[agent agent_id call_id call_outcome call_type closed_at config_id context_truncated conversation_id created_at custom description end_fault end_reason end_stage forked_from id incognito instructions last_response_at llm modality mode model_overwrites project_id review_notes review_score state sts stt subagent summary text title tts usage user_id video voice].freeze,
+          properties: %w[agent agent_id call_id call_outcome call_type closed_at config_id context_truncated conversation_id created_at custom description end_fault end_reason end_stage forked_from id incognito instructions last_response_at llm modality mode model_overwrites pinned_at project_id review_notes review_score state sts stt subagent summary team text title tts usage user_id video voice].freeze,
           required: %w[agent_id call_id call_type created_at id modality state user_id].freeze, open: false
         }.freeze,
         "SessionCall" => {
@@ -2910,7 +2914,7 @@ module GetStream
           required: %w[name connection_id].freeze, open: false
         }.freeze,
         "SessionFilter" => {
-          properties: %w[agent agent_id config_id created_at custom modality project_id state text user_id].freeze,
+          properties: %w[$and $or agent project_id review_score text user_id].freeze,
           required: [].freeze, open: false
         }.freeze,
         "SessionMemory" => {
@@ -3097,10 +3101,6 @@ module GetStream
           properties: %w[$q].freeze,
           required: %w[$q].freeze, open: false
         }.freeze,
-        "TimeRange" => {
-          properties: %w[$gte $lt].freeze,
-          required: [].freeze, open: false
-        }.freeze,
         "TimelineEntry" => {
           properties: %w[audio_out_ms cadence_ms decision_ms first_audible_frame_ms first_frame_queued_ms heard interrupted llm_ttft_ms model_calls model_to_first_text_ms roundtrip_ms said speech_end_to_audible_ms speech_end_to_audio_ms started_at stt_latency_ms text_to_tts_ms tts_to_audio_ms tts_ttfb_ms turn_id].freeze,
           required: %w[started_at turn_id].freeze, open: false
@@ -3166,7 +3166,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "UpdateSessionRequest" => {
-          properties: %w[custom description llm max_output_tokens sts stt temperature thinking title tts verbosity voice].freeze,
+          properties: %w[custom description llm max_output_tokens pinned sts stt temperature thinking title tts verbosity voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "UpdateSipTrunkRequest" => {

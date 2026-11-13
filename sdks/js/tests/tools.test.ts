@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { CallNotHeldError, ConfigurationError, ToolCall, ToolOutput, Tools, render } from "../src/index.js";
+import { CallNotHeldError, ConfigurationError, ToolCallContext, ToolOutput, Tools, render } from "../src/index.js";
 
 describe("Tools", () => {
   const nothing = new AbortController().signal;
@@ -209,37 +209,67 @@ describe("render", () => {
     );
   });
 
-  it("fails and aborts a call that takes longer than its timeout", async () => {
-    let aborted: unknown;
+  it("fails a call that takes longer than its timeout", async () => {
     const tools = new Tools().register({
       name: "stuck",
       description: "Never finishes",
       timeoutMs: 20,
-      run: (_input, signal) =>
-        new Promise(() => {
-          signal.addEventListener("abort", () => (aborted = signal.reason));
-        }),
+      run: () => new Promise(() => undefined),
     });
 
     await assert.rejects(() => tools.call("stuck", "{}", new AbortController().signal), /stuck took longer than 20 ms/);
-    assert.match(String(aborted), /took longer/);
   });
 
   it("hands a function the call it runs for, which does nothing without a line", async () => {
-    let seen: ToolCall | undefined;
+    let seen: ToolCallContext | undefined;
     const tools = new Tools().register({
       name: "whoami",
       description: "Who asked",
-      run: async (_input, _signal, toolCallContext) => {
+      run: async (_input, toolCallContext) => {
         seen = toolCallContext;
         toolCallContext.update("checking");
         toolCallContext.say("One moment.");
-        return (await toolCallContext.disallowInterruptions()).aborted ? "stopped" : "kept";
+        await toolCallContext.disallowInterruptions();
+        return "kept";
       },
     });
 
     assert.equal(await tools.call("whoami", "{}", new AbortController().signal), "kept");
     assert.equal(seen?.id, "");
+  });
+
+  it("hands run the arguments, then the call it runs for", async () => {
+    const tools = new Tools()
+      .register<{ city: string }>({
+        name: "simple",
+        description: "Only the arguments",
+        run: ({ city }) => city,
+      })
+      .register<{ city: string }>({
+        name: "context",
+        description: "The arguments, then the call",
+        run: ({ city }, toolCallContext) => `${toolCallContext.id} ${city}`,
+      });
+    const call = new ToolCallContext({ id: "call-1" });
+
+    assert.equal(await tools.call("simple", JSON.stringify({ city: "Rome" }), new AbortController().signal, call), "Rome");
+    assert.equal(
+      await tools.call("context", JSON.stringify({ city: "Rome" }), new AbortController().signal, call),
+      "call-1 Rome",
+    );
+  });
+
+  it("stops waiting on a call that is cancelled", async () => {
+    const cancel = new AbortController();
+    const tools = new Tools().register({
+      name: "slow",
+      description: "Never finishes",
+      run: () => new Promise(() => undefined),
+    });
+
+    const answer = tools.call("slow", "{}", cancel.signal);
+    cancel.abort();
+    await assert.rejects(answer, /slow was cancelled/);
   });
 
   it("reports how a call is going on its line, and a call stopped before it was held", async () => {
@@ -248,19 +278,267 @@ describe("render", () => {
       update: (id: string, text: string, verbatim: boolean) => void sent.push([id, text, verbatim]),
       hold: async () => holds,
     });
-    const toolCallContext = new ToolCall({ id: "call_1" }, line(true));
+    const toolCallContext = new ToolCallContext({ id: "call_1" }, line(true));
 
     toolCallContext.update("checking");
     toolCallContext.say("One moment.");
-    const kept = await toolCallContext.disallowInterruptions();
-    const stopped = await new ToolCall({ id: "call_2" }, line(false)).disallowInterruptions();
+    await toolCallContext.disallowInterruptions();
 
     assert.deepEqual(sent, [
       ["call_1", "checking", false],
       ["call_1", "One moment.", true],
     ]);
-    assert.equal(kept.aborted, false);
-    assert.equal(stopped.aborted, true);
-    assert.ok(stopped.reason instanceof CallNotHeldError);
+    await assert.rejects(
+      new ToolCallContext({ id: "call_2" }, line(false)).disallowInterruptions(),
+      CallNotHeldError,
+    );
+  });
+});
+
+describe("Tools concurrency", () => {
+  const nothing = new AbortController().signal;
+  /** Lets every call waiting on a microtask, such as for a place, get as far as it can. */
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  const gate = () => {
+    let open = (): void => undefined;
+    const opened = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    return { opened, open };
+  };
+
+  it("runs at most as many calls of a function at once as its concurrency", async () => {
+    let running = 0;
+    let most = 0;
+    const tools = new Tools().register({
+      name: "lookup",
+      description: "Look it up",
+      concurrency: 2,
+      run: async () => {
+        running += 1;
+        most = Math.max(most, running);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        running -= 1;
+        return "found";
+      },
+    });
+
+    const answers = await Promise.all(Array.from({ length: 6 }, () => tools.call("lookup", "{}", nothing)));
+
+    assert.deepEqual(answers, Array(6).fill("found"));
+    assert.equal(most, 2);
+  });
+
+  it("runs at most 16 calls at once across all its functions", async () => {
+    const { opened, open } = gate();
+    let started = 0;
+    const run = async () => {
+      started += 1;
+      await opened;
+      return "done";
+    };
+    const tools = new Tools()
+      .register({ name: "one", description: "First", run })
+      .register({ name: "two", description: "Second", run });
+
+    const answers = Promise.all(
+      Array.from({ length: 20 }, (_, i) => tools.call(i % 2 ? "one" : "two", "{}", nothing)),
+    );
+    await settle();
+    assert.equal(started, 16);
+
+    open();
+    assert.equal((await answers).length, 20);
+    assert.equal(started, 20);
+  });
+
+  it("runs as many calls at once as it is set to, waiting calls included", async () => {
+    const { opened, open } = gate();
+    let started = 0;
+    const tools = new Tools().register({
+      name: "lookup",
+      description: "Look it up",
+      run: async () => {
+        started += 1;
+        await opened;
+        return "found";
+      },
+    });
+
+    tools.setConcurrency(2);
+    const answers = Promise.all(Array.from({ length: 24 }, () => tools.call("lookup", "{}", nothing)));
+    await settle();
+    assert.equal(started, 2);
+
+    tools.setConcurrency(20);
+    await settle();
+    assert.equal(started, 20);
+
+    open();
+    assert.equal((await answers).length, 24);
+    assert.equal(started, 24);
+  });
+
+  it("refuses to run a number of calls at once that is not a whole number", () => {
+    for (const calls of [0, -1, 1.5, Number.NaN]) {
+      assert.throws(() => new Tools().setConcurrency(calls), ConfigurationError, String(calls));
+    }
+  });
+
+  it("keeps calls waiting on one function from holding places another needs", { timeout: 2000 }, async () => {
+    const { opened, open } = gate();
+    const tools = new Tools()
+      .register({
+        name: "book",
+        description: "Book it",
+        concurrency: 1,
+        run: async () => {
+          await opened;
+          return "booked";
+        },
+      })
+      .register({ name: "lookup", description: "Look it up", run: () => "found" });
+
+    const booked = Promise.all(Array.from({ length: 16 }, () => tools.call("book", "{}", nothing)));
+    await settle();
+    assert.equal(await tools.call("lookup", "{}", nothing), "found");
+
+    open();
+    assert.equal((await booked).length, 16);
+  });
+
+  it("counts the wait for a place toward a call's timeout", { timeout: 2000 }, async () => {
+    const { opened, open } = gate();
+    let started = 0;
+    const tools = new Tools().register({
+      name: "book",
+      description: "Book it",
+      concurrency: 1,
+      timeoutMs: 30,
+      run: async () => {
+        started += 1;
+        await opened;
+        return "booked";
+      },
+    });
+
+    const first = tools.call("book", "{}", nothing);
+    first.catch(() => undefined);
+    await settle();
+    await assert.rejects(tools.call("book", "{}", nothing), /book took longer than 30 ms/);
+    assert.equal(started, 1);
+
+    // The call that timed out waiting gave up its turn, so the place goes to the next call.
+    open();
+    await assert.rejects(first, /took longer/);
+    assert.equal(await tools.call("book", "{}", nothing), "booked");
+  });
+
+  it("takes a cancelled call out of the queue without keeping a place", { timeout: 2000 }, async () => {
+    const { opened, open } = gate();
+    let started = 0;
+    const tools = new Tools().register({
+      name: "book",
+      description: "Book it",
+      concurrency: 1,
+      run: async () => {
+        started += 1;
+        await opened;
+        return "booked";
+      },
+    });
+
+    const first = tools.call("book", "{}", nothing);
+    await settle();
+    const cancel = new AbortController();
+    const waiting = tools.call("book", "{}", cancel.signal);
+    await settle();
+    cancel.abort();
+    await assert.rejects(waiting, /book was cancelled/);
+
+    open();
+    assert.equal(await first, "booked");
+    assert.equal(await tools.call("book", "{}", nothing), "booked");
+    assert.equal(started, 2);
+  });
+
+  it("keeps the place of a cancelled call until its function returns", { timeout: 2000 }, async () => {
+    const { opened, open } = gate();
+    let running = 0;
+    let most = 0;
+    const tools = new Tools().register({
+      name: "write",
+      description: "Write it",
+      concurrency: 1,
+      run: async () => {
+        running += 1;
+        most = Math.max(most, running);
+        await opened;
+        running -= 1;
+        return "written";
+      },
+    });
+
+    const cancel = new AbortController();
+    const first = tools.call("write", "{}", cancel.signal);
+    await settle();
+    cancel.abort();
+    await assert.rejects(first, /write was cancelled/);
+    const next = tools.call("write", "{}", nothing);
+    await settle();
+    assert.equal(running, 1);
+
+    open();
+    assert.equal(await next, "written");
+    assert.equal(most, 1);
+  });
+
+  it("gives back the place of a call that failed", { timeout: 2000 }, async () => {
+    let calls = 0;
+    const tools = new Tools().register({
+      name: "flaky",
+      description: "Fails twice",
+      concurrency: 1,
+      run: async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new Error("rejected");
+        }
+        return "ok";
+      },
+    });
+    const throwing = new Tools().register({
+      name: "throws",
+      description: "Throws before it returns",
+      concurrency: 1,
+      run: () => {
+        calls += 1;
+        if (calls === 3) {
+          throw new Error("thrown");
+        }
+        return "ok";
+      },
+    });
+
+    await assert.rejects(tools.call("flaky", "{}", nothing), /rejected/);
+    assert.equal(await tools.call("flaky", "{}", nothing), "ok");
+    await assert.rejects(throwing.call("throws", "{}", nothing), /thrown/);
+    assert.equal(await throwing.call("throws", "{}", nothing), "ok");
+  });
+
+  it("refuses a concurrency that is not a whole number of calls", () => {
+    for (const concurrency of [0, -1, 1.5, Number.NaN]) {
+      assert.throws(
+        () => new Tools().register({ name: "x", description: "One", concurrency, run: () => "" }),
+        ConfigurationError,
+        String(concurrency),
+      );
+    }
+  });
+
+  it("keeps the concurrency to itself, since only this process enforces it", () => {
+    const tools = new Tools().register({ name: "x", description: "One", concurrency: 2, run: () => "" });
+
+    assert.deepEqual(tools.declared(), [{ name: "x", description: "One" }]);
   });
 });

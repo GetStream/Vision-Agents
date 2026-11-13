@@ -190,7 +190,8 @@ public sealed record Declaration
     /// <summary>
     /// The model that controls the agent's floor, and how long a caller may wait once they stop
     /// (max_wait_ms), as written. Null when agent.yaml says nothing, which leaves the stored
-    /// choice; empty ({}) for the default flow controller again. Which models there are, and
+    /// choice; empty ({}) for no choice again, which the router's default rules; {model:
+    /// flow-controller} keeps the flow controller whatever that default. Which models there are, and
     /// whether a wait names one, is the router's to say.
     /// </summary>
     public FloorControl? FloorControl { get; init; }

@@ -67,12 +67,13 @@ func Code(err error) string {
 
 // refused is a refusal of one of the kinds above, which reads as its message alone. resets is
 // when a spent limit's window ends, zero for the rest. unchecked says the money could not be
-// checked, rather than that it ran out.
+// checked, rather than that it ran out. limit is the sandbox limit a sandbox refusal is over.
 type refused struct {
 	kind      error
 	message   string
 	resets    time.Time
 	unchecked bool
+	limit     string
 }
 
 func (r *refused) Error() string { return r.message }

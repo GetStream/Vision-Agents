@@ -3133,15 +3133,17 @@ llm:
       tier: high-quality
       prefer: openai/gpt-6.1-sol
 
-    # What the agent moderator (Nora) reviews flagged content on. Gemma on our own GPUs is
-    # preferred: a review is a short ruling against labels, and the app's moderation volume
-    # is billed by the GPU minute there rather than by the token. GPT-6.1 Sol, what
-    # llm-thinking prefers, catches it being down or GEMMA_BASE_URL being unset. Named
-    # outright with only because the two share no tier. It has no title: the moderator
-    # page offers no model picker, so it is the template's default rather than a choice.
+    # What the agent moderator (Nora) reviews flagged content on. GPT-5.6 Luna is preferred
+    # for now. Gemma on our own GPUs, which was preferred before, stands behind it: a review
+    # is a short ruling against labels, and the app's moderation volume is billed by the GPU
+    # minute there rather than by the token. GPT-6.1 Sol, what llm-thinking prefers, catches
+    # both being down, or OpenAI failing Luna while GEMMA_BASE_URL is unset. Named outright
+    # with only because the three share no tier. It has no title: the moderator page offers
+    # no model picker, so it is the template's default rather than a choice.
     llm-moderator:
-      prefer: gemma/gemma-4-26B-A4B-it
+      prefer: openai/gpt-5.6-luna
       only:
+        - openai/gpt-5.6-luna
         - gemma/gemma-4-26B-A4B-it
         - openai/gpt-6.1-sol
 
@@ -3408,6 +3410,25 @@ decision_model:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
+
+    # Gemini Decision 1 on Google's own Decisions API (GOOGLE_API_KEY), at $0.10/1M input
+    # tokens of any modality and no output (ai.google.dev/gemini-api/docs/pricing, read
+    # 2026-11-12). It is the only model that endpoint serves, and it reads images, audio,
+    # video and PDFs as well as text, though only text reaches it from here. On 2026-11-12
+    # it answered a 128-case guardrail, injection, routing and severity set as well as Jev
+    # and the Deciders, at Jev's latency, for the highest rate here: about $0.18 per 1,000
+    # twelve-question guardrail calls, against $0.08 for Jev and $0.03 for the Deciders.
+    # Google do not use paid-tier traffic to improve their products and log it for an
+    # unstated period, with no zero-retention path on the Developer API.
+    - provider: gemini
+      model: gemini-decision-1
+      description: "Google's multimodal decision model. As quick as Jev and as accurate, at the highest rate of any decision model here."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
 
   aliases:
     en-low-latency:

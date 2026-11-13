@@ -125,14 +125,15 @@ The router makes chorus-asr available, and each agent opts in to it.
 
 | Variable | Purpose |
 | --- | --- |
-| `ROUTER_CHORUS_ASR_URL` | The server, such as `http://floor:8080`, with the path of a gateway it sits behind if it has one ([Behind a gateway](#behind-a-gateway)). Makes chorus-asr available: the `stream/chorus-asr` transcriber, and floor control for an agent that opts in. It rules no agent's floor of its own accord |
+| `ROUTER_CHORUS_ASR_URL` | The server, such as `http://floor:8080`, with the path of a gateway it sits behind if it has one ([Behind a gateway](#behind-a-gateway)). Makes chorus-asr available: the `stream/chorus-asr` transcriber, and floor control for an agent that opts in. It rules the floor of no other agent unless `ROUTER_FLOOR_CONTROL_DEFAULT` says so |
 | `ROUTER_CHORUS_ASR_API_KEY` | Optional. Sent as `Authorization: Bearer <key>` on every request, for a server behind a gateway that asks for a key. Never logged, and taken out of what a gateway says back. Send it over `https` |
 | `ROUTER_CHORUS_ASR_AUDIO` | `opus` (default), or `pcm`, 16-bit PCM at 8 to 20 times the bytes, to tell the codec apart from the model when debugging a decision |
 | `ROUTER_CHORUS_ASR_INTERIMS` | `on` (default), which has the transcriber write the words so far while the caller talks ([Live words](#live-words)); or `off`, for a server short of transcription lanes, where the words come at the turn's end |
 | `ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT` | How long the router waits for a ruling while the caller talks over the agent, as a duration: `250ms` (default) up to `450ms`, and at least `100ms`. The router refuses to start outside that. A ruling that comes later is not acted on, and the flow controller rules instead ([Fallbacks](#fallbacks)). The checks of a pause keep their 1 s whatever it says. Set it from the server's round trip ([The wait over the agent](#the-wait-over-the-agent)) |
+| `ROUTER_FLOOR_CONTROL_DEFAULT` | What controls the floor of an agent that chose no `floor_control`: empty (default) or `flow-controller`, the flow controller; or `stream/chorus-asr`, chorus-asr at the server's default point, for every such agent on the router ([The router's default](#the-routers-default-router_floor_control_default)). Without `ROUTER_CHORUS_ASR_URL` the router warns once at start and the flow controller rules; no session is refused for it |
 
 `cmd/router` and `cmd/agent` read these the same way (`audiofloor.Open`); `cmd/agent`'s one
-agent opts in with `-floor-control stream/chorus-asr`.
+agent opts in with `-floor-control stream/chorus-asr`, and reads no default.
 
 `ROUTER_CHORUS_ASR_MODE`, which once had every agent on a router shadow or act on chorus-asr,
 is no longer read. A router started with it, as a variable or in its settings file, acts on it
@@ -150,6 +151,14 @@ Three ways to use it, each a short Go program in
 | [Decisions and transcripts](../../../examples/routers/chorus_asr_example/decide_and_transcribe/main.go): one model hears the caller, writes the words and ends the turn | `ROUTER_CHORUS_ASR_URL` | `floor_control: {model: stream/chorus-asr}`, `stt: stream/chorus-asr`, its own `tts` |
 | [Decisions only](../../../examples/routers/chorus_asr_example/decide_only/main.go): another transcriber writes the words | `ROUTER_CHORUS_ASR_URL` | `floor_control: {model: stream/chorus-asr}`, any `stt` |
 | [Transcription only](../../../examples/routers/chorus_asr_example/transcribe_only/main.go): the words, through the router's STT | `ROUTER_CHORUS_ASR_URL` | a router config naming `stream/chorus-asr` |
+
+Languages are optional. An agent's language hints, when it has any, are the languages its
+callers speak: the server is told them when the agent is registered, and asked for the words
+so far in them, so that it can drop a room's voice in another language. With none, the router
+sends none and invents none: the agent is registered and ruled on all the same, its pauses
+asked about and its words written in whatever language the server heard, with nothing
+detected first. A tag the server's model does not speak is dropped by the server, not refused,
+and no agent is turned away from floor control over its languages.
 
 ### The wait over the agent
 
@@ -186,7 +195,10 @@ speech over the agent, is the app's to choose, per agent, beside its `stt`, `llm
 `floor_control` is one setting: `model` names the model that controls the floor, as `stt` names
 the transcriber, and `max_wait_ms` is its one knob, how long a caller may wait once they stop
 ([How long a caller waits](#how-long-a-caller-waits-max_wait_ms)). An agent that names none
-keeps the default flow controller, as every agent did before there was a choice:
+gets the router's default ([The router's default](#the-routers-default-router_floor_control_default)):
+the flow controller, as every agent had before there was a choice, unless the router defaults
+every such agent to chorus-asr. `model: flow-controller` keeps the flow controller whatever the
+router's default:
 
 ```yaml
 # agent.yaml
@@ -205,13 +217,14 @@ it does with no such model; chorus-asr still transcribes for an agent whose `stt
   it), a config's create, replace and patch, and a server-side `createSession` or the session
   socket's start frame, which choose for one session over its config's, all take the same
   field. Sent, it replaces the stored choice whole, `max_wait_ms` included, and
-  `floor_control: {}` is the default flow controller again; left out, or null, the stored one
-  stays. A device may not choose a session's (403).
+  `floor_control: {}` is no choice again, which the router's default rules; left out, or null,
+  the stored one stays. An agent reads back what it stored, `{model: flow-controller}` included,
+  and nothing where it chose none. A device may not choose a session's (403).
 - **What is refused.** `stream/chorus-asr` sent to a router without `ROUTER_CHORUS_ASR_URL` is
   refused at write time (400, `not_configured`), before anything is stored, saying what the
-  router needs. So is, with a 400, a `max_wait_ms` without a `model`, a model nobody knows, a
-  key it doesn't have, the string `floor_control` once was, and `end_of_turn`, which
-  `max_wait_ms` replaced. A choice stored on one router and read on another without a server
+  router needs. So is, with a 400, a `max_wait_ms` without a `model` or with `flow-controller`,
+  which has no wait to choose, a model nobody knows, a key it doesn't have, the string
+  `floor_control` once was, and `end_of_turn`, which `max_wait_ms` replaced. A choice stored on one router and read on another without a server
   asks nothing there, and the router logs a warning for the session.
 - **One router, many choices.** Each session runs by its own: on one router, an agent whose
   floor chorus-asr controls and one with the default flow controller take their calls side by
@@ -219,7 +232,30 @@ it does with no such model; chorus-asr still transcribes for an agent whose `stt
   loop's contract are each session's, and an agent with none chosen behaves exactly as it did
   before.
 - **A session row** keeps the floor control it was opened with, which reopening it keeps; one
-  opened with none takes its config's.
+  opened with none takes its config's, and the router's default after it.
+
+## The router's default: `ROUTER_FLOOR_CONTROL_DEFAULT`
+
+`ROUTER_FLOOR_CONTROL_DEFAULT` (`agent.floor_control_default`) is what controls the floor of
+every agent on the router that chose no `floor_control` of its own: empty, or
+`flow-controller`, is the flow controller, as before; `stream/chorus-asr` has chorus-asr
+control it at the server's default point, as `floor_control: {model: stream/chorus-asr}` with
+no `max_wait_ms` would. It is how chorus-asr's floor control is rolled out to an environment
+at once, and each agent keeps control through the SDK: an agent's own choice always wins,
+`{model: stream/chorus-asr}` with its own `max_wait_ms` as today, or `{model: flow-controller}`
+to keep the flow controller, which is stored and read back, where `{}` is no choice and
+follows the default. Floor control only: which transcriber writes the words does not change,
+and `ROUTER_CHORUS_ASR_MODE`, which once changed both, is not back. On a router without
+`ROUTER_CHORUS_ASR_URL` the default is warned of once at start and the flow controller rules;
+no session is refused for it.
+
+| Router default | Agent chose | Floor |
+| --- | --- | --- |
+| empty or `flow-controller` | none, or `{}` | flow controller |
+| `stream/chorus-asr`, with a server | none, or `{}` | chorus-asr, server's default point |
+| `stream/chorus-asr`, no server | none, or `{}` | flow controller, one warning at start |
+| any | `{model: stream/chorus-asr, max_wait_ms: N}` | chorus-asr at N, as today (refused without a server) |
+| any | `{model: flow-controller}` | flow controller |
 
 ## How long a caller waits: `max_wait_ms`
 
@@ -484,12 +520,13 @@ transcriber now shows the words so far while the caller talks, as interim transc
   utterance's first words at a pause, which the server had a whole phrase to tell, and
   words that come back in another, named otherwise or refused as one the callers don't
   speak (`noise: language`), are dropped (`foreign`), as are a pause's words in another
-  language, which wait for the final. With no languages declared no interim is asked for
-  before that language is known: asked to guess the language of a second of speech, the
-  server guessed differently from one interim to the next over somebody else talking in the
-  room, and a watcher saw the line switch script. With languages declared the words so far
-  are asked for in them until the utterance's language is known, and in it alone from then
-  on. The final is the model's, in whatever language it heard the turn.
+  language, which wait for the final. With languages declared the words so far are asked
+  for in them until the utterance's language is known, and in it alone from then on. With
+  none declared they are asked for in none, and the server writes what it heard: asked to
+  guess the language of a second of speech, the server has guessed differently from one
+  interim to the next over somebody else talking in the room, and an interim that switches
+  script on the words shown is dropped (`unstable`). The final is the model's, in whatever
+  language it heard the turn.
 - **The line never goes back.** An interim holds up no pause check, no decision and no
   final: it runs on a goroutine of its own, and one that answers after the final, or after
   newer words, is dropped (`late`). An interim of the next utterance waits for the last
@@ -728,6 +765,20 @@ when the transcriber is chorus-asr too, and otherwise from when the words last c
 Nothing acts on the tool the caller wants, or on `cannot`, and a tool's approval is
 untouched. Acting, a decision's `Ruler` is `heard`.
 
+The words always count. Floor control says when the agent speaks, never whether what the
+caller said reaches it. `ignore` with words, over the agent or not, says they were no turn
+for the agent: a murmur ("yeah", "mm-hmm"), a voice in the room, a radio, or a caller's aside
+("Yeah, zip is 46281." over a reply). They are heard, and kept for the next reply to the
+caller, which is told they may be someone else and uses them only where they fit, a line the
+agent says of its own accord included; the agent is not interrupted, and nothing is answered
+on their own account: a caller's line the model took for background is answered with their
+next turn, and the model's ignores are its training's to get right. A cough or a lone "uh"
+stays ignored. With another transcriber writing the words,
+the runs it had settled go out as a turn of their own when the floor steps aside or takes the
+turns back, a final that comes after the floor gave up waiting for it is the next turn's (its
+words past the ones the turn ended on), and words settled with no voice heard since are a
+turn of their own 700 ms later: no final it writes is dropped.
+
 ## Fallbacks
 
 - **Acting.** The model has a third of the flow controller's deadline for a pause, 1 s, and
@@ -755,11 +806,13 @@ untouched. Acting, a decision's `Ruler` is `heard`.
   words. A request for words times out at 8 s and the audio's length again.
 - **Echo.** A phone with no echo cancellation sends the agent's voice back down the
   caller's line, and the model writes it as the caller's words, or around theirs when they
-  speak over it. The agent drops from a chorus-asr transcript every run of three or more of
-  its own words, near enough (a quarter of them may be heard wrong, one at a time), when
-  the audio the words are of came while the agent's voice was going out, or began within
-  800 ms of its last audible sample going out: what is left, before, between and after the
-  runs, is the caller's, and an echo alone is nothing heard
+  speak over it. The agent drops from a chorus-asr transcript every run of its own words,
+  near enough (a quarter of them may be heard wrong, one at a time), with at least three of
+  them heard right in a row as it said them, when the audio the words are of came while the
+  agent's voice was going out, or began within 800 ms of its last audible sample going out,
+  but for a run with two or more words of the caller's own before it and after it, more
+  than a murmur, which they said in their sentence: what is left, before, between and after
+  the runs, is the caller's, and an echo alone is nothing heard
   (`router_agent_chorus_asr_echoes_total`). When the voice goes out is the edge's pace:
   each chunk from when it was queued, after what was queued ahead of it, for as long as it
   plays, and its silences, the padding after the last word included, carry no words;
@@ -855,10 +908,10 @@ never ended the utterance; the new one wrote both replacements and the final.
   writes the room's words into the caller's final. With the agent quiet it writes words
   only at pauses. It rewrites the whole utterance at each pause, ends one at 60 s if the
   caller never pauses, and drops a ninth request waiting on a slow server.
-- With no languages declared the words so far wait for the utterance's first pause, whose
-  words say what language it is in; an utterance with no pause in it shows none until its
-  final, and the language is the model's guess on that pause's words, which the whole
-  utterance's interims are then held to.
+- With no languages declared the words so far are the model's guess on a second or two of
+  speech until the utterance's first pause, whose words say what language it is in; the
+  language is the model's guess on that pause's words, which the rest of the utterance's
+  interims are then held to.
 - Checks over the agent cost a decision and the words every `interval_ms` while a caller
   is voiced over it, the agent's own echo included: a line with no echo cancellation costs
   that for as long as the agent talks, on the replay's TPU about three requests a second of
@@ -875,15 +928,25 @@ never ended the utterance; the new one wrote both replacements and the final.
   and a late one starts a run of checks in a row again: a point that asks for two then ends
   the turn at `cap_ms`. The replay's 19.8 s turn was answered 3.1 s after the voice under
   `max_wait_ms: 1400` so.
-- Echo is dropped by its words, not its sound: an echo the model writes too far from what
-  the agent said, or of fewer than three words, is still the caller's; a caller who repeats
-  three or more of the agent's words in a row while it speaks, or in an utterance that began
-  (300 ms before their voice) within 800 ms of the agent's last audible sample going out,
-  loses them, as the model writes no word's time and only the utterance's start can be
-  weighed;
-  and one word of the caller's between two runs of the echo reads as a word of the agent's
-  misheard. Two or more words in a row are the caller's wherever they fall, as "and in
-  Porto" does inside the reply's echo.
+- Echo is dropped by its words, not its sound, and only an utterance's start is timed: the
+  model writes no word's time, nor does the voice, and the agent's reckoning of where its
+  voice is in the reply, by its speaking rate on the call, is off by up to a third (5th to
+  95th percentile over 996 lines of a τ³-Voice bench), too rough to time a word by. An echo
+  the model writes too far from what the agent said, or without three of its words heard
+  right in a row, is still the caller's, as is one between two or more words of the caller's
+  own on each side, even one that truly came back down the line: an echo whose ends the model
+  wrote wrong two words at a time, "Tomorrow, and listen, it will be sunny … in the after
+  noon.", is taken whole for the caller's, where one word wrong at an end ("Signed and warm
+  …") is not. A caller who says three or more of the agent's words in a row while it speaks,
+  or in an utterance that began (300 ms before their voice) within 800 ms of its last audible
+  sample going out, loses them at the start or the end of what they said so far, or next to
+  a murmur or a lone word: "Okay, the tablet order, please." over a reply that says "the
+  tablet order" is "Okay, please.", and "Just use the address from the tablet order." loses
+  all but "Just use" until "…for every—" is written. A word the model writes with some of
+  the agent's in it goes whole: "No, it's A-J-A-M-E-L." over a reply that spelled
+  "J-A-M-E-L" is "No, it's". One word of the caller's between two runs of the echo reads as
+  a word of the agent's misheard. Two or more words in a row are the caller's wherever they
+  fall, as "and in Porto" does inside the reply's echo.
 - With unified replies the reply rules on its own words and no flow controller is asked,
   so acting has nothing to stand in for.
 - Without turns from the audio, a CPU decision over a full window, 373 ms here, does not fit

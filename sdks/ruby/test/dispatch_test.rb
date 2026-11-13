@@ -282,7 +282,7 @@ class TestDispatch < LocalRouterTest
     agent = client.agent("travel")
     agent.tools.register("book_flight", description: "Book a flight",
                                         parameters: { type: "object", properties: { flight_id: { type: "string" } } },
-                                        interruptible: true, timeout: 90, approval: "Book flight {flight_id}?") do |_args, tool_call_context|
+                                        interruptible: true, timeout: 90, approval: "Book flight {flight_id}?") do |tool_call_context, _args|
       seen << tool_call_context
       tool_call_context.update("checking seats")
       "booked"
@@ -309,7 +309,7 @@ class TestDispatch < LocalRouterTest
     release = Thread::Queue.new
     stopped = Thread::Queue.new
     agent = client.agent("support")
-    agent.tools.register("investigate", description: "Investigate for a while") do |_args, tool_call_context|
+    agent.tools.register("investigate", description: "Investigate for a while") do |tool_call_context, _args|
       release.pop(timeout: 5)
       stopped << tool_call_context.cancelled?
       "found it"

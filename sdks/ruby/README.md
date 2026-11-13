@@ -58,12 +58,12 @@ agent.chat { |session| session.responses.create("What changed in v3?") }
 ```
 
 A tool can say how the backend treats its calls, and its block can take the call it runs for
-as a second argument:
+as its first argument, ahead of the arguments:
 
 ```ruby
 agent.tools.register("book_flight", description: "Book a flight for the caller",
                      parameters: { type: "object", properties: { flight_id: { type: "string" } } },
-                     timeout: 20, approval: "Book flight {flight_id}?") do |args, tool_call_context|
+                     timeout: 20, approval: "Book flight {flight_id}?") do |tool_call_context, args|
   tool_call_context.update("checking seats")
   tool_call_context.disallow_interruptions
   bookings.book(args["flight_id"], user: tool_call_context.user.id, key: tool_call_context.id)
@@ -219,7 +219,9 @@ agent.join { ... }
 `sync` stores the directory as a config named after it, in one request. A key `agent.yaml`
 does not know is refused. `floor_control` is the model that controls the agent's floor, and how
 long a caller may wait once they stop (`{model: stream/chorus-asr, max_wait_ms: 800}`, with
-`max_wait_ms` optional; `{}` for the default flow controller; left out, the stored choice stays).
+`max_wait_ms` optional; `{}` for no choice, which follows the router's default;
+`{model: flow-controller}` keeps the flow controller whatever that default; left out, the stored
+choice stays).
 `.agent_sync` records the fingerprint, which is the one the Go,
 Python and JavaScript SDKs take, so syncing on every start only reads the config back when
 nothing changed. What the code sets wins over what the directory says.
@@ -269,15 +271,47 @@ agent.chat do |session|
   branch = session.fork(response_id: first, title: "asked again")
 end
 
-page = api.agent("support").sessions.query(user_id: "u1", state: "live", limit: 20)
-page = api.agent("support").sessions.query(user_id: "u1", state: "live", cursor: page["next_cursor"]) if page["has_more"]
-api.agent("support").sessions.search("billing")["items"]
+sessions = api.agent("support").sessions
+page = sessions.query(filter: { user_id: "u1" }, limit: 20)
+page = sessions.query(filter: { user_id: "u1" }, limit: 20, cursor: page["next_cursor"]) if page["has_more"]
+sessions.query(filter: { "$or" => [{ project_id: "docs" }, { project_id: "billing" }] })
+sessions.query(filter: { project_id: { "$in" => %w[docs billing] }, review_score: { "$gte" => 4 } })
+sessions.query(sort: [{ field: "pinned" }, { field: "last_message_at", direction: -1 }])  # pinned first
+sessions.search("billing", filter: { project_id: "docs" })["items"]
 ```
 
 `query` and `search` answer a page, `{items, has_more, next_cursor}`; pass `next_cursor` back
-as `cursor` with the same filters for the next one. `query` narrows by `project_id`,
-`user_id`, `modality`, `state` (`live` or `ended`) and `agent_id`; `search` takes the same
-but `project_id`. `responses.list` and `responses.items.list` page the same way, and
+as `cursor` with the same filter and sort for the next one. The agent is always the one asked.
+
+`filter` is the router's own filter, key for key, with string or symbol keys:
+
+| Key            | Value                                                                        |
+| -------------- | ---------------------------------------------------------------------------- |
+| `project_id`   | `"docs"`, `{ "$eq" => "docs" }` or `{ "$in" => [...] }` (up to 50)             |
+| `review_score` | `1..5`, or `{ "$eq" / "$gt" / "$gte" / "$lt" / "$lte" => n }`; server side only |
+| `user_id`      | `"u1"` or `{ "$eq" => "u1" }`; server side only                                |
+| `text`         | `{ "$q" => "words" }`, which is what `search` sets                             |
+| `$and`, `$or`  | 1 to 10 filters each, nested at most 3 deep                                  |
+
+The keys of one filter narrow together. `text` and `user_id` go at the top level or straight
+inside the top-level `$and`, never inside an `$or`. Any other key is a 400.
+
+`sort` is an array of `{ field:, direction: }`, direction `-1` (the default) or `1`:
+`last_message_at`; `pinned`, alone or followed by `last_message_at`; `review_score` (server
+side only); `relevance`, only with a `text`. Left out, it is `last_message_at` newest first.
+`search` takes the same `filter` (without a `text`), `limit` and `cursor` and no `sort`: it is
+ordered by relevance.
+
+```ruby
+session.pin                                      # or sessions.pin(session_id)
+session.unpin                                    # or sessions.unpin(session_id)
+sessions.update(session_id, pinned: true)["pinned_at"]
+```
+
+A pinned session carries `pinned_at`, and one that is not has no such key. Pinning does not
+move a session in `last_message_at` order; sort by `pinned` to list the pinned ones first.
+
+`responses.list` and `responses.items.list` page the same way, and
 `responses.items.each` follows the cursor itself.
 
 A written conversation is kept in Stream Chat unless it is opened with `incognito: true`.
@@ -293,7 +327,7 @@ api.agent("support").sessions.update(session_id, title: "Pricing")  # an ended s
 ```
 
 `update` takes `title`, `description`, `custom`, `llm`, `stt`, `tts`, `sts`,
-`voice`, `thinking`, `temperature`, `max_output_tokens` and `verbosity`; a field left out is
+`voice`, `thinking`, `temperature`, `max_output_tokens`, `verbosity` and `pinned`; a field left out is
 left as it is.
 
 `session.close` stops a conversation and keeps everything it recorded and remembered.

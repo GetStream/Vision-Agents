@@ -128,9 +128,19 @@ type Config struct {
 }
 
 // chorusASRModeRetired is what took the place of agent.chorus_asr_mode, which once had every
-// agent on the router shadow or act on chorus-asr: each agent opts in itself.
-const chorusASRModeRetired = "agent.chorus_asr_mode (ROUTER_CHORUS_ASR_MODE) is no longer read, and stream/chorus-asr controls " +
-	"no agent's floor of the router's accord: an agent opts in with floor_control: {model: stream/chorus-asr} on its config or in its agent.yaml"
+// agent on the router shadow or act on chorus-asr: each agent chooses itself, and
+// agent.floor_control_default is what one that chose nothing gets.
+const chorusASRModeRetired = "agent.chorus_asr_mode (ROUTER_CHORUS_ASR_MODE) is no longer read: an agent chooses with " +
+	"floor_control: {model: stream/chorus-asr} on its config or in its agent.yaml, and agent.floor_control_default " +
+	"(ROUTER_FLOOR_CONTROL_DEFAULT) is what an agent that chose none gets"
+
+// floorControlChorusASR and floorControlFlowController are what agent.floor_control_default
+// may name, store.FloorControlChorusASR and store.FloorControlFlowController, which this
+// package does not import.
+const (
+	floorControlChorusASR      = "stream/chorus-asr"
+	floorControlFlowController = "flow-controller"
+)
 
 // minOverlapTimeout and maxOverlapTimeout bound agent.chorus_asr_overlap_timeout.
 const (
@@ -398,9 +408,9 @@ type Agent struct {
 	FlowJudge string `koanf:"flow_judge"`
 	// AudioFloorURL is a chorus-asr server (internal/audiofloor), which it makes available:
 	// its model transcribes for an agent that names stream/chorus-asr as its transcriber, and
-	// rules the floor of an agent whose floor control opts in (store.FloorControl). It rules
-	// no agent's floor of the router's accord. AudioFloorAudio is how the audio is sent: opus
-	// (the default) or pcm, for debugging. AudioFloorInterims says whether its transcriber
+	// rules the floor of an agent whose floor control opts in (store.FloorControl), or of
+	// every agent that chose none where FloorControlDefault says so. AudioFloorAudio is how
+	// the audio is sent: opus (the default) or pcm, for debugging. AudioFloorInterims says whether its transcriber
 	// writes the words so far while the caller talks: on (the default) or off, for a server
 	// short of transcription lanes, where the words come at the turn's end. AudioFloorAPIKey
 	// is sent as a bearer token on every request to a server behind a gateway that asks for
@@ -416,6 +426,16 @@ type Agent struct {
 	// to be faster. The checks of a pause keep the flow controller's own share of its deadline
 	// (harness.HearDeadline).
 	AudioFloorOverlapTimeout time.Duration `koanf:"chorus_asr_overlap_timeout"`
+	// FloorControlDefault is what controls the floor of an agent that chose no floor control
+	// of its own, on its config or its session: empty (the default) or flow-controller, the
+	// flow controller, as every agent had before there was a choice; or stream/chorus-asr,
+	// chorus-asr at the server's default point, on a router with AudioFloorURL. Without a
+	// server the router warns once at start and the flow controller rules, refusing no session
+	// for it. An agent's own choice always wins: stream/chorus-asr with its own max_wait_ms, or
+	// flow-controller to keep the flow controller whatever this says. It is a default of the
+	// floor control's model alone, not a mode: which transcriber writes the words does not
+	// change, and agent.chorus_asr_mode, which once did both, is not back.
+	FloorControlDefault string `koanf:"floor_control_default"`
 }
 
 // Connectors is whether agents may reach the customer's accounts elsewhere.
@@ -603,6 +623,7 @@ var variables = map[string]string{
 	"models.private_endpoints":  "ROUTER_MODELS_PRIVATE_ENDPOINTS",
 
 	"agent.chorus_asr_overlap_timeout":  "ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT",
+	"agent.floor_control_default":       "ROUTER_FLOOR_CONTROL_DEFAULT",
 	"connectors.proxy_calls_per_minute": "ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE",
 	"runs.concurrent_per_app":           "ROUTER_RUNS_CONCURRENT_PER_APP",
 
@@ -850,6 +871,12 @@ func (c Config) validate() error {
 			"the agent stops within 800 ms of the caller's first word over it and the first check is asked 350 ms in, "+
 			"so a longer wait can't keep that line, and a server that needs one needs to be faster",
 			minOverlapTimeout, maxOverlapTimeout, wait)
+	}
+	switch c.Agent.FloorControlDefault {
+	case "", floorControlFlowController, floorControlChorusASR:
+	default:
+		return fmt.Errorf("config: agent.floor_control_default (ROUTER_FLOOR_CONTROL_DEFAULT) is %s, or %s or empty for the flow controller, got %q",
+			floorControlChorusASR, floorControlFlowController, c.Agent.FloorControlDefault)
 	}
 	switch c.Stream.Tenancy {
 	case "", TenancyDeployment:

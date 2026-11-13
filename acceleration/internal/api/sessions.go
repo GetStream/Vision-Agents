@@ -18,6 +18,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 	"github.com/danielgtaylor/huma/v2"
 )
 
@@ -164,6 +165,9 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	ctx = s.threadConversation(ctx, customerID, &spec)
 	spec.Caller = CallerFrom(ctx)
 	spec.CallerKind = KindFrom(ctx)
+	if body.Messages == nil || *body.Messages {
+		spec.Documents = s.forkedDocuments(ctx, parent, value(body.ResponseId), spec.Caller.UserID)
+	}
 
 	created, err := s.sessions.Create(ctx, spec)
 	if errors.Is(err, session.ErrNoAgentCallType) {
@@ -192,6 +196,7 @@ func (s *Server) getSession(ctx context.Context, request *getSessionRequest) (*g
 	var rendered Session
 	if found.Live != nil {
 		rendered = sessionOf(ctx, found.Live)
+		rendered.PinnedAt = s.livePinnedAt(ctx, found.Live)
 	} else {
 		rendered = storedSessionOf(*found.Stored)
 	}
@@ -905,6 +910,9 @@ func describe(rendered *Session, spec session.Spec) {
 	if spec.Project != "" {
 		rendered.ProjectId = &spec.Project
 	}
+	if team := usage.Team(spec.Attribution.UsageCategories); team != "" {
+		rendered.Team = &team
+	}
 	if len(spec.Custom) > 0 {
 		rendered.Custom = &spec.Custom
 	}
@@ -968,6 +976,9 @@ func mergeStored(rendered *Session, row *store.AgentSession) {
 	if row.Project != "" {
 		rendered.ProjectId = &row.Project
 	}
+	if row.Team != "" {
+		rendered.Team = &row.Team
+	}
 	if len(row.Custom) > 0 {
 		custom := row.Custom
 		rendered.Custom = &custom
@@ -985,6 +996,7 @@ func mergeStored(rendered *Session, row *store.AgentSession) {
 		rendered.EndFault, rendered.EndStage = &fault, &stage
 	}
 	rendered.LastResponseAt = row.LastResponseAt
+	rendered.PinnedAt = row.PinnedAt
 }
 
 // SessionEndReason is why a session ended: a session.EndReasons value a row can keep.
@@ -1206,6 +1218,31 @@ func (s *Server) recordedHistory(ctx context.Context, parent session.Found, requ
 		return nil, nil
 	}
 	return session.HistoryOf(exchanges), nil
+}
+
+// forkedDocuments are the files a fork carries from its parent's conversation: those sent up to
+// the turn it stops at, and only when the person forking it is the one who sent them. Anybody
+// else's fork, a server's included, carries the words and not the files.
+//
+// Files that cannot be read leave the fork without them rather than unopened, as a session's
+// other records do, and say so in the log.
+func (s *Server) forkedDocuments(ctx context.Context, parent session.Found, until, owner string) []store.ConversationDocument {
+	if s.store == nil {
+		return nil
+	}
+	scope := store.DocumentScope{SessionID: parent.ID(), Owner: owner, UntilResponse: until}
+	switch {
+	case parent.Live != nil:
+		scope.ConversationID = parent.Live.Spec().ConversationID
+	case parent.Stored != nil:
+		scope.ConversationID = parent.Stored.ConversationID
+	}
+	documents, err := s.store.ConversationDocuments(ctx, OwnerFrom(ctx).CustomerID, scope)
+	if err != nil {
+		s.logger.Error("could not read the files a fork carries", "session", parent.ID(), "error", err)
+		return nil
+	}
+	return documents
 }
 
 // value reads an optional field, which the generated types carry as pointers.

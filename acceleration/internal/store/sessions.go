@@ -363,7 +363,18 @@ func (s *Store) DeleteSession(ctx context.Context, customerID, id string) error 
 		return stack.Wrap(errors.New("store: a customer and a session id are required"))
 	}
 
+	// The documents first: they hold the person's files, and have no foreign key to go with
+	// the session by.
 	_, err := onEveryShard(ctx, s, func(ctx context.Context, db bun.IDB) (sql.Result, error) {
+		return db.NewDelete().Model((*ConversationDocument)(nil)).
+			Where("session_id = ?", id).
+			Where("customer_id = ?", customerID).
+			Exec(ctx)
+	})
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: delete session documents: %w", err))
+	}
+	_, err = onEveryShard(ctx, s, func(ctx context.Context, db bun.IDB) (sql.Result, error) {
 		return db.NewDelete().Model((*AgentSession)(nil)).
 			Where("id = ?", id).
 			Where("customer_id = ?", customerID).
@@ -375,8 +386,8 @@ func (s *Store) DeleteSession(ctx context.Context, customerID, id string) error 
 	return nil
 }
 
-// QuerySessions returns a customer's sessions, most recently updated first, narrowed by the
-// filter.
+// QuerySessions returns a customer's sessions in the filter's order, the most recent message
+// first unless it says otherwise, narrowed by the filter.
 //
 // This is the structured half of finding an old conversation: everything here is an exact
 // match, so the answer is the same every time and a page can hold a cursor into it.
@@ -386,14 +397,15 @@ func (s *Store) QuerySessions(ctx context.Context, customerID string, filter Ses
 	if customerID == "" {
 		return nil, stack.Wrap(errors.New("store: customer id is required"))
 	}
+	// Relevance is a search's: without words there is no rank to sort on.
+	if filter.Order.By == SessionSortRelevance {
+		filter.Order.By = SessionSortLastMessage
+	}
 
 	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]AgentSession, error) {
 		query := db.NewSelect().Model((*AgentSession)(nil)).
-			Where("customer_id = ?", customerID).
-			Order("updated_at DESC", "id DESC")
-		if after := filter.Cursor; after != nil {
-			query = query.Where("(updated_at, id) < (?, ?)", after.UpdatedAt, after.ID)
-		}
+			Where("customer_id = ?", customerID)
+		query = orderSessions(query, filter.Order, "", nil, filter.Cursor)
 		query = narrowSessions(query, filter)
 
 		var sessions []AgentSession
@@ -403,9 +415,7 @@ func (s *Store) QuerySessions(ctx context.Context, customerID string, filter Ses
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: query sessions: %w", err))
 	}
-	return pageOfSessions(lists, filter, func(a, b AgentSession) int {
-		return cmp.Or(b.UpdatedAt.Compare(a.UpdatedAt), strings.Compare(b.ID, a.ID))
-	}), nil
+	return pageOfSessions(lists, filter), nil
 }
 
 // SearchSessions returns the sessions whose title, description, project or agent match the
@@ -430,17 +440,14 @@ func (s *Store) SearchSessions(ctx context.Context, customerID, text string, fil
 
 	words, args := searchedFor(text)
 	rank := "ts_rank(searchable, " + words + ")"
+	filter.Order = SessionOrder{By: SessionSortRelevance}
 	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]AgentSession, error) {
 		query := db.NewSelect().Model((*AgentSession)(nil)).
 			ColumnExpr("?TableColumns").
 			ColumnExpr(rank+" AS rank", args...).
 			Where("customer_id = ?", customerID).
-			Where("searchable @@ "+words, args...).
-			Order("rank DESC", "updated_at DESC", "id DESC")
-		if after := filter.Cursor; after != nil {
-			query = query.Where("("+rank+", updated_at, id) < (?::real, ?, ?)",
-				append(slices.Clone(args), after.Rank, after.UpdatedAt, after.ID)...)
-		}
+			Where("searchable @@ "+words, args...)
+		query = orderSessions(query, filter.Order, rank, args, filter.Cursor)
 		query = narrowSessions(query, filter)
 
 		var sessions []AgentSession
@@ -450,9 +457,7 @@ func (s *Store) SearchSessions(ctx context.Context, customerID, text string, fil
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: search sessions: %w", err))
 	}
-	return pageOfSessions(lists, filter, func(a, b AgentSession) int {
-		return cmp.Or(cmp.Compare(b.Rank, a.Rank), b.UpdatedAt.Compare(a.UpdatedAt), strings.Compare(b.ID, a.ID))
-	}), nil
+	return pageOfSessions(lists, filter), nil
 }
 
 // searchedFor is what a search's text asks for, as a tsquery expression and its arguments.
@@ -479,14 +484,31 @@ func searchedFor(text string) (string, []any) {
 		[]any{head, string(runes[start:])}
 }
 
-// pageOfSessions merges every shard's page into one, keeping a session carried on in another
-// shard once, by its newest row. Each shard's page is one longer than asked, so the merged one
+// pageOfSessions merges every shard's page into one in the filter's order, keeping a session
+// carried on in another shard once, by the row written last: that one says what it is now,
+// whichever way the list runs. Each shard's page is one longer than asked, so the merged one
 // still tells the caller whether there is more.
-func pageOfSessions(lists [][]AgentSession, filter SessionFilter, before func(a, b AgentSession) int) []AgentSession {
+func pageOfSessions(lists [][]AgentSession, filter SessionFilter) []AgentSession {
 	if len(lists) == 1 {
 		return lists[0]
 	}
-	sessions := distinct(merged(lists, before, 0), func(session AgentSession) string { return session.ID })
+	newest := map[string]time.Time{}
+	for _, list := range lists {
+		for _, session := range list {
+			if written, seen := newest[session.ID]; !seen || session.UpdatedAt.After(written) {
+				newest[session.ID] = session.UpdatedAt
+			}
+		}
+	}
+	current := make([][]AgentSession, 0, len(lists))
+	for _, list := range lists {
+		current = append(current, slices.DeleteFunc(slices.Clone(list), func(session AgentSession) bool {
+			return !session.UpdatedAt.Equal(newest[session.ID])
+		}))
+	}
+	sessions := distinct(merged(current, func(a, b AgentSession) int {
+		return filter.Order.Compare(a.Position(), b.Position())
+	}, 0), func(session AgentSession) string { return session.ID })
 	if limit := SessionLimit(filter.Limit) + 1; len(sessions) > limit {
 		sessions = sessions[:limit]
 	}
@@ -524,6 +546,9 @@ func narrowSessions(query *bun.SelectQuery, filter SessionFilter) *bun.SelectQue
 	if filter.State != "" {
 		query = query.Where("state = ?", filter.State)
 	}
+	if filter.Team != "" {
+		query = query.Where("team = ?", filter.Team)
+	}
 	if len(filter.Custom) > 0 {
 		// Containment rather than a key at a time, so the GIN index on custom is usable
 		// and a caller asking for two labels gets the sessions carrying both. The index is
@@ -536,7 +561,62 @@ func narrowSessions(query *bun.SelectQuery, filter SessionFilter) *bun.SelectQue
 	if !filter.Before.IsZero() {
 		query = query.Where("created_at < ?", filter.Before)
 	}
+	// What the request asked for goes in last and as one parenthesised condition, ANDed with
+	// everything above: an $or in it chooses among the sessions the caller may see, and
+	// never adds one.
+	if filter.Where != nil {
+		condition, args := filter.Where.where()
+		query = query.Where(condition, args...)
+	}
 	return query
+}
+
+// PinSession pins one of a customer's sessions, or unpins it, and returns when it was
+// pinned: nil once it is not. Pinning a session that is already pinned keeps the time it was
+// first pinned at. Nothing else about the row moves, its updated_at included: a pin is where
+// a person keeps a conversation, not something that happened in it.
+func (s *Store) PinSession(ctx context.Context, customerID, id string, pinned bool, at time.Time) (*time.Time, error) {
+	if customerID == "" || id == "" {
+		return nil, stack.Wrap(errors.New("store: a customer and a session id are required"))
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+
+	type pin struct {
+		PinnedAt *time.Time `bun:"pinned_at"`
+	}
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]pin, error) {
+		query := db.NewUpdate().Model((*AgentSession)(nil)).
+			Where("id = ?", id).
+			Where("customer_id = ?", customerID).
+			Returning("pinned_at")
+		if pinned {
+			query = query.Set("pinned_at = COALESCE(pinned_at, ?)", at)
+		} else {
+			query = query.Set("pinned_at = NULL")
+		}
+		var pins []pin
+		_, err := query.Exec(ctx, &pins)
+		return pins, err
+	})
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: pin session: %w", err))
+	}
+	var first *time.Time
+	rows := 0
+	for _, pins := range lists {
+		for _, one := range pins {
+			rows++
+			if one.PinnedAt != nil && (first == nil || one.PinnedAt.Before(*first)) {
+				first = one.PinnedAt
+			}
+		}
+	}
+	if rows == 0 {
+		return nil, unknownStoredSession(id)
+	}
+	return first, nil
 }
 
 // StartResponse records that the agent began a turn.

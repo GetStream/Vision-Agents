@@ -38,7 +38,8 @@ final readonly class Declaration
      *     reach; outbound network is blocked unless network or an allow list opens it
      * @param ?FloorControl $floorControl the model that controls the agent's floor, and how long
      *     a caller may wait once they stop (max_wait_ms), as written: null when the declaration
-     *     says nothing, which leaves the stored choice; empty for the default flow controller again
+     *     says nothing, which leaves the stored choice; empty for no choice again, which the
+     *     router's default rules; {model: flow-controller} keeps the flow controller
      */
     public function __construct(
         public string $name = '',
@@ -71,7 +72,7 @@ final readonly class Declaration
      * @param mixed $mapped the same file parsed with Yaml::PARSE_OBJECT_FOR_MAP, which
      *     `connectors` is read from: there `{}` is an object and not an empty list, so it is
      *     refused rather than sent as [] and wiping the stored bindings. `floor_control` is read
-     *     from it too, where `{}` is the default flow controller and `[]` is not a mapping
+     *     from it too, where `{}` is no choice, the router's default, and `[]` is not a mapping
      */
     public static function fromYaml(mixed $parsed, mixed $mapped): self
     {
@@ -267,7 +268,7 @@ final readonly class Declaration
 
     /**
      * The model that controls the agent's floor and, optionally, `max_wait_ms`, as written: an
-     * empty mapping is the default flow controller again, and a key whose value is null is left
+     * empty mapping is no choice again, which the router's default rules, and a key whose value is null is left
      * out. Only the shape is checked here; which models there are, and whether a wait names one,
      * is the router's to say.
      */

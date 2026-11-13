@@ -10,6 +10,10 @@ import {
   type CreateSessionOptions,
   type GuestStore,
   type Schemas,
+  type SessionFilter,
+  type SessionSearch,
+  type SessionSort,
+  type Sessions,
 } from "../src/index.js";
 import { inPage, offPage } from "./device.js";
 import { TestRouter, type Connection } from "./router.js";
@@ -257,47 +261,201 @@ describe("sessions", () => {
     assert.equal(created()[0]?.["timezone"], "Asia/Tokyo");
   });
 
-  it("puts a query on the wire as the filter the router reads", async () => {
-    router.serve("POST", "/v1/agents/sessions/query", {
-      body: { items: [session()], has_more: false },
+  describe("a session query", () => {
+    const sent = async (run: (sessions: Sessions) => Promise<unknown>) => {
+      router.serve("POST", "/v1/agents/sessions/query", {
+        body: { items: [session()], has_more: false },
+      });
+      await run(api.agent("docs").sessions);
+      return router.last.body;
+    };
+
+    it("asks for the agent's own sessions when nothing is filtered", async () => {
+      assert.deepEqual(await sent((sessions) => sessions.query()), { filter: { agent: "docs" } });
     });
 
-    await api.agent("docs").sessions.query({
-      projectId: "health",
-      modality: "voice",
-      state: "live",
-      agentId: "support-7",
-      limit: 10,
-      cursor: "page-2",
+    it("sends a project filter beside the agent", async () => {
+      assert.deepEqual(await sent((sessions) => sessions.query({ filter: { project_id: "health" } })), {
+        filter: { project_id: "health", agent: "docs" },
+      });
     });
 
-    assert.deepEqual(
-      router.last.body,
-      {
-        filter: {
-          agent: "docs",
-          project_id: "health",
-          modality: "voice",
-          state: "live",
-          agent_id: "support-7",
-        },
+    it("sends an $or of two projects as it was written", async () => {
+      assert.deepEqual(
+        await sent((sessions) =>
+          sessions.query({ filter: { $or: [{ project_id: "health" }, { project_id: "billing" }] } }),
+        ),
+        { filter: { $or: [{ project_id: "health" }, { project_id: "billing" }], agent: "docs" } },
+      );
+    });
+
+    it("sends a nested $and and $or without wrapping it in another", async () => {
+      const filter: SessionFilter = {
+        $and: [
+          { $or: [{ project_id: "health" }, { project_id: { $eq: "billing" } }] },
+          { $or: [{ agent: "docs" }, { $and: [{ project_id: "trips" }] }] },
+        ],
+      };
+
+      assert.deepEqual(await sent((sessions) => sessions.query({ filter })), {
+        filter: { ...filter, agent: "docs" },
+      });
+    });
+
+    it("sends $in for any of several projects", async () => {
+      assert.deepEqual(
+        await sent((sessions) => sessions.query({ filter: { project_id: { $in: ["health", "billing"] } } })),
+        { filter: { project_id: { $in: ["health", "billing"] }, agent: "docs" } },
+      );
+    });
+
+    it("narrows to its own agent whatever agent the filter names", async () => {
+      assert.deepEqual(
+        await sent((sessions) => sessions.query({ filter: { agent: "someone-else", project_id: "health" } })),
+        { filter: { agent: "docs", project_id: "health" } },
+      );
+    });
+
+    it("searches through the same query, as a text match at the top level", async () => {
+      assert.deepEqual(
+        await sent((sessions) => sessions.search("sendbird", { filter: { project_id: "health" }, limit: 5 })),
+        { filter: { project_id: "health", text: { $q: "sendbird" }, agent: "docs" }, limit: 5 },
+      );
+    });
+
+    it("searches with no filter, and pages a search with its cursor", async () => {
+      assert.deepEqual(await sent((sessions) => sessions.search("lisbon", { cursor: "page-2" })), {
+        filter: { text: { $q: "lisbon" }, agent: "docs" },
+        cursor: "page-2",
+      });
+    });
+
+    it("refuses a search whose filter already has a text, or that names a sort", async () => {
+      const sessions = api.agent("docs").sessions;
+
+      await assert.rejects(
+        sessions.search("lisbon", { filter: { text: { $q: "porto" } } }),
+        ConfigurationError,
+      );
+      await assert.rejects(
+        sessions.search("lisbon", { sort: [{ field: "relevance" }] } as SessionSearch),
+        ConfigurationError,
+      );
+      assert.equal(router.requestsTo("POST", "/v1/agents/sessions/query").length, 0);
+    });
+
+    const sorts: readonly (readonly SessionSort[])[] = [
+      [{ field: "last_message_at" }],
+      [{ field: "last_message_at", direction: 1 }],
+      [{ field: "last_message_at", direction: -1 }],
+      [{ field: "pinned" }],
+      [{ field: "pinned", direction: -1 }, { field: "last_message_at", direction: -1 }],
+      [{ field: "pinned", direction: -1 }, { field: "last_message_at", direction: 1 }],
+      [{ field: "review_score", direction: -1 }],
+      [{ field: "review_score", direction: 1 }],
+    ];
+    for (const sort of sorts) {
+      it(`sends the sort ${JSON.stringify(sort)} as it was written`, async () => {
+        assert.deepEqual(await sent((sessions) => sessions.query({ sort })), {
+          filter: { agent: "docs" },
+          sort,
+        });
+      });
+    }
+
+    it("sorts a text filter by relevance when asked to", async () => {
+      assert.deepEqual(
+        await sent((sessions) =>
+          sessions.query({ filter: { text: { $q: "lisbon" } }, sort: [{ field: "relevance", direction: -1 }] }),
+        ),
+        { filter: { text: { $q: "lisbon" }, agent: "docs" }, sort: [{ field: "relevance", direction: -1 }] },
+      );
+    });
+
+    it("pages with a limit and the cursor of the page before", async () => {
+      router.serve("POST", "/v1/agents/sessions/query", {
+        body: { items: [session()], has_more: true, next_cursor: "page-2" },
+      });
+      const sessions = api.agent("docs").sessions;
+      const query = { filter: { project_id: "health" }, sort: [{ field: "pinned" }], limit: 10 } as const;
+
+      const first = await sessions.query(query);
+      await sessions.query({ ...query, cursor: first.next_cursor! });
+
+      assert.equal(first.has_more, true);
+      assert.deepEqual(router.last.body, {
+        filter: { project_id: "health", agent: "docs" },
+        sort: [{ field: "pinned" }],
         limit: 10,
         cursor: "page-2",
-      },
-      "an agent's sessions are the agent's own, and a filter nobody set is not sent empty",
-    );
+      });
+    });
+
+    it("lets a backend filter and sort by review score, and ask for one user's", async () => {
+      assert.deepEqual(
+        await sent((sessions) =>
+          sessions.query({
+            filter: { user_id: "ana", review_score: { $gte: 2, $lt: 5 }, $or: [{ review_score: 1 }, { project_id: "health" }] },
+            sort: [{ field: "review_score", direction: 1 }],
+          }),
+        ),
+        {
+          filter: {
+            user_id: "ana",
+            review_score: { $gte: 2, $lt: 5 },
+            $or: [{ review_score: 1 }, { project_id: "health" }],
+            agent: "docs",
+          },
+          sort: [{ field: "review_score", direction: 1 }],
+        },
+      );
+    });
+
+    it("reads pinned_at from the sessions a query answers", async () => {
+      router.serve("POST", "/v1/agents/sessions/query", {
+        body: {
+          items: [session({ id: "pinned", pinned_at: "2026-11-10T09:00:00Z" }), session({ id: "plain" })],
+          has_more: false,
+        },
+      });
+
+      const page = await api.agent("docs").sessions.query({ sort: [{ field: "pinned" }] });
+
+      assert.equal(page.items[0]?.pinned_at, "2026-11-10T09:00:00Z");
+      assert.equal(page.items[1]?.pinned_at, undefined);
+    });
   });
 
-  it("searches through the same query, as a text match", async () => {
-    router.serve("POST", "/v1/agents/sessions/query", {
-      body: { items: [session()], has_more: false },
+  it("pins and unpins a session by its id, and one it holds", async () => {
+    router.serve("PATCH", "/v1/agents/sessions/session-9", {
+      body: session({ id: "session-9", pinned_at: "2026-11-10T09:00:00Z" }),
     });
+    const sessions = api.agent("docs").sessions;
 
-    await api.agent("docs").sessions.search("sendbird", { userId: "ana" });
+    const pinned = await sessions.pin("session-9");
+    assert.equal(pinned.pinned_at, "2026-11-10T09:00:00Z");
+    assert.deepEqual(router.last.body, { pinned: true });
 
-    assert.deepEqual(router.last.body, {
-      filter: { agent: "docs", user_id: "ana", text: { $q: "sendbird" } },
+    router.serve("PATCH", "/v1/agents/sessions/session-9", { body: session({ id: "session-9" }) });
+    const unpinned = await sessions.unpin("session-9");
+    assert.equal(unpinned.pinned_at, undefined);
+    assert.deepEqual(router.last.body, { pinned: false });
+
+    await sessions.update("session-9", { title: "Trip", pinned: true });
+    assert.deepEqual(router.last.body, { title: "Trip", pinned: true });
+
+    router.serve("POST", "/v1/agents/sessions", { status: 201, body: session() });
+    router.serve("PATCH", "/v1/agents/sessions/session-1", {
+      body: session({ pinned_at: "2026-11-10T09:00:00Z" }),
     });
+    const held = await sessions.create({ watch: false });
+
+    assert.equal((await held.pin()).pinned_at, "2026-11-10T09:00:00Z");
+    assert.deepEqual(router.last.body, { pinned: true });
+    await held.unpin();
+    assert.deepEqual(router.last.body, { pinned: false });
+    await held.update({ pinned: true });
+    assert.deepEqual(router.last.body, { pinned: true });
   });
 
   it("stops an unwatched session on close rather than deleting it, so what it said is kept", async () => {
@@ -401,49 +559,6 @@ describe("sessions", () => {
       api.agent("docs").sessions.deleteMemories("someone-elses"),
       (error: unknown) => error instanceof RouterError && error.status === 404,
     );
-  });
-
-  it("filters a query by when sessions were made and by their labels, and sorts it", async () => {
-    router.serve("POST", "/v1/agents/sessions/query", {
-      body: { items: [session()], has_more: false },
-    });
-
-    await api.agent("docs").sessions.query({
-      createdSince: new Date("2026-10-01T00:00:00Z"),
-      createdBefore: new Date("2026-11-01T00:00:00Z"),
-      custom: { team: "support" },
-      sort: "updated_at",
-    });
-
-    assert.deepEqual(router.last.body, {
-      filter: {
-        agent: "docs",
-        created_at: { $gte: "2026-10-01T00:00:00.000Z", $lt: "2026-11-01T00:00:00.000Z" },
-        custom: { team: "support" },
-      },
-      sort: [{ field: "updated_at" }],
-    });
-  });
-
-  it("sends one end of a date range alone, and no empty labels", async () => {
-    router.serve("POST", "/v1/agents/sessions/query", {
-      body: { items: [], has_more: false },
-    });
-
-    await api.agent("docs").sessions.search("lisbon", {
-      createdSince: new Date("2026-10-01T00:00:00Z"),
-      custom: {},
-      sort: "relevance",
-    });
-
-    assert.deepEqual(router.last.body, {
-      filter: {
-        agent: "docs",
-        created_at: { $gte: "2026-10-01T00:00:00.000Z" },
-        text: { $q: "lisbon" },
-      },
-      sort: [{ field: "relevance" }],
-    });
   });
 
   it("renames, voices, stops and forks a session it is not holding, by its id", async () => {

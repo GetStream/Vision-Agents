@@ -157,22 +157,25 @@ func (s *StoreSuite) TestPagesNarrowedByKindAreFull() {
 		"a full page and the one row past it that says there is more")
 }
 
-func (s *StoreSuite) TestQueryOrdersMostRecentlyUpdatedFirst() {
+func (s *StoreSuite) TestQueryOrdersTheLastMessageFirst() {
 	s.opened("older", "app", s.base, nil)
 	s.opened("newer", "app", s.base.Add(time.Hour), nil)
 
 	found, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{})
 	s.Require().NoError(err)
-	s.Require().Len(found, 2)
-	s.Equal("newer", found[0].ID)
-	s.Equal("older", found[1].ID)
+	s.Equal([]string{"newer", "older"}, sessionIDs(found))
 
-	// Coming back to a conversation moves it up, however long ago it was opened.
-	s.Require().NoError(s.store.DescribeSession(s.ctx, "app", "older", "Picked up again", "", nil))
+	// Renaming a conversation is not coming back to it, so it stays where it was.
+	s.Require().NoError(s.store.DescribeSession(s.ctx, "app", "older", "Renamed", "", nil))
 	found, err = s.store.QuerySessions(s.ctx, "app", SessionFilter{})
 	s.Require().NoError(err)
-	s.Require().Len(found, 2)
-	s.Equal("older", found[0].ID)
+	s.Equal([]string{"newer", "older"}, sessionIDs(found))
+
+	// An answer in it moves it up, however long ago it was opened.
+	s.lastAnswered("older", s.base.Add(2*time.Hour))
+	found, err = s.store.QuerySessions(s.ctx, "app", SessionFilter{})
+	s.Require().NoError(err)
+	s.Equal([]string{"older", "newer"}, sessionIDs(found))
 }
 
 func (s *StoreSuite) TestQueryNarrowsByProjectAndAgent() {
@@ -191,6 +194,29 @@ func (s *StoreSuite) TestQueryNarrowsByProjectAndAgent() {
 	byAgent, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{AgentName: "docs"})
 	s.Require().NoError(err)
 	s.Len(byAgent, 2)
+}
+
+func (s *StoreSuite) TestQueryAndSearchNarrowToATeam() {
+	s.opened("finance", "app", s.base, func(session *AgentSession) {
+		session.Team = "finance"
+		session.Title = "shared subject"
+	})
+	s.opened("sales", "app", s.base.Add(time.Minute), func(session *AgentSession) {
+		session.Team = "sales"
+		session.Title = "shared subject"
+	})
+	s.opened("none", "app", s.base.Add(2*time.Minute), func(session *AgentSession) { session.Title = "shared subject" })
+
+	listed, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{Team: "finance"})
+	s.Require().NoError(err)
+	s.Require().Len(listed, 1)
+	s.Equal("finance", listed[0].ID)
+	s.Equal("finance", listed[0].Team)
+
+	found, err := s.store.SearchSessions(s.ctx, "app", "shared", SessionFilter{Team: "sales"})
+	s.Require().NoError(err)
+	s.Require().Len(found, 1)
+	s.Equal("sales", found[0].ID)
 }
 
 func (s *StoreSuite) TestASessionIsTextWithoutACallAndVoiceWithOne() {
@@ -241,7 +267,7 @@ func (s *StoreSuite) TestQueryPages() {
 
 	last := first[1]
 	second, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{
-		Limit: 2, Cursor: &SessionPosition{UpdatedAt: last.UpdatedAt, ID: last.ID},
+		Limit: 2, Cursor: after(last),
 	})
 	s.Require().NoError(err)
 	s.Require().Len(second, 1)
@@ -258,7 +284,7 @@ func (s *StoreSuite) TestQueryPagesThroughSessionsUpdatedAtTheSameInstant() {
 	s.Equal("c", first[0].ID)
 
 	second, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{
-		Limit: 1, Cursor: &SessionPosition{UpdatedAt: first[0].UpdatedAt, ID: first[0].ID},
+		Limit: 1, Cursor: after(first[0]),
 	})
 	s.Require().NoError(err)
 	s.Equal("b", second[0].ID, "the id breaks the tie, so nothing is skipped or repeated")
@@ -279,7 +305,7 @@ func (s *StoreSuite) TestSearchPagesInRankOrder() {
 
 	top := first[0]
 	second, err := s.store.SearchSessions(s.ctx, "app", "health", SessionFilter{
-		Limit: 1, Cursor: &SessionPosition{UpdatedAt: top.UpdatedAt, ID: top.ID, Rank: top.Rank},
+		Limit: 1, Cursor: after(top),
 	})
 	s.Require().NoError(err)
 	s.Require().Len(second, 1)
