@@ -23,7 +23,9 @@ import (
 //
 //	message.new, no source, in callouts:team-1          receiveMessageEvent, receiveChatInbound
 //	  addressedIn: the hook's app's own customer has a    a shared app, a type no config names,
-//	    config naming callouts (chatChannelConfig)          a failed read: nothing
+//	    config naming callouts (chatChannelConfig),         a failed read: nothing
+//	    mentioning the agent when it answers only its       no mention there: nothing; the
+//	    mentions there (answersTo)                          message stays, unanswered
 //	  answerChatChannel, off the request
 //	    lease the channel's turn in Postgres                another router's turn: wait
 //	    the session on the channel (ByConversationWhere), else
