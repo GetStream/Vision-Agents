@@ -229,3 +229,17 @@ func (s *DisplaySuite) TestQueuedAndPublishedCopiesKeepTheirOwnApproval() {
 	s.Require().Len(published, 1)
 	s.Empty(published[0].Message.Parts[0].Approval.Decision, "the published update")
 }
+
+// The copy a live update sends is encoded after the lock is let go: answering the approval
+// meanwhile changes only the live reply.
+func (s *DisplaySuite) TestTheLiveUpdatesCopyKeepsItsOwnApproval() {
+	reply := Message{ID: "reply", Role: "assistant", Parts: []Part{{
+		Type: partToolCall, ID: "call", Status: "awaiting_approval", Approval: &Approval{Title: "Send it?"},
+	}}}
+	sent := liveCopy(&reply)
+
+	s.True(decided(&reply, "call", true, "", time.Now()))
+
+	s.Equal("allowed", reply.Parts[0].Approval.Decision)
+	s.Empty(sent.Parts[0].Approval.Decision, "the live update")
+}
