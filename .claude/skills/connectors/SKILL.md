@@ -167,7 +167,10 @@ until the session's user allows it. The call's step is `awaiting_approval`, addr
 nothing reaches the provider before they answer with `tool_approval` (`tool_call_id`, the reply's
 `request_id`, `allowed`), on their socket or their backend's. Declined, or not answered in ten
 minutes, the call is not sent and the model is told. A session with nobody to ask (incognito, a
-run, a shared chat, an MCP event's) refuses the call at once. An entry must match a tool the
+run, a shared chat, an MCP event's) refuses the call at once. In a channel of a type
+`chat_channels` names, the call asks the writer of the message the reply answers, who answers
+with their own user token through `POST /v1/agents/conversations/{cid}/tool_approvals` while a
+member of the channel; the backend may answer any (`api/conversations.go`, AI-3154). An entry must match a tool the
 binding grants, and `sandbox: true` is refused beside it (`session/connector_approval.go`).
 Beside a sensitive connector (Nessy), a binding's write tool needs `require_approval`: the
 config is refused unless each tool it grants only reads (`read_only_tools`) or is held, and a

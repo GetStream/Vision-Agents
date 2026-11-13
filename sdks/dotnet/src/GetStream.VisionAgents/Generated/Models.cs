@@ -15615,6 +15615,39 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
+    /// A person's answer to a connector call waiting for their approval. An unknown field is refused rather than ignored.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ToolApprovalAnswer
+    {
+
+        /// <summary>
+        /// Whether the person allows the call.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("allowed")]
+        public bool Allowed { get; set; } = default!;
+
+        /// <summary>
+        /// The command the reply answers: support_runtime.command_id on the reply's message.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("request_id")]
+        public string RequestId { get; set; } = default!;
+
+        /// <summary>
+        /// Shown on the declined call, such as "Not now".
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("summary")]
+        public string? Summary { get; set; } = default!;
+
+        /// <summary>
+        /// The call's id, the id of its ai_tool_call step.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("tool_call_id")]
+        public string ToolCallId { get; set; } = default!;
+
+    }
+
+    /// <summary>
     /// A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself. For a connector call whose binding sets require_approval, the answer decides whether the router sends it, and names tool_call_id and request_id; turn_id may be left out.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]

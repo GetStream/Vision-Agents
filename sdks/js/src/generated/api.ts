@@ -1397,6 +1397,27 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/conversations/{cid}/tool_approvals": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Answer a call waiting for a person's approval
+         * @description Allows or declines a connector call whose binding sets `require_approval`, held on its `ai_tool_call` step (`awaiting_approval`) in the conversation's channel, as `tool_approval` on the session's socket does. The step's `target_user_id` is who may answer: the session's user, or in a channel of a type an agent config answers in (`chat_channels`), the person whose message the reply answers, with their own user token while they are a member of the channel. The app's backend may answer any. Allowed, the call is sent; declined, it is not, and the model is told so.
+         *     A call held for another person to allow is a 403. A call nobody waits on, answered or stopped already, or in a channel the caller is not a member of, is a 404.
+         */
+        readonly post: operations["answerConversationToolApproval"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/guests": {
         readonly parameters: {
             readonly query?: never;
@@ -10580,6 +10601,17 @@ export type components = {
             /** Format: date-time */
             readonly $lt?: string;
         };
+        /** @description A person's answer to a connector call waiting for their approval. An unknown field is refused rather than ignored. */
+        readonly ToolApprovalAnswer: {
+            /** @description Whether the person allows the call. */
+            readonly allowed: boolean;
+            /** @description The command the reply answers: support_runtime.command_id on the reply's message. */
+            readonly request_id: string;
+            /** @description Shown on the declined call, such as "Not now". */
+            readonly summary?: string;
+            /** @description The call's id, the id of its ai_tool_call step. */
+            readonly tool_call_id: string;
+        };
         /** @description A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself. For a connector call whose binding sets require_approval, the answer decides whether the router sends it, and names tool_call_id and request_id; turn_id may be left out. */
         readonly ToolApprovalCommand: {
             readonly allowed: boolean;
@@ -14835,6 +14867,42 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly answerConversationToolApproval: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The conversation's channel, type:id. */
+                readonly cid: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ToolApprovalAnswer"];
+            };
+        };
+        readonly responses: {
+            /** @description The answer reached the call */
+            readonly 204: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
             readonly 503: components["responses"]["Unavailable"];
         };

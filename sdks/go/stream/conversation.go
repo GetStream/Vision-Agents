@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
+	"net/http"
 	"time"
 )
 
@@ -63,6 +64,31 @@ func (b Backend) ConversationHistory(ctx context.Context, cid, agentID, before s
 	err = json.Unmarshal(raw, &page)
 	return page, err
 }
+
+// AnswerApproval answers, as the backend, a connector call held for a person to allow it in the
+// conversation cid (an ai_tool_call step awaiting_approval): the step's id, the request_id of the
+// command its reply answers (support_runtime.command_id), whether it is allowed and, declined,
+// what the step says. It is how a backend answers for the writer of a message in a channel of a
+// type an agent config answers in, whose session it holds no socket of.
+func (b Backend) AnswerApproval(ctx context.Context, cid, toolCallID, requestID string, allowed bool, summary string) error {
+	client, err := b.Client()
+	if err != nil {
+		return err
+	}
+	body := acceleration.AnswerConversationToolApprovalJSONRequestBody{ToolCallId: toolCallID, RequestId: requestID, Allowed: allowed}
+	if summary != "" {
+		body.Summary = &summary
+	}
+	r, err := client.AnswerConversationToolApprovalWithResponse(ctx, cid, body)
+	if err != nil {
+		return err
+	}
+	if r.StatusCode() != http.StatusNoContent {
+		return NewRouterError(r.HTTPResponse, r.Body, "", "tool approval", r.Status())
+	}
+	return nil
+}
+
 func (e Event) ConversationMessage() (ConversationMessage, bool) {
 	var m ConversationMessage
 	if e.Kind != "conversation_updated" {

@@ -576,6 +576,7 @@ from .text_match import TextMatch
 from .tier import Tier
 from .time_window import TimeWindow
 from .timeline_entry import TimelineEntry
+from .tool_approval_answer import ToolApprovalAnswer
 from .tool_approval_command import ToolApprovalCommand
 from .tool_approval_command_type import ToolApprovalCommandType
 from .tool_result_command import ToolResultCommand
@@ -1212,6 +1213,7 @@ __all__ = (
     "Tier",
     "TimeWindow",
     "TimelineEntry",
+    "ToolApprovalAnswer",
     "ToolApprovalCommand",
     "ToolApprovalCommandType",
     "ToolResultCommand",

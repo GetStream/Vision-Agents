@@ -13193,6 +13193,21 @@ pub struct TimelineEntry {
     pub tts_ttfb_ms: ::std::option::Option<f64>,
     pub turn_id: ::std::string::String,
 }
+///A person's answer to a connector call waiting for their approval. An unknown field is refused rather than ignored.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+#[derive(Default)]
+pub struct ToolApprovalAnswer {
+    ///Whether the person allows the call.
+    pub allowed: bool,
+    ///The command the reply answers: support_runtime.command_id on the reply's message.
+    pub request_id: ::std::string::String,
+    ///Shown on the declined call, such as "Not now".
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub summary: ::std::option::Option<::std::string::String>,
+    ///The call's id, the id of its ai_tool_call step.
+    pub tool_call_id: ::std::string::String,
+}
 ///A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself. For a connector call whose binding sets require_approval, the answer decides whether the router sends it, and names tool_call_id and request_id; turn_id may be left out.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct ToolApprovalCommand {

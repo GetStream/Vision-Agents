@@ -88,6 +88,8 @@ Each entry may say `answer: mentioned` (`always` when left out, as before): a me
 
 The model answering in a channel of a named type sees each person's message under their name and Stream user id, `Anya (user anya-1): ...`, from the first message, both live and read back from the channel, and is told that only that opening label says who wrote a message and that the id grants no access. A name is cut at 256 characters, and a colon, a bracket, a line break or an invisible format character in a name or id becomes a space. `agent` channels and thread channels are labelled as before (AI-3153).
 
+In a channel of a named type, a connector call whose binding sets `require_approval` asks the person whose message the reply answers: its `ai_tool_call` step's `target_user_id` is that writer, not the session's user. The writer answers with their own user token through `POST /v1/agents/conversations/{cid}/tool_approvals` (`tool_call_id`, `request_id`, `allowed`, `summary`), while they are a member of the channel; the app's backend may answer any. Another person is refused with a 403, and a call nobody waits on, or a channel the caller is not in, is a 404. `agent` channels and shared conversations ask whom they asked before; the session's user may answer through the new operation too (AI-3154).
+
 ### The router counts the voice sessions judged for silence
 
 `/metrics` serves `router_voice_sessions_judged_total{kind}`: each voice session somebody besides the agent joined, once at its end, whether or not it is in a silent case. `kind` is `phone` or `web`, as in `router_silent_sessions_total`. A case's count divided by it is at most 1, so it is the denominator of the silent share. A session nobody joined counts in neither. Nothing else changes (AI-3156).

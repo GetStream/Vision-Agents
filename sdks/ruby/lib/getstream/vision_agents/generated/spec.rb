@@ -38,6 +38,12 @@ module GetStream
           body: "AnalyzeReviewsRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
+        "answerConversationToolApproval" => {
+          method: :post, path: "/v1/agents/conversations/{cid}/tool_approvals",
+          path_params: %w[cid].freeze, query: [].freeze,
+          body: "ToolApprovalAnswer", body_required: true,
+          socket: false, client_accessible: true
+        }.freeze,
         "answerProviderAppHandshake" => {
           method: :get, path: "/v1/connectors/events/{connector_id}/{provider_app_id}",
           path_params: %w[connector_id provider_app_id].freeze, query: %w[hub.mode hub.verify_token hub.challenge].freeze,
@@ -3120,6 +3126,10 @@ module GetStream
         "TimelineEntry" => {
           properties: %w[audio_out_ms cadence_ms decision_ms first_audible_frame_ms first_frame_queued_ms heard interrupted llm_ttft_ms model_calls model_to_first_text_ms roundtrip_ms said speech_end_to_audible_ms speech_end_to_audio_ms started_at stt_latency_ms text_to_tts_ms tts_to_audio_ms tts_ttfb_ms turn_id].freeze,
           required: %w[started_at turn_id].freeze, open: false
+        }.freeze,
+        "ToolApprovalAnswer" => {
+          properties: %w[allowed request_id summary tool_call_id].freeze,
+          required: %w[tool_call_id request_id allowed].freeze, open: false
         }.freeze,
         "ToolApprovalCommand" => {
           properties: %w[allowed request_id summary tool_call_id turn_id type].freeze,

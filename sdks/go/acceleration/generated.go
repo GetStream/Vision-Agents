@@ -10195,6 +10195,21 @@ type TimelineEntry struct {
 	TurnId    string   `json:"turn_id"`
 }
 
+// ToolApprovalAnswer A person's answer to a connector call waiting for their approval. An unknown field is refused rather than ignored.
+type ToolApprovalAnswer struct {
+	// Allowed Whether the person allows the call.
+	Allowed bool `json:"allowed"`
+
+	// RequestId The command the reply answers: support_runtime.command_id on the reply's message.
+	RequestId string `json:"request_id"`
+
+	// Summary Shown on the declined call, such as "Not now".
+	Summary *string `json:"summary,omitempty"`
+
+	// ToolCallId The call's id, the id of its ai_tool_call step.
+	ToolCallId string `json:"tool_call_id"`
+}
+
 // ToolApprovalCommand A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself. For a connector call whose binding sets require_approval, the answer decides whether the router sends it, and names tool_call_id and request_id; turn_id may be left out.
 type ToolApprovalCommand struct {
 	Allowed   bool   `json:"allowed"`
@@ -11791,6 +11806,9 @@ type SetConnectorOAuthClientJSONRequestBody = ConnectorOAuthClientRequest
 
 // SetConnectorProviderAppJSONRequestBody defines body for SetConnectorProviderApp for application/json ContentType.
 type SetConnectorProviderAppJSONRequestBody = ConnectorProviderAppRequest
+
+// AnswerConversationToolApprovalJSONRequestBody defines body for AnswerConversationToolApproval for application/json ContentType.
+type AnswerConversationToolApprovalJSONRequestBody = ToolApprovalAnswer
 
 // CreateGuestUserJSONRequestBody defines body for CreateGuestUser for application/json ContentType.
 type CreateGuestUserJSONRequestBody = GuestUserRequest
@@ -13552,6 +13570,26 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/agents/conversations/{cid}/messages (the `GetConversationMessages` operationId).
 	GetConversationMessages(ctx context.Context, cid string, params *GetConversationMessagesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AnswerConversationToolApprovalWithBody Answer a call waiting for a person's approval
+	//
+	// Allows or declines a connector call whose binding sets `require_approval`, held on its `ai_tool_call` step (`awaiting_approval`) in the conversation's channel, as `tool_approval` on the session's socket does. The step's `target_user_id` is who may answer: the session's user, or in a channel of a type an agent config answers in (`chat_channels`), the person whose message the reply answers, with their own user token while they are a member of the channel. The app's backend may answer any. Allowed, the call is sent; declined, it is not, and the model is told so.
+	// A call held for another person to allow is a 403. A call nobody waits on, answered or stopped already, or in a channel the caller is not a member of, is a 404.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/conversations/{cid}/tool_approvals (the `AnswerConversationToolApproval` operationId).
+	AnswerConversationToolApprovalWithBody(ctx context.Context, cid string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AnswerConversationToolApproval Answer a call waiting for a person's approval
+	//
+	// Allows or declines a connector call whose binding sets `require_approval`, held on its `ai_tool_call` step (`awaiting_approval`) in the conversation's channel, as `tool_approval` on the session's socket does. The step's `target_user_id` is who may answer: the session's user, or in a channel of a type an agent config answers in (`chat_channels`), the person whose message the reply answers, with their own user token while they are a member of the channel. The app's backend may answer any. Allowed, the call is sent; declined, it is not, and the model is told so.
+	// A call held for another person to allow is a 403. A call nobody waits on, answered or stopped already, or in a channel the caller is not a member of, is a 404.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/conversations/{cid}/tool_approvals (the `AnswerConversationToolApproval` operationId).
+	AnswerConversationToolApproval(ctx context.Context, cid string, body AnswerConversationToolApprovalJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateGuestUserWithBody Mint a guest so somebody can talk to an agent before signing up
 	//
@@ -17759,6 +17797,46 @@ func (c *Client) GetConversationCommand(ctx context.Context, cid string, request
 // Corresponds with GET /v1/agents/conversations/{cid}/messages (the `GetConversationMessages` operationId).
 func (c *Client) GetConversationMessages(ctx context.Context, cid string, params *GetConversationMessagesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetConversationMessagesRequest(c.Server, cid, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AnswerConversationToolApprovalWithBody Answer a call waiting for a person's approval
+//
+// Allows or declines a connector call whose binding sets `require_approval`, held on its `ai_tool_call` step (`awaiting_approval`) in the conversation's channel, as `tool_approval` on the session's socket does. The step's `target_user_id` is who may answer: the session's user, or in a channel of a type an agent config answers in (`chat_channels`), the person whose message the reply answers, with their own user token while they are a member of the channel. The app's backend may answer any. Allowed, the call is sent; declined, it is not, and the model is told so.
+// A call held for another person to allow is a 403. A call nobody waits on, answered or stopped already, or in a channel the caller is not a member of, is a 404.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/conversations/{cid}/tool_approvals (the `AnswerConversationToolApproval` operationId).
+func (c *Client) AnswerConversationToolApprovalWithBody(ctx context.Context, cid string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAnswerConversationToolApprovalRequestWithBody(c.Server, cid, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AnswerConversationToolApproval Answer a call waiting for a person's approval
+//
+// Allows or declines a connector call whose binding sets `require_approval`, held on its `ai_tool_call` step (`awaiting_approval`) in the conversation's channel, as `tool_approval` on the session's socket does. The step's `target_user_id` is who may answer: the session's user, or in a channel of a type an agent config answers in (`chat_channels`), the person whose message the reply answers, with their own user token while they are a member of the channel. The app's backend may answer any. Allowed, the call is sent; declined, it is not, and the model is told so.
+// A call held for another person to allow is a 403. A call nobody waits on, answered or stopped already, or in a channel the caller is not a member of, is a 404.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/conversations/{cid}/tool_approvals (the `AnswerConversationToolApproval` operationId).
+func (c *Client) AnswerConversationToolApproval(ctx context.Context, cid string, body AnswerConversationToolApprovalJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAnswerConversationToolApprovalRequest(c.Server, cid, body)
 	if err != nil {
 		return nil, err
 	}
@@ -26147,6 +26225,53 @@ func NewGetConversationMessagesRequest(server string, cid string, params *GetCon
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewAnswerConversationToolApprovalRequest calls the generic AnswerConversationToolApproval builder with application/json body
+func NewAnswerConversationToolApprovalRequest(server string, cid string, body AnswerConversationToolApprovalJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAnswerConversationToolApprovalRequestWithBody(server, cid, "application/json", bodyReader)
+}
+
+// NewAnswerConversationToolApprovalRequestWithBody constructs an http.Request for the AnswerConversationToolApproval method, with any body, and a specified content type
+func NewAnswerConversationToolApprovalRequestWithBody(server string, cid string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "cid", cid, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/conversations/%s/tool_approvals", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -35894,6 +36019,26 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/agents/conversations/{cid}/messages (the `GetConversationMessages` operationId).
 	GetConversationMessagesWithResponse(ctx context.Context, cid string, params *GetConversationMessagesParams, reqEditors ...RequestEditorFn) (*GetConversationMessagesResponse, error)
+
+	// AnswerConversationToolApprovalWithBodyWithResponse Answer a call waiting for a person's approval
+	//
+	// Allows or declines a connector call whose binding sets `require_approval`, held on its `ai_tool_call` step (`awaiting_approval`) in the conversation's channel, as `tool_approval` on the session's socket does. The step's `target_user_id` is who may answer: the session's user, or in a channel of a type an agent config answers in (`chat_channels`), the person whose message the reply answers, with their own user token while they are a member of the channel. The app's backend may answer any. Allowed, the call is sent; declined, it is not, and the model is told so.
+	// A call held for another person to allow is a 403. A call nobody waits on, answered or stopped already, or in a channel the caller is not a member of, is a 404.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/conversations/{cid}/tool_approvals (the `AnswerConversationToolApproval` operationId).
+	AnswerConversationToolApprovalWithBodyWithResponse(ctx context.Context, cid string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AnswerConversationToolApprovalResponse, error)
+
+	// AnswerConversationToolApprovalWithResponse Answer a call waiting for a person's approval
+	//
+	// Allows or declines a connector call whose binding sets `require_approval`, held on its `ai_tool_call` step (`awaiting_approval`) in the conversation's channel, as `tool_approval` on the session's socket does. The step's `target_user_id` is who may answer: the session's user, or in a channel of a type an agent config answers in (`chat_channels`), the person whose message the reply answers, with their own user token while they are a member of the channel. The app's backend may answer any. Allowed, the call is sent; declined, it is not, and the model is told so.
+	// A call held for another person to allow is a 403. A call nobody waits on, answered or stopped already, or in a channel the caller is not a member of, is a 404.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/conversations/{cid}/tool_approvals (the `AnswerConversationToolApproval` operationId).
+	AnswerConversationToolApprovalWithResponse(ctx context.Context, cid string, body AnswerConversationToolApprovalJSONRequestBody, reqEditors ...RequestEditorFn) (*AnswerConversationToolApprovalResponse, error)
 
 	// CreateGuestUserWithBodyWithResponse Mint a guest so somebody can talk to an agent before signing up
 	//
@@ -46441,6 +46586,107 @@ func (r GetConversationMessagesResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetConversationMessagesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// AnswerConversationToolApprovalResponse204Headers the declared response headers of an HTTP 204 response for AnswerConversationToolApproval
+type AnswerConversationToolApprovalResponse204Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// AnswerConversationToolApprovalResponse402Headers the declared response headers of an HTTP 402 response for AnswerConversationToolApproval
+type AnswerConversationToolApprovalResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type AnswerConversationToolApprovalResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers204 the parsed response headers for an HTTP 204 response
+	Headers204 *AnswerConversationToolApprovalResponse204Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *AnswerConversationToolApprovalResponse402Headers
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r AnswerConversationToolApprovalResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AnswerConversationToolApprovalResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r AnswerConversationToolApprovalResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r AnswerConversationToolApprovalResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r AnswerConversationToolApprovalResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AnswerConversationToolApprovalResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r AnswerConversationToolApprovalResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r AnswerConversationToolApprovalResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AnswerConversationToolApprovalResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AnswerConversationToolApprovalResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AnswerConversationToolApprovalResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -66503,6 +66749,38 @@ func (c *ClientWithResponses) GetConversationMessagesWithResponse(ctx context.Co
 	return ParseGetConversationMessagesResponse(rsp)
 }
 
+// AnswerConversationToolApprovalWithBodyWithResponse Answer a call waiting for a person's approval
+//
+// Allows or declines a connector call whose binding sets `require_approval`, held on its `ai_tool_call` step (`awaiting_approval`) in the conversation's channel, as `tool_approval` on the session's socket does. The step's `target_user_id` is who may answer: the session's user, or in a channel of a type an agent config answers in (`chat_channels`), the person whose message the reply answers, with their own user token while they are a member of the channel. The app's backend may answer any. Allowed, the call is sent; declined, it is not, and the model is told so.
+// A call held for another person to allow is a 403. A call nobody waits on, answered or stopped already, or in a channel the caller is not a member of, is a 404.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/conversations/{cid}/tool_approvals (the `AnswerConversationToolApproval` operationId).
+func (c *ClientWithResponses) AnswerConversationToolApprovalWithBodyWithResponse(ctx context.Context, cid string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AnswerConversationToolApprovalResponse, error) {
+	rsp, err := c.AnswerConversationToolApprovalWithBody(ctx, cid, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAnswerConversationToolApprovalResponse(rsp)
+}
+
+// AnswerConversationToolApprovalWithResponse Answer a call waiting for a person's approval
+//
+// Allows or declines a connector call whose binding sets `require_approval`, held on its `ai_tool_call` step (`awaiting_approval`) in the conversation's channel, as `tool_approval` on the session's socket does. The step's `target_user_id` is who may answer: the session's user, or in a channel of a type an agent config answers in (`chat_channels`), the person whose message the reply answers, with their own user token while they are a member of the channel. The app's backend may answer any. Allowed, the call is sent; declined, it is not, and the model is told so.
+// A call held for another person to allow is a 403. A call nobody waits on, answered or stopped already, or in a channel the caller is not a member of, is a 404.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/conversations/{cid}/tool_approvals (the `AnswerConversationToolApproval` operationId).
+func (c *ClientWithResponses) AnswerConversationToolApprovalWithResponse(ctx context.Context, cid string, body AnswerConversationToolApprovalJSONRequestBody, reqEditors ...RequestEditorFn) (*AnswerConversationToolApprovalResponse, error) {
+	rsp, err := c.AnswerConversationToolApproval(ctx, cid, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAnswerConversationToolApprovalResponse(rsp)
+}
+
 // CreateGuestUserWithBodyWithResponse Mint a guest so somebody can talk to an agent before signing up
 //
 // Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with, and a refresh_secret to come back with once it has expired. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id. A token for an existing guest goes only to the app's backend, to the guest's own still-valid token, or to the refresh_secret the guest was last handed; any other caller naming an id is minted a new guest.
@@ -79770,6 +80048,128 @@ func ParseGetConversationMessagesResponse(rsp *http.Response) (*GetConversationM
 		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
 		var headers GetConversationMessagesResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseAnswerConversationToolApprovalResponse parses an HTTP response from a AnswerConversationToolApprovalWithResponse call
+func ParseAnswerConversationToolApprovalResponse(rsp *http.Response) (*AnswerConversationToolApprovalResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AnswerConversationToolApprovalResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		var headers AnswerConversationToolApprovalResponse204Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers204 = &headers
+	case rsp.StatusCode == 402:
+		var headers AnswerConversationToolApprovalResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
