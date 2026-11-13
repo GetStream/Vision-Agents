@@ -851,7 +851,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 	streams := &api.Streams{}
 
 	// One chorus-asr server serves every agent: as a transcriber where one names it, and
-	// to the flow controller of an agent whose floor control opts in.
+	// to the flow controller of an agent whose floor control opts in, or of every agent that
+	// chose none where agent.floor_control_default says so.
 	floor := audiofloor.Open(settings.Agent)
 
 	if section, ok := capabilities[routing.STT]; ok {
@@ -1384,7 +1385,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 	}
 	logger.Info("management API, /v1/manage", "on", settings.Auth.ManageKey != "", "setting", "ROUTER_AUTH_MANAGE_KEY")
 
+	documents := api.NewDocumentReader(extract.Options{Logger: logger})
+	defer documents.Close()
 	options := api.Options{
+		Documents:             documents,
 		Routers:               routers,
 		Pricer:                prices,
 		Prices:                activePrices,
@@ -2073,8 +2077,10 @@ func buildSessions(
 		Classifier: judging,
 		FlowJudge:  settings.Agent.FlowJudge,
 		Phone:      telephony,
-		// Off unless the deployment names a server and an agent opts in.
-		AudioFloor: floor,
+		// Off unless the deployment names a server and an agent opts in, or the deployment
+		// defaults every agent that chose none to it.
+		AudioFloor:          floor,
+		FloorControlDefault: settings.Agent.FloorControlDefault,
 		// Off unless the deployment asks: a reply started before its ruling is paid for
 		// whether or not it is spoken.
 		SpeculativeReplies: settings.Agent.SpeculativeReplies,

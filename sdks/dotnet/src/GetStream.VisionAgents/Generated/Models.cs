@@ -718,7 +718,7 @@ namespace GetStream.VisionAgents.Models
         public string? EpisodeCards { get; set; } = default!;
 
         /// <summary>
-        /// The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. Absent for the default flow controller.
+        /// The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop, as the agent chose it: stream/chorus-asr, or flow-controller for the flow controller whatever the router's default. Absent when it chose none, which the router's default rules.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("floor_control")]
         public FloorControl? FloorControl { get; set; } = default!;
@@ -889,7 +889,7 @@ namespace GetStream.VisionAgents.Models
         public string? EpisodeCards { get; set; } = default!;
 
         /// <summary>
-        /// Replaces the choice whole. Left out or null, the stored choice stays; an empty object is the default flow controller again.
+        /// Replaces the choice whole. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules; {model: flow-controller} keeps the flow controller whatever that default.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("floor_control")]
         public FloorControl? FloorControl { get; set; } = default!;
@@ -1069,7 +1069,7 @@ namespace GetStream.VisionAgents.Models
         public string? EpisodeCards { get; set; } = default!;
 
         /// <summary>
-        /// The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. A session request's wins over this. Left out or null on a create, the default flow controller; left out or null on an update, the stored choice stays; an empty object is the default flow controller again.
+        /// The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. A session request's wins over this. Left out or null on a create, no choice: the router's default rules, the flow controller or stream/chorus-asr where the router defaults every agent to it; left out or null on an update, the stored choice stays; an empty object is no choice again; {model: flow-controller} keeps the flow controller whatever the router's default.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("floor_control")]
         public FloorControl? FloorControl { get; set; } = default!;
@@ -3863,6 +3863,12 @@ namespace GetStream.VisionAgents.Models
         public string? Description { get; set; } = default!;
 
         /// <summary>
+        /// The reply to a tool result, counted since the agent was handed its input, that is offered no more tools and made to answer from what it has. Zero is the default of 8; a negative number never withdraws them, for an agent that chains many lookups.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("max_tool_rounds")]
+        public long? MaxToolRounds { get; set; } = default!;
+
+        /// <summary>
         /// How long one call may take, two minutes when left out. A call never outlasts the run that made it: it gets this or what is left of the run, whichever is less. A call that runs out of time, or whose agent fails, is answered to the model as a failed tool call, and the run goes on.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("timeout_ms")]
@@ -6050,6 +6056,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("audio")]
         public AudioSource? Audio { get; set; } = default!;
 
+        /// <summary>
+        /// A file to answer questions about: a PDF or a Word document. The router reads it as text before the turn starts, and the agent answers from it on this turn and on every turn of the conversation after it, including a conversation carried on later or forked by the same person. In a conversation kept in Stream Chat the person's message shows the file. At most 100 pages, and at most 120,000 characters of text together with the files the conversation already holds, or a quarter of what the model reads at once. Only in a person's own conversation: refused in a thread, in a channel others write in, in a session a worker opened for a channel's message, and by a speech-to-speech session. Not with a voice note. Refused before any turn starts when it cannot be read, is too large, or reads as a prompt injection under the organization's policy.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("files")]
+        public System.Collections.Generic.List<FileSource>? Files { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("images")]
         public System.Collections.Generic.List<ImageSource>? Images { get; set; } = default!;
 
@@ -6285,7 +6297,7 @@ namespace GetStream.VisionAgents.Models
         public string? Description { get; set; } = default!;
 
         /// <summary>
-        /// The model that controls the floor in this session, and how long a caller may wait once they stop, over the agent config's. Left out or null, the config's; an empty object is the default flow controller. The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide.
+        /// The model that controls the floor in this session, and how long a caller may wait once they stop, over the agent config's. Left out or null, the config's; an empty object is no choice, which the router's default rules; {model: flow-controller} keeps the flow controller whatever that default. A model the session was opened with, named here or the config's then, is its for its life, reopened included; no choice is stored as none, so a reopened session takes its config's choice as it is then, and the router's default after it. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("floor_control")]
         public FloorControl? FloorControl { get; set; } = default!;
@@ -7285,7 +7297,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), tier_limit_reached (the organization's tier limits refuse the work, and limit says which: a 403 for a call or a transfer, to a country the tier does not reach, past its minutes or recipients of the day, or past its calls at once; a 400 for an agent config whose sandbox is bigger or more open than the organization's sandbox limits allow. The message names the tier and the limit), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), and &lt;resource&gt;_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+        /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), tier_limit_reached (the organization's tier limits refuse the work, and limit says which: a 403 for a call or a transfer, to a country the tier does not reach, past its minutes or recipients of the day, or past its calls at once; a 400 for an agent config whose sandbox is bigger or more open than the organization's sandbox limits allow. The message names the tier and the limit), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), document_too_large (a 413: a file sent with a response has more pages or text than one may, alone or with the files the conversation already holds, and the message names the limit), document_unreadable (a 400: a file sent with a response could not be read, such as one with a password, one that is damaged or one with no text in it, which retrying the same file does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), and &lt;resource&gt;_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("code")]
         public string Code { get; set; } = default!;
@@ -7344,20 +7356,50 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
-    /// The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole.
+    /// A file sent with a question. The router reads it as text once, and the agent answers from it on this turn and every turn of the conversation after it.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class FileSource
+    {
+
+        /// <summary>
+        /// What the file is called, shown on the person's message and to the model. Left out, the last part of the URL's path, or document for a data URI.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("name")]
+        public string? Name { get; set; } = default!;
+
+        /// <summary>
+        /// Public HTTP(S) URL or base64 data URI, such as data:application/pdf;base64,.... A PDF or a Word document (DOCX or DOC), told apart by its bytes. At most 20 MiB fetched, or 8 MiB as a data URI. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("url")]
+        public string Url { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default; anything else replaces the stored choice whole.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class FloorControl
     {
 
         /// <summary>
-        /// The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point.
+        /// The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point. It is stream/chorus-asr's: with flow-controller it is refused (400).
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("max_wait_ms")]
         public long? MaxWaitMs { get; set; } = default!;
 
         /// <summary>
-        /// The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one there is. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured).
+        /// The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one model there is; flow-controller keeps the flow controller, which rules the floor where no model does, whatever the router defaults an agent that chose none to. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured).
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("model")]
         public string? Model { get; set; } = default!;
@@ -7880,7 +7922,7 @@ namespace GetStream.VisionAgents.Models
         public System.DateTimeOffset CreatedAt { get; set; } = default!;
 
         /// <summary>
-        /// Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good.
+        /// Why the uploaded file could not be read, or why the passages of posted text could not all be written, written for whoever sent it. Set while a read that failed is tried again, and once it has failed for good.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("error")]
         public string? Error { get; set; } = default!;
@@ -7898,7 +7940,7 @@ namespace GetStream.VisionAgents.Models
         public int Pages { get; set; } = default!;
 
         /// <summary>
-        /// How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read.
+        /// How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read. A document that is pending or failed can also count the passages of the version before, so that deleting it removes every passage either version wrote.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("passages")]
         public int Passages { get; set; } = default!;
@@ -14960,7 +15002,7 @@ namespace GetStream.VisionAgents.Models
         public AgentDispatch? Dispatch { get; set; } = default!;
 
         /// <summary>
-        /// agent.yaml's floor_control: the model that controls the agent's floor, and how long a caller may wait once they stop. Sent, it replaces the stored choice whole, and an empty object is the default flow controller again; left out or null, the stored one stays, and an agent that never chose has the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400), and so is a max_wait_ms shorter than every point the chorus-asr server publishes, before anything is written. When the server cannot be asked the wait is kept and a warning says so, as it does of a point that fails the server's dictation guard.
+        /// agent.yaml's floor_control: the model that controls the agent's floor, and how long a caller may wait once they stop. Sent, it replaces the stored choice whole, and an empty object is no choice again; left out or null, the stored one stays. An agent that chose none gets the router's default: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever that default. stream/chorus-asr on a router without a chorus-asr server is refused (400), and so is a max_wait_ms shorter than every point the chorus-asr server publishes, before anything is written. When the server cannot be asked the wait is kept and a warning says so, as it does of a point that fails the server's dictation guard.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("floor_control")]
         public FloorControl? FloorControl { get; set; } = default!;

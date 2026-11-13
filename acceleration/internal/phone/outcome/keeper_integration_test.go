@@ -447,12 +447,18 @@ func (s *KeeperSuite) carrierOf(vendor string) map[string]float64 {
 			}
 			switch family.GetName() {
 			case "router_phone_call_sip_responses_total":
-				got[prefix+"sip "+labels["code"]] = metric.GetCounter().GetValue()
+				if value := metric.GetCounter().GetValue(); value != 0 {
+					got[prefix+"sip "+labels["code"]] = value
+				}
 			case "router_phone_short_calls_total":
-				got["short "+labels["direction"]] = metric.GetCounter().GetValue()
+				if value := metric.GetCounter().GetValue(); value != 0 {
+					got["short "+labels["direction"]] = value
+				}
 			case "router_phone_post_dial_delay_seconds":
-				got[prefix+"delays"] = float64(metric.GetHistogram().GetSampleCount())
-				got[prefix+"delay seconds"] = metric.GetHistogram().GetSampleSum()
+				if count := metric.GetHistogram().GetSampleCount(); count != 0 {
+					got[prefix+"delays"] = float64(count)
+					got[prefix+"delay seconds"] = metric.GetHistogram().GetSampleSum()
+				}
 			}
 		}
 	}

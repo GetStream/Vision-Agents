@@ -134,6 +134,7 @@ func (r *childRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.Content
 	spec := FromConfig(config)
 	spec.CustomerID = r.spec.CustomerID
 	spec.Caller, spec.CallerKind = r.spec.Caller, r.spec.CallerKind
+	spec.MaxToolRounds = child.MaxToolRounds
 	// The parent's cost labels go on the child's requests too, so its spend is counted
 	// where the parent's is.
 	if len(r.spec.Tags) > 0 {

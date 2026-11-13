@@ -14,7 +14,7 @@ name: Release all SDKs
 # Each SDK keeps its own version line, so "minor" raises .NET 0.2.0 to 0.3.0 and Ruby 0.1.0 to
 # 0.2.0. Two decide their version themselves and ignore the part: JS reads its `sdk-js` commits
 # and releases nothing when there are none, and Dart releases the version in its pubspec.yaml
-# files if that one is not out yet.
+# if that one is not out yet.
 #
 # Not started from here: Kotlin is published when a pull request raising its version merges
 # (publish-sdk-kotlin.yml), and Go is a copy of sdks/go on main with a tag (the sdk-go skill).

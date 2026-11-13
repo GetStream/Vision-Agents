@@ -624,6 +624,8 @@ type stub struct {
 	leg StreamLeg
 	// pressed is every vendorCallID:digits this vendor was asked to press.
 	pressed []string
+	// hungUp is every vendorCallID this vendor was asked to hang up.
+	hungUp []string
 }
 
 func (s *stub) StreamLeg() StreamLeg { return s.leg }
@@ -702,8 +704,16 @@ func (s *stub) ReadMachine(_ string, body []byte) (MachineReport, error) {
 	return MachineReport{Machine: Machine(form.Get("machine")), Word: form.Get("machine")}, nil
 }
 
+func (s *stub) HangUp(_ context.Context, vendorCallID string) error {
+	s.hungUp = append(s.hungUp, vendorCallID)
+	return s.err
+}
+
 // silent is a vendor that reports nothing on the calls it places.
 type silent struct{ Provider }
+
+// plainVendor is a vendor that cannot hang up a call it placed.
+type plainVendor struct{ Provider }
 
 func (s *stub) Supports(filter Filter) bool { return !slices.Contains(s.unsupported, filter) }
 

@@ -207,6 +207,10 @@ type Spec struct {
 	// first response, where a resumed conversation's history goes, and it is recorded
 	// nowhere: not as turns, not in a transcript, not in Chat.
 	History []persistent.HistoryLine
+	// Documents are files carried into this session from the conversation it forks, read
+	// as text, the caller's own (store.DocumentScope). They are pinned ahead of every reply
+	// and kept under this session as well, so a fork of it carries them on.
+	Documents []store.ConversationDocument `json:"-"`
 
 	Instructions string
 	// Greeting is said on joining without going through the model. Empty means the agent
@@ -284,8 +288,8 @@ type Spec struct {
 	// model: the session request's, else the agent config's. Zero is the router's default.
 	ResumeHistory store.ResumeHistory
 	// FloorControl is the model that controls the floor, and how long a caller may wait once
-	// they stop: the session request's, else the agent config's. Zero is the default flow
-	// controller.
+	// they stop: the session request's, else the agent config's. Zero is no choice, which the
+	// router's default rules (FloorControlOf).
 	FloorControl store.FloorControl
 	// Scheduling is the agent config's scheduled-task settings: whether the
 	// scheduling tools are offered, and the defaults a task takes.

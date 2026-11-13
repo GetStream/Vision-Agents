@@ -18,7 +18,7 @@ from one file, and do not rename them.
 | Ruby | `getstream-vision-agents` | RubyGems | `release-sdk-ruby.yml` | last tag + bump | `sdk-ruby-v*` |
 | Rust | `vision-agents` | crates.io | `release-sdk-rust.yml` | last tag + bump | `sdk-rust-v*` |
 | PHP | `getstream/vision-agents` | Packagist, through a split repository | `release-sdk-php.yml` | last tag + bump | `sdk-php-v*` |
-| Dart | `vision_agents_core`, `_chat`, `_rtc` | pub.dev | `release-sdk-dart.yml` | the three `pubspec.yaml` | `sdk-dart-v*` |
+| Dart | `stream_agents` | pub.dev | `release-sdk-dart.yml` | its `pubspec.yaml` | `sdk-dart-v*` |
 | Kotlin | `io.getstream:stream-agents-android-core` | stream-io-repo.com | `publish-sdk-kotlin.yml` | `gradle.properties` | `sdk-kotlin-v*` |
 | Go | `github.com/GetStream/Vision-Agents/sdks/go` | the Go proxy | by hand, on `main` | you | `sdks/go/v*` |
 | Swift | `stream-agents` (SwiftPM) | this repository | none | the GitHub Release | `v*` |
@@ -56,12 +56,11 @@ leaves the others as they were: fix it and run "Release all SDKs" again with onl
 
 - **JS** decides its own version from commits scoped `sdk-js` since the last `sdk-js-v*` tag,
   and releases nothing when there are none (see the `sdk-js` skill).
-- **Dart** releases the version committed in `sdks/dart/{core,chat,rtc}/pubspec.yaml`, if it has
-  no `sdk-dart-v*` tag yet. To include Dart, first merge a pull request that raises `version` in
-  all three and `vision_agents_core: ^<version>` in chat and rtc. pub.dev takes a package only
-  from a run on a tag, so the run from `accelerate` tags the commit and starts a second run of
-  `release-sdk-dart.yml` on that tag, which publishes core, then chat and rtc. If that run
-  fails, run the workflow again from the tag: what is already on pub.dev is skipped.
+- **Dart** releases the version committed in `sdks/dart/stream_agents/pubspec.yaml`, if it has
+  no `sdk-dart-v*` tag yet. To include Dart, first merge a pull request that raises `version`
+  and adds the `CHANGELOG.md` entry. pub.dev takes a package only from a run on a tag, so the
+  run from `accelerate` tags the commit and starts a second run of `release-sdk-dart.yml` on
+  that tag, which publishes it. If that run fails, run the workflow again from the tag.
 - **Kotlin** is not started from here. Merging a pull request that raises `version` in
   `sdks/kotlin/gradle.properties` publishes it (see "Releasing" in `sdks/kotlin/README.md`).
 - **Go** is not started from here. It is a copy of `sdks/go` on `main` and a tag on the merge
@@ -103,10 +102,10 @@ this.
 - **Packagist**: create the read-only split repository, submit it to Packagist as
   `getstream/vision-agents`, and set the repository variable `SDK_PHP_SPLIT_REPOSITORY`
   (`owner/name`) and the secret `SDK_PHP_SPLIT_TOKEN` (a token that may push to it).
-- **pub.dev**: publish the first version of each package by hand (core first), then on each
-  package's admin page enable publishing from GitHub Actions: repository
-  `GetStream/Vision-Agents`, tag pattern `sdk-dart-v{{version}}`, `workflow_dispatch` events
-  allowed. Each package needs a `LICENSE` to publish at all.
+- **pub.dev**: publish the first version of `stream_agents` by hand (see "Releasing" in the
+  `sdk-dart` skill) and tag that commit `sdk-dart-v<version>`, then on the package's admin page
+  enable publishing from GitHub Actions: repository `GetStream/Vision-Agents`, tag pattern
+  `sdk-dart-v{{version}}`, `workflow_dispatch` events allowed.
 
 ## When a release fails
 

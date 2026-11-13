@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:stream_core_flutter/core.dart';
@@ -22,16 +23,21 @@ enum ReplyFormat {
 
   /// The format the agent answers in, asked of [backend], or null for one the app does not
   /// offer, such as OpenUI, which another app chose.
-  static Future<ReplyFormat?> current({Uri? backend}) async => _read(await http.get(_url(backend)));
+  static Future<ReplyFormat?> current({Uri? backend}) async =>
+      _read(await http.get(_url(backend)).timeout(_answering));
 
   /// Has the agent answer in this format, from its next conversation on.
   Future<void> choose({Uri? backend}) async => _read(
-    await http.put(
-      _url(backend),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'format': name}),
-    ),
+    await http
+        .put(
+          _url(backend),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'format': name}),
+        )
+        .timeout(_answering),
   );
+
+  static const _answering = Duration(seconds: 15);
 
   static ReplyFormat? _read(http.Response response) {
     if (response.statusCode != 200) {
@@ -60,6 +66,7 @@ class SettingsSheet extends StatefulWidget {
 class _SettingsSheetState extends State<SettingsSheet> {
   ReplyFormat? _format;
   bool _loaded = false;
+  bool _choosing = false;
   String? _failure;
 
   @override
@@ -72,15 +79,23 @@ class _SettingsSheetState extends State<SettingsSheet> {
               _loaded = true;
             })
           : null,
-      onError: (Object error) => mounted ? setState(() => _failure = '$error') : null,
+      // A format can still be chosen without knowing the current one.
+      onError: (Object error) => mounted
+          ? setState(() {
+              _failure = '$error';
+              _loaded = true;
+            })
+          : null,
     );
   }
 
+  /// One at a time, so a failed choice goes back to the format that was really chosen.
   Future<void> _choose(ReplyFormat format) async {
     final was = _format;
     setState(() {
       _format = format;
       _failure = null;
+      _choosing = true;
     });
     try {
       await format.choose();
@@ -91,6 +106,8 @@ class _SettingsSheetState extends State<SettingsSheet> {
           _failure = '$error';
         });
       }
+    } finally {
+      if (mounted) setState(() => _choosing = false);
     }
   }
 
@@ -111,7 +128,7 @@ class _SettingsSheetState extends State<SettingsSheet> {
             StreamListTile(
               title: Text(format.title),
               trailing: format == _format ? Icon(Icons.check, color: colors.accentPrimary) : null,
-              onTap: _loaded ? () => _choose(format) : null,
+              onTap: _loaded && !_choosing ? () => _choose(format) : null,
             ),
           Padding(
             padding: const EdgeInsets.all(16),

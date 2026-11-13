@@ -24,6 +24,7 @@
 package io.getstream.agents.android.core.generated
 
 import io.getstream.agents.android.core.generated.AudioSource
+import io.getstream.agents.android.core.generated.FileSource
 import io.getstream.agents.android.core.generated.ImageSource
 import io.getstream.agents.android.core.generated.VideoSource
 
@@ -41,6 +42,7 @@ import kotlinx.serialization.encoding.Encoder
  *
  * @param text What to answer, as though it had been said. May be empty when images or audio carry the question. Images with no text are shown on the person's message in a session kept in Stream Chat, so they are then data URIs, at most 8, with or without a request_id.
  * @param audio 
+ * @param files A file to answer questions about: a PDF or a Word document. The router reads it as text before the turn starts, and the agent answers from it on this turn and on every turn of the conversation after it, including a conversation carried on later or forked by the same person. In a conversation kept in Stream Chat the person's message shows the file. At most 100 pages, and at most 120,000 characters of text together with the files the conversation already holds, or a quarter of what the model reads at once. Only in a person's own conversation: refused in a thread, in a channel others write in, in a session a worker opened for a channel's message, and by a speech-to-speech session. Not with a voice note. Refused before any turn starts when it cannot be read, is too large, or reads as a prompt injection under the organization's policy.
  * @param images 
  * @param maxOutputTokens Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's.
  * @param reasoningEffort How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's.
@@ -58,6 +60,10 @@ internal data class CreateResponseRequest (
 
     @SerialName(value = "audio")
     val audio: AudioSource? = null,
+
+    /* A file to answer questions about: a PDF or a Word document. The router reads it as text before the turn starts, and the agent answers from it on this turn and on every turn of the conversation after it, including a conversation carried on later or forked by the same person. In a conversation kept in Stream Chat the person's message shows the file. At most 100 pages, and at most 120,000 characters of text together with the files the conversation already holds, or a quarter of what the model reads at once. Only in a person's own conversation: refused in a thread, in a channel others write in, in a session a worker opened for a channel's message, and by a speech-to-speech session. Not with a voice note. Refused before any turn starts when it cannot be read, is too large, or reads as a prompt injection under the organization's policy. */
+    @SerialName(value = "files")
+    val files: kotlin.collections.List<FileSource>? = null,
 
     @SerialName(value = "images")
     val images: kotlin.collections.List<ImageSource>? = null,

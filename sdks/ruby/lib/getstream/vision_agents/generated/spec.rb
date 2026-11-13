@@ -2078,7 +2078,7 @@ module GetStream
           required: %w[agent_id].freeze, open: false
         }.freeze,
         "ChildAgent" => {
-          properties: %w[config description timeout_ms tool].freeze,
+          properties: %w[config description max_tool_rounds timeout_ms tool].freeze,
           required: %w[config tool].freeze, open: false
         }.freeze,
         "ClaimGuestRequest" => {
@@ -2298,7 +2298,7 @@ module GetStream
           required: %w[recipient channel].freeze, open: false
         }.freeze,
         "CreateResponseRequest" => {
-          properties: %w[audio images max_output_tokens reasoning_effort request_id text ui_action videos].freeze,
+          properties: %w[audio files images max_output_tokens reasoning_effort request_id text ui_action videos].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
         "CreateRunRequest" => {
@@ -2396,6 +2396,10 @@ module GetStream
         "ErrorResponse" => {
           properties: %w[error].freeze,
           required: %w[error].freeze, open: false
+        }.freeze,
+        "FileSource" => {
+          properties: %w[name url].freeze,
+          required: %w[url].freeze, open: false
         }.freeze,
         "FloorControl" => {
           properties: %w[max_wait_ms model].freeze,

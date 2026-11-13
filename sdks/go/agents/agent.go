@@ -345,7 +345,7 @@ type Session struct {
 func (s *Session) Call() edge.Call { return edge.Call{ID: s.ID(), Type: edge.DefaultCallType} }
 
 // MonitorURL is a link a person can open to join this call from a browser and hear the
-// agent.
+// agent. It carries a token that joins the call, so keep it out of logs.
 func (s *Session) MonitorURL() (string, error) {
 	if !s.Voice.Started() {
 		return "", errors.New("agents: a conversation held in writing has no call to watch")

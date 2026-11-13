@@ -1,12 +1,12 @@
 import 'dart:async';
 
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 import 'package:stream_core_flutter/core.dart';
 import 'package:stream_video_flutter/stream_video_flutter.dart' as video;
-import 'package:vision_agents_core/vision_agents_core.dart';
-import 'package:vision_agents_rtc/vision_agents_rtc.dart';
+import 'package:stream_agents/stream_agents.dart';
 
 import 'agent_chat.dart';
 import 'assistant.dart';
@@ -62,8 +62,15 @@ class _VoiceScreenState extends State<VoiceScreen> with WidgetsBindingObserver {
   ///
   /// This comes from the audio rather than the session: a reply is written before it is spoken and is done before the agent
   /// stops talking, and the person is transcribed only after they have started.
-  ({bool isPerson, double level})? _heard;
+  final _heard = ValueNotifier<({bool isPerson, double level})?>(null);
   final _captions = Captions();
+
+  /// The caption and whether it is up, apart from [_heard], which moves thirty times a second,
+  /// so the caption is laid out only when it changes.
+  final _caption = ValueNotifier<({Caption? caption, bool isVisible})>((
+    caption: null,
+    isVisible: false,
+  ));
   Timer? _meter;
   final _clock = Stopwatch()..start();
   var _lastTick = Duration.zero;
@@ -127,6 +134,8 @@ class _VoiceScreenState extends State<VoiceScreen> with WidgetsBindingObserver {
     }
     unawaited(_participants?.cancel());
     _meter?.cancel();
+    _heard.dispose();
+    _caption.dispose();
     final session = widget.session;
     final hangingUp = _hangingUp = _starting.whenComplete(() => _hangUp(_voice, session));
     unawaited(
@@ -194,7 +203,10 @@ class _VoiceScreenState extends State<VoiceScreen> with WidgetsBindingObserver {
       _before = {for (final turn in _voice!.session.turns) turn.id};
       _participants = call.state.valueStream.listen((callState) {
         _person = callState.callParticipants.where((p) => p.isLocal).firstOrNull;
-        _agent = callState.callParticipants.where((p) => !p.isLocal).firstOrNull;
+        // The agent's video worker joins too, with no audio.
+        _agent = callState.callParticipants
+            .where((p) => !p.isLocal && p.isAudioEnabled)
+            .firstOrNull;
       });
       _lastTick = _clock.elapsed;
       _meter = Timer.periodic(const Duration(milliseconds: 33), (_) => _tick());
@@ -231,8 +243,6 @@ class _VoiceScreenState extends State<VoiceScreen> with WidgetsBindingObserver {
     }
 
     final turn = voice.session.turns.lastOrNull;
-    final caption = _captions.caption;
-    final captionIsVisible = _captions.isVisible;
     _captions.update(
       turn: turn == null || _before.contains(turn.id) ? null : turn,
       agentIsAudible: agentIsAudible,
@@ -243,11 +253,8 @@ class _VoiceScreenState extends State<VoiceScreen> with WidgetsBindingObserver {
       now: now,
       elapsed: elapsed,
     );
-    if (heard != _heard ||
-        caption != _captions.caption ||
-        captionIsVisible != _captions.isVisible) {
-      setState(() => _heard = heard);
-    }
+    _heard.value = heard;
+    _caption.value = (caption: _captions.caption, isVisible: _captions.isVisible);
   }
 
   void _conversationChanged(Conversation conversation) {
@@ -325,7 +332,7 @@ class _VoiceScreenState extends State<VoiceScreen> with WidgetsBindingObserver {
     if (!_inCall) {
       return (state: AIVoiceAgentState.connecting, status: 'Connecting');
     }
-    switch (_heard?.isPerson) {
+    switch (_heard.value?.isPerson) {
       case true:
         return (state: AIVoiceAgentState.listening, status: 'Listening');
       case false:
@@ -355,7 +362,6 @@ class _VoiceScreenState extends State<VoiceScreen> with WidgetsBindingObserver {
     final voice = _voice;
     final voiceState = voice?.state.value;
     final call = voiceState?.call;
-    final presence = _presence;
     final colors = context.streamColorScheme;
     final text = context.streamTextTheme;
     final request = widget.session.approvals.value.firstOrNull;
@@ -386,35 +392,45 @@ class _VoiceScreenState extends State<VoiceScreen> with WidgetsBindingObserver {
                 children: [
                   // The glow shrinks to what is left, as the camera's preview takes room.
                   Expanded(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      spacing: 16,
-                      children: [
-                        Flexible(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 320, maxHeight: 320),
-                            child: AspectRatio(
-                              aspectRatio: 1,
-                              child: AIVoiceGlowView(
-                                state: presence.state,
-                                colors: _heard?.isPerson ?? false ? _personColors : _agentColors,
-                                audioLevel: _heard?.level,
+                    child: ValueListenableBuilder(
+                      valueListenable: _heard,
+                      builder: (context, heard, _) {
+                        final presence = _presence;
+                        return Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          spacing: 16,
+                          children: [
+                            Flexible(
+                              child: ConstrainedBox(
+                                constraints: const BoxConstraints(maxWidth: 320, maxHeight: 320),
+                                child: AspectRatio(
+                                  aspectRatio: 1,
+                                  child: AIVoiceGlowView(
+                                    state: presence.state,
+                                    colors: heard?.isPerson ?? false ? _personColors : _agentColors,
+                                    audioLevel: heard?.level,
+                                  ),
+                                ),
                               ),
                             ),
-                          ),
-                        ),
-                        AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 200),
-                          child: Text(
-                            presence.status,
-                            key: ValueKey(presence.status),
-                            style: text.bodyEmphasis.copyWith(color: colors.textSecondary),
-                          ),
-                        ),
-                      ],
+                            AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 200),
+                              child: Text(
+                                presence.status,
+                                key: ValueKey(presence.status),
+                                style: text.bodyEmphasis.copyWith(color: colors.textSecondary),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
                     ),
                   ),
-                  CaptionView(caption: _captions.caption, isVisible: _captions.isVisible),
+                  ValueListenableBuilder(
+                    valueListenable: _caption,
+                    builder: (context, shown, _) =>
+                        CaptionView(caption: shown.caption, isVisible: shown.isVisible),
+                  ),
                 ],
               ),
             ),
@@ -479,13 +495,17 @@ class _CameraPreview extends StatelessWidget {
             child: SizedBox(
               height: 260,
               width: double.infinity,
+              // Only this phone's participant: the call's state changes with everyone's audio
+              // level.
               child: StreamBuilder(
-                stream: call.state.valueStream,
-                builder: (context, _) {
-                  final me = call.state.value.localParticipant;
+                stream: call.state.valueStream.map((state) => state.localParticipant).distinct(),
+                initialData: call.state.value.localParticipant,
+                builder: (context, snapshot) {
+                  final me = snapshot.data;
                   return me == null
                       ? const SizedBox.shrink()
                       : video.StreamVideoRenderer(
+                          key: ValueKey(me.uniqueParticipantKey),
                           call: call,
                           participant: me,
                           videoTrackType: video.SfuTrackType.video,

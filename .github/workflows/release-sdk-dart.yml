@@ -1,27 +1,24 @@
 name: Release Dart SDK
 
-# Publishes vision_agents_core, vision_agents_chat and vision_agents_rtc to pub.dev, at the one
-# version their pubspec.yaml files share. Unlike the other SDKs the version is the committed
-# one: pub.dev checks the published pubspec against the tag, and chat and rtc name the core
-# version they need, so a release starts with a pull request that raises all three.
+# Publishes stream_agents to pub.dev, at the version in its pubspec.yaml. Unlike the other SDKs
+# the version is the committed one: pub.dev checks the published pubspec against the tag, and
+# the package's CHANGELOG.md names it, so a release starts with a pull request that raises it.
 #
 # pub.dev only takes a package from a run on a tag, so this runs twice:
-# - From accelerate, by hand or started by release-sdks.yml: checks the three packages and, if
-#   their version has no sdk-dart-v* tag yet and this is no dry run, tags the commit and starts
+# - From accelerate, by hand or started by release-sdks.yml: checks the package and, if its
+#   version has no sdk-dart-v* tag yet and this is no dry run, tags the commit and starts
 #   itself again on that tag. A version already tagged is nothing to release.
-# - On the sdk-dart-v<version> tag: publishes core, then chat and rtc against the hosted core.
-#   A package already on pub.dev at that version is skipped, so a failed run is run again from
-#   the tag.
+# - On the sdk-dart-v<version> tag: publishes the package. A failed run is run again from the
+#   tag.
 #
-# Each package's first version is published by hand; after that its admin page on pub.dev
+# The first version is published by hand; after that the package's admin page on pub.dev
 # enables publishing from GitHub Actions for GetStream/Vision-Agents with the tag pattern
 # sdk-dart-v{{version}} and workflow_dispatch events allowed.
-# No GitHub Release: publishing one runs release.yml, which uploads the Python packages to PyPI.
 on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: Check the packages without tagging or publishing (ignored on a tag)
+        description: Check the package without tagging or publishing (ignored on a tag)
         type: boolean
         default: true
 
@@ -53,29 +50,19 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
-          version=$(sed -n 's/^version: //p' sdks/dart/core/pubspec.yaml)
+          version=$(sed -n 's/^version: //p' sdks/dart/stream_agents/pubspec.yaml)
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
-            echo "::error file=sdks/dart/core/pubspec.yaml::version $version is not X.Y.Z or X.Y.Z-suffix"; exit 1
+            echo "::error file=sdks/dart/stream_agents/pubspec.yaml::version $version is not X.Y.Z or X.Y.Z-suffix"; exit 1
           fi
-          for package in chat rtc; do
-            other=$(sed -n 's/^version: //p' "sdks/dart/$package/pubspec.yaml")
-            if [ "$other" != "$version" ]; then
-              echo "::error file=sdks/dart/$package/pubspec.yaml::version $other is not core's $version"; exit 1
-            fi
-            # The three are released together, so each one needs the core released with it.
-            if ! grep -qxF "  vision_agents_core: ^$version" "sdks/dart/$package/pubspec.yaml"; then
-              echo "::error file=sdks/dart/$package/pubspec.yaml::does not depend on vision_agents_core: ^$version"; exit 1
-            fi
-          done
           last=$(git tag -l 'sdk-dart-v*' | sed 's/^sdk-dart-v//' | sort -V | tail -n1)
           if git rev-parse -q --verify "refs/tags/sdk-dart-v$version" >/dev/null; then
             release=false
-            echo "### Dart SDK $version is already released" >> "$GITHUB_STEP_SUMMARY"
-            echo "Raise \`version\` in the three pubspec.yaml files to release the next one." >> "$GITHUB_STEP_SUMMARY"
+            echo "### stream_agents $version is already released" >> "$GITHUB_STEP_SUMMARY"
+            echo "Raise \`version\` in sdks/dart/stream_agents/pubspec.yaml to release the next one." >> "$GITHUB_STEP_SUMMARY"
           else
             release=true
             {
-              echo "### Dart SDK $version$([ "$DRY_RUN" = true ] && echo ' (dry run)')"
+              echo "### stream_agents $version$([ "$DRY_RUN" = true ] && echo ' (dry run)')"
               echo "Last release: ${last:-none}. Changes under sdks/dart since then:"
               echo '```'
               git log --oneline --no-merges "${last:+sdk-dart-v$last..}HEAD" -- sdks/dart
@@ -85,42 +72,21 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "release=$release" >> "$GITHUB_OUTPUT"
 
-      # core and chat are pure Dart and checked with the Dart SDK, as CI does; rtc needs Flutter.
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
 
-      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
-        with:
-          sdk: stable
-
-      # pub warns about the exact pins on Stream's packages, which are deliberate (see the
-      # sdk-dart skill), so only its errors fail a publish or its dry run.
-      - name: Check and test core
-        working-directory: sdks/dart/core
-        run: |
-          dart pub get
-          dart analyze
-          dart run tool/generate.dart --check
-          dart test
-          dart pub publish --dry-run --ignore-warnings
-
-      - name: Check and test chat
-        working-directory: sdks/dart/chat
-        run: |
-          dart pub get
-          dart analyze
-          dart test
-          dart pub publish --dry-run --ignore-warnings
-
-      - name: Check rtc
-        working-directory: sdks/dart/rtc
+      # What CI runs. The dry run fails on a warning as well as an error.
+      - name: Check and test
+        working-directory: sdks/dart/stream_agents
         run: |
           flutter pub get
           flutter analyze
-          flutter pub publish --dry-run --ignore-warnings
+          dart run tool/generate.dart --check
+          flutter test
+          flutter pub publish --dry-run
 
-      # The tag comes first here, unlike the other SDKs: pub.dev takes the packages only from
+      # The tag comes first here, unlike the other SDKs: pub.dev takes the package only from
       # a run on it.
       - name: Tag and start the publishing run
         if: ${{ !inputs.dry_run && steps.version.outputs.release == 'true' }}
@@ -153,14 +119,11 @@ jobs:
           version="${GITHUB_REF_NAME#sdk-dart-v}"
           echo "VERSION=$version" >> "$GITHUB_ENV"
           git merge-base --is-ancestor HEAD origin/accelerate || { echo "::error::$GITHUB_REF_NAME is not on accelerate"; exit 1; }
-          for package in core chat rtc; do
-            committed=$(sed -n 's/^version: //p' "sdks/dart/$package/pubspec.yaml")
-            if [ "$committed" != "$version" ]; then
-              echo "::error file=sdks/dart/$package/pubspec.yaml::version $committed is not the tag's $version"; exit 1
-            fi
-          done
+          committed=$(sed -n 's/^version: //p' sdks/dart/stream_agents/pubspec.yaml)
+          if [ "$committed" != "$version" ]; then
+            echo "::error file=sdks/dart/stream_agents/pubspec.yaml::version $committed is not the tag's $version"; exit 1
+          fi
 
-      # Flutter for rtc, then the Dart SDK the other two are published with.
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
@@ -170,53 +133,14 @@ jobs:
         with:
           sdk: stable
 
-      - name: Publish core
-        working-directory: sdks/dart/core
+      - name: Publish
+        working-directory: sdks/dart/stream_agents
         run: |
-          if curl -sf "https://pub.dev/api/packages/vision_agents_core/versions/$VERSION" >/dev/null; then
-            echo "vision_agents_core $VERSION is already published"; exit 0
-          fi
-          dart pub get
-          dart pub publish --force --ignore-warnings
-
-      # chat and rtc depend on the hosted core, which pub.dev lists a little after the upload.
-      - name: Wait for core on pub.dev
-        run: |
-          for _ in $(seq 1 30); do
-            if curl -sf "https://pub.dev/api/packages/vision_agents_core/versions/$VERSION" >/dev/null; then exit 0; fi
-            sleep 10
-          done
-          echo "::error::pub.dev never listed vision_agents_core $VERSION"; exit 1
-
-      # In a copy, so the package that is published is the tagged tree untouched.
-      - name: chat and rtc resolve against the hosted core
-        run: |
-          set -euo pipefail
-          for package in chat rtc; do
-            cp -R "sdks/dart/$package" "$RUNNER_TEMP/$package"
-            rm "$RUNNER_TEMP/$package/pubspec_overrides.yaml"
-            (cd "$RUNNER_TEMP/$package" && flutter pub get)
-            resolved=$(sed -n '/^  vision_agents_core:/,/^  [^ ]/s/^    version: "\(.*\)"/\1/p' "$RUNNER_TEMP/$package/pubspec.lock")
-            [ "$resolved" = "$VERSION" ] || { echo "::error::$package resolves vision_agents_core $resolved, not $VERSION"; exit 1; }
-          done
-
-      - name: Publish chat
-        working-directory: sdks/dart/chat
-        run: |
-          if curl -sf "https://pub.dev/api/packages/vision_agents_chat/versions/$VERSION" >/dev/null; then
-            echo "vision_agents_chat $VERSION is already published"; exit 0
-          fi
-          dart pub get
-          dart pub publish --force --ignore-warnings
-
-      - name: Publish rtc
-        working-directory: sdks/dart/rtc
-        run: |
-          if curl -sf "https://pub.dev/api/packages/vision_agents_rtc/versions/$VERSION" >/dev/null; then
-            echo "vision_agents_rtc $VERSION is already published"; exit 0
+          if curl -sf "https://pub.dev/api/packages/stream_agents/versions/$VERSION" >/dev/null; then
+            echo "stream_agents $VERSION is already published"; exit 0
           fi
           flutter pub get
-          flutter pub publish --force --ignore-warnings
+          flutter pub publish --force
 
       - name: Summary
-        run: echo "Published vision_agents_core, vision_agents_chat and vision_agents_rtc $VERSION to pub.dev" >> "$GITHUB_STEP_SUMMARY"
+        run: echo "Published stream_agents $VERSION to pub.dev" >> "$GITHUB_STEP_SUMMARY"
