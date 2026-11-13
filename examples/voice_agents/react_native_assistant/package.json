@@ -14,7 +14,7 @@
     "@react-native-community/netinfo": "12.0.1",
     "@shopify/react-native-skia": "^2.14.0",
     "@stream-io/state-store": "^1.2.0",
-    "@stream-io/stream-agents": "^0.4.2",
+    "@stream-io/stream-agents": "^0.4.3",
     "@types/jest": "30.0.0",
     "babel-preset-expo": "~58.0.0",
     "expo": "^58.0.8",
