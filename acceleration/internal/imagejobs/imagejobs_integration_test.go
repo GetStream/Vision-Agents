@@ -44,6 +44,9 @@ type drawer struct {
 	entered chan struct{}
 	// takes is how long each draw takes.
 	takes time.Duration
+	// outlasts, when set, has a draw finish only once its context ended, and finish drawn: a
+	// picture that came back just as the router stopped.
+	outlasts bool
 }
 
 func (d *drawer) Generate(ctx context.Context, _ imagegen.Request) (imagegen.Result, error) {
@@ -51,7 +54,7 @@ func (d *drawer) Generate(ctx context.Context, _ imagegen.Request) (imagegen.Res
 	d.asked++
 	d.running++
 	d.most = max(d.most, d.running)
-	held, entered, err, takes := d.held, d.entered, d.err, d.takes
+	held, entered, err, takes, outlasts := d.held, d.entered, d.err, d.takes, d.outlasts
 	if len(d.failing) > 0 {
 		err, d.failing = d.failing[0], d.failing[1:]
 	}
@@ -63,6 +66,10 @@ func (d *drawer) Generate(ctx context.Context, _ imagegen.Request) (imagegen.Res
 	}()
 	if entered != nil {
 		entered <- struct{}{}
+	}
+	if outlasts {
+		<-ctx.Done()
+		return imagegen.Result{Images: []imagegen.Image{{Data: []byte("png"), MediaType: "image/png", Width: 1024, Height: 1024}}}, nil
 	}
 	if held != nil {
 		select {
@@ -208,16 +215,16 @@ func (s *ImageJobsSuite) started(poster imagejobs.Poster) *imagejobs.Service {
 	return worker
 }
 
-// queue asks worker for a picture, as the call id of the session's turn does once it ended.
+// queue asks worker for a picture, as a call of the session's first turn does once it ended.
 func (s *ImageJobsSuite) queue(worker *imagejobs.Service, call string) {
-	s.queueIn(worker, s.session, call)
+	s.queueIn(worker, "turn-1", call, "a yellow watering can")
 }
 
-func (s *ImageJobsSuite) queueIn(worker *imagejobs.Service, session, call string) {
+func (s *ImageJobsSuite) queueIn(worker *imagejobs.Service, turn, call, prompt string) {
 	s.Require().NoError(worker.Queue(s.ctx, imagejobs.Request{
-		CustomerID: s.customer, CID: s.cid, AgentUser: "illustrator", SessionID: session, ToolCallID: call,
-		AgentID: "illustrator", Target: "stub/draw", Prompt: "a yellow watering can",
-		Attribution: routing.Attribution{APIKey: "key-1", UserID: "ana", SessionID: session,
+		CustomerID: s.customer, CID: s.cid, AgentUser: "illustrator", SessionID: s.session, TurnID: turn, ToolCallID: call,
+		AgentID: "illustrator", Target: "stub/draw", Prompt: prompt,
+		Attribution: routing.Attribution{APIKey: "key-1", UserID: "ana", SessionID: s.session,
 			UsageCategories: []string{"team:design"}},
 	}))
 }
@@ -325,6 +332,8 @@ func (s *ImageJobsSuite) TestADrawIsBilledUnderTheSessionThatAskedWhenItIsDrawn(
 	s.Equal([]string{"team:design"}, row.UsageCategories)
 	s.EqualValues(1, row.Quantities()["images"])
 	s.EqualValues(40_000, row.CostMicros, "four cents a picture")
+	s.Equal(routing.UsageID("image_job", s.job().ID), row.UsageID,
+		"the job's own id, so a picture drawn again after a stopped router settles on this row")
 }
 
 func (s *ImageJobsSuite) TestAPictureTheProviderFailedPostsWhyAndCostsNothing() {
@@ -380,7 +389,7 @@ func (s *ImageJobsSuite) TestFourPicturesAtOnceAreAllDrawnTwoAtATime() {
 func (s *ImageJobsSuite) TestADrawNoProviderTookInTimeIsTriedAgainUncounted() {
 	// Such as one that waited out its deadline for a slot the endpoint's own requests held: it
 	// cost nothing and drew nothing, so it is neither a failure nor one of the job's draws.
-	s.drawer.failing = []error{imagegen.Fail(imagegen.Timeout, false, context.DeadlineExceeded)}
+	s.drawer.failing = []error{imagegen.Fail(imagegen.Timeout, false, fmt.Errorf("%w: %w", imagegen.ErrNotStarted, context.DeadlineExceeded))}
 	worker := s.started(s.posts)
 
 	s.queue(worker, "draw-1")
@@ -391,6 +400,68 @@ func (s *ImageJobsSuite) TestADrawNoProviderTookInTimeIsTriedAgainUncounted() {
 	s.Equal(store.ImageJobDone, job.State)
 	s.Equal(2, s.drawer.times())
 	s.Equal(1, job.Draws, "the draw no provider took is not counted")
+}
+
+func (s *ImageJobsSuite) TestADrawSentThatTimedOutIsCountedAndSaysSo() {
+	// Gemini's call that ran out of time, or a FAL submit that timed out once FAL took it: the
+	// vendor may have drawn, and billed, it, so it is not sent again as if it never left.
+	s.drawer.err = imagegen.Fail(imagegen.Timeout, false, context.DeadlineExceeded)
+	worker := s.started(s.posts)
+
+	s.queue(worker, "draw-1")
+
+	posted := s.awaitPosted(1)
+	s.Contains(posted[0]["text"], "took too long")
+	s.Equal(1, s.drawer.times(), "not sent again")
+	job := s.job()
+	s.Equal(store.ImageJobFailed, job.State)
+	s.Equal(1, job.Draws)
+}
+
+func (s *ImageJobsSuite) TestADrawNeverStartedForHalfAnHourPostsThatItTookTooLong() {
+	// A provider whose slots stay taken would otherwise keep the person waiting for ever.
+	s.drawer.err = imagegen.Fail(imagegen.Timeout, false, fmt.Errorf("%w: %w", imagegen.ErrNotStarted, context.DeadlineExceeded))
+	worker := s.worker()
+	s.queue(worker, "draw-1")
+	_, err := s.store.DB().NewUpdate().Model((*store.ImageJob)(nil)).
+		Set("created_at = now() - interval '31 minutes'").Where("cid = ?", s.cid).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	worker.Start(s.ctx, s.posts)
+	s.T().Cleanup(worker.Close)
+
+	posted := s.awaitPosted(1)
+	s.Contains(posted[0]["text"], "took too long")
+	s.Equal(1, s.drawer.times(), "given up, not tried again")
+	s.Equal(store.ImageJobFailed, s.job().State)
+}
+
+func (s *ImageJobsSuite) TestADrawThatFinishesAsTheRouterStopsIsKeptNotDrawnAgain() {
+	// The picture is drawn and billed; thrown away, the next router would draw it again.
+	s.drawer.outlasts, s.drawer.entered = true, make(chan struct{}, 4)
+	stopping := s.worker()
+	stopping.Start(s.ctx, s.posts)
+	s.queue(stopping, "draw-1")
+	select {
+	case <-s.drawer.entered:
+	case <-time.After(10 * time.Second):
+		s.FailNow("the router never started drawing")
+	}
+
+	stopping.Close()
+	var kept store.ImageJob
+	s.Require().NoError(s.store.DB().NewSelect().Model(&kept).Where("cid = ?", s.cid).Scan(s.ctx))
+	s.Equal("Here is the picture.", kept.Message, "the drawn picture is kept with its message")
+	s.Equal([]byte("png"), kept.Drawn)
+	s.Equal(1, kept.Draws)
+
+	s.drawer.mu.Lock()
+	s.drawer.outlasts = false
+	s.drawer.mu.Unlock()
+	s.started(s.posts)
+	posted := s.awaitPosted(1)
+	s.Equal(1, pictures(posted[0]))
+	s.Equal(1, s.drawer.times(), "posted, not drawn again")
 }
 
 func (s *ImageJobsSuite) TestARouterThatStopsMidDrawGivesThePictureBackAtOnce() {
@@ -508,6 +579,25 @@ func (s *ImageJobsSuite) TestAnUploadStreamChatFailedIsTriedAgainWithoutDrawing(
 	s.rows(1)
 }
 
+func (s *ImageJobsSuite) TestAStreamChatRequestTimeoutIsTriedAgain() {
+	// Stream Chat's RequestTimeoutError is a 408: the next try may well pass.
+	s.chat.FailWith(http.MethodPost, "/image", http.StatusRequestTimeout)
+	worker := s.started(s.posts)
+
+	s.queue(worker, "draw-1")
+	s.Require().Eventually(func() bool {
+		var job store.ImageJob
+		err := s.store.DB().NewSelect().Model(&job).Where("cid = ?", s.cid).Scan(s.ctx)
+		return err == nil && job.Posts >= 1
+	}, 10*time.Second, 20*time.Millisecond, "the upload was never tried")
+	s.chat.Heal(http.MethodPost, "/image")
+
+	posted := s.awaitPosted(1)
+	s.Equal(1, pictures(posted[0]))
+	s.Equal(1, s.drawer.times())
+	s.Equal(store.ImageJobDone, s.job().State)
+}
+
 func (s *ImageJobsSuite) TestAnUploadStreamChatRefusedForGoodPostsThatItCouldNotBePosted() {
 	// Such as a file the app's upload settings refuse: uploading it again gets the same answer,
 	// and drawing it again would bill the same picture twice.
@@ -584,12 +674,21 @@ func (s *ImageJobsSuite) TestACallRunAgainQueuesNoSecondPicture() {
 	s.Len(s.queued(), 1)
 }
 
-func (s *ImageJobsSuite) TestTheSameCallIdInAnotherSessionIsAnotherPicture() {
-	// Calls parsed from a reply's tags are numbered ask-1, ask-2 again in each session, and a
-	// conversation in a channel answered by the hook is a new session each turn.
+func (s *ImageJobsSuite) TestTheSameCallIdInAnotherTurnIsAnotherPicture() {
+	// Calls parsed from a reply's tags are numbered ask-1, ask-2 again by each harness, and a
+	// session reopened after it ended starts a new one under the same session id.
 	worker := s.worker()
-	s.queueIn(worker, "turn-1", "ask-1")
-	s.queueIn(worker, "turn-2", "ask-1")
+	s.queueIn(worker, "turn-1", "ask-1", "a yellow watering can")
+	s.queueIn(worker, "turn-2", "ask-1", "a yellow watering can")
+
+	s.Len(s.queued(), 2)
+}
+
+func (s *ImageJobsSuite) TestTheSameCallAskingForAnotherPictureIsAnotherJob() {
+	// Never dropped: a call id reused for another prompt is another picture to draw.
+	worker := s.worker()
+	s.queueIn(worker, "turn-1", "ask-1", "a yellow watering can")
+	s.queueIn(worker, "turn-1", "ask-1", "a red kite")
 
 	s.Len(s.queued(), 2)
 }

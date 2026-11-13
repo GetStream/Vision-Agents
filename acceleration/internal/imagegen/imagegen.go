@@ -216,6 +216,11 @@ func CodeOf(err error) Code {
 	return ProviderFailed
 }
 
+// ErrNotStarted is a draw that never left the router: it ran out of time waiting for a slot of
+// its provider's, so nothing was sent and nothing can have been billed. A draw that was sent and
+// then timed out is not one, whatever the provider says about having taken it.
+var ErrNotStarted = errors.New("imagegen: the draw was never sent")
+
 // Accepted reports whether a provider had taken the job before err.
 func Accepted(err error) bool {
 	var failure *Error

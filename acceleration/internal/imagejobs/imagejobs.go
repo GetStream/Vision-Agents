@@ -27,8 +27,11 @@ package imagejobs
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -131,9 +134,11 @@ type Request struct {
 	StreamApp  int64
 	CID        string
 	AgentUser  string
-	// SessionID and ToolCallID are the call that asked. A call of a session queues one job,
-	// however often it runs.
+	// SessionID, TurnID and ToolCallID are the call that asked. One request queues one job,
+	// however often its call runs in its turn; the same call id in another turn, or asking for
+	// another picture, is another job.
 	SessionID  string
+	TurnID     string
 	ToolCallID string
 	// AgentID, CallID, Region, Target, Tags and Attribution are what the draw is routed and
 	// billed under, as the turn's own work is.
@@ -215,7 +220,8 @@ func New(options Options) (*Service, error) {
 }
 
 // Queue writes the job for a worker to draw, on this router or another, and wakes this one's.
-// A call of a session queued already is the same call run again, and queues nothing more.
+// A request queued already, the same call of the same turn asking for the same picture, is
+// that call run again, and queues nothing more.
 func (s *Service) Queue(ctx context.Context, request Request) error {
 	attribution, err := json.Marshal(request.Attribution)
 	if err != nil {
@@ -223,8 +229,9 @@ func (s *Service) Queue(ctx context.Context, request Request) error {
 	}
 	job := store.ImageJob{
 		ID: uuid.NewString(), CustomerID: request.CustomerID, StreamApp: request.StreamApp, CID: request.CID,
-		AgentUser: request.AgentUser, SessionID: request.SessionID, ToolCallID: request.ToolCallID,
-		AgentID: request.AgentID, CallID: request.CallID, Region: request.Region, Target: request.Target,
+		AgentUser: request.AgentUser, SessionID: request.SessionID, TurnID: request.TurnID, ToolCallID: request.ToolCallID,
+		RequestKey: requestKey(request),
+		AgentID:    request.AgentID, CallID: request.CallID, Region: request.Region, Target: request.Target,
 		Tags: request.Tags, Attribution: attribution, Prompt: request.Prompt, AspectRatio: request.AspectRatio,
 	}
 	if _, err := s.store.QueueImageJob(ctx, &job); err != nil {
@@ -380,12 +387,13 @@ func (s *Service) draw(log *slog.Logger, job store.ImageJob) {
 	started := time.Now()
 	generation, err := s.images.Generate(routing.WithAttribution(s.ctx, attribution), imagerouter.Request{
 		CustomerID: job.CustomerID, AgentID: job.AgentID, CallID: job.CallID, Region: job.Region,
-		Tags: job.Tags, Target: job.Target,
+		Tags: job.Tags, Target: job.Target, UsageID: usageID(job),
 		Image: imagegen.Request{Prompt: job.Prompt, AspectRatio: job.AspectRatio, N: 1},
 	})
 	switch {
-	case s.ctx.Err() != nil:
-		// Close cut it short: a draw cut is not billed, so it is not counted either.
+	case err != nil && s.ctx.Err() != nil:
+		// Close cut it short: a draw cut is not billed, so it is not counted either. One that
+		// finished as Close came is kept below, like any other.
 		log.Info("gave an image job back as the router stops", "error", err)
 		s.release(log, job, true, time.Now())
 		return
@@ -496,6 +504,21 @@ func (s *Service) upload(log *slog.Logger, job store.ImageJob) (_ *sandbox.Attac
 		}
 		return &picture, true
 	}
+	if job.Drawn == nil {
+		drawn, err := s.store.ImageJobDrawn(s.ctx, job.ID)
+		switch {
+		case err != nil && s.ctx.Err() != nil:
+			s.release(log, job, false, time.Now())
+			return nil, false
+		case err != nil:
+			s.retryPost(log, job, err)
+			return nil, false
+		case drawn == nil:
+			log.Error("an image job decided on a picture keeps none")
+			return nil, true
+		}
+		job.Drawn = drawn
+	}
 	file := sandbox.File{Name: "picture." + strings.TrimPrefix(job.DrawnType, "image/"), MIME: job.DrawnType, Data: job.Drawn}
 	picture, err := s.poster.UploadTo(s.ctx, job.CustomerID, job.StreamApp, job.CID, job.AgentUser, file)
 	switch {
@@ -577,19 +600,53 @@ func messageID(job store.ImageJob) string {
 	return job.ID
 }
 
-// untaken reports whether a draw failed before any provider took the job, for want of time:
-// such as one that waited out its deadline for a provider's slot. It cost nothing.
+// untaken reports whether a draw never left the router: it waited out its deadline for a
+// provider's slot (imagegen.ErrNotStarted), so nothing was sent and nothing billed. A draw that
+// was sent and then timed out is not one: the vendor may have drawn, and billed, it.
 func untaken(err error) bool {
-	return !imagegen.Accepted(err) && !routing.ReservationRefused(err) && imagegen.CodeOf(err) == imagegen.Timeout
+	return errors.Is(err, imagegen.ErrNotStarted)
+}
+
+// usageID is the usage id of the job's draws: one id for the job, so a picture drawn again
+// after a router stopped between drawing it and keeping it settles on the same row, billed once.
+func usageID(job store.ImageJob) uuid.UUID {
+	return routing.UsageID("image_job", job.ID)
+}
+
+// requestKey is the request a job is queued once for: its session, turn and call, and the
+// picture asked for. Each part goes after its length, so no two requests share a key however
+// their parts split.
+func requestKey(request Request) string {
+	digest := sha256.New()
+	for _, part := range []string{request.SessionID, request.TurnID, request.ToolCallID, request.Prompt, request.AspectRatio} {
+		_, _ = fmt.Fprintf(digest, "%d:%s", len(part), part)
+	}
+	return hex.EncodeToString(digest.Sum(nil))
 }
 
 // permanent reports whether Stream Chat refused a write a later attempt would be refused too:
-// a 4xx other than 429, such as a channel deleted or frozen, or a file it will not keep.
-// No answer, a 5xx or a 429 may pass later (RFC 9110 section 15.6, RFC 6585 section 4).
+// a 4xx other than 408 and 429, such as a channel deleted or frozen, or a file it will not keep.
+// No answer, a 408 (its RequestTimeoutError), a 5xx or a 429 may pass later (RFC 9110 sections
+// 15.5.9 and 15.6, RFC 6585 section 4). So may a 400 saying the message is already written,
+// which the post gets when the message it is writing again was written and reading it back
+// failed: the next try reads it back.
 func permanent(err error) bool {
 	var refused *getstream.StreamError
-	return errors.As(err, &refused) && refused.StatusCode >= http.StatusBadRequest &&
-		refused.StatusCode < http.StatusInternalServerError && refused.StatusCode != http.StatusTooManyRequests
+	if !errors.As(err, &refused) || refused.StatusCode < http.StatusBadRequest || refused.StatusCode >= http.StatusInternalServerError {
+		return false
+	}
+	switch refused.StatusCode {
+	case http.StatusRequestTimeout, http.StatusTooManyRequests:
+		return false
+	}
+	return !alreadyWritten(refused)
+}
+
+// alreadyWritten is Stream Chat refusing a message because it already holds one with its id:
+// HTTP 400, code 4 and «a message with ID <id> already exists», as channelbridge reads it.
+func alreadyWritten(refused *getstream.StreamError) bool {
+	return refused.StatusCode == http.StatusBadRequest && refused.Code == 4 &&
+		strings.Contains(refused.Message, "a message with ID ") && strings.Contains(refused.Message, " already exists")
 }
 
 // failureText is what the person is told about a draw that failed.

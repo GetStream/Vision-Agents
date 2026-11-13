@@ -40,9 +40,12 @@ type ImageJob struct {
 	StreamApp int64  `bun:"stream_app,notnull"`
 	CID       string `bun:"cid,notnull"`
 	AgentUser string `bun:"agent_user,notnull"`
-	// SessionID and ToolCallID are the call that asked.
+	// SessionID, TurnID and ToolCallID are the call that asked, and RequestKey the request:
+	// one job per key.
 	SessionID  string `bun:"session_id,notnull"`
+	TurnID     string `bun:"turn_id,notnull"`
 	ToolCallID string `bun:"tool_call_id,notnull"`
+	RequestKey string `bun:"request_key,notnull"`
 	// AgentID, CallID, Region, Target, Tags and Attribution are what the draw is routed and
 	// billed under. Attribution is a routing.Attribution, kept as JSON.
 	AgentID     string            `bun:"agent_id,notnull"`
@@ -76,11 +79,11 @@ type ImageJob struct {
 	FinishedAt *time.Time `bun:"finished_at"`
 }
 
-// QueueImageJob writes a job to be drawn now, and reports whether it was new: a call of a
-// session that already queued one queues nothing.
+// QueueImageJob writes a job to be drawn now, and reports whether it was new: a request
+// already queued under its key queues nothing.
 func (s *Store) QueueImageJob(ctx context.Context, job *ImageJob) (bool, error) {
-	if job.ID == "" || job.CID == "" || job.SessionID == "" || job.ToolCallID == "" || job.AgentUser == "" {
-		return false, stack.Wrap(errors.New("store: an image job needs an id, a channel, a session, a call and an agent"))
+	if job.ID == "" || job.CID == "" || job.RequestKey == "" || job.AgentUser == "" {
+		return false, stack.Wrap(errors.New("store: an image job needs an id, a channel, a request key and an agent"))
 	}
 	job.State = ImageJobQueued
 	if job.CreatedAt.IsZero() {
@@ -89,7 +92,7 @@ func (s *Store) QueueImageJob(ctx context.Context, job *ImageJob) (bool, error) 
 	if job.NextAttemptAt.IsZero() {
 		job.NextAttemptAt = job.CreatedAt
 	}
-	result, err := s.db.NewInsert().Model(job).On("CONFLICT (session_id, tool_call_id) DO NOTHING").Exec(ctx)
+	result, err := s.db.NewInsert().Model(job).On("CONFLICT (request_key) DO NOTHING").Exec(ctx)
 	if err != nil {
 		return false, stack.Wrap(fmt.Errorf("store: queue image job: %w", err))
 	}
@@ -100,8 +103,15 @@ func (s *Store) QueueImageJob(ctx context.Context, job *ImageJob) (bool, error) 
 	return inserted == 1, nil
 }
 
+// imageJobClaimed is every column of a claimed job but its drawn picture, up to 10 MiB each,
+// which only an upload reads (ImageJobDrawn).
+const imageJobClaimed = `ij.id, ij.customer_id, ij.stream_app, ij.cid, ij.agent_user, ij.session_id, ij.turn_id,
+ij.tool_call_id, ij.request_key, ij.agent_id, ij.call_id, ij.region, ij.target, ij.tags, ij.attribution, ij.prompt,
+ij.aspect_ratio, ij.state, ij.attempts, ij.draws, ij.posts, ij.next_attempt_at, ij.drawn_type, ij.picture,
+ij.message, ij.failed, ij.outcome, ij.created_at, ij.finished_at`
+
 // ClaimImageJobs takes up to limit queued jobs due by now, moves each one's next attempt to
-// leaseUntil and counts the claim. decided takes the jobs whose message is decided, which only
+// leaseUntil and counts the claim. The drawn picture is left out of what it returns. decided takes the jobs whose message is decided, which only
 // post; otherwise the ones still to be drawn. A job whose earlier claim's lease ran out, such as
 // one a router stopped in the middle of, is due again, as claimChatInboundQuery's rows are.
 func (s *Store) ClaimImageJobs(ctx context.Context, now time.Time, limit int, leaseUntil time.Time, decided bool) ([]ImageJob, error) {
@@ -121,11 +131,21 @@ UPDATE image_jobs AS ij
 SET next_attempt_at = ?, attempts = ij.attempts + 1
 FROM due
 WHERE ij.id = due.id
-RETURNING ij.*`, now.UTC(), decided, limit, leaseUntil.UTC()).Scan(ctx, &claimed)
+RETURNING `+imageJobClaimed, now.UTC(), decided, limit, leaseUntil.UTC()).Scan(ctx, &claimed)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: claim image jobs: %w", err))
 	}
 	return claimed, nil
+}
+
+// ImageJobDrawn is the picture the job keeps as drawn, nil when it keeps none.
+func (s *Store) ImageJobDrawn(ctx context.Context, id string) ([]byte, error) {
+	var drawn []byte
+	err := s.db.NewSelect().Model((*ImageJob)(nil)).Column("drawn").Where("id = ?", id).Scan(ctx, &drawn)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: image job drawn: %w", err))
+	}
+	return drawn, nil
 }
 
 // NextImageJobAt is when the next queued job is due, and false when none is queued.

@@ -3,6 +3,7 @@ package api
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -79,13 +80,17 @@ func (s *Server) regionComplaint(ctx context.Context, config store.AgentConfig, 
 			continue
 		}
 		served, err := router.InRegion(ctx, model.target, region, nil)
-		if err != nil {
-			// A session refuses a model it cannot route when it opens; nothing refuses a picture
-			// target until a draw after the turn fails, so it is refused here instead.
-			if model.modality == routing.Image {
-				unmet = append(unmet, fmt.Sprintf("image: %s is not something this deployment draws with", model.target))
-			}
+		switch {
+		case err != nil && model.modality != routing.Image:
 			continue
+		case errors.Is(err, routing.ErrRequest):
+			// A session refuses a model it cannot route when it opens; nothing refuses a picture
+			// target until a draw after the turn fails, so one nothing answers to is refused here.
+			unmet = append(unmet, fmt.Sprintf("image: %s is not something this deployment draws with", model.target))
+			continue
+		case err != nil:
+			// Whether the target routes could not be told, which is no fault of the save's.
+			return "", false, err
 		}
 		if !served {
 			unmet = append(unmet, fmt.Sprintf("%s: no instance of %s in region %s", model.setting, model.target, region))

@@ -62,7 +62,7 @@ func (s *AgentSuite) TestAPictureIsQueuedAndTheTurnIsAnsweredAtOnce() {
 	queued := s.drawings.requests()
 	s.Require().Len(queued, 1)
 	s.Equal(DrawRequest{
-		ToolCallID: "draw-1", Prompt: "a yellow watering can", AspectRatio: "16:9", Target: "image-fast",
+		TurnID: "turn-draw-1", ToolCallID: "draw-1", Prompt: "a yellow watering can", AspectRatio: "16:9", Target: "image-fast",
 		AgentID: s.agentID, Attribution: routing.Attribution{APIKey: "key-1", UserID: "ana", SessionID: "session-1"},
 	}, queued[0], "billed under the session that asked, once it is drawn")
 }

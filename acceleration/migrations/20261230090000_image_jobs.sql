@@ -10,8 +10,10 @@
 --     (conversation.Service.Post).
 --   - customer_id, stream_app, cid and agent_user are the conversation: who it is billed to, the
 --     Stream app it is kept in, its channel and the agent's Stream user, who posts.
---   - session_id and tool_call_id are the call that asked: one row per call of a session, so a
---     call run again queues nothing, and a call id another session reuses (ask-1) still does.
+--   - session_id, turn_id and tool_call_id are the call that asked. request_key is a digest of
+--     them with the prompt and shape: one row per request, so a call run again in its turn
+--     queues nothing, while a call id a later turn or a reopened session reuses (ask-1), or the
+--     same call asking for another picture, is another job.
 --   - agent_id, call_id, region, target, tags and attribution are what the draw is routed and
 --     billed under, as the turn would have: the session's attribution, so its spend limits hold.
 --   - prompt and aspect_ratio are what to draw.
@@ -36,7 +38,9 @@ CREATE TABLE image_jobs (
     cid TEXT NOT NULL,
     agent_user TEXT NOT NULL,
     session_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL DEFAULT '',
     tool_call_id TEXT NOT NULL,
+    request_key TEXT NOT NULL UNIQUE,
     agent_id TEXT NOT NULL DEFAULT '',
     call_id TEXT NOT NULL DEFAULT '',
     region TEXT NOT NULL DEFAULT '',
@@ -57,8 +61,7 @@ CREATE TABLE image_jobs (
     failed BOOLEAN NOT NULL DEFAULT false,
     outcome TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL,
-    finished_at TIMESTAMPTZ,
-    UNIQUE (session_id, tool_call_id)
+    finished_at TIMESTAMPTZ
 );
 
 -- The queued rows by when they are due, apart for those still to be drawn and those with their

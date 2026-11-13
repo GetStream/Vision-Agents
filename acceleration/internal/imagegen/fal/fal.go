@@ -186,7 +186,7 @@ func (p *Provider) Generate(ctx context.Context, request imagegen.Request) (imag
 	case slots <- struct{}{}:
 		defer func() { <-slots }()
 	case <-ctx.Done():
-		return imagegen.Result{}, failure(false, ctx.Err())
+		return imagegen.Result{}, failure(false, fmt.Errorf("%w: %w", imagegen.ErrNotStarted, ctx.Err()))
 	}
 
 	answer, key, err := p.call(ctx, "", http.MethodPost, p.base.JoinPath(p.model).String(), body, statusLimit)

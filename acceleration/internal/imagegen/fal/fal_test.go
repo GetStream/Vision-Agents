@@ -263,6 +263,34 @@ func (s *FALSuite) TestAJobFirstSeenFinishedLeavesItsQueueAndDrawingUnknown() {
 	s.NotContains(drawn.Attributes(), imagegen.AttributeQueuedMs)
 }
 
+func (s *FALSuite) TestADrawThatWaitedOutItsDeadlineForASlotWasNeverStarted() {
+	// Nothing was sent, so it can be sent again without paying for it twice.
+	slots <- struct{}{}
+	slots <- struct{}{}
+	defer func() { <-slots; <-slots }()
+	ctx, cancel := context.WithTimeout(s.ctx, 20*time.Millisecond)
+	defer cancel()
+
+	_, err := s.provider.Generate(ctx, imagegen.Request{Prompt: "a field"})
+
+	s.Require().ErrorIs(err, imagegen.ErrNotStarted)
+	s.False(imagegen.Accepted(err))
+	submitted, _, _ := s.queue.seen()
+	s.Empty(submitted)
+}
+
+func (s *FALSuite) TestADrawThatTimedOutOnceSubmittedWasStarted() {
+	// FAL took it, and may draw and bill it: not one to send again as if it never left.
+	s.queue.queued = 1000
+	ctx, cancel := context.WithTimeout(s.ctx, 50*time.Millisecond)
+	defer cancel()
+
+	_, err := s.provider.Generate(ctx, imagegen.Request{Prompt: "a field"})
+
+	s.Require().Error(err)
+	s.NotErrorIs(err, imagegen.ErrNotStarted)
+}
+
 func (s *FALSuite) TestAnAspectRatioIsSentAsFALsNameForIt() {
 	s.queue.finishWith(map[string]any{"images": []any{inline("png", picture("png", 16, 9))}})
 

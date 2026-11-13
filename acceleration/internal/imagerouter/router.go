@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
@@ -62,6 +64,10 @@ type Request struct {
 	CallID string
 	// Region is where the work is done: the agent's, from its config. Empty names none.
 	Region string
+	// UsageID names a generation that may be drawn again, such as a picture an agent asked for
+	// that a stopped router drew without keeping, so its row is written, and billed, once. Zero
+	// gives each generation an id of its own.
+	UsageID uuid.UUID
 	// Tags are the customer's own cost labels, recorded on the row this request writes.
 	Tags routing.Tags
 	// Target is a "provider/model" name or a capability shortcut. Empty means
@@ -174,7 +180,7 @@ func (r *Router) Generate(ctx context.Context, request Request) (Generation, err
 			continue
 		}
 
-		generation, err := r.draw(ctx, provider, config, core.Owner(), request.Image)
+		generation, err := r.draw(ctx, provider, config, core.Owner(), request.UsageID, request.Image)
 		if err == nil {
 			return generation, nil
 		}
@@ -201,12 +207,13 @@ func (r *Router) draw(
 	provider imagegen.Provider,
 	config routing.ProviderConfig,
 	owner routing.Owner,
+	usageID uuid.UUID,
 	request imagegen.Request,
 ) (Generation, error) {
 	defer provider.Close()
 
 	result, err := routing.Call(ctx, routing.Meter{
-		Recorder: r.Recorder(), Config: config, Owner: owner,
+		Recorder: r.Recorder(), Config: config, Owner: owner, UsageID: usageID,
 		Code:       func(err error) string { return string(imagegen.CodeOf(err)) },
 		Estimate:   pricing.Quantities{pricing.Images: int64(max(request.N, 1))},
 		ReserveFor: Deadline,

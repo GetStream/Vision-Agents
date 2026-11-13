@@ -27,9 +27,10 @@ var aspectRatios = []string{"1:1", "4:3", "3:4", "16:9", "9:16"}
 
 // DrawRequest is a picture generate_image asks for, as the session queues it.
 type DrawRequest struct {
-	// SessionID and ToolCallID are the call that asked: a call run again queues nothing more,
-	// and a call id another session reuses, such as ask-1, is another call.
+	// SessionID, TurnID and ToolCallID are the call that asked: a call run again in its turn
+	// queues nothing more, and a call id a later turn reuses, such as ask-1, is another call.
 	SessionID   string
+	TurnID      string
 	ToolCallID  string
 	Prompt      string
 	AspectRatio string
@@ -107,7 +108,7 @@ func (a *Agent) generateImage(ctx context.Context, call llm.ToolCall) (string, e
 			"Tell the person what is on its way so far.", maxDrawsPerTurn), nil
 	}
 	err := a.options.Draws(ctx, DrawRequest{
-		SessionID: a.options.SessionID, ToolCallID: call.ID, Prompt: prompt, AspectRatio: shape,
+		SessionID: a.options.SessionID, TurnID: call.TurnID, ToolCallID: call.ID, Prompt: prompt, AspectRatio: shape,
 		Target: a.options.ImageTarget, AgentID: a.options.AgentID, CallID: a.options.CallID,
 		Region: a.options.Region, Tags: a.options.Tags, Attribution: routing.AttributionFrom(ctx),
 	})

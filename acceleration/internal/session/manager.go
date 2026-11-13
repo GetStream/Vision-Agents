@@ -2495,7 +2495,7 @@ func (m *Manager) drawer(spec Spec, conv *persistent.Conversation) agent.Drawer 
 	return func(ctx context.Context, request agent.DrawRequest) error {
 		return m.options.Drawings.Queue(ctx, imagejobs.Request{
 			CustomerID: spec.CustomerID, StreamApp: conv.StreamApp(), CID: conv.CID(), AgentUser: conv.Agent(),
-			SessionID: request.SessionID, ToolCallID: request.ToolCallID, AgentID: request.AgentID, CallID: request.CallID, Region: request.Region,
+			SessionID: request.SessionID, TurnID: request.TurnID, ToolCallID: request.ToolCallID, AgentID: request.AgentID, CallID: request.CallID, Region: request.Region,
 			Target: request.Target, Tags: request.Tags, Attribution: request.Attribution,
 			Prompt: request.Prompt, AspectRatio: request.AspectRatio,
 		})

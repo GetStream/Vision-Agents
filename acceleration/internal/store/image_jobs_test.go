@@ -11,7 +11,7 @@ import (
 func (s *StoreSuite) queuedImageJob() ImageJob {
 	job := ImageJob{
 		ID: "job-" + time.Now().Format("150405.000000000"), CustomerID: "acme", CID: "agent:a", AgentUser: "illustrator",
-		SessionID: "session-1", ToolCallID: "draw-1", Target: "image-fast", Attribution: json.RawMessage(`{}`), Prompt: "a field",
+		SessionID: "session-1", ToolCallID: "draw-1", RequestKey: "key-draw-1", Target: "image-fast", Attribution: json.RawMessage(`{}`), Prompt: "a field",
 	}
 	queued, err := s.store.QueueImageJob(s.ctx, &job)
 	s.Require().NoError(err)
@@ -73,7 +73,10 @@ func (s *StoreSuite) TestAnImageJobWithItsMessageDecidedIsClaimedOnlyToPost() {
 	toPost, err := s.store.ClaimImageJobs(s.ctx, now.Add(time.Second), 1, now.Add(time.Minute), true)
 	s.Require().NoError(err)
 	s.Require().Len(toPost, 1)
-	s.Equal([]byte("png"), toPost[0].Drawn, "the drawn picture comes with it")
+	s.Nil(toPost[0].Drawn, "a claim of up to 16 jobs loads none of their pictures")
+	drawn, err := s.store.ImageJobDrawn(s.ctx, toPost[0].ID)
+	s.Require().NoError(err)
+	s.Equal([]byte("png"), drawn, "read when the upload needs it")
 }
 
 func (s *StoreSuite) TestPostedImageJobsAreDeletedAfterADayAndFailedOnesAfter30Days() {
@@ -89,7 +92,7 @@ func (s *StoreSuite) TestPostedImageJobsAreDeletedAfterADayAndFailedOnesAfter30D
 		{"failed-new", ImageJobFailed, now.Add(-29 * 24 * time.Hour)},
 	} {
 		job := ImageJob{ID: finished.call, CustomerID: "acme", CID: "agent:a", AgentUser: "illustrator", SessionID: "session-1",
-			ToolCallID: finished.call, Target: "image-fast", Attribution: json.RawMessage(`{}`), Prompt: "a field"}
+			ToolCallID: finished.call, RequestKey: "key-" + finished.call, Target: "image-fast", Attribution: json.RawMessage(`{}`), Prompt: "a field"}
 		_, err := s.store.QueueImageJob(s.ctx, &job)
 		s.Require().NoError(err)
 		_, err = s.store.DB().NewUpdate().Model((*ImageJob)(nil)).Set("state = ?", finished.state).
