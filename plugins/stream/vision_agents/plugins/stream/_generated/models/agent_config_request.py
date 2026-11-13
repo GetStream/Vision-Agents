@@ -170,9 +170,9 @@ class AgentConfigRequest:
             agent named here must be a text agent with no agents of its own and not this one. Omitted or null on an update,
             the list stored stays as it is; an empty list removes it.
         image (str | Unset): What the agent draws pictures with, as a provider/model or a capability shortcut such as
-            image-fast. Naming one offers a text agent with a Chat channel the generate_image tool, whose pictures are
-            attached to its reply and billed like POST /v1/image/generations. Empty offers no such tool: unlike search there
-            is no default.
+            image-fast. Naming one offers a text agent with a Chat channel the generate_image tool, whose pictures are drawn
+            after the turn and posted into the conversation when ready, billed like POST /v1/image/generations. Empty offers
+            no such tool: unlike search there is no default.
     """
 
     name: str

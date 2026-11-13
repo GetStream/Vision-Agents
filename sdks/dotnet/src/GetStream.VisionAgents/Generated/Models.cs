@@ -1096,7 +1096,7 @@ namespace GetStream.VisionAgents.Models
         public string? Harness { get; set; } = default!;
 
         /// <summary>
-        /// What the agent draws pictures with, as a provider/model or a capability shortcut such as image-fast. Naming one offers a text agent with a Chat channel the generate_image tool, whose pictures are attached to its reply and billed like POST /v1/image/generations. Empty offers no such tool: unlike search there is no default.
+        /// What the agent draws pictures with, as a provider/model or a capability shortcut such as image-fast. Naming one offers a text agent with a Chat channel the generate_image tool, whose pictures are drawn after the turn and posted into the conversation when ready, billed like POST /v1/image/generations. Empty offers no such tool: unlike search there is no default.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("image")]
         public string? Image { get; set; } = default!;
