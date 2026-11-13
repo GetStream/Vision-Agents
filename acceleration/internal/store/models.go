@@ -2030,7 +2030,6 @@ type ItemPosition struct {
 // filter at all.
 type SessionFilter struct {
 	UserID    string
-	ConfigID  string
 	AgentName string
 	AgentID   string
 	Project   string
@@ -2039,17 +2038,8 @@ type SessionFilter struct {
 	// caller. A user id is only worth what proved it, so an end user is narrowed by both
 	// halves of who they are, the same as a session they reach by id.
 	CallerKinds []string
-	// State is SessionRunning or SessionClosed.
-	State string
 	// Team is the team the session's usage is counted under.
 	Team string
-	// Custom matches sessions whose custom object contains every one of these pairs, which
-	// is what makes custom worth writing: a caller that labelled a session can find it
-	// again by the label.
-	Custom map[string]string
-	// After and Before bound when the session started, After inclusive and Before not.
-	After  time.Time
-	Before time.Time
 	// Where is the filter the request spelled out, with its $and and $or. Nil admits every
 	// session. It is ANDed with every field above, so nothing in it reaches past them: an
 	// end user's UserID and CallerKinds hold whatever the expression says.

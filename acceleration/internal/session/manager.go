@@ -1604,8 +1604,6 @@ func matchesLive(live *Session, filter store.SessionFilter) bool {
 		return false
 	case len(filter.CallerKinds) > 0 && !slices.Contains(filter.CallerKinds, string(spec.CallerKind)):
 		return false
-	case filter.ConfigID != "" && spec.ConfigID != filter.ConfigID:
-		return false
 	case filter.AgentName != "" && spec.AgentName != filter.AgentName:
 		return false
 	case filter.Project != "" && spec.Project != filter.Project:
@@ -1616,15 +1614,6 @@ func matchesLive(live *Session, filter store.SessionFilter) bool {
 		return false
 	case filter.Team != "" && usage.Team(spec.Attribution.UsageCategories) != filter.Team:
 		return false
-	case filter.State == store.SessionRunning && live.State() != Live,
-		filter.State == store.SessionClosed && live.State() != Ended:
-		return false
-	case !filter.After.IsZero() && live.CreatedAt().Before(filter.After):
-		return false
-	case !filter.Before.IsZero() && !live.CreatedAt().Before(filter.Before):
-		return false
-	case !contains(spec.Custom, filter.Custom):
-		return false
 	// Nobody has reviewed a session that is still running, so it has no score.
 	case !filter.Where.Matches(store.SessionValues{
 		Project: spec.Project, Agent: spec.AgentName, UserID: spec.Caller.UserID, ConfigID: spec.ConfigID,
@@ -1633,17 +1622,6 @@ func matchesLive(live *Session, filter store.SessionFilter) bool {
 		return false
 	case filter.Cursor != nil && filter.Order.Compare(livePosition(live), *filter.Cursor) <= 0:
 		return false
-	}
-	return true
-}
-
-// contains is the store's custom @> ?::jsonb, for a session that has no row to ask.
-func contains(custom map[string]any, wanted map[string]string) bool {
-	for key, value := range wanted {
-		held, ok := custom[key]
-		if !ok || fmt.Sprint(held) != value {
-			return false
-		}
 	}
 	return true
 }
