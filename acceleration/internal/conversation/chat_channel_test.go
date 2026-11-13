@@ -589,3 +589,45 @@ func (s *ChatChannelSuite) wrote() {
 	s.Require().NoError(err)
 	s.Require().True(slices.ContainsFunc(s.chat.Stored(s.cid), func(m map[string]any) bool { return m["text"] == text }))
 }
+
+// AI-3154: in a channel of a type a config answers in, a call held for approval asks the writer
+// of the message its reply answers, one turn after another, though the Router's session there
+// is opened for nobody. A follow-up nobody wrote, such as a scheduled task's, asks nobody, as on
+// base (probe on eee6d6665: AwaitApproval("") refused every one of them).
+func (s *ChatChannelSuite) TestAHeldCallAsksTheWriterOfEachMessage() {
+	s.created(nil)
+	s.wrote()
+	c, _, _, err := s.service.Open(s.routerOpens(s.cid), "customer", "config-1", s.cid)
+	s.Require().NoError(err)
+	allow := conversation.ToolApproval{Title: "Allow crm to run echo?"}
+	for _, writer := range []string{"anya", "ben", ""} {
+		id := "message-" + uuid.NewString()
+		_, err = c.BeginFollowUp(id, "check the crm for my shift", writer)
+		s.Require().NoError(err)
+		c.Observe(agent.ToolStarted{ID: "call-" + id, Tool: "crm__echo", StartedAt: time.Now().UTC()})
+
+		command, asked, ok := c.AwaitApproval("", "call-"+id, "", allow)
+
+		s.Equal(writer != "", ok, writer)
+		s.Equal(writer, asked)
+		if ok {
+			s.Equal(id, command)
+		}
+		c.Observe(agent.Responded{})
+	}
+}
+
+// A conversation shared with its channel's members asks nobody, its owner included, as on base (probe on eee6d6665: AwaitApproval("anya") refused it).
+func (s *ChatChannelSuite) TestAHeldCallInASharedConversationAsksNobody() {
+	s.in(places()[2])
+	s.created(nil)
+	c, _, err := s.opened(s.service)
+	s.Require().NoError(err)
+	_, err = c.BeginCommand("command-1", "check the crm for my shift", "")
+	s.Require().NoError(err)
+	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "crm__echo", StartedAt: time.Now().UTC()})
+
+	_, _, ok := c.AwaitApproval("anya", "call-1", "", conversation.ToolApproval{Title: "Allow crm to run echo?"})
+
+	s.False(ok)
+}

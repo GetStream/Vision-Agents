@@ -660,23 +660,34 @@ func (s *SessionConnectorsSuite) threadChannel(channel, connector, connection, c
 }
 
 // connector stores a connector of the suite's app at the fake, taking a bearer token.
-func (s *SessionConnectorsSuite) connector() string {
+func (s *SessionConnectorsSuite) connector() string { return s.customConnector(s.provider) }
+
+// manifest is the YAML of a connector custom_crm at the fake, taking a bearer token.
+func (s *SessionConnectorsSuite) manifest() string { return customManifest(s.provider) }
+
+// connection is bearerConnection with the fake's token.
+func (s *SessionConnectorsSuite) connection(user *testClient, connector string) (string, map[string]any) {
+	return s.bearerConnection(s.token, user, connector)
+}
+
+// customConnector stores a connector of the suite's app at provider, taking a bearer token.
+func (s *RouterSuite) customConnector(provider *fakeprovider.Server) string {
 	id := "custom_crm" + strings.ReplaceAll(s.utils.uuid(), "-", "")
-	manifest, err := core.ParseManifest([]byte(strings.Replace(s.manifest(), "custom_crm", id, 1)))
+	manifest, err := core.ParseManifest([]byte(strings.Replace(customManifest(provider), "custom_crm", id, 1)))
 	s.Require().NoError(err)
 	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
 	s.Require().NoError(err)
 	return id
 }
 
-// manifest is the YAML of a connector custom_crm at the fake, taking a bearer token.
-func (s *SessionConnectorsSuite) manifest() string {
+// customManifest is the YAML of a connector custom_crm at provider, taking a bearer token.
+func customManifest(provider *fakeprovider.Server) string {
 	return `
 id: custom_crm
 revision: 1
 name: CRM
 endpoints:
-  mcp: ` + s.provider.URL + fakeprovider.PathMCP + `
+  mcp: ` + provider.URL + fakeprovider.PathMCP + `
 schemes: [bearer]
 sources:
   - kind: mcp
@@ -684,10 +695,10 @@ sources:
 `
 }
 
-// connection is a validated connection to connector holding the fake's token, the app's
+// bearerConnection is a validated connection to connector holding token, a fake's, the app's
 // when user is nil and otherwise user's, made by the backend acting for them, and the grant
 // of the fake's echo at the digest its validate listed.
-func (s *SessionConnectorsSuite) connection(user *testClient, connector string) (string, map[string]any) {
+func (s *RouterSuite) bearerConnection(token string, user *testClient, connector string) (string, map[string]any) {
 	as, body := s.serverClient, appOwned(connector)
 	if user != nil {
 		as, body = s.serverClient.actingFor(user), userOwned(connector, user)
@@ -695,7 +706,7 @@ func (s *SessionConnectorsSuite) connection(user *testClient, connector string) 
 	var created Connection
 	s.Require().Equal(http.StatusCreated, as.do(http.MethodPost, "/v1/agents/connections", withScheme(body, bearer.Name), &created))
 	s.Require().Equal(http.StatusOK, as.do(http.MethodPut, "/v1/agents/connections/"+created.ID+"/credentials",
-		map[string]any{"expected_revision": 1, "values": map[string]string{bearer.SuppliedToken: s.token}}, nil))
+		map[string]any{"expected_revision": 1, "values": map[string]string{bearer.SuppliedToken: token}}, nil))
 	var validation ConnectionValidation
 	s.Require().Equal(http.StatusOK, as.do(http.MethodPost, "/v1/agents/connections/"+created.ID+"/validate", nil, &validation))
 	s.Require().Equal(validationConnected, string(validation.Status), validation.Error)

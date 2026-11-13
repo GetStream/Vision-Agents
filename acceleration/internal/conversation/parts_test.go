@@ -262,3 +262,16 @@ func (s *PartsSuite) TestAStreamingStepShowsItsLatestThoughts() {
 	s.EqualValues(1500, live[0].DurationMS)
 	s.Empty(s.m.Parts[0].Preview, "the live preview is never stored")
 }
+
+// In a channel of a type a config answers in, a declared tool's question asks the writer of the
+// message the reply answers, not the command's initiator.
+func (s *PartsSuite) TestAServerToolsQuestionAsksTheWriterOfTheMessage() {
+	s.c.data.Commands["command"] = commandRecord{Initiator: "emp_alice", Writer: "anya"}
+	s.c.tools["send_email"] = ToolDisplay{Title: "Sending the email", Approval: &ToolApproval{Title: "Send this email?"}}
+
+	s.c.called(s.m, toolCall{id: "call-1", name: "send_email", startedAt: time.Now()})
+
+	s.Require().Len(s.m.Parts, 1)
+	s.Equal("awaiting_approval", s.m.Parts[0].Status)
+	s.Equal("anya", s.m.Parts[0].TargetUserID)
+}
