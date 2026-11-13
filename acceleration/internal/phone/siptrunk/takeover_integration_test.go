@@ -338,6 +338,25 @@ func (s *TakeoverSuite) TestCloseHandsTheCallToAnotherNode() {
 	s.Equal("b", s.get("owner:"+id))
 }
 
+func (s *TakeoverSuite) TestClosingTwiceHandsTheCallOverOnce() {
+	s.holdFor = time.Minute
+	a, b := s.node("a"), s.node("b")
+	id := s.dial(a)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s.Require().NoError(a.provider.Close(ctx))
+	s.Eventually(func() bool { return live(b.provider, id) }, time.Second, 10*time.Millisecond)
+
+	start := time.Now()
+	s.Require().NoError(a.provider.Close(ctx))
+
+	s.Less(time.Since(start), 200*time.Millisecond)
+	s.Equal(1, b.takeover.resumes())
+	s.False(a.dialer.call.wasHungUp())
+	s.Equal("b", s.get("owner:"+id))
+}
+
 func (s *TakeoverSuite) TestCloseWithNoOtherNodeLeavesTheCallForLater() {
 	a := s.node("a")
 	id := s.dial(a)

@@ -353,8 +353,9 @@ func (s *Service) ResumeTrunkCall(ctx context.Context, ref TrunkCallRef) (Resume
 	return ResumedTrunkCall{Trunk: trunk, Bridge: bridge, Ended: s.trunkCallEnded(ctx, ref.Token, ref.CallID)}, nil
 }
 
-// Close hangs up the calls this node holds through customers' own trunks. Calls placed
-// at a vendor are the vendor's to hold and are not touched.
+// Close hands the calls this node holds through customers' own trunks to another node, or
+// hangs them up without Redis. Calls placed at a vendor are the vendor's to hold and are not
+// touched.
 func (s *Service) Close(ctx context.Context) error {
 	if closer, ok := s.sipTrunks.(interface{ Close(context.Context) error }); ok {
 		return closer.Close(ctx)

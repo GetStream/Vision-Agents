@@ -158,9 +158,10 @@ const (
 	sentryFlushTimeout = 2 * time.Second
 	// traceFlushTimeout bounds the same thing for spans, on the same reasoning.
 	traceFlushTimeout = 2 * time.Second
-	// phoneHangupGrace bounds hanging up the calls this node holds through customers' own
-	// SIP trunks. A BYE is one round trip, so this is generous. On a signal the hangup runs
-	// first, and the HTTP drain gets the rest of shutdownGrace, so both fit inside the
+	// phoneHangupGrace bounds handing the calls this node holds through customers' own SIP
+	// trunks to another node, or hanging them up when there is no Redis to hand them through.
+	// A BYE is one round trip and a takeover a few, so this is generous. On a signal this
+	// runs first, and the HTTP drain gets the rest of shutdownGrace, so both fit inside the
 	// orchestrator's termination grace period.
 	phoneHangupGrace = 5 * time.Second
 	// usageDrainTimeout is how long the usage writer has to write what is queued once
@@ -1143,7 +1144,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if policies != nil {
 		dlcGate.Charging(policies).Limiting(settings.Limits.Mode)
 	}
-	telephony, err := buildPhone(settings, vendorConfig, pgStore, liveClient, phoneRecorder, streamClients, dlcGate, secrets, logger)
+	telephony, err := buildPhone(ctx, settings, vendorConfig, pgStore, liveClient, phoneRecorder, streamClients, dlcGate, secrets, logger)
 	if err != nil {
 		return err
 	}
@@ -1742,8 +1743,9 @@ const drainPoll = 250 * time.Millisecond
 
 // stopServing stops taking work, then lets what is running finish.
 //
-// Without a drain it hangs up the calls through customers' own SIP trunks, then drains HTTP,
-// both inside the grace: the drain gets whatever the hangup left of it, and metrics and the
+// Without a drain it hands the calls through customers' own SIP trunks to another node (or
+// hangs them up without Redis), then drains HTTP, both inside the grace: the drain gets
+// whatever that left of it, and metrics and the
 // sandbox egress proxy are served until the process exits. With one, the metrics, sandbox
 // egress proxy and public listeners close first and the sessions this process holds, phone
 // calls included, keep going until they end or the drain runs out, still answering their
@@ -2421,8 +2423,10 @@ func newActivePrices(ctx context.Context, pgStore *store.Store, capabilities rou
 
 // buildPhone wires the telephony service. Stream credentials are only needed to attach a
 // number, so a deployment without them still lists vendors and searches for numbers, and
-// the operations that need them say so.
+// the operations that need them say so. The calls through customers' own SIP trunks are
+// taken over from other nodes until ctx ends.
 func buildPhone(
+	ctx context.Context,
 	settings config.Config,
 	vendorConfig phone.Config,
 	pgStore *store.Store,
@@ -2440,21 +2444,23 @@ func buildPhone(
 	// Passwords of customers' own SIP trunks are sealed under the router's keyring. Without
 	// a key those trunks are off, rather than their passwords stored in the clear.
 	var trunks phone.Provider
+	var trunkCalls *siptrunk.Provider
+	// The Redis of every shard: the node that ends a refused call's leg need not be the one
+	// that refused it, and the node that stops need not be the one that continues a call.
+	var shared rueidis.Client
+	if liveClient != nil {
+		shared = liveClient.Redis()
+	}
 	if secrets != nil {
-		trunks = siptrunk.New(siptrunk.Options{Logger: logger})
+		trunkCalls = siptrunk.New(siptrunk.Options{Logger: logger, Redis: shared})
+		trunks = trunkCalls
 	} else {
 		logger.Info("no key encryption key, calls through customers' own sip trunks are off")
 	}
 
-	// The Redis of every shard: the node that ends a refused call's leg need not be the one
-	// that refused it.
-	var refusals rueidis.Client
-	if liveClient != nil {
-		refusals = liveClient.Redis()
-	}
-	return phone.NewService(phone.ServiceOptions{
+	service, err := phone.NewService(phone.ServiceOptions{
 		Registry:  vendors.Registry(vendorConfig),
-		Redis:     refusals,
+		Redis:     shared,
 		Store:     pgStore,
 		Apps:      phone.AppsOf(stream),
 		Recorder:  recorder,
@@ -2464,6 +2470,14 @@ func buildPhone(
 		Sealer:    secrets,
 		SIPTrunks: trunks,
 	})
+	if err != nil {
+		return nil, err
+	}
+	if trunkCalls != nil {
+		trunkCalls.SetResumer(service)
+		trunkCalls.Start(ctx)
+	}
+	return service, nil
 }
 
 // callHookCheckTimeout bounds the one read of the deployment's app hooks at boot.
@@ -2498,9 +2512,10 @@ func checkCallHook(ctx context.Context, settings config.Config, logger *slog.Log
 	}
 }
 
-// closePhone hangs up the calls this node holds through customers' own SIP trunks. Their
-// signalling runs through this process, so stopping without a BYE would leave both ends of
-// each call connected to nothing.
+// closePhone hands the calls this node holds through customers' own SIP trunks to another
+// node, or hangs them up when there is no Redis to hand them through. Their signalling runs
+// through this process, so stopping with neither would leave both ends of each call
+// connected to nothing.
 func closePhone(telephony *phone.Service, logger *slog.Logger) {
 	ctx, cancel := context.WithTimeout(context.Background(), phoneHangupGrace)
 	defer cancel()
