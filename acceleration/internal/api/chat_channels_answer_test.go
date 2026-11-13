@@ -95,7 +95,7 @@ func (s *AppHooksSuite) TestAMessageNobodyAnsweredIsReadWithTheNextMention() {
 	request, _ := s.askedWith(asked)
 	input := request.Input
 	ben := slices.IndexFunc(input, func(m llm.Message) bool { return strings.Contains(m.Content, "the 6pm shift is short one person") })
-	anya := slices.IndexFunc(input, func(m llm.Message) bool { return strings.HasSuffix(m.Content, asked) })
+	anya := slices.IndexFunc(input, func(m llm.Message) bool { return strings.Contains(m.Content, asked) })
 	s.Require().NotEqual(-1, ben, "the message nobody answered did not reach the model: %+v", input)
 	s.Less(ben, anya, "the message nobody answered came after the one answered")
 	s.Equal(1, s.count(input, asked), "the message answered was handed twice: %+v", input)

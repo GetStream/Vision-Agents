@@ -93,7 +93,7 @@ func (t dataTable) rollup() bool {
 // its tools again on first use. And connector_connection_clients: the next consent of the
 // connection where it moved to records its client again. And connector_connection_validations:
 // the next validate where it moved to records its result again. And chat_inbound, Stream
-// Chat messages in flight for minutes.
+// Chat messages in flight for minutes, and image_jobs, pictures in flight for minutes.
 var dataTables = []dataTable{
 	{name: "agent_configs", customer: "customer_id"},
 	{name: "skills", customer: "customer_id"},
@@ -130,6 +130,10 @@ var dataTables = []dataTable{
 	{name: "agent_responses", customer: "customer_id", shard: true},
 	{name: "agent_response_items", parent: "agent_responses", parentColumn: "response_id", shard: true},
 	{name: "conversation_documents", customer: "customer_id", shard: true},
+	// The channel's hidden ranges are in the Stream app and stay there, so the copies of what
+	// they hid and the switches that hid it go with their session.
+	{name: "agent_branch_switches", customer: "customer_id", shard: true},
+	{name: "agent_branch_messages", customer: "customer_id", shard: true},
 	// Nothing points at a log's id, so a copied log is given one of this deployment's
 	// (20261206120000_agent_logs_source_id.sql).
 	{name: "agent_logs", customer: "customer_id", copied: "source_id"},

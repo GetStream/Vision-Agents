@@ -186,7 +186,7 @@ func (p *Provider) Generate(ctx context.Context, request imagegen.Request) (imag
 	case slots <- struct{}{}:
 		defer func() { <-slots }()
 	case <-ctx.Done():
-		return imagegen.Result{}, failure(false, ctx.Err())
+		return imagegen.Result{}, failure(false, fmt.Errorf("%w: %w", imagegen.ErrNotStarted, ctx.Err()))
 	}
 
 	answer, key, err := p.call(ctx, "", http.MethodPost, p.base.JoinPath(p.model).String(), body, statusLimit)
@@ -214,6 +214,10 @@ func (p *Provider) Generate(ctx context.Context, request imagegen.Request) (imag
 		}
 	}()
 
+	// Each phase is as long as the polls saw it, to within pollInterval: submitted to the
+	// first IN_PROGRESS is the queue, and from then to COMPLETED the drawing.
+	submittedAt := time.Now()
+	var drawingAt time.Time
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 	for {
@@ -235,15 +239,26 @@ func (p *Provider) Generate(ctx context.Context, request imagegen.Request) (imag
 		}
 
 		switch status.Status {
-		case "IN_QUEUE", "IN_PROGRESS":
+		case "IN_QUEUE":
+			continue
+		case "IN_PROGRESS":
+			if drawingAt.IsZero() {
+				drawingAt = time.Now()
+			}
 			continue
 		case "COMPLETED":
 			finished = true
+			completedAt := time.Now()
 			answer, _, err := p.call(ctx, key, http.MethodGet, submitted.ResponseURL, nil, resultLimit)
 			if err != nil {
 				return imagegen.Result{}, failure(true, err)
 			}
-			return p.decode(answer, request.Count(), format)
+			result, err := p.decode(answer, request.Count(), format)
+			// A job first seen finished says nothing about where its time went.
+			if err == nil && !drawingAt.IsZero() {
+				result.Queued, result.Drawn = drawingAt.Sub(submittedAt), completedAt.Sub(drawingAt)
+			}
+			return result, err
 		default:
 			return imagegen.Result{}, failure(true, fmt.Errorf("fal: the job is %q", status.Status))
 		}
