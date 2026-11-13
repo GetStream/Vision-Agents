@@ -2011,7 +2011,7 @@ func (c *Conversation) finish(state string) {
 func (c *Conversation) publish(m Message) {
 	if c.emit != nil {
 		m.Tools = append([]Tool{}, m.Tools...)
-		m.Parts = append([]Part{}, m.Parts...)
+		m.Parts = clonedParts(m.Parts)
 		m.Sources = append([]Source{}, m.Sources...)
 		m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 		m.Files = append([]sandbox.Attachment{}, m.Files...)
@@ -2028,7 +2028,7 @@ func (c *Conversation) StreamApp() int64 {
 }
 func (c *Conversation) enqueue(m Message, create bool) {
 	m.Tools = append([]Tool{}, m.Tools...)
-	m.Parts = append([]Part{}, m.Parts...)
+	m.Parts = clonedParts(m.Parts)
 	m.Sources = append([]Source{}, m.Sources...)
 	m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 	m.Files = append([]sandbox.Attachment{}, m.Files...)
@@ -2319,13 +2319,7 @@ func (c *Conversation) run() {
 			}
 			// Only an update sends the reply, so only a tick that sends one copies it.
 			if live {
-				copy := *m
-				copy.Tools = append([]Tool{}, m.Tools...)
-				copy.Parts = append([]Part{}, m.Parts...)
-				copy.Sources = append([]Source{}, m.Sources...)
-				copy.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
-				copy.Files = append([]sandbox.Attachment{}, m.Files...)
-				copy.ConnectorAuthorizations = append([]ConnectorAuthorization{}, m.ConnectorAuthorizations...)
+				copy := liveCopy(m)
 				m = &copy
 			}
 			// A change not sent yet waits for the next update; a settled reply's is stored.
@@ -2477,4 +2471,17 @@ func aiState(m Message) string {
 
 func sameMemoryScope(a, b memory.Scope) bool {
 	return a.UserID == b.UserID && a.AppID == b.AppID && maps.Equal(a.Extra, b.Extra)
+}
+
+// liveCopy is the reply a live update sends, which is encoded once the lock is let go: its
+// parts' approvals are its own, so answering one meanwhile changes only the live reply.
+func liveCopy(m *Message) Message {
+	copy := *m
+	copy.Tools = append([]Tool{}, m.Tools...)
+	copy.Parts = clonedParts(m.Parts)
+	copy.Sources = append([]Source{}, m.Sources...)
+	copy.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
+	copy.Files = append([]sandbox.Attachment{}, m.Files...)
+	copy.ConnectorAuthorizations = append([]ConnectorAuthorization{}, m.ConnectorAuthorizations...)
+	return copy
 }
