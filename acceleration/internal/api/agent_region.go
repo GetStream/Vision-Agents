@@ -80,6 +80,11 @@ func (s *Server) regionComplaint(ctx context.Context, config store.AgentConfig, 
 		}
 		served, err := router.InRegion(ctx, model.target, region, nil)
 		if err != nil {
+			// A session refuses a model it cannot route when it opens; nothing refuses a picture
+			// target until a draw after the turn fails, so it is refused here instead.
+			if model.modality == routing.Image {
+				unmet = append(unmet, fmt.Sprintf("image: %s is not something this deployment draws with", model.target))
+			}
 			continue
 		}
 		if !served {

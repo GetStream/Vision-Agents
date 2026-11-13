@@ -140,6 +140,15 @@ func (s *ConfigsSuite) TestAnImageTargetIsStoredOnCreateAndOnEveryUpdate() {
 	s.Equal("image-quality", value(patched.Image), "a patch that leaves it out keeps it")
 }
 
+func (s *ConfigsSuite) TestAnImageTargetNothingDrawsWithIsRefused() {
+	// The agent would be offered generate_image, and every picture would fail after its turn.
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "illustrator", "mode": "text", "image": "imagefast"})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "imagefast")
+}
+
 func (s *ConfigsSuite) TestAConfigWithoutAnImageTargetHasNone() {
 	created := s.createConfig(map[string]any{"name": "support", "mode": "text"})
 
