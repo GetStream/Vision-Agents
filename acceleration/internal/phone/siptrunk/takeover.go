@@ -3,6 +3,7 @@ package siptrunk
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strconv"
 	"time"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/sipbridge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // holdFor is how long a node's claim on a call lasts unrenewed. A node that dies leaves its
@@ -289,9 +291,14 @@ func (p *Provider) take(id string) {
 	}
 
 	resumed, err := p.resumer.ResumeTrunkCall(ctx, rec.Ref)
-	if err != nil {
-		log.Error("dropping a call through a customer's sip trunk whose credentials could not be opened", "error", err)
+	if errors.Is(err, store.ErrNoSIPTrunk) || errors.Is(err, store.ErrNoStreamTrunk) {
+		log.Error("dropping a call through a customer's sip trunk whose trunk is gone", "error", err)
 		p.forget(id, log)
+		return
+	}
+	if err != nil {
+		// The claim lapses unrenewed, and the next scan tries again.
+		log.Warn("could not open the credentials of a call through a customer's sip trunk to take it over", "error", err)
 		return
 	}
 	ended := resumed.Ended

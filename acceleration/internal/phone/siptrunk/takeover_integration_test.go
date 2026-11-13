@@ -21,6 +21,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/sipbridge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
@@ -40,8 +41,9 @@ type fakeTakeover struct {
 	states  []sipbridge.CallState
 	call    *fakeCall
 	err     error
-	// lookupErr, when set, is what opening the credentials fails with.
-	lookupErr error
+	// lookupErrs are what opening the credentials fails with, the next one each time, until
+	// none are left.
+	lookupErrs []error
 	// beforeLookup, when set, runs before the credentials are opened.
 	beforeLookup func()
 	// before, when set, runs before the resume answers, and its error is the resume's.
@@ -57,8 +59,14 @@ func (t *fakeTakeover) ResumeTrunkCall(_ context.Context, _ phone.TrunkCallRef) 
 	if t.beforeLookup != nil {
 		t.beforeLookup()
 	}
-	if t.lookupErr != nil {
-		return phone.ResumedTrunkCall{}, t.lookupErr
+	t.mu.Lock()
+	var err error
+	if len(t.lookupErrs) > 0 {
+		err, t.lookupErrs = t.lookupErrs[0], t.lookupErrs[1:]
+	}
+	t.mu.Unlock()
+	if err != nil {
+		return phone.ResumedTrunkCall{}, err
 	}
 	return phone.ResumedTrunkCall{
 		Trunk: &phone.SIPTrunk{
@@ -414,12 +422,36 @@ func (s *TakeoverSuite) TestACallWhoseCredentialsCannotBeOpenedIsDropped() {
 	a := s.node("a")
 	id := s.dial(a)
 	b := s.node("b")
-	b.takeover.lookupErr = errors.New("store: sip trunk not found")
+	b.takeover.lookupErrs = []error{fmt.Errorf("phone: %w", store.ErrNoSIPTrunk)}
 
 	a.stop()
 
 	s.Eventually(func() bool { return s.gone(id) }, 2*time.Second, 10*time.Millisecond)
 	s.Zero(b.takeover.resumes())
+}
+
+func (s *TakeoverSuite) TestACallOnAStreamTrunkThatIsGoneIsDropped() {
+	a := s.node("a")
+	id := s.dial(a)
+	b := s.node("b")
+	b.takeover.lookupErrs = []error{fmt.Errorf("phone: %w", store.ErrNoStreamTrunk)}
+
+	a.stop()
+
+	s.Eventually(func() bool { return s.gone(id) }, 2*time.Second, 10*time.Millisecond)
+	s.Zero(b.takeover.resumes())
+}
+
+func (s *TakeoverSuite) TestACallWhoseCredentialsFailToOpenOnceIsTakenLater() {
+	a := s.node("a")
+	id := s.dial(a)
+	b := s.node("b")
+	b.takeover.lookupErrs = []error{errors.New("store: sip trunk: connection refused")}
+
+	a.stop()
+
+	s.Eventually(func() bool { return b.takeover.resumes() == 1 }, 3*time.Second, 10*time.Millisecond)
+	s.Eventually(func() bool { return s.get("owner:"+id) == "b" }, time.Second, 10*time.Millisecond)
 }
 
 func (s *TakeoverSuite) TestAnUnusableRecordIsDropped() {
