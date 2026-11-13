@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"net/http"
 	"slices"
@@ -635,6 +636,40 @@ func (s *SessionConnectorsSuite) TestASlackThreadSessionUsesTheAppsConnectionsOn
 	s.Equal("mine", left["name"])
 	s.Equal("shared_session", left["reason"])
 	s.Equal(connectorEchoText, ran["result"], "the app's binding answers")
+}
+
+// TestAThreadChannelsHeldCallAsksNobody: a thread channel (type agent) answered by the hook
+// keeps the rule it had before channels of a named type asked their writer. The Router's own
+// session there asks nobody, so a call held for approval is refused at once, never put to the
+// person whose message the reply answers (Session.followUp hands BeginFollowUp a writer only
+// for a turn agent.WithWriter marks, which a thread channel's turn is not).
+func (s *SessionConnectorsSuite) TestAThreadChannelsHeldCallAsksNobody() {
+	connector := s.connector()
+	app, echo := s.connection(nil, connector)
+	held := s.binding("crm", connector, "fixed", app, echo)
+	held["require_approval"] = []string{"echo"}
+	config := s.config(held)
+	channel := conversation.ThreadChannelPrefix + s.utils.uuid()
+	s.threadChannel(channel, connector, app, config)
+
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream", fmt.Sprintf(`{
+  "type": "message.new", "cid": "agent:%s", "channel_id": %q, "channel_type": "agent", "channel_custom": {},
+  "message": {"id": "message-%s", "text": "check the crm", "user": {"id": "slack-U0000ALICE", "name": "Alice"}}
+}`, channel, channel, s.utils.uuid())))
+
+	s.Require().Eventually(func() bool {
+		for _, stored := range s.chat.Stored("agent:" + channel) {
+			custom, _ := stored["custom"].(map[string]any)
+			runtime, _ := custom["support_runtime"].(map[string]any)
+			if strings.HasPrefix(fmt.Sprint(runtime["command_id"]), "thread_") && runtime["state"] == "completed" {
+				return true
+			}
+		}
+		return false
+	}, settleFor, 20*time.Millisecond, "the thread's reply never finished")
+	for _, stored := range s.chat.Stored("agent:" + channel) {
+		s.Nil(echoStepOf(stored), "a thread channel's held call was put to a person")
+	}
 }
 
 // threadChannel is a Slack thread's thread channel, linked and created in Stream Chat as the
