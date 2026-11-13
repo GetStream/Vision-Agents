@@ -172,8 +172,9 @@ Run from the repo root. The full image, not `-slim`: `websocket-driver` has a C 
 ## Publishing
 
 `rubygems_mfa_required` is set in the gemspec. Publish with RubyGems trusted publishing from
-CI (`rubygems/release-gem`), never a stored API key. `Gemfile.lock` is not committed for a
-library.
+CI, never a stored API key: `.github/workflows/release-sdk-ruby.yml`, run by hand or with every
+other SDK (see the `release-sdks` skill). Not `rubygems/release-gem`, whose `rake release` tags
+`v<version>`, the Python packages' tag. `Gemfile.lock` is not committed for a library.
 
 ## Reviewing a change
 

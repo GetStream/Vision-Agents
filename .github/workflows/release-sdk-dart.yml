@@ -1,0 +1,146 @@
+name: Release Dart SDK
+
+# Publishes stream_agents to pub.dev, at the version in its pubspec.yaml. Unlike the other SDKs
+# the version is the committed one: pub.dev checks the published pubspec against the tag, and
+# the package's CHANGELOG.md names it, so a release starts with a pull request that raises it.
+#
+# pub.dev only takes a package from a run on a tag, so this runs twice:
+# - From accelerate, by hand or started by release-sdks.yml: checks the package and, if its
+#   version has no sdk-dart-v* tag yet and this is no dry run, tags the commit and starts
+#   itself again on that tag. A version already tagged is nothing to release.
+# - On the sdk-dart-v<version> tag: publishes the package. A failed run is run again from the
+#   tag.
+#
+# The first version is published by hand; after that the package's admin page on pub.dev
+# enables publishing from GitHub Actions for GetStream/Vision-Agents with the tag pattern
+# sdk-dart-v{{version}} and workflow_dispatch events allowed.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Check the package without tagging or publishing (ignored on a tag)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-sdk-dart-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check and tag
+    if: github.ref == 'refs/heads/accelerate'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # push the release tag
+      actions: write    # start the publishing run on that tag
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Every sdk-dart-v* tag, for the last version.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Work out the version
+        id: version
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^version: //p' sdks/dart/stream_agents/pubspec.yaml)
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error file=sdks/dart/stream_agents/pubspec.yaml::version $version is not X.Y.Z or X.Y.Z-suffix"; exit 1
+          fi
+          last=$(git tag -l 'sdk-dart-v*' | sed 's/^sdk-dart-v//' | sort -V | tail -n1)
+          if git rev-parse -q --verify "refs/tags/sdk-dart-v$version" >/dev/null; then
+            release=false
+            echo "### stream_agents $version is already released" >> "$GITHUB_STEP_SUMMARY"
+            echo "Raise \`version\` in sdks/dart/stream_agents/pubspec.yaml to release the next one." >> "$GITHUB_STEP_SUMMARY"
+          else
+            release=true
+            {
+              echo "### stream_agents $version$([ "$DRY_RUN" = true ] && echo ' (dry run)')"
+              echo "Last release: ${last:-none}. Changes under sdks/dart since then:"
+              echo '```'
+              git log --oneline --no-merges "${last:+sdk-dart-v$last..}HEAD" -- sdks/dart
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+
+      # What CI runs. The dry run fails on a warning as well as an error.
+      - name: Check and test
+        working-directory: sdks/dart/stream_agents
+        run: |
+          flutter pub get
+          flutter analyze
+          dart run tool/generate.dart --check
+          flutter test
+          flutter pub publish --dry-run
+
+      # The tag comes first here, unlike the other SDKs: pub.dev takes the package only from
+      # a run on it.
+      - name: Tag and start the publishing run
+        if: ${{ !inputs.dry_run && steps.version.outputs.release == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: sdk-dart-v${{ steps.version.outputs.version }}
+        run: |
+          git tag "$TAG" "$GITHUB_SHA"
+          git push "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" "$TAG"
+          gh workflow run release-sdk-dart.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+          echo "Tagged \`$TAG\`. The publishing run is the newest one of this workflow on that tag." >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Publish to pub.dev
+    if: startsWith(github.ref, 'refs/tags/sdk-dart-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # pub.dev automated publishing (OIDC)
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The whole history, to see that the tag is on accelerate.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: The tag is on accelerate and names the committed version
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#sdk-dart-v}"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          git merge-base --is-ancestor HEAD origin/accelerate || { echo "::error::$GITHUB_REF_NAME is not on accelerate"; exit 1; }
+          committed=$(sed -n 's/^version: //p' sdks/dart/stream_agents/pubspec.yaml)
+          if [ "$committed" != "$version" ]; then
+            echo "::error file=sdks/dart/stream_agents/pubspec.yaml::version $committed is not the tag's $version"; exit 1
+          fi
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+
+      # Asks GitHub for the OIDC token pub.dev trusts and hands it to pub, Flutter's too.
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: stable
+
+      - name: Publish
+        working-directory: sdks/dart/stream_agents
+        run: |
+          if curl -sf "https://pub.dev/api/packages/stream_agents/versions/$VERSION" >/dev/null; then
+            echo "stream_agents $VERSION is already published"; exit 0
+          fi
+          flutter pub get
+          flutter pub publish --force
+
+      - name: Summary
+        run: echo "Published stream_agents $VERSION to pub.dev" >> "$GITHUB_STEP_SUMMARY"

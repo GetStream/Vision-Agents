@@ -1,0 +1,103 @@
+name: Release Rust SDK
+
+# Run by hand from accelerate, or started by release-sdks.yml with every other SDK. It raises the
+# last sdk-rust-v* version by the chosen part, or takes the exact version typed in, tests and
+# packages that copy, publishes it to crates.io through trusted publishing, then tags the commit
+# sdk-rust-v<version>. The version in Cargo.toml is not maintained: the one released is written
+# into the crate that is published and nothing is committed back.
+# No GitHub Release: publishing one runs release.yml, which uploads the Python packages to PyPI.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Part of the last version to raise
+        type: choice
+        options: [ patch, minor, major ]
+        default: patch
+      version:
+        description: Exact version to release instead, such as 0.2.0 or 0.2.0-beta.1
+        type: string
+        default: ''
+      dry_run:
+        description: Work out the version, test and package, without publishing or tagging
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-sdk-rust
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/accelerate'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # push the release tag
+      id-token: write   # crates.io trusted publishing (OIDC)
+    defaults:
+      run:
+        working-directory: sdks/rust
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Every sdk-rust-v* tag, for the last version.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./.github/actions/sdk-version
+        id: version
+        with:
+          sdk: rust
+          package: vision-agents
+          path: sdks/rust
+          bump: ${{ inputs.bump }}
+          version: ${{ inputs.version }}
+          dry-run: ${{ inputs.dry_run }}
+
+      # No build cache in a job that holds an OIDC token: a cache poisoned by another run
+      # would hand that token to whatever it planted.
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch
+        with:
+          toolchain: stable
+
+      - name: Check the generated types are in step with the spec
+        run: cargo run -p generate -- --check
+
+      - name: Test
+        run: cargo test
+
+      # The package's own version is the first `version =` line, in [package].
+      - name: Set the version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          sed -i -E "0,/^version = \".*\"/s//version = \"$VERSION\"/" Cargo.toml
+          set=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "vision-agents") | .version')
+          [ "$set" = "$VERSION" ] || { echo "::error::Cargo.toml says $set, not $VERSION"; exit 1; }
+
+      # Builds the crate from the packaged files alone, as crates.io's users will.
+      - name: Package
+        run: cargo publish --dry-run --allow-dirty
+
+      - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+        if: ${{ !inputs.dry_run }}
+        id: auth
+
+      - name: Publish
+        if: ${{ !inputs.dry_run }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish --allow-dirty
+
+      # After the publish, so a failed one leaves no tag behind for the next bump to skip past.
+      - name: Tag
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git tag "sdk-rust-v$VERSION" "$GITHUB_SHA"
+          git push "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" "sdk-rust-v$VERSION"
