@@ -306,7 +306,7 @@ func (s *TwilioEventsSuite) TestWithoutAPublicURLNoEventIsCounted() {
 	status, answer := s.deliver(twilioAlert(rand.Text(), `{"error_code":"10001"}`), "", s.signed(twilioEventsHookPath))
 
 	s.Equal(http.StatusNotFound, status)
-	s.Contains(answer, "twilio events are not configured")
+	s.Contains(answer, "Twilio events are not configured")
 	s.Zero(accountEvents("twilio", "error.10001", "page") - before)
 }
 
@@ -416,6 +416,6 @@ func (s *TwilioEventsUnconfiguredSuite) TestWithoutATokenNoEventIsCounted() {
 	s.Equal(http.StatusNotFound, unsigned)
 	s.Equal(http.StatusNotFound, signed)
 	s.Contains(answer, `"type":"not_found"`)
-	s.Contains(answer, "twilio events are not configured")
+	s.Contains(answer, "Twilio events are not configured")
 	s.Zero(accountEvents("twilio", "error.20003", "warn") - before)
 }

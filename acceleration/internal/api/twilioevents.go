@@ -41,7 +41,7 @@ func (s *Server) receiveTwilioEvent(w http.ResponseWriter, r *http.Request) {
 	if s.twilioAuthToken == "" || public == "" {
 		// Without the token anyone could raise the counter a monitor pages on, and without the
 		// public URL no signature Twilio made over it can match.
-		writeError(w, notFound("twilio events are not configured"))
+		writeError(w, notFound("Twilio events are not configured"))
 		return
 	}
 
