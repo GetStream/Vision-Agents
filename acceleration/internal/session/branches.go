@@ -293,6 +293,10 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 	}
 	found := persistent.ResponseMessages{Question: earlier.ForkMessageID}
 	if earlier.ID == "" {
+		// The messages are found by reading Chat, which has to hold them first.
+		if err := s.persisted.Drain(); err != nil {
+			return Branched{}, err
+		}
 		if found, err = s.persisted.ResponseMessages(ctx, replaced.ID, replaced.QuestionResponseID); err != nil {
 			return Branched{}, err
 		}
