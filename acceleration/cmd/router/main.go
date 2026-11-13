@@ -1745,12 +1745,11 @@ const drainPoll = 250 * time.Millisecond
 //
 // Without a drain it hands the calls through customers' own SIP trunks to another node (or
 // hangs them up without Redis), then drains HTTP, both inside the grace: the drain gets
-// whatever that left of it, and metrics and the
-// sandbox egress proxy are served until the process exits. With one, the metrics, sandbox
-// egress proxy and public listeners close first and the sessions this process holds, phone
-// calls included, keep going until they end or the drain runs out, still answering their
-// peers' requests. A second signal stops
-// waiting. The sessions left are ended by the caller's sessions.Shutdown either way.
+// whatever that left of it, and metrics and the sandbox egress proxy are served until the
+// process exits. With one, the metrics, sandbox egress proxy and public listeners close first
+// and the sessions this process holds, phone calls included, keep going until they end or the
+// drain runs out, still answering their peers' requests. A second signal stops waiting. The
+// sessions left are ended by the caller's sessions.Shutdown either way.
 func stopServing(s stopping) error {
 	s.drainWork()
 	grace := cmp.Or(s.grace, shutdownGrace)
@@ -2424,7 +2423,7 @@ func newActivePrices(ctx context.Context, pgStore *store.Store, capabilities rou
 // buildPhone wires the telephony service. Stream credentials are only needed to attach a
 // number, so a deployment without them still lists vendors and searches for numbers, and
 // the operations that need them say so. The calls through customers' own SIP trunks are
-// taken over from other nodes until ctx ends.
+// taken over from other nodes until the provider closes.
 func buildPhone(
 	ctx context.Context,
 	settings config.Config,
@@ -2475,7 +2474,9 @@ func buildPhone(
 	}
 	if trunkCalls != nil {
 		trunkCalls.SetResumer(service)
-		trunkCalls.Start(ctx)
+		// Not ctx: it ends at the signal, but this node keeps relaying its calls through a
+		// drain and must keep renewing their claims until closePhone.
+		trunkCalls.Start(context.WithoutCancel(ctx))
 	}
 	return service, nil
 }
