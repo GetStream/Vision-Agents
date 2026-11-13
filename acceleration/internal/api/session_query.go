@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -78,8 +79,8 @@ const (
 
 // sessionFilterFields is said in every refusal of a key, so a caller reads what it could
 // have sent instead.
-const sessionFilterFields = "the fields that can be filtered are project_id, review_score, text, agent and " +
-	"user_id, combined with $and and $or"
+const sessionFilterFields = "the fields that can be filtered are project_id, review_score, text, agent, " +
+	"user_id, config_id, state, created_at and custom, combined with $and and $or"
 
 // SessionFilter narrows a session query. It is kept as it was sent: a filter nests, so it is
 // read by sessionFilterOf, which says what it refuses in its own words.
@@ -176,6 +177,27 @@ func (SessionFilter) Schema(registry huma.Registry) *huma.Schema {
 		Required:             []string{"$q"},
 		AdditionalProperties: false,
 	})
+	state := SessionState("").Schema(registry)
+	stateIs := named("SessionStateEquals", &huma.Schema{
+		Description: `Matches live or ended: "live" is short for {"$eq": "live"}.`,
+		OneOf: []*huma.Schema{
+			state,
+			{
+				Type:                 huma.TypeObject,
+				Properties:           map[string]*huma.Schema{"$eq": state},
+				Required:             []string{"$eq"},
+				AdditionalProperties: false,
+			},
+		},
+	})
+	instant := func() *huma.Schema { return &huma.Schema{Type: huma.TypeString, Format: "date-time"} }
+	window := named("TimeWindow", &huma.Schema{
+		Type: huma.TypeObject,
+		Description: "A window of time: $gte is its start, which it holds, and $lt its end, which it does " +
+			"not. Either may be left out, and $gte is before $lt.",
+		Properties:           map[string]*huma.Schema{"$gte": instant(), "$lt": instant()},
+		AdditionalProperties: false, MinProperties: new(1),
+	})
 
 	return named("SessionFilter", &huma.Schema{
 		Type: huma.TypeObject,
@@ -198,6 +220,17 @@ func (SessionFilter) Schema(registry huma.Registry) *huma.Schema {
 			"text": described(textMatch, "Full text over the title, description, project and agent name, "+
 				"sorted by relevance. Once per filter, at its top level or in a top-level $and, and never "+
 				"inside $or."),
+			"config_id": described(equals, "The agent config the session ran under, which stays the same "+
+				"when the agent is renamed."),
+			"state":      described(stateIs, "Whether the agent is still in the call."),
+			"created_at": described(window, "When the session began."),
+			"custom": {
+				Type: huma.TypeObject,
+				Description: "Labels the session's custom object holds, every one of them: " +
+					`{"origin": "test"} matches a session whose custom has origin set to the string "test".`,
+				AdditionalProperties: &huma.Schema{Type: huma.TypeString},
+				MinProperties:        new(1),
+			},
 		},
 	})
 }
@@ -267,7 +300,7 @@ func (p *parsedFilter) object(raw json.RawMessage, depth int, place filterPlace)
 			}
 			all = append(all, group)
 			continue
-		case "project_id", "agent", "user_id", "review_score", "text":
+		case "project_id", "agent", "user_id", "review_score", "text", "config_id", "state", "created_at", "custom":
 		default:
 			return store.SessionExpr{}, stack.Wrap(fmt.Errorf("%q cannot be filtered on: %s", key, sessionFilterFields))
 		}
@@ -289,6 +322,33 @@ func (p *parsedFilter) object(raw json.RawMessage, depth int, place filterPlace)
 			}
 			p.reviewed = true
 			all = append(all, conditions...)
+		case "created_at":
+			conditions, err := createdAtConditions(value)
+			if err != nil {
+				return store.SessionExpr{}, err
+			}
+			all = append(all, conditions...)
+		case "custom":
+			var labels map[string]string
+			if json.Unmarshal(value, &labels) != nil || len(labels) == 0 {
+				return store.SessionExpr{}, stack.Wrap(errors.New("custom takes an object of at least one label, each a string"))
+			}
+			all = append(all, store.CustomHolds(labels))
+		case "state":
+			condition, err := textCondition(key, value)
+			if err != nil {
+				return store.SessionExpr{}, err
+			}
+			// The API says live and ended; a row keeps running and closed.
+			switch SessionState(condition.Strings[0]) {
+			case Live:
+				condition.Strings = []string{store.SessionRunning}
+			case Ended:
+				condition.Strings = []string{store.SessionClosed}
+			default:
+				return store.SessionExpr{}, stack.Wrap(errors.New("state is live or ended"))
+			}
+			all = append(all, condition)
 		default:
 			if key == "user_id" {
 				if place != placeTop && place != placeTopAnd {
@@ -444,6 +504,36 @@ func scoreConditions(raw json.RawMessage) ([]store.SessionExpr, error) {
 	return conditions, nil
 }
 
+// createdAtConditions reads a window on when a session began: an object of $gte and $lt,
+// each an RFC 3339 time.
+func createdAtConditions(raw json.RawMessage) ([]store.SessionExpr, error) {
+	var sent map[string]json.RawMessage
+	if json.Unmarshal(raw, &sent) != nil || len(sent) == 0 {
+		return nil, stack.Wrap(errors.New("created_at takes an object of $gte, $lt"))
+	}
+	operators, err := operatorsOf("created_at", raw, "$gte", "$lt")
+	if err != nil {
+		return nil, err
+	}
+	// $gte sorts before $lt, so a window with both is its start then its end.
+	conditions := make([]store.SessionExpr, 0, len(operators))
+	for _, operator := range slices.Sorted(maps.Keys(operators)) {
+		var written string
+		at, err := time.Time{}, json.Unmarshal(operators[operator], &written)
+		if err == nil {
+			at, err = time.Parse(time.RFC3339Nano, written)
+		}
+		if err != nil {
+			return nil, stack.Wrap(fmt.Errorf("created_at %s takes an RFC 3339 time", operator))
+		}
+		conditions = append(conditions, store.CreatedAtIs(store.SessionOperator(operator), at.UTC()))
+	}
+	if len(conditions) == 2 && !conditions[0].Time.Before(conditions[1].Time) {
+		return nil, stack.Wrap(errors.New("created_at $gte must be before $lt, or the window holds nothing"))
+	}
+	return conditions, nil
+}
+
 // scoreOf reads a review score: a whole number from 1 to 5.
 func scoreOf(raw json.RawMessage) (int, bool) {
 	score, err := strconv.Atoi(strings.TrimSpace(string(raw)))
@@ -581,7 +671,11 @@ func (s *Server) registerSessionQuery(api huma.API) {
 			"- `agent`: a value or `{\"$eq\": value}`, the agent name the session was opened against\n" +
 			"- `text`: `{\"$q\": \"words\"}`, full text over the title, description, project and agent name\n" +
 			"- `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only\n" +
-			"- `user_id`: a value or `{\"$eq\": value}`; a server-side caller's only\n\n" +
+			"- `user_id`: a value or `{\"$eq\": value}`; a server-side caller's only\n" +
+			"- `config_id`: a value or `{\"$eq\": value}`, the agent config the session ran under, which a rename leaves alone\n" +
+			"- `state`: `live` or `ended`, as a value or `{\"$eq\": value}`\n" +
+			"- `created_at`: `{\"$gte\": time, \"$lt\": time}`, either bound alone or both, as RFC 3339 times\n" +
+			"- `custom`: an object of string labels the session's `custom` holds, every one of them\n\n" +
 			"Nothing else can be filtered on: any other key or operator is a 400 that names it. " +
 			"`$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a " +
 			"filter holds at most 30 field conditions. `text` appears once, at the top level or in a " +
