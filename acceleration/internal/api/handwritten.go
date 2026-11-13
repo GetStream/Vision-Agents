@@ -738,6 +738,27 @@ func documentHandWritten(api huma.API) {
 		},
 	})
 	document.AddOperation(&huma.Operation{
+		OperationID: "receiveTwilioEvent",
+		Method:      http.MethodPost,
+		Path:        twilioEventsHookPath,
+		Summary:     "Receive a Twilio account event",
+		Description: "Where the Twilio account sends its Monitor alerts (the Debugger webhook) and its " +
+			"usage triggers' callbacks, as form posts. Unauthenticated because Twilio is not a " +
+			"customer: each event is checked against X-Twilio-Signature, made with the account's " +
+			"Auth Token over ROUTER_PUBLIC_URL and this path, then logged and counted in " +
+			"vendor_account_events_total by its error code or usage category and its level. A " +
+			"deployment with no Twilio webhook token or no public URL answers 404, so nobody else " +
+			"can raise the count.",
+		Security: []map[string][]string{},
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The event is counted"},
+			"400": {Description: "The signed form is not a Monitor alert or a usage trigger"},
+			"401": {Description: "The event is not signed by Twilio"},
+			"404": {Description: "Twilio events are not configured"},
+			"413": {Description: "The event is over 1 MiB"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
 		OperationID: "receiveChatDelivery",
 		Method:      http.MethodPost,
 		Path:        chatInboundPath,

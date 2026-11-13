@@ -288,7 +288,7 @@ func (s *Service) refresh(ctx context.Context, useCase store.UseCase, report []b
 	if campaign.Outcome == Failed {
 		vendorevent.Count(s.registrar.Name(), campaignFailed, vendorevent.LevelWarn)
 		s.logger.Warn("a vendor failed a 10DLC campaign", "vendor", s.registrar.Name(), "event", campaignFailed,
-			"level", string(vendorevent.LevelWarn), "use_case", useCase.ID, "vendor_status", campaign.Status)
+			"event_level", string(vendorevent.LevelWarn), "use_case", useCase.ID, "vendor_status", campaign.Status)
 	}
 	return nil
 }

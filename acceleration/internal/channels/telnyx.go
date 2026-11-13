@@ -106,7 +106,7 @@ func (p *telnyxProvider) Parse(body []byte) ([]Message, error) {
 			vendorevent.Count(vendorevent.VendorTelnyx, event, level)
 			// The default logger is the router's own: cmd/router/main.go sets it.
 			slog.Default().Info("received a telnyx account event", "vendor", vendorevent.VendorTelnyx,
-				"event", event, "level", string(level), "id", delivered.Data.ID)
+				"event", event, "event_level", string(level), "id", delivered.Data.ID)
 		}
 		return nil, nil
 	}

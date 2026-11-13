@@ -103,6 +103,7 @@ func (s *HookBodySuite) TestAHookRequestNamingACustomerIsIgnored() {
 	s.post(phone.CallHookPath, []byte(`{"type":"call.session_ended"}`), "")
 	s.post(chat.MessageHookPath, []byte(`{"type":"message.read"}`), "")
 	s.post(chatInboundPath, []byte(`{"type":"message.read"}`), "")
+	s.post(twilioEventsHookPath, []byte(`Sid=NO1&Payload={}`), "")
 
 	s.Zero(s.asked.Load())
 }
