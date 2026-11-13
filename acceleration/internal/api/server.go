@@ -32,6 +32,7 @@ import (
 	sentryhttp "github.com/getsentry/sentry-go/http"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
+	"github.com/redis/rueidis"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -371,6 +372,7 @@ type Server struct {
 	telnyxPublicKey    ed25519.PublicKey
 	chatInboundKeys    []ed25519.PublicKey
 	twilioAuthToken    string
+	twilioAlertSids    rueidis.Client // nil without Redis: every copy of an alert is counted
 	telnyxConnectionID string
 	simulations        *simulation.Runner
 	knowledge          *metered.Knowledge
@@ -638,6 +640,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	server.proxyCallsPerMinute = options.ProxyCallsPerMinute
 	if options.Live != nil {
 		server.runSlots, server.runsPerApp = concurrency.New(options.Live.Redis(), nil), options.RunsPerApp
+		server.twilioAlertSids = options.Live.Redis()
 	}
 	server.imageHTTP = options.ImageHTTP
 	server.documents = options.Documents
