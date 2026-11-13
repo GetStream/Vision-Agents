@@ -62,6 +62,8 @@ func (s *MentionSuite) TestAMessageNotMentioningTheAgentIsNone() {
 		{"another user whose id starts with the agent's", "@rotabot can you cover?", ""},
 		{"another user whose id is the agent's with a dash", "@rota-2 can you cover?", ""},
 		{"another user whose id is the agent's with an underscore", "@rota_old can you cover?", ""},
+		{"another user whose id is the agent's with a digit", "@rota2 can you cover?", ""},
+		{"an address whose name ends with a digit", "anya2@rota", ""},
 		{"another user whose name starts with the agent's", "@Front Desks are closed", ""},
 		{"the agent's name's first word alone", "@Front can you cover?", ""},
 		{"@ doubled", "@@rota", ""},
@@ -78,12 +80,14 @@ func (s *MentionSuite) TestAMessageNotMentioningTheAgentIsNone() {
 }
 
 // A type the config answers every message in, by saying so or by saying nothing, needs no
-// mention, and neither does a type it answers only mentions in for another type.
+// mention, beside a type it answers only mentions in or with none: a mention is asked for only
+// in the type that says so.
 func (s *MentionSuite) TestATypeAnsweringEveryMessageNeedsNoMention() {
 	for _, channels := range [][]store.ChatChannel{
 		{{Type: "callouts"}},
 		{{Type: "callouts", Answer: store.ChatChannelAnswerAlways}},
 		{{Type: "shifts", Answer: store.ChatChannelAnswerMentioned}, {Type: "callouts"}},
+		{{Type: "shifts", Answer: store.ChatChannelAnswerMentioned}},
 	} {
 		config := store.AgentConfig{ID: "rota", Name: "Front Desk", ChatChannels: channels}
 		s.True(answersTo(config, mentioning("feel better!", "")), "%+v", channels)
