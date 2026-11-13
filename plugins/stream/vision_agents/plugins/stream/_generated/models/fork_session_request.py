@@ -48,7 +48,7 @@ class ForkSessionRequest:
             title (str | Unset):
             tool_timeout_ms (int | Unset): How long the fork's model waits for the result of a tool the caller or a worker
                 runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that
-                ended has 30 seconds, since its row does not keep one.
+                ended has 30 seconds, since its row does not keep one. Zero is 30 seconds, as on createSession.
     """
 
     agent: str | Unset = UNSET

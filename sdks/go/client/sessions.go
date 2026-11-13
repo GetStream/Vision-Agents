@@ -557,8 +557,9 @@ type ForkOptions struct {
 	// ResponseID carries the history only up to the end of this response, so the fork
 	// branches from that point rather than from where the parent is now.
 	ResponseID string
-	// ToolTimeout is how long the fork's model waits for one of your functions. Zero keeps a
-	// running parent's, and a parent that ended has the router's default of 30 seconds.
+	// ToolTimeout is how long the fork's model waits for one of your functions, to the
+	// millisecond. Zero, or less than a millisecond, keeps a running parent's, and a parent
+	// that ended has the router's default of 30 seconds.
 	ToolTimeout time.Duration
 
 	// Tools are the fork's own. Nil inherits this session's, since a conversation continued
@@ -600,7 +601,9 @@ func (s *Session) Fork(ctx context.Context, options ForkOptions) (*Session, erro
 		no := false
 		request.Messages = &no
 	}
-	if options.ToolTimeout > 0 {
+	// Under a millisecond would go over as zero, which the router reads as 30 seconds rather
+	// than as the parent's.
+	if options.ToolTimeout >= time.Millisecond {
 		milliseconds := int(options.ToolTimeout / time.Millisecond)
 		request.ToolTimeoutMs = &milliseconds
 	}

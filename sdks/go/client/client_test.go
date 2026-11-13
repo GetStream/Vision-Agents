@@ -1713,6 +1713,22 @@ func TestAForksToolTimeoutGoesOverInMilliseconds(t *testing.T) {
 	}
 }
 
+func TestAForksToolTimeoutUnderAMillisecondIsNotSent(t *testing.T) {
+	// Sent, it would be zero: 30 seconds, not the parent's timeout the field promises.
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	forked, err := session.Fork(t.Context(), ForkOptions{ToolTimeout: 500 * time.Microsecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer forked.Close(t.Context())
+
+	if body := backend.body(t, "POST", "/v1/agents/sessions/session-1/fork"); body["tool_timeout_ms"] != nil {
+		t.Errorf("tool_timeout_ms went over as %v", body["tool_timeout_ms"])
+	}
+}
+
 func TestForkingWithoutMessagesSaysSo(t *testing.T) {
 	backend := newRouter(t)
 	session := open(t, backend)

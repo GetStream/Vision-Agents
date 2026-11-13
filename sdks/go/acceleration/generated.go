@@ -6528,7 +6528,7 @@ type ForkSessionRequest struct {
 	ResponseId *string `json:"response_id,omitempty"`
 	Title      *string `json:"title,omitempty"`
 
-	// ToolTimeoutMs How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds, since its row does not keep one.
+	// ToolTimeoutMs How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds, since its row does not keep one. Zero is 30 seconds, as on createSession.
 	ToolTimeoutMs *int `json:"tool_timeout_ms,omitempty"`
 }
 

@@ -18,7 +18,7 @@ final class ForkSessionRequest: Sendable, Codable, JSONEncodable {
     /// Carry the parent's history only up to the end of this response, so the fork continues from that point rather than from where the parent is now. The history is read from what the parent recorded, which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with messages false.
     let responseId: String?
     let title: String?
-    /// How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds, since its row does not keep one.
+    /// How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds, since its row does not keep one. Zero is 30 seconds, as on createSession.
     let toolTimeoutMs: Int?
 
     init(agent: String? = nil, configId: String? = nil, custom: [String: RawJSON]? = nil, description: String? = nil, incognito: Bool? = nil, messages: Bool? = nil, modelOverwrites: ModelOverwritesPayload? = nil, projectId: String? = nil, responseId: String? = nil, title: String? = nil, toolTimeoutMs: Int? = nil) {

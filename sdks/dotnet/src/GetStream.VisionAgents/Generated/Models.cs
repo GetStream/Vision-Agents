@@ -7456,7 +7456,7 @@ namespace GetStream.VisionAgents.Models
         public string? Title { get; set; } = default!;
 
         /// <summary>
-        /// How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds, since its row does not keep one.
+        /// How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds, since its row does not keep one. Zero is 30 seconds, as on createSession.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tool_timeout_ms")]
         public int? ToolTimeoutMs { get; set; } = default!;
