@@ -67,15 +67,37 @@ func (s *AgentSuite) TestAPictureIsQueuedAndTheTurnIsAnsweredAtOnce() {
 	}, queued[0], "billed under the session that asked, once it is drawn")
 }
 
-func (s *AgentSuite) TestAPictureThatCouldNotBeQueuedIsAFailedCall() {
-	// The person would wait for a picture nobody is drawing.
-	s.drawings = &drawQueue{err: errors.New("postgres is down")}
+func (s *AgentSuite) TestAPictureThatCouldNotBeQueuedIsToldInPlainWords() {
+	// The person would wait for a picture nobody is drawing; the model is told so, and what broke
+	// stays in the logs rather than in what the model may repeat.
+	s.drawings = &drawQueue{err: errors.New("pq: connection refused to 10.0.0.7:5432")}
 	s.joinText()
 
 	ran := s.runsTool(drawCall("draw-1", "a field"), 1)
 
-	s.Error(ran.Err)
+	s.NoError(ran.Err)
+	s.Contains(ran.Result, "could not be started")
 	s.NotContains(ran.Result, "being drawn")
+	s.NotContains(ran.Result, "10.0.0.7")
+	s.NotContains(ran.Result, "pq:")
+}
+
+func (s *AgentSuite) TestAShapeNoModelDrawsIsRefusedInTheTurn() {
+	// Refused after the turn, the model could not pick another shape; it would only be told by a
+	// failure posted minutes later.
+	s.drawings = &drawQueue{}
+	s.joinText()
+
+	ran := s.runsTool(llm.ToolCall{ID: "draw-1", Name: GenerateImageTool, Arguments: `{"prompt":"a field","aspect_ratio":"5:2"}`}, 1)
+
+	s.NoError(ran.Err)
+	s.Contains(ran.Result, "16:9")
+	s.Contains(ran.Result, `"5:2"`)
+	s.Empty(s.drawings.requests(), "nothing is queued for a shape nobody draws")
+	tool, _ := s.agent.availableTools().Lookup(GenerateImageTool)
+	properties, _ := tool.Parameters["properties"].(map[string]any)
+	shape, _ := properties["aspect_ratio"].(map[string]any)
+	s.Equal(aspectRatios, shape["enum"], "the model is offered the shapes, not left to guess")
 }
 
 func (s *AgentSuite) TestAnAgentWithoutAnImageTargetIsNotOfferedDrawing() {

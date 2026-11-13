@@ -28,18 +28,20 @@ const (
 )
 
 // ImageJob is one picture an agent was asked to draw (20261230090000_image_jobs.sql): what to
-// draw, who pays and where it is posted.
+// draw, who pays, where it is posted and how far it got.
 type ImageJob struct {
 	bun.BaseModel `bun:"table:image_jobs,alias:ij"`
 
-	// ID is the job and the id of the message it posts.
+	// ID is the job, and names the message it posts.
 	ID         string `bun:"id,pk"`
 	CustomerID string `bun:"customer_id,notnull"`
 	// StreamApp, CID and AgentUser are the conversation: its app, channel and the agent's
 	// Stream user, who posts.
-	StreamApp  int64  `bun:"stream_app,notnull"`
-	CID        string `bun:"cid,notnull"`
-	AgentUser  string `bun:"agent_user,notnull"`
+	StreamApp int64  `bun:"stream_app,notnull"`
+	CID       string `bun:"cid,notnull"`
+	AgentUser string `bun:"agent_user,notnull"`
+	// SessionID and ToolCallID are the call that asked.
+	SessionID  string `bun:"session_id,notnull"`
 	ToolCallID string `bun:"tool_call_id,notnull"`
 	// AgentID, CallID, Region, Target, Tags and Attribution are what the draw is routed and
 	// billed under. Attribution is a routing.Attribution, kept as JSON.
@@ -52,22 +54,33 @@ type ImageJob struct {
 	Prompt      string            `bun:"prompt,notnull"`
 	AspectRatio string            `bun:"aspect_ratio,notnull"`
 	State       string            `bun:"state,notnull"`
-	// Attempts is how many times the job was claimed, the current claim included.
+	// Attempts is how many times the job was claimed, the current claim included: the claim a
+	// write holds the job by.
 	Attempts int `bun:"attempts,notnull"`
+	// Draws is how many draws were started that a provider took; Posts how many posts failed.
+	Draws int `bun:"draws,notnull"`
+	Posts int `bun:"posts,notnull"`
 	// NextAttemptAt is when the job is due; on a claimed row, the end of the claim's lease.
 	NextAttemptAt time.Time `bun:"next_attempt_at,notnull"`
-	// Picture is the uploaded picture once drawn, a sandbox.Attachment as JSON. Nil until then.
-	Picture    json.RawMessage `bun:"picture,type:jsonb,nullzero"`
-	Outcome    string          `bun:"outcome,notnull"`
-	CreatedAt  time.Time       `bun:"created_at,notnull"`
-	FinishedAt *time.Time      `bun:"finished_at"`
+	// Drawn and DrawnType are the picture as drawn, until it is uploaded; Picture is it uploaded,
+	// a sandbox.Attachment as JSON. Both nil until it is drawn.
+	Drawn     []byte          `bun:"drawn,nullzero"`
+	DrawnType string          `bun:"drawn_type,notnull"`
+	Picture   json.RawMessage `bun:"picture,type:jsonb,nullzero"`
+	// Message is what the job posts, once decided; Failed is a message saying why there is no
+	// picture.
+	Message    string     `bun:"message,notnull"`
+	Failed     bool       `bun:"failed,notnull"`
+	Outcome    string     `bun:"outcome,notnull"`
+	CreatedAt  time.Time  `bun:"created_at,notnull"`
+	FinishedAt *time.Time `bun:"finished_at"`
 }
 
-// QueueImageJob writes a job to be drawn now, and reports whether it was new: a call in a
-// channel that already queued one queues nothing.
+// QueueImageJob writes a job to be drawn now, and reports whether it was new: a call of a
+// session that already queued one queues nothing.
 func (s *Store) QueueImageJob(ctx context.Context, job *ImageJob) (bool, error) {
-	if job.ID == "" || job.CID == "" || job.ToolCallID == "" || job.AgentUser == "" {
-		return false, stack.Wrap(errors.New("store: an image job needs an id, a channel, a call and an agent"))
+	if job.ID == "" || job.CID == "" || job.SessionID == "" || job.ToolCallID == "" || job.AgentUser == "" {
+		return false, stack.Wrap(errors.New("store: an image job needs an id, a channel, a session, a call and an agent"))
 	}
 	job.State = ImageJobQueued
 	if job.CreatedAt.IsZero() {
@@ -76,7 +89,7 @@ func (s *Store) QueueImageJob(ctx context.Context, job *ImageJob) (bool, error) 
 	if job.NextAttemptAt.IsZero() {
 		job.NextAttemptAt = job.CreatedAt
 	}
-	result, err := s.db.NewInsert().Model(job).On("CONFLICT (cid, tool_call_id) DO NOTHING").Exec(ctx)
+	result, err := s.db.NewInsert().Model(job).On("CONFLICT (session_id, tool_call_id) DO NOTHING").Exec(ctx)
 	if err != nil {
 		return false, stack.Wrap(fmt.Errorf("store: queue image job: %w", err))
 	}
@@ -88,9 +101,10 @@ func (s *Store) QueueImageJob(ctx context.Context, job *ImageJob) (bool, error) 
 }
 
 // ClaimImageJobs takes up to limit queued jobs due by now, moves each one's next attempt to
-// leaseUntil and counts the claim. A job whose earlier claim's lease ran out, such as one a
-// router stopped in the middle of, is due again, as claimChatInboundQuery's rows are.
-func (s *Store) ClaimImageJobs(ctx context.Context, now time.Time, limit int, leaseUntil time.Time) ([]ImageJob, error) {
+// leaseUntil and counts the claim. decided takes the jobs whose message is decided, which only
+// post; otherwise the ones still to be drawn. A job whose earlier claim's lease ran out, such as
+// one a router stopped in the middle of, is due again, as claimChatInboundQuery's rows are.
+func (s *Store) ClaimImageJobs(ctx context.Context, now time.Time, limit int, leaseUntil time.Time, decided bool) ([]ImageJob, error) {
 	var claimed []ImageJob
 	if limit < 1 {
 		return claimed, nil
@@ -98,7 +112,7 @@ func (s *Store) ClaimImageJobs(ctx context.Context, now time.Time, limit int, le
 	err := s.db.NewRaw(`
 WITH due AS (
     SELECT ij.id FROM image_jobs AS ij
-    WHERE ij.state = 'queued' AND ij.next_attempt_at <= ?
+    WHERE ij.state = 'queued' AND ij.next_attempt_at <= ? AND (ij.message <> '') = ?
     ORDER BY ij.next_attempt_at, ij.id
     LIMIT ?
     FOR UPDATE OF ij SKIP LOCKED
@@ -107,7 +121,7 @@ UPDATE image_jobs AS ij
 SET next_attempt_at = ?, attempts = ij.attempts + 1
 FROM due
 WHERE ij.id = due.id
-RETURNING ij.*`, now.UTC(), limit, leaseUntil.UTC()).Scan(ctx, &claimed)
+RETURNING ij.*`, now.UTC(), decided, limit, leaseUntil.UTC()).Scan(ctx, &claimed)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: claim image jobs: %w", err))
 	}
@@ -128,35 +142,71 @@ func (s *Store) NextImageJobAt(ctx context.Context) (time.Time, bool, error) {
 	return next, true, nil
 }
 
-// SaveImageJobPicture keeps the picture a claim drew. It reports false when the claim no longer
-// holds the job: its lease ran out and another claim took it.
-func (s *Store) SaveImageJobPicture(ctx context.Context, job ImageJob, picture json.RawMessage) (bool, error) {
-	return s.updateImageJob(ctx, job, "save image job picture", func(update *bun.UpdateQuery) *bun.UpdateQuery {
-		return update.Set("picture = ?", picture)
+// StartImageJobDraw counts a draw the claim is about to start, before it starts: a router that
+// stops in the middle of it leaves it counted. It reports false when the claim no longer holds
+// the job.
+func (s *Store) StartImageJobDraw(ctx context.Context, job ImageJob) (bool, error) {
+	return s.updateImageJob(ctx, job, "start image job draw", func(update *bun.UpdateQuery) *bun.UpdateQuery {
+		return update.Set("draws = draws + 1")
 	})
 }
 
-// FinishImageJob records that a claim posted the job's message: done, or failed with outcome.
-// It reports false when the claim no longer holds the job.
+// ReleaseImageJob gives the job back for another claim now, without the draw the claim started
+// when undraw: a draw no provider took, or one this router cut short as it stopped.
+func (s *Store) ReleaseImageJob(ctx context.Context, job ImageJob, undraw bool, next time.Time) (bool, error) {
+	return s.updateImageJob(ctx, job, "release image job", func(update *bun.UpdateQuery) *bun.UpdateQuery {
+		if undraw {
+			update = update.Set("draws = greatest(draws - 1, 0)")
+		}
+		return update.Set("next_attempt_at = ?", next.UTC())
+	})
+}
+
+// KeepImageJobDrawing keeps the picture a claim drew, and the message that posts it, so the job
+// is never drawn again. It reports false when the claim no longer holds the job.
+func (s *Store) KeepImageJobDrawing(ctx context.Context, job ImageJob, drawn []byte, mediaType, message string) (bool, error) {
+	return s.updateImageJob(ctx, job, "keep image job drawing", func(update *bun.UpdateQuery) *bun.UpdateQuery {
+		return update.Set("drawn = ?", drawn).Set("drawn_type = ?", mediaType).Set("message = ?", message).Set("failed = false")
+	})
+}
+
+// DecideImageJobFailure decides that the job posts message, why there is no picture, and lets
+// go of any picture it held. It reports false when the claim no longer holds the job.
+func (s *Store) DecideImageJobFailure(ctx context.Context, job ImageJob, message string) (bool, error) {
+	return s.updateImageJob(ctx, job, "decide image job failure", func(update *bun.UpdateQuery) *bun.UpdateQuery {
+		return update.Set("message = ?", message).Set("failed = true").Set("drawn = NULL").Set("picture = NULL")
+	})
+}
+
+// SaveImageJobPicture keeps the uploaded picture and lets go of the drawn one. It reports false
+// when the claim no longer holds the job.
+func (s *Store) SaveImageJobPicture(ctx context.Context, job ImageJob, picture json.RawMessage) (bool, error) {
+	return s.updateImageJob(ctx, job, "save image job picture", func(update *bun.UpdateQuery) *bun.UpdateQuery {
+		return update.Set("picture = ?", picture).Set("drawn = NULL")
+	})
+}
+
+// RetryImageJobPost counts a post that failed and makes the job due again at next. It reports
+// false when the claim no longer holds the job.
+func (s *Store) RetryImageJobPost(ctx context.Context, job ImageJob, next time.Time) (bool, error) {
+	return s.updateImageJob(ctx, job, "retry image job post", func(update *bun.UpdateQuery) *bun.UpdateQuery {
+		return update.Set("posts = posts + 1").Set("next_attempt_at = ?", next.UTC())
+	})
+}
+
+// FinishImageJob records that a claim is done with the job: posted (done), or failed with
+// outcome. It reports false when the claim no longer holds the job.
 func (s *Store) FinishImageJob(ctx context.Context, job ImageJob, state, outcome string, at time.Time) (bool, error) {
 	if state != ImageJobDone && state != ImageJobFailed {
 		return false, stack.Wrap(fmt.Errorf("store: an image job finishes done or failed, not %q", state))
 	}
 	return s.updateImageJob(ctx, job, "finish image job", func(update *bun.UpdateQuery) *bun.UpdateQuery {
-		return update.Set("state = ?", state).Set("outcome = ?", outcome).Set("finished_at = ?", at.UTC())
-	})
-}
-
-// RetryImageJob makes the job due again at next, keeping what the claim saved. It reports false
-// when the claim no longer holds the job.
-func (s *Store) RetryImageJob(ctx context.Context, job ImageJob, next time.Time) (bool, error) {
-	return s.updateImageJob(ctx, job, "retry image job", func(update *bun.UpdateQuery) *bun.UpdateQuery {
-		return update.Set("next_attempt_at = ?", next.UTC())
+		return update.Set("state = ?", state).Set("outcome = ?", outcome).Set("finished_at = ?", at.UTC()).Set("drawn = NULL")
 	})
 }
 
 // updateImageJob changes a queued job only while the claim job came from still holds it: a
-// slow claim and the one that took the job after its lease ran out never both finish it.
+// slow claim and the one that took the job after its lease ran out never both write it.
 func (s *Store) updateImageJob(ctx context.Context, job ImageJob, doing string,
 	set func(*bun.UpdateQuery) *bun.UpdateQuery) (bool, error) {
 	result, err := set(s.db.NewUpdate().Model((*ImageJob)(nil))).

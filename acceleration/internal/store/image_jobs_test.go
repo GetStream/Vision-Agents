@@ -11,7 +11,7 @@ import (
 func (s *StoreSuite) queuedImageJob() ImageJob {
 	job := ImageJob{
 		ID: "job-" + time.Now().Format("150405.000000000"), CustomerID: "acme", CID: "agent:a", AgentUser: "illustrator",
-		ToolCallID: "draw-1", Target: "image-fast", Attribution: json.RawMessage(`{}`), Prompt: "a field",
+		SessionID: "session-1", ToolCallID: "draw-1", Target: "image-fast", Attribution: json.RawMessage(`{}`), Prompt: "a field",
 	}
 	queued, err := s.store.QueueImageJob(s.ctx, &job)
 	s.Require().NoError(err)
@@ -24,10 +24,10 @@ func (s *StoreSuite) TestASlowClaimCannotFinishAnImageJobAnotherClaimTook() {
 	// post, and both record, without the claim being part of every write.
 	s.queuedImageJob()
 	start := time.Now()
-	first, err := s.store.ClaimImageJobs(s.ctx, start, 1, start.Add(time.Millisecond))
+	first, err := s.store.ClaimImageJobs(s.ctx, start, 1, start.Add(time.Millisecond), false)
 	s.Require().NoError(err)
 	s.Require().Len(first, 1)
-	second, err := s.store.ClaimImageJobs(s.ctx, start.Add(time.Second), 1, start.Add(time.Minute))
+	second, err := s.store.ClaimImageJobs(s.ctx, start.Add(time.Second), 1, start.Add(time.Minute), false)
 	s.Require().NoError(err)
 	s.Require().Len(second, 1, "due again once the first lease ran out")
 	s.Equal(2, second[0].Attempts)
@@ -35,9 +35,9 @@ func (s *StoreSuite) TestASlowClaimCannotFinishAnImageJobAnotherClaimTook() {
 	finished, err := s.store.FinishImageJob(s.ctx, first[0], ImageJobDone, "", time.Now())
 	s.Require().NoError(err)
 	s.False(finished, "the first claim no longer holds it")
-	saved, err := s.store.SaveImageJobPicture(s.ctx, first[0], json.RawMessage(`{"url":"x"}`))
+	kept, err := s.store.KeepImageJobDrawing(s.ctx, first[0], []byte("png"), "image/png", "Here is the picture.")
 	s.Require().NoError(err)
-	s.False(saved)
+	s.False(kept)
 
 	finished, err = s.store.FinishImageJob(s.ctx, second[0], ImageJobDone, "", time.Now())
 	s.Require().NoError(err)
@@ -47,11 +47,62 @@ func (s *StoreSuite) TestASlowClaimCannotFinishAnImageJobAnotherClaimTook() {
 func (s *StoreSuite) TestAnImageJobUnderItsLeaseIsNotClaimedAgain() {
 	s.queuedImageJob()
 	now := time.Now()
-	claimed, err := s.store.ClaimImageJobs(s.ctx, now, 1, now.Add(time.Minute))
+	claimed, err := s.store.ClaimImageJobs(s.ctx, now, 1, now.Add(time.Minute), false)
 	s.Require().NoError(err)
 	s.Require().Len(claimed, 1)
 
-	again, err := s.store.ClaimImageJobs(s.ctx, now.Add(time.Second), 1, now.Add(2*time.Minute))
+	again, err := s.store.ClaimImageJobs(s.ctx, now.Add(time.Second), 1, now.Add(2*time.Minute), false)
 	s.Require().NoError(err)
 	s.Empty(again)
+}
+
+func (s *StoreSuite) TestAnImageJobWithItsMessageDecidedIsClaimedOnlyToPost() {
+	// A router's draw slots are kept for the jobs still to draw: a decided one only posts.
+	s.queuedImageJob()
+	now := time.Now()
+	claimed, err := s.store.ClaimImageJobs(s.ctx, now, 1, now, false)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+	kept, err := s.store.KeepImageJobDrawing(s.ctx, claimed[0], []byte("png"), "image/png", "Here is the picture.")
+	s.Require().NoError(err)
+	s.Require().True(kept)
+
+	toDraw, err := s.store.ClaimImageJobs(s.ctx, now.Add(time.Second), 1, now.Add(time.Minute), false)
+	s.Require().NoError(err)
+	s.Empty(toDraw)
+	toPost, err := s.store.ClaimImageJobs(s.ctx, now.Add(time.Second), 1, now.Add(time.Minute), true)
+	s.Require().NoError(err)
+	s.Require().Len(toPost, 1)
+	s.Equal([]byte("png"), toPost[0].Drawn, "the drawn picture comes with it")
+}
+
+func (s *StoreSuite) TestPostedImageJobsAreDeletedAfterADayAndFailedOnesAfter30Days() {
+	// They hold the prompt: kept as long as someone may look for why, and no longer.
+	now := time.Now()
+	for _, finished := range []struct {
+		call, state string
+		at          time.Time
+	}{
+		{"done-old", ImageJobDone, now.Add(-25 * time.Hour)},
+		{"done-new", ImageJobDone, now.Add(-time.Hour)},
+		{"failed-old", ImageJobFailed, now.Add(-31 * 24 * time.Hour)},
+		{"failed-new", ImageJobFailed, now.Add(-29 * 24 * time.Hour)},
+	} {
+		job := ImageJob{ID: finished.call, CustomerID: "acme", CID: "agent:a", AgentUser: "illustrator", SessionID: "session-1",
+			ToolCallID: finished.call, Target: "image-fast", Attribution: json.RawMessage(`{}`), Prompt: "a field"}
+		_, err := s.store.QueueImageJob(s.ctx, &job)
+		s.Require().NoError(err)
+		_, err = s.store.DB().NewUpdate().Model((*ImageJob)(nil)).Set("state = ?", finished.state).
+			Set("finished_at = ?", finished.at).Where("id = ?", finished.call).Exec(s.ctx)
+		s.Require().NoError(err)
+	}
+	s.queuedImageJob()
+
+	pruned, err := s.store.PruneImageJobs(s.ctx, now)
+
+	s.Require().NoError(err)
+	s.EqualValues(2, pruned)
+	var left []string
+	s.Require().NoError(s.store.DB().NewSelect().Model((*ImageJob)(nil)).Column("tool_call_id").Order("tool_call_id").Scan(s.ctx, &left))
+	s.Equal([]string{"done-new", "draw-1", "failed-new"}, left, "the queued one and the ones within their keep stay")
 }

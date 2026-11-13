@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
@@ -19,9 +20,16 @@ const GenerateImageTool = "generate_image"
 // "one more" is stopped well before a reply's worth of pictures piles up in the conversation.
 const maxDrawsPerTurn = 4
 
+// aspectRatios are the shapes generate_image offers: the ones every image model routed today
+// draws (FAL's Qwen Image 3 takes these five, and Gemini these and more), so a shape the model
+// asks for is refused in its turn, where it can pick another, not by the draw after it ended.
+var aspectRatios = []string{"1:1", "4:3", "3:4", "16:9", "9:16"}
+
 // DrawRequest is a picture generate_image asks for, as the session queues it.
 type DrawRequest struct {
-	// ToolCallID is the call that asked: a call run again queues nothing more.
+	// SessionID and ToolCallID are the call that asked: a call run again queues nothing more,
+	// and a call id another session reuses, such as ask-1, is another call.
+	SessionID   string
 	ToolCallID  string
 	Prompt      string
 	AspectRatio string
@@ -56,7 +64,8 @@ func generateImageTool() harness.Tool {
 				},
 				"aspect_ratio": map[string]any{
 					"type":        "string",
-					"description": "The picture's shape as width:height, such as 1:1, 16:9 or 9:16. Leave it out for square.",
+					"enum":        aspectRatios,
+					"description": "The picture's shape as width:height. Leave it out for square.",
 				},
 			},
 			"required": []string{"prompt"},
@@ -88,17 +97,24 @@ func (a *Agent) generateImage(ctx context.Context, call llm.ToolCall) (string, e
 	if prompt == "" {
 		return "Nothing was drawn: describe the picture in prompt.", nil
 	}
+	shape := strings.TrimSpace(arguments.AspectRatio)
+	if shape != "" && !slices.Contains(aspectRatios, shape) {
+		return fmt.Sprintf("Nothing was drawn: aspect_ratio is one of %s, not %q. Ask again with one of them.",
+			strings.Join(aspectRatios, ", "), shape), nil
+	}
 	if !a.drawAllowed(call.TurnID) {
 		return fmt.Sprintf("Nothing was drawn: one reply may draw at most %d pictures. "+
 			"Tell the person what is on its way so far.", maxDrawsPerTurn), nil
 	}
 	err := a.options.Draws(ctx, DrawRequest{
-		ToolCallID: call.ID, Prompt: prompt, AspectRatio: strings.TrimSpace(arguments.AspectRatio),
+		SessionID: a.options.SessionID, ToolCallID: call.ID, Prompt: prompt, AspectRatio: shape,
 		Target: a.options.ImageTarget, AgentID: a.options.AgentID, CallID: a.options.CallID,
 		Region: a.options.Region, Tags: a.options.Tags, Attribution: routing.AttributionFrom(ctx),
 	})
 	if err != nil {
-		return "", fmt.Errorf("agent: queue a picture: %w", err)
+		// The model is told in words it can pass on; what broke is for the logs.
+		a.logger.Error("could not queue a picture", "call", call.ID, "error", err)
+		return "Nothing was drawn: the picture could not be started. Tell the person to ask again in a moment.", nil
 	}
 	return "The picture is being drawn and will be posted in this conversation when it is ready, " +
 		"in a minute or two. Tell the person it is on its way; do not describe it as done, link it " +

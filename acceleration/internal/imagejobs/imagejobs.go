@@ -6,17 +6,23 @@
 // (image_jobs), draws each through the image router, under the attribution of the session that
 // asked, and posts the picture, or a short failure, as an agent message in the conversation.
 //
-//	generate_image            Queue: image_jobs row, Kick
-//	worker (every router)     ClaimImageJobs: due rows, lease, attempts + 1
-//	  picture kept            post it                 (a claim after a crash mid-post)
-//	  attempts > maxDraws     post the failure        (claims that never finished)
-//	  otherwise               draw, upload, keep it, post it; a refusal or failure posts why
-//	  posted                  done or failed          a post that failed: due again, no new draw
+//	generate_image          Queue: image_jobs row, Kick
+//	worker (every router)   claim: draw slots for jobs to draw, post slots for decided ones
+//	  to draw               draws >= maxDraws: decide the failure
+//	                        else count the draw, draw it
+//	                          not taken (a provider never took it in time): give it back, uncounted
+//	                          refused or failed: decide why
+//	                          drawn: keep it and its message on the row, never drawn again
+//	  decided               upload a kept picture (once), then post the decided message
+//	                          a transient failure: due again, backing off; nothing is drawn again
+//	                          a permanent one: an upload decides the failure, a post gives up
+//	                        posted: done (a picture) or failed (why there is none)
 //
-// A router that stops between a claim and its outcome leaves the row queued under its lease;
-// once the lease runs out another router claims it again. A draw already billed is not drawn
-// again once its picture was kept, and a message already written is found written rather than
-// posted twice (conversation.Service.Post).
+// Every write after the claim names it (store attempts), so a slow claim and the one that took
+// the job after its lease ran out never both write it. A message is decided before it is posted
+// and posted under an id its kind names, so a post written again after a crash is found written
+// and posts nothing (conversation.Service.Post), and a job never ends done while its person was
+// shown a failure.
 package imagejobs
 
 import (
@@ -24,10 +30,12 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
@@ -44,19 +52,40 @@ import (
 // longer than that.
 const Lease = imagerouter.Deadline + time.Minute
 
-// maxDraws is how many claims may draw a job. The second is for a router that stopped in the
-// middle of the first; a third would say the draw itself ends routers, and the job posts its
-// failure instead.
+// drawSlots is how many jobs one router draws at once: FAL's own limit per process
+// (imagegen/fal slots). A job claimed beyond it would wait for a slot inside its own deadline,
+// and time out undrawn while another router's slots sat idle.
+const drawSlots = 2
+
+// postSlots is how many decided jobs one router uploads and posts at once. A choice: each is a
+// couple of Stream Chat writes.
+const postSlots = 16
+
+// maxDraws is how many draws a provider took may be started for a job. The second is for a
+// router that stopped in the middle of the first; a third would say the draw itself ends
+// routers, and the job posts its failure instead.
 const maxDraws = 2
 
-// maxClaims bounds the claims of a job whose picture was kept but could not be posted, such as
-// while Stream Chat is down: after them it is recorded failed and logged, there being nowhere
-// to say so.
-const maxClaims = 6
+// untakenWait is how long a draw no provider took in time, such as one that waited out its
+// deadline for a slot the endpoint's own requests held, waits before it is tried again, and
+// untakenFor how long after it was asked such a job keeps being tried before it posts that it
+// took too long.
+const (
+	untakenWait = 10 * time.Second
+	untakenFor  = 30 * time.Minute
+)
 
-// retryPost is how long a job whose post failed waits before the next claim. A choice: Stream
-// Chat failing a write is usually over within a minute.
-const retryPost = 30 * time.Second
+// defaultPostBackoff are the waits after each post that failed for a reason a later one may get
+// past, over about two and a half hours, so an outage of Stream Chat that long loses no picture.
+// After them the job is recorded failed and logged, there being nowhere to say so.
+var defaultPostBackoff = []time.Duration{
+	30 * time.Second, time.Minute, 2 * time.Minute, 5 * time.Minute, 10 * time.Minute,
+	15 * time.Minute, 30 * time.Minute, 30 * time.Minute, 30 * time.Minute, 30 * time.Minute,
+}
+
+// maxClaims bounds the claims of one job, each a router that took it and stopped before writing
+// what came of it: a job that keeps ending routers is given up and logged.
+const maxClaims = 20
 
 // look is the longest wait between looks for due jobs, so a job a stopped router held is
 // claimed within about a lease and a look. A choice, chatinbound's.
@@ -65,25 +94,26 @@ const look = time.Minute
 // defaultPoll is the shortest wait between looks while jobs are queued.
 const defaultPoll = time.Second
 
-// inFlight is how many jobs one router draws at once. A choice: FAL holds two per process
-// (imagegen/fal slots), and the rest of these wait for its slot inside their own deadline.
-const inFlight = 16
-
 // pruneEvery is how often the worker deletes the rows past their keep.
 const pruneEvery = time.Hour
 
-// recordTimeout bounds writing what came of a claim.
-const recordTimeout = 10 * time.Second
+// recordTimeout bounds writing what came of a step; keepFor bounds trying to keep a drawn
+// picture, which is worth waiting for: without it a later claim cannot know it was drawn.
+const (
+	recordTimeout = 10 * time.Second
+	keepFor       = 30 * time.Second
+)
 
 // What a job posts. The model is gone by the time the picture is drawn, so these are written
 // to the person.
 const (
-	pictureText  = "Here is the picture."
-	failedText   = "I could not draw that picture: something went wrong. Ask me again to try once more."
-	filteredText = "I could not draw that picture: the safety filter refused it."
-	spentText    = "I could not draw that picture: the spending limit for pictures has been reached."
-	shapeText    = "I could not draw that picture in that shape."
-	slowText     = "I could not draw that picture: it took too long. Ask me again to try once more."
+	pictureText    = "Here is the picture."
+	failedText     = "I could not draw that picture: something went wrong. Ask me again to try once more."
+	filteredText   = "I could not draw that picture: the safety filter refused it."
+	spentText      = "I could not draw that picture: the spending limit for pictures has been reached."
+	shapeText      = "I could not draw that picture in that shape."
+	slowText       = "I could not draw that picture: it took too long. Ask me again to try once more."
+	unuploadedText = "I drew the picture, but it could not be posted here."
 )
 
 // Poster writes into a conversation outside any turn: conversation.Service.
@@ -101,7 +131,9 @@ type Request struct {
 	StreamApp  int64
 	CID        string
 	AgentUser  string
-	// ToolCallID is the call that asked. A call in a channel queues one job, however often it runs.
+	// SessionID and ToolCallID are the call that asked. A call of a session queues one job,
+	// however often it runs.
+	SessionID  string
 	ToolCallID string
 	// AgentID, CallID, Region, Target, Tags and Attribution are what the draw is routed and
 	// billed under, as the turn's own work is.
@@ -115,7 +147,7 @@ type Request struct {
 	AspectRatio string
 }
 
-// Options configures a Service. Store and Images are required to queue; Poster to draw.
+// Options configures a Service. Store and Images are required.
 type Options struct {
 	Store  *store.Store
 	Images *imagerouter.Router
@@ -123,24 +155,29 @@ type Options struct {
 	Lease time.Duration
 	// Poll is the shortest wait between looks while jobs are queued. Zero is defaultPoll.
 	Poll time.Duration
-	// PostRetry is how long a job whose post failed waits. Zero is retryPost. Tests shorten it.
-	PostRetry time.Duration
-	Logger    *slog.Logger
+	// PostBackoff are the waits after each failed post. Nil is defaultPostBackoff. Tests
+	// shorten them.
+	PostBackoff []time.Duration
+	// UntakenWait is how long a draw no provider took waits. Zero is untakenWait. Tests shorten it.
+	UntakenWait time.Duration
+	Logger      *slog.Logger
 }
 
 // Service queues the pictures agents are asked for and, once started, draws and posts them.
 type Service struct {
-	store     *store.Store
-	images    *imagerouter.Router
-	lease     time.Duration
-	poll      time.Duration
-	postRetry time.Duration
-	logger    *slog.Logger
+	store       *store.Store
+	images      *imagerouter.Router
+	lease       time.Duration
+	poll        time.Duration
+	postBackoff []time.Duration
+	untakenWait time.Duration
+	logger      *slog.Logger
 
 	// kick wakes the loop: a job was queued, or a slot freed.
 	kick chan struct{}
-	// slots holds one token for each job running.
-	slots   chan struct{}
+	// drawing and posting hold one token for each job running in that kind of slot.
+	drawing chan struct{}
+	posting chan struct{}
 	poster  Poster
 	pruned  time.Time
 	ctx     context.Context
@@ -155,7 +192,8 @@ func New(options Options) (*Service, error) {
 	}
 	s := &Service{
 		store: options.Store, images: options.Images, lease: options.Lease, poll: options.Poll,
-		postRetry: options.PostRetry, logger: options.Logger, kick: make(chan struct{}, 1), slots: make(chan struct{}, inFlight),
+		postBackoff: options.PostBackoff, untakenWait: options.UntakenWait, logger: options.Logger, kick: make(chan struct{}, 1),
+		drawing: make(chan struct{}, drawSlots), posting: make(chan struct{}, postSlots),
 	}
 	if s.lease <= 0 {
 		s.lease = Lease
@@ -163,8 +201,11 @@ func New(options Options) (*Service, error) {
 	if s.poll <= 0 {
 		s.poll = defaultPoll
 	}
-	if s.postRetry <= 0 {
-		s.postRetry = retryPost
+	if s.untakenWait <= 0 {
+		s.untakenWait = untakenWait
+	}
+	if s.postBackoff == nil {
+		s.postBackoff = defaultPostBackoff
 	}
 	if s.logger == nil {
 		s.logger = slog.Default()
@@ -174,6 +215,7 @@ func New(options Options) (*Service, error) {
 }
 
 // Queue writes the job for a worker to draw, on this router or another, and wakes this one's.
+// A call of a session queued already is the same call run again, and queues nothing more.
 func (s *Service) Queue(ctx context.Context, request Request) error {
 	attribution, err := json.Marshal(request.Attribution)
 	if err != nil {
@@ -181,9 +223,9 @@ func (s *Service) Queue(ctx context.Context, request Request) error {
 	}
 	job := store.ImageJob{
 		ID: uuid.NewString(), CustomerID: request.CustomerID, StreamApp: request.StreamApp, CID: request.CID,
-		AgentUser: request.AgentUser, ToolCallID: request.ToolCallID, AgentID: request.AgentID, CallID: request.CallID,
-		Region: request.Region, Target: request.Target, Tags: request.Tags, Attribution: attribution,
-		Prompt: request.Prompt, AspectRatio: request.AspectRatio,
+		AgentUser: request.AgentUser, SessionID: request.SessionID, ToolCallID: request.ToolCallID,
+		AgentID: request.AgentID, CallID: request.CallID, Region: request.Region, Target: request.Target,
+		Tags: request.Tags, Attribution: attribution, Prompt: request.Prompt, AspectRatio: request.AspectRatio,
 	}
 	if _, err := s.store.QueueImageJob(ctx, &job); err != nil {
 		return err
@@ -210,7 +252,7 @@ func (s *Service) Start(ctx context.Context, poster Poster) {
 		timer := time.NewTimer(0)
 		defer timer.Stop()
 		for {
-			wait := s.drawDue(ctx)
+			wait := s.runDue(ctx)
 			timer.Stop()
 			timer.Reset(wait)
 			select {
@@ -233,43 +275,48 @@ func (s *Service) Kick() {
 
 // Running is how many jobs this router is drawing or posting, for a draining router to wait for.
 func (s *Service) Running() int {
-	return len(s.slots)
+	return len(s.drawing) + len(s.posting)
 }
 
-// Close stops claiming, cuts the jobs in flight short and waits for them. A job cut short stays
-// queued under its lease, for another router once it runs out.
+// Close stops claiming, cuts the jobs in flight short and waits for them. A job cut short is
+// given back at once, its cut draw uncounted, for another router to take it from where it was.
 func (s *Service) Close() {
 	s.cancel()
 	s.working.Wait()
 }
 
-// drawDue claims as many due jobs as there are free slots and runs each on its own goroutine,
-// and returns how long to wait before looking again.
-func (s *Service) drawDue(ctx context.Context) time.Duration {
+// runDue claims as many jobs as there are free slots of each kind and runs each on its own
+// goroutine, and returns how long to wait before looking again.
+func (s *Service) runDue(ctx context.Context) time.Duration {
 	s.prune(ctx)
-	free := cap(s.slots) - len(s.slots)
-	if free == 0 {
-		return look
-	}
-	now := time.Now()
-	claimed, err := s.store.ClaimImageJobs(ctx, now, free, now.Add(s.lease))
-	if err != nil {
-		if ctx.Err() == nil {
-			s.logger.Error("could not take the image jobs due", "error", err)
+	for _, kind := range []struct {
+		slots   chan struct{}
+		decided bool
+	}{{s.drawing, false}, {s.posting, true}} {
+		free := cap(kind.slots) - len(kind.slots)
+		if free == 0 {
+			continue
 		}
-		return s.poll
-	}
-	for _, job := range claimed {
-		s.slots <- struct{}{}
-		s.working.Add(1)
-		go func() {
-			defer s.working.Done()
-			defer func() {
-				<-s.slots
-				s.Kick()
+		now := time.Now()
+		claimed, err := s.store.ClaimImageJobs(ctx, now, free, now.Add(s.lease), kind.decided)
+		if err != nil {
+			if ctx.Err() == nil {
+				s.logger.Error("could not take the image jobs due", "error", err)
+			}
+			return s.poll
+		}
+		for _, job := range claimed {
+			kind.slots <- struct{}{}
+			s.working.Add(1)
+			go func() {
+				defer s.working.Done()
+				defer func() {
+					<-kind.slots
+					s.Kick()
+				}()
+				s.run(job)
 			}()
-			s.run(job)
-		}()
+		}
 	}
 	next, queued, err := s.store.NextImageJobAt(ctx)
 	switch {
@@ -295,53 +342,64 @@ func (s *Service) prune(ctx context.Context) {
 	}
 }
 
-// run takes one claimed job as far as it goes: drawn, kept, posted.
+// run takes one claimed job as far as it goes.
 func (s *Service) run(job store.ImageJob) {
 	log := s.logger.With("job", job.ID, "customer", job.CustomerID, "channel", job.CID, "attempts", job.Attempts)
 	switch {
-	case job.Picture != nil:
-		var picture sandbox.Attachment
-		if err := json.Unmarshal(job.Picture, &picture); err != nil {
-			log.Error("an image job's kept picture is not readable", "error", err)
-			s.post(log, job, store.ImageJobFailed, failedText, nil)
-			return
-		}
-		s.post(log, job, store.ImageJobDone, pictureText, []sandbox.Attachment{picture})
-	case job.Attempts > maxDraws:
-		log.Warn("an image job was claimed more times than it may be drawn; posting its failure")
-		s.post(log, job, store.ImageJobFailed, failedText, nil)
-	default:
+	case job.Attempts > maxClaims:
+		log.Error("gave up an image job claimed more times than any job should be")
+		s.finish(log, job, store.ImageJobFailed, "given up: claimed too often")
+	case job.Message == "":
 		s.draw(log, job)
+	default:
+		s.deliver(log, job)
 	}
 }
 
-// draw draws the job's picture under the attribution of the session that asked, keeps it and
-// posts it, or posts why it could not be drawn.
+// draw draws the job's picture under the attribution of the session that asked and keeps it,
+// or decides why there is none, then delivers what was decided.
 func (s *Service) draw(log *slog.Logger, job store.ImageJob) {
+	if job.Draws >= maxDraws {
+		log.Warn("an image job was drawn as often as it may be without finishing; posting its failure")
+		s.decideFailure(log, job, failedText)
+		return
+	}
 	var attribution routing.Attribution
 	if err := json.Unmarshal(job.Attribution, &attribution); err != nil {
 		log.Error("an image job's attribution is not readable", "error", err)
-		s.post(log, job, store.ImageJobFailed, failedText, nil)
+		s.decideFailure(log, job, failedText)
 		return
 	}
+	if !s.write(log, "start an image job's draw", func(ctx context.Context) (bool, error) {
+		return s.store.StartImageJobDraw(ctx, job)
+	}) {
+		return
+	}
+	job.Draws++
+
 	started := time.Now()
 	generation, err := s.images.Generate(routing.WithAttribution(s.ctx, attribution), imagerouter.Request{
 		CustomerID: job.CustomerID, AgentID: job.AgentID, CallID: job.CallID, Region: job.Region,
 		Tags: job.Tags, Target: job.Target,
 		Image: imagegen.Request{Prompt: job.Prompt, AspectRatio: job.AspectRatio, N: 1},
 	})
-	if err != nil && s.ctx.Err() != nil {
-		// Close cut it short: the lease runs out and another router draws it.
-		log.Info("left an image job for another router", "error", err)
+	switch {
+	case s.ctx.Err() != nil:
+		// Close cut it short: a draw cut is not billed, so it is not counted either.
+		log.Info("gave an image job back as the router stops", "error", err)
+		s.release(log, job, true, time.Now())
 		return
-	}
-	if err == nil && len(generation.Images) == 0 {
-		err = errors.New("imagejobs: the image provider answered with no picture")
-	}
-	if err != nil {
-		text := failureText(err)
+	case err != nil && untaken(err) && time.Since(job.CreatedAt) < untakenFor:
+		log.Info("no provider took an image job in time; it is tried again", "error", err)
+		s.release(log, job, true, time.Now().Add(s.untakenWait))
+		return
+	case err != nil:
 		log.Warn("an image job could not be drawn", "provider", generation.Provider, "error", err)
-		s.post(log, job, store.ImageJobFailed, text, nil)
+		s.decideFailure(log, job, failureText(err))
+		return
+	case len(generation.Images) == 0:
+		log.Error("the image provider answered with no picture")
+		s.decideFailure(log, job, failedText)
 		return
 	}
 	log.Info("drew an image job", "provider", generation.Provider, "model", generation.Model,
@@ -349,80 +407,189 @@ func (s *Service) draw(log *slog.Logger, job store.ImageJob) {
 		"queued_ms", generation.Queued.Milliseconds(), "drawn_ms", generation.Drawn.Milliseconds())
 
 	drawn := generation.Images[0]
-	file := sandbox.File{Name: "picture." + strings.TrimPrefix(drawn.MediaType, "image/"), MIME: drawn.MediaType, Data: drawn.Data}
-	picture, err := s.poster.UploadTo(s.ctx, job.CustomerID, job.StreamApp, job.CID, job.AgentUser, file)
-	if err != nil {
-		// The picture is billed and lost: the next claim draws it again, within maxDraws.
-		log.Error("could not upload a drawn picture; the job is drawn again", "error", err)
-		s.retry(log, job)
-		return
+	job.Drawn, job.DrawnType, job.Message, job.Failed = drawn.Data, drawn.MediaType, pictureText, false
+	if !s.keep(log, job) {
+		// Not kept, the picture is posted all the same: a later claim draws it again, and posts
+		// under the same id, which finds this post written.
+		log.Error("could not keep a drawn picture; it is posted without being kept")
 	}
-	kept, err := json.Marshal(picture)
-	if err != nil {
-		log.Error("could not keep a drawn picture", "error", err)
-		s.post(log, job, store.ImageJobFailed, failedText, nil)
-		return
-	}
-	writing, done := context.WithTimeout(context.WithoutCancel(s.ctx), recordTimeout)
-	saved, err := s.store.SaveImageJobPicture(writing, job, kept)
-	done()
-	switch {
-	case err != nil:
-		// Posted all the same: the picture exists, and a claim after this one posts the
-		// same message id, which is found written.
-		log.Error("could not keep a drawn picture before posting it", "error", err)
-	case !saved:
-		log.Warn("an image job's lease ran out while it was drawn; another claim has it")
-		return
-	}
-	s.post(log, job, store.ImageJobDone, pictureText, []sandbox.Attachment{picture})
+	s.deliver(log, job)
 }
 
-// post writes the job's one message and records what came of it. A post that failed makes the
-// job due again rather than finishing it, so the person is told, unless the claims ran out.
-func (s *Service) post(log *slog.Logger, job store.ImageJob, state, text string, files []sandbox.Attachment) {
-	err := s.poster.Post(s.ctx, job.CustomerID, job.StreamApp, job.CID, job.AgentUser, job.ID, job.CreatedAt, text, files)
-	if err != nil && s.ctx.Err() != nil {
-		log.Info("left an image job's message for another router", "error", err)
+// keep writes the drawn picture and its message on the row, trying for keepFor: once it is
+// written the job is never drawn again.
+func (s *Service) keep(log *slog.Logger, job store.ImageJob) bool {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), keepFor)
+	defer cancel()
+	for wait := 100 * time.Millisecond; ; wait = min(2*wait, 5*time.Second) {
+		kept, err := s.store.KeepImageJobDrawing(ctx, job, job.Drawn, job.DrawnType, job.Message)
+		switch {
+		case err == nil && !kept:
+			log.Warn("an image job's lease ran out while it was drawn; it is kept by no claim")
+			return false
+		case err == nil:
+			return true
+		}
+		log.Warn("could not keep a drawn picture yet", "error", err)
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(wait):
+		}
+	}
+}
+
+// decideFailure decides the job posts message, why there is no picture, and delivers it.
+func (s *Service) decideFailure(log *slog.Logger, job store.ImageJob, message string) {
+	if !s.write(log, "decide an image job's failure", func(ctx context.Context) (bool, error) {
+		return s.store.DecideImageJobFailure(ctx, job, message)
+	}) {
 		return
 	}
-	if err != nil {
-		if job.Attempts < maxClaims {
-			log.Warn("could not post an image job's message; it is posted again", "error", err)
-			s.retry(log, job)
+	job.Message, job.Failed, job.Drawn, job.Picture = message, true, nil, nil
+	s.deliver(log, job)
+}
+
+// deliver uploads the job's picture if it is not yet, then posts the decided message.
+func (s *Service) deliver(log *slog.Logger, job store.ImageJob) {
+	var files []sandbox.Attachment
+	if !job.Failed {
+		picture, ok := s.upload(log, job)
+		if !ok {
 			return
 		}
-		log.Error("gave up posting an image job's message", "error", err)
-		state, text = store.ImageJobFailed, "not posted: "+err.Error()
+		if picture == nil {
+			s.decideFailure(log, job, unuploadedText)
+			return
+		}
+		files = []sandbox.Attachment{*picture}
 	}
-	writing, done := context.WithTimeout(context.WithoutCancel(s.ctx), recordTimeout)
-	defer done()
-	finished, err := s.store.FinishImageJob(writing, job, state, outcomeOf(state, text), time.Now())
+
+	err := s.poster.Post(s.ctx, job.CustomerID, job.StreamApp, job.CID, job.AgentUser, messageID(job), job.CreatedAt, job.Message, files)
+	switch {
+	case err == nil:
+		state, outcome := store.ImageJobDone, ""
+		if job.Failed {
+			state, outcome = store.ImageJobFailed, job.Message
+		}
+		s.finish(log, job, state, outcome)
+	case s.ctx.Err() != nil:
+		log.Info("gave an image job's post back as the router stops", "error", err)
+		s.release(log, job, false, time.Now())
+	case permanent(err):
+		log.Error("Stream Chat refused an image job's message; it is not posted", "error", err)
+		s.finish(log, job, store.ImageJobFailed, "not posted: "+err.Error())
+	default:
+		s.retryPost(log, job, err)
+	}
+}
+
+// upload is the job's picture uploaded: kept from an earlier claim, or uploaded now and kept.
+// ok is false when the job was let go of for later; a nil picture with ok is an upload Stream
+// Chat refused for good, which is not tried again.
+func (s *Service) upload(log *slog.Logger, job store.ImageJob) (_ *sandbox.Attachment, ok bool) {
+	if job.Picture != nil {
+		var picture sandbox.Attachment
+		if err := json.Unmarshal(job.Picture, &picture); err != nil {
+			log.Error("an image job's kept picture is not readable", "error", err)
+			return nil, true
+		}
+		return &picture, true
+	}
+	file := sandbox.File{Name: "picture." + strings.TrimPrefix(job.DrawnType, "image/"), MIME: job.DrawnType, Data: job.Drawn}
+	picture, err := s.poster.UploadTo(s.ctx, job.CustomerID, job.StreamApp, job.CID, job.AgentUser, file)
+	switch {
+	case err == nil:
+	case s.ctx.Err() != nil:
+		log.Info("gave an image job's upload back as the router stops", "error", err)
+		s.release(log, job, false, time.Now())
+		return nil, false
+	case permanent(err):
+		log.Error("Stream Chat refused a drawn picture for good", "error", err)
+		return nil, true
+	default:
+		s.retryPost(log, job, err)
+		return nil, false
+	}
+	kept, err := json.Marshal(picture)
+	if err == nil {
+		s.write(log, "keep an image job's uploaded picture", func(ctx context.Context) (bool, error) {
+			return s.store.SaveImageJobPicture(ctx, job, kept)
+		})
+	}
+	// Posted even when not kept: the drawn picture is still on the row, so a later claim uploads
+	// it again rather than drawing it.
+	return &picture, true
+}
+
+// retryPost makes the job due again after the next wait, or gives it up once they ran out.
+func (s *Service) retryPost(log *slog.Logger, job store.ImageJob, failure error) {
+	if job.Posts >= len(s.postBackoff) {
+		log.Error("gave up posting an image job's message", "posts", job.Posts, "error", failure)
+		s.finish(log, job, store.ImageJobFailed, "not posted: "+failure.Error())
+		return
+	}
+	next := time.Now().Add(s.postBackoff[job.Posts])
+	log.Warn("could not post an image job's message; it is tried again", "posts", job.Posts, "next", next, "error", failure)
+	s.write(log, "make an image job's post due again", func(ctx context.Context) (bool, error) {
+		return s.store.RetryImageJobPost(ctx, job, next)
+	})
+}
+
+// release gives the job back for another claim at next, uncounting the draw it started when
+// undraw.
+func (s *Service) release(log *slog.Logger, job store.ImageJob, undraw bool, next time.Time) {
+	s.write(log, "give an image job back", func(ctx context.Context) (bool, error) {
+		return s.store.ReleaseImageJob(ctx, job, undraw, next)
+	})
+}
+
+// finish records that the claim is done with the job.
+func (s *Service) finish(log *slog.Logger, job store.ImageJob, state, outcome string) {
+	if s.write(log, "record an image job's outcome", func(ctx context.Context) (bool, error) {
+		return s.store.FinishImageJob(ctx, job, state, outcome, time.Now())
+	}) {
+		log.Info("finished an image job", "state", state)
+	}
+}
+
+// write runs one write of the claim's, even while Close waits, and reports whether the claim
+// still held the job. A write that failed, or a claim that lost the job, is logged.
+func (s *Service) write(log *slog.Logger, doing string, write func(context.Context) (bool, error)) bool {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), recordTimeout)
+	defer cancel()
+	held, err := write(ctx)
 	switch {
 	case err != nil:
-		log.Error("could not record an image job's message", "error", err)
-	case !finished:
-		log.Warn("an image job's lease ran out before its message was recorded; another claim posts the same message")
-	default:
-		log.Info("posted an image job's message", "state", state)
+		log.Error("could not "+doing, "error", err)
+	case !held:
+		log.Warn("could not " + doing + ": the claim's lease ran out and another claim has the job")
 	}
+	return err == nil && held
 }
 
-// retry makes the job due again after the post retry wait.
-func (s *Service) retry(log *slog.Logger, job store.ImageJob) {
-	writing, done := context.WithTimeout(context.WithoutCancel(s.ctx), recordTimeout)
-	defer done()
-	if _, err := s.store.RetryImageJob(writing, job, time.Now().Add(s.postRetry)); err != nil {
-		log.Error("could not make an image job due again; its lease runs out instead", "error", err)
+// messageID is the id of the message the job posts: its kind's own, so a failure and a picture
+// are never taken for one another when a post is found written.
+func messageID(job store.ImageJob) string {
+	if job.Failed {
+		return job.ID + "-failed"
 	}
+	return job.ID
 }
 
-// outcomeOf is what a finished job records: nothing for a posted picture, else what was said.
-func outcomeOf(state, text string) string {
-	if state == store.ImageJobDone {
-		return ""
-	}
-	return text
+// untaken reports whether a draw failed before any provider took the job, for want of time:
+// such as one that waited out its deadline for a provider's slot. It cost nothing.
+func untaken(err error) bool {
+	return !imagegen.Accepted(err) && !routing.ReservationRefused(err) && imagegen.CodeOf(err) == imagegen.Timeout
+}
+
+// permanent reports whether Stream Chat refused a write a later attempt would be refused too:
+// a 4xx other than 429, such as a channel deleted or frozen, or a file it will not keep.
+// No answer, a 5xx or a 429 may pass later (RFC 9110 section 15.6, RFC 6585 section 4).
+func permanent(err error) bool {
+	var refused *getstream.StreamError
+	return errors.As(err, &refused) && refused.StatusCode >= http.StatusBadRequest &&
+		refused.StatusCode < http.StatusInternalServerError && refused.StatusCode != http.StatusTooManyRequests
 }
 
 // failureText is what the person is told about a draw that failed.
