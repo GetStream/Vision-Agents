@@ -994,6 +994,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		}
 	}
 
+	if spec.Phone != nil && m.options.Phone != nil {
+		created.closers = append(created.closers, func() { m.hangUpRinging(created, spec) })
+	}
+
 	// The row is queued before the session is reachable, so the call cannot be recorded
 	// as ending before it is recorded as starting. An incognito session has none: the row
 	// names the session, its caller and the instructions it ran with.
@@ -1025,12 +1029,16 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	if m.closed {
 		m.mu.Unlock()
 		turnedAway = true
+		// Left ringing as a failed create leaves it: a hangup now would join m.ended after
+		// Shutdown has stopped waiting on it.
+		created.handedOver.Store(true)
 		fail()
 		return nil, stack.Wrap(errors.New("session: the manager is shut down"))
 	}
 	if held, raced := m.sessions[created.id]; raced && !replaces(spec, held) {
 		m.mu.Unlock()
 		turnedAway = true
+		created.handedOver.Store(true)
 		fail()
 		return nil, stack.Wrap(ErrSessionExists)
 	}
@@ -1141,6 +1149,7 @@ func (m *Manager) supersede(spec Spec) {
 	for _, found := range left {
 		m.logger.Info("ending the session this agent left behind in the call",
 			"session", found.id, "call", spec.CallID, "user", spec.UserID)
+		found.handedOver.Store(true)
 		if err := found.Close(); err != nil {
 			m.logger.Warn("the session left behind did not end cleanly",
 				"session", found.id, "error", err)
@@ -1802,7 +1811,26 @@ func (m *Manager) leaveVoicemail(found *Session, spec Spec, message string) {
 	m.hangUp(found, EndVoicemail)
 }
 
-// hangUpTimeout bounds ending a call at Stream once the voicemail is left.
+// hangUpRinging hangs up the call created placed when it ends before anybody answered,
+// which would otherwise ring on with no agent to answer it. In the background, so a slow
+// vendor holds up neither the rest of the close nor a shutdown closing the next session.
+func (m *Manager) hangUpRinging(created *Session, spec Spec) {
+	if created.CallerJoined() || created.handedOver.Load() {
+		return
+	}
+	m.ended.Add(1)
+	go func() {
+		defer m.ended.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), hangUpTimeout)
+		defer cancel()
+		if err := m.options.Phone.HangUpUnanswered(ctx, spec.CustomerID, spec.CallID); err != nil {
+			m.logger.Warn("could not hang up the call its session left ringing", "session", created.id, "call", spec.CallID, "customer", spec.CustomerID, "error", err)
+		}
+	}()
+}
+
+// hangUpTimeout bounds ending a call: at Stream once the voicemail is left, or at the vendor
+// while it still rings.
 const hangUpTimeout = 5 * time.Second
 
 // releaseTimeout bounds taking back this node's claim on a session. Short, because a
