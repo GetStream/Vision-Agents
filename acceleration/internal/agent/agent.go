@@ -615,6 +615,9 @@ type Agent struct {
 	// directions takes the voice's stage directions out of the reply. They are meant for
 	// the provider that can act them, so they never reach a reader or the history.
 	directions tts.Directions
+	// ui separates fenced or tagged UI blocks from spoken and fallback prose before stage
+	// directions or sentence chunking see them.
+	ui uiStream
 	// spoken is the reply as the caller will hear it, which is what goes into the
 	// history: a request for help was written to the harness, not said, so remembering
 	// it would have the model reading its own instructions back on the next turn.
@@ -3155,7 +3158,17 @@ func (a *Agent) say(turnID, delta string) {
 	if speech == "" {
 		return
 	}
+	speech, uiEvents := a.ui.Add(turnID, speech)
+	if speech == "" && len(uiEvents) == 0 {
+		return
+	}
 	a.turns.firstText(turnID, time.Now())
+	for _, ev := range uiEvents {
+		a.emitter.Send(ev)
+	}
+	if speech == "" {
+		return
+	}
 
 	// A stage direction is addressed to the voice, not to the caller: it is taken out of
 	// what is read and remembered, and left in only for a voice that can act it. A
@@ -3196,7 +3209,11 @@ func (a *Agent) finish(response llm.Response) {
 	a.claimReply(response.ID)
 	// Text the harness was holding on the chance it began a request for help was only
 	// ever text, so it is spoken.
-	tail := a.harness.Flush()
+	harnessTail := a.harness.Flush()
+	addedProse, uiAdded := a.ui.Add(response.ID, harnessTail)
+	flushedProse, uiFlushed := a.ui.Flush(response.ID)
+	tail := addedProse + flushedProse
+	uiTail := append(uiAdded, uiFlushed...)
 	// A direction the stripper was still holding is released the same way: unfinished, it
 	// was only ever text. In writing the stripper never ran, so there is nothing held.
 	plain := tail
@@ -3208,7 +3225,11 @@ func (a *Agent) finish(response llm.Response) {
 		// Nothing of a refused reply goes out after the verdict: what the harness, the
 		// stripper and the chunker were still holding of it is dropped with the turn.
 		tail, plain = "", ""
+		uiTail = nil
 		a.chunk.Reset()
+	}
+	for _, ev := range uiTail {
+		a.emitter.Send(ev)
 	}
 	a.spoken.WriteString(plain)
 	if !a.performs {
@@ -3281,10 +3302,20 @@ func (a *Agent) finish(response llm.Response) {
 	// what tells the tracker when the turn has finished being spoken.
 	a.turns.completed(response.ID, response.TimeToFirstTokenMs, a.expectedSyntheses(response.ID))
 	said := strings.TrimSpace(a.spoken.String())
+	uiHistory := a.ui.HistoryBlock()
 	if refused {
 		// What streamed before the verdict, or the apology spoken for the lost reply, is no
 		// answer the agent gave, so it is not reported as one to be recorded.
 		said = ""
+		uiHistory = ""
+	}
+	historyContent := said
+	if uiHistory != "" {
+		if historyContent != "" {
+			historyContent += "\n\n" + uiHistory
+		} else {
+			historyContent = uiHistory
+		}
 	}
 	a.resetTurn()
 
@@ -3315,17 +3346,17 @@ func (a *Agent) finish(response llm.Response) {
 		// here would leave the refused input behind it, read by every later request and
 		// judged by none.
 		a.history = Withheld(a.history)
-	case said != "" || len(calls) > 0:
+	case historyContent != "" || len(calls) > 0:
 		// A reply that only called a tool is still a turn the model took, and it has to be
 		// recorded with the calls on it: the result sent back answers one of them, and a
 		// provider refuses a conversation where it answers nothing.
 		a.history = append(a.history, llm.Message{
 			Role:      llm.Assistant,
-			Content:   said,
+			Content:   historyContent,
 			ToolCalls: calls,
 			Reasoning: response.ReasoningText,
 		})
-		if said != "" {
+		if historyContent != "" {
 			a.keptReply = response.ID
 		}
 	}
@@ -4027,6 +4058,7 @@ func (a *Agent) resetTurn() {
 	a.performed = a.performed[:0]
 	a.harness.Reset()
 	a.directions.Reset()
+	a.ui.Reset()
 	a.spoken.Reset()
 	a.sentences = 0
 	a.openTurn = ""
