@@ -470,6 +470,8 @@ components:
       type: object
     AgentChatChannel:
       properties:
+        answer:
+          $ref: '#/components/schemas/ChatChannelAnswer'
         type:
           description: The channel type's name, as it comes before the colon in a channel's cid.
           example: callouts
@@ -2522,6 +2524,12 @@ components:
         - code
         - expires_at
       type: object
+    ChatChannelAnswer:
+      description: 'Which messages in a channel of the type are answered. always answers every message. mentioned answers only a message that mentions the agent: its mentioned_users holds the Stream user whose id is the config''s id, or its text has @ and that user''s id or the config''s name, as Stream''s clients write a mention. A message that does not mention the agent gets no reply and starts no model; it stays in the channel, and the next answered message reads it as what was said before. Omitted is always.'
+      enum:
+        - always
+        - mentioned
+      type: string
     ChatToken:
       properties:
         api_key:
@@ -8919,12 +8927,27 @@ components:
         agent:
           $ref: '#/components/schemas/Equals'
           description: The agent name the session was opened against.
+        config_id:
+          $ref: '#/components/schemas/Equals'
+          description: The agent config the session ran under, which stays the same when the agent is renamed.
+        created_at:
+          $ref: '#/components/schemas/TimeWindow'
+          description: When the session began.
+        custom:
+          additionalProperties:
+            type: string
+          description: 'Labels the session''s custom object holds, every one of them: {"origin": "test"} matches a session whose custom has origin set to the string "test".'
+          minProperties: 1
+          type: object
         project_id:
           $ref: '#/components/schemas/EqualsOrIn'
           description: The project the session belongs to.
         review_score:
           $ref: '#/components/schemas/ReviewScoreMatch'
           description: The score the review gave the conversation. A session with no review matches no condition on it. Only a server-side caller may use it.
+        state:
+          $ref: '#/components/schemas/SessionStateEquals'
+          description: Whether the agent is still in the call.
         text:
           $ref: '#/components/schemas/TextMatch'
           description: Full text over the title, description, project and agent name, sorted by relevance. Once per filter, at its top level or in a top-level $and, and never inside $or.
@@ -9102,6 +9125,17 @@ components:
         - live
         - ended
       type: string
+    SessionStateEquals:
+      description: 'Matches live or ended: "live" is short for {"$eq": "live"}.'
+      oneOf:
+        - $ref: '#/components/schemas/SessionState'
+        - additionalProperties: false
+          properties:
+            $eq:
+              $ref: '#/components/schemas/SessionState'
+          required:
+            - $eq
+          type: object
     SessionTool:
       description: One of the caller's own functions. The model is offered it by name and description; running it is the caller's business, over the events socket.
       properties:
@@ -10509,6 +10543,18 @@ components:
         - low-latency
         - high-quality
       type: string
+    TimeWindow:
+      additionalProperties: false
+      description: 'A window of time: $gte is its start, which it holds, and $lt its end, which it does not. Either may be left out, and $gte is before $lt.'
+      minProperties: 1
+      properties:
+        $gte:
+          format: date-time
+          type: string
+        $lt:
+          format: date-time
+          type: string
+      type: object
     TimelineEntry:
       properties:
         audio_out_ms:
@@ -19193,6 +19239,10 @@ paths:
         - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
         - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
         - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+        - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename leaves alone
+        - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+        - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+        - `custom`: an object of string labels the session's `custom` holds, every one of them
 
         Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
 
@@ -22940,6 +22990,44 @@ paths:
           $ref: '#/components/responses/InternalError'
       security: []
       summary: Receive a Telnyx call
+  /v1/phone/hooks/telnyx/events:
+    post:
+      description: 'Where the Telnyx account''s notification channel sends account events, such as a port-out or a number order. Unauthenticated because Telnyx is not a customer: each event is checked against the account''s Ed25519 signature, then logged and counted in vendor_account_events_total by its type and level. A deployment with no Telnyx key answers 404, so nobody else can raise the count.'
+      operationId: receiveTelnyxEvent
+      responses:
+        "204":
+          description: The event is counted
+        "400":
+          description: The signed body is not a Telnyx event
+        "401":
+          description: The event is not signed by Telnyx
+        "404":
+          description: Telnyx events are not configured
+        "413":
+          description: The event is over 64 KiB
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security: []
+      summary: Receive a Telnyx account event
+  /v1/phone/hooks/twilio/events:
+    post:
+      description: 'Where the Twilio account sends its Monitor alerts (the Debugger webhook) and its usage triggers'' callbacks, as form posts. Unauthenticated because Twilio is not a customer: each event is checked against X-Twilio-Signature, made with the account''s Auth Token over ROUTER_PUBLIC_URL and this path, then logged and counted in vendor_account_events_total by its error code or usage category and its level. An alert whose Sid was counted in the last hour is answered 204 and not counted again. A deployment with no Twilio webhook token or no public URL answers 404, so nobody else can raise the count.'
+      operationId: receiveTwilioEvent
+      responses:
+        "204":
+          description: The event is counted, or is an alert already counted in the last hour
+        "400":
+          description: The signed form is not a Monitor alert or a usage trigger
+        "401":
+          description: The event is not signed by Twilio
+        "404":
+          description: Twilio events are not configured
+        "413":
+          description: The event is over 1 MiB
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security: []
+      summary: Receive a Twilio account event
   /v1/phone/machine/{token}:
     post:
       description: 'Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.'

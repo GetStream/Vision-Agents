@@ -13,6 +13,7 @@ final readonly class AgentChatChannel
     public function __construct(
         // The channel type's name, as it comes before the colon in a channel's cid.
         public string $type,
+        public ChatChannelAnswer|string|null $answer = null,
     ) {
     }
 
@@ -23,6 +24,7 @@ final readonly class AgentChatChannel
     {
         return new self(
             type: Json::string($data, 'type'),
+            answer: array_key_exists('answer', $data) && $data['answer'] !== null ? Json::enum($data, 'answer', ChatChannelAnswer::class) : null,
         );
     }
 
@@ -35,6 +37,9 @@ final readonly class AgentChatChannel
     {
         $out = [];
         $out['type'] = $this->type;
+        if ($this->answer !== null) {
+            $out['answer'] = Json::enumValue($this->answer);
+        }
         return $out;
     }
 }

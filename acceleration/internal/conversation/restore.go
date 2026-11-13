@@ -50,8 +50,28 @@ func WithRestore(ctx context.Context, r Restore) context.Context {
 	return context.WithValue(ctx, restoreKey{}, r)
 }
 
+type answeringKey struct{}
+
+type answering struct {
+	id        string
+	addressed func(text string, mentioned []string) bool
+}
+
+// Answering has every history read under ctx take the people's messages written after the
+// last reply and before the message id as what was said before it: a channel that answers
+// only the messages mentioning the agent leaves the others unanswered, and the session told
+// the message id (Session.FollowUp) would otherwise never read them. Without it, every message
+// after the last reply is taken as one a session is about to be told (entries). addressed is
+// whether a person's message, with the ids of the users it mentions, is addressed to the agent
+// too: it gets a turn of its own, so it is never read as unanswered.
+func Answering(ctx context.Context, id string, addressed func(text string, mentioned []string) bool) context.Context {
+	return context.WithValue(ctx, answeringKey{}, answering{id, addressed})
+}
+
 // restored is the history of a page as ctx asks for it.
 func restored(ctx context.Context, cid string, p Page) ([]llm.Message, bool) {
+	a, _ := ctx.Value(answeringKey{}).(answering)
+	p.answering, p.addressed = a.id, a.addressed
 	r, _ := ctx.Value(restoreKey{}).(Restore)
 	if !r.Since.IsZero() {
 		p.Messages = slices.DeleteFunc(slices.Clone(p.Messages), func(m Message) bool { return m.StartedAt.Before(r.Since) })
@@ -117,7 +137,7 @@ func (r Restore) history(p Page, rounds map[string][]llm.Message, opening string
 			if e.message.Content == "" {
 				continue
 			}
-			n := utf8.RuneCountInString(e.message.Content)
+			n := utf8.RuneCountInString(e.message.Content) + utf8.RuneCountInString(e.message.Speaker)
 			if size+n > budget || len(out) == limit {
 				tr = true
 				break
@@ -144,7 +164,7 @@ type told struct {
 }
 
 func (t told) size() int {
-	n := utf8.RuneCountInString(t.message.Content)
+	n := utf8.RuneCountInString(t.message.Content) + utf8.RuneCountInString(t.message.Speaker)
 	for _, m := range t.rounds {
 		n += utf8.RuneCountInString(m.Content)
 		for _, call := range m.ToolCalls {

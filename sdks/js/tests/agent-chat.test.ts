@@ -9,7 +9,7 @@ import {
   type AgentTransportFeed,
   type AgentTransportRequest,
 } from "../src/chat.js";
-import { RouterError, type CreateResponseOptions, type Session } from "../src/index.js";
+import { RouterError, type CreateResponseOptions, type Session, type ToolDecision } from "../src/index.js";
 
 type Message = { id: string; text?: string; reasoning?: unknown };
 
@@ -38,6 +38,8 @@ class FakeSession {
   failCreate: Error | undefined;
   failChat: Error | undefined;
   readonly asked: { text: string; options: CreateResponseOptions }[] = [];
+  readonly decided: { id: string; answer: ToolDecision }[] = [];
+  approvals: { id: string }[] = [];
   readonly state = store<{ kind: string; skills: readonly string[] }>({ kind: "idle", skills: [] });
   readonly conversation = store({ failure: "", failureContext: "", failureAt: 0 });
   readonly responses = {
@@ -59,6 +61,9 @@ class FakeSession {
   }
   interrupt() {
     this.interrupts += 1;
+  }
+  decide(id: string, answer: ToolDecision) {
+    this.decided.push({ id, answer });
   }
   async close() {
     this.closed += 1;
@@ -231,6 +236,91 @@ describe("AgentChat", () => {
     assert.equal(state.isLoaded, true);
     assert.equal(state.hasOlderMessages, true);
     assert.equal(state.usedSessionId, undefined);
+  });
+
+  describe("decide", () => {
+    const waitingStep = {
+      type: "ai_tool_call",
+      id: "call_1",
+      status: "awaiting_approval",
+      name: "get_location",
+      arguments: { reason: "to find a café" },
+    };
+
+    it("answers a call shown waiting in a stream-chat 9 reply with its step, request and turn", async () => {
+      const channel = new ChannelV9();
+      channel.latest = [
+        { id: "q1", text: "Where can I get coffee?" },
+        {
+          id: "r1",
+          attachments: [{ type: "ai_reasoning", id: "step_0" }, waitingStep],
+          support_runtime: { command_id: "q1", turn_id: "t1" },
+        } as Message,
+      ];
+      const { open, sessions } = opener(channel);
+      const chat = new AgentChat<Message>({ sessionId: "s1", open });
+      await chat.prepare();
+
+      await chat.decide("call_1", { allowed: true });
+
+      assert.deepEqual(sessions[0]?.decided, [
+        {
+          id: "call_1",
+          answer: {
+            allowed: true,
+            call: { name: "get_location", arguments: '{"reason":"to find a café"}', requestId: "q1", turnId: "t1" },
+          },
+        },
+      ]);
+    });
+
+    it("reads the request and turn under custom in a stream-chat 10 reply", async () => {
+      const channel = new ChannelV10();
+      channel.latest = [
+        { id: "r1", attachments: [waitingStep], custom: { support_runtime: { command_id: "q1", turn_id: "t1" } } } as Message,
+      ];
+      const { open, sessions } = opener(channel);
+      const chat = new AgentChat<Message>({ sessionId: "s1", open });
+      await chat.prepare();
+
+      await chat.decide("call_1", { allowed: false, summary: "Not now" });
+
+      assert.deepEqual(sessions[0]?.decided[0]?.answer, {
+        allowed: false,
+        summary: "Not now",
+        call: { name: "get_location", arguments: '{"reason":"to find a café"}', requestId: "q1", turnId: "t1" },
+      });
+    });
+
+    it("rejects, answering nothing, for a call no loaded message shows waiting, so the card can try again", async () => {
+      const channel = new ChannelV9();
+      channel.latest = [
+        {
+          id: "r1",
+          attachments: [{ ...waitingStep, status: "awaiting_client" }],
+          support_runtime: { command_id: "q1", turn_id: "t1" },
+        } as Message,
+      ];
+      const { open, sessions } = opener(channel);
+      const chat = new AgentChat<Message>({ sessionId: "s1", open });
+      await chat.prepare();
+
+      await assert.rejects(chat.decide("call_1", { allowed: true }), /call_1/);
+      await assert.rejects(chat.decide("call_9", { allowed: true }), /call_9/);
+      assert.deepEqual(sessions[0]?.decided, []);
+    });
+
+    it("answers a call its session holds before the channel shows it", async () => {
+      const channel = new ChannelV9();
+      const { open, sessions } = opener(channel);
+      const chat = new AgentChat<Message>({ sessionId: "s1", open });
+      await chat.prepare();
+      sessions[0]!.approvals = [{ id: "call_1" }];
+
+      await chat.decide("call_1", { allowed: true });
+
+      assert.deepEqual(sessions[0]?.decided, [{ id: "call_1", answer: { allowed: true } }]);
+    });
   });
 
   it("opens one session for everything that asks for it at once", async () => {
