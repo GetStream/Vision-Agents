@@ -2191,6 +2191,24 @@ func (e RefusedReason) Valid() bool {
 	}
 }
 
+// Defines values for ResponseBranchOf.
+const (
+	ResponseBranchOfQuestion ResponseBranchOf = "question"
+	ResponseBranchOfReply    ResponseBranchOf = "reply"
+)
+
+// Valid indicates whether the value is a known member of the ResponseBranchOf enum.
+func (e ResponseBranchOf) Valid() bool {
+	switch e {
+	case ResponseBranchOfQuestion:
+		return true
+	case ResponseBranchOfReply:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReviewActor.
 const (
 	ReviewActorApp    ReviewActor = "app"
@@ -3265,6 +3283,24 @@ func (e ListScheduledTasksParamsState) Valid() bool {
 	}
 }
 
+// Defines values for ListResponseSiblingsParamsOf.
+const (
+	ListResponseSiblingsParamsOfQuestion ListResponseSiblingsParamsOf = "question"
+	ListResponseSiblingsParamsOfReply    ListResponseSiblingsParamsOf = "reply"
+)
+
+// Valid indicates whether the value is a known member of the ListResponseSiblingsParamsOf enum.
+func (e ListResponseSiblingsParamsOf) Valid() bool {
+	switch e {
+	case ListResponseSiblingsParamsOfQuestion:
+		return true
+	case ListResponseSiblingsParamsOfReply:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListSimulationRunsParamsState.
 const (
 	ListSimulationRunsParamsStateCancelled ListSimulationRunsParamsState = "cancelled"
@@ -3341,6 +3377,19 @@ type AccountBalanceWarningSource string
 
 // AccountStatus suspended: Stream refuses every request of the organization, free work included, until it restores it.
 type AccountStatus string
+
+// ActivatedBranch defines model for ActivatedBranch.
+type ActivatedBranch struct {
+	// AlreadyActive The branch was already the conversation, and nothing changed.
+	AlreadyActive bool `json:"already_active"`
+
+	// LeafResponseId The newest response of the branch, which the next question is answered after.
+	LeafResponseId string `json:"leaf_response_id"`
+
+	// Resent How many messages were sent again.
+	Resent    int        `json:"resent"`
+	RewoundTo *RewoundTo `json:"rewound_to,omitempty"`
+}
 
 // ActivityArea defines model for ActivityArea.
 type ActivityArea struct {
@@ -3985,10 +4034,15 @@ type AgentMode string
 
 // AgentResponse defines model for AgentResponse.
 type AgentResponse struct {
-	CreatedAt  time.Time  `json:"created_at"`
-	Error      *string    `json:"error,omitempty"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
-	Id         string     `json:"id"`
+	Branch     *ResponseBranch `json:"branch,omitempty"`
+	CreatedAt  time.Time       `json:"created_at"`
+	Error      *string         `json:"error,omitempty"`
+	FinishedAt *time.Time      `json:"finished_at,omitempty"`
+	Id         string          `json:"id"`
+
+	// ParentResponseId The response this one was answered after, absent for a session's first.
+	ParentResponseId *string    `json:"parent_response_id,omitempty"`
+	RewoundTo        *RewoundTo `json:"rewound_to,omitempty"`
 
 	// Said What the person asked, which is the first item of every response.
 	Said      *string `json:"said,omitempty"`
@@ -4316,6 +4370,36 @@ type AvailableNumber struct {
 	//
 	// Example: telnyx
 	Vendor string `json:"vendor"`
+}
+
+// BranchMessage defines model for BranchMessage.
+type BranchMessage struct {
+	Attachments []map[string]interface{} `json:"attachments"`
+	CreatedAt   time.Time                `json:"created_at"`
+
+	// Custom The message's custom data, as Stream Chat held it, with support_branch saying where it stands among its alternatives now.
+	Custom map[string]interface{} `json:"custom"`
+
+	// Id The id the message had in Stream Chat.
+	Id string `json:"id"`
+
+	// Role user or assistant, for a message the router wrote. Absent for one somebody else wrote in the channel.
+	Role *string `json:"role,omitempty"`
+	Text string  `json:"text"`
+
+	// UserId Who wrote it: the person, or the agent's Stream user.
+	UserId string `json:"user_id"`
+}
+
+// BranchMessagePage defines model for BranchMessagePage.
+type BranchMessagePage struct {
+	// Active The response is on the conversation, which the channel shows: there are no items.
+	Active  bool            `json:"active"`
+	HasMore bool            `json:"has_more"`
+	Items   []BranchMessage `json:"items"`
+
+	// NextCursor Pass as `cursor` for the next page. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // BusinessProfile Who the app is, and the brand a vendor registered it as.
@@ -5892,6 +5976,9 @@ type CreateResponseRequest struct {
 	// ReasoningEffort How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's.
 	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
 
+	// Replaces An earlier response of a conversation kept in Stream Chat to regenerate or edit. With no text its question is answered again; with text, the text is asked in its place. Requires request_id, and takes no images, audio, videos, files or ui_action.
+	Replaces *string `json:"replaces,omitempty"`
+
 	// RequestId Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and the frames of videos are shown to the model alone. A retry with the same id, text, images and voice note starts no second turn, returns no id and does not fetch its videos again: videos are not part of what a retry is matched on. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.
 	RequestId *string `json:"request_id,omitempty"`
 
@@ -6460,7 +6547,7 @@ type EqualsOrIn1 struct {
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), tier_limit_reached (the organization's tier limits refuse the work, and limit says which: a 403 for a call or a transfer, to a country the tier does not reach, past its minutes or recipients of the day, or past its calls at once; a 400 for an agent config whose sandbox is bigger or more open than the organization's sandbox limits allow. The message names the tier and the limit), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), document_too_large (a 413: a file sent with a response has more pages or text than one may, alone or with the files the conversation already holds, and the message names the limit), document_unreadable (a 400: a file sent with a response could not be read, such as one with a password, one that is damaged or one with no text in it, which retrying the same file does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), tier_limit_reached (the organization's tier limits refuse the work, and limit says which: a 403 for a call or a transfer, to a country the tier does not reach, past its minutes or recipients of the day, or past its calls at once; a 400 for an agent config whose sandbox is bigger or more open than the organization's sandbox limits allow. The message names the tier and the limit), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), document_too_large (a 413: a file sent with a response has more pages or text than one may, alone or with the files the conversation already holds, and the message names the limit), document_unreadable (a 400: a file sent with a response could not be read, such as one with a password, one that is damaged or one with no text in it, which retrying the same file does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), branch_limit_reached (a 409: the conversation has as many edit and regenerate points as Stream Chat keeps for it, 100, so a regenerate or an edit is refused and the conversation is continued in a new chat; asking and reading are unaffected), branch_too_long (a 409: the branch an activation would bring back is more than 100 messages to send again, so it is continued in a new chat), branch_unavailable (a 410: the copies of a hidden branch were deleted, as a memory truncate deletes them, so it can be neither read nor brought back), switch_unfinished (a 409: a regenerate, an edit or an activation of the session failed after Stream Chat may have rewound, and finishing it still fails because Stream Chat does not answer, so the session's questions, regenerates, edits and activations are refused meanwhile; try again: each one tries to finish it first, so it clears once Stream Chat answers), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
@@ -8419,6 +8506,46 @@ type RespondRequest struct {
 	Text string `json:"text"`
 }
 
+// ResponseBranch defines model for ResponseBranch.
+type ResponseBranch struct {
+	// Count How many there are.
+	Count int `json:"count"`
+
+	// Index Its place, from 1, oldest first.
+	Index int `json:"index"`
+
+	// Of reply counts the answers to one question, a regenerate's; question the questions asked at one point, an edit's.
+	Of ResponseBranchOf `json:"of"`
+}
+
+// ResponseBranchOf reply counts the answers to one question, a regenerate's; question the questions asked at one point, an edit's.
+type ResponseBranchOf string
+
+// ResponseSibling defines model for ResponseSibling.
+type ResponseSibling struct {
+	// Active Whether the conversation goes through this sibling now: for a question, through any answer to it.
+	Active    bool      `json:"active"`
+	CreatedAt time.Time `json:"created_at"`
+
+	// Id The response, which getResponseBranch reads and activateResponse brings back.
+	Id string `json:"id"`
+
+	// Index Its place among the siblings, from 1, oldest first: the i of ‹ i/n ›.
+	Index int `json:"index"`
+
+	// Said The question the response answers.
+	Said *string `json:"said,omitempty"`
+}
+
+// ResponseSiblingPage defines model for ResponseSiblingPage.
+type ResponseSiblingPage struct {
+	HasMore bool              `json:"has_more"`
+	Items   []ResponseSibling `json:"items"`
+
+	// NextCursor Pass as `cursor` for the next page. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
 // ResumeHistory How a conversation is handed back to the model when a session carries it on.
 type ResumeHistory struct {
 	// IncludeTools Hand each reply back with the tool calls it made and what they returned, as they were recorded, so a resumed agent knows what it already looked up and does not run its tools again. Over max_characters the oldest results are replaced with [result trimmed] before any turn is left out, and the conversation's first message is kept. A reply whose calls were not recorded, have been removed with their session or redacted under a retention setting is handed back as text. Results are replayed as recorded: credentials redacted and any result over 8 KB cut to its first 2048 characters. False turns off what a broader level turned on. Off by default.
@@ -8511,6 +8638,15 @@ type ReviewUseCaseRequest struct {
 type RewindSessionRequest struct {
 	// ResponseId The response to carry on from. It is kept; everything after it is not.
 	ResponseId string `json:"response_id"`
+}
+
+// RewoundTo defines model for RewoundTo.
+type RewoundTo struct {
+	// Inclusive The message itself is hidden too.
+	Inclusive bool `json:"inclusive"`
+
+	// MessageId The message the channel was rewound to. Every message after it is hidden.
+	MessageId string `json:"message_id"`
 }
 
 // RollupRequest defines model for RollupRequest.
@@ -11384,6 +11520,30 @@ type ListResponseItemsParams struct {
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// GetResponseBranchParams defines parameters for GetResponseBranch.
+type GetResponseBranchParams struct {
+	// Limit Up to 200. Omitted is 100.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The `next_cursor` of the previous page. Omitted is the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListResponseSiblingsParams defines parameters for ListResponseSiblings.
+type ListResponseSiblingsParams struct {
+	// Of reply lists the answers to the response's question; question lists the questions asked in its place. Omitted is reply.
+	Of *ListResponseSiblingsParamsOf `form:"of,omitempty" json:"of,omitempty"`
+
+	// Limit Up to 100. Omitted is 25.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListResponseSiblingsParamsOf defines parameters for ListResponseSiblings.
+type ListResponseSiblingsParamsOf string
+
 // ListSimulationRunsParams defines parameters for ListSimulationRuns.
 type ListSimulationRunsParams struct {
 	SimulationId *string                        `form:"simulation_id,omitempty" json:"simulation_id,omitempty"`
@@ -14211,6 +14371,7 @@ type ClientInterface interface {
 	// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 	// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
 	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
+	// With replaces, in a conversation kept in Stream Chat, it regenerates or edits an earlier response instead of asking something new. No text answers the replaced response's question again, beside its reply; text asks it in place of that question. Chat hides the conversation from there on, which is kept as a branch (listResponseSiblings, getResponseBranch, activateResponse), and the answer says where the channel was rewound to (rewound_to), so the acting device prunes its view at once. A request_id is required, and images, audio, videos and ui_action cannot go with replaces. A conversation has at most 100 edit and regenerate points; past them it is a 409 branch_limit_reached.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -14222,6 +14383,7 @@ type ClientInterface interface {
 	// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 	// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
 	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
+	// With replaces, in a conversation kept in Stream Chat, it regenerates or edits an earlier response instead of asking something new. No text answers the replaced response's question again, beside its reply; text asks it in place of that question. Chat hides the conversation from there on, which is kept as a branch (listResponseSiblings, getResponseBranch, activateResponse), and the answer says where the channel was rewound to (rewound_to), so the acting device prunes its view at once. A request_id is required, and images, audio, videos and ui_action cannot go with replaces. A conversation has at most 100 edit and regenerate points; past them it is a 409 branch_limit_reached.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -14236,6 +14398,31 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/responses/items (the `ListResponseItems` operationId).
 	ListResponseItems(ctx context.Context, id string, params *ListResponseItemsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ActivateResponse Make a hidden branch the conversation again
+	//
+	// The conversation from where the branch leaves it is hidden in Stream Chat and kept as a branch of its own, and the branch ending at the newest response under the one named is sent again: new messages, with new ids, sent with skip_push and carrying custom.resent_from, the id of the message each copies. The model answers from that branch from then on. Call it before asking anything while a hidden branch is shown.
+	// A branch already on the conversation changes nothing and answers already_active, so a retry is safe. rewound_to says where the channel was rewound to, which the acting device prunes its own view from: the message itself is gone too when inclusive.
+	// At most 100 messages are sent again; a longer branch is a 409 branch_too_long, and a conversation with no room left for another hidden range a 409 branch_limit_reached.
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/responses/{response_id}/activate (the `ActivateResponse` operationId).
+	ActivateResponse(ctx context.Context, id string, responseId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetResponseBranch The messages of a hidden branch, to show in place of the conversation's
+	//
+	// A regenerate or an edit hides the conversation from that point on in Stream Chat and keeps what it hid as a branch. This reads a branch back: its messages from where it leaves the conversation down to the newest response under the one named, oldest first, shaped as Chat messages so a client renders them the same way. Nothing is written to Chat and the model is not told.
+	// A response on the conversation is shown by the channel itself, so it answers active: true and no items. A branch whose copies were deleted, as a memory truncate deletes them, is a 410 branch_unavailable.
+	//
+	// Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/branch (the `GetResponseBranch` operationId).
+	GetResponseBranch(ctx context.Context, id string, responseId string, params *GetResponseBranchParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListResponseSiblings The alternatives to one response: its regenerations, or the edits of its question
+	//
+	// What a ‹ i/n › control pages through. of=reply lists every answer to the response's question, the response's own included; of=question lists the questions asked at the same point of the conversation, the original and its edits, each as the first response that answered it. Oldest first, which is the order of their index.
+	// active marks the one the conversation goes through now. Reading a sibling's messages is getResponseBranch, and making it the conversation is activateResponse. A response whose messages carry no branch mark, such as a turn spoken on a call, has no siblings but itself.
+	//
+	// Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/siblings (the `ListResponseSiblings` operationId).
+	ListResponseSiblings(ctx context.Context, id string, responseId string, params *ListResponseSiblingsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RewindSessionWithBody Go back to a response and carry on from there
 	//
@@ -19057,6 +19244,7 @@ func (c *Client) ListResponses(ctx context.Context, id string, params *ListRespo
 // The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 // It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
 // A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
+// With replaces, in a conversation kept in Stream Chat, it regenerates or edits an earlier response instead of asking something new. No text answers the replaced response's question again, beside its reply; text asks it in place of that question. Chat hides the conversation from there on, which is kept as a branch (listResponseSiblings, getResponseBranch, activateResponse), and the answer says where the channel was rewound to (rewound_to), so the acting device prunes its view at once. A request_id is required, and images, audio, videos and ui_action cannot go with replaces. A conversation has at most 100 edit and regenerate points; past them it is a 409 branch_limit_reached.
 //
 // Takes any type of body and a specified content type.
 //
@@ -19078,6 +19266,7 @@ func (c *Client) CreateResponseWithBody(ctx context.Context, id string, contentT
 // The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 // It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
 // A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
+// With replaces, in a conversation kept in Stream Chat, it regenerates or edits an earlier response instead of asking something new. No text answers the replaced response's question again, beside its reply; text asks it in place of that question. Chat hides the conversation from there on, which is kept as a branch (listResponseSiblings, getResponseBranch, activateResponse), and the answer says where the channel was rewound to (rewound_to), so the acting device prunes its view at once. A request_id is required, and images, audio, videos and ui_action cannot go with replaces. A conversation has at most 100 edit and regenerate points; past them it is a 409 branch_limit_reached.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -19103,6 +19292,61 @@ func (c *Client) CreateResponse(ctx context.Context, id string, body CreateRespo
 // Corresponds with GET /v1/agents/sessions/{id}/responses/items (the `ListResponseItems` operationId).
 func (c *Client) ListResponseItems(ctx context.Context, id string, params *ListResponseItemsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListResponseItemsRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ActivateResponse Make a hidden branch the conversation again
+//
+// The conversation from where the branch leaves it is hidden in Stream Chat and kept as a branch of its own, and the branch ending at the newest response under the one named is sent again: new messages, with new ids, sent with skip_push and carrying custom.resent_from, the id of the message each copies. The model answers from that branch from then on. Call it before asking anything while a hidden branch is shown.
+// A branch already on the conversation changes nothing and answers already_active, so a retry is safe. rewound_to says where the channel was rewound to, which the acting device prunes its own view from: the message itself is gone too when inclusive.
+// At most 100 messages are sent again; a longer branch is a 409 branch_too_long, and a conversation with no room left for another hidden range a 409 branch_limit_reached.
+//
+// Corresponds with POST /v1/agents/sessions/{id}/responses/{response_id}/activate (the `ActivateResponse` operationId).
+func (c *Client) ActivateResponse(ctx context.Context, id string, responseId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewActivateResponseRequest(c.Server, id, responseId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetResponseBranch The messages of a hidden branch, to show in place of the conversation's
+//
+// A regenerate or an edit hides the conversation from that point on in Stream Chat and keeps what it hid as a branch. This reads a branch back: its messages from where it leaves the conversation down to the newest response under the one named, oldest first, shaped as Chat messages so a client renders them the same way. Nothing is written to Chat and the model is not told.
+// A response on the conversation is shown by the channel itself, so it answers active: true and no items. A branch whose copies were deleted, as a memory truncate deletes them, is a 410 branch_unavailable.
+//
+// Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/branch (the `GetResponseBranch` operationId).
+func (c *Client) GetResponseBranch(ctx context.Context, id string, responseId string, params *GetResponseBranchParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetResponseBranchRequest(c.Server, id, responseId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListResponseSiblings The alternatives to one response: its regenerations, or the edits of its question
+//
+// What a ‹ i/n › control pages through. of=reply lists every answer to the response's question, the response's own included; of=question lists the questions asked at the same point of the conversation, the original and its edits, each as the first response that answered it. Oldest first, which is the order of their index.
+// active marks the one the conversation goes through now. Reading a sibling's messages is getResponseBranch, and making it the conversation is activateResponse. A response whose messages carry no branch mark, such as a turn spoken on a call, has no siblings but itself.
+//
+// Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/siblings (the `ListResponseSiblings` operationId).
+func (c *Client) ListResponseSiblings(ctx context.Context, id string, responseId string, params *ListResponseSiblingsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListResponseSiblingsRequest(c.Server, id, responseId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -28651,6 +28895,219 @@ func NewListResponseItemsRequest(server string, id string, params *ListResponseI
 	return req, nil
 }
 
+// NewActivateResponseRequest constructs an http.Request for the ActivateResponse method
+func NewActivateResponseRequest(server string, id string, responseId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "response_id", responseId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/responses/%s/activate", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetResponseBranchRequest constructs an http.Request for the GetResponseBranch method
+func NewGetResponseBranchRequest(server string, id string, responseId string, params *GetResponseBranchParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "response_id", responseId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/responses/%s/branch", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListResponseSiblingsRequest constructs an http.Request for the ListResponseSiblings method
+func NewListResponseSiblingsRequest(server string, id string, responseId string, params *ListResponseSiblingsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "response_id", responseId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/responses/%s/siblings", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Of != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "of", *params.Of, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewRewindSessionRequest calls the generic RewindSession builder with application/json body
 func NewRewindSessionRequest(server string, id string, body RewindSessionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -36617,6 +37074,7 @@ type ClientWithResponsesInterface interface {
 	// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 	// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
 	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
+	// With replaces, in a conversation kept in Stream Chat, it regenerates or edits an earlier response instead of asking something new. No text answers the replaced response's question again, beside its reply; text asks it in place of that question. Chat hides the conversation from there on, which is kept as a branch (listResponseSiblings, getResponseBranch, activateResponse), and the answer says where the channel was rewound to (rewound_to), so the acting device prunes its view at once. A request_id is required, and images, audio, videos and ui_action cannot go with replaces. A conversation has at most 100 edit and regenerate points; past them it is a 409 branch_limit_reached.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -36628,6 +37086,7 @@ type ClientWithResponsesInterface interface {
 	// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 	// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
 	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
+	// With replaces, in a conversation kept in Stream Chat, it regenerates or edits an earlier response instead of asking something new. No text answers the replaced response's question again, beside its reply; text asks it in place of that question. Chat hides the conversation from there on, which is kept as a branch (listResponseSiblings, getResponseBranch, activateResponse), and the answer says where the channel was rewound to (rewound_to), so the acting device prunes its view at once. A request_id is required, and images, audio, videos and ui_action cannot go with replaces. A conversation has at most 100 edit and regenerate points; past them it is a 409 branch_limit_reached.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -36644,6 +37103,37 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/responses/items (the `ListResponseItems` operationId).
 	ListResponseItemsWithResponse(ctx context.Context, id string, params *ListResponseItemsParams, reqEditors ...RequestEditorFn) (*ListResponseItemsResponse, error)
+
+	// ActivateResponseWithResponse Make a hidden branch the conversation again
+	//
+	// The conversation from where the branch leaves it is hidden in Stream Chat and kept as a branch of its own, and the branch ending at the newest response under the one named is sent again: new messages, with new ids, sent with skip_push and carrying custom.resent_from, the id of the message each copies. The model answers from that branch from then on. Call it before asking anything while a hidden branch is shown.
+	// A branch already on the conversation changes nothing and answers already_active, so a retry is safe. rewound_to says where the channel was rewound to, which the acting device prunes its own view from: the message itself is gone too when inclusive.
+	// At most 100 messages are sent again; a longer branch is a 409 branch_too_long, and a conversation with no room left for another hidden range a 409 branch_limit_reached.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/responses/{response_id}/activate (the `ActivateResponse` operationId).
+	ActivateResponseWithResponse(ctx context.Context, id string, responseId string, reqEditors ...RequestEditorFn) (*ActivateResponseResponse, error)
+
+	// GetResponseBranchWithResponse The messages of a hidden branch, to show in place of the conversation's
+	//
+	// A regenerate or an edit hides the conversation from that point on in Stream Chat and keeps what it hid as a branch. This reads a branch back: its messages from where it leaves the conversation down to the newest response under the one named, oldest first, shaped as Chat messages so a client renders them the same way. Nothing is written to Chat and the model is not told.
+	// A response on the conversation is shown by the channel itself, so it answers active: true and no items. A branch whose copies were deleted, as a memory truncate deletes them, is a 410 branch_unavailable.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/branch (the `GetResponseBranch` operationId).
+	GetResponseBranchWithResponse(ctx context.Context, id string, responseId string, params *GetResponseBranchParams, reqEditors ...RequestEditorFn) (*GetResponseBranchResponse, error)
+
+	// ListResponseSiblingsWithResponse The alternatives to one response: its regenerations, or the edits of its question
+	//
+	// What a ‹ i/n › control pages through. of=reply lists every answer to the response's question, the response's own included; of=question lists the questions asked at the same point of the conversation, the original and its edits, each as the first response that answered it. Oldest first, which is the order of their index.
+	// active marks the one the conversation goes through now. Reading a sibling's messages is getResponseBranch, and making it the conversation is activateResponse. A response whose messages carry no branch mark, such as a turn spoken on a call, has no siblings but itself.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/siblings (the `ListResponseSiblings` operationId).
+	ListResponseSiblingsWithResponse(ctx context.Context, id string, responseId string, params *ListResponseSiblingsParams, reqEditors ...RequestEditorFn) (*ListResponseSiblingsResponse, error)
 
 	// RewindSessionWithBodyWithResponse Go back to a response and carry on from there
 	//
@@ -51584,7 +52074,7 @@ type CreateResponseResponse struct {
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *Unavailable
+	JSON503 *ErrorResponse
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *CreateResponseResponse202Headers
 	// Headers402 the parsed response headers for an HTTP 402 response
@@ -51632,7 +52122,7 @@ func (r CreateResponseResponse) GetJSON500() *InternalError {
 }
 
 // GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r CreateResponseResponse) GetJSON503() *Unavailable {
+func (r CreateResponseResponse) GetJSON503() *ErrorResponse {
 	return r.JSON503
 }
 
@@ -51767,6 +52257,351 @@ func (r ListResponseItemsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListResponseItemsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ActivateResponseResponse200Headers the declared response headers of an HTTP 200 response for ActivateResponse
+type ActivateResponseResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// ActivateResponseResponse402Headers the declared response headers of an HTTP 402 response for ActivateResponse
+type ActivateResponseResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type ActivateResponseResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ActivatedBranch
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON410 the response for an HTTP 410 `application/json` response
+	JSON410 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *ActivateResponseResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *ActivateResponseResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ActivateResponseResponse) GetJSON200() *ActivatedBranch {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ActivateResponseResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ActivateResponseResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ActivateResponseResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ActivateResponseResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ActivateResponseResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ActivateResponseResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON410 returns the response for an HTTP 410 `application/json` response
+func (r ActivateResponseResponse) GetJSON410() *ErrorResponse {
+	return r.JSON410
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ActivateResponseResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ActivateResponseResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ActivateResponseResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ActivateResponseResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ActivateResponseResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ActivateResponseResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetResponseBranchResponse200Headers the declared response headers of an HTTP 200 response for GetResponseBranch
+type GetResponseBranchResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// GetResponseBranchResponse402Headers the declared response headers of an HTTP 402 response for GetResponseBranch
+type GetResponseBranchResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type GetResponseBranchResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BranchMessagePage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON410 the response for an HTTP 410 `application/json` response
+	JSON410 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetResponseBranchResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *GetResponseBranchResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetResponseBranchResponse) GetJSON200() *BranchMessagePage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetResponseBranchResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetResponseBranchResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetResponseBranchResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetResponseBranchResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetResponseBranchResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON410 returns the response for an HTTP 410 `application/json` response
+func (r GetResponseBranchResponse) GetJSON410() *ErrorResponse {
+	return r.JSON410
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetResponseBranchResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetResponseBranchResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetResponseBranchResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetResponseBranchResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetResponseBranchResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetResponseBranchResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListResponseSiblingsResponse200Headers the declared response headers of an HTTP 200 response for ListResponseSiblings
+type ListResponseSiblingsResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// ListResponseSiblingsResponse402Headers the declared response headers of an HTTP 402 response for ListResponseSiblings
+type ListResponseSiblingsResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type ListResponseSiblingsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ResponseSiblingPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *ListResponseSiblingsResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *ListResponseSiblingsResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListResponseSiblingsResponse) GetJSON200() *ResponseSiblingPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListResponseSiblingsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListResponseSiblingsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListResponseSiblingsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListResponseSiblingsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListResponseSiblingsResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListResponseSiblingsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListResponseSiblingsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListResponseSiblingsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListResponseSiblingsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListResponseSiblingsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListResponseSiblingsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -67603,6 +68438,7 @@ func (c *ClientWithResponses) ListResponsesWithResponse(ctx context.Context, id 
 // The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 // It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
 // A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
+// With replaces, in a conversation kept in Stream Chat, it regenerates or edits an earlier response instead of asking something new. No text answers the replaced response's question again, beside its reply; text asks it in place of that question. Chat hides the conversation from there on, which is kept as a branch (listResponseSiblings, getResponseBranch, activateResponse), and the answer says where the channel was rewound to (rewound_to), so the acting device prunes its view at once. A request_id is required, and images, audio, videos and ui_action cannot go with replaces. A conversation has at most 100 edit and regenerate points; past them it is a 409 branch_limit_reached.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -67620,6 +68456,7 @@ func (c *ClientWithResponses) CreateResponseWithBodyWithResponse(ctx context.Con
 // The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 // It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
 // A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
+// With replaces, in a conversation kept in Stream Chat, it regenerates or edits an earlier response instead of asking something new. No text answers the replaced response's question again, beside its reply; text asks it in place of that question. Chat hides the conversation from there on, which is kept as a branch (listResponseSiblings, getResponseBranch, activateResponse), and the answer says where the channel was rewound to (rewound_to), so the acting device prunes its view at once. A request_id is required, and images, audio, videos and ui_action cannot go with replaces. A conversation has at most 100 edit and regenerate points; past them it is a 409 branch_limit_reached.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -67647,6 +68484,55 @@ func (c *ClientWithResponses) ListResponseItemsWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseListResponseItemsResponse(rsp)
+}
+
+// ActivateResponseWithResponse Make a hidden branch the conversation again
+//
+// The conversation from where the branch leaves it is hidden in Stream Chat and kept as a branch of its own, and the branch ending at the newest response under the one named is sent again: new messages, with new ids, sent with skip_push and carrying custom.resent_from, the id of the message each copies. The model answers from that branch from then on. Call it before asking anything while a hidden branch is shown.
+// A branch already on the conversation changes nothing and answers already_active, so a retry is safe. rewound_to says where the channel was rewound to, which the acting device prunes its own view from: the message itself is gone too when inclusive.
+// At most 100 messages are sent again; a longer branch is a 409 branch_too_long, and a conversation with no room left for another hidden range a 409 branch_limit_reached.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/{id}/responses/{response_id}/activate (the `ActivateResponse` operationId).
+func (c *ClientWithResponses) ActivateResponseWithResponse(ctx context.Context, id string, responseId string, reqEditors ...RequestEditorFn) (*ActivateResponseResponse, error) {
+	rsp, err := c.ActivateResponse(ctx, id, responseId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseActivateResponseResponse(rsp)
+}
+
+// GetResponseBranchWithResponse The messages of a hidden branch, to show in place of the conversation's
+//
+// A regenerate or an edit hides the conversation from that point on in Stream Chat and keeps what it hid as a branch. This reads a branch back: its messages from where it leaves the conversation down to the newest response under the one named, oldest first, shaped as Chat messages so a client renders them the same way. Nothing is written to Chat and the model is not told.
+// A response on the conversation is shown by the channel itself, so it answers active: true and no items. A branch whose copies were deleted, as a memory truncate deletes them, is a 410 branch_unavailable.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/branch (the `GetResponseBranch` operationId).
+func (c *ClientWithResponses) GetResponseBranchWithResponse(ctx context.Context, id string, responseId string, params *GetResponseBranchParams, reqEditors ...RequestEditorFn) (*GetResponseBranchResponse, error) {
+	rsp, err := c.GetResponseBranch(ctx, id, responseId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetResponseBranchResponse(rsp)
+}
+
+// ListResponseSiblingsWithResponse The alternatives to one response: its regenerations, or the edits of its question
+//
+// What a ‹ i/n › control pages through. of=reply lists every answer to the response's question, the response's own included; of=question lists the questions asked at the same point of the conversation, the original and its edits, each as the first response that answered it. Oldest first, which is the order of their index.
+// active marks the one the conversation goes through now. Reading a sibling's messages is getResponseBranch, and making it the conversation is activateResponse. A response whose messages carry no branch mark, such as a turn spoken on a call, has no siblings but itself.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/siblings (the `ListResponseSiblings` operationId).
+func (c *ClientWithResponses) ListResponseSiblingsWithResponse(ctx context.Context, id string, responseId string, params *ListResponseSiblingsParams, reqEditors ...RequestEditorFn) (*ListResponseSiblingsResponse, error) {
+	rsp, err := c.ListResponseSiblings(ctx, id, responseId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListResponseSiblingsResponse(rsp)
 }
 
 // RewindSessionWithBodyWithResponse Go back to a response and carry on from there
@@ -85879,7 +86765,7 @@ func ParseCreateResponseResponse(rsp *http.Response) (*CreateResponseResponse, e
 		response.JSON500 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest Unavailable
+		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -86047,6 +86933,405 @@ func ParseListResponseItemsResponse(rsp *http.Response) (*ListResponseItemsRespo
 		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
 		var headers ListResponseItemsResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseActivateResponseResponse parses an HTTP response from a ActivateResponseWithResponse call
+func ParseActivateResponseResponse(rsp *http.Response) (*ActivateResponseResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ActivateResponseResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ActivatedBranch
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers ActivateResponseResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers ActivateResponseResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetResponseBranchResponse parses an HTTP response from a GetResponseBranchWithResponse call
+func ParseGetResponseBranchResponse(rsp *http.Response) (*GetResponseBranchResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetResponseBranchResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BranchMessagePage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetResponseBranchResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers GetResponseBranchResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListResponseSiblingsResponse parses an HTTP response from a ListResponseSiblingsWithResponse call
+func ParseListResponseSiblingsResponse(rsp *http.Response) (*ListResponseSiblingsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListResponseSiblingsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ResponseSiblingPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers ListResponseSiblingsResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers ListResponseSiblingsResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {

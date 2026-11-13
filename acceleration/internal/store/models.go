@@ -2100,6 +2100,76 @@ type AgentResponse struct {
 	// RewoundAt is when a rewind went back past this turn, which takes it out of the
 	// conversation without pretending it was never said.
 	RewoundAt *time.Time `bun:"rewound_at"`
+	// ParentResponseID is the response before this one on the path it was answered on, empty
+	// for a session's first. Responses sharing a parent are alternatives to one another.
+	ParentResponseID string `bun:"parent_response_id,nullzero"`
+	// QuestionResponseID is the response whose question this one answers: its own id for a
+	// new question or an edit, the replaced one's for a regenerate. Empty only on a row from
+	// before branches were kept.
+	QuestionResponseID string `bun:"question_response_id,nullzero"`
+}
+
+// The kinds of branch switch.
+const (
+	// SwitchRegenerate answers a question again.
+	SwitchRegenerate = "regenerate"
+	// SwitchEdit asks a question again in other words.
+	SwitchEdit = "edit"
+	// SwitchActivate brings back a branch a switch hid.
+	SwitchActivate = "activate"
+)
+
+// How far a branch switch got, in the order it gets there.
+const (
+	// SwitchSnapshotted has copied the messages the rewind will hide.
+	SwitchSnapshotted = "snapshotted"
+	// SwitchRewound has rewound the channel.
+	SwitchRewound = "rewound"
+	// SwitchResending is sending the chosen branch's messages again.
+	SwitchResending = "resending"
+	// SwitchDone has nothing left to do.
+	SwitchDone = "done"
+)
+
+// AgentBranchSwitch is one move of a conversation to another branch, kept until it is done
+// so a router that stopped partway finishes it.
+type AgentBranchSwitch struct {
+	bun.BaseModel `bun:"table:agent_branch_switches,alias:abs"`
+
+	ID               string `bun:"id,pk"`
+	SessionID        string `bun:"session_id,notnull"`
+	CustomerID       string `bun:"customer_id,notnull"`
+	Kind             string `bun:"kind,notnull"`
+	TargetResponseID string `bun:"target_response_id,notnull"`
+	// ForkMessageID is the Stream Chat message the channel is rewound to, and Inclusive says
+	// whether it is hidden too.
+	ForkMessageID string `bun:"fork_message_id,notnull"`
+	Inclusive     bool   `bun:"inclusive,notnull"`
+	// HiddenFrom is when ForkMessageID was created: with CreatedAt, the range of messages the
+	// rewind hid.
+	HiddenFrom time.Time `bun:"hidden_from,notnull"`
+	State      string    `bun:"state,notnull"`
+	// Resent is how many messages of the chosen branch were sent again.
+	Resent    int       `bun:"resent,notnull"`
+	CreatedAt time.Time `bun:"created_at,notnull"`
+	UpdatedAt time.Time `bun:"updated_at,notnull"`
+}
+
+// AgentBranchMessage is a copy of a Stream Chat message a rewind hid, so the branch it was on
+// can be shown and sent again.
+type AgentBranchMessage struct {
+	bun.BaseModel `bun:"table:agent_branch_messages,alias:abm"`
+
+	SessionID         string `bun:"session_id,pk"`
+	OriginalMessageID string `bun:"original_message_id,pk"`
+	CustomerID        string `bun:"customer_id,notnull"`
+	// ResponseID is the response the message belongs to, empty for one that belongs to none.
+	ResponseID    string    `bun:"response_id,notnull"`
+	SwitchID      string    `bun:"switch_id,notnull"`
+	ChatCreatedAt time.Time `bun:"chat_created_at,notnull"`
+	AuthorID      string    `bun:"author_id,notnull"`
+	// Message is what the message said: its text, attachments and custom data.
+	Message map[string]any `bun:"message,type:jsonb,notnull"`
 }
 
 // Exchange is one turn as a model is given it again: what was asked and what was answered.
