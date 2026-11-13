@@ -22,6 +22,8 @@
 --     lease and counts the claim in attempts, so only that claim may write the row, and a router
 --     that stopped mid-job leaves the row to the next once the lease ran out.
 --   - draws counts the draws started; a draw the provider never took is not counted.
+--     released counts the claims given back uncounted (a draw that never left its slot wait, a
+--     router stopping), so the cap on claims that never finished reads attempts - released.
 --   - drawn and drawn_type are the picture as drawn, kept the moment it is, so it is never drawn
 --     and billed again; picture is it once uploaded, when drawn is let go of.
 --   - message is what the job posts once decided: the picture's words, or why there is no
@@ -52,6 +54,7 @@ CREATE TABLE image_jobs (
     state TEXT NOT NULL DEFAULT 'queued' CHECK (state IN ('queued', 'done', 'failed')),
     attempts INTEGER NOT NULL DEFAULT 0,
     draws INTEGER NOT NULL DEFAULT 0,
+    released INTEGER NOT NULL DEFAULT 0,
     posts INTEGER NOT NULL DEFAULT 0,
     next_attempt_at TIMESTAMPTZ NOT NULL,
     drawn BYTEA,

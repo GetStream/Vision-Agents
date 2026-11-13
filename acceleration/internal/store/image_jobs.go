@@ -61,8 +61,11 @@ type ImageJob struct {
 	// write holds the job by.
 	Attempts int `bun:"attempts,notnull"`
 	// Draws is how many draws were started that a provider took; Posts how many posts failed.
-	Draws int `bun:"draws,notnull"`
-	Posts int `bun:"posts,notnull"`
+	// Released is how many claims were given back uncounted, so Attempts - Released are the
+	// claims that ended unfinished or failed.
+	Draws    int `bun:"draws,notnull"`
+	Released int `bun:"released,notnull"`
+	Posts    int `bun:"posts,notnull"`
 	// NextAttemptAt is when the job is due; on a claimed row, the end of the claim's lease.
 	NextAttemptAt time.Time `bun:"next_attempt_at,notnull"`
 	// Drawn and DrawnType are the picture as drawn, until it is uploaded; Picture is it uploaded,
@@ -107,7 +110,7 @@ func (s *Store) QueueImageJob(ctx context.Context, job *ImageJob) (bool, error) 
 // which only an upload reads (ImageJobDrawn).
 const imageJobClaimed = `ij.id, ij.customer_id, ij.stream_app, ij.cid, ij.agent_user, ij.session_id, ij.turn_id,
 ij.tool_call_id, ij.request_key, ij.agent_id, ij.call_id, ij.region, ij.target, ij.tags, ij.attribution, ij.prompt,
-ij.aspect_ratio, ij.state, ij.attempts, ij.draws, ij.posts, ij.next_attempt_at, ij.drawn_type, ij.picture,
+ij.aspect_ratio, ij.state, ij.attempts, ij.draws, ij.released, ij.posts, ij.next_attempt_at, ij.drawn_type, ij.picture,
 ij.message, ij.failed, ij.outcome, ij.created_at, ij.finished_at`
 
 // ClaimImageJobs takes up to limit queued jobs due by now, moves each one's next attempt to
@@ -148,11 +151,13 @@ func (s *Store) ImageJobDrawn(ctx context.Context, id string) ([]byte, error) {
 	return drawn, nil
 }
 
-// NextImageJobAt is when the next queued job is due, and false when none is queued.
-func (s *Store) NextImageJobAt(ctx context.Context) (time.Time, bool, error) {
+// NextImageJobAt is when the next queued job of a kind is due, decided or still to be drawn as
+// ClaimImageJobs takes them, and false when none is queued.
+func (s *Store) NextImageJobAt(ctx context.Context, decided bool) (time.Time, bool, error) {
 	var next time.Time
 	err := s.db.NewSelect().Model((*ImageJob)(nil)).ColumnExpr("next_attempt_at").
-		Where("state = ?", ImageJobQueued).OrderExpr("next_attempt_at").Limit(1).Scan(ctx, &next)
+		Where("state = ?", ImageJobQueued).Where("(message <> '') = ?", decided).
+		OrderExpr("next_attempt_at").Limit(1).Scan(ctx, &next)
 	if errors.Is(err, sql.ErrNoRows) {
 		return time.Time{}, false, nil
 	}
@@ -171,14 +176,15 @@ func (s *Store) StartImageJobDraw(ctx context.Context, job ImageJob) (bool, erro
 	})
 }
 
-// ReleaseImageJob gives the job back for another claim now, without the draw the claim started
-// when undraw: a draw no provider took, or one this router cut short as it stopped.
+// ReleaseImageJob gives the job back for another claim at next, a claim that does not count
+// against the job, without the draw the claim started when undraw: a draw no provider took, or
+// one this router cut short as it stopped.
 func (s *Store) ReleaseImageJob(ctx context.Context, job ImageJob, undraw bool, next time.Time) (bool, error) {
 	return s.updateImageJob(ctx, job, "release image job", func(update *bun.UpdateQuery) *bun.UpdateQuery {
 		if undraw {
 			update = update.Set("draws = greatest(draws - 1, 0)")
 		}
-		return update.Set("next_attempt_at = ?", next.UTC())
+		return update.Set("released = released + 1").Set("next_attempt_at = ?", next.UTC())
 	})
 }
 

@@ -325,17 +325,28 @@ func (s *Service) runDue(ctx context.Context) time.Duration {
 			}()
 		}
 	}
-	next, queued, err := s.store.NextImageJobAt(ctx)
-	switch {
-	case err != nil:
-		if ctx.Err() == nil {
-			s.logger.Error("could not find when the next image job is due", "error", err)
+	// Only a kind with a free slot is worth waking for: a job due behind full slots waits for
+	// one to free, which kicks the loop, rather than having it ask again every poll.
+	wait := look
+	for _, kind := range []struct {
+		slots   chan struct{}
+		decided bool
+	}{{s.drawing, false}, {s.posting, true}} {
+		if len(kind.slots) == cap(kind.slots) {
+			continue
 		}
-		return s.poll
-	case !queued:
-		return look
+		next, queued, err := s.store.NextImageJobAt(ctx, kind.decided)
+		switch {
+		case err != nil:
+			if ctx.Err() == nil {
+				s.logger.Error("could not find when the next image job is due", "error", err)
+			}
+			return s.poll
+		case queued:
+			wait = min(wait, max(time.Until(next), s.poll))
+		}
 	}
-	return min(max(time.Until(next), s.poll), look)
+	return wait
 }
 
 // prune deletes the rows past their keep, once every pruneEvery.
@@ -353,7 +364,7 @@ func (s *Service) prune(ctx context.Context) {
 func (s *Service) run(job store.ImageJob) {
 	log := s.logger.With("job", job.ID, "customer", job.CustomerID, "channel", job.CID, "attempts", job.Attempts)
 	switch {
-	case job.Attempts > maxClaims:
+	case job.Attempts-job.Released > maxClaims:
 		log.Error("gave up an image job claimed more times than any job should be")
 		s.finish(log, job, store.ImageJobFailed, "given up: claimed too often")
 	case job.Message == "":

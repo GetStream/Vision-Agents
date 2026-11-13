@@ -402,6 +402,26 @@ func (s *ImageJobsSuite) TestADrawNoProviderTookInTimeIsTriedAgainUncounted() {
 	s.Equal(1, job.Draws, "the draw no provider took is not counted")
 }
 
+func (s *ImageJobsSuite) TestADrawGivenBackMoreTimesThanTheClaimCapIsStillDrawn() {
+	// A picture no provider took for minutes is given back every 10 s for up to 30 min: those
+	// claims count against nothing, or the job would end failed, unposted, after 20 of them.
+	notStarted := imagegen.Fail(imagegen.Timeout, false, fmt.Errorf("%w: %w", imagegen.ErrNotStarted, context.DeadlineExceeded))
+	for range 25 {
+		s.drawer.failing = append(s.drawer.failing, notStarted)
+	}
+	worker := s.started(s.posts)
+
+	s.queue(worker, "draw-1")
+
+	posted := s.awaitPosted(1)
+	s.Equal(1, pictures(posted[0]))
+	job := s.job()
+	s.Equal(store.ImageJobDone, job.State)
+	s.Equal(26, job.Attempts)
+	s.Equal(25, job.Released)
+	s.Equal(1, job.Draws)
+}
+
 func (s *ImageJobsSuite) TestADrawSentThatTimedOutIsCountedAndSaysSo() {
 	// Gemini's call that ran out of time, or a FAL submit that timed out once FAL took it: the
 	// vendor may have drawn, and billed, it, so it is not sent again as if it never left.

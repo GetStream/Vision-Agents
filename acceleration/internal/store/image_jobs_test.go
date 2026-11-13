@@ -79,6 +79,23 @@ func (s *StoreSuite) TestAnImageJobWithItsMessageDecidedIsClaimedOnlyToPost() {
 	s.Equal([]byte("png"), drawn, "read when the upload needs it")
 }
 
+func (s *StoreSuite) TestTheNextImageJobDueIsToldApartForDrawingAndPosting() {
+	// A router whose draw slots are full waits for a decided job's post, not for a draw it has
+	// no slot for, which would have it ask again every poll.
+	toDraw := s.queuedImageJob()
+	_, err := s.store.DB().NewUpdate().Model((*ImageJob)(nil)).Set("next_attempt_at = ?", time.Now().Add(-time.Minute)).
+		Where("id = ?", toDraw.ID).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	_, queued, err := s.store.NextImageJobAt(s.ctx, true)
+	s.Require().NoError(err)
+	s.False(queued, "no decided job is queued")
+	next, queued, err := s.store.NextImageJobAt(s.ctx, false)
+	s.Require().NoError(err)
+	s.True(queued)
+	s.True(next.Before(time.Now()))
+}
+
 func (s *StoreSuite) TestPostedImageJobsAreDeletedAfterADayAndFailedOnesAfter30Days() {
 	// They hold the prompt: kept as long as someone may look for why, and no longer.
 	now := time.Now()
