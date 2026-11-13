@@ -74,8 +74,9 @@ def sync_detailed(
     callbacks, as form posts. Unauthenticated because Twilio is not a customer: each event is checked
     against X-Twilio-Signature, made with the account's Auth Token over ROUTER_PUBLIC_URL and this path,
     then logged and counted in vendor_account_events_total by its error code or usage category and its
-    level. A deployment with no Twilio webhook token or no public URL answers 404, so nobody else can
-    raise the count.
+    level. An alert whose Sid was counted in the last hour is answered 204 and not counted again. A
+    deployment with no Twilio webhook token or no public URL answers 404, so nobody else can raise the
+    count.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -104,8 +105,9 @@ def sync(
     callbacks, as form posts. Unauthenticated because Twilio is not a customer: each event is checked
     against X-Twilio-Signature, made with the account's Auth Token over ROUTER_PUBLIC_URL and this path,
     then logged and counted in vendor_account_events_total by its error code or usage category and its
-    level. A deployment with no Twilio webhook token or no public URL answers 404, so nobody else can
-    raise the count.
+    level. An alert whose Sid was counted in the last hour is answered 204 and not counted again. A
+    deployment with no Twilio webhook token or no public URL answers 404, so nobody else can raise the
+    count.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -130,8 +132,9 @@ async def asyncio_detailed(
     callbacks, as form posts. Unauthenticated because Twilio is not a customer: each event is checked
     against X-Twilio-Signature, made with the account's Auth Token over ROUTER_PUBLIC_URL and this path,
     then logged and counted in vendor_account_events_total by its error code or usage category and its
-    level. A deployment with no Twilio webhook token or no public URL answers 404, so nobody else can
-    raise the count.
+    level. An alert whose Sid was counted in the last hour is answered 204 and not counted again. A
+    deployment with no Twilio webhook token or no public URL answers 404, so nobody else can raise the
+    count.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -158,8 +161,9 @@ async def asyncio(
     callbacks, as form posts. Unauthenticated because Twilio is not a customer: each event is checked
     against X-Twilio-Signature, made with the account's Auth Token over ROUTER_PUBLIC_URL and this path,
     then logged and counted in vendor_account_events_total by its error code or usage category and its
-    level. A deployment with no Twilio webhook token or no public URL answers 404, so nobody else can
-    raise the count.
+    level. An alert whose Sid was counted in the last hour is answered 204 and not counted again. A
+    deployment with no Twilio webhook token or no public URL answers 404, so nobody else can raise the
+    count.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

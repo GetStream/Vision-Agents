@@ -3316,7 +3316,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Receive a Twilio account event
-         * @description Where the Twilio account sends its Monitor alerts (the Debugger webhook) and its usage triggers' callbacks, as form posts. Unauthenticated because Twilio is not a customer: each event is checked against X-Twilio-Signature, made with the account's Auth Token over ROUTER_PUBLIC_URL and this path, then logged and counted in vendor_account_events_total by its error code or usage category and its level. A deployment with no Twilio webhook token or no public URL answers 404, so nobody else can raise the count.
+         * @description Where the Twilio account sends its Monitor alerts (the Debugger webhook) and its usage triggers' callbacks, as form posts. Unauthenticated because Twilio is not a customer: each event is checked against X-Twilio-Signature, made with the account's Auth Token over ROUTER_PUBLIC_URL and this path, then logged and counted in vendor_account_events_total by its error code or usage category and its level. An alert whose Sid was counted in the last hour is answered 204 and not counted again. A deployment with no Twilio webhook token or no public URL answers 404, so nobody else can raise the count.
          */
         readonly post: operations["receiveTwilioEvent"];
         readonly delete?: never;
@@ -19088,7 +19088,7 @@ export interface operations {
         };
         readonly requestBody?: never;
         readonly responses: {
-            /** @description The event is counted */
+            /** @description The event is counted, or is an alert already counted in the last hour */
             readonly 204: {
                 headers: {
                     readonly [name: string]: unknown;
