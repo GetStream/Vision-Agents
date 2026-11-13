@@ -281,9 +281,8 @@ const (
 	// UnsupportedNative is a session on a speech-to-speech model, which keeps its own context
 	// out of reach. The session refuses it.
 	UnsupportedNative = "native"
-	// UnsupportedUnmarked is a response whose messages carry no response id, as one not asked
-	// through createResponse, such as a turn sent through /respond or a spoken one: there is
-	// nothing to find them by.
+	// UnsupportedUnmarked is a response whose messages carry no response id, such as a turn
+	// spoken on a call: there is nothing to find them by.
 	UnsupportedUnmarked = "unmarked"
 )
 

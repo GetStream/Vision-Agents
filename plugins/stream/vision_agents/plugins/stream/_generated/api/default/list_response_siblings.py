@@ -123,8 +123,8 @@ def sync_detailed(
     conversation, the original and its edits, each as the first response that answered it. Oldest first,
     which is the order of their index.
     active marks the one the conversation goes through now. Reading a sibling's messages is
-    getResponseBranch, and making it the conversation is activateResponse. A response not asked through
-    createResponse, such as a turn sent through /respond or a spoken one, has no siblings but itself.
+    getResponseBranch, and making it the conversation is activateResponse. A response whose messages
+    carry no branch mark, such as a turn spoken on a call, has no siblings but itself.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -174,8 +174,8 @@ def sync(
     conversation, the original and its edits, each as the first response that answered it. Oldest first,
     which is the order of their index.
     active marks the one the conversation goes through now. Reading a sibling's messages is
-    getResponseBranch, and making it the conversation is activateResponse. A response not asked through
-    createResponse, such as a turn sent through /respond or a spoken one, has no siblings but itself.
+    getResponseBranch, and making it the conversation is activateResponse. A response whose messages
+    carry no branch mark, such as a turn spoken on a call, has no siblings but itself.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -220,8 +220,8 @@ async def asyncio_detailed(
     conversation, the original and its edits, each as the first response that answered it. Oldest first,
     which is the order of their index.
     active marks the one the conversation goes through now. Reading a sibling's messages is
-    getResponseBranch, and making it the conversation is activateResponse. A response not asked through
-    createResponse, such as a turn sent through /respond or a spoken one, has no siblings but itself.
+    getResponseBranch, and making it the conversation is activateResponse. A response whose messages
+    carry no branch mark, such as a turn spoken on a call, has no siblings but itself.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -269,8 +269,8 @@ async def asyncio(
     conversation, the original and its edits, each as the first response that answered it. Oldest first,
     which is the order of their index.
     active marks the one the conversation goes through now. Reading a sibling's messages is
-    getResponseBranch, and making it the conversation is activateResponse. A response not asked through
-    createResponse, such as a turn sent through /respond or a spoken one, has no siblings but itself.
+    getResponseBranch, and making it the conversation is activateResponse. A response whose messages
+    carry no branch mark, such as a turn spoken on a call, has no siblings but itself.
 
     Args:
         id (str): The session, as returned when it was created.
