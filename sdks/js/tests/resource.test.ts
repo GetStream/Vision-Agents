@@ -1388,4 +1388,16 @@ describe("search", () => {
     await api.router().search("weather in Lisbon");
     assert.deepEqual(router.last.body, { query: "weather in Lisbon" });
   });
+  it("lists a modality's routes, default first", async () => {
+    router.serve("GET", "/v1/image/routes", {
+      body: [
+        { id: "image-fast", title: "Fast images", description: "", candidates: [{ provider: "fal", model: "alibaba/qwen-image-3/text-to-image" }] },
+        { id: "image-quality", title: "Best images", description: "", candidates: [{ provider: "google", model: "gemini-3.1-flash-image" }] },
+      ],
+    });
+
+    const routes = await api.router().routes("image");
+    assert.deepEqual(routes.map((route) => route.id), ["image-fast", "image-quality"]);
+    assert.equal(router.requestsTo("GET", "/v1/image/routes").length, 1);
+  });
 });
