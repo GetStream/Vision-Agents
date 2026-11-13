@@ -219,13 +219,13 @@ func New(options Options) (*Service, error) {
 	return s, nil
 }
 
-// Queue writes the job for a worker to draw, on this router or another, and wakes this one's.
-// A request queued already, the same call of the same turn asking for the same picture, is
-// that call run again, and queues nothing more.
-func (s *Service) Queue(ctx context.Context, request Request) error {
+// Queue writes the job for a worker to draw, on this router or another, wakes this one's, and
+// reports whether it queued one. A request queued already, the same call of the same turn
+// asking for the same picture, is that call run again, and queues nothing more.
+func (s *Service) Queue(ctx context.Context, request Request) (bool, error) {
 	attribution, err := json.Marshal(request.Attribution)
 	if err != nil {
-		return stack.Wrap(err)
+		return false, stack.Wrap(err)
 	}
 	job := store.ImageJob{
 		ID: uuid.NewString(), CustomerID: request.CustomerID, StreamApp: request.StreamApp, CID: request.CID,
@@ -234,11 +234,12 @@ func (s *Service) Queue(ctx context.Context, request Request) error {
 		AgentID:    request.AgentID, CallID: request.CallID, Region: request.Region, Target: request.Target,
 		Tags: request.Tags, Attribution: attribution, Prompt: request.Prompt, AspectRatio: request.AspectRatio,
 	}
-	if _, err := s.store.QueueImageJob(ctx, &job); err != nil {
-		return err
+	queued, err := s.store.QueueImageJob(ctx, &job)
+	if err != nil {
+		return false, err
 	}
 	s.Kick()
-	return nil
+	return queued, nil
 }
 
 // Start draws the jobs due until ctx ends or Close, posting each into its conversation with

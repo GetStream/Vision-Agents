@@ -85,10 +85,11 @@ func (s *DrainSuite) TestTheDrainWaitsForAPictureBeingDrawn() {
 	conversation := &postedTexts{}
 	drawings.Start(signal, conversation)
 	s.T().Cleanup(drawings.Close)
-	s.Require().NoError(drawings.Queue(s.ctx, imagejobs.Request{
+	_, err = drawings.Queue(s.ctx, imagejobs.Request{
 		CustomerID: "customer-" + uuid.NewString(), CID: "agent:" + uuid.NewString(), AgentUser: "illustrator",
 		SessionID: "session-" + uuid.NewString(), ToolCallID: "draw-1", Target: "stub/draw", Prompt: "a field",
-	}))
+	})
+	s.Require().NoError(err)
 	select {
 	case <-drawer.entered:
 	case <-time.After(10 * time.Second):

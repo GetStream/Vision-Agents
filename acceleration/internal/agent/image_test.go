@@ -12,22 +12,34 @@ import (
 )
 
 // drawQueue stands in for the session's queue of pictures: it records what it was asked to
-// queue, or refuses as the test says.
+// queue, or refuses as the test says, and queues a call it already holds once, as the store
+// keys a request.
 type drawQueue struct {
 	err error
+	// failing is how many of the first calls fail, when err is not set.
+	failing int
 
 	mu     sync.Mutex
 	queued []DrawRequest
 }
 
-func (q *drawQueue) queue(_ context.Context, request DrawRequest) error {
+func (q *drawQueue) queue(_ context.Context, request DrawRequest) (bool, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.err != nil {
-		return q.err
+		return false, q.err
+	}
+	if q.failing > 0 {
+		q.failing--
+		return false, errors.New("postgres is down")
+	}
+	for _, held := range q.queued {
+		if held.TurnID == request.TurnID && held.ToolCallID == request.ToolCallID && held.Prompt == request.Prompt {
+			return false, nil
+		}
 	}
 	q.queued = append(q.queued, request)
-	return nil
+	return true, nil
 }
 
 func (q *drawQueue) requests() []DrawRequest {
@@ -138,6 +150,29 @@ func (s *AgentSuite) TestWithoutAnImageTargetACallersOwnGenerateImageRunsUnchang
 	ran := s.runsTool(drawCall("draw-1", "a field"), 1)
 	s.Equal("drawn by the caller", ran.Result)
 	s.Len(s.runner.asked(), 1)
+}
+
+func (s *AgentSuite) TestOnlyAPictureQueuedCountsAgainstTheReply() {
+	// A queue that failed, or a call run again that queued nothing, drew nothing: counted, it
+	// would leave the reply fewer pictures than it may draw.
+	s.drawings = &drawQueue{failing: 1}
+	s.joinText()
+	run := func(id string) ToolRan {
+		n := len(toolsRanIn(s.reported())) + 1
+		s.agent.runTool(harness.ToolRequested{TurnID: "one-reply", Call: drawCall(id, "a field "+id)})
+		s.eventually(func() bool { return len(toolsRanIn(s.reported())) == n }, "the tool never settled")
+		return toolsRanIn(s.reported())[n-1]
+	}
+
+	s.Contains(run("draw-1").Result, "could not be started")
+	s.Contains(run("draw-2").Result, "being drawn")
+	s.Contains(run("draw-2").Result, "being drawn", "the same call run again")
+	for _, id := range []string{"draw-3", "draw-4", "draw-5"} {
+		s.Contains(run(id).Result, "being drawn")
+	}
+
+	s.Len(s.drawings.requests(), maxDrawsPerTurn, "four pictures queued, though six calls ran")
+	s.Contains(run("draw-6").Result, "at most 4 pictures")
 }
 
 func (s *AgentSuite) TestOneReplyQueuesAtMostFourPictures() {

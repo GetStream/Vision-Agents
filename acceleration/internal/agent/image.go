@@ -45,8 +45,9 @@ type DrawRequest struct {
 }
 
 // Drawer queues a picture to be drawn after the turn and posted into the conversation once it
-// is ready, as a message of the agent's.
-type Drawer func(ctx context.Context, request DrawRequest) error
+// is ready, as a message of the agent's, and reports whether it queued one: a call run again
+// queues nothing.
+type Drawer func(ctx context.Context, request DrawRequest) (bool, error)
 
 // generateImageTool is generate_image as the model is offered it.
 func generateImageTool() harness.Tool {
@@ -107,11 +108,16 @@ func (a *Agent) generateImage(ctx context.Context, call llm.ToolCall) (string, e
 		return fmt.Sprintf("Nothing was drawn: one reply may draw at most %d pictures. "+
 			"Tell the person what is on its way so far.", maxDrawsPerTurn), nil
 	}
-	err := a.options.Draws(ctx, DrawRequest{
+	queued, err := a.options.Draws(ctx, DrawRequest{
 		SessionID: a.options.SessionID, TurnID: call.TurnID, ToolCallID: call.ID, Prompt: prompt, AspectRatio: shape,
 		Target: a.options.ImageTarget, AgentID: a.options.AgentID, CallID: a.options.CallID,
 		Region: a.options.Region, Tags: a.options.Tags, Attribution: routing.AttributionFrom(ctx),
 	})
+	if err != nil || !queued {
+		// Only a picture queued counts against the reply: one that failed, or a call run again
+		// that queued nothing, gives back the place drawAllowed held for it.
+		a.drawRefused(call.TurnID)
+	}
 	if err != nil {
 		// The model is told in words it can pass on; what broke is for the logs.
 		a.logger.Error("could not queue a picture", "call", call.ID, "error", err)
@@ -122,7 +128,19 @@ func (a *Agent) generateImage(ctx context.Context, call llm.ToolCall) (string, e
 		"or embed it.", nil
 }
 
-// drawAllowed counts a draw against its reply, and reports whether the reply had any left.
+// drawRefused gives back the place drawAllowed held for a draw of the reply turnID that queued
+// nothing.
+func (a *Agent) drawRefused(turnID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.drawnTurn == turnID && a.drawnCount > 0 {
+		a.drawnCount--
+	}
+}
+
+// drawAllowed holds a place for a draw of its reply, and reports whether the reply had any left.
+// The place is held before the draw is queued, so calls of one reply running at once never
+// queue more than the cap; drawRefused gives it back when nothing was queued.
 func (a *Agent) drawAllowed(turnID string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()

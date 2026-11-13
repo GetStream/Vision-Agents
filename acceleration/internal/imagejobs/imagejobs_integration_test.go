@@ -221,12 +221,13 @@ func (s *ImageJobsSuite) queue(worker *imagejobs.Service, call string) {
 }
 
 func (s *ImageJobsSuite) queueIn(worker *imagejobs.Service, turn, call, prompt string) {
-	s.Require().NoError(worker.Queue(s.ctx, imagejobs.Request{
+	_, err := worker.Queue(s.ctx, imagejobs.Request{
 		CustomerID: s.customer, CID: s.cid, AgentUser: "illustrator", SessionID: s.session, TurnID: turn, ToolCallID: call,
 		AgentID: "illustrator", Target: "stub/draw", Prompt: prompt,
 		Attribution: routing.Attribution{APIKey: "key-1", UserID: "ana", SessionID: s.session,
 			UsageCategories: []string{"team:design"}},
-	}))
+	})
+	s.Require().NoError(err)
 }
 
 // posted are the agent's finished messages in the conversation.
@@ -688,9 +689,18 @@ func (s *ImageJobsSuite) TestTwoRoutersDrawEachPictureOnce() {
 
 func (s *ImageJobsSuite) TestACallRunAgainQueuesNoSecondPicture() {
 	worker := s.worker()
-	s.queue(worker, "draw-1")
-	s.queue(worker, "draw-1")
+	request := imagejobs.Request{
+		CustomerID: s.customer, CID: s.cid, AgentUser: "illustrator", SessionID: s.session, TurnID: "turn-1",
+		ToolCallID: "draw-1", Target: "stub/draw", Prompt: "a yellow watering can",
+	}
 
+	first, err := worker.Queue(s.ctx, request)
+	s.Require().NoError(err)
+	again, err := worker.Queue(s.ctx, request)
+	s.Require().NoError(err)
+
+	s.True(first)
+	s.False(again, "said, so the reply's count of pictures is not spent on it")
 	s.Len(s.queued(), 1)
 }
 

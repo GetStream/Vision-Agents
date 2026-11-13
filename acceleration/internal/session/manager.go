@@ -2470,7 +2470,7 @@ func (m *Manager) drawer(spec Spec, conv *persistent.Conversation) agent.Drawer 
 	if m.options.Drawings == nil || conv == nil || spec.ImageTarget == "" {
 		return nil
 	}
-	return func(ctx context.Context, request agent.DrawRequest) error {
+	return func(ctx context.Context, request agent.DrawRequest) (bool, error) {
 		return m.options.Drawings.Queue(ctx, imagejobs.Request{
 			CustomerID: spec.CustomerID, StreamApp: conv.StreamApp(), CID: conv.CID(), AgentUser: conv.Agent(),
 			SessionID: request.SessionID, TurnID: request.TurnID, ToolCallID: request.ToolCallID, AgentID: request.AgentID, CallID: request.CallID, Region: request.Region,
