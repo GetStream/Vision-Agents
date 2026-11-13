@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -58,25 +59,31 @@ func (s *Server) addressedIn(ctx context.Context, origin hookOrigin, event messa
 // (chatChannelSession). A message it does not answer stays in the channel unanswered, and the
 // next one it answers reads it as what was said before (conversation.Answering).
 func answersTo(config store.AgentConfig, event messageEvent) bool {
-	return !config.AnswersOnlyMentionsIn(event.ChannelType) || event.mentions(config.ID, config.Name)
+	return !config.AnswersOnlyMentionsIn(event.ChannelType) || mentions(config, event.Message.Text, event.mentionedUsers())
 }
 
-// mentions is whether the message mentions the Stream user id, named name: its mentioned_users
-// holds the user, as Stream's clients send a mention picked from their list, or its text has @
-// and the id or the name, as those clients write one (`@${name || id}`, stream-chat-js
-// src/messageComposer/middleware/textComposer/mentions.ts) and a person may type one.
-func (e messageEvent) mentions(id, name string) bool {
+// mentionedUsers are the ids of the users the message mentions, from its mentioned_users.
+func (e messageEvent) mentionedUsers() []string {
 	var users []struct {
 		ID string `json:"id"`
 	}
-	if json.Unmarshal(e.Message.MentionedUsers, &users) == nil {
-		for _, user := range users {
-			if user.ID == id {
-				return true
-			}
-		}
+	if json.Unmarshal(e.Message.MentionedUsers, &users) != nil {
+		return nil
 	}
-	return mentionedIn(e.Message.Text, id) || mentionedIn(e.Message.Text, name)
+	ids := make([]string, 0, len(users))
+	for _, user := range users {
+		ids = append(ids, user.ID)
+	}
+	return ids
+}
+
+// mentions is whether a message, its text and the ids of the users it mentions, mentions the
+// config's agent, the Stream user named after the config (chatChannelSession): the ids hold the
+// config's, as Stream's clients send a mention picked from their list, or the text has @ and
+// the config's id or name, as those clients write one (`@${name || id}`, stream-chat-js
+// src/messageComposer/middleware/textComposer/mentions.ts) and a person may type one.
+func mentions(config store.AgentConfig, text string, mentioned []string) bool {
+	return slices.Contains(mentioned, config.ID) || mentionedIn(text, config.ID) || mentionedIn(text, config.Name)
 }
 
 // mentionedIn is whether text has @handle, in any case, as a mention of its own: the @ starts
@@ -200,8 +207,10 @@ func (s *Server) chatChannelSession(ctx context.Context, origin hookOrigin, conf
 	opening := conversation.RouterOpensDispatched(ctx, cid)
 	if config.AnswersOnlyMentionsIn(event.ChannelType) {
 		// What was written since the last reply without mentioning the agent was never answered:
-		// it is read as what was said before this message.
-		opening = conversation.Answering(opening, event.Message.ID)
+		// it is read as what was said before this message. A mention gets its own turn.
+		opening = conversation.Answering(opening, event.Message.ID, func(text string, mentioned []string) bool {
+			return mentions(config, text, mentioned)
+		})
 	}
 	opened, err := s.sessions.Create(opening, spec)
 	if err != nil {

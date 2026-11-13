@@ -122,6 +122,50 @@ func (s *AppHooksSuite) TestAMessageWrittenAfterTheMentionIsNotReadBeforeIt() {
 	s.Zero(s.count(request.Input, later), "a message written after the mention was read before it: %+v", request.Input)
 }
 
+// Two mentions close together can take the channel's turn out of order: Ben's, written after
+// Anya's, is answered first. Anya's mention gets a turn of its own, so Ben's turn is not handed
+// it as a message nobody answered; Anya's turn is handed hers once, as the message answered.
+// Ben's "@anya" between them mentions someone else and is still read as what was said before,
+// and so is Ben's mention, answered, in Anya's turn.
+func (s *AppHooksSuite) TestAnEarlierMentionAnsweredLaterIsHandedOnceInItsOwnTurn() {
+	s.forgetNoted()
+	s.holdsType("callouts", memberWrites)
+	config := s.mentionedIn("callouts")
+	channel := s.emptyChannel("callouts")
+	cid := "callouts:" + channel
+	anya := "can you cover my 6pm? " + s.utils.uuid()
+	first := s.writes("callouts", channel, "anya", anya, config.ID)
+	between := "@anya feel better! " + s.utils.uuid()
+	s.writes("callouts", channel, "ben", between, "anya")
+	ben := "@" + config.Name + " I can take it if nobody else does " + s.utils.uuid()
+	second := s.writes("callouts", channel, "ben", ben)
+
+	s.delivers("callouts", channel, second, "ben", ben, "")
+	s.Require().NotNil(s.replyIn(cid), "the later mention was not answered")
+	s.delivers("callouts", channel, first, "anya", anya, fmt.Sprintf(`[{"id": %q}]`, config.ID))
+
+	s.Require().Eventually(func() bool { return s.completedReplies(cid) == 2 }, settleFor, 20*time.Millisecond, "the earlier mention was not answered")
+	request, _ := s.askedWith(ben)
+	s.Zero(s.count(request.Input, anya), "the later turn was handed the earlier mention: %+v", request.Input)
+	s.Equal(1, s.count(request.Input, between), "the message mentioning someone else was not read: %+v", request.Input)
+	request, _ = s.askedWith(anya)
+	s.Equal(1, s.count(request.Input, anya), "the earlier mention was handed twice: %+v", request.Input)
+	s.Equal(1, s.count(request.Input, ben), "the mention answered before was not read as what was said: %+v", request.Input)
+}
+
+// completedReplies is how many replies the agent completed in the channel cid.
+func (s *AppHooksSuite) completedReplies(cid string) int {
+	replies := 0
+	for _, stored := range s.chat.Stored(cid) {
+		custom, _ := stored["custom"].(map[string]any)
+		written, _ := custom["support_message"].(map[string]any)
+		if written["role"] == "assistant" && written["state"] == "completed" {
+			replies++
+		}
+	}
+	return replies
+}
+
 // A config answering only its mentions in one type answers every message in another it names
 // with no answer, as before.
 func (s *AppHooksSuite) TestATypeWithNoAnswerAnswersEveryMessageBesideAMentionsOnlyOne() {
@@ -160,12 +204,12 @@ func (s *AppHooksSuite) says(channelType, channel, user, text, mentioned string)
 	s.delivers(channelType, channel, s.writes(channelType, channel, user, text), user, text, mentioned)
 }
 
-// writes stores text in channelType:channel as the user given, delivering no message.new, and
-// is the id Stream stored it by.
-func (s *AppHooksSuite) writes(channelType, channel, user, text string) string {
+// writes stores text in channelType:channel as the user given, mentioning the users given,
+// delivering no message.new, and is the id Stream stored it by.
+func (s *AppHooksSuite) writes(channelType, channel, user, text string, mentioned ...string) string {
 	id := "message-" + s.utils.uuid()
 	_, err := s.chat.Client.Chat().SendMessage(context.Background(), channelType, channel,
-		&getstream.SendMessageRequest{Message: getstream.MessageRequest{ID: &id, Text: &text, UserID: &user}})
+		&getstream.SendMessageRequest{Message: getstream.MessageRequest{ID: &id, Text: &text, UserID: &user, MentionedUsers: mentioned}})
 	s.Require().NoError(err)
 	return id
 }
