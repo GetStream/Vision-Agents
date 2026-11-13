@@ -275,3 +275,17 @@ func (s *PartsSuite) TestAServerToolsQuestionAsksTheWriterOfTheMessage() {
 	s.Equal("awaiting_approval", s.m.Parts[0].Status)
 	s.Equal("anya", s.m.Parts[0].TargetUserID)
 }
+
+// A reply to a command with neither a writer nor an initiator, such as a follow-up in a channel
+// the Router's session holds for nobody, has nobody to ask: the step runs without a question.
+func (s *PartsSuite) TestAServerToolsQuestionInAReplyNobodyAskedForAsksNobody() {
+	s.c.data.Commands["command"] = commandRecord{}
+	s.c.tools["send_email"] = ToolDisplay{Title: "Sending the email", Approval: &ToolApproval{Title: "Send this email?"}}
+
+	s.c.called(s.m, toolCall{id: "call-1", name: "send_email", startedAt: time.Now()})
+
+	s.Require().Len(s.m.Parts, 1)
+	s.Equal("running", s.m.Parts[0].Status)
+	s.Empty(s.m.Parts[0].TargetUserID)
+	s.Nil(s.m.Parts[0].Approval)
+}
