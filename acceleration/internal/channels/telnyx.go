@@ -98,15 +98,14 @@ func (p *telnyxProvider) Parse(body []byte) ([]Message, error) {
 	if err := json.Unmarshal(body, &delivered); err != nil {
 		return nil, fmt.Errorf("channels: that is not a Telnyx delivery: %w", err)
 	}
-	if delivered.Data.EventType == telnyxSpendLimitReached {
-		event, level := vendorevent.Telnyx(delivered.Data.EventType, "")
-		vendorevent.Count(vendorevent.VendorTelnyx, event, level)
-		// The default logger is the router's own: cmd/router/main.go sets it.
-		slog.Default().Info("received a telnyx account event", "vendor", vendorevent.VendorTelnyx,
-			"event", event, "level", string(level))
-		return nil, nil
-	}
 	if delivered.Data.EventType != "message.received" {
+		if delivered.Data.EventType == telnyxSpendLimitReached {
+			event, level := vendorevent.Telnyx(delivered.Data.EventType, "")
+			vendorevent.Count(vendorevent.VendorTelnyx, event, level)
+			// The default logger is the router's own: cmd/router/main.go sets it.
+			slog.Default().Info("received a telnyx account event", "vendor", vendorevent.VendorTelnyx,
+				"event", event, "level", string(level))
+		}
 		return nil, nil
 	}
 	message := delivered.Data.Payload

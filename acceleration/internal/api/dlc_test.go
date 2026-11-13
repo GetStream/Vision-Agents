@@ -160,16 +160,27 @@ func (s *dlcRegistration) review(id string, decision ReviewDecision, notes strin
 
 // report posts what Telnyx would send about a campaign, signed with the suite's key.
 func (s *dlcRegistration) report(body string, signer ed25519.PrivateKey) int {
+	status, err := s.sendReport(body, signer)
+	s.Require().NoError(err)
+	return status
+}
+
+// sendReport is report for a goroutine other than the test's, which must not call Require.
+func (s *dlcRegistration) sendReport(body string, signer ed25519.PrivateKey) (int, error) {
 	seconds := strconv.FormatInt(time.Now().Unix(), 10)
 	request, err := http.NewRequest(http.MethodPost, s.server.URL+dlc.HookPath, bytes.NewBufferString(body))
-	s.Require().NoError(err)
+	if err != nil {
+		return 0, err
+	}
 	request.Header.Set("Telnyx-Timestamp", seconds)
 	request.Header.Set("Telnyx-Signature-Ed25519", base64.StdEncoding.EncodeToString(
 		ed25519.Sign(signer, []byte(seconds+"|"+body))))
 	response, err := http.DefaultClient.Do(request)
-	s.Require().NoError(err)
+	if err != nil {
+		return 0, err
+	}
 	defer response.Body.Close()
-	return response.StatusCode
+	return response.StatusCode, nil
 }
 
 func (s *dlcRegistration) dial(to string) (int, string) {
@@ -259,10 +270,40 @@ func (s *DLCSuite) TestACampaignTheVendorRejectedIsCountedOnce() {
 	for _, line := range strings.Split(s.logged.String()[since:], "\n") {
 		if strings.Contains(line, "a vendor failed a 10DLC campaign") {
 			lines++
+			s.Contains(line, "level=WARN ")
 			s.Contains(line, "vendor=telnyx event=10dlc.campaign_failed level=warn use_case="+id+" vendor_status=MNO_REJECTED")
 		}
 	}
 	s.Equal(1, lines)
+}
+
+// Telnyx retries a report and the poller reads the same campaign, so several refreshes can
+// find the use case pending at once; only the one whose move is stored counts. Catches the
+// count made before the move, or after a move another refresh won.
+func (s *DLCSuite) TestARejectionReportedManyTimesAtOnceIsCountedOnce() {
+	id, campaign := s.pendingWithTheVendor()
+	before := campaignsFailed()
+	s.registry.set(campaign, "MNO_REJECTED")
+
+	var reports sync.WaitGroup
+	failures := make(chan error, 8)
+	for range 8 {
+		reports.Go(func() {
+			if _, err := s.sendReport(`{"campaignId":"`+campaign+`"}`, s.signing); err != nil {
+				failures <- err
+			}
+		})
+	}
+	reports.Wait()
+	close(failures)
+
+	for err := range failures {
+		s.NoError(err)
+	}
+	var rejected UseCase
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/phone/use-cases/"+id, nil, &rejected))
+	s.Equal(UseCaseStatus(dlc.VendorRejected), rejected.Status)
+	s.Equal(1.0, campaignsFailed()-before)
 }
 
 // Every failed status Telnyx has is counted, not only a rejection. Catches a count tied to one
