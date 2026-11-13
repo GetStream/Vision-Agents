@@ -900,7 +900,11 @@ func (a *Agent) callTool(ctx context.Context, call llm.ToolCall) ([]llm.ContentP
 // would have it promise the caller a person and then sit there.
 func (a *Agent) availableTools() harness.Tools {
 	var available harness.Tools
+	draws := a.draws()
 	for _, tool := range a.options.Tools.Tools {
+		if draws && tool.Name == GenerateImageTool {
+			continue
+		}
 		if tool.Name == toolTransfer && len(a.options.Destinations) > 0 {
 			tool = DestinationTransfer(a.options.Destinations)
 		}
@@ -934,7 +938,7 @@ func (a *Agent) availableTools() harness.Tools {
 	if a.runsCode() {
 		available.Tools = append(available.Tools, harness.SandboxTool(a.options.Sandbox))
 	}
-	if a.draws() {
+	if draws {
 		available.Tools = append(available.Tools, generateImageTool())
 	}
 	return available

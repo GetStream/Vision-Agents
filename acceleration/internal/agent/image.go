@@ -52,14 +52,11 @@ func generateImageTool() harness.Tool {
 
 // draws reports whether this agent is offered generate_image: a written conversation whose
 // config names an image target, on a deployment that routes images, with a channel to put the
-// picture in. A voice model would be answered minutes after it asked. A tool of the caller's
-// own by the same name keeps the name.
+// picture in. A voice model would be answered minutes after it asked. Unlike the other
+// built-ins, it takes the name from a tool of the caller's own: that tool is the workaround
+// customers wrote before drawing was built in, and a config naming an image target asks for this one.
 func (a *Agent) draws() bool {
-	if !a.options.Text || a.options.Image == nil || a.options.ImageTarget == "" || a.options.Publish == nil {
-		return false
-	}
-	_, declared := a.options.Tools.Lookup(GenerateImageTool)
-	return !declared
+	return a.options.Text && a.options.Image != nil && a.options.ImageTarget != "" && a.options.Publish != nil
 }
 
 // generateImage draws one picture and publishes it to the conversation, to be attached to the

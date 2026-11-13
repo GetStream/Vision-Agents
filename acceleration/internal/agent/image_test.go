@@ -124,8 +124,9 @@ func (s *AgentSuite) TestAConversationWithNowhereToPutAPictureIsNotOfferedDrawin
 	s.False(s.offersDrawing(), "a picture nobody can see is paid for and lost")
 }
 
-func (s *AgentSuite) TestACallersOwnGenerateImageKeepsTheName() {
-	// The tool customers wrote before drawing was built in keeps working, unchanged.
+func (s *AgentSuite) TestAnImageTargetReplacesACallersOwnGenerateImage() {
+	// The caller's tool is the workaround customers wrote before drawing was built in: it asked
+	// their own backend to draw, and needed a longer tool timeout to do it.
 	s.drawer = &stubDrawer{}
 	s.shelf = &codeShelf{}
 	s.ownsTools("drawn by the caller")
@@ -136,11 +137,28 @@ func (s *AgentSuite) TestACallersOwnGenerateImageKeepsTheName() {
 	s.NoError(tools.Validate(), "the name is offered once")
 	tool, offered := tools.Lookup(GenerateImageTool)
 	s.Require().True(offered)
+	s.Equal(generateImageTool().Description, tool.Description)
+
+	ran := s.runsTool(drawCall("draw-1", "a field"), 1)
+	s.Require().NoError(ran.Err)
+	s.Len(ran.Files, 1)
+	s.Len(s.drawer.requests(), 1)
+	s.Empty(s.runner.asked(), "the caller's own tool is not asked")
+}
+
+func (s *AgentSuite) TestWithoutAnImageTargetACallersOwnGenerateImageRunsUnchanged() {
+	s.shelf = &codeShelf{}
+	s.ownsTools("drawn by the caller")
+	s.tools.Tools = append(s.tools.Tools, harness.Tool{Name: GenerateImageTool, Description: "mine"})
+	s.joinText()
+
+	tool, offered := s.agent.availableTools().Lookup(GenerateImageTool)
+	s.Require().True(offered)
 	s.Equal("mine", tool.Description)
 
 	ran := s.runsTool(drawCall("draw-1", "a field"), 1)
 	s.Equal("drawn by the caller", ran.Result)
-	s.Empty(s.drawer.requests())
+	s.Len(s.runner.asked(), 1)
 }
 
 func (s *AgentSuite) TestAPictureTheSafetyFilterRefusedIsToldInWordsNotAsAFailure() {
