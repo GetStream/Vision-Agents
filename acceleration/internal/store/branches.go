@@ -72,6 +72,40 @@ func (s *Store) Siblings(ctx context.Context, customerID, sessionID, responseID,
 	return siblings, nil
 }
 
+// QuestionsAt counts the questions asked at one point of a session's conversation, after
+// parentID or first for none, rewound or not: the questions a new one asked there stands
+// beside. A row from no question (no question_response_id) is no question.
+func (s *Store) QuestionsAt(ctx context.Context, customerID, sessionID, parentID string) (int, error) {
+	if customerID == "" || sessionID == "" {
+		return 0, stack.Wrap(errors.New("store: a customer and a session id are required"))
+	}
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]string, error) {
+		query := db.NewSelect().Model((*AgentResponse)(nil)).
+			ColumnExpr("DISTINCT question_response_id").
+			Where("customer_id = ?", customerID).
+			Where("session_id = ?", sessionID).
+			Where("question_response_id IS NOT NULL")
+		if parentID == "" {
+			query = query.Where("parent_response_id IS NULL")
+		} else {
+			query = query.Where("parent_response_id = ?", parentID)
+		}
+		var questions []string
+		err := query.Scan(ctx, &questions)
+		return questions, err
+	})
+	if err != nil {
+		return 0, stack.Wrap(fmt.Errorf("store: questions at: %w", err))
+	}
+	distinct := map[string]bool{}
+	for _, list := range lists {
+		for _, question := range list {
+			distinct[question] = true
+		}
+	}
+	return len(distinct), nil
+}
+
 // SiblingPosition is where response stands among siblings as Siblings returned them for of:
 // its 1-based index and how many there are. A response not among them is 1 of 1.
 func SiblingPosition(siblings []AgentResponse, response AgentResponse, of string) (index, count int) {
