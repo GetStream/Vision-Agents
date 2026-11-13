@@ -11,10 +11,15 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/vendorevent"
 )
 
 // HookPath is where a registrar reports on brands and campaigns.
 const HookPath = "/v1/phone/hooks/10dlc"
+
+// campaignFailed is the event counted when a registrar suspends, rejects or fails a campaign
+// (Failed): its numbers cannot send A2P texts, which somebody should look at in working hours.
+const campaignFailed = "10dlc.campaign_failed"
 
 // Service moves use cases through review and registration.
 type Service struct {
@@ -275,7 +280,17 @@ func (s *Service) refresh(ctx context.Context, useCase store.UseCase, report []b
 		}
 		useCase.VendorStatus = campaign.Status
 	}
-	return s.store.MoveUseCase(ctx, &useCase, VendorPending, log)
+	if err := s.store.MoveUseCase(ctx, &useCase, VendorPending, log); err != nil {
+		return err
+	}
+	// Counted once the move is stored: a report and the poller reading the same rejection
+	// both get here, and only the one that moved the use case off VendorPending counts it.
+	if campaign.Outcome == Failed {
+		vendorevent.Count(s.registrar.Name(), campaignFailed, vendorevent.LevelWarn)
+		s.logger.Warn("a vendor failed a 10DLC campaign", "vendor", s.registrar.Name(), "event", campaignFailed,
+			"level", string(vendorevent.LevelWarn), "use_case", useCase.ID, "vendor_status", campaign.Status)
+	}
+	return nil
 }
 
 // register registers the app's brand if it has none, and the campaign once the brand is
