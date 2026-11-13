@@ -130,6 +130,10 @@ var dataTables = []dataTable{
 	{name: "agent_responses", customer: "customer_id", shard: true},
 	{name: "agent_response_items", parent: "agent_responses", parentColumn: "response_id", shard: true},
 	{name: "conversation_documents", customer: "customer_id", shard: true},
+	// The channel's hidden ranges are in the Stream app and stay there, so the copies of what
+	// they hid and the switches that hid it go with their session.
+	{name: "agent_branch_switches", customer: "customer_id", shard: true},
+	{name: "agent_branch_messages", customer: "customer_id", shard: true},
 	// Nothing points at a log's id, so a copied log is given one of this deployment's
 	// (20261206120000_agent_logs_source_id.sql).
 	{name: "agent_logs", customer: "customer_id", copied: "source_id"},

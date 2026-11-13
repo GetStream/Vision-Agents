@@ -160,10 +160,56 @@ func newRouter(t *testing.T) *router {
 
 	mux.HandleFunc("POST /v1/agents/sessions/{id}/responses", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
+		backend.mu.Lock()
+		replaces, _ := backend.bodies[r.Method+" "+r.URL.Path]["replaces"].(string)
+		backend.mu.Unlock()
+		if replaces != "" {
+			// A regenerate or an edit, answered as the router answers one that hid the reply.
+			answer(w, http.StatusAccepted, acceleration.AgentResponse{
+				Id: "response-3", SessionId: r.PathValue("id"), Status: "running", CreatedAt: time.Now(),
+				ParentResponseId: ptr("response-1"),
+				Branch:           &acceleration.ResponseBranch{Of: "reply", Index: 2, Count: 2},
+				RewoundTo:        &acceleration.RewoundTo{MessageId: "question-2"},
+			})
+			return
+		}
 		answer(w, http.StatusAccepted, acceleration.AgentResponse{
 			Id: "response-1", SessionId: r.PathValue("id"), Status: "running",
 			Said: ptr("Is Stream better?"), CreatedAt: time.Now(),
 		})
+	})
+
+	mux.HandleFunc("GET /v1/agents/sessions/{id}/responses/{response_id}/siblings", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		if r.URL.Query().Get("cursor") == "" {
+			answer(w, http.StatusOK, acceleration.ResponseSiblingPage{HasMore: true, NextCursor: ptr("sibling-2"),
+				Items: []acceleration.ResponseSibling{{Id: "response-2", Index: 1, CreatedAt: time.Now()}}})
+			return
+		}
+		answer(w, http.StatusOK, acceleration.ResponseSiblingPage{
+			Items: []acceleration.ResponseSibling{{Id: "response-3", Index: 2, Active: true, CreatedAt: time.Now()}}})
+	})
+
+	mux.HandleFunc("GET /v1/agents/sessions/{id}/responses/{response_id}/branch", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		switch r.PathValue("response_id") {
+		case "response-3":
+			answer(w, http.StatusOK, acceleration.BranchMessagePage{Active: true, Items: []acceleration.BranchMessage{}})
+		case "truncated":
+			answer(w, http.StatusGone, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+				Code: "branch_unavailable", Message: "this branch is no longer kept"}})
+		default:
+			answer(w, http.StatusOK, acceleration.BranchMessagePage{Items: []acceleration.BranchMessage{{
+				Id: "reply-2", Text: "Yes.", UserId: "docs", Role: ptr("assistant"), CreatedAt: time.Now(),
+				Attachments: []map[string]interface{}{}, Custom: map[string]interface{}{},
+			}}})
+		}
+	})
+
+	mux.HandleFunc("POST /v1/agents/sessions/{id}/responses/{response_id}/activate", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusOK, acceleration.ActivatedBranch{LeafResponseId: r.PathValue("response_id"), Resent: 1,
+			RewoundTo: &acceleration.RewoundTo{MessageId: "question-2"}})
 	})
 
 	mux.HandleFunc("GET /v1/agents/sessions/{id}/responses", func(w http.ResponseWriter, r *http.Request) {

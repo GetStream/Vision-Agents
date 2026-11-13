@@ -124,7 +124,7 @@ func (s *StoreSuite) SetupTest() {
 			s.ctx,
 			"TRUNCATE requests, stats_hourly, stats_daily, stats_tags_hourly, stats_tags_daily, customer_activity,"+
 				" turn_stats_hourly, turn_latency_hourly, calls, phone_numbers, sip_trunks,"+
-				" voices, agent_sessions, agent_responses, agent_response_items, conversation_documents, users,"+
+				" voices, agent_sessions, agent_responses, agent_response_items, conversation_documents, agent_branch_switches, agent_branch_messages, users,"+
 				" policies, app_organizations, call_resources, stream_trunks, organizations, agent_configs,"+
 				" agent_plugin_connections, agent_plugin_clients, data_changes, data_change_capture, connector_definitions, connector_broken_revisions,"+
 				" connector_connections, connector_authorization_attempts, connector_oauth_clients,"+
@@ -1478,6 +1478,23 @@ func (s *StoreSuite) TestMigrateRebuildsTheContactIndexLeftInvalid() {
 	read := func() {
 		s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
 			"SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass('contact_map_conversation')").Scan(&valid))
+	}
+	read()
+	s.Require().False(valid)
+
+	s.Require().NoError(s.store.Migrate(s.ctx))
+
+	read()
+	s.True(valid, "dropped and built again")
+}
+
+func (s *StoreSuite) TestMigrateRebuildsTheResponseParentIndexLeftInvalid() {
+	// As a CONCURRENTLY build that failed leaves it: the migration's IF NOT EXISTS skips it.
+	s.onShard("UPDATE pg_index SET indisvalid = false WHERE indexrelid = to_regclass('agent_responses_parent_idx')")
+	var valid bool
+	read := func() {
+		s.Require().NoError(s.store.ShardDB().QueryRowContext(s.ctx,
+			"SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass('agent_responses_parent_idx')").Scan(&valid))
 	}
 	read()
 	s.Require().False(valid)

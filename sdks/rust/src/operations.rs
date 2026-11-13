@@ -1937,6 +1937,71 @@ impl Client {
         )
         .await
     }
+    /// Make a hidden branch the conversation again
+    ///
+    /// `POST /v1/agents/sessions/{id}/responses/{response_id}/activate` (`activateResponse`).
+    pub async fn activate_response(
+        &self,
+        id: &str,
+        response_id: &str,
+    ) -> Result<types::ActivatedBranch> {
+        self.send(
+            Method::POST,
+            &format!(
+                "/v1/agents/sessions/{id}/responses/{response_id}/activate",
+                id = segment(id),
+                response_id = segment(response_id)
+            ),
+            None::<&()>,
+            None::<&()>,
+            "activateResponse",
+        )
+        .await
+    }
+    /// The messages of a hidden branch, to show in place of the conversation's
+    ///
+    /// `GET /v1/agents/sessions/{id}/responses/{response_id}/branch` (`getResponseBranch`).
+    pub async fn get_response_branch(
+        &self,
+        id: &str,
+        response_id: &str,
+        query: &GetResponseBranchQuery,
+    ) -> Result<types::BranchMessagePage> {
+        self.send(
+            Method::GET,
+            &format!(
+                "/v1/agents/sessions/{id}/responses/{response_id}/branch",
+                id = segment(id),
+                response_id = segment(response_id)
+            ),
+            Some(query),
+            None::<&()>,
+            "getResponseBranch",
+        )
+        .await
+    }
+    /// The alternatives to one response: its regenerations, or the edits of its question
+    ///
+    /// `GET /v1/agents/sessions/{id}/responses/{response_id}/siblings` (`listResponseSiblings`).
+    pub async fn list_response_siblings(
+        &self,
+        id: &str,
+        response_id: &str,
+        query: &ListResponseSiblingsQuery,
+    ) -> Result<types::ResponseSiblingPage> {
+        self.send(
+            Method::GET,
+            &format!(
+                "/v1/agents/sessions/{id}/responses/{response_id}/siblings",
+                id = segment(id),
+                response_id = segment(response_id)
+            ),
+            Some(query),
+            None::<&()>,
+            "listResponseSiblings",
+        )
+        .await
+    }
     /// Go back to a response and carry on from there
     ///
     /// `POST /v1/agents/sessions/{id}/rewind` (`rewindSession`).
@@ -4613,6 +4678,29 @@ pub struct ListResponseItemsQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_id: Option<String>,
     /// Up to 1000. Omitted is 200.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+/// The query string `getResponseBranch` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct GetResponseBranchQuery {
+    /// Up to 200. Omitted is 100.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The `next_cursor` of the previous page. Omitted is the first page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+/// The query string `listResponseSiblings` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListResponseSiblingsQuery {
+    /// reply lists the answers to the response's question; question lists the questions asked in its place. Omitted is reply.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub of: Option<String>,
+    /// Up to 100. Omitted is 25.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
     /// The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.

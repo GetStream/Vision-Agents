@@ -345,6 +345,14 @@ export class AgentChat<M extends AgentChatMessage = AgentChatMessage> {
   }
 
   /**
+   * Reads the channel's latest messages again, for messages its socket may not have brought.
+   * Rejects when they couldn't be read.
+   */
+  async readLatest(): Promise<void> {
+    await this.reader?.readLatest();
+  }
+
+  /**
    * Stops following the channel and lets the session go: deleted when it was a new conversation's
    * that nothing was asked in, closed otherwise. Safe to call twice.
    */
@@ -533,6 +541,8 @@ interface ReaderEvents {
 interface ChannelReader {
   start(): Promise<void>;
   loadOlder(loaded: readonly AgentChatMessage[]): Promise<void>;
+  /** Reads the latest page again, into `messages`. */
+  readLatest(): Promise<void>;
   stop(): void;
 }
 
@@ -563,6 +573,7 @@ interface ChannelV10 {
   on(type: string, handler: (event: ChatEvent) => void): Subscription;
   activate(): () => void;
   watch(options: { messages: { limit: number } }): Promise<unknown>;
+  reload(): Promise<unknown>;
 }
 
 /** What this module reads of a stream-chat 9 channel. */
@@ -618,6 +629,10 @@ function readerV10(channel: ChannelV10, pageSize: number, events: ReaderEvents):
         throw paginator.lastQueryError;
       }
     },
+    async readLatest() {
+      // 10's query places no messages; reload pages them in again.
+      await channel.reload();
+    },
     stop() {
       for (const stop of stops.splice(0)) {
         stop();
@@ -646,7 +661,14 @@ function readerV9(channel: ChannelV9, pageSize: number, events: ReaderEvents): C
         if (event.type === "message.updated" && event.message) {
           events.updated(event.message);
         }
-        if (event.type === "message.new" || event.type === "message.updated" || event.type === "message.deleted") {
+        // A rewind is pruned from the state before the channel's listeners run (see followRewinds).
+        if (
+          event.type === "message.new" ||
+          event.type === "message.updated" ||
+          event.type === "message.deleted" ||
+          event.type === "channel.rewound" ||
+          event.type === "notification.channel_rewound"
+        ) {
           publish();
         }
       });
@@ -679,6 +701,7 @@ function readerV9(channel: ChannelV9, pageSize: number, events: ReaderEvents): C
       hasOlderMessages = page.messages.length >= pageSize;
       publish();
     },
+    readLatest: watchLatest,
     stop() {
       stopped = true;
       for (const stop of stops.splice(0)) {
