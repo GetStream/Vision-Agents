@@ -112,6 +112,21 @@ func (s *DisplaySuite) TestAFollowUpsHeldCallIsAskedOfTheOwner() {
 	s.Equal("follow-up-a", command)
 }
 
+// A follow-up answering a writer's message asks the writer, though the conversation has an
+// owner, as one a caller opened on a channel of a type a config answers in has.
+func (s *DisplaySuite) TestAWritersFollowUpAsksTheWriterNotTheOwner() {
+	c := s.open("on_call")
+	_, err := c.BeginFollowUp("follow-up-a", "check the crm for my shift", "anya")
+	s.Require().NoError(err)
+	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "crm__echo", StartedAt: time.Now().UTC()})
+
+	_, asked, ok := c.AwaitApproval("employee", "call-1", "", allowEcho)
+
+	s.True(ok)
+	s.Equal("anya", asked)
+	s.Equal("anya", current(c).Parts[0].TargetUserID)
+}
+
 // Only the conversation's owner is asked, and only for a call of the reply being written.
 func (s *DisplaySuite) TestAHeldCallIsAskedOnlyOfTheOwnerForACallOfTheReply() {
 	c := s.open("on_call")

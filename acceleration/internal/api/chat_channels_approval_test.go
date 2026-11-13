@@ -34,6 +34,7 @@ func (s *AppHooksSuite) TestAnApprovalInAChannelTypeGoesToTheWriterOfTheMessage(
 	s.Equal(http.StatusForbidden, s.approves(s.data.signedInAs(ben), cid, step, request, true), "another member")
 	s.Equal(http.StatusNotFound, s.approves(s.data.createUser(), cid, step, request, true), "someone outside the channel")
 	s.Equal(http.StatusForbidden, s.approves(s.data.claiming(anya), cid, step, request, true), "an anonymous caller")
+	s.Equal(http.StatusNotFound, s.approves(s.data.signedInAs(anya), cid, step, "thread_another", true), "another request")
 	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP), "nothing reached the provider before her answer")
 	s.Equal(http.StatusNoContent, s.approves(s.data.signedInAs(anya), cid, step, request, true))
 	s.Require().NotNil(s.replyIn(cid), "the reply never finished")

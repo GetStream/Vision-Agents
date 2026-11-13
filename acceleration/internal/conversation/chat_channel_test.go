@@ -614,6 +614,8 @@ func (s *ChatChannelSuite) TestAHeldCallAsksTheWriterOfEachMessage() {
 			s.Equal(id, command)
 		}
 		c.Observe(agent.Responded{})
+		_, _, again := c.AwaitApproval("", "call-"+id, "", allow)
+		s.False(again, "a finished reply asks nobody")
 	}
 }
 

@@ -11,7 +11,6 @@ import (
 	"maps"
 	"net/http"
 	"regexp"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -918,16 +917,14 @@ func (s *Service) Member(ctx context.Context, customer, cid, user string) (bool,
 	if err != nil {
 		return false, stack.Wrap(err)
 	}
-	// Asked of the one user, which a channel of any size answers; its state lists only the
-	// first members.
+	// Asked of the one user by id ($eq, https://getstream.io/chat/docs/go-golang/query_members/),
+	// which a channel of any size answers; its state lists only the first members.
 	r, err := client.Chat().QueryMembers(lookup, &getstream.QueryMembersRequest{Payload: &getstream.QueryMembersPayload{
 		Type: channelType, ID: &id, FilterConditions: map[string]any{"id": map[string]any{"$eq": user}}}})
 	if err != nil {
 		return false, stack.Wrap(err)
 	}
-	return slices.ContainsFunc(r.Data.Members, func(m getstream.ChannelMemberResponse) bool {
-		return m.UserID != nil && *m.UserID == user
-	}), nil
+	return len(r.Data.Members) > 0, nil
 }
 
 // CommandForCaller reports what one command ended as without opening its conversation,

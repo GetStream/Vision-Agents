@@ -80,7 +80,7 @@ func (s *Server) answerToolApproval(ctx context.Context, req *answerToolApproval
 	}
 	by := OwnerFrom(ctx)
 	backend := by.Kind == auth.KindServer
-	if !backend && (!by.Kind.Verified() || by.UserID == "") {
+	if !backend && !by.Kind.Verified() {
 		return nil, errApprovalNeedsPerson
 	}
 	found, running := s.sessions.ByConversationWhere(req.Cid, func(owner string, _ int64) bool { return owner == customer })
