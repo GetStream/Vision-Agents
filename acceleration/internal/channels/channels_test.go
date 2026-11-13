@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -345,6 +347,91 @@ func (s *TelnyxSuite) TestAReportOnTheRoutersOwnMessageIsNotAnswered() {
 
 	s.Require().NoError(err)
 	s.Empty(messages)
+}
+
+// A reached spend limit stops every text of the line, so a monitor must see it; it is still
+// no message to answer. Catches the event dropped uncounted, counted under the wrong name or
+// level, logged other than once, or returned as a message.
+func (s *TelnyxSuite) TestAReachedSpendLimitIsCountedAndLoggedAndIsNoMessage() {
+	logged := s.logToBuffer()
+	before := telnyxAccountEvents()
+
+	messages, err := s.provider.Parse([]byte(`{"data":{"event_type":"messaging-profile.spend-limit-reached",
+		"id":"d21a2887-8007-4bb6-bd7d-f2874829918e","record_type":"event",
+		"payload":{"profile_id":"be3eb60a-a346-470a-886c-ab4e421711bd"}}}`))
+
+	s.Require().NoError(err)
+	s.Nil(messages)
+	after := telnyxAccountEvents()
+	s.Equal(1.0, after["messaging-profile.spend-limit-reached/page"]-before["messaging-profile.spend-limit-reached/page"])
+	s.Equal(sum(before)+1, sum(after), "no other Telnyx series moves")
+	s.Equal(1, strings.Count(logged.String(), "\n"))
+	s.Contains(logged.String(), "vendor=telnyx event=messaging-profile.spend-limit-reached level=page")
+}
+
+// The line's hook gets every message event Telnyx has, and only the spend limit is an account
+// event. Catches a match on a prefix, a fold of case or a trim, and a count of each delivery.
+func (s *TelnyxSuite) TestNothingButTheSpendLimitIsCounted() {
+	for _, eventType := range []string{"message.received", "message.sent", "message.finalized", "",
+		"Messaging-Profile.Spend-Limit-Reached", "messaging-profile.spend-limit-reached ",
+		"messaging-profile.spend-limit", "portout.status_changed"} {
+		logged := s.logToBuffer()
+		before := sum(telnyxAccountEvents())
+
+		messages, err := s.provider.Parse([]byte(`{"data":{"event_type":"` + eventType + `",
+			"payload":{"id":"msg-4","text":"hi","from":{"phone_number":"+12025550123"}}}}`))
+
+		s.Require().NoError(err, eventType)
+		s.Equal(before, sum(telnyxAccountEvents()), eventType)
+		s.Empty(logged.String(), eventType)
+		if eventType == "message.received" {
+			s.Len(messages, 1, "a text is still read")
+		} else {
+			s.Empty(messages, eventType)
+		}
+	}
+}
+
+// logToBuffer sends the default logger, which Parse logs to, to a buffer until the test ends.
+// The package's tests run one at a time, so no other test logs into it.
+func (s *TelnyxSuite) logToBuffer() *strings.Builder {
+	previous := slog.Default()
+	s.T().Cleanup(func() { slog.SetDefault(previous) })
+	logged := &strings.Builder{}
+	slog.SetDefault(slog.New(slog.NewTextHandler(logged, nil)))
+	return logged
+}
+
+// telnyxAccountEvents is each vendor_account_events_total series of Telnyx, by event/level.
+func telnyxAccountEvents() map[string]float64 {
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		panic(err)
+	}
+	counted := map[string]float64{}
+	for _, family := range families {
+		if family.GetName() != "vendor_account_events_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			labels := map[string]string{}
+			for _, pair := range metric.GetLabel() {
+				labels[pair.GetName()] = pair.GetValue()
+			}
+			if labels["vendor"] == "telnyx" {
+				counted[labels["event"]+"/"+labels["level"]] = metric.GetCounter().GetValue()
+			}
+		}
+	}
+	return counted
+}
+
+func sum(counted map[string]float64) float64 {
+	total := 0.0
+	for _, value := range counted {
+		total += value
+	}
+	return total
 }
 
 func (s *TelnyxSuite) TestAnAnswerIsSentFromTheLineToTheNumberThatWrote() {

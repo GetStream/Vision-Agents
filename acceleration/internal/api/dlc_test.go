@@ -93,6 +93,8 @@ type dlcRegistration struct {
 	signing  ed25519.PrivateKey
 	// staff is Stream's own review tool, holding the ops key and no app's credentials.
 	staff *testClient
+	// logged is what the router logged, at debug and up.
+	logged *lockedLog
 }
 
 func (s *dlcRegistration) SetupSuite() {
@@ -107,6 +109,8 @@ func (s *dlcRegistration) SetupSuite() {
 	})
 	s.Require().NoError(err)
 	s.sandbox = dlc.Sandbox{Enabled: true, Recipients: 2, MessagesPerDay: 30, AudioMinutesPerDay: 30}
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 }
 
@@ -218,6 +222,76 @@ func (s *DLCSuite) TestAUseCaseIsApprovedByStreamAndThenByTheVendor() {
 	dialed, failure := s.dial("+15559990000")
 	s.Equal(http.StatusBadRequest, dialed, "past the gate, the call fails for want of Stream: "+failure)
 	s.Contains(failure, "no Stream app")
+}
+
+// pendingWithTheVendor is a use case Stream approved and Telnyx holds a campaign for.
+func (s *dlcRegistration) pendingWithTheVendor() (string, string) {
+	sent := s.submitted()
+	status, reviewed := s.review(sent.Id, dlc.Approve, "")
+	s.Require().Equal(http.StatusOK, status)
+	s.Require().Equal(UseCaseStatus(dlc.VendorPending), reviewed.Status)
+	s.Require().NotNil(reviewed.VendorCampaignId)
+	return sent.Id, *reviewed.VendorCampaignId
+}
+
+// campaignsFailed is the count a monitor reads for campaigns Telnyx failed. Only DLCSuite fails
+// campaigns, and its tests run one at a time, so a test reads the change its own report made.
+func campaignsFailed() float64 { return accountEvents("telnyx", "10dlc.campaign_failed", "warn") }
+
+// A campaign Telnyx rejected cannot send, so it is counted once, when the use case moves to
+// vendor_rejected, with one line naming Telnyx's status; Telnyx telling again moves nothing.
+// Catches the count missing, counted at another level, logged without the status, or counted
+// again on a repeated report.
+func (s *DLCSuite) TestACampaignTheVendorRejectedIsCountedOnce() {
+	since := len(s.logged.String())
+	id, campaign := s.pendingWithTheVendor()
+	before := campaignsFailed()
+	s.registry.set(campaign, "MNO_REJECTED")
+
+	s.Equal(http.StatusNoContent, s.report(`{"campaignId":"`+campaign+`"}`, s.signing))
+	s.Equal(http.StatusNoContent, s.report(`{"campaignId":"`+campaign+`"}`, s.signing))
+
+	var rejected UseCase
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/phone/use-cases/"+id, nil, &rejected))
+	s.Equal(UseCaseStatus(dlc.VendorRejected), rejected.Status)
+	s.Equal(1.0, campaignsFailed()-before)
+	lines := 0
+	for _, line := range strings.Split(s.logged.String()[since:], "\n") {
+		if strings.Contains(line, "a vendor failed a 10DLC campaign") {
+			lines++
+			s.Contains(line, "vendor=telnyx event=10dlc.campaign_failed level=warn use_case="+id+" vendor_status=MNO_REJECTED")
+		}
+	}
+	s.Equal(1, lines)
+}
+
+// Every failed status Telnyx has is counted, not only a rejection. Catches a count tied to one
+// status rather than to the outcome.
+func (s *DLCSuite) TestACampaignTheVendorSuspendedIsCounted() {
+	_, campaign := s.pendingWithTheVendor()
+	before := campaignsFailed()
+	s.registry.set(campaign, "TCR_SUSPENDED")
+
+	s.Equal(http.StatusNoContent, s.report(`{"campaignId":"`+campaign+`"}`, s.signing))
+
+	s.Equal(1.0, campaignsFailed()-before)
+}
+
+// A campaign carriers provisioned, or one still on its way, failed nothing. Catches a count on
+// every move of a use case.
+func (s *DLCSuite) TestACampaignStillPendingOrProvisionedIsNotCounted() {
+	id, campaign := s.pendingWithTheVendor()
+	before := campaignsFailed()
+
+	s.registry.set(campaign, "TCR_ACCEPTED")
+	s.Equal(http.StatusNoContent, s.report(`{"campaignId":"`+campaign+`"}`, s.signing))
+	s.registry.set(campaign, "MNO_PROVISIONED")
+	s.Equal(http.StatusNoContent, s.report(`{"campaignId":"`+campaign+`"}`, s.signing))
+
+	var approved UseCase
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/phone/use-cases/"+id, nil, &approved))
+	s.Equal(UseCaseStatus(dlc.Approved), approved.Status)
+	s.Equal(0.0, campaignsFailed()-before)
 }
 
 // The report only names the campaign: what it claims is asked of Telnyx, so a forged one
