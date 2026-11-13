@@ -105,6 +105,10 @@ type Page struct {
 	// thread is a page of a thread channel, whose people's messages are read back as user
 	// turns (messageFromThread).
 	thread bool
+	// named is a page of a channel of a type other than agent, one an agent config answers in,
+	// whose people are the customer's own Stream users: each of their messages is read back
+	// under their name and user id (agent.WriterLabel), not counted as a thread's are.
+	named bool
 	// dispatched is a page of the channel a message the Router handed to a worker was written
 	// in, opened on its word (opensDispatched): the router never stamped it, so it holds no
 	// memory scope to keep, and its people's messages are read back as user turns.
@@ -1082,7 +1086,7 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 			return Page{}, stack.Wrap(errors.New("conversation caller is not a channel member"))
 		}
 	}
-	p := Page{agent: stored, shared: Shared(r.Data.Channel.Custom), thread: thread, dispatched: dispatched, empty: len(r.Data.Messages) == 0, Messages: []Message{}, Truncated: len(r.Data.Messages) == limit}
+	p := Page{agent: stored, shared: Shared(r.Data.Channel.Custom), thread: thread, named: channelType != streamapp.AgentChannelType, dispatched: dispatched, empty: len(r.Data.Messages) == 0, Messages: []Message{}, Truncated: len(r.Data.Messages) == limit}
 	if raw, ok := r.Data.Channel.Custom["support_memory_scope"]; ok {
 		b, err := json.Marshal(raw)
 		if err != nil {
@@ -1321,7 +1325,10 @@ func entryOf(p Page, m Message) entry {
 		}
 	}
 	message := llm.Message{Role: role, Content: content}
-	if m.written {
+	switch {
+	case m.written && p.named:
+		message.Speaker = agent.WriterLabel(m.authorID, m.authorName)
+	case m.written:
 		message.Author = m.authorID
 	}
 	return entry{message: message, turn: turn}

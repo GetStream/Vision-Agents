@@ -1046,7 +1046,11 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		// Chat answers with the author it resolved the id to, which is how a reader
 		// learns who spoke: a stored message carries a user, not a user id. A user
 		// nobody named comes back named after their own id.
-		message["user"] = map[string]any{"id": message["user_id"], "name": message["user_id"]}
+		name := message["user_id"]
+		if user, ok := db.users[fmt.Sprint(message["user_id"])]; ok && user["name"] != nil {
+			name = user["name"]
+		}
+		message["user"] = map[string]any{"id": message["user_id"], "name": name}
 		// Chat answers with the users a message mentions as it does its author: a message
 		// is sent with their ids.
 		if ids, ok := message["mentioned_users"].([]any); ok {

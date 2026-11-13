@@ -21,6 +21,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
@@ -455,6 +456,10 @@ type Agent struct {
 	// writers is whether speakers counts people who wrote rather than spoke, so the model
 	// is told about several people in writing (severalWriters), not in a call.
 	writers bool
+	// namesWriters is whether a turn has come from a person writing in a channel of a type an
+	// agent config answers in (WithWriter): each such person's turn goes under their name and
+	// user id from the first (WriterLabel), and the model is told so (namedWriters).
+	namesWriters bool
 	// knows is what the reply model has been told, once, of what moves on during a call: the
 	// hour the clock line names, and whether there are several people. A reply that is
 	// told it keeps it in the conversation (harness.Turn.Tell), so it is not said again.
@@ -973,6 +978,7 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 func (a *Agent) respondTo(ctx context.Context, text string, images []llm.ImagePart, asked options.LLM) (string, error) {
 	caller := stt.Participant{ID: typedCaller}
 	author, _ := ctx.Value(authorKey{}).(string)
+	written, _ := ctx.Value(writerKey{}).(writer)
 	sender, _ := routing.CallerFrom(ctx)
 	scheduled := routing.ScheduledTurn(ctx)
 	// Typed into a call, the words are what the caller said as much as anything transcribed,
@@ -1024,17 +1030,17 @@ func (a *Agent) respondTo(ctx context.Context, text string, images []llm.ImagePa
 				return "", err
 			}
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author, photos: photos}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender, scheduled, "")
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author, writer: written, photos: photos}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender, scheduled, "")
 		case model != nil && model.Capabilities().Accepts(llm.ModalityImage):
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author, photos: photos}, "", attached, asked, sender, scheduled, "")
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author, writer: written, photos: photos}, "", attached, asked, sender, scheduled, "")
 		default:
 			return "", stack.Wrap(ErrCannotSeeImages)
 		}
 	}
 	id := replyPrefix + turnStamp()
 	typed()
-	return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author}, "", nil, asked, sender, scheduled, "")
+	return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author, writer: written}, "", nil, asked, sender, scheduled, "")
 }
 
 // imagesAlone is what the vision skill, or the model asked in writing (Ask), is asked about
@@ -2128,7 +2134,7 @@ func (a *Agent) ask(ready candidate) {
 	// The flow controller is not told the hour: it rules on the words, and its prompt is
 	// cached by its prefix like any other.
 	instructions := a.prompted()
-	if line := severalPeople(len(a.speakers), a.writers); line != "" {
+	if line := severalPeople(len(a.speakers), a.writers, a.namesWriters); line != "" {
 		instructions += "\n\n" + line
 	}
 	// Pending tools still own the turn even after its spoken acknowledgement ends.
@@ -2224,6 +2230,9 @@ type heard struct {
 	typed bool
 	// author is the Stream user who wrote a typed turn in a thread channel (WithAuthor).
 	author string
+	// writer is the person who wrote a typed turn in a channel of a type an agent config
+	// answers in (WithWriter).
+	writer writer
 	// photos is how many photos a typed turn came with, whether the model or the vision
 	// skill looks at them, not counting the frames of a video.
 	photos int
@@ -2405,7 +2414,12 @@ func (a *Agent) respondTurn(
 		return stack.Wrap(errNotJoined)
 	}
 	said := participant
-	if listened.author != "" {
+	switch {
+	case listened.writer.id != "":
+		// Named with their id from their first turn; everything else still answers the typed caller.
+		said = stt.Participant{ID: listened.writer.id, UserID: listened.writer.id, Name: listened.writer.name}
+		a.writers, a.namesWriters = true, true
+	case listened.author != "":
 		// Counted and named as a speaker is; everything else still answers the typed caller.
 		said = stt.Participant{ID: listened.author, UserID: listened.author}
 		a.writers = true
@@ -2473,7 +2487,21 @@ const severalSpeakers = "Several people are talking in this call. Each of their 
 const severalWriters = "Several people are writing in this conversation. Each of their messages starts " +
 	"with the name of who wrote it, then a colon. Never start your reply with such a label."
 
+// namedWriters is severalWriters for a channel of a type an agent config answers in
+// (WithWriter), told from the first turn, as every person's message there is labelled from
+// the first: the label holds their user id too, which a tool acting for one of them names.
+const namedWriters = "Several people may write in this conversation. Each of their messages starts with " +
+	"the name of who wrote it and, in parentheses, their user id, then a colon: \"Name (user id): ...\". " +
+	"When a tool needs to know which person a message is from, use that user id. Never start your reply with such a label."
+
 type authorKey struct{}
+
+type writerKey struct{}
+
+// writer is a person who wrote in a channel of a type an agent config answers in (WithWriter).
+type writer struct {
+	id, name string
+}
 
 // WithAuthor says which Stream user wrote the text a turn on ctx answers, in a thread channel
 // several people may write in. RespondTo counts and names them as it does a speaker on a
@@ -2482,10 +2510,46 @@ func WithAuthor(ctx context.Context, userID string) context.Context {
 	return context.WithValue(ctx, authorKey{}, userID)
 }
 
+// WithWriter says which person wrote the text a turn on ctx answers, by their Stream user id
+// and display name, in a channel of a type an agent config answers in, such as a team's group
+// channel (internal/api chat_channels). The people there are the customer's own Stream users,
+// whom a tool may need to name, so RespondTo puts each of their turns under their name and
+// user id from the first (WriterLabel), where WithAuthor numbers a thread's people only once
+// a second one writes.
+func WithWriter(ctx context.Context, userID, name string) context.Context {
+	return context.WithValue(ctx, writerKey{}, writer{id: userID, name: name})
+}
+
+// WriterLabel is how a person writing in a channel of a type an agent config answers in is
+// named ahead of their words (WithWriter): their display name and their Stream user id,
+// "Anya (user anya-1)", with the id for a name when they have none. A colon, a bracket or a
+// line break in either could pass for the end of the label or the start of another person's
+// line, so each is a space, and the spaces run together into one.
+func WriterLabel(userID, name string) string {
+	id := labelPart(userID)
+	return cmp.Or(labelPart(name), id) + " (user " + id + ")"
+}
+
+// labelPart is a name or an id as WriterLabel writes it.
+func labelPart(raw string) string {
+	kept := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || strings.ContainsRune(":()[]", r) {
+			return ' '
+		}
+		return r
+	}, raw)
+	return strings.Join(strings.Fields(kept), " ")
+}
+
 // userTurnLocked is a participant's words as a turn of the conversation. It names who
-// said them once somebody else in the call has had a turn answered too.
+// said them once somebody else in the call has had a turn answered too, and a person writing
+// in a channel of a type an agent config answers in from their first turn (WithWriter).
 func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Message {
 	turn := llm.Message{Role: llm.User, Content: harness.Defang(text)}
+	if a.namesWriters && participant.ID != typedCaller {
+		turn.Speaker = WriterLabel(participant.UserID, participant.Name)
+		return turn
+	}
 	_, known := a.speakers[personOf(participant)]
 	if participant.ID != typedCaller && len(a.speakers) > 0 && !(known && len(a.speakers) == 1) {
 		turn.Speaker = a.speakerLocked(participant).label
@@ -2786,7 +2850,7 @@ func (a *Agent) instructions() string { return a.instructionsFor(len(a.speakers)
 // through the harness: a native speech session, a composed line, an aside.
 func (a *Agent) instructionsFor(people int) string {
 	parts := []string{a.prompted()}
-	if line := severalPeople(people, a.writers); line != "" {
+	if line := severalPeople(people, a.writers, a.namesWriters); line != "" {
 		parts = append(parts, line)
 	}
 	parts = append(parts, clockLine(a.now(), a.zone))
@@ -2816,9 +2880,12 @@ func (a *Agent) prompted() string {
 	return strings.Join(parts, "\n\n")
 }
 
-// severalPeople is what the model is told about a conversation of that many people.
-func severalPeople(people int, writers bool) string {
+// severalPeople is what the model is told about a conversation of that many people, named
+// saying its writers are named with their ids from the first (namedWriters).
+func severalPeople(people int, writers, named bool) string {
 	switch {
+	case named:
+		return namedWriters
 	case people > 1 && writers:
 		return severalWriters
 	case people > 1:
@@ -2835,15 +2902,16 @@ type telling struct {
 
 // tellLocked is what a reply for a conversation of that many people has not been told yet:
 // the clock when the hour has moved on since it last was, and that there are several people
-// when there have come to be. It is told once, with the reply's turn, and kept from then on.
+// when there have come to be, or from the first turn when writers are named (namesWriters).
+// It is told once, with the reply's turn, and kept from then on.
 func (a *Agent) tellLocked(turnID string, people int) string {
-	now := telling{hour: a.now().Truncate(time.Hour), several: people > 1}
+	now := telling{hour: a.now().Truncate(time.Hour), several: people > 1 || a.namesWriters}
 	var lines []string
 	if !now.hour.Equal(a.knows.hour) {
 		lines = append(lines, clockLine(a.now(), a.zone))
 	}
 	if now.several && !a.knows.several {
-		lines = append(lines, severalPeople(people, a.writers))
+		lines = append(lines, severalPeople(people, a.writers, a.namesWriters))
 	}
 	if len(lines) == 0 {
 		return ""
