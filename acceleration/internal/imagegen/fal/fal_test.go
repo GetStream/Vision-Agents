@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/jpeg"
 	"image/png"
@@ -30,7 +31,9 @@ type queue struct {
 	server *httptest.Server
 
 	mu sync.Mutex
-	// pending is how many polls answer IN_PROGRESS before the job is COMPLETED.
+	// queued is how many polls answer IN_QUEUE first, and pending how many answer IN_PROGRESS
+	// after them, before the job is COMPLETED.
+	queued  int
 	pending int
 	// submitStatus, when set, is what a submission is refused with.
 	submitStatus int
@@ -87,7 +90,10 @@ func (q *queue) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && r.URL.Path == "/alibaba/qwen-image-3/requests/r1/status":
 		q.polls++
 		status := "COMPLETED"
-		if q.polls <= q.pending {
+		switch {
+		case q.polls <= q.queued:
+			status = "IN_QUEUE"
+		case q.polls <= q.queued+q.pending:
 			status = "IN_PROGRESS"
 		}
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": status})
@@ -226,6 +232,35 @@ func (s *FALSuite) TestAJobIsSubmittedPolledAndItsPicturesReturned() {
 	for _, key := range s.queue.keys {
 		s.Equal("Key test-key", key)
 	}
+}
+
+func (s *FALSuite) TestAJobsTimeIsSplitIntoFALsQueueAndTheDrawing() {
+	// A slow picture is either one FAL kept waiting or one that took long to draw; only the
+	// second is helped by a faster model.
+	s.queue.queued, s.queue.pending = 12, 2
+	s.queue.finishWith(map[string]any{"images": []any{inline("png", picture("png", 16, 16))}})
+
+	drawn, err := s.provider.Generate(s.ctx, imagegen.Request{Prompt: "A yellow watering can"})
+	s.Require().NoError(err)
+
+	s.Greater(drawn.Queued, drawn.Drawn, "twelve polls queued, two drawing")
+	s.Positive(drawn.Drawn)
+	s.Equal(map[string]string{
+		imagegen.AttributeWidth: "16", imagegen.AttributeHeight: "16",
+		imagegen.AttributeQueuedMs: fmt.Sprint(drawn.Queued.Milliseconds()),
+		imagegen.AttributeDrawnMs:  fmt.Sprint(drawn.Drawn.Milliseconds()),
+	}, drawn.Attributes(), "both go on the job's usage row")
+}
+
+func (s *FALSuite) TestAJobFirstSeenFinishedLeavesItsQueueAndDrawingUnknown() {
+	s.queue.finishWith(map[string]any{"images": []any{inline("png", picture("png", 16, 16))}})
+
+	drawn, err := s.provider.Generate(s.ctx, imagegen.Request{Prompt: "A yellow watering can"})
+	s.Require().NoError(err)
+
+	s.Zero(drawn.Queued, "not a queue of nothing: the polls never saw it")
+	s.Zero(drawn.Drawn)
+	s.NotContains(drawn.Attributes(), imagegen.AttributeQueuedMs)
 }
 
 func (s *FALSuite) TestAnAspectRatioIsSentAsFALsNameForIt() {
