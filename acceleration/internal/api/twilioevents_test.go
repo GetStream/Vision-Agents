@@ -120,6 +120,7 @@ func (s *TwilioEventsSuite) TestAnAlertWithNoReadableCodeIsCountedAsErrorOther()
 
 	s.Equal(float64(len(payloads)), accountEvents("twilio", "error.other", "info")-before)
 	s.Zero(accountEvents("twilio", "error.10001", "page") - page)
+	s.Equal(len(payloads), s.loggedLines("event=error.other", `error_code=""`))
 }
 
 // The callback's parameters as https://www.twilio.com/docs/usage/api/usage-trigger lists them.
@@ -225,10 +226,12 @@ func (s *TwilioEventsSuite) TestTheQueryStringIsPartOfTheSignedURL() {
 // Each refusal is logged, so a Twilio shape the router does not read shows up, and the form,
 // which may hold numbers, is not.
 func (s *TwilioEventsSuite) TestASignedFormThatIsNoEventIsRefusedAndNotCounted() {
+	// Stands in for a caller's number.
+	caller := rand.Text()
 	forms := []url.Values{
 		{},
 		{"Sid": {"NO1"}, "Level": {"ERROR"}},
-		{"Payload": {`{"error_code":"10001"}`}, "From": {"+10000000000"}},
+		{"Payload": {`{"error_code":"10001"}`}, "From": {caller}},
 		{"Sid": {"NO1"}, "Payload": {""}},
 		{"UsageCategory": {"totalprice"}, "AccountSid": {"AC1"}},
 		{"UsageTriggerSid": {""}, "UsageCategory": {"totalprice"}},
@@ -246,7 +249,7 @@ func (s *TwilioEventsSuite) TestASignedFormThatIsNoEventIsRefusedAndNotCounted()
 	s.Zero(accountEvents("twilio", "error.10001", "page") - page)
 	s.Zero(accountEvents("twilio", "usage_trigger.totalprice", "page") - triggers)
 	s.Equal(len(forms), s.loggedLines("level=WARN", "refused a signed twilio account event that is no event"))
-	s.NotContains(s.logged.String()[s.since:], "+10000000000")
+	s.NotContains(s.logged.String()[s.since:], caller)
 }
 
 // A body that is no form cannot be checked against a signature over its parameters.
@@ -257,9 +260,11 @@ func (s *TwilioEventsSuite) TestABodyThatIsNoFormIsRefused() {
 	s.Contains(answer, "that is not a form")
 }
 
+// The 1 MiB the spec names, written out rather than read from the constant, so a raised limit
+// fails here.
 func (s *TwilioEventsSuite) TestAnEventOverTheLimitIsRefusedBeforeItIsRead() {
 	before := accountEvents("twilio", "error.other", "info")
-	form := twilioAlert(rand.Text(), `{"pad":"`+strings.Repeat("x", twilioEventLimit)+`"}`)
+	form := twilioAlert(rand.Text(), `{"pad":"`+strings.Repeat("x", 1<<20)+`"}`)
 
 	status, _ := s.deliver(form, "", s.signed(twilioSignedURL))
 
