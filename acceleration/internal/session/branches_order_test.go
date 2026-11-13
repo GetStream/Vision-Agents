@@ -165,3 +165,29 @@ func (s *BranchesSuite) TestARegenerateRightAfterATurnNotYetRecordedRegeneratesI
 	s.settled(session)
 	s.NotNil(s.response(session, second).RewoundAt)
 }
+
+// A regenerate asked while the turn's messages are still on their way to Chat waits for them,
+// rather than reading a channel without them and refusing the turn as unmarked.
+func (s *BranchesSuite) TestARegenerateWaitsForTheTurnsMessagesToReachChat() {
+	session := s.opens()
+	s.asks(session, "Is it raining?")
+	waiting, release := s.chat.Hold("/message")
+	request := uuid.NewString()
+	_, second, err := session.RespondCommand(s.ctx, request, "And tomorrow?", "", nil, options.LLM{})
+	s.Require().NoError(err)
+	<-waiting
+	s.Require().Eventually(func() bool {
+		done, err := session.Command(request)
+		return err == nil && done.State == "completed"
+	}, 5*time.Second, 5*time.Millisecond, "the reply is finished, though not in Chat yet")
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		release()
+	}()
+
+	_, err = session.Regenerate(s.ctx, uuid.NewString(), second, options.LLM{})
+
+	s.Require().NoError(err)
+	s.settled(session)
+	s.NotNil(s.response(session, second).RewoundAt)
+}
