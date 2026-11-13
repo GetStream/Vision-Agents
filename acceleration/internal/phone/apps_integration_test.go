@@ -1091,10 +1091,16 @@ type trunkCall struct {
 }
 
 func (s *AppsSuite) callsThroughATrunk() trunkCall {
+	return s.callsThroughATrunkOn(StreamLegPerCall)
+}
+
+// callsThroughATrunkOn is callsThroughATrunk where the stand-in for the sip_trunk provider
+// has the given kind of Stream leg.
+func (s *AppsSuite) callsThroughATrunkOn(leg StreamLeg) trunkCall {
 	sealer, err := auth.NewSealer("apps suite")
 	s.Require().NoError(err)
 	logged := &bytes.Buffer{}
-	vendor := &stub{vendor: SIPTrunkVendor}
+	vendor := &stub{vendor: SIPTrunkVendor, leg: leg}
 	service, err := NewService(ServiceOptions{
 		Registry: NewRegistry(s.config()), Store: s.store, Apps: s.apps, Sealer: sealer,
 		SIPTrunks: vendor, Logger: slog.New(slog.NewTextHandler(logged, nil)),
@@ -1163,6 +1169,46 @@ func (s *AppsSuite) TestACallThroughACustomersTrunkKeepsHowItEnded() {
 	s.Empty(call.vendor.dialed.StatusURL, "the bridge tells the router itself")
 }
 
+func (s *AppsSuite) TestACallThroughACustomersTrunkOnItsOwnStreamTrunkCanBeResumed() {
+	call := s.callsThroughATrunk()
+
+	resume := call.vendor.dialed.Resume
+	s.Require().NotNil(resume)
+	number, err := s.store.Number(s.ctx, s.customer, call.vendor.dialed.From)
+	s.Require().NoError(err)
+	s.Equal(TrunkCallRef{
+		CustomerID: s.customer, SIPTrunkID: number.SIPTrunkID, BridgeURI: call.vendor.dialed.Bridge.URI,
+		From: call.vendor.dialed.From, CallID: call.placed.CallID, Token: resume.Token,
+	}, *resume)
+	byToken, err := call.service.Outcomes().ByToken(s.ctx, resume.Token)
+	s.Require().NoError(err)
+	s.Equal(call.placed.CallID, byToken.CallID, "the token is the placed call's")
+	s.NotEmpty(resume.BridgeURI)
+	s.NotEmpty(resume.SIPTrunkID)
+}
+
+func (s *AppsSuite) TestACallThroughACustomersTrunkOnASharedLineCanBeResumed() {
+	call := s.callsThroughATrunkOn(StreamLegShared)
+
+	resume := call.vendor.dialed.Resume
+	s.Require().NotNil(resume)
+	number, err := s.store.Number(s.ctx, s.customer, call.vendor.dialed.From)
+	s.Require().NoError(err)
+	s.NotEmpty(number.StreamTrunkID)
+	s.Equal(TrunkCallRef{
+		CustomerID: s.customer, SIPTrunkID: number.SIPTrunkID, StreamTrunkID: number.StreamTrunkID,
+		BridgeURI: call.vendor.dialed.Bridge.URI, From: call.vendor.dialed.From, CallID: call.placed.CallID,
+		Token: resume.Token,
+	}, *resume)
+	byToken, err := call.service.Outcomes().ByToken(s.ctx, resume.Token)
+	s.Require().NoError(err)
+	s.Equal(call.placed.CallID, byToken.CallID, "the token is the placed call's")
+
+	resumed, err := call.service.ResumeTrunkCall(s.ctx, *resume)
+	s.Require().NoError(err)
+	s.Equal(call.vendor.dialed.Bridge, resumed.Bridge, "a takeover dials the bridge the call was placed on")
+}
+
 func (s *AppsSuite) TestABridgeThatSawNoAddressWritesNoRow() {
 	call := s.callsThroughATrunk()
 	s.Require().NotNil(call.vendor.dialed.Connected)
@@ -1179,6 +1225,7 @@ func (s *AppsSuite) TestACallThroughAVendorHasNoBridgeToHearFrom() {
 	s.Require().NoError(err)
 
 	s.Nil(s.vendor.dialed.Connected)
+	s.Nil(s.vendor.dialed.Resume)
 }
 
 func (s *AppsSuite) TestACallTheVendorRefusedWritesNoCallPlacedRow() {
