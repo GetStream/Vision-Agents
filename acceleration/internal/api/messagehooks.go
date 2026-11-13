@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -27,6 +28,19 @@ import (
 // turn because nobody is sitting in silence waiting for it, and short enough that a stuck
 // provider does not hold a goroutine for the life of the process.
 const askTimeout = 2 * time.Minute
+
+// drawingAskTimeout bounds answering one written message for an agent that draws: one picture
+// alone may take imagerouter.Deadline, on top of the reply around it. A session closed when the
+// wait ends kills the picture it was drawing, which was already paid for.
+const drawingAskTimeout = askTimeout + imagerouter.Deadline
+
+// askTimeoutFor is how long answering one written message may take for a session run as spec.
+func askTimeoutFor(spec session.Spec) time.Duration {
+	if spec.ImageTarget != "" {
+		return drawingAskTimeout
+	}
+	return askTimeout
+}
 
 // messageEvent is the part of a message event this hook acts on.
 //
@@ -798,7 +812,7 @@ func (s *Server) assignMessage(ctx context.Context, customerID string, message d
 // session answers one (answerClaimed): with what its voice recording says and its photos, read
 // once for every try.
 func (s *Server) followUpMessage(origin hookOrigin, found *session.Session, event messageEvent) {
-	ctx, cancel := context.WithTimeout(context.Background(), askTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), askTimeoutFor(found.Spec()))
 	defer cancel()
 	followUpID := "message_" + store.NewID()
 	text, images := s.messagePhotos(ctx, found.SeesImages(), s.heardText(ctx, found.Spec(), origin, event), event)
@@ -821,7 +835,7 @@ func (s *Server) followUpMessage(origin hookOrigin, found *session.Session, even
 // it, and saying a reply to something they never said would interrupt them with an answer
 // to somebody else's question.
 func (s *Server) answerMessage(origin hookOrigin, found *session.Session, event messageEvent) {
-	ctx, cancel := context.WithTimeout(context.Background(), askTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), askTimeoutFor(found.Spec()))
 	defer cancel()
 
 	// Ask refuses a speech-to-speech agent, which answers only on the call (Mode), so a

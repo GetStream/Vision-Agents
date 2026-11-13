@@ -93,6 +93,50 @@ func (s *AppHooksSuite) TestAChannelAnotherRouterIsAnsweringWaitsForItsTurn() {
 	}, settleFor, 20*time.Millisecond, "the turn that answered let go of the channel")
 }
 
+// A picture may take imagerouter.Deadline on top of the reply around it. A turn of an agent that
+// draws holds the channel for that long: a lease that ran out mid-draw lets another router answer
+// the next message beside it, and the turn's wait ending closes the session and kills the draw.
+func (s *AppHooksSuite) TestATurnOfAnAgentThatDrawsHoldsTheChannelForItsLongerBudget() {
+	s.holdsType("callouts", memberWrites)
+	config := s.answeringIn("callouts")
+	config.Image = "image-fast"
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &config))
+	channel := s.groupChannel("callouts", nil)
+
+	until := s.leaseWhileAnswering("callouts", channel)
+
+	s.Greater(time.Until(until), askTimeout+turnLeaseMargin, "held longer than a turn that draws nothing")
+	s.LessOrEqual(time.Until(until), drawingAskTimeout+turnLeaseMargin)
+}
+
+func (s *AppHooksSuite) TestATurnOfAnAgentThatDrawsNothingKeepsItsLease() {
+	s.holdsType("callouts", memberWrites)
+	s.answeringIn("callouts")
+	channel := s.groupChannel("callouts", nil)
+
+	until := s.leaseWhileAnswering("callouts", channel)
+
+	s.LessOrEqual(time.Until(until), threadTurnLease)
+}
+
+// leaseWhileAnswering delivers Anya's message in channelType:channel and returns until when the
+// channel's turn is leased while the agent writes its reply, which is held until then.
+func (s *AppHooksSuite) leaseWhileAnswering(channelType, channel string) time.Time {
+	writing, release := s.chat.Hold("/" + channel + "/message")
+	defer release()
+	s.Equal(http.StatusOK, s.fromApp(s.appPath("/v1/chat/hooks/stream"), s.groupMessage(channelType, channel, nil)))
+	select {
+	case <-writing:
+	case <-time.After(settleFor):
+		s.FailNow("the agent never wrote its reply")
+	}
+	var until time.Time
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT turn_until FROM chat_channel_turns WHERE stream_app_pk = ? AND cid = ?",
+		s.appID(), channelType+":"+channel).Scan(&until))
+	return until
+}
+
 // replies counts the agent's finished replies in the channel cid.
 func (s *RouterSuite) replies(cid string) int {
 	count := 0

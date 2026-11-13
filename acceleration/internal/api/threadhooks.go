@@ -33,8 +33,13 @@ const threadTurnWait = 250 * time.Millisecond
 
 // threadTurnLease is how long a turn's lease holds: the turn's own budget, askTimeout, and a
 // margin for closing its session, so a lease outlives the turn that holds it and a router
-// that stopped mid-turn holds the thread no longer than that.
-const threadTurnLease = askTimeout + 30*time.Second
+// that stopped mid-turn holds the thread no longer than that. A turn of an agent that draws
+// has a longer budget (askTimeoutFor), and holds its lease for that budget and the margin.
+const threadTurnLease = askTimeout + turnLeaseMargin
+
+// turnLeaseMargin is how much longer than its turn's budget a lease holds: time to close the
+// session the turn opened.
+const turnLeaseMargin = 30 * time.Second
 
 // A thread channel holds one external thread, such as a Slack thread, which the channel bridge
 // (internal/channelbridge) writes into as the people in it write. The Router answers it
@@ -158,18 +163,25 @@ func (s *Server) answerClaimed(ctx context.Context, origin hookOrigin, thread st
 	s.answerHosted(origin, chatlog.ChannelType+":"+thread.ChannelID, thread.CustomerID, event,
 		func(turn context.Context) (*session.Session, error) {
 			return s.threadSession(turn, origin, thread, event)
+		},
+		func(ctx context.Context, until time.Time) (bool, error) {
+			return s.store.TakeChannelThreadTurn(ctx, thread.ChannelID, holder, until)
 		})
 }
 
 // answerHosted has the Router's own session on the channel cid, the customer's, answer a
 // person's message there: a thread channel's (answerClaimed), or a channel of a type an agent
 // config answers in (answerChatChannel). open opens the session when none runs on the channel.
+// hold extends the turn's lease, already taken, until a time: a turn of an agent that draws
+// runs longer than the lease it was taken with.
 func (s *Server) answerHosted(origin hookOrigin, cid, customer string, event messageEvent,
-	open func(context.Context) (*session.Session, error)) {
+	open func(context.Context) (*session.Session, error), hold func(context.Context, time.Time) (bool, error)) {
 	// The author is told to the agent by their Stream user alone: the bridge names that user
 	// after the provider's id for them (channelbridge openThread), a phone number on a texting
 	// line, which no model is told. So each person goes under "Speaker N".
-	turn, cancelTurn := context.WithTimeout(agent.WithAuthor(routing.WithAttribution(context.Background(), chatHookAttribution(customer, event)), event.Message.User.ID), askTimeout)
+	asked := agent.WithAuthor(routing.WithAttribution(context.Background(), chatHookAttribution(customer, event)), event.Message.User.ID)
+	started := time.Now()
+	turn, cancelTurn := context.WithTimeout(asked, askTimeout)
 	defer cancelTurn()
 
 	// A session a caller opened on the channel through the API answers there; otherwise this
@@ -195,6 +207,19 @@ func (s *Server) answerHosted(origin hookOrigin, cid, customer string, event mes
 				s.logger.Error("could not close the session of a channel the Router answers in", "channel", cid, "session", found.ID(), "error", err)
 			}
 		}()
+	}
+	// Which agent answers is known only now. One that draws gets its longer budget, counted from
+	// the start, and its lease is held for as long: a lease that ran out mid-draw would let another
+	// router answer the next message beside this one. The session is not bound to the context it
+	// was opened under (Manager.Create), so the context can be swapped.
+	if budget := askTimeoutFor(found.Spec()); budget > askTimeout {
+		var cancelDrawing context.CancelFunc
+		turn, cancelDrawing = context.WithDeadline(asked, started.Add(budget))
+		defer cancelDrawing()
+		if held, err := hold(turn, started.Add(budget+turnLeaseMargin)); err != nil || !held {
+			s.logger.Warn("could not hold a channel's turn for a drawing agent's reply; it runs out first",
+				"channel", cid, "held", held, "error", err)
+		}
 	}
 
 	// One id for the message, kept across the retries below: an attempt that

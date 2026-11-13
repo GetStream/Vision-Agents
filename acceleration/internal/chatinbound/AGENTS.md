@@ -15,7 +15,7 @@ endpoint                                    api.receiveChatInbound
   store error or no store: 503              Stream Chat delivers it again
 
 worker (every router)                       Worker.answerDue
-  ClaimChatInbound: due rows, lease 5 min, SKIP LOCKED
+  ClaimChatInbound: due rows, lease 9 min, SKIP LOCKED
   Answer = api.AnswerChatInbound -> routeArrivingMessage
     thread channel     answerThread claims the turn; row stays queued
     session here       answerOnce: queued -> done, then answer
