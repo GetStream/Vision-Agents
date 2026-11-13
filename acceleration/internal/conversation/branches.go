@@ -744,6 +744,10 @@ func (sw switcher) rewind(ctx context.Context, target RewindTarget, read func(be
 		return rewound{}, err
 	}
 	if len(hidden) > 0 {
+		copied := make([]string, 0, len(hidden))
+		for _, m := range hidden {
+			copied = append(copied, m.ID)
+		}
 		for attempt := 0; ; attempt++ {
 			_, err = sw.rewinder.Rewind(ctx, channelType, id, target.MessageID, target.Inclusive, tail.LastID, sw.agent)
 			var conflict *RewindConflictError
@@ -755,6 +759,7 @@ func (sw switcher) rewind(ctx context.Context, target RewindTarget, read func(be
 				err = nil
 				break
 			}
+
 			if attempt > 0 {
 				break
 			}
@@ -770,6 +775,15 @@ func (sw switcher) rewind(ctx context.Context, target RewindTarget, read func(be
 		if errors.Is(err, ErrNothingToRewind) {
 			err = nil
 			hidden = nil
+		}
+		if branchRefusal(err) != nil {
+			// Why: an earlier try of this switch whose answer was lost can land while this one
+			// runs. Chat then refuses this rewind, as a conflict or, an inclusive one, as a
+			// message to rewind to that no longer exists. The copies are what that rewind hid,
+			// and abandoning the switch would delete the only ones.
+			if landed, _, landedErr := sw.landed(ctx, row, copied); landedErr == nil && landed {
+				err = nil
+			}
 		}
 		if refusal := branchRefusal(err); refusal != nil {
 			if abandonErr := sw.branches.AbandonBranchSwitch(ctx, sw.customer, sw.session, row.ID); abandonErr != nil {
