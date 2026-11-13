@@ -1188,12 +1188,7 @@ now. The Go SDK has it as `client.Routes(ctx, acceleration.ModalityImage)` and t
 SDK as `api.router().routes("image")`. The four shared shortcuts (`en-low-latency` and the
 rest) work here too.
 
-**Time.** A request is answered when its pictures are drawn, within 240 seconds; a caller that
-hangs up cancels the job at the provider. FAL is a queue: the router submits the job and asks
-every 3 seconds whether it is done, and one router process holds at most 2 FAL jobs at once,
-so a third waits for a slot before it is submitted. Gemini is one call per picture, drawn one
-after another. Nothing records how long a job waited for a slot apart from how long FAL took:
-a request row's `latency_ms` holds both.
+**Time.** A request is answered when its pictures are drawn, within 240 seconds; a caller that hangs up cancels the job at the provider. FAL is a queue: the router submits the job and asks every 3 seconds whether it is done, and one router process holds at most 2 FAL jobs at once, so a third waits for a slot before it is submitted. Gemini is one call per picture, drawn one after another. A FAL picture's usage row splits its time into `queued_ms`, submit to the first poll that saw it drawing, and `drawn_ms`, from then to done, each to within a poll; both are left out when no poll saw it drawing. `latency_ms` is the whole request, a wait for a slot included.
 
 **Limits.** At most 4 pictures a request, each at most 10 MiB and 4096 pixels a side, checked
 by decoding the picture before it is returned.
@@ -1204,6 +1199,14 @@ and $0.0672 a picture for Gemini plus its prompt and thinking tokens. `cost_micr
 request cost the customer. The money is held before the job is submitted, so a
 spend limit that covers the caller refuses a draw it cannot pay for, and a failed draw costs
 nothing. A request is one row in `requests` counting its pictures.
+
+**From an agent.** `image: image-fast` on an agent config, or in agent.yaml, offers a text agent
+whose conversation has a Chat channel the built-in `generate_image(prompt, aspect_ratio?)`. It
+answers at once and the turn ends; the picture is drawn after it, on whichever router claims the
+job, and posted into the conversation as the agent's own message, or a short message saying why
+there is none. It is billed as this endpoint is, under the session's attribution. An empty
+`image` turns it off, and a target the deployment cannot draw with is refused when the config is
+saved.
 
 ## Run
 
