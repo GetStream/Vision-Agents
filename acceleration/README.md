@@ -1161,11 +1161,11 @@ curl -s localhost:8080/v1/image/generations -H 'X-Customer-Id: acme' \
 
 ```json
 {"id": "img_1b9d...", "status": "completed", "provider": "fal",
- "model": "alibaba/qwen-image-3/text-to-image", "cost_micros": 40000,
- "images": [{"data": "iVBORw0...", "media_type": "image/png", "width": 1344, "height": 768}]}
+ "model": "alibaba/qwen-image-3/text-to-image", "cost_micros": 0,
+ "images": [{"data": "iVBORw0...", "media_type": "image/png", "width": 0, "height": 0}]}
 ```
 
-The pictures come back as base64 bytes, never a link, and nothing is kept: `id` is for logs. A
+The zeros stand in for real values. The pictures come back as base64 bytes, never a link, and nothing is kept: `id` is for logs. A
 generation that reached a provider is a 200 whether it drew or not. A failed one has `status:
 failed`, an `error_code` (`content_filtered`, `unsupported_option`, `timeout` and the rest of
 `ImageErrorCode`) and `error`, and costs nothing. A request that cannot be routed is a 400.
