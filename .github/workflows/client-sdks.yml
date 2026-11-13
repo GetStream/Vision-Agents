@@ -9,6 +9,8 @@ on:
       - 'sdks/swift/**'
       - 'Package.swift'
       - 'sdks/dart/**'
+      - 'examples/voice_agents/flutter_demo/**'
+      - 'examples/voice_agents/flutter_assistant/**'
       - 'examples/voice_agents/swift_demo/app/**'
       - 'examples/voice_agents/android_demo/**'
       - 'examples/voice_agents/android_assistant/**'
@@ -21,6 +23,8 @@ on:
       - 'sdks/swift/**'
       - 'Package.swift'
       - 'sdks/dart/**'
+      - 'examples/voice_agents/flutter_demo/**'
+      - 'examples/voice_agents/flutter_assistant/**'
       - 'examples/voice_agents/swift_demo/app/**'
       - 'examples/voice_agents/android_demo/**'
       - 'examples/voice_agents/android_assistant/**'
@@ -56,6 +60,8 @@ jobs:
               - '.github/workflows/client-sdks.yml'
             dart:
               - 'sdks/dart/**'
+              - 'examples/voice_agents/flutter_demo/**'
+              - 'examples/voice_agents/flutter_assistant/**'
               - 'acceleration/api/openapi.yaml'
               - '.github/workflows/client-sdks.yml'
             swift:
@@ -110,6 +116,8 @@ jobs:
           changed=$(git status --porcelain -- core/src/main/kotlin/io/getstream/agents/android/core/generated)
           if [ -n "$changed" ]; then echo "$changed"; git diff; exit 1; fi
 
+  # stream_agents is a Flutter package (rtc depends on stream_video_flutter), so the whole of it,
+  # core's plain package:test tests included, is checked with the Flutter SDK.
   dart:
     needs: changes
     if: github.event_name == 'push' || needs.changes.outputs.dart == 'true'
@@ -117,26 +125,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
-          sdk: stable
+          channel: stable
 
-      - name: Check and test core
-        working-directory: sdks/dart/core
+      # The dry run fails on a warning (exit 65), so a missing LICENSE or an exact pin on a
+      # dependency fails here rather than at release. area_boundaries_test.dart, run with the
+      # rest, keeps core, chat and rtc apart inside the package.
+      - name: Check and test stream_agents
+        working-directory: sdks/dart/stream_agents
         run: |
-          dart pub get
+          flutter pub get
           dart format --set-exit-if-changed .
-          dart analyze
+          flutter analyze
           dart run tool/generate.dart --check
-          dart test
+          flutter test
+          flutter pub publish --dry-run
 
-      - name: Check and test chat
-        working-directory: sdks/dart/chat
+      # Against stream_agents as it is in this checkout, through a path dependency.
+      - name: Check and test flutter_demo
+        working-directory: examples/voice_agents/flutter_demo
         run: |
-          dart pub get
-          dart format --set-exit-if-changed .
-          dart analyze
-          dart test
+          flutter pub get
+          flutter analyze
+          flutter test
+
+      - name: Check and test flutter_assistant
+        working-directory: examples/voice_agents/flutter_assistant
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
 
   swift:
     needs: changes

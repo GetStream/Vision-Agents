@@ -23,6 +23,8 @@ final readonly class ChildAgent
         public ?string $description = null,
         // How long one call may take, two minutes when left out. A call never outlasts the run that made it: it gets...
         public ?int $timeoutMs = null,
+        // The reply to a tool result, counted since the agent was handed its input, that is offered no more tools and...
+        public ?int $maxToolRounds = null,
     ) {
     }
 
@@ -36,6 +38,7 @@ final readonly class ChildAgent
             tool: Json::string($data, 'tool'),
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
             timeoutMs: array_key_exists('timeout_ms', $data) && $data['timeout_ms'] !== null ? Json::int($data, 'timeout_ms') : null,
+            maxToolRounds: array_key_exists('max_tool_rounds', $data) && $data['max_tool_rounds'] !== null ? Json::int($data, 'max_tool_rounds') : null,
         );
     }
 
@@ -54,6 +57,9 @@ final readonly class ChildAgent
         }
         if ($this->timeoutMs !== null) {
             $out['timeout_ms'] = $this->timeoutMs;
+        }
+        if ($this->maxToolRounds !== null) {
+            $out['max_tool_rounds'] = $this->maxToolRounds;
         }
         return $out;
     }

@@ -254,6 +254,8 @@ team to request a higher limit.
 - `model_name`: str - Hugging Face model identifier (default: "moondream/moondream3-preview")
 - `options`: AgentOptions - Model directory configuration. If not provided, uses default which defaults to
   tempfile.gettempdir()
+- `revision`: str - Commit hash of the model repo to load. The default model is pinned to a known commit. Required
+  with a custom `model_name`, because Moondream runs code from the model repo.
 
 **Performance:** Performance will vary depending on your hardware configuration. CUDA is recommended for best
 performance on NVIDIA GPUs. The model will be downloaded from HuggingFace on first use.
@@ -279,6 +281,8 @@ limits.
   running on CUDA for best performance. (default: False)
 - `model_name`: str - Hugging Face model identifier (default: "moondream/moondream3-preview")
 - `options`: AgentOptions - Model directory configuration. If not provided, uses default_agent_options()
+- `revision`: str - Commit hash of the model repo to load. The default model is pinned to a known commit. Required
+  with a custom `model_name`, because Moondream runs code from the model repo.
 
 **Performance:** Performance will vary depending on your hardware configuration. CUDA is recommended for best
 performance on NVIDIA GPUs. The model will be downloaded from HuggingFace on first use.

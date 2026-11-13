@@ -730,6 +730,122 @@ describe("Session", () => {
       await session.close();
     });
 
+    describe("a call shown from the conversation that this socket was never asked", () => {
+      const shown = { name: "issue_refund", arguments: refundCall.arguments, requestId: "m1", turnId: "t1" };
+
+      it("allowed, answers it on its turn and runs it here", async () => {
+        const [session, connection] = await opened(refunds());
+
+        session.decide("call_1", { allowed: true, call: shown });
+
+        assert.deepEqual(await connection.next(), {
+          type: "tool_approval",
+          tool_call_id: "call_1",
+          allowed: true,
+          request_id: "m1",
+          turn_id: "t1",
+        });
+        assert.deepEqual(await connection.next(), {
+          type: "tool_result",
+          tool_call_id: "call_1",
+          request_id: "m1",
+          turn_id: "t1",
+          output: "Refunded A-1042",
+        });
+        assert.deepEqual(ran, ["A-1042"]);
+        await session.close();
+      });
+
+      it("declined, never runs and tells the model so", async () => {
+        const [session, connection] = await opened(refunds());
+
+        session.decide("call_1", { allowed: false, summary: "Kept the order", call: shown });
+
+        assert.deepEqual(await connection.next(), {
+          type: "tool_approval",
+          tool_call_id: "call_1",
+          allowed: false,
+          summary: "Kept the order",
+          request_id: "m1",
+          turn_id: "t1",
+        });
+        assert.deepEqual(await connection.next(), {
+          type: "tool_result",
+          tool_call_id: "call_1",
+          request_id: "m1",
+          turn_id: "t1",
+          error: "The person declined this call.",
+        });
+        assert.deepEqual(ran, []);
+        await session.close();
+      });
+
+      it("allowed, leaves running to whoever registered a function this session lacks", async () => {
+        const [session, connection] = await opened(refunds());
+
+        session.decide("call_2", { allowed: true, call: { ...shown, name: "get_location" } });
+        session.say("still there?");
+
+        assert.deepEqual(await connection.next(), {
+          type: "tool_approval",
+          tool_call_id: "call_2",
+          allowed: true,
+          request_id: "m1",
+          turn_id: "t1",
+        });
+        assert.deepEqual(await connection.next(), { type: "say", text: "still there?" });
+        await session.close();
+      });
+
+      it("allowed with its arguments too long for the conversation to show, tells the model it couldn't run", async () => {
+        const [session, connection] = await opened(refunds());
+
+        session.decide("call_1", { allowed: true, call: { name: "issue_refund", requestId: "m1", turnId: "t1" } });
+
+        assert.equal((await connection.next()).type, "tool_approval");
+        assert.deepEqual(await connection.next(), {
+          type: "tool_result",
+          tool_call_id: "call_1",
+          request_id: "m1",
+          turn_id: "t1",
+          error: "The call's arguments were too long for the conversation to keep, so it could not run.",
+        });
+        assert.deepEqual(ran, []);
+        await session.close();
+      });
+
+      it("answered twice, such as a double tap on Allow, sends one answer and runs once", async () => {
+        const [session, connection] = await opened(refunds());
+
+        session.decide("call_1", { allowed: true, call: shown });
+        session.decide("call_1", { allowed: true, call: shown });
+        session.decide("call_1", { allowed: false, call: shown });
+
+        assert.equal((await connection.next()).type, "tool_approval");
+        assert.equal((await connection.next()).type, "tool_result");
+        session.say("still there?");
+        assert.deepEqual(await connection.next(), { type: "say", text: "still there?" });
+        assert.deepEqual(ran, ["A-1042"]);
+        await session.close();
+      });
+
+      it("sends nothing for one it already answered from its own socket", async () => {
+        const [session, connection] = await opened(refunds());
+
+        connection.send(refundCall);
+        await waiting(session);
+        session.decide("call_1", { allowed: true });
+        assert.equal((await connection.next()).type, "tool_approval");
+        assert.equal((await connection.next()).type, "tool_result");
+
+        session.decide("call_1", { allowed: true, call: shown });
+        session.say("still there?");
+        assert.deepEqual(await connection.next(), { type: "say", text: "still there?" });
+        assert.deepEqual(ran, ["A-1042"]);
+        await session.close();
+      });
+    });
+
     it("runs at once a call the caller already allowed out loud", async () => {
       const [session, connection] = await opened(refunds());
 

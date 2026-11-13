@@ -67,7 +67,7 @@ func TestAFloorControlThatAsksIsRefusedWithoutAServer(t *testing.T) {
 		require.Equal(t, errNoChorusASR, failure, name)
 		require.Equal(t, codeNotConfigured, failure.Code, name)
 	}
-	for name, sent := range map[string]*FloorControl{"empty": {}, "left out": nil} {
+	for name, sent := range map[string]*FloorControl{"empty": {}, "left out": nil, "opt-out": {Model: new("flow-controller")}} {
 		_, refused := without.floorControlRefusal(sent, nil)
 		require.False(t, refused, name)
 	}
@@ -86,7 +86,9 @@ func TestAFloorControlTheSchemaRefusesIsRefusedWithoutIt(t *testing.T) {
 	for sent, says := range map[*FloorControl]string{
 		{MaxWaitMs: new(800)}:                                "floor_control.model is required",
 		{Model: new("stream/another")}:                       `floor_control.model is "stream/another"`,
+		{Model: new("default")}:                              `floor_control.model is "default"`,
 		{Model: new("stream/chorus-asr"), MaxWaitMs: new(0)}: "floor_control.max_wait_ms is a number of milliseconds above 0",
+		{Model: new("flow-controller"), MaxWaitMs: new(800)}: "floor_control.max_wait_ms is stream/chorus-asr's",
 	} {
 		failure, refused := s.floorControlRefusal(sent, nil)
 		require.True(t, refused, says)
@@ -101,28 +103,41 @@ func TestAFloorControlTheSchemaRefusesIsRefusedWithoutIt(t *testing.T) {
 	}
 }
 
-// An agent that chose no floor control asks chorus-asr nothing, as before there was floor
-// control: it opts in for itself. A wait is the point the session's Hearer ends turns by.
-func TestAnUnsetFloorControlIsTheDefaultFlowController(t *testing.T) {
+// An agent that chose no floor control asks chorus-asr nothing of itself: the router's default
+// decides (session.FloorControlOf), and so does one that opted out, whatever the default. A
+// wait is the point the session's Hearer ends turns by.
+func TestAnUnsetFloorControlIsTheRoutersDefault(t *testing.T) {
 	require.Equal(t, audiofloor.Off, session.FloorModeOf(store.FloorControl{}))
+	require.Equal(t, audiofloor.Off, session.FloorModeOf(store.FloorControl{Model: store.FloorControlFlowController}))
+	require.Equal(t, audiofloor.Act, session.FloorModeOf(session.FloorControlOf(store.FloorControl{}, store.FloorControlChorusASR, true)))
+	require.Equal(t, audiofloor.Off, session.FloorModeOf(session.FloorControlOf(store.FloorControl{Model: store.FloorControlFlowController}, store.FloorControlChorusASR, true)))
 	require.Equal(t, audiofloor.Act, session.FloorModeOf(chorusASR(0)))
 	require.Equal(t, audiofloor.EndOfTurn{MaxWaitMs: 800}, session.EndOfTurnOf(chorusASR(800)))
 	require.Equal(t, audiofloor.EndOfTurn{}, session.EndOfTurnOf(chorusASR(0)), "no wait is the server's default point")
 }
 
-// Sent, a choice replaces the stored one whole, and empty is the default flow controller
-// again; left out, the stored one stays. What is stored renders as it was sent, and none
-// chosen as nothing.
+// Sent, a choice replaces the stored one whole, and empty is no choice again, which the
+// router's default rules; left out, the stored one stays. What is stored renders as it was
+// sent, the opt-out included, which is stored and not zero, and none chosen as nothing.
 func TestAFloorControlSentReplacesTheStoredOne(t *testing.T) {
 	stored := chorusASR(1400)
 	require.Equal(t, stored, floorControlOr(stored, nil), "left out, it stays")
 	require.Equal(t, chorusASR(0), floorControlOr(stored, &FloorControl{Model: new("stream/chorus-asr")}), "sent, it replaces the wait too")
 	require.Equal(t, chorusASR(800), floorControlOr(store.FloorControl{}, &FloorControl{Model: new("stream/chorus-asr"), MaxWaitMs: new(800)}))
-	require.True(t, floorControlOr(stored, &FloorControl{}).IsZero(), "empty is the default again")
+	require.True(t, floorControlOr(stored, &FloorControl{}).IsZero(), "empty is no choice again")
+	optedOut := floorControlOr(stored, &FloorControl{Model: new("flow-controller")})
+	require.Equal(t, store.FloorControl{Model: store.FloorControlFlowController}, optedOut, "the opt-out replaces the choice, wait included")
+	require.False(t, optedOut.IsZero(), "and is stored, as distinct from no choice")
 
 	require.Equal(t, &FloorControl{Model: new("stream/chorus-asr"), MaxWaitMs: new(1400)}, renderedFloorControl(stored))
 	require.Equal(t, &FloorControl{Model: new("stream/chorus-asr")}, renderedFloorControl(chorusASR(0)))
+	require.Equal(t, &FloorControl{Model: new("flow-controller")}, renderedFloorControl(optedOut), "an agent reads back the opt-out it stored")
 	require.Nil(t, renderedFloorControl(store.FloorControl{}))
+
+	client, asked := chorusASRServer(t, chorusASRInfo)
+	_, message, ok := serverAsking(client).floorControlComplaint(context.Background(), optedOut, store.FloorControl{})
+	require.True(t, ok, message)
+	require.Zero(t, asked.Load(), "the opt-out has no wait to check")
 }
 
 // A wait is checked against what the server publishes: one within some measured point's p90

@@ -33,6 +33,15 @@ final readonly class SessionFilter
         public ?array $or = null,
         // The score the review gave the conversation. A session with no review matches no condition on it. Only a ser...
         public mixed $reviewScore = null,
+        // The agent config the session ran under, which stays the same when the agent is renamed.
+        public mixed $configId = null,
+        // When the session began.
+        public ?TimeWindow $createdAt = null,
+        // Labels the session's custom object holds, every one of them: {"origin": "test"} matches a session whose cus...
+        /** @var array<string, string>|null */
+        public ?array $custom = null,
+        // Whether the agent is still in the call.
+        public mixed $state = null,
     ) {
     }
 
@@ -49,6 +58,10 @@ final readonly class SessionFilter
             and: array_key_exists('$and', $data) && $data['$and'] !== null ? array_map(SessionFilter::fromArray(...), Json::objects($data, '$and')) : null,
             or: array_key_exists('$or', $data) && $data['$or'] !== null ? array_map(SessionFilter::fromArray(...), Json::objects($data, '$or')) : null,
             reviewScore: $data['review_score'] ?? null,
+            configId: $data['config_id'] ?? null,
+            createdAt: array_key_exists('created_at', $data) && $data['created_at'] !== null ? TimeWindow::fromArray(Json::object($data, 'created_at')) : null,
+            custom: array_key_exists('custom', $data) && $data['custom'] !== null ? Json::stringMap($data, 'custom') : null,
+            state: $data['state'] ?? null,
         );
     }
 
@@ -80,6 +93,18 @@ final readonly class SessionFilter
         }
         if ($this->reviewScore !== null) {
             $out['review_score'] = $this->reviewScore;
+        }
+        if ($this->configId !== null) {
+            $out['config_id'] = $this->configId;
+        }
+        if ($this->createdAt !== null) {
+            $out['created_at'] = $this->createdAt->toArray();
+        }
+        if ($this->custom !== null) {
+            $out['custom'] = $this->custom;
+        }
+        if ($this->state !== null) {
+            $out['state'] = $this->state;
         }
         return $out;
     }

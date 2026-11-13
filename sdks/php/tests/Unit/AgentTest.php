@@ -348,7 +348,7 @@ final class AgentTest extends TestCase
     {
         yield 'model and wait' => ["floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n", '{"max_wait_ms":800,"model":"stream/chorus-asr"}'];
         yield 'model alone' => ["floor_control: {model: stream/chorus-asr}\n", '{"model":"stream/chorus-asr"}'];
-        yield 'empty, the default flow controller again' => ["floor_control: {}\n", '{}'];
+        yield 'empty, no choice again' => ["floor_control: {}\n", '{}'];
         yield 'a model for the router to refuse' => ["floor_control:\n  model: other\n", '{"model":"other"}'];
     }
 

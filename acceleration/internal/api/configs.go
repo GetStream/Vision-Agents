@@ -1742,7 +1742,12 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	if len(config.ChatChannels) > 0 {
 		types := make([]AgentChatChannel, 0, len(config.ChatChannels))
 		for _, channel := range config.ChatChannels {
-			types = append(types, AgentChatChannel{Type: channel.Type})
+			rendered := AgentChatChannel{Type: channel.Type}
+			if channel.Answer != "" {
+				answer := ChatChannelAnswer(channel.Answer)
+				rendered.Answer = &answer
+			}
+			types = append(types, rendered)
 		}
 		rendered.ChatChannels = &types
 	}
@@ -1999,7 +2004,7 @@ type AgentConfigRequest struct {
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. Left out on an update, the stored settings stay."`
 	Calls              *AgentCalls              `json:"calls,omitempty" doc:"The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and press are on and end_call is off. On an update, a tool left out keeps its stored settings and a tool sent replaces its settings whole."`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty" doc:"How a conversation is handed back to the model when a session under this agent carries it on: reopened, resumed by id, joined by voice or forked. Each field set here wins over the app's and the organization's policy, and a session request's wins over this; a field set nowhere is the router's default: replies as text, the newest 100 turns within 60000 characters. Left out on an update, the stored settings stay."`
-	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. A session request's wins over this. Left out or null on a create, the default flow controller; left out or null on an update, the stored choice stays; an empty object is the default flow controller again."`
+	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. A session request's wins over this. Left out or null on a create, no choice: the router's default rules, the flow controller or stream/chorus-asr where the router defaults every agent to it; left out or null on an update, the stored choice stays; an empty object is no choice again; {model: flow-controller} keeps the flow controller whatever the router's default."`
 	EndOfTurn          any                      `json:"end_of_turn,omitempty" hidden:"true"` // refused: floor_control's max_wait_ms replaced it
 	Plugins            *[]retiredPlugin         `json:"plugins,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
 	PluginEvents       *[]map[string]any        `json:"plugin_events,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
@@ -2045,7 +2050,7 @@ type AgentConfig struct {
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
 	Calls              *AgentCalls              `json:"calls,omitempty"`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty"`
-	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. Absent for the default flow controller."`
+	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop, as the agent chose it: stream/chorus-asr, or flow-controller for the flow controller whatever the router's default. Absent when it chose none, which the router's default rules."`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" doc:"The bindings exactly as they were written. Absent when there are none."`
 	LeftOutConnectors  *[]LeftOutConnector      `json:"left_out_connectors,omitempty" readOnly:"true" doc:"The connectors agent.yaml names that the last sync left out, because the app has no connection by the id or label they name: an agent that runs without them until the connection exists and it syncs again. Only a sync writes them. Absent when there are none."`
 	Channels           *AgentChannels           `json:"channels,omitempty"`
@@ -2554,7 +2559,22 @@ type AgentChatChannel struct {
 	// The pattern is the type part of a cid as Stream Chat checks it, [\w-]+ (GetStream/chat
 	// monolith/internal/validator/registry.go, ValidChannelCIDRe). 64 is a choice: the length
 	// Stream Chat allows a channel id.
-	Type string `json:"type" minLength:"1" maxLength:"64" pattern:"^[A-Za-z0-9_-]+$" patternDescription:"letters, digits, _ and -" example:"callouts" doc:"The channel type's name, as it comes before the colon in a channel's cid."`
+	Type   string             `json:"type" minLength:"1" maxLength:"64" pattern:"^[A-Za-z0-9_-]+$" patternDescription:"letters, digits, _ and -" example:"callouts" doc:"The channel type's name, as it comes before the colon in a channel's cid."`
+	Answer *ChatChannelAnswer `json:"answer,omitempty"`
+}
+
+// ChatChannelAnswer is which messages in a channel of a type an agent config names are answered.
+type ChatChannelAnswer string
+
+func (ChatChannelAnswer) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "ChatChannelAnswer",
+		"Which messages in a channel of the type are answered. always answers every message. mentioned "+
+			"answers only a message that mentions the agent: its mentioned_users holds the Stream user whose "+
+			"id is the config's id, or its text has @ and that user's id or the config's name, as Stream's "+
+			"clients write a mention. A message that does not mention the agent gets no reply and starts no "+
+			"model; it stays in the channel, and the next answered message reads it as what was said before. "+
+			"Omitted is always.",
+		store.ChatChannelAnswerAlways, store.ChatChannelAnswerMentioned)
 }
 
 // chatChannelsComplaint reports what is wrong with a config's chat_channels that their schema
@@ -2584,7 +2604,7 @@ func chatChannelsOf(channels *[]AgentChatChannel) []store.ChatChannel {
 	}
 	var stored []store.ChatChannel
 	for _, channel := range *channels {
-		stored = append(stored, store.ChatChannel{Type: channel.Type})
+		stored = append(stored, store.ChatChannel{Type: channel.Type, Answer: string(value(channel.Answer))})
 	}
 	return stored
 }

@@ -166,10 +166,17 @@ func (s *Server) answerClaimed(ctx context.Context, origin hookOrigin, thread st
 // config answers in (answerChatChannel). open opens the session when none runs on the channel.
 func (s *Server) answerHosted(origin hookOrigin, cid, customer string, event messageEvent,
 	open func(context.Context) (*session.Session, error)) {
-	// The author is told to the agent by their Stream user alone: the bridge names that user
-	// after the provider's id for them (channelbridge openThread), a phone number on a texting
-	// line, which no model is told. So each person goes under "Speaker N".
-	turn, cancelTurn := context.WithTimeout(agent.WithAuthor(routing.WithAttribution(context.Background(), chatHookAttribution(customer, event)), event.Message.User.ID), askTimeout)
+	// A thread's author is told to the agent by their Stream user alone: the bridge names that
+	// user after the provider's id for them (channelbridge openThread), a phone number on a
+	// texting line, which no model is told. So each person goes under "Speaker N". The people in
+	// a channel of a type an agent config answers in are the customer's own Stream users, whom a
+	// tool may need to name: each goes under their name and user id (agent.WithWriter).
+	attributed := routing.WithAttribution(context.Background(), chatHookAttribution(customer, event))
+	written := agent.WithAuthor(attributed, event.Message.User.ID)
+	if event.ChannelType != chatlog.ChannelType {
+		written = agent.WithWriter(attributed, event.Message.User.ID, conversation.AuthorName(event.Message.User.Name))
+	}
+	turn, cancelTurn := context.WithTimeout(written, askTimeout)
 	defer cancelTurn()
 
 	// A session a caller opened on the channel through the API answers there; otherwise this

@@ -28,10 +28,13 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/getsentry/sentry-go"
 	sentryhttp "github.com/getsentry/sentry-go/http"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
+	"github.com/redis/rueidis"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
@@ -234,6 +237,9 @@ type Options struct {
 	// ChatInboundKeys check that a message delivered to the Stream Chat delivery endpoint
 	// came from Stream (ROUTER_CHAT_INBOUND_KEYS). Without one that endpoint answers 404.
 	ChatInboundKeys []ed25519.PublicKey
+	// TwilioAuthToken checks that a webhook came from Twilio (TWILIO_WEBHOOK_AUTH_TOKEN).
+	// Without it no Twilio webhook is believed.
+	TwilioAuthToken string
 	// TelnyxConnectionID is the TeXML application this router's Telnyx numbers are on
 	// (TELNYX_CONNECTION_ID). A call webhook for any other is hung up.
 	TelnyxConnectionID string
@@ -340,6 +346,8 @@ type Options struct {
 
 // Server serves the router's HTTP API.
 type Server struct {
+	// mux is what Handler built, which a middleware asks for the pattern of a path.
+	mux                *chi.Mux
 	routers            map[routing.Modality]routing.Inspector
 	pricer             pricing.Pricer
 	prices             *pricing.Active
@@ -363,6 +371,8 @@ type Server struct {
 	hookSecret         string
 	telnyxPublicKey    ed25519.PublicKey
 	chatInboundKeys    []ed25519.PublicKey
+	twilioAuthToken    string
+	twilioAlertSids    rueidis.Client // nil without Redis: every copy of an alert is counted
 	telnyxConnectionID string
 	simulations        *simulation.Runner
 	knowledge          *metered.Knowledge
@@ -572,6 +582,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		hookSecret:         options.HookSecret,
 		telnyxPublicKey:    options.TelnyxPublicKey,
 		chatInboundKeys:    options.ChatInboundKeys,
+		twilioAuthToken:    options.TwilioAuthToken,
 		telnyxConnectionID: options.TelnyxConnectionID,
 		simulations:        options.Simulations,
 		knowledge:          options.Knowledge,
@@ -629,6 +640,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	server.proxyCallsPerMinute = options.ProxyCallsPerMinute
 	if options.Live != nil {
 		server.runSlots, server.runsPerApp = concurrency.New(options.Live.Redis(), nil), options.RunsPerApp
+		server.twilioAlertSids = options.Live.Redis()
 	}
 	server.imageHTTP = options.ImageHTTP
 	server.documents = options.Documents
@@ -754,6 +766,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
 	mux.HandleFunc("POST "+phone.CallHookPath+"/{app}", s.receiveCallEvent)
 	mux.HandleFunc("POST "+telnyxCallHookPath, s.receiveTelnyxCall)
+	mux.HandleFunc("POST "+telnyxEventsHookPath, s.receiveTelnyxEvent)
+	mux.HandleFunc("POST "+twilioEventsHookPath, s.receiveTwilioEvent)
 	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
 	mux.HandleFunc("POST "+chat.MessageHookPath+"/{app}", s.receiveMessageEvent)
 	mux.HandleFunc("POST "+chatInboundPath, s.receiveChatInbound)
@@ -775,6 +789,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+channels.HookPath+"{token}", s.receiveChannelMessage)
 	mux.HandleFunc("POST "+dlc.HookPath, s.receiveDLCReport)
 	s.newAPI(mux)
+	s.mux = mux
 	var handler http.Handler = mux
 	// Sentry is outermost so it sees panics from every middleware below it, not
 	// only from the route handlers.
@@ -791,7 +806,7 @@ func (s *Server) Handler() http.Handler {
 	// WaitForDelivery is false because most of what is served here is a long-
 	// lived socket; blocking the handler's return on event delivery would hold
 	// the connection open past its use. The flush in cmd/router covers shutdown.
-	served := withSentry(withRequestID(withTrace(withMetrics(mux, withTiming(withCORS(s.authMode,
+	served := withSentry(mux, withRequestID(withTrace(mux, withMetrics(mux, withTiming(withCORS(s.authMode,
 		s.onOwningNode(s.withCustomer(s.withCost(s.withRequestLog(mux, s.withQuota(s.withServerSide(handler))))))))))))
 	if s.directory == nil {
 		return served
@@ -802,11 +817,24 @@ func (s *Server) Handler() http.Handler {
 }
 
 // withSentry reports what goes wrong serving a request to Sentry.
-func withSentry(handler http.Handler) http.Handler {
+func withSentry(routes *chi.Mux, handler http.Handler) http.Handler {
 	return sentryhttp.New(sentryhttp.Options{
 		Repanic:         false,
 		WaitForDelivery: false,
-	}).Handle(handler)
+	}).Handle(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// sentryhttp has already put the raw URL on the scope and named the transaction with
+		// its path, and a token route's path is its secret.
+		if path := loggedPath(routes, r); path != r.URL.Path {
+			ctx := r.Context()
+			redacted := r.Clone(ctx)
+			redacted.URL.Path, redacted.URL.RawPath = path, ""
+			sentry.GetHubFromContext(ctx).Scope().SetRequest(redacted)
+			if transaction := sentry.TransactionFromContext(ctx); transaction != nil {
+				transaction.Name, transaction.Source = r.Method+" "+path, sentry.SourceRoute
+			}
+		}
+		handler.ServeHTTP(w, r)
+	}))
 }
 
 // withTiming reports how long the server itself spent, so a caller timing a call can tell
@@ -930,14 +958,20 @@ func (t *timedResponse) opening(body []byte) ([]byte, bool) {
 // one, and a span per session id is a trace nobody can group by. A route context is seeded
 // here so that the mux fills in the one this can read back; chi only makes its own when
 // there is none.
-func withTrace(next http.Handler) http.Handler {
+func withTrace(mux *chi.Mux, next http.Handler) http.Handler {
 	traced := otelhttp.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		routes := chi.NewRouteContext()
 		r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, routes))
+		// Deferred: a panic skips what follows next, and otelhttp ends the span as it unwinds.
+		defer func() {
+			span := trace.SpanFromContext(r.Context())
+			if pattern := routes.RoutePattern(); pattern != "" {
+				span.SetName(r.Method + " " + pattern)
+			}
+			// otelhttp records the path as sent, which for a token route is the secret.
+			span.SetAttributes(attribute.String("url.path", loggedPath(mux, r)))
+		}()
 		next.ServeHTTP(w, r)
-		if pattern := routes.RoutePattern(); pattern != "" {
-			trace.SpanFromContext(r.Context()).SetName(r.Method + " " + pattern)
-		}
 	}), "router", otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
 		return r.Method
 	}))
@@ -983,7 +1017,7 @@ func (s *Server) withRequestLog(routes *chi.Mux, next http.Handler) http.Handler
 			if recovered != http.ErrAbortHandler {
 				customer, _ := CustomerFrom(r.Context())
 				s.logger.Error("a request panicked",
-					"method", r.Method, "path", r.URL.Path, "customer", customer,
+					"method", r.Method, "path", loggedPath(routes, r), "customer", customer,
 					"request_id", RequestIDFrom(r.Context()),
 					"panic", fmt.Sprint(recovered), "stack", string(debug.Stack()))
 				if recorder.code == 0 && recorder.written == 0 && !recorder.hijacked {
@@ -1000,7 +1034,7 @@ func (s *Server) withRequestLog(routes *chi.Mux, next http.Handler) http.Handler
 		// since it is logged once it has closed.
 		fields := []any{
 			"method", r.Method,
-			"path", r.URL.Path,
+			"path", loggedPath(routes, r),
 			"status", recorder.status(),
 			"duration", time.Since(started).Round(time.Millisecond),
 			"customer", customer,
@@ -1132,7 +1166,7 @@ func (s *Server) refuseClientSide(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	s.logger.Debug("refused a client-side caller a server-side operation",
-		"method", r.Method, "path", r.URL.Path)
+		"method", r.Method, "path", loggedPath(s.mux, r))
 	writeError(w, errServerSideOnly)
 	return true
 }
@@ -1178,7 +1212,7 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 		span.End()
 		if errors.Is(err, auth.ErrLevelRefused) {
 			s.logger.Debug("refused a level of user this app turns away",
-				"method", r.Method, "path", r.URL.Path, "kind", principal.Kind)
+				"method", r.Method, "path", loggedPath(s.mux, r), "kind", principal.Kind)
 			writeError(w, forbidden("this app does not accept "+
 				"requests from this level of user"))
 			return

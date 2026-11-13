@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"slices"
 	"strconv"
@@ -53,6 +54,7 @@ func (s *ChildAgentsSuite) SetupSuite() {
 		{Provider: "gathered", Model: "gathered-model", Languages: []string{"la"}, Price: countedPrice},
 		{Provider: "parked", Model: "parked-model", Languages: []string{"la"}},
 		{Provider: "offering", Model: "offering-model", Languages: []string{"la"}},
+		{Provider: "chaining", Model: "chaining-model", Languages: []string{"la"}},
 	}
 	s.llmFactories = func(registry *llmrouter.Registry) {
 		// Calls all three tools in its first reply, then recites what came back.
@@ -74,6 +76,9 @@ func (s *ChildAgentsSuite) SetupSuite() {
 			return &offeringLLM{scriptedLLM: scriptedLLM{reply: "Checking.", then: "Judged.", calls: []llm.ToolCall{{
 				ID: store.NewID(), Name: harness.LoadSkillTool, Arguments: `{"name":"policy"}`,
 			}}}, offered: s.offer}, nil
+		})
+		registry.Register("chaining", func(routing.Spec) (llmrouter.Provider, error) {
+			return &chainingLLM{}, nil
 		})
 	}
 	s.RouterSuite.SetupSuite()
@@ -162,6 +167,38 @@ func (s *ChildAgentsSuite) TestAChildThatChangedSinceItsParentWasSavedIsAFailedT
 	s.Contains(run.FinalText, "tool: That did not work: the agent "+strconv.Quote(voiced.Name)+" behind ask_a is no text agent")
 	s.Contains(run.FinalText, "tool: That did not work: the agent "+strconv.Quote(gained.Name)+" behind ask_b calls agents of its own")
 	s.Contains(run.FinalText, "tool: That did not work: the agent "+strconv.Quote(deleted.Name)+" behind ask_c no longer exists")
+}
+
+func (s *ChildAgentsSuite) TestAChildsMaxToolRoundsDecidesHowLongItIsOfferedTools() {
+	unlimited, unset := pointerTo(-1), (*int)(nil)
+	parent := s.parentWith([]ChildAgent{
+		{Config: s.chaining(), Tool: "ask_a", MaxToolRounds: unlimited},
+		{Config: s.chaining(), Tool: "ask_b", MaxToolRounds: unset},
+		{Config: s.text("echo/echo-model"), Tool: "ask_c"},
+	})
+
+	run := s.run(CreateRunRequest{ConfigId: parent, Input: "review this"})
+
+	s.Contains(run.FinalText, fmt.Sprintf("tool: still offered tools after %d tool results", chainedRounds),
+		"a child with no limit is offered tools past the default 8 rounds")
+	s.Contains(run.FinalText, "tool: offered no tools after 8 tool results", "a child that names none keeps the default")
+}
+
+func (s *ChildAgentsSuite) TestAChildsMaxToolRoundsIsStoredAndReadBack() {
+	child := s.textNamed("echo/echo-model")
+	created := s.saveParent(http.StatusCreated, []ChildAgent{
+		{Config: child, Tool: "unlimited", MaxToolRounds: pointerTo(-1)},
+		{Config: child, Tool: "longer", MaxToolRounds: pointerTo(30)},
+		{Config: child, Tool: "default"},
+	})
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+
+	s.Equal([]ChildAgent{
+		{Config: child, Tool: "unlimited", MaxToolRounds: pointerTo(-1)},
+		{Config: child, Tool: "longer", MaxToolRounds: pointerTo(30)},
+		{Config: child, Tool: "default"},
+	}, value(read.Agents))
 }
 
 func (s *ChildAgentsSuite) TestPatchingTheAgentsReplacesTheListWhole() {
@@ -377,9 +414,28 @@ func (s *ChildAgentsSuite) parentOf(children map[string]string, timeouts map[str
 	return created.Id
 }
 
+// parentWith is the id of a text agent on fanning whose agents are agents.
+func (s *ChildAgentsSuite) parentWith(agents []ChildAgent) string {
+	var created AgentConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "lead-" + s.utils.uuid(), "mode": "text", "llm": "fanning/fanning-model", "agents": agents,
+	}, &created))
+	return created.Id
+}
+
+// chaining is the name of a text agent on chaining, with the policy skill to load.
+func (s *ChildAgentsSuite) chaining() string {
+	return s.skilled("chaining/chaining-model", nil).Name
+}
+
 // offeringConfig is the id of a text agent on offering, with the policy skill and agents.
 func (s *ChildAgentsSuite) offeringConfig(agents *[]ChildAgent) string {
-	request := map[string]any{"name": "agent-" + s.utils.uuid(), "mode": "text", "llm": "offering/offering-model",
+	return s.skilled("offering/offering-model", agents).Id
+}
+
+// skilled is a text agent on model, with the policy skill and agents.
+func (s *ChildAgentsSuite) skilled(model string, agents *[]ChildAgent) AgentConfig {
+	request := map[string]any{"name": "agent-" + s.utils.uuid(), "mode": "text", "llm": model,
 		"skills": []string{"policy"}}
 	if agents != nil {
 		request["agents"] = *agents
@@ -389,7 +445,7 @@ func (s *ChildAgentsSuite) offeringConfig(agents *[]ChildAgent) string {
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/skills", map[string]any{
 		"config_id": config.Id, "name": "policy", "description": "the labels to judge by", "instructions": "Flag spam.",
 	}, nil))
-	return config.Id
+	return config
 }
 
 func (s *ChildAgentsSuite) saveParent(status int, agents []ChildAgent) AgentConfig {
@@ -511,4 +567,34 @@ type offeringLLM struct {
 func (o *offeringLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	o.offered(params.Tools)
 	return o.scriptedLLM.Create(ctx, params)
+}
+
+// chainedRounds is how many tool results chainingLLM reads before it answers of its own accord.
+const chainedRounds = 12
+
+// chainingLLM loads the policy skill again for as long as it is offered tools, up to
+// chainedRounds tool results, and then says how many it read and whether tools were offered.
+type chainingLLM struct{ scriptedLLM }
+
+func (c *chainingLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	results := 0
+	for _, message := range params.Input {
+		if message.Role == llm.ToolResult {
+			results++
+		}
+	}
+	// The agent withdraws tools by tool choice, keeping them in the prompt for the cache.
+	offeredTools := len(params.Tools) > 0 && params.ToolChoice != "none"
+	if offeredTools && results < chainedRounds {
+		next := &scriptedLLM{calls: []llm.ToolCall{{
+			ID: store.NewID(), Name: harness.LoadSkillTool, Arguments: `{"name":"policy"}`,
+		}}}
+		return next.Create(ctx, params)
+	}
+	offered := "offered no tools"
+	if offeredTools {
+		offered = "still offered tools"
+	}
+	answer := &scriptedLLM{reply: fmt.Sprintf("%s after %d tool results", offered, results)}
+	return answer.Create(ctx, params)
 }

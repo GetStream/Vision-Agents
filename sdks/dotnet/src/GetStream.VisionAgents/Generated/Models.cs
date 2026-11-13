@@ -660,6 +660,9 @@ namespace GetStream.VisionAgents.Models
     public partial class AgentChatChannel
     {
 
+        [System.Text.Json.Serialization.JsonPropertyName("answer")]
+        public string? Answer { get; set; } = default!;
+
         /// <summary>
         /// The channel type's name, as it comes before the colon in a channel's cid.
         /// </summary>
@@ -718,7 +721,7 @@ namespace GetStream.VisionAgents.Models
         public string? EpisodeCards { get; set; } = default!;
 
         /// <summary>
-        /// The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. Absent for the default flow controller.
+        /// The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop, as the agent chose it: stream/chorus-asr, or flow-controller for the flow controller whatever the router's default. Absent when it chose none, which the router's default rules.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("floor_control")]
         public FloorControl? FloorControl { get; set; } = default!;
@@ -889,7 +892,7 @@ namespace GetStream.VisionAgents.Models
         public string? EpisodeCards { get; set; } = default!;
 
         /// <summary>
-        /// Replaces the choice whole. Left out or null, the stored choice stays; an empty object is the default flow controller again.
+        /// Replaces the choice whole. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules; {model: flow-controller} keeps the flow controller whatever that default.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("floor_control")]
         public FloorControl? FloorControl { get; set; } = default!;
@@ -1069,7 +1072,7 @@ namespace GetStream.VisionAgents.Models
         public string? EpisodeCards { get; set; } = default!;
 
         /// <summary>
-        /// The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. A session request's wins over this. Left out or null on a create, the default flow controller; left out or null on an update, the stored choice stays; an empty object is the default flow controller again.
+        /// The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. A session request's wins over this. Left out or null on a create, no choice: the router's default rules, the flow controller or stream/chorus-asr where the router defaults every agent to it; left out or null on an update, the stored choice stays; an empty object is no choice again; {model: flow-controller} keeps the flow controller whatever the router's default.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("floor_control")]
         public FloorControl? FloorControl { get; set; } = default!;
@@ -3863,6 +3866,12 @@ namespace GetStream.VisionAgents.Models
         public string? Description { get; set; } = default!;
 
         /// <summary>
+        /// The reply to a tool result, counted since the agent was handed its input, that is offered no more tools and made to answer from what it has. Zero is the default of 8; a negative number never withdraws them, for an agent that chains many lookups.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("max_tool_rounds")]
+        public long? MaxToolRounds { get; set; } = default!;
+
+        /// <summary>
         /// How long one call may take, two minutes when left out. A call never outlasts the run that made it: it gets this or what is left of the run, whichever is less. A call that runs out of time, or whose agent fails, is answered to the model as a failed tool call, and the run goes on.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("timeout_ms")]
@@ -6291,7 +6300,7 @@ namespace GetStream.VisionAgents.Models
         public string? Description { get; set; } = default!;
 
         /// <summary>
-        /// The model that controls the floor in this session, and how long a caller may wait once they stop, over the agent config's. Left out or null, the config's; an empty object is the default flow controller. The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide.
+        /// The model that controls the floor in this session, and how long a caller may wait once they stop, over the agent config's. Left out or null, the config's; an empty object is no choice, which the router's default rules; {model: flow-controller} keeps the flow controller whatever that default. A model the session was opened with, named here or the config's then, is its for its life, reopened included; no choice is stored as none, so a reopened session takes its config's choice as it is then, and the router's default after it. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("floor_control")]
         public FloorControl? FloorControl { get; set; } = default!;
@@ -7380,20 +7389,20 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
-    /// The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole.
+    /// The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default; anything else replaces the stored choice whole.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class FloorControl
     {
 
         /// <summary>
-        /// The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point.
+        /// The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point. It is stream/chorus-asr's: with flow-controller it is refused (400).
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("max_wait_ms")]
         public long? MaxWaitMs { get; set; } = default!;
 
         /// <summary>
-        /// The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one there is. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured).
+        /// The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one model there is; flow-controller keeps the flow controller, which rules the floor where no model does, whatever the router defaults an agent that chose none to. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured).
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("model")]
         public string? Model { get; set; } = default!;
@@ -7916,7 +7925,7 @@ namespace GetStream.VisionAgents.Models
         public System.DateTimeOffset CreatedAt { get; set; } = default!;
 
         /// <summary>
-        /// Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good.
+        /// Why the uploaded file could not be read, or why the passages of posted text could not all be written, written for whoever sent it. Set while a read that failed is tried again, and once it has failed for good.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("error")]
         public string? Error { get; set; } = default!;
@@ -7934,7 +7943,7 @@ namespace GetStream.VisionAgents.Models
         public int Pages { get; set; } = default!;
 
         /// <summary>
-        /// How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read.
+        /// How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read. A document that is pending or failed can also count the passages of the version before, so that deleting it removes every passage either version wrote.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("passages")]
         public int Passages { get; set; } = default!;
@@ -13064,6 +13073,24 @@ namespace GetStream.VisionAgents.Models
         public string? Agent { get; set; } = default!;
 
         /// <summary>
+        /// The agent config the session ran under, which stays the same when the agent is renamed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("config_id")]
+        public string? ConfigId { get; set; } = default!;
+
+        /// <summary>
+        /// When the session began.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("created_at")]
+        public TimeWindow? CreatedAt { get; set; } = default!;
+
+        /// <summary>
+        /// Labels the session's custom object holds, every one of them: {"origin": "test"} matches a session whose custom has origin set to the string "test".
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("custom")]
+        public System.Collections.Generic.Dictionary<string, string>? Custom { get; set; } = default!;
+
+        /// <summary>
         /// The project the session belongs to.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("project_id")]
@@ -13074,6 +13101,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("review_score")]
         public int? ReviewScore { get; set; } = default!;
+
+        /// <summary>
+        /// Whether the agent is still in the call.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("state")]
+        public string? State { get; set; } = default!;
 
         /// <summary>
         /// Full text over the title, description, project and agent name, sorted by relevance. Once per filter, at its top level or in a top-level $and, and never inside $or.
@@ -13326,6 +13359,26 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("field")]
         public string Field { get; set; } = default!;
+
+    }
+
+    /// <summary>
+    /// Whether the agent is still in the call.
+    /// <br/>
+    /// <br/>One of `live`, `ended`.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class SessionStateEquals
+    {
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
 
     }
 
@@ -14996,7 +15049,7 @@ namespace GetStream.VisionAgents.Models
         public AgentDispatch? Dispatch { get; set; } = default!;
 
         /// <summary>
-        /// agent.yaml's floor_control: the model that controls the agent's floor, and how long a caller may wait once they stop. Sent, it replaces the stored choice whole, and an empty object is the default flow controller again; left out or null, the stored one stays, and an agent that never chose has the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400), and so is a max_wait_ms shorter than every point the chorus-asr server publishes, before anything is written. When the server cannot be asked the wait is kept and a warning says so, as it does of a point that fails the server's dictation guard.
+        /// agent.yaml's floor_control: the model that controls the agent's floor, and how long a caller may wait once they stop. Sent, it replaces the stored choice whole, and an empty object is no choice again; left out or null, the stored one stays. An agent that chose none gets the router's default: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever that default. stream/chorus-asr on a router without a chorus-asr server is refused (400), and so is a max_wait_ms shorter than every point the chorus-asr server publishes, before anything is written. When the server cannot be asked the wait is kept and a warning says so, as it does of a point that fails the server's dictation guard.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("floor_control")]
         public FloorControl? FloorControl { get; set; } = default!;
@@ -15414,6 +15467,21 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("$q")]
         public string Q { get; set; } = default!;
+
+    }
+
+    /// <summary>
+    /// A window of time: $gte is its start, which it holds, and $lt its end, which it does not. Either may be left out, and $gte is before $lt.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class TimeWindow
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("$gte")]
+        public System.DateTimeOffset? Gte { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("$lt")]
+        public System.DateTimeOffset? Lt { get; set; } = default!;
 
     }
 
