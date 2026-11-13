@@ -309,6 +309,12 @@ working. What the router writes is what it renders:
   token in its fragment, in a web authentication sheet. The router updates the step once the
   provider has answered, and the call runs in the same reply. A session made without a
   `returnURL` sends the sign-in back to the dashboard, and the sheet never comes back.
+- A reply's interactive UI (`ai_ui`) reaches the session's socket first, as `ui_delta` and
+  `ui_completed`, which `Conversation` folds onto the turn as `Turn.ui` (`TurnUI`), merging an
+  `openui` patch onto the turn before's card. `LiveUI` shows it on the reply until the message's
+  own `ai_ui` is complete: `observe` the conversation, and read each message's custom data
+  through `overlay(_:)` into `AIUIDocument(customData:)`. On a call there is no channel; show
+  the newest `Turn.ui` with an `AIUIHost` of its own.
 - `ai_indicator.update` and `.clear` say what the agent is doing before the answer starts:
   `AITypingIndicatorView`. Read them from `chatClient.eventsController()`; a channel's events
   controller never sees them.
