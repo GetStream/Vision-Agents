@@ -20,8 +20,8 @@ import (
 // the router, signed with the account's key as Telnyx signs them.
 //
 // The counter is process-wide and its labels are a fixed set, so each test reads the change
-// on the series it sends to. No other suite sends Telnyx account events, and a suite's tests
-// run one at a time.
+// on the series it sends to. No other suite sends the Telnyx account events these tests count,
+// and a suite's tests run one at a time.
 type TelnyxEventsSuite struct {
 	RouterSuite
 	private ed25519.PrivateKey

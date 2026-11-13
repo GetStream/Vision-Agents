@@ -6,10 +6,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/vendorevent"
 )
 
 // telnyxURL is Telnyx's API.
@@ -21,6 +24,11 @@ const (
 	telnyxSignatureHeader = "Telnyx-Signature-Ed25519"
 	telnyxTimestampHeader = "Telnyx-Timestamp"
 )
+
+// telnyxSpendLimitReached is the event Telnyx sends down a messaging profile's webhook, which is
+// the line's hook, once the profile's spend limit is reached and it refuses every message after.
+// https://developers.telnyx.com/docs/messaging/messages/configurable-spend-limits.md
+const telnyxSpendLimitReached = "messaging-profile.spend-limit-reached"
 
 // telnyxMaxMedia is how many media URLs Telnyx takes on one message.
 const telnyxMaxMedia = 10
@@ -63,6 +71,8 @@ func (p *telnyxProvider) Verify(account Account, header http.Header, body []byte
 // telnyxDelivery is the part of a Telnyx webhook a message is read out of.
 type telnyxDelivery struct {
 	Data struct {
+		// ID is the event's own id, which an account event's log line carries.
+		ID        string `json:"id"`
 		EventType string `json:"event_type"`
 		Payload   struct {
 			ID   string `json:"id"`
@@ -82,13 +92,22 @@ type telnyxDelivery struct {
 }
 
 // Parse reads the message out of a delivery. Telnyx reports on messages this router sent
-// down the same webhook, and those are not messages to answer.
+// down the same webhook, and those are not messages to answer. A reached spend limit is no
+// message either, but it stops every text of the line, so it is counted for a monitor; Receive
+// parses only a delivery whose signature it checked, so only Telnyx's own are counted.
 func (p *telnyxProvider) Parse(body []byte) ([]Message, error) {
 	var delivered telnyxDelivery
 	if err := json.Unmarshal(body, &delivered); err != nil {
 		return nil, fmt.Errorf("channels: that is not a Telnyx delivery: %w", err)
 	}
 	if delivered.Data.EventType != "message.received" {
+		if delivered.Data.EventType == telnyxSpendLimitReached {
+			event, level := vendorevent.Telnyx(delivered.Data.EventType, "")
+			vendorevent.Count(vendorevent.VendorTelnyx, event, level)
+			// The default logger is the router's own: cmd/router/main.go sets it.
+			slog.Default().Info("received a telnyx account event", "vendor", vendorevent.VendorTelnyx,
+				"event", event, "level", string(level), "id", delivered.Data.ID)
+		}
 		return nil, nil
 	}
 	message := delivered.Data.Payload
