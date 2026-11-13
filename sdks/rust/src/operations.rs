@@ -3220,6 +3220,32 @@ impl Client {
         )
         .await
     }
+    /// Receive a Telnyx account event
+    ///
+    /// `POST /v1/phone/hooks/telnyx/events` (`receiveTelnyxEvent`).
+    pub async fn receive_telnyx_event(&self) -> Result<()> {
+        self.send(
+            Method::POST,
+            "/v1/phone/hooks/telnyx/events",
+            None::<&()>,
+            None::<&()>,
+            "receiveTelnyxEvent",
+        )
+        .await
+    }
+    /// Receive a Twilio account event
+    ///
+    /// `POST /v1/phone/hooks/twilio/events` (`receiveTwilioEvent`).
+    pub async fn receive_twilio_event(&self) -> Result<()> {
+        self.send(
+            Method::POST,
+            "/v1/phone/hooks/twilio/events",
+            None::<&()>,
+            None::<&()>,
+            "receiveTwilioEvent",
+        )
+        .await
+    }
     /// Receive who picked up a placed call
     ///
     /// `POST /v1/phone/machine/{token}` (`receiveCallMachine`).
