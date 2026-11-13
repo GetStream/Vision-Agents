@@ -68,6 +68,7 @@ func Dial(ctx context.Context, cfg Config) (*Call, error) {
 	stream.onDialog = func(id string) { reg.add(id, stream) }
 
 	call := newCall(customer, stream, log)
+	call.onChange = cfg.OnChange
 	handle(srv, reg, call)
 
 	flow := flowB
@@ -177,7 +178,12 @@ func handle(srv *sipgo.Server, reg *registry, call *Call) {
 		forward := func(ctx context.Context, offer []byte) ([]byte, error) {
 			return call.onReinvite(ctx, l.side, offer)
 		}
-		_ = tx.Respond(answerReinvite(ctx, l, req, forward))
+		res := answerReinvite(ctx, l, req, forward)
+		_ = tx.Respond(res)
+		// onReinvite told it before this leg's own SDP was stored, so tell it again.
+		if res.StatusCode == sip.StatusOK && len(req.Body()) > 0 {
+			call.changed()
+		}
 	})
 
 	// The ACK for our 2xx to a re-INVITE needs no action.

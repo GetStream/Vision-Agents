@@ -338,7 +338,7 @@ func (l *sipLeg) State() LegState {
 	if l.answer == nil {
 		return LegState{}
 	}
-	return legState(l.dlg.InviteRequest, l.answer, l.dlg.CSEQ(), l.lastSDP)
+	return legState(l.dlg.InviteRequest, l.answer, l.dlg.CSEQ(), l.lastSDP, l.transport, l.reinviteHost)
 }
 
 func (l *sipLeg) contact() *sip.ContactHeader {

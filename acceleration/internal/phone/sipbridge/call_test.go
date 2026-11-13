@@ -249,3 +249,52 @@ func TestAReinviteLogsTheAddressesBothWays(t *testing.T) {
 	require.Contains(t, logged, `"side":"customer"`)
 	require.Contains(t, logged, `"side":"stream"`)
 }
+
+func TestReleaseEndsTheCallWithoutAByeOnEitherLeg(t *testing.T) {
+	c, customer, stream := newTestCall()
+
+	c.Release()
+
+	requireEnded(t, c)
+	require.ErrorIs(t, c.Err(), ErrReleased)
+	require.Empty(t, customer.calls())
+	require.Empty(t, stream.calls())
+}
+
+func TestAByeAfterReleaseIsNotPassedOn(t *testing.T) {
+	c, _, stream := newTestCall()
+	c.Release()
+
+	c.onBye(t.Context(), customerSide)
+
+	require.Empty(t, stream.calls())
+}
+
+func TestAPassedOnReinviteTellsOnChange(t *testing.T) {
+	c, _, stream := newTestCall()
+	stream.reinviteAnswer = sdpAt("198.51.100.20")
+	changes := 0
+	c.onChange = func() { changes++ }
+
+	_, err := c.onReinvite(t.Context(), customerSide, sdpAt("203.0.113.10"))
+	require.NoError(t, err)
+	require.Equal(t, 1, changes)
+
+	stream.reinviteErr = errors.New("refused")
+	_, err = c.onReinvite(t.Context(), customerSide, sdpAt("203.0.113.11"))
+	require.Error(t, err)
+	require.Equal(t, 1, changes)
+}
+
+func TestACallStateHasBothLegsAndTheMedia(t *testing.T) {
+	c, customer, stream := newTestCall()
+	customer.state = LegState{CallID: "c"}
+	stream.state = LegState{CallID: "s"}
+	c.media = MediaAddrs{Customer: "203.0.113.10", Stream: "198.51.100.20"}
+
+	got := c.State()
+
+	require.Equal(t, "c", got.Customer.CallID)
+	require.Equal(t, "s", got.Stream.CallID)
+	require.Equal(t, MediaAddrs{Customer: "203.0.113.10", Stream: "198.51.100.20"}, got.Media)
+}

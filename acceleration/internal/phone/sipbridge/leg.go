@@ -15,6 +15,8 @@ type leg interface {
 	Info(ctx context.Context, contentType string, body []byte) error
 	// Bye ends the dialog. On a dialog that already ended it does nothing.
 	Bye(ctx context.Context) error
+	// State is a snapshot of the leg's dialog.
+	State() LegState
 }
 
 type side int
