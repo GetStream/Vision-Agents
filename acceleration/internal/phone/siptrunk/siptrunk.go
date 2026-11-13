@@ -79,9 +79,14 @@ type Provider struct {
 	resumer    Resumer
 	loops      sync.WaitGroup
 
+	// notTaken is set when Close let a recorded call go that no other node had taken.
+	notTaken atomic.Bool
+
 	mu        sync.Mutex
 	calls     map[string]*heldCall
 	stopLoops context.CancelFunc
+	// closing is Close's context once it began, so a call adopted after that is handed over too.
+	closing context.Context
 }
 
 // heldCall is a connected call this node holds.
@@ -219,30 +224,45 @@ func (p *Provider) run(id string, config sipbridge.Config, connected func(sipbri
 		// Its own goroutine, so a slow write of where the audio goes cannot hold up a hang-up.
 		p.running.Go(func() { connected(bridged.Media()) })
 	}
-	if held := p.adopt(id, bridged, ref, log); held != nil {
+	if held := p.adopt(id, bridged, ref, false, log); held != nil {
 		p.hold(id, held, changed, log, func() { report(nil) })
 	}
 }
 
 // adopt records and claims a connected call, and adds it to the calls this node holds. It
-// lets the call go and returns nil when another node holds it.
-func (p *Provider) adopt(id string, bridged call, ref *phone.TrunkCallRef, log *slog.Logger) *heldCall {
+// lets the call go and returns nil when another node holds it. takenOver is a call this node
+// already won the claim on. A call adopted while Close runs is handed over at once.
+func (p *Provider) adopt(id string, bridged call, ref *phone.TrunkCallRef, takenOver bool, log *slog.Logger) *heldCall {
 	held := &heldCall{call: bridged, ref: ref}
 	if p.redis != nil && ref != nil {
 		claimed, err := p.claim(id, held)
-		if err != nil {
-			// Unrecorded, the call cannot move, so Close hangs it up as it would without Redis.
+		switch {
+		case err != nil && takenOver:
+			// The claim won before resuming is still this node's: renewal extends it, or lets
+			// the call go if another node holds it.
+			log.Warn("could not record a call through a customer's sip trunk taken over", "error", err)
+			held.movable = true
+		case err != nil:
+			// The script may have run with only its reply lost. A record left behind would
+			// let another node resume the call while this one still relays it, so none is
+			// left, and Close hangs the call up as it would without Redis.
 			log.Warn("could not record a call through a customer's sip trunk; it ends when this node stops", "error", err)
-		} else if !claimed {
+			p.forget(id, log)
+		case !claimed:
 			log.Info("another node holds a call through a customer's sip trunk; letting it go")
 			bridged.Release()
 			return nil
+		default:
+			held.movable = true
 		}
-		held.movable = err == nil
 	}
 	p.mu.Lock()
 	p.calls[id] = held
+	closing := p.closing
 	p.mu.Unlock()
+	if closing != nil && held.movable {
+		go p.handOver(closing, id, held)
+	}
 	return held
 }
 
@@ -340,20 +360,27 @@ func statusOf(err error) phone.CallStatus {
 func (p *Provider) Close(ctx context.Context) error {
 	p.mu.Lock()
 	p.stop()
+	p.closing = ctx
 	stopLoops := p.stopLoops
+	// Under the lock adopt registers under, so each call is handed over once: here, or by
+	// adopt for a call that connects or is taken over from now on.
+	for id, held := range p.calls {
+		if held.movable {
+			go p.handOver(ctx, id, held)
+		}
+	}
 	p.mu.Unlock()
 	if stopLoops != nil {
 		stopLoops()
 	}
-	// The loops first, so no call is taken over, nor let go by a renewal, while handing over.
+	// Before running: a takeover still resuming adds its call to running.
 	if err := waitFor(ctx, &p.loops); err != nil {
 		return stack.Wrap(fmt.Errorf("phone: still taking over a call through a customer's sip trunk at shutdown: %w", err))
 	}
-	handedOver := p.handOverAll(ctx)
 	if err := waitFor(ctx, &p.running); err != nil {
 		return stack.Wrap(fmt.Errorf("phone: calls through customers' sip trunks still up at shutdown: %w", err))
 	}
-	if !handedOver {
+	if p.notTaken.Load() {
 		return stack.Wrap(fmt.Errorf("phone: no other node took a call through a customer's sip trunk before shutdown: %w", ctx.Err()))
 	}
 	return nil

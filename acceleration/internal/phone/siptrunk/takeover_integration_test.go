@@ -42,6 +42,8 @@ type fakeTakeover struct {
 	err     error
 	// lookupErr, when set, is what opening the credentials fails with.
 	lookupErr error
+	// beforeLookup, when set, runs before the credentials are opened.
+	beforeLookup func()
 	// before, when set, runs before the resume answers, and its error is the resume's.
 	before func() error
 	ended  chan phone.CallStatus
@@ -52,6 +54,9 @@ func newFakeTakeover() *fakeTakeover {
 }
 
 func (t *fakeTakeover) ResumeTrunkCall(_ context.Context, _ phone.TrunkCallRef) (phone.ResumedTrunkCall, error) {
+	if t.beforeLookup != nil {
+		t.beforeLookup()
+	}
 	if t.lookupErr != nil {
 		return phone.ResumedTrunkCall{}, t.lookupErr
 	}
@@ -101,8 +106,9 @@ type TakeoverSuite struct {
 	redis  rueidis.Client
 	prefix string
 	nodes  []*testNode
-	// holdFor is how long the claims of the nodes a test starts last.
-	holdFor time.Duration
+	// holdFor is how long the claims of the nodes a test starts last, and renewEvery how often
+	// they renew and scan.
+	holdFor, renewEvery time.Duration
 }
 
 func TestTakeoverSuite(t *testing.T) { suite.Run(t, new(TakeoverSuite)) }
@@ -128,6 +134,7 @@ func (s *TakeoverSuite) SetupTest() {
 	s.prefix = "{test:siptrunk:" + uuid.NewString() + "}"
 	s.nodes = nil
 	s.holdFor = testHoldFor
+	s.renewEvery = testRenewEvery
 }
 
 func (s *TakeoverSuite) TearDownTest() {
@@ -149,7 +156,7 @@ func (s *TakeoverSuite) node(name string) *testNode {
 	n.dialer.call.state = callState("a")
 	n.provider = newProvider(Options{
 		Logger: slog.New(slog.DiscardHandler), Redis: s.redis, Node: name,
-		holdFor: s.holdFor, renewEvery: testRenewEvery, prefix: s.prefix,
+		holdFor: s.holdFor, renewEvery: s.renewEvery, prefix: s.prefix,
 	}, n.dialer.dial, n.takeover.resume)
 	n.provider.SetResumer(n.takeover)
 	ctx, stop := context.WithCancel(context.Background())
@@ -218,6 +225,12 @@ func (s *TakeoverSuite) lapse(id string) (time.Time, bool) {
 	}
 	s.Require().NoError(err)
 	return time.UnixMilli(int64(score)), true
+}
+
+// exists reads a key without failing the test, for checks run off the test's goroutine.
+func (s *TakeoverSuite) exists(key string) bool {
+	n, err := s.redis.Do(context.Background(), s.redis.B().Exists().Key(s.prefix+":"+key).Build()).AsInt64()
+	return err == nil && n == 1
 }
 
 func (s *TakeoverSuite) gone(id string) bool {
@@ -434,9 +447,20 @@ func (s *TakeoverSuite) TestANodeThatLostItsClaimLetsTheCallGo() {
 func (s *TakeoverSuite) TestAByeDuringTheHandoffEndsTheCallOnce() {
 	a, b := s.node("a"), s.node("b")
 	id := s.dial(a)
-	// The BYE reaches a while b is taking the call over, so b's re-INVITE finds no dialog.
-	b.takeover.before = func() error {
+	// The BYE reaches a while b is taking the call over.
+	b.takeover.beforeLookup = func() {
 		a.dialer.call.bye()
+		deadline := time.Now().Add(time.Second)
+		for s.exists("call:"+id) && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	// As a peer would: a re-INVITE in a dialog still up is answered, one in an ended dialog is
+	// refused. A node that left the ended call's record behind is resuming a live call.
+	b.takeover.before = func() error {
+		if s.exists("call:" + id) {
+			return nil
+		}
 		return &sipbridge.Unanswered{Code: 481, Reason: "Call/Transaction Does Not Exist"}
 	}
 
@@ -446,6 +470,138 @@ func (s *TakeoverSuite) TestAByeDuringTheHandoffEndsTheCallOnce() {
 
 	s.Equal(phone.CallStatus{Result: phone.CallCompleted, Word: "bye", SIPCode: 200}, s.reported(a.ended))
 	s.Eventually(func() bool { return s.gone(id) }, time.Second, 10*time.Millisecond)
+	s.Never(func() bool { return len(a.ended) > 0 || live(b.provider, id) }, time.Second, 10*time.Millisecond,
+		"the call was reported again, or a node went on holding it")
+}
+
+func (s *TakeoverSuite) TestCloseOffersItsCallsWhileATakeoverIsStillResuming() {
+	// Claims far longer than the test, so a call moves only because a gave it up.
+	s.holdFor = time.Minute
+	a := s.node("a")
+	held := s.dial(a)
+	resuming := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	a.takeover.before = func() error {
+		close(resuming)
+		<-release
+		return nil
+	}
+	s.seed(uuid.NewString())
+	select {
+	case <-resuming:
+	case <-time.After(2 * time.Second):
+		s.FailNow("a never started taking the seeded call over")
+	}
+	b := s.node("b")
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	s.Error(a.provider.Close(ctx), "a takeover still running at the deadline")
+
+	s.Eventually(func() bool { return s.get("owner:"+held) == "b" }, time.Second, 10*time.Millisecond)
+	s.True(a.dialer.call.wasReleased())
+	s.False(a.dialer.call.wasHungUp())
+	s.Equal(1, b.takeover.resumes())
+}
+
+func (s *TakeoverSuite) TestACallThatConnectsAsTheNodeStopsIsHandedOver() {
+	s.holdFor = time.Minute
+	a := s.node("a")
+	s.node("b")
+	a.dialer.gate = make(chan struct{})
+	placing := outbound()
+	placing.Resume = ref()
+	placing.Ended = func(status phone.CallStatus) { a.ended <- status }
+	dialed, err := a.provider.Dial(context.Background(), placing)
+	s.Require().NoError(err)
+	<-a.dialer.dialled
+
+	closed := make(chan error, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	go func() { closed <- a.provider.Close(ctx) }()
+	p := a.provider
+	s.Eventually(func() bool { return p.ctx.Err() != nil }, time.Second, time.Millisecond)
+	close(a.dialer.gate)
+
+	select {
+	case err := <-closed:
+		s.NoError(err)
+	case <-time.After(4 * time.Second):
+		s.FailNow("Close never returned")
+	}
+	s.Equal("b", s.get("owner:"+dialed.VendorCallID))
+	s.True(a.dialer.call.wasReleased())
 	s.noReport(a.ended)
-	s.False(live(b.provider, id), "no node goes on holding a call whose side hung up")
+}
+
+func (s *TakeoverSuite) TestAGivenUpCallIsTakenOnTheNoticeBeforeAnyScan() {
+	// No claim lapses and no scan runs in the test, so only the notice can move the call.
+	s.holdFor, s.renewEvery = 2*time.Minute, time.Minute
+	a, b := s.node("a"), s.node("b")
+	id := s.dial(a)
+	s.Eventually(func() bool {
+		subscribers, err := s.redis.Do(context.Background(), s.redis.B().PubsubNumsub().Channel(s.prefix+":free").Build()).AsIntMap()
+		return err == nil && subscribers[s.prefix+":free"] > 0
+	}, time.Second, 10*time.Millisecond, "b never listened for calls given up")
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	s.Require().NoError(a.provider.Close(ctx))
+
+	s.Equal("b", s.get("owner:"+id))
+	s.Equal(1, b.takeover.resumes())
+}
+
+func (s *TakeoverSuite) TestADialledCallWhoseRecordCannotBeWrittenLeavesNothingToResume() {
+	// A set of calls that is not a set makes the claim fail after it wrote the record and owner,
+	// as a reply lost after the script ran would.
+	s.Require().NoError(s.redis.Do(context.Background(), s.redis.B().Set().Key(s.prefix+":calls").Value("not a set").Build()).Error())
+	a := s.node("a")
+	dialed, err := a.provider.Dial(context.Background(), func() phone.Outbound {
+		placing := outbound()
+		placing.Resume = ref()
+		return placing
+	}())
+	s.Require().NoError(err)
+	p := a.provider
+	s.Eventually(func() bool { return live(p, dialed.VendorCallID) }, time.Second, 10*time.Millisecond)
+
+	s.Empty(s.get("call:" + dialed.VendorCallID))
+	s.Empty(s.get("owner:" + dialed.VendorCallID))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	s.Require().NoError(a.provider.Close(ctx))
+	s.True(a.dialer.call.wasHungUp(), "a call no other node can continue is hung up")
+}
+
+func (s *TakeoverSuite) TestATakenOverCallWhoseRecordCannotBeWrittenStaysUnderItsClaim() {
+	s.holdFor = time.Minute
+	a := s.node("a")
+	id := s.dial(a)
+	b := s.node("b")
+	// Breaks the claim b writes once it resumed, after b won the call.
+	b.takeover.before = func() error {
+		return s.redis.Do(context.Background(), s.redis.B().Set().Key(s.prefix+":calls").Value("not a set").Build()).Error()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s.Require().NoError(a.provider.Close(ctx))
+	s.Eventually(func() bool { return live(b.provider, id) }, time.Second, 10*time.Millisecond)
+
+	closeB, cancelB := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancelB()
+	_ = b.provider.Close(closeB)
+
+	s.False(b.takeover.call.wasHungUp(), "the node's claim still stands, so the call is offered on, not hung up")
+	s.True(b.takeover.call.wasReleased())
+}
+
+// seed records a lapsed call no node holds.
+func (s *TakeoverSuite) seed(id string) {
+	rec, err := json.Marshal(callRecord{ID: id, Ref: *ref(), State: callState("seeded")})
+	s.Require().NoError(err)
+	s.Require().NoError(s.redis.Do(context.Background(), s.redis.B().Set().Key(s.prefix+":call:"+id).Value(string(rec)).Build()).Error())
+	s.Require().NoError(s.redis.Do(context.Background(), s.redis.B().Zadd().Key(s.prefix+":calls").ScoreMember().ScoreMember(0, id).Build()).Error())
 }

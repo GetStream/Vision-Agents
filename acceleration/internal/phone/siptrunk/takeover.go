@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"strconv"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/redis/rueidis"
@@ -117,10 +115,10 @@ return 1
 // KEYS: record, owner, calls. ARGV: node, id.
 var forgetScript = rueidis.NewLuaScript(`
 redis.call('DEL', KEYS[1])
-redis.call('ZREM', KEYS[3], ARGV[2])
 if redis.call('GET', KEYS[2]) == ARGV[1] then
   redis.call('DEL', KEYS[2])
 end
+redis.call('ZREM', KEYS[3], ARGV[2])
 return 1
 `)
 
@@ -329,7 +327,7 @@ func (p *Provider) take(id string) {
 	}
 	log.Info("continued a call through a customer's sip trunk another node held")
 	// Adopted before this returns, so a Close waiting for the scan hands the call on.
-	held := p.adopt(id, bridged, &rec.Ref, log)
+	held := p.adopt(id, bridged, &rec.Ref, true, log)
 	if held == nil {
 		return
 	}
@@ -378,54 +376,31 @@ func (p *Provider) forget(id string, log *slog.Logger) {
 	}
 }
 
-// handOverAll offers every recorded call this node holds to the other nodes, and says
-// whether each was taken or ended before ctx did.
-func (p *Provider) handOverAll(ctx context.Context) bool {
-	p.mu.Lock()
-	held := map[string]*heldCall{}
-	for id, h := range p.calls {
-		if h.movable {
-			held[id] = h
-		}
-	}
-	p.mu.Unlock()
-
-	var all atomic.Bool
-	all.Store(true)
-	var wg sync.WaitGroup
-	for id, h := range held {
-		wg.Go(func() {
-			if !p.handOver(ctx, id, h) {
-				all.Store(false)
-			}
-		})
-	}
-	wg.Wait()
-	return all.Load()
-}
-
 // handOver gives up this node's claim on a call, tells the other nodes, and lets the call go
 // once one of them holds it. Until then the call keeps relaying, so a BYE still ends it here.
-func (p *Provider) handOver(ctx context.Context, id string, held *heldCall) bool {
+// A call let go that no node took sets notTaken first, so Close sees it once the call ended.
+func (p *Provider) handOver(ctx context.Context, id string, held *heldCall) {
 	log := p.logger.With("vendor", phone.SIPTrunkVendor, "vendor_call_id", id)
 	record, err := json.Marshal(callRecord{ID: id, Ref: *held.ref, State: held.call.State()})
 	if err != nil {
 		log.Warn("could not record a call to hand it to another node", "error", err)
+		p.notTaken.Store(true)
 		held.call.Release()
-		return false
+		return
 	}
 	gaveUp, err := giveUpScript.Exec(ctx, p.redis, []string{p.keys.record(id), p.keys.owner(id), p.keys.calls()},
 		[]string{p.node, string(record), ms(recordFor), id}).AsInt64()
 	if err != nil {
 		// The claim lapses unrenewed, and the next node to scan takes the call from there.
 		log.Warn("could not offer a call through a customer's sip trunk to another node", "error", err)
+		p.notTaken.Store(true)
 		held.call.Release()
-		return false
+		return
 	}
 	if gaveUp == 0 {
 		// Another node took it already, or this node's claim lapsed and a scan will.
 		held.call.Release()
-		return true
+		return
 	}
 	if err := p.redis.Do(ctx, p.redis.B().Publish().Channel(p.keys.free()).Message(id).Build()).Error(); err != nil {
 		log.Warn("could not tell other nodes a call is free; they find it by scanning", "error", err)
@@ -436,17 +411,18 @@ func (p *Provider) handOver(ctx context.Context, id string, held *heldCall) bool
 	for {
 		select {
 		case <-held.call.Done():
-			return true
+			return
 		case <-ctx.Done():
 			log.Warn("no node took a call through a customer's sip trunk before this one stopped; leaving it for the next to scan")
+			p.notTaken.Store(true)
 			held.call.Release()
-			return false
+			return
 		case <-ticker.C:
 			owner, err := p.redis.Do(ctx, p.redis.B().Get().Key(p.keys.owner(id)).Build()).ToString()
 			if err == nil && owner != p.node {
 				log.Info("handed a call through a customer's sip trunk to another node", "node", owner)
 				held.call.Release()
-				return true
+				return
 			}
 		}
 	}

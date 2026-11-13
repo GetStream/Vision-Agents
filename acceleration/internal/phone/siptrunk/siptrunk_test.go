@@ -86,12 +86,14 @@ func (c *fakeCall) wasReleased() bool {
 
 // fakeDialer records what it was asked to dial and answers with call or err.
 type fakeDialer struct {
-	mu      sync.Mutex
-	ctx     context.Context
-	config  sipbridge.Config
-	call    *fakeCall
-	err     error
-	blocks  bool // the dial waits for ctx to end, like a phone nobody picks up
+	mu     sync.Mutex
+	ctx    context.Context
+	config sipbridge.Config
+	call   *fakeCall
+	err    error
+	blocks bool // the dial waits for ctx to end, like a phone nobody picks up
+	// gate, when set, holds the answer back until it is closed, whatever ctx does.
+	gate    chan struct{}
 	dialled chan struct{}
 	// respondsAfter, when set, is the post-dial delay the dial tells the config's Responded.
 	respondsAfter time.Duration
@@ -104,6 +106,9 @@ func (d *fakeDialer) dial(ctx context.Context, config sipbridge.Config) (call, e
 	close(d.dialled)
 	if d.respondsAfter > 0 {
 		config.Call.Responded(d.respondsAfter)
+	}
+	if d.gate != nil {
+		<-d.gate
 	}
 	if d.blocks {
 		<-ctx.Done()
