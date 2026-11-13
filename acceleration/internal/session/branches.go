@@ -237,6 +237,15 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 	if err := s.current().CheckAsked(asked); err != nil {
 		return Branched{}, stack.Wrap(err)
 	}
+	// Refused before anything is paused or hidden: once Chat hid the old turn, a command that
+	// cannot begin leaves the conversation without it and without its replacement.
+	question := text
+	if !edit {
+		question = "regenerate"
+	}
+	if err := persistent.ValidCommand(id, question, 0); err != nil {
+		return Branched{}, err
+	}
 	if err := s.checkSettled(ctx, switchID(s.id, id)); err != nil {
 		return Branched{}, err
 	}

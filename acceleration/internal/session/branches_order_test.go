@@ -83,3 +83,24 @@ func (s *BranchesSuite) TestARewindThatLandsLateIsFoundByTheNextQuestion() {
 	s.Equal(s.texts(session), history(session), "the model holds what Chat shows")
 	s.True(settledSwitch(session))
 }
+
+// An edit that cannot be asked, empty or under an id that is not one, is refused before Chat
+// hides anything: the conversation keeps the turn it would have replaced.
+func (s *BranchesSuite) TestAnEditThatCannotBeAskedIsRefusedBeforeAnythingIsHidden() {
+	session := s.opens()
+	s.asks(session, "Is it raining?")
+	second := s.asks(session, "And tomorrow?")
+	before := s.texts(session)
+
+	_, empty := session.Edit(s.ctx, uuid.NewString(), second, "", "", options.LLM{})
+	_, badID := session.Edit(s.ctx, "not an id!", second, "And on Sunday?", "", options.LLM{})
+
+	s.Require().Error(empty)
+	s.Require().Error(badID)
+	s.Equal(before, s.texts(session), "Chat still shows the turn")
+	s.Equal(before, history(session))
+	s.Nil(s.response(session, second).RewoundAt)
+	for _, request := range s.chat.Requests(s.chat.Key) {
+		s.NotContains(request.Path, "/rewind", "Chat was never asked to rewind")
+	}
+}

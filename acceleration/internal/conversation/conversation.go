@@ -1578,14 +1578,23 @@ func (c *Conversation) BeginCommandWithAction(id, text, clientID string, action 
 	return c.beginCommand(Turn{}, id, text, clientID, action, photos...)
 }
 
+// ValidCommand reports whether a command with this id and text, and photos when it has any,
+// can be begun, so a caller that must change the conversation first can refuse it before.
+func ValidCommand(id, text string, photos int) error {
+	if !validCommandID.MatchString(id) || text == "" && photos == 0 || len(text) > maxCommandText {
+		return stack.Wrap(errInvalidCommand)
+	}
+	return nil
+}
+
 func (c *Conversation) beginCommand(turn Turn, id, text, clientID string, action map[string]any, photos ...Photo) (CommandReceipt, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.active {
 		return CommandReceipt{}, stack.Wrap(errors.New("conversation is not open"))
 	}
-	if !validCommandID.MatchString(id) || text == "" && len(photos) == 0 || len(text) > maxCommandText {
-		return CommandReceipt{}, stack.Wrap(errInvalidCommand)
+	if err := ValidCommand(id, text, len(photos)); err != nil {
+		return CommandReceipt{}, err
 	}
 	if !ValidUIAction(action) {
 		return CommandReceipt{}, stack.Wrap(errors.New("invalid UI action"))
