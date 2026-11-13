@@ -16,34 +16,72 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/sipbridge"
 )
 
-// fakeCall is a connected call that ends when it is hung up.
+// fakeCall is a connected call that ends when it is hung up, let go, or the other side
+// says bye.
 type fakeCall struct {
 	media    sipbridge.MediaAddrs
 	done     chan struct{}
 	once     sync.Once
+	mu       sync.Mutex
+	state    sipbridge.CallState
+	err      error
 	hungUp   bool
-	hangupMu sync.Mutex
+	released bool
 }
 
 func newFakeCall() *fakeCall { return &fakeCall{done: make(chan struct{})} }
 
 func (c *fakeCall) Done() <-chan struct{} { return c.done }
-func (c *fakeCall) Err() error            { return nil }
+func (c *fakeCall) Err() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.err
+}
 func (c *fakeCall) Media() sipbridge.MediaAddrs {
 	return c.media
 }
 func (c *fakeCall) Hangup(context.Context) error {
-	c.hangupMu.Lock()
-	c.hungUp = true
-	c.hangupMu.Unlock()
-	c.once.Do(func() { close(c.done) })
+	c.end(nil, func() { c.hungUp = true })
 	return nil
+}
+func (c *fakeCall) Release() {
+	c.end(sipbridge.ErrReleased, func() { c.released = true })
+}
+func (c *fakeCall) State() sipbridge.CallState {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.state
+}
+
+// bye ends the call as a BYE from either side would.
+func (c *fakeCall) bye() { c.end(nil, func() {}) }
+
+func (c *fakeCall) setState(state sipbridge.CallState) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.state = state
+}
+
+func (c *fakeCall) end(err error, mark func()) {
+	c.once.Do(func() {
+		c.mu.Lock()
+		c.err = err
+		mark()
+		c.mu.Unlock()
+		close(c.done)
+	})
 }
 
 func (c *fakeCall) wasHungUp() bool {
-	c.hangupMu.Lock()
-	defer c.hangupMu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.hungUp
+}
+
+func (c *fakeCall) wasReleased() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.released
 }
 
 // fakeDialer records what it was asked to dial and answers with call or err.
@@ -87,7 +125,7 @@ func TestSIPTrunkSuite(t *testing.T) { suite.Run(t, new(SIPTrunkSuite)) }
 
 func (s *SIPTrunkSuite) SetupTest() {
 	s.dialer = &fakeDialer{call: newFakeCall(), dialled: make(chan struct{})}
-	s.provider = newProvider(Options{Logger: slog.New(slog.DiscardHandler)}, s.dialer.dial)
+	s.provider = newProvider(Options{Logger: slog.New(slog.DiscardHandler)}, s.dialer.dial, nil)
 }
 
 func (s *SIPTrunkSuite) TearDownTest() {
@@ -276,6 +314,22 @@ func (s *SIPTrunkSuite) TestCloseHangsUpEveryCall() {
 
 	s.True(s.dialer.call.wasHungUp())
 	s.False(live(p, dialed.VendorCallID))
+}
+
+func (s *SIPTrunkSuite) TestWithoutRedisCloseStillHangsUp() {
+	placing := outbound()
+	placing.Resume = &phone.TrunkCallRef{CustomerID: "acme", SIPTrunkID: "trunk-1", CallID: "call-1"}
+	dialed, err := s.provider.Dial(context.Background(), placing)
+	s.Require().NoError(err)
+	p := s.provider
+	s.Eventually(func() bool { return live(p, dialed.VendorCallID) }, time.Second, 10*time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	s.Require().NoError(s.provider.Close(ctx))
+
+	s.True(s.dialer.call.wasHungUp(), "a call another node could continue is still hung up when no node can")
+	s.False(s.dialer.call.wasReleased())
 }
 
 func (s *SIPTrunkSuite) TestCloseCancelsACallStillBeingSetUp() {

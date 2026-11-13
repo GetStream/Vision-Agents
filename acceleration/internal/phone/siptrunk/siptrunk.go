@@ -3,8 +3,12 @@
 // Every other vendor is asked over HTTP to place a call and holds it on its own network.
 // Here this process places it: it opens one SIP dialog to the customer's trunk and one to
 // the Stream trunk made for the call, and copies SDP between them, so the audio goes from
-// the carrier to Stream directly and never through here. The dialogs live on the node that
-// placed the call until it ends, which is why stopping the node hangs them all up.
+// the carrier to Stream directly and never through here.
+//
+// The dialogs live on one node at a time. With Redis, that node records each connected call
+// and holds a claim on it; when it stops it offers its calls to the other nodes, and when it
+// dies its claims lapse, and either way another node continues both dialogs from the record.
+// Without Redis, stopping the node hangs its calls up.
 package siptrunk
 
 import (
@@ -19,6 +23,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/rueidis"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/sipbridge"
@@ -36,28 +41,60 @@ type call interface {
 	Err() error
 	Hangup(ctx context.Context) error
 	Media() sipbridge.MediaAddrs
+	State() sipbridge.CallState
+	Release()
 }
 
 type dialer func(ctx context.Context, config sipbridge.Config) (call, error)
 
+type resumer func(ctx context.Context, cfg sipbridge.ResumeConfig, state sipbridge.CallState) (call, error)
+
 // Options configures a Provider.
 type Options struct {
 	Logger *slog.Logger
+	// Redis is where calls are recorded so another node can continue them. Nil keeps every
+	// call on this node, and stopping it hangs them up.
+	Redis rueidis.Client
+	// Node names this process as the owner of the calls it holds. Empty is a random name.
+	Node string
+
+	holdFor, renewEvery time.Duration
+	prefix              string
 }
 
 // Provider is the sip_trunk vendor.
 type Provider struct {
 	dial    dialer
+	resume  resumer
 	logger  *slog.Logger
 	ctx     context.Context
 	stop    context.CancelFunc
 	running sync.WaitGroup
 
-	mu    sync.Mutex
-	calls map[string]call
+	redis      rueidis.Client
+	node       string
+	keys       keys
+	holdFor    time.Duration
+	renewEvery time.Duration
+	resumer    Resumer
+	loops      sync.WaitGroup
+
+	mu        sync.Mutex
+	calls     map[string]*heldCall
+	stopLoops context.CancelFunc
 }
 
-// New returns a Provider that dials with sipbridge.
+// heldCall is a connected call this node holds.
+type heldCall struct {
+	call call
+	// ref is what the record names, nil for a call no other node can continue.
+	ref *phone.TrunkCallRef
+	// movable is whether the call is recorded and claimed, so Close offers it to another node
+	// rather than hanging it up.
+	movable bool
+}
+
+// New returns a Provider that dials and resumes with sipbridge.
 func New(options Options) *Provider {
 	return newProvider(options, func(ctx context.Context, config sipbridge.Config) (call, error) {
 		connected, err := sipbridge.Dial(ctx, config)
@@ -65,15 +102,37 @@ func New(options Options) *Provider {
 			return nil, err
 		}
 		return connected, nil
+	}, func(ctx context.Context, cfg sipbridge.ResumeConfig, state sipbridge.CallState) (call, error) {
+		resumed, err := sipbridge.Resume(ctx, cfg, state)
+		if err != nil {
+			return nil, err
+		}
+		return resumed, nil
 	})
 }
 
-func newProvider(options Options, dial dialer) *Provider {
+func newProvider(options Options, dial dialer, resume resumer) *Provider {
 	if options.Logger == nil {
 		options.Logger = slog.Default()
 	}
+	if options.Node == "" {
+		options.Node = uuid.NewString()
+	}
+	if options.holdFor == 0 {
+		options.holdFor = holdFor
+	}
+	if options.renewEvery == 0 {
+		options.renewEvery = renewEvery
+	}
+	if options.prefix == "" {
+		options.prefix = keyPrefix
+	}
 	ctx, stop := context.WithCancel(context.Background())
-	return &Provider{dial: dial, logger: options.Logger, ctx: ctx, stop: stop, calls: map[string]call{}}
+	return &Provider{
+		dial: dial, resume: resume, logger: options.Logger, ctx: ctx, stop: stop, calls: map[string]*heldCall{},
+		redis: options.Redis, node: options.Node, keys: keys(options.prefix),
+		holdFor: options.holdFor, renewEvery: options.renewEvery,
+	}
 }
 
 // StreamLeg is the number's own line, with the call id on the leg.
@@ -120,15 +179,16 @@ func (p *Provider) Dial(_ context.Context, outbound phone.Outbound) (phone.Diale
 	p.running.Add(1)
 	p.mu.Unlock()
 
-	go p.run(id, config, outbound.Connected, outbound.Ended)
+	go p.run(id, config, outbound.Connected, outbound.Ended, outbound.Resume)
 	return phone.Dialed{VendorCallID: id, Status: "queued"}, nil
 }
 
 // run holds one call from dialling to its end. It uses the node's context, never the
 // request's: the request is answered, and its context cancelled, while the phone still rings.
 // connected, when set, is told where each side's audio comes from once the call is up, and
-// ended, when set, how the call ended.
-func (p *Provider) run(id string, config sipbridge.Config, connected func(sipbridge.MediaAddrs), ended func(phone.CallStatus)) {
+// ended, when set, how the call ended. ref, when set, is what another node needs to
+// continue the call.
+func (p *Provider) run(id string, config sipbridge.Config, connected func(sipbridge.MediaAddrs), ended func(phone.CallStatus), ref *phone.TrunkCallRef) {
 	defer p.running.Done()
 	log := config.Logger
 	if ended == nil {
@@ -143,6 +203,10 @@ func (p *Provider) run(id string, config sipbridge.Config, connected func(sipbri
 		status.PostDialDelay = time.Duration(postDialDelay.Load())
 		ended(status)
 	}
+	changed := make(chan struct{}, 1)
+	if p.redis != nil && ref != nil {
+		config.OnChange = notify(changed)
+	}
 
 	bridged, err := p.dial(p.ctx, config)
 	if err != nil {
@@ -150,36 +214,98 @@ func (p *Provider) run(id string, config sipbridge.Config, connected func(sipbri
 		report(err)
 		return
 	}
-	defer report(nil)
-	p.mu.Lock()
-	p.calls[id] = bridged
-	p.mu.Unlock()
-	defer func() {
-		p.mu.Lock()
-		delete(p.calls, id)
-		p.mu.Unlock()
-	}()
 	log.Info("call through a customer's sip trunk connected")
 	if connected != nil {
 		// Its own goroutine, so a slow write of where the audio goes cannot hold up a hang-up.
 		p.running.Go(func() { connected(bridged.Media()) })
 	}
+	if held := p.adopt(id, bridged, ref, log); held != nil {
+		p.hold(id, held, changed, log, func() { report(nil) })
+	}
+}
 
-	select {
-	case <-bridged.Done():
-		if err := bridged.Err(); err != nil {
-			log.Warn("call through a customer's sip trunk ended", "error", err)
+// adopt records and claims a connected call, and adds it to the calls this node holds. It
+// lets the call go and returns nil when another node holds it.
+func (p *Provider) adopt(id string, bridged call, ref *phone.TrunkCallRef, log *slog.Logger) *heldCall {
+	held := &heldCall{call: bridged, ref: ref}
+	if p.redis != nil && ref != nil {
+		claimed, err := p.claim(id, held)
+		if err != nil {
+			// Unrecorded, the call cannot move, so Close hangs it up as it would without Redis.
+			log.Warn("could not record a call through a customer's sip trunk; it ends when this node stops", "error", err)
+		} else if !claimed {
+			log.Info("another node holds a call through a customer's sip trunk; letting it go")
+			bridged.Release()
+			return nil
+		}
+		held.movable = err == nil
+	}
+	p.mu.Lock()
+	p.calls[id] = held
+	p.mu.Unlock()
+	return held
+}
+
+// hold keeps an adopted call until it ends or this node lets it go, and reports its end.
+// changed is told when the call's dialogs changed, so its record is written again.
+func (p *Provider) hold(id string, held *heldCall, changed <-chan struct{}, log *slog.Logger, report func()) {
+	bridged := held.call
+	defer func() {
+		p.mu.Lock()
+		delete(p.calls, id)
+		p.mu.Unlock()
+	}()
+
+	// A movable call is offered to another node by Close instead.
+	var stopping <-chan struct{}
+	if !held.movable {
+		stopping = p.ctx.Done()
+	}
+	for {
+		select {
+		case <-changed:
+			if held.movable {
+				p.rewrite(id, held, log)
+			}
+		case <-bridged.Done():
+			err := bridged.Err()
+			if errors.Is(err, sipbridge.ErrReleased) {
+				log.Info("let a call through a customer's sip trunk go to another node")
+				return
+			}
+			if err != nil {
+				log.Warn("call through a customer's sip trunk ended", "error", err)
+			} else {
+				log.Info("call through a customer's sip trunk ended")
+			}
+			report()
+			if held.movable {
+				p.forget(id, log)
+			}
+			return
+		case <-stopping:
+			ctx, cancel := context.WithTimeout(context.Background(), hangupTimeout)
+			err := bridged.Hangup(ctx)
+			cancel()
+			if err != nil {
+				log.Warn("could not hang up a call through a customer's sip trunk", "error", err)
+			} else {
+				log.Info("hung up a call through a customer's sip trunk because the node is stopping")
+			}
+			report()
 			return
 		}
-		log.Info("call through a customer's sip trunk ended")
-	case <-p.ctx.Done():
-		ctx, cancel := context.WithTimeout(context.Background(), hangupTimeout)
-		defer cancel()
-		if err := bridged.Hangup(ctx); err != nil {
-			log.Warn("could not hang up a call through a customer's sip trunk", "error", err)
-			return
+	}
+}
+
+// notify is an OnChange that never blocks the bridge: one pending change stands for any
+// number, since each rewrite reads the call's whole state.
+func notify(changed chan<- struct{}) func() {
+	return func() {
+		select {
+		case changed <- struct{}{}:
+		default:
 		}
-		log.Info("hung up a call through a customer's sip trunk because the node is stopping")
 	}
 }
 
@@ -208,22 +334,42 @@ func statusOf(err error) phone.CallStatus {
 	return phone.CallStatus{Result: phone.CallFailed, Word: "error"}
 }
 
-// Close hangs up every call this node holds and waits for them, up to ctx.
+// Close stops placing and taking calls, offers each recorded call to another node and lets
+// it go once one took it, hangs up the rest, and waits for them, up to ctx. A recorded call
+// no node took by then is let go too, and its record stays for the next node to scan.
 func (p *Provider) Close(ctx context.Context) error {
 	p.mu.Lock()
 	p.stop()
+	stopLoops := p.stopLoops
 	p.mu.Unlock()
+	if stopLoops != nil {
+		stopLoops()
+	}
+	// The loops first, so no call is taken over, nor let go by a renewal, while handing over.
+	if err := waitFor(ctx, &p.loops); err != nil {
+		return stack.Wrap(fmt.Errorf("phone: still taking over a call through a customer's sip trunk at shutdown: %w", err))
+	}
+	handedOver := p.handOverAll(ctx)
+	if err := waitFor(ctx, &p.running); err != nil {
+		return stack.Wrap(fmt.Errorf("phone: calls through customers' sip trunks still up at shutdown: %w", err))
+	}
+	if !handedOver {
+		return stack.Wrap(fmt.Errorf("phone: no other node took a call through a customer's sip trunk before shutdown: %w", ctx.Err()))
+	}
+	return nil
+}
 
+func waitFor(ctx context.Context, wg *sync.WaitGroup) error {
 	finished := make(chan struct{})
 	go func() {
-		p.running.Wait()
+		wg.Wait()
 		close(finished)
 	}()
 	select {
 	case <-finished:
 		return nil
 	case <-ctx.Done():
-		return stack.Wrap(fmt.Errorf("phone: calls through customers' sip trunks still up at shutdown: %w", ctx.Err()))
+		return ctx.Err()
 	}
 }
 

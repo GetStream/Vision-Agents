@@ -1,0 +1,455 @@
+package siptrunk
+
+import (
+	"context"
+	"encoding/json"
+	"log/slog"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/redis/rueidis"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/sipbridge"
+)
+
+// holdFor is how long a node's claim on a call lasts unrenewed. A node that dies leaves its
+// calls unheld for at most this long; the audio flows between the carrier and Stream without
+// it, so only a re-INVITE or BYE in that time is lost.
+const holdFor = 30 * time.Second
+
+// renewEvery renews well inside holdFor, so a Redis that drops a write has more chances
+// before another node takes a call this one still holds.
+const renewEvery = 10 * time.Second
+
+// keyPrefix holds every key in one hash slot: the scripts touch a call's keys and the set of
+// calls together, which a Redis cluster refuses across slots.
+const keyPrefix = "{siptrunk}"
+
+// recordFor outlives the longest call, so a record a node never deleted goes by itself.
+const recordFor = phone.MaxCallLength + time.Hour
+
+// scanBatch caps the calls one scan takes, so a node that comes up after many died does not
+// spend a whole renewal taking them.
+const scanBatch = 100
+
+// handoffPoll is how often Close looks whether another node took a call it offered.
+const handoffPoll = 100 * time.Millisecond
+
+// redisTimeout bounds a write about one call.
+const redisTimeout = 5 * time.Second
+
+// Resumer opens what continuing a call another node placed needs: both sides' credentials,
+// read fresh, and how to report the call's end. *phone.Service is one.
+type Resumer interface {
+	ResumeTrunkCall(ctx context.Context, ref phone.TrunkCallRef) (phone.ResumedTrunkCall, error)
+}
+
+// callRecord is a connected call as Redis holds it, for another node to continue. It holds no
+// password: Ref says where the node taking the call over reads them.
+type callRecord struct {
+	ID    string
+	Ref   phone.TrunkCallRef
+	State sipbridge.CallState
+}
+
+// keys names the Redis keys: a call's record, its owner, the set of calls scored by when
+// each one's claim lapses, and the channel a stopping node offers its calls on.
+type keys string
+
+func (k keys) record(id string) string { return string(k) + ":call:" + id }
+func (k keys) owner(id string) string  { return string(k) + ":owner:" + id }
+func (k keys) calls() string           { return string(k) + ":calls" }
+func (k keys) free() string            { return string(k) + ":free" }
+
+// claimScript records a call and claims it for ARGV[1], unless another node holds it.
+// KEYS: record, owner, calls. ARGV: node, record, recordFor ms, holdFor ms, lapse ms, id.
+var claimScript = rueidis.NewLuaScript(`
+local owner = redis.call('GET', KEYS[2])
+if owner and owner ~= ARGV[1] then
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
+redis.call('SET', KEYS[2], ARGV[1], 'PX', ARGV[4])
+redis.call('ZADD', KEYS[3], ARGV[5], ARGV[6])
+return 1
+`)
+
+// writeScript rewrites a call's record, only for its owner: a node that gave the call up
+// must not overwrite the record of the node that took it.
+// KEYS: record, owner. ARGV: node, record, recordFor ms.
+var writeScript = rueidis.NewLuaScript(`
+if redis.call('GET', KEYS[2]) ~= ARGV[1] then
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
+return 1
+`)
+
+// renewScript extends ARGV[1]'s claim, and says 0 when it holds the claim no more.
+// KEYS: owner, calls. ARGV: node, holdFor ms, lapse ms, id.
+var renewScript = rueidis.NewLuaScript(`
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+  return 0
+end
+redis.call('PEXPIRE', KEYS[1], ARGV[2])
+redis.call('ZADD', KEYS[2], ARGV[3], ARGV[4])
+return 1
+`)
+
+// giveUpScript writes the call's record one last time and gives up ARGV[1]'s claim, marking
+// it lapsed now so the next scan takes it.
+// KEYS: record, owner, calls. ARGV: node, record, recordFor ms, id.
+var giveUpScript = rueidis.NewLuaScript(`
+if redis.call('GET', KEYS[2]) ~= ARGV[1] then
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
+redis.call('DEL', KEYS[2])
+redis.call('ZADD', KEYS[3], 0, ARGV[4])
+return 1
+`)
+
+// forgetScript deletes an ended call, and its claim only when ARGV[1] holds it: a node
+// still taking it over keeps its own.
+// KEYS: record, owner, calls. ARGV: node, id.
+var forgetScript = rueidis.NewLuaScript(`
+redis.call('DEL', KEYS[1])
+redis.call('ZREM', KEYS[3], ARGV[2])
+if redis.call('GET', KEYS[2]) == ARGV[1] then
+  redis.call('DEL', KEYS[2])
+end
+return 1
+`)
+
+// SetResumer gives the provider what opens a call's credentials to take it over. Call it
+// before Start.
+func (p *Provider) SetResumer(r Resumer) { p.resumer = r }
+
+// Start renews this node's claims and, with a Resumer, takes over the calls other nodes gave
+// up or stopped renewing, until ctx ends or Close. Without Redis it does nothing.
+func (p *Provider) Start(ctx context.Context) {
+	if p.redis == nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	p.mu.Lock()
+	p.stopLoops = cancel
+	p.mu.Unlock()
+	p.loops.Go(func() { p.renewLoop(ctx) })
+	if p.resumer == nil {
+		return
+	}
+	offered := make(chan struct{}, 1)
+	p.loops.Go(func() { p.listen(ctx, offered) })
+	p.loops.Go(func() { p.scanLoop(ctx, offered) })
+}
+
+func (p *Provider) renewLoop(ctx context.Context) {
+	ticker := time.NewTicker(p.renewEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			p.renew(ctx)
+		}
+	}
+}
+
+// renew extends the claim on every call this node holds, and lets go of each one another
+// node now holds.
+func (p *Provider) renew(ctx context.Context) {
+	p.mu.Lock()
+	held := make(map[string]*heldCall, len(p.calls))
+	for id, h := range p.calls {
+		if h.movable {
+			held[id] = h
+		}
+	}
+	p.mu.Unlock()
+
+	for id, h := range held {
+		lapse := time.Now().Add(p.holdFor).UnixMilli()
+		kept, err := renewScript.Exec(ctx, p.redis, []string{p.keys.owner(id), p.keys.calls()},
+			[]string{p.node, ms(p.holdFor), strconv.FormatInt(lapse, 10), id}).AsInt64()
+		if err != nil {
+			if ctx.Err() == nil {
+				p.logger.Warn("could not renew the claim on a call through a customer's sip trunk",
+					"vendor_call_id", id, "error", err)
+			}
+			continue
+		}
+		if kept == 0 {
+			// Another node took it, or will: two nodes relaying one call would answer each
+			// other's re-INVITEs out of order.
+			h.call.Release()
+		}
+	}
+}
+
+// listen tells offered each time another node gives up a call.
+func (p *Provider) listen(ctx context.Context, offered chan<- struct{}) {
+	for {
+		err := p.redis.Receive(ctx, p.redis.B().Subscribe().Channel(p.keys.free()).Build(), func(rueidis.PubSubMessage) {
+			select {
+			case offered <- struct{}{}:
+			default:
+			}
+		})
+		if ctx.Err() != nil {
+			return
+		}
+		p.logger.Warn("lost the channel other nodes offer their calls on; finding them by scanning only", "error", err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(p.renewEvery):
+		}
+	}
+}
+
+func (p *Provider) scanLoop(ctx context.Context, offered <-chan struct{}) {
+	ticker := time.NewTicker(p.renewEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		case <-offered:
+		}
+		p.scan(ctx)
+	}
+}
+
+// scan takes over the calls whose claims lapsed.
+func (p *Provider) scan(ctx context.Context) {
+	now := strconv.FormatInt(time.Now().UnixMilli(), 10)
+	ids, err := p.redis.Do(ctx, p.redis.B().Zrangebyscore().Key(p.keys.calls()).Min("-inf").Max(now).
+		Limit(0, scanBatch).Build()).AsStrSlice()
+	if err != nil {
+		if ctx.Err() == nil {
+			p.logger.Warn("could not look for calls through customers' sip trunks no node holds", "error", err)
+		}
+		return
+	}
+	for _, id := range ids {
+		if ctx.Err() != nil {
+			return
+		}
+		p.take(id)
+	}
+}
+
+// take continues a call no node holds, if this node wins it.
+func (p *Provider) take(id string) {
+	p.mu.Lock()
+	_, mine := p.calls[id]
+	p.mu.Unlock()
+	if mine {
+		return
+	}
+	log := p.logger.With("vendor", phone.SIPTrunkVendor, "vendor_call_id", id)
+	// Not the loop's context: stopping this node mid-resume would hang the call up. It ends
+	// before the claim won here lapses, so no other node resumes the call meanwhile.
+	ctx, cancel := context.WithTimeout(context.Background(), p.holdFor-p.renewEvery)
+	defer cancel()
+
+	err := p.redis.Do(ctx, p.redis.B().Set().Key(p.keys.owner(id)).Value(p.node).Nx().
+		PxMilliseconds(p.holdFor.Milliseconds()).Build()).Error()
+	if rueidis.IsRedisNil(err) {
+		return
+	}
+	if err != nil {
+		log.Warn("could not claim a call through a customer's sip trunk no node holds", "error", err)
+		return
+	}
+
+	raw, err := p.redis.Do(ctx, p.redis.B().Get().Key(p.keys.record(id)).Build()).ToString()
+	if rueidis.IsRedisNil(err) {
+		p.forget(id, log)
+		return
+	}
+	if err != nil {
+		log.Warn("could not read a call through a customer's sip trunk to take it over", "error", err)
+		return
+	}
+	var rec callRecord
+	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+		log.Error("dropping a call record no node can read", "error", err)
+		p.forget(id, log)
+		return
+	}
+	if rec.State.Customer.CallID == "" || rec.State.Stream.CallID == "" {
+		log.Error("dropping a call record with no dialog to continue")
+		p.forget(id, log)
+		return
+	}
+
+	resumed, err := p.resumer.ResumeTrunkCall(ctx, rec.Ref)
+	if err != nil {
+		log.Error("dropping a call through a customer's sip trunk whose credentials could not be opened", "error", err)
+		p.forget(id, log)
+		return
+	}
+	ended := resumed.Ended
+	if ended == nil {
+		ended = func(phone.CallStatus) {}
+	}
+	trunk := resumed.Trunk
+	changed := make(chan struct{}, 1)
+	cfg := sipbridge.ResumeConfig{
+		CustomerTrunk: sipbridge.CustomerTrunk{
+			Host: trunk.Host, Port: trunk.Port, Transport: trunk.Transport, Username: trunk.Username,
+			Password: trunk.Password, LateOffer: trunk.LateOffer, Codecs: trunk.Codecs,
+		},
+		Stream: sipbridge.StreamTrunk{
+			URI: resumed.Bridge.URI, Username: resumed.Bridge.Username, Password: resumed.Bridge.Password,
+		},
+		OnChange: notify(changed),
+		Logger:   log,
+	}.WithDefaults()
+	if err := cfg.Validate(); err != nil {
+		log.Error("dropping a call through a customer's sip trunk no node can continue", "error", err)
+		p.forget(id, log)
+		return
+	}
+
+	bridged, err := p.resume(ctx, cfg, rec.State)
+	if err != nil {
+		// The call was answered, and resuming it sent both sides a BYE.
+		log.Warn("could not continue a call through a customer's sip trunk another node held", "error", err)
+		ended(statusOf(nil))
+		p.forget(id, log)
+		return
+	}
+	log.Info("continued a call through a customer's sip trunk another node held")
+	// Adopted before this returns, so a Close waiting for the scan hands the call on.
+	held := p.adopt(id, bridged, &rec.Ref, log)
+	if held == nil {
+		return
+	}
+	p.running.Go(func() { p.hold(id, held, changed, log, func() { ended(statusOf(nil)) }) })
+}
+
+// claim records a call this node holds and claims it, and says false when another node holds
+// it.
+func (p *Provider) claim(id string, held *heldCall) (bool, error) {
+	record, err := json.Marshal(callRecord{ID: id, Ref: *held.ref, State: held.call.State()})
+	if err != nil {
+		return false, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), redisTimeout)
+	defer cancel()
+	lapse := time.Now().Add(p.holdFor).UnixMilli()
+	claimed, err := claimScript.Exec(ctx, p.redis, []string{p.keys.record(id), p.keys.owner(id), p.keys.calls()},
+		[]string{p.node, string(record), ms(recordFor), ms(p.holdFor), strconv.FormatInt(lapse, 10), id}).AsInt64()
+	return claimed == 1, err
+}
+
+// rewrite writes a held call's record again after its dialogs changed.
+func (p *Provider) rewrite(id string, held *heldCall, log *slog.Logger) {
+	record, err := json.Marshal(callRecord{ID: id, Ref: *held.ref, State: held.call.State()})
+	if err != nil {
+		log.Warn("could not record a call's changed dialogs", "error", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), redisTimeout)
+	defer cancel()
+	err = writeScript.Exec(ctx, p.redis, []string{p.keys.record(id), p.keys.owner(id)},
+		[]string{p.node, string(record), ms(recordFor)}).Error()
+	if err != nil {
+		log.Warn("could not record a call's changed dialogs", "error", err)
+	}
+}
+
+// forget deletes an ended call's keys.
+func (p *Provider) forget(id string, log *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), redisTimeout)
+	defer cancel()
+	err := forgetScript.Exec(ctx, p.redis, []string{p.keys.record(id), p.keys.owner(id), p.keys.calls()},
+		[]string{p.node, id}).Error()
+	if err != nil {
+		log.Warn("could not delete an ended call through a customer's sip trunk", "error", err)
+	}
+}
+
+// handOverAll offers every recorded call this node holds to the other nodes, and says
+// whether each was taken or ended before ctx did.
+func (p *Provider) handOverAll(ctx context.Context) bool {
+	p.mu.Lock()
+	held := map[string]*heldCall{}
+	for id, h := range p.calls {
+		if h.movable {
+			held[id] = h
+		}
+	}
+	p.mu.Unlock()
+
+	var all atomic.Bool
+	all.Store(true)
+	var wg sync.WaitGroup
+	for id, h := range held {
+		wg.Go(func() {
+			if !p.handOver(ctx, id, h) {
+				all.Store(false)
+			}
+		})
+	}
+	wg.Wait()
+	return all.Load()
+}
+
+// handOver gives up this node's claim on a call, tells the other nodes, and lets the call go
+// once one of them holds it. Until then the call keeps relaying, so a BYE still ends it here.
+func (p *Provider) handOver(ctx context.Context, id string, held *heldCall) bool {
+	log := p.logger.With("vendor", phone.SIPTrunkVendor, "vendor_call_id", id)
+	record, err := json.Marshal(callRecord{ID: id, Ref: *held.ref, State: held.call.State()})
+	if err != nil {
+		log.Warn("could not record a call to hand it to another node", "error", err)
+		held.call.Release()
+		return false
+	}
+	gaveUp, err := giveUpScript.Exec(ctx, p.redis, []string{p.keys.record(id), p.keys.owner(id), p.keys.calls()},
+		[]string{p.node, string(record), ms(recordFor), id}).AsInt64()
+	if err != nil {
+		// The claim lapses unrenewed, and the next node to scan takes the call from there.
+		log.Warn("could not offer a call through a customer's sip trunk to another node", "error", err)
+		held.call.Release()
+		return false
+	}
+	if gaveUp == 0 {
+		// Another node took it already, or this node's claim lapsed and a scan will.
+		held.call.Release()
+		return true
+	}
+	if err := p.redis.Do(ctx, p.redis.B().Publish().Channel(p.keys.free()).Message(id).Build()).Error(); err != nil {
+		log.Warn("could not tell other nodes a call is free; they find it by scanning", "error", err)
+	}
+
+	ticker := time.NewTicker(handoffPoll)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-held.call.Done():
+			return true
+		case <-ctx.Done():
+			log.Warn("no node took a call through a customer's sip trunk before this one stopped; leaving it for the next to scan")
+			held.call.Release()
+			return false
+		case <-ticker.C:
+			owner, err := p.redis.Do(ctx, p.redis.B().Get().Key(p.keys.owner(id)).Build()).ToString()
+			if err == nil && owner != p.node {
+				log.Info("handed a call through a customer's sip trunk to another node", "node", owner)
+				held.call.Release()
+				return true
+			}
+		}
+	}
+}
+
+func ms(d time.Duration) string { return strconv.FormatInt(d.Milliseconds(), 10) }
