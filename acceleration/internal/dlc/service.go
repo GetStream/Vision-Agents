@@ -284,8 +284,8 @@ func (s *Service) refresh(ctx context.Context, useCase store.UseCase, report []b
 	// A failed campaign leaves its numbers unable to send A2P texts, so somebody looks at it in working hours.
 	if campaign.Outcome == Failed {
 		vendorevent.Count(s.registrar.Name(), vendorevent.DLCCampaignFailed, vendorevent.LevelWarn)
-		s.logger.Warn("a vendor failed a 10DLC campaign", "vendor", s.registrar.Name(), "event", vendorevent.DLCCampaignFailed,
-			"event_level", string(vendorevent.LevelWarn), "use_case", useCase.ID, "vendor_status", campaign.Status)
+		s.logger.Warn("a vendor failed a 10DLC campaign", "vendor", s.registrar.Name(),
+			"event", vendorevent.DLCCampaignFailed, "event_level", string(vendorevent.LevelWarn), "use_case", useCase.ID, "vendor_status", campaign.Status)
 	}
 	return nil
 }
