@@ -165,6 +165,7 @@ export {
   type SessionOptions,
   type SessionVideo,
   type ToolApprovalRequest,
+  type ToolDecision,
 } from "./session.js";
 
 export {

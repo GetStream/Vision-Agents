@@ -563,21 +563,87 @@ func (s *SessionListSuite) TestNobodyPinsSomebodyElsesSessionOrOneNothingRecords
 	s.Nil(s.client.getSession(incognito.Id).Title, "a refused change changes nothing")
 }
 
+// opened is a session the backend opens, against an agent config when one is given, and
+// recorded unless it is incognito, which is listed from memory.
+func (s *SessionListSuite) opened(config *AgentConfig, incognito bool, custom map[string]any) Session {
+	request := textSession(nil)
+	request.Incognito = &incognito
+	if config != nil {
+		request.Agent = &config.Name
+	}
+	if custom != nil {
+		request.Custom = &custom
+	}
+	return s.serverClient.createSession(request)
+}
+
+func (s *SessionListSuite) listed(filter map[string]any) []string {
+	return ids(s.serverClient.querySessions(query(filter)).Items)
+}
+
+func (s *SessionListSuite) TestAConfigIdNarrowsTheList() {
+	support, sales := s.data.createAgentConfig(), s.data.createAgentConfig()
+	recorded, unrecorded := s.opened(&support, false, nil), s.opened(&support, true, nil)
+	s.opened(&sales, false, nil)
+
+	s.ElementsMatch([]string{recorded.Id, unrecorded.Id}, s.listed(map[string]any{"config_id": support.Id}))
+	s.ElementsMatch([]string{recorded.Id, unrecorded.Id},
+		s.listed(map[string]any{"config_id": map[string]any{"$eq": support.Id}}))
+}
+
+func (s *SessionListSuite) TestAStateNarrowsTheListToLiveOrEndedSessions() {
+	running, unrecorded := s.opened(nil, false, nil), s.opened(nil, true, nil)
+	stopped := s.opened(nil, false, nil)
+
+	s.serverClient.stopSession(stopped.Id)
+
+	s.Require().Eventually(func() bool {
+		return slices.Equal([]string{stopped.Id}, s.listed(map[string]any{"state": "ended"}))
+	}, settleFor, 20*time.Millisecond, "the stopped session was never listed as ended")
+	s.ElementsMatch([]string{running.Id, unrecorded.Id}, s.listed(map[string]any{"state": map[string]any{"$eq": "live"}}))
+}
+
+func (s *SessionListSuite) TestACustomLabelNarrowsTheList() {
+	support := s.data.createAgentConfig()
+	test := map[string]any{"origin": "test", "attempt": 2}
+	recorded, unrecorded := s.opened(nil, false, test), s.opened(nil, true, test)
+	production := s.opened(nil, false, map[string]any{"origin": "production"})
+	unlabelled := s.opened(&support, false, nil)
+	tests := map[string]any{"custom": map[string]any{"origin": "test"}}
+
+	s.ElementsMatch([]string{recorded.Id, unrecorded.Id}, s.listed(tests))
+	s.Equal([]string{production.Id}, s.listed(map[string]any{"custom": map[string]any{"origin": "production"}}))
+	s.Empty(s.listed(map[string]any{"custom": map[string]any{"origin": "test", "case": "a"}}), "every label has to be held")
+	s.Empty(s.listed(map[string]any{"custom": map[string]any{"attempt": "2"}}), "a number is not the string it prints as")
+	s.ElementsMatch([]string{recorded.Id, unrecorded.Id, unlabelled.Id},
+		s.listed(map[string]any{"$or": []any{tests, map[string]any{"config_id": support.Id}}}),
+		"an $or chooses between a label and another field")
+}
+
+func (s *SessionListSuite) TestACreationWindowNarrowsTheList() {
+	first, second := s.opened(nil, false, nil), s.opened(nil, true, nil)
+	s.Require().Greater(second.CreatedAt.Sub(first.CreatedAt), 2*time.Microsecond)
+	between := first.CreatedAt.Add(second.CreatedAt.Sub(first.CreatedAt) / 2).Format(time.RFC3339Nano)
+
+	s.Equal([]string{second.Id}, s.listed(map[string]any{"created_at": map[string]any{"$gte": between}}))
+	s.Equal([]string{first.Id}, s.listed(map[string]any{"created_at": map[string]any{"$lt": between}}))
+	s.Empty(s.listed(map[string]any{"created_at": map[string]any{
+		"$gte": first.CreatedAt.Add(-time.Hour).Format(time.RFC3339Nano), "$lt": first.CreatedAt.Add(-time.Minute).Format(time.RFC3339Nano),
+	}}))
+}
+
 func (s *SessionListSuite) TestAFieldThatIsNoLongerFilteredOnIsRefusedByName() {
 	removed := map[string]any{
-		"agent_id":   "abc",
-		"config_id":  "abc",
-		"modality":   "text",
-		"state":      "live",
-		"team":       "finance",
-		"created_at": map[string]any{"$gte": "2026-10-05T00:00:00Z"},
-		"custom":     map[string]any{"origin": "test"},
-		"call_id":    "abc",
+		"agent_id": "abc",
+		"modality": "text",
+		"team":     "finance",
+		"call_id":  "abc",
 	}
 	for field, condition := range removed {
 		s.refuses(s.serverClient, query(map[string]any{field: condition}),
 			`"`+field+`" cannot be filtered on`,
-			"the fields that can be filtered are project_id, review_score, text, agent and user_id, combined with $and and $or")
+			"the fields that can be filtered are project_id, review_score, text, agent, user_id, config_id, state, "+
+				"created_at and custom, combined with $and and $or")
 		s.refuses(s.client, query(map[string]any{"$or": []any{map[string]any{field: condition}}}),
 			`"`+field+`" cannot be filtered on`)
 	}

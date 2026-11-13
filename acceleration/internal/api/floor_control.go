@@ -16,13 +16,15 @@ import (
 // FloorControl is the model that controls an agent's floor, and how long a caller may wait
 // once they stop.
 type FloorControl struct {
-	Model     *string `json:"model,omitempty" pattern:"^stream/chorus-asr$" example:"stream/chorus-asr" doc:"The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one there is. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured)."`
-	MaxWaitMs *int    `json:"max_wait_ms,omitempty" minimum:"1" example:"800" doc:"The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point."`
+	Model     *string `json:"model,omitempty" pattern:"^(stream/chorus-asr|flow-controller)$" example:"stream/chorus-asr" doc:"The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one model there is; flow-controller keeps the flow controller, which rules the floor where no model does, whatever the router defaults an agent that chose none to. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured)."`
+	MaxWaitMs *int    `json:"max_wait_ms,omitempty" minimum:"1" example:"800" doc:"The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point. It is stream/chorus-asr's: with flow-controller it is refused (400)."`
 }
 
 func (*FloorControl) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "The model that controls an agent's floor, and how long a caller may wait once they stop. " +
-		"Left out or null, the stored choice stays; an empty object is the default flow controller again; " +
+		"Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules: " +
+		"the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; " +
+		"{model: flow-controller} keeps the flow controller whatever the router's default; " +
 		"anything else replaces the stored choice whole."
 	schema.AdditionalProperties = false
 	return schema
@@ -30,14 +32,15 @@ func (*FloorControl) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma
 
 // errNoChorusASR refuses stream/chorus-asr on a router with no chorus-asr server to ask.
 var errNoChorusASR = notConfigured("floor_control: stream/chorus-asr cannot control the floor on this router, which has " +
-	"no chorus-asr server (ROUTER_CHORUS_ASR_URL); leave floor_control out, or send {}, for the default flow controller")
+	"no chorus-asr server (ROUTER_CHORUS_ASR_URL); leave floor_control out, send {}, or name flow-controller: " +
+	"the flow controller rules every floor on this router")
 
 // errEndOfTurn refuses end_of_turn, which floor_control's max_wait_ms replaced.
 var errEndOfTurn = invalidRequest("end_of_turn is no longer read: send floor_control: " +
 	"{model: stream/chorus-asr, max_wait_ms: N}, where max_wait_ms is how long a caller may wait once they stop")
 
 // floorControlOr is what a caller sent in place of stored: left out keeps it, sent replaces
-// it whole, and empty is the default flow controller again.
+// it whole, and empty is no choice again, which the router's default rules.
 func floorControlOr(stored store.FloorControl, sent *FloorControl) store.FloorControl {
 	if sent == nil {
 		return stored
@@ -45,8 +48,8 @@ func floorControlOr(stored store.FloorControl, sent *FloorControl) store.FloorCo
 	return store.FloorControl{Model: value(sent.Model), MaxWaitMs: value(sent.MaxWaitMs)}
 }
 
-// renderedFloorControl renders a stored choice for the wire, and nothing for the default flow
-// controller.
+// renderedFloorControl renders a stored choice for the wire, the opt-out included, and nothing
+// for none chosen: an agent reads back what it stored.
 func renderedFloorControl(stored store.FloorControl) *FloorControl {
 	if stored.IsZero() {
 		return nil
@@ -73,9 +76,11 @@ func (s *Server) floorControlRefusal(sent *FloorControl, endOfTurn any) (APIErro
 	chosen := floorControlOr(store.FloorControl{}, sent)
 	switch {
 	case chosen.Model == "" && sent.MaxWaitMs != nil:
-		return invalidRequest("floor_control.model is required: name stream/chorus-asr, or send {} for the default flow controller"), true
-	case chosen.Model != "" && chosen.Model != store.FloorControlChorusASR:
-		return invalidRequest(fmt.Sprintf("floor_control.model is %q: stream/chorus-asr is the one there is", chosen.Model)), true
+		return invalidRequest("floor_control.model is required: name stream/chorus-asr, or flow-controller, or send {} for the router's default"), true
+	case chosen.Model != "" && chosen.Model != store.FloorControlChorusASR && chosen.Model != store.FloorControlFlowController:
+		return invalidRequest(fmt.Sprintf("floor_control.model is %q: stream/chorus-asr is the one model there is, and flow-controller keeps the flow controller", chosen.Model)), true
+	case chosen.Model == store.FloorControlFlowController && sent.MaxWaitMs != nil:
+		return invalidRequest("floor_control.max_wait_ms is stream/chorus-asr's: the flow controller has no wait to choose"), true
 	case sent.MaxWaitMs != nil && *sent.MaxWaitMs < 1:
 		return invalidRequest("floor_control.max_wait_ms is a number of milliseconds above 0"), true
 	case session.FloorModeOf(chosen).Asks() && s.audioFloor == nil:

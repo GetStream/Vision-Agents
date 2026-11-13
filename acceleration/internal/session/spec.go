@@ -288,8 +288,8 @@ type Spec struct {
 	// model: the session request's, else the agent config's. Zero is the router's default.
 	ResumeHistory store.ResumeHistory
 	// FloorControl is the model that controls the floor, and how long a caller may wait once
-	// they stop: the session request's, else the agent config's. Zero is the default flow
-	// controller.
+	// they stop: the session request's, else the agent config's. Zero is no choice, which the
+	// router's default rules (FloorControlOf).
 	FloorControl store.FloorControl
 	// Scheduling is the agent config's scheduled-task settings: whether the
 	// scheduling tools are offered, and the defaults a task takes.

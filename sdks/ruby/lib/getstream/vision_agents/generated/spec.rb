@@ -1406,6 +1406,18 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "receiveTelnyxEvent" => {
+          method: :post, path: "/v1/phone/hooks/telnyx/events",
+          path_params: [].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
+        "receiveTwilioEvent" => {
+          method: :post, path: "/v1/phone/hooks/twilio/events",
+          path_params: [].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "recordSpeech" => {
           method: :post, path: "/v1/tts/recordings",
           path_params: [].freeze, query: [].freeze,
@@ -1836,7 +1848,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "AgentChatChannel" => {
-          properties: %w[type].freeze,
+          properties: %w[answer type].freeze,
           required: %w[type].freeze, open: false
         }.freeze,
         "AgentConfig" => {
@@ -2108,7 +2120,7 @@ module GetStream
           required: %w[agent_id].freeze, open: false
         }.freeze,
         "ChildAgent" => {
-          properties: %w[config description timeout_ms tool].freeze,
+          properties: %w[config description max_tool_rounds timeout_ms tool].freeze,
           required: %w[config tool].freeze, open: false
         }.freeze,
         "ClaimGuestRequest" => {
@@ -2960,7 +2972,7 @@ module GetStream
           required: %w[name connection_id].freeze, open: false
         }.freeze,
         "SessionFilter" => {
-          properties: %w[$and $or agent project_id review_score text user_id].freeze,
+          properties: %w[$and $or agent config_id created_at custom project_id review_score state text user_id].freeze,
           required: [].freeze, open: false
         }.freeze,
         "SessionMemory" => {
@@ -3146,6 +3158,10 @@ module GetStream
         "TextMatch" => {
           properties: %w[$q].freeze,
           required: %w[$q].freeze, open: false
+        }.freeze,
+        "TimeWindow" => {
+          properties: %w[$gte $lt].freeze,
+          required: [].freeze, open: false
         }.freeze,
         "TimelineEntry" => {
           properties: %w[audio_out_ms cadence_ms decision_ms first_audible_frame_ms first_frame_queued_ms heard interrupted llm_ttft_ms model_calls model_to_first_text_ms roundtrip_ms said speech_end_to_audible_ms speech_end_to_audio_ms started_at stt_latency_ms text_to_tts_ms tts_to_audio_ms tts_ttfb_ms turn_id].freeze,

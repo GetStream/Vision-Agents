@@ -138,7 +138,7 @@ class VogentTurnDetection(
                 warmup=True,
                 device=None,
                 model_name="vogent/Vogent-Turn-80M",
-                revision="main",
+                revision="a38c3fefd388f30e6f76a2f478b8f81a6a0ce9ab",
             )
         )
         logger.info("Vogent turn detection model loaded")

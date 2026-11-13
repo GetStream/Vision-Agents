@@ -27,8 +27,9 @@ type Keeper struct {
 }
 
 // NewKeeper keeps calls in st, times what it is told without a time by now, and counts calls by
-// the vendors named.
+// the vendors named, whose series it sets to 0 (seed).
 func NewKeeper(st *store.Store, now func() time.Time, vendors []string, logger *slog.Logger) *Keeper {
+	seed(vendors)
 	return &Keeper{store: st, now: now, vendors: vendors, logger: logger}
 }
 
@@ -82,6 +83,16 @@ func (k *Keeper) Reported(ctx context.Context, token string, report Report) (Cal
 		return Call{}, asUnknown(err)
 	}
 	k.countReport(before, report, e.at)
+	return call, nil
+}
+
+// Canceled is the router hanging up the call before anyone answered. It is decided as a
+// vendor's final report is, so whichever of the two came first is kept.
+func (k *Keeper) Canceled(ctx context.Context, key Key) (Call, error) {
+	_, call, err := k.decide(ctx, where(key), event{kind: reportedEvent, reported: Canceled, at: k.now()})
+	if err != nil {
+		return Call{}, asUnknown(err)
+	}
 	return call, nil
 }
 

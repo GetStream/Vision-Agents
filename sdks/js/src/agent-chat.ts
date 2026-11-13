@@ -1,7 +1,8 @@
 import { RouterError } from "./errors.js";
 import { LiveReasoning } from "./reasoning.js";
 import type { CreateResponseOptions, ImageSource, UIAction } from "./responses.js";
-import type { Session } from "./session.js";
+import { messageField } from "./message-field.js";
+import type { Session, ToolDecision } from "./session.js";
 
 /** How many messages are read at a time, unless `pageSize` says otherwise. */
 export const AGENT_CHAT_PAGE_SIZE = 30;
@@ -320,6 +321,21 @@ export class AgentChat<M extends AgentChatMessage = AgentChatMessage> {
     session.interrupt();
   }
 
+  /**
+   * Answers a tool call the conversation shows waiting for the person, such as an approval card's
+   * Allow or Not now. The call is read from the loaded messages, so one asked before the session
+   * was opened here, after a restart or on another device, is answered too. Rejects when neither
+   * the session nor a loaded message has the call waiting, so the card can offer to try again.
+   */
+  async decide(toolCallId: string, answer: { allowed: boolean; summary?: string }): Promise<void> {
+    const session = await this.session();
+    const shown = callShown(this.state.getLatestValue().messages, toolCallId);
+    if (!shown.call && !session.approvals.some((request) => request.id === toolCallId)) {
+      throw new Error(`No loaded message shows the tool call ${toolCallId} waiting for an answer`);
+    }
+    session.decide(toolCallId, { ...answer, ...shown });
+  }
+
   /** Loads the messages before the oldest one loaded. Rejects when they couldn't load. */
   async loadOlderMessages(): Promise<void> {
     if (!this.state.getLatestValue().hasOlderMessages) {
@@ -471,6 +487,37 @@ function sameActivity(a: AgentActivity | undefined, b: AgentActivity | undefined
   return true;
 }
 
+/**
+ * A tool call as a reply shows it waiting for the person: its `ai_tool_call` step, and the
+ * request and turn the router wrote the reply for (`support_runtime`). Nothing when no loaded
+ * message shows the call waiting, such as once it was answered.
+ */
+function callShown(messages: readonly AgentChatMessage[], id: string): Pick<ToolDecision, "call"> {
+  for (const message of messages) {
+    const attachments = messageField(message, "attachments");
+    const step = (Array.isArray(attachments) ? (attachments as Partial<Record<string, unknown>>[]) : []).find(
+      (part) => part?.["type"] === "ai_tool_call" && part["id"] === id,
+    );
+    if (!step || typeof step["name"] !== "string" || step["status"] !== "awaiting_approval") {
+      continue;
+    }
+    const runtime = messageField(message, "support_runtime") as Record<string, unknown> | undefined;
+    const requestId = runtime?.["command_id"];
+    const turnId = runtime?.["turn_id"];
+    // Kept as JSON on the step, and left off one too long to show.
+    const args = step["arguments"];
+    return {
+      call: {
+        name: step["name"],
+        ...(args === undefined ? {} : { arguments: typeof args === "string" ? args : JSON.stringify(args) }),
+        ...(typeof requestId === "string" && requestId ? { requestId } : {}),
+        ...(typeof turnId === "string" && turnId ? { turnId } : {}),
+      },
+    };
+  }
+  return {};
+}
+
 function responseOptions({ images, reasoningEffort, uiAction, requestId }: AgentChatSendOptions): CreateResponseOptions {
   return {
     ...(images && images.length > 0 ? { images } : {}),
@@ -514,6 +561,7 @@ interface ChannelV10 {
   readonly messagePaginator: {
     pageSize: number;
     readonly hasMoreTail: boolean;
+    readonly lastQueryError?: Error;
     readonly state: {
       subscribeWithSelector<O extends Readonly<Record<string, unknown>>>(
         selector: (value: { items?: readonly AgentChatMessage[] | undefined; hasMoreTail: boolean }) => O,
@@ -572,8 +620,13 @@ function readerV10(channel: ChannelV10, pageSize: number, events: ReaderEvents):
       await channel.watch({ messages: { limit: pageSize } });
     },
     async loadOlder() {
-      if (channel.messagePaginator.hasMoreTail) {
-        await channel.messagePaginator.toTail();
+      const paginator = channel.messagePaginator;
+      if (!paginator.hasMoreTail) {
+        return;
+      }
+      await paginator.toTail();
+      if (paginator.lastQueryError) {
+        throw paginator.lastQueryError;
       }
     },
     async readLatest() {

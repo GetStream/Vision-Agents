@@ -350,6 +350,10 @@ agent.tools.register<{ flight_id: string }>({
   default it keeps running and the model is told it is still going.
 - `timeoutMs` is how long one call may take, in place of the session's. A call that takes
   longer fails.
+- `concurrency` caps how many calls to the tool run at once. A call over the cap waits its
+  turn, and its timeout keeps counting while it waits. Every tool's calls together are capped
+  at 16 at once, which `agent.tools.setConcurrency(n)` changes. A `Dispatch` shares an agent's
+  `tools` across every session it hosts, so the cap is the worker's.
 - `approval` is asked before each call runs. In writing the call waits in `session.approvals`
   until `session.decide(id, { allowed })` answers it; a page follows the list in
   `session.conversation`, which says when it changes, a cancel by the model included.
@@ -507,8 +511,9 @@ floor_control:
   max_wait_ms: 800      # optional; left out, the server's default point
 ```
 
-Left out or null, the stored choice stays, and an agent that never chose has the default flow
-controller; `floor_control: {}` is the default flow controller again. The router refuses
+Left out or null, the stored choice stays; `floor_control: {}` is no choice, which follows the
+router's default (the flow controller, or `stream/chorus-asr` where the router defaults every
+agent to it); `{model: flow-controller}` keeps the flow controller whatever that default. The router refuses
 `stream/chorus-asr` without a chorus-asr server, and a `max_wait_ms` shorter than every point
 the server has measured.
 

@@ -609,3 +609,320 @@ func (s *FloorSuite) TestAFloorThatRelapsesStepsAsideAgainAndWaitsLonger() {
 	s.GreaterOrEqual(s.decidedSince(aside)[0].Sub(aside), 2*first-5*time.Millisecond, "the wait goes on from the last")
 	s.rulesAgain()
 }
+
+// stalls has the server answer no check, by a clock the test moves (failoverWindow is
+// measured by it), and returns the clock's hands.
+func (s *FloorSuite) stalls() func(time.Duration) {
+	clock := time.Now()
+	var mu sync.Mutex
+	s.transcriber.now = func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return clock
+	}
+	s.server.mu.Lock()
+	s.server.failDecide = true
+	s.server.mu.Unlock()
+	return func(d time.Duration) {
+		mu.Lock()
+		defer mu.Unlock()
+		clock = clock.Add(d)
+	}
+}
+
+// noCutWaiting waits until no utterance the floor ended is waiting for its words, as none is
+// by the time a floor takes the floor back (probeFirst, against finalWait). A cut gives up by
+// a timer, which a loaded runner fires late: a final handed to one still waiting is that
+// utterance's, which retake ends, and no sleep says when the timer has fired.
+func (s *FloorSuite) noCutWaiting() {
+	s.T().Helper()
+	w := s.transcriber.words
+	s.Require().Eventually(func() bool {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		return w.cut == nil
+	}, 5*time.Second, time.Millisecond, "an utterance the floor ended still waits for its words")
+}
+
+// quietUntilFinal feeds the line's silence, a frame at a time, until the floor sends a final,
+// which only its own clock can bring with no voice (stray), or d has passed.
+func (s *FloorSuite) quietUntilFinal(d time.Duration) (stt.Transcript, bool) {
+	s.T().Helper()
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		s.say(20, false)
+		select {
+		case event := <-s.transcriber.Events():
+			if said, ok := event.(stt.Transcript); ok && said.Mode == stt.ModeFinal {
+				return said, true
+			}
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	return stt.Transcript{}, false
+}
+
+// A floor whose server stalls while the caller spells their name, the other transcriber
+// settling run after run of it with no check to rule on any, steps aside with the runs settled:
+// they go out as a turn of their own, a final with no ruling, and the words after are the
+// listener's.
+func (s *FloorSuite) TestAFloorThatStepsAsideMidUtteranceSendsTheRunsItHadSettled() {
+	handovers := testutil.ToFloat64(floorWords.WithLabelValues("handover"))
+	advance := s.stalls()
+	for i := range failoverAfter - 1 {
+		s.say(600, true)
+		s.say(220, false)
+		s.answered()
+		s.True(s.writes(int64(i+1), stt.ModeFinal, "hello"))
+		s.say(40, false)
+		s.Equal("hello", s.final().Text, "the turn ends at the transcriber's end of its run")
+		advance(failoverWindow / 2)
+	}
+	s.say(600, true)
+	s.True(s.writes(3, stt.ModeFinal, "My name is"))
+	s.say(400, true)
+	s.True(s.writes(4, stt.ModeFinal, "J O N E S."))
+	// The finals are older than the voice's last frame will be, so the pause is no end of a
+	// run the transcriber settled: the check is what ends it, and the check stalls.
+	time.Sleep(300 * time.Millisecond)
+	s.say(220, false)
+	s.answered()
+	s.Require().True(s.transcriber.stepped.Load(), "the floor stepped aside")
+	s.say(100, false)
+
+	end := s.final()
+	s.Equal("My name is J O N E S.", end.Text)
+	s.True(end.Floor)
+	s.Equal("stub", end.Provider)
+	s.Equal(handovers+1, testutil.ToFloat64(floorWords.WithLabelValues("handover")))
+	s.False(s.writes(5, stt.ModeReplacement, "zip"), "the words after are the listener's")
+	s.Empty(s.agent.rulings(), "no check ruled on them")
+}
+
+// A final the listener handed the floor as it stepped aside, the listener having read that it
+// stood before it did, is the floor's: it goes out when the floor takes the floor back, a
+// turn of its own, rather than with the utterance left open, which is over.
+func (s *FloorSuite) TestAFloorThatTakesTheFloorBackSendsAFinalWrittenAsItSteppedAside() {
+	s.stepAside()
+	s.noCutWaiting()
+	s.transcriber.words.heard(stt.Transcript{Participant: stt.Participant{ID: "p"}, Mode: stt.ModeFinal, Utterance: 9,
+		Text: "Yeah, zip is 46281.", Provider: "stub", Model: "stub-1"})
+	// The floor takes the floor back because the server answered a probe: it rules again.
+	// Left failing, the next pause's check would fail, and the utterance end on the words
+	// alone at a later frame, which this test feeds none of.
+	s.server.mu.Lock()
+	s.server.failDecide = false
+	s.server.mu.Unlock()
+	s.transcriber.retake(stt.Participant{ID: "p"})
+
+	end := s.final()
+	s.Equal("Yeah, zip is 46281.", end.Text)
+	s.True(end.Floor)
+	s.False(s.transcriber.stepped.Load())
+	s.say(1000, true)
+	s.True(s.writes(10, stt.ModeFinal, "Two tickets to Bilbao, please."), "the words are the floor's again")
+	s.say(220, false)
+	s.Equal("Two tickets to Bilbao, please.", s.final().Text, "only what was said since")
+	rulings := s.agent.rulings()
+	s.Require().NotEmpty(rulings)
+	s.True(rulings[len(rulings)-1].Ended, "a check's ruling ended it")
+}
+
+// A run whose final came after the floor gave up waiting for it, the utterance ended on its
+// words as they stood, says those words again and perhaps more: the more is the next
+// utterance's, and with no voice heard since goes out as a turn of its own; the words again
+// are nothing new.
+func (s *FloorSuite) TestWordsOfARunPastThoseTheFloorGaveUpOnAreTheNextUtterances() {
+	s.settles = false
+	s.say(1000, true)
+	s.writes(1, stt.ModeReplacement, "a table for two")
+	s.say(220, false)
+	end := s.final()
+	s.Equal("a table for two", end.Text)
+	s.Equal(int64(1), end.Utterance)
+
+	s.writes(1, stt.ModeFinal, "A table for two.")
+	_, came := s.quietUntilFinal(runLead + 300*time.Millisecond)
+	s.False(came, "the final said nothing more than the utterance ended on")
+
+	s.writes(1, stt.ModeFinal, "A table for two by the window.")
+	began := time.Now()
+	end, came = s.quietUntilFinal(3 * time.Second)
+	s.Require().True(came, "the words past those the utterance ended on never went out")
+	s.Equal("by the window.", end.Text)
+	s.Equal(int64(2), end.Utterance)
+	s.True(end.Floor)
+	s.GreaterOrEqual(time.Since(began), runLead-50*time.Millisecond, "once no voice has begun runLead after them")
+}
+
+// Words the transcriber settles with no voice heard since, the final of a turn a check ended
+// that came too late for it (the turn came back with no words), are a turn of their own once
+// no voice has begun runLead after them, rather than the next utterance's, which may never
+// come.
+func (s *FloorSuite) TestWordsSettledWithNoVoiceHeardSinceAreATurnOfTheirOwn() {
+	s.say(1000, true)
+	s.say(220, false)
+	time.Sleep(finalWait + 100*time.Millisecond)
+	s.none()
+	s.Empty(s.agent.rulings(), "the turn came back with no words, so nothing was handed over")
+
+	s.writes(1, stt.ModeFinal, "Two tickets to Bilbao, please.")
+	began := time.Now()
+	end, came := s.quietUntilFinal(3 * time.Second)
+	s.Require().True(came, "the late words never went out")
+	s.Equal("Two tickets to Bilbao, please.", end.Text)
+	s.Equal(int64(2), end.Utterance)
+	s.True(end.Floor)
+	s.GreaterOrEqual(time.Since(began), runLead-50*time.Millisecond)
+	s.Less(time.Since(began), runLead+time.Second)
+}
+
+// Every final the other transcriber writes reaches the conversation, whatever path the floor
+// takes with it: as a final of the floor's, or, once the floor has stepped aside, as the
+// listener's own (Heard false). The words are compared as a multiset: what the transcriber
+// wrote, its last final of each run, against what came out.
+func (s *FloorSuite) TestNoWordTheOtherTranscriberWritesIsLost() {
+	p := stt.Participant{ID: "p"}
+	type recorder struct {
+		wrote   map[int64]string
+		reached []string
+	}
+	// wrote hands the floor a transcript and keeps what the transcriber wrote: its final of
+	// the run, and, for one the floor did not take, that it reached the listener.
+	wrote := func(r *recorder, run int64, mode stt.Mode, text string) {
+		took := s.writes(run, mode, text)
+		if mode == stt.ModeFinal {
+			r.wrote[run] = text
+			if !took {
+				r.reached = append(r.reached, text)
+			}
+		}
+	}
+	// drain feeds silence for d and keeps the floor's finals.
+	drain := func(r *recorder, d time.Duration) {
+		for end := time.Now().Add(d); time.Now().Before(end); {
+			s.say(20, false)
+			select {
+			case event := <-s.transcriber.Events():
+				if said, ok := event.(stt.Transcript); ok && said.Mode == stt.ModeFinal {
+					r.reached = append(r.reached, said.Text)
+				}
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+	}
+	cases := []struct {
+		name string
+		run  func(r *recorder)
+	}{
+		{"a turn a check ended", func(r *recorder) {
+			s.say(1000, true)
+			wrote(r, 1, stt.ModeReplacement, "Two tickets")
+			wrote(r, 1, stt.ModeFinal, "Two tickets to Bilbao, please.")
+			s.say(220, false)
+		}},
+		{"a run the transcriber ended mid-sentence", func(r *recorder) {
+			s.say(800, true)
+			wrote(r, 1, stt.ModeFinal, "A table for two at 7:30, patio.")
+			s.say(600, true)
+			wrote(r, 2, stt.ModeReplacement, "peanut allergy")
+			s.say(220, false)
+			wrote(r, 2, stt.ModeFinal, "Peanut allergy.")
+		}},
+		{"the floor stepped aside mid-utterance", func(r *recorder) {
+			advance := s.stalls()
+			for i := range failoverAfter - 1 {
+				s.say(600, true)
+				s.say(220, false)
+				s.answered()
+				wrote(r, int64(i+1), stt.ModeFinal, "hello")
+				s.say(40, false)
+				advance(failoverWindow / 2)
+			}
+			s.say(600, true)
+			wrote(r, 3, stt.ModeFinal, "My name is")
+			s.say(400, true)
+			wrote(r, 4, stt.ModeFinal, "J O N E S.")
+			time.Sleep(300 * time.Millisecond)
+			s.say(220, false)
+			s.answered()
+			s.Require().True(s.transcriber.stepped.Load())
+			s.say(100, false)
+			wrote(r, 5, stt.ModeFinal, "Zip is 46281.")
+		}},
+		{"a final written as the floor stepped aside, and the floor back", func(r *recorder) {
+			s.transcriber.probeFirst, s.transcriber.probeCap = 20*time.Millisecond, 80*time.Millisecond
+			s.stepAside()
+			s.noCutWaiting()
+			s.transcriber.words.heard(stt.Transcript{Participant: p, Mode: stt.ModeFinal, Utterance: 9, Text: "Yeah, zip is 46281.", Provider: "stub"})
+			r.wrote[9] = "Yeah, zip is 46281."
+			s.say(100, false)
+			// Read before rulesAgain, which reads past every event but the Connected it waits for.
+			r.reached = append(r.reached, s.final().Text)
+			s.rulesAgain()
+			s.say(1000, true)
+			wrote(r, 10, stt.ModeFinal, "Two tickets to Bilbao, please.")
+			s.say(220, false)
+		}},
+		{"a final after the floor gave up waiting for it", func(r *recorder) {
+			s.settles = false
+			s.say(1000, true)
+			wrote(r, 1, stt.ModeReplacement, "a table for two")
+			s.say(220, false)
+			time.Sleep(finalWait + 100*time.Millisecond)
+			wrote(r, 1, stt.ModeFinal, "A table for two.")
+			wrote(r, 1, stt.ModeFinal, "A table for two by the window.")
+		}},
+		{"words settled with no voice heard since", func(r *recorder) {
+			s.say(1000, true)
+			s.say(220, false)
+			time.Sleep(finalWait + 100*time.Millisecond)
+			wrote(r, 1, stt.ModeFinal, "Two tickets to Bilbao, please.")
+		}},
+	}
+	for _, test := range cases {
+		s.Run(test.name, func() {
+			s.SetupTest()
+			r := &recorder{wrote: map[int64]string{}}
+			test.run(r)
+			drain(r, 2*time.Second)
+			var wrote, reached []string
+			for _, text := range r.wrote {
+				wrote = append(wrote, bareWords(text)...)
+			}
+			for _, text := range r.reached {
+				reached = append(reached, bareWords(text)...)
+			}
+			s.ElementsMatch(wrote, reached, "wrote %q, reached %q", r.wrote, r.reached)
+		})
+	}
+}
+
+// bareWords is text as its words, lower case and without punctuation.
+func bareWords(text string) []string {
+	var out []string
+	for _, field := range strings.Fields(text) {
+		if word := bareWord(field); word != "" {
+			out = append(out, word)
+		}
+	}
+	return out
+}
+
+func TestPastWords(t *testing.T) {
+	cases := []struct{ text, said, want string }{
+		{"A table for two.", "a table for two", ""},
+		{"A table for 2.", "a table for two", ""},
+		{"a table", "a table for two", ""},
+		{"A table for two by the window.", "a table for two", "by the window."},
+		{"A table for two, by the window.", "a table for two", "by the window."},
+		{"What time do you open?", "wh", "What time do you open?"},
+		{"What time do you open?", "what", "time do you open?"},
+		{"by the window", "", "by the window"},
+	}
+	for _, test := range cases {
+		if got := pastWords(test.text, test.said); got != test.want {
+			t.Errorf("pastWords(%q, %q) = %q, want %q", test.text, test.said, got, test.want)
+		}
+	}
+}

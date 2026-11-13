@@ -264,7 +264,12 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 	if settings.ChatChannels != nil {
 		named := make([]acceleration.AgentChatChannel, 0, len(*settings.ChatChannels))
 		for _, channel := range *settings.ChatChannels {
-			named = append(named, acceleration.AgentChatChannel{Type: channel.Type})
+			declared := acceleration.AgentChatChannel{Type: channel.Type}
+			if channel.Answer != "" {
+				answer := acceleration.ChatChannelAnswer(channel.Answer)
+				declared.Answer = &answer
+			}
+			named = append(named, declared)
 		}
 		body.ChatChannels = &named
 	}
@@ -299,6 +304,10 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 			if child.TimeoutMs > 0 {
 				timeout := int64(child.TimeoutMs)
 				declared.TimeoutMs = &timeout
+			}
+			if child.MaxToolRounds != 0 {
+				rounds := int64(child.MaxToolRounds)
+				declared.MaxToolRounds = &rounds
 			}
 			agents = append(agents, declared)
 		}
@@ -348,7 +357,8 @@ func declareCalls(calls *CallSettings) *acceleration.AgentCalls {
 
 // declareFloorControl is what the file says of floor_control for the wire, as written, or nil
 // when it says nothing, which leaves the stored choice. An empty mapping is sent as an empty
-// object, the default flow controller again.
+// object, no choice again, which the router's default rules; {model: flow-controller} keeps
+// the flow controller whatever that default.
 func declareFloorControl(settings *FloorControlSettings) *acceleration.FloorControl {
 	if settings == nil {
 		return nil

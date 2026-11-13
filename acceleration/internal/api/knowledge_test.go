@@ -3,6 +3,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -40,6 +41,69 @@ func (s *KnowledgeSuite) TestAPostedDocumentIsListed() {
 	listed := s.documents()
 	s.Require().Len(listed, 1)
 	s.Equal(s.source, listed[0].Source)
+	s.Equal(2, listed[0].Passages)
+	s.Equal(KnowledgeDocumentStateIndexed, listed[0].State)
+	s.Nil(listed[0].Error)
+}
+
+func (s *KnowledgeSuite) TestADocumentWhoseWriteFailedIsListedAsFailedWithAReasonThatNamesNoInternalNamespace() {
+	s.knowledge.failWrites(true)
+	s.T().Cleanup(func() { s.knowledge.failWrites(false) })
+
+	s.Require().Equal(http.StatusInternalServerError, s.attempt("# Pricing\n\nA penny."))
+
+	listed := s.documents()
+	s.Require().Len(listed, 1)
+	s.Equal(KnowledgeDocumentStateFailed, listed[0].State)
+	s.Require().NotNil(listed[0].Error)
+	s.NotContains(*listed[0].Error, s.namespace)
+	s.NotContains(*listed[0].Error, "turbopuffer")
+}
+
+func (s *KnowledgeSuite) TestADocumentThatFailedPartWayIsDeletedWithEveryPassageItWrote() {
+	s.knowledge.refuseWritesAfter(1)
+	s.T().Cleanup(func() { s.knowledge.failWrites(false) })
+	s.Require().Equal(http.StatusInternalServerError, s.attempt(sections(knowledge.WriteBatch+10)))
+	s.knowledge.failWrites(false)
+	s.Require().NotEmpty(s.storedOfSource(), "the first batch was written")
+
+	listed := s.documents()
+	s.Require().Len(listed, 1)
+	s.Equal(KnowledgeDocumentStateFailed, listed[0].State)
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete,
+		"/v1/agents/knowledge/documents/"+listed[0].Id, nil, nil))
+
+	s.Empty(s.storedOfSource())
+}
+
+func (s *KnowledgeSuite) TestADocumentThatGrewAndFailedPartWayLeavesNoPassageBehindOnceDeleted() {
+	s.post("# Pricing\n\nA penny.")
+	s.knowledge.refuseWritesAfter(1)
+	s.T().Cleanup(func() { s.knowledge.failWrites(false) })
+	s.Require().Equal(http.StatusInternalServerError, s.attempt(sections(knowledge.WriteBatch+10)))
+	s.knowledge.failWrites(false)
+
+	listed := s.documents()
+	s.Require().Len(listed, 1)
+	s.Equal(KnowledgeDocumentStateFailed, listed[0].State)
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete,
+		"/v1/agents/knowledge/documents/"+listed[0].Id, nil, nil))
+
+	s.Empty(s.storedOfSource())
+}
+
+func (s *KnowledgeSuite) TestADocumentPostedAgainAfterAFailureIsIndexed() {
+	s.knowledge.failWrites(true)
+	s.T().Cleanup(func() { s.knowledge.failWrites(false) })
+	s.Require().Equal(http.StatusInternalServerError, s.attempt("# Pricing\n\nA penny.\n\n# Support\n\nA day."))
+	s.knowledge.failWrites(false)
+
+	s.post("# Pricing\n\nA penny.\n\n# Support\n\nA day.")
+
+	listed := s.documents()
+	s.Require().Len(listed, 1)
+	s.Equal(KnowledgeDocumentStateIndexed, listed[0].State)
+	s.Nil(listed[0].Error)
 	s.Equal(2, listed[0].Passages)
 }
 
@@ -287,11 +351,25 @@ func (s *KnowledgeSuite) storedOfSource() []string {
 
 // post writes the test's one file into its knowledge base.
 func (s *KnowledgeSuite) post(text string) {
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/knowledge",
+	s.Require().Equal(http.StatusOK, s.attempt(text))
+}
+
+// attempt posts the test's one file into its knowledge base and returns the status.
+func (s *KnowledgeSuite) attempt(text string) int {
+	return s.serverClient.do(http.MethodPost, "/v1/agents/knowledge",
 		map[string]any{
 			"namespace": s.namespace,
 			"documents": []map[string]string{{"source": s.source, "text": text}},
-		}, nil))
+		}, nil)
+}
+
+// sections is a document cut into n passages, one per section.
+func sections(n int) string {
+	var text strings.Builder
+	for i := range n {
+		fmt.Fprintf(&text, "# Section %d\n\nWhat section %d says.\n\n", i, i)
+	}
+	return text.String()
 }
 
 // deleteBase deletes the test's knowledge base.
