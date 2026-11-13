@@ -2,6 +2,10 @@
 
 ## Features
 
+### List a modality's routes from the Go and JavaScript SDKs, and image generation is documented
+
+`client.Routes(ctx, acceleration.ModalityImage)` in Go and `api.router().routes("image")` in JavaScript list a modality's shortcuts, default first, with the models each resolves to: `image-fast` and `image-quality` for pictures. JavaScript callers no longer write `client.get("/v1/{modality}/routes", ...)` by hand. The router README documents `POST /v1/image/generations` (its options, routes, time, limits and billing) and lists `image-fast` and `image-quality` among the default groups (AI-3199).
+
 ### A child agent takes a budget of tool rounds
 
 `ChildAgent` (an agent config's `agents`, and agent.yaml's `agents:`) gains `max_tool_rounds`: the reply to a tool result, counted since the child was handed its input, at which it is offered no more tools and made to answer. Zero or left out is the default of 8, as before, and a negative number never withdraws them, as `max_tool_rounds` on `createSession` does. A child that chains many lookups, such as a reviewer reading through a diff, no longer has to answer after 8.

@@ -753,6 +753,8 @@ pick rather than a list of their own to keep:
 | `stt-accurate`       | Muse, Scribe v2 Realtime, Ink 2 and Nemotron, pinned to Muse                    |
 | `tts-fast`           | The low-latency tier, pinned to Cartesia Sonic 3.6                              |
 | `tts-quality`        | The top of the Artificial Analysis arena: ElevenLabs v4, Sonic 3.6, Inworld TTS-2 Flash, Breeze TTS 2 and ElevenLabs v3 Conversational |
+| `image-fast`         | The default for pictures: Qwen Image 3 on FAL. Takes a size, a shape, a seed and a negative prompt |
+| `image-quality`      | Gemini 3.1 Flash Image: follows a long prompt and writes legible text. Takes a shape only |
 
 ```yaml
 stt:
@@ -1145,6 +1147,62 @@ no keys.
 
 `router usage storage` and `router usage sandboxes` open the customers' keys with the same keyring
 as the router, so their CronJobs need its variables too.
+
+## Pictures
+
+`POST /v1/image/generations` draws pictures from a prompt and answers with them. It is server-side
+only, like every routed modality but search.
+
+```bash
+curl -s localhost:8080/v1/image/generations -H 'X-Customer-Id: acme' \
+  -d '{"prompt": "A yellow watering can beside a seedling, flat illustration, no text",
+       "options": {"target": "image-fast", "aspect_ratio": "16:9"}}'
+```
+
+```json
+{"id": "img_1b9d...", "status": "completed", "provider": "fal",
+ "model": "alibaba/qwen-image-3/text-to-image", "cost_micros": 40000,
+ "images": [{"data": "iVBORw0...", "media_type": "image/png", "width": 1344, "height": 768}]}
+```
+
+The pictures come back as base64 bytes, never a link, and nothing is kept: `id` is for logs. A
+generation that reached a provider is a 200 whether it drew or not. A failed one has `status:
+failed`, an `error_code` (`content_filtered`, `unsupported_option`, `timeout` and the rest of
+`ImageErrorCode`) and `error`, and costs nothing. A request that cannot be routed is a 400.
+
+| Option | What it does |
+| --- | --- |
+| `target` | A shortcut or `provider/model`. Defaults to `image-fast` |
+| `providers` | A priority list, which wins over `target` |
+| `n` | How many pictures, 1 to 4 |
+| `size` | `1024x1024`, on a model that takes a size. FAL draws 512 to 2048 a side |
+| `aspect_ratio` | `16:9`, on a model that takes a shape |
+| `seed`, `negative_prompt`, `output_format` | On a model that declares them |
+
+An option narrows the candidates to the models that declared it, so it is honoured or refused,
+never dropped.
+
+**Routes.** `GET /v1/image/routes` lists `image-fast` and `image-quality` (see
+[The default groups](#the-default-groups)), default first, each with the model it resolves to
+now. The Go SDK has it as `client.Routes(ctx, acceleration.ModalityImage)` and the JavaScript
+SDK as `api.router().routes("image")`. The four shared shortcuts (`en-low-latency` and the
+rest) work here too.
+
+**Time.** A request is answered when its pictures are drawn, within 240 seconds; a caller that
+hangs up cancels the job at the provider. FAL is a queue: the router submits the job and asks
+every 3 seconds whether it is done, and one router process holds at most 2 FAL jobs at once,
+so a third waits for a slot before it is submitted. Gemini is one call per picture, drawn one
+after another. Nothing records how long a job waited for a slot apart from how long FAL took:
+a request row's `latency_ms` holds both.
+
+**Limits.** At most 4 pictures a request, each at most 10 MiB and 4096 pixels a side, checked
+by decoding the picture before it is returned.
+
+**Billing.** Per picture at the model's price (see [Prices](#prices)): Qwen Image 3 is priced
+at FAL's $0.04 a picture, and Gemini at $0.0672 a picture plus its prompt and thinking tokens.
+`cost_micros` is what the request cost. The money is held before the job is submitted, so a
+spend limit that covers the caller refuses a draw it cannot pay for, and a failed draw costs
+nothing. A request is one row in `requests` counting its pictures.
 
 ## Run
 
