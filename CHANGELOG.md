@@ -2,6 +2,10 @@
 
 ## Features
 
+### A fork takes tool_timeout_ms, and the default tool timeout is documented as 30 seconds
+
+`POST /v1/agents/sessions/{id}/fork` takes `tool_timeout_ms`, as `createSession` does: how long the fork's model waits for a tool the caller or a worker runs. Left out, a fork keeps a running parent's, now also when the fork names another config, and a fork of a conversation that ended has the default. The default is documented: 30 seconds, and a tool's own `timeout_ms` replaces it for that tool, which is how a slow tool such as one that draws a picture gets longer alone. Go has `ForkOptions.ToolTimeout`; JavaScript sends `tool_timeout_ms` from `fork()` (AI-3201).
+
 ### A child agent takes a budget of tool rounds
 
 `ChildAgent` (an agent config's `agents`, and agent.yaml's `agents:`) gains `max_tool_rounds`: the reply to a tool result, counted since the child was handed its input, at which it is offered no more tools and made to answer. Zero or left out is the default of 8, as before, and a negative number never withdraws them, as `max_tool_rounds` on `createSession` does. A child that chains many lookups, such as a reviewer reading through a diff, no longer has to answer after 8.

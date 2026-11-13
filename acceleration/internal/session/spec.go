@@ -332,7 +332,8 @@ type Spec struct {
 	// functions: the session carries the request out to whoever asked for the session
 	// and waits for them to answer it.
 	Tools []harness.Tool
-	// ToolTimeoutMs bounds how long the model waits on one of them. Zero is the default.
+	// ToolTimeoutMs bounds how long the model waits on one of them. Zero is the default,
+	// defaultToolTimeout.
 	ToolTimeoutMs int
 	// MaxToolRounds is the reply to a tool result, since the caller last spoke, made to
 	// answer rather than reach for another tool. Zero is the agent's default; negative is

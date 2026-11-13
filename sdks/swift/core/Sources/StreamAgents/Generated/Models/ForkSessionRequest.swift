@@ -18,8 +18,10 @@ final class ForkSessionRequest: Sendable, Codable, JSONEncodable {
     /// Carry the parent's history only up to the end of this response, so the fork continues from that point rather than from where the parent is now. The history is read from what the parent recorded, which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with messages false.
     let responseId: String?
     let title: String?
+    /// How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds, since its row does not keep one.
+    let toolTimeoutMs: Int?
 
-    init(agent: String? = nil, configId: String? = nil, custom: [String: RawJSON]? = nil, description: String? = nil, incognito: Bool? = nil, messages: Bool? = nil, modelOverwrites: ModelOverwritesPayload? = nil, projectId: String? = nil, responseId: String? = nil, title: String? = nil) {
+    init(agent: String? = nil, configId: String? = nil, custom: [String: RawJSON]? = nil, description: String? = nil, incognito: Bool? = nil, messages: Bool? = nil, modelOverwrites: ModelOverwritesPayload? = nil, projectId: String? = nil, responseId: String? = nil, title: String? = nil, toolTimeoutMs: Int? = nil) {
         self.agent = agent
         self.configId = configId
         self.custom = custom
@@ -30,6 +32,7 @@ final class ForkSessionRequest: Sendable, Codable, JSONEncodable {
         self.projectId = projectId
         self.responseId = responseId
         self.title = title
+        self.toolTimeoutMs = toolTimeoutMs
     }
 
     init(from decoder: Decoder) throws {
@@ -44,6 +47,7 @@ final class ForkSessionRequest: Sendable, Codable, JSONEncodable {
         self.projectId = try container.decodeIfPresent(String.self, forKey: .projectId)
         self.responseId = try container.decodeIfPresent(String.self, forKey: .responseId)
         self.title = try container.decodeIfPresent(String.self, forKey: .title)
+        self.toolTimeoutMs = try container.decodeIfPresent(Int.self, forKey: .toolTimeoutMs)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -58,6 +62,7 @@ final class ForkSessionRequest: Sendable, Codable, JSONEncodable {
         try container.encodeIfPresent(projectId, forKey: .projectId)
         try container.encodeIfPresent(responseId, forKey: .responseId)
         try container.encodeIfPresent(title, forKey: .title)
+        try container.encodeIfPresent(toolTimeoutMs, forKey: .toolTimeoutMs)
     }
 
 }
@@ -73,7 +78,8 @@ extension ForkSessionRequest: Hashable {
         lhs.modelOverwrites == rhs.modelOverwrites &&
         lhs.projectId == rhs.projectId &&
         lhs.responseId == rhs.responseId &&
-        lhs.title == rhs.title
+        lhs.title == rhs.title &&
+        lhs.toolTimeoutMs == rhs.toolTimeoutMs
     }
 
     func hash(into hasher: inout Hasher) {
@@ -87,5 +93,6 @@ extension ForkSessionRequest: Hashable {
         hasher.combine(projectId)
         hasher.combine(responseId)
         hasher.combine(title)
+        hasher.combine(toolTimeoutMs)
     }
 }
