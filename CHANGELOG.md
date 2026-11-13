@@ -2,6 +2,10 @@
 
 ## Features
 
+### A call through a customer's own SIP trunk survives the router node that holds it stopping
+
+A call through a customer's own SIP trunk on a shared Stream line no longer ends when the router node that dialled it is deployed or crashes. Another node sends each side a re-INVITE in the old dialog, from its own address, and holds the call from then on; the audio never passes through a node, so the people keep talking. On a deploy the node hands its calls over before it stops. After a crash another node takes them within about 40 s, and a hang-up on either side still ends both. This needs Redis. Calls on a Stream trunk of their own, transfer legs, and deployments without Redis are hung up at shutdown as before (#2014).
+
 ### The router counts a resent Twilio alert once
 
 A Monitor alert whose `Sid` was counted in the last hour is answered 204 and adds nothing to `vendor_account_events_total`. The mark is kept in the router's Redis, so a resend to another replica is caught too. When Redis fails, or a deployment has none, the alert is counted again with a warning rather than dropped. Usage triggers are counted on every callback. (#2000)
