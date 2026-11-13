@@ -729,6 +729,7 @@ func TestSyncSendsTheImageTargetTheAgentDeclared(t *testing.T) {
 	}{
 		{"mode: text\nimage: image-fast\n", pointer("image-fast")},
 		{"mode: text\nimage: \"\"\n", pointer("")},
+		{"mode: text\nimage:\n", nil},
 		{"mode: text\nllm: openai/gpt-5.6\n", nil},
 	} {
 		root := filepath.Join(t.TempDir(), "illustrator")
