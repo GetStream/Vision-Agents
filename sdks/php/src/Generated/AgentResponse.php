@@ -20,6 +20,12 @@ final readonly class AgentResponse
         public ?\DateTimeImmutable $finishedAt = null,
         // What the person asked, which is the first item of every response.
         public ?string $said = null,
+        // Where a regenerate or an edit stands among its alternatives, on the answer to one. Absent when it is the on...
+        public ?ResponseBranch $branch = null,
+        // The response this one was answered after, absent for a session's first.
+        public ?string $parentResponseId = null,
+        // Where a regenerate or an edit rewound the conversation's channel to, on the answer to one that hid somethin...
+        public ?RewoundTo $rewoundTo = null,
     ) {
     }
 
@@ -36,6 +42,9 @@ final readonly class AgentResponse
             error: array_key_exists('error', $data) && $data['error'] !== null ? Json::string($data, 'error') : null,
             finishedAt: array_key_exists('finished_at', $data) && $data['finished_at'] !== null ? Json::date($data, 'finished_at') : null,
             said: array_key_exists('said', $data) && $data['said'] !== null ? Json::string($data, 'said') : null,
+            branch: array_key_exists('branch', $data) && $data['branch'] !== null ? ResponseBranch::fromArray(Json::object($data, 'branch')) : null,
+            parentResponseId: array_key_exists('parent_response_id', $data) && $data['parent_response_id'] !== null ? Json::string($data, 'parent_response_id') : null,
+            rewoundTo: array_key_exists('rewound_to', $data) && $data['rewound_to'] !== null ? RewoundTo::fromArray(Json::object($data, 'rewound_to')) : null,
         );
     }
 
@@ -59,6 +68,15 @@ final readonly class AgentResponse
         }
         if ($this->said !== null) {
             $out['said'] = $this->said;
+        }
+        if ($this->branch !== null) {
+            $out['branch'] = $this->branch->toArray();
+        }
+        if ($this->parentResponseId !== null) {
+            $out['parent_response_id'] = $this->parentResponseId;
+        }
+        if ($this->rewoundTo !== null) {
+            $out['rewound_to'] = $this->rewoundTo->toArray();
         }
         return $out;
     }

@@ -215,6 +215,8 @@ var usageIndexes = []struct{ name, create string }{
 	// The leg digits are pressed on (20261215120000_call_legs_vendor_call_id.sql).
 	{"call_legs_vendor_call_idx", "CREATE INDEX CONCURRENTLY IF NOT EXISTS call_legs_vendor_call_idx ON call_legs (vendor_call_id) " +
 		"WHERE vendor_call_id IS NOT NULL"},
+	// A response's alternatives, the responses sharing its parent (20261227100000_response_branches.sql).
+	{"agent_responses_parent_idx", "CREATE INDEX CONCURRENTLY IF NOT EXISTS agent_responses_parent_idx ON agent_responses (session_id, parent_response_id)"},
 }
 
 // ensureUsageIndexes builds each usage index that is missing, dropping one a failed build left

@@ -205,3 +205,41 @@ func (s *DisplaySuite) TestAHeldCallThatWasNotSentIsNotFinishedInTools() {
 		s.Equal(status, tool.Summary)
 	}
 }
+
+// A write waiting in the queue, and an update already handed to the conversation's listener,
+// keep the approval they were made with while the reply being written has its approval
+// answered, so neither is encoded while it changes.
+func (s *DisplaySuite) TestQueuedAndPublishedCopiesKeepTheirOwnApproval() {
+	c := s.open("on_call")
+	var published []Updated
+	c.Attach(func(update Updated) { published = append(published, update) })
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	reply := Message{ID: "reply", Role: "assistant", Parts: []Part{{
+		Type: partToolCall, ID: "call", Status: "awaiting_approval", Approval: &Approval{Title: "Send it?"},
+	}}}
+	c.enqueue(reply, false)
+	c.publish(reply)
+	queued := c.data.Pending[len(c.data.Pending)-1]
+
+	s.True(decided(&reply, "call", true, "", time.Now()))
+
+	s.Equal("allowed", reply.Parts[0].Approval.Decision)
+	s.Empty(queued.Message.Parts[0].Approval.Decision, "the queued write")
+	s.Require().Len(published, 1)
+	s.Empty(published[0].Message.Parts[0].Approval.Decision, "the published update")
+}
+
+// The copy a live update sends is encoded after the lock is let go: answering the approval
+// meanwhile changes only the live reply.
+func (s *DisplaySuite) TestTheLiveUpdatesCopyKeepsItsOwnApproval() {
+	reply := Message{ID: "reply", Role: "assistant", Parts: []Part{{
+		Type: partToolCall, ID: "call", Status: "awaiting_approval", Approval: &Approval{Title: "Send it?"},
+	}}}
+	sent := liveCopy(&reply)
+
+	s.True(decided(&reply, "call", true, "", time.Now()))
+
+	s.Equal("allowed", reply.Parts[0].Approval.Decision)
+	s.Empty(sent.Parts[0].Approval.Decision, "the live update")
+}

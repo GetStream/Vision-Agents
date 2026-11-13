@@ -46,6 +46,9 @@ class ForkSessionRequest:
                 which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with
                 messages false.
             title (str | Unset):
+            tool_timeout_ms (int | Unset): How long the fork's model waits for the result of a tool the caller or a worker
+                runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that
+                ended has 30 seconds, since its row does not keep one. Zero is 30 seconds, as on createSession.
     """
 
     agent: str | Unset = UNSET
@@ -58,6 +61,7 @@ class ForkSessionRequest:
     project_id: str | Unset = UNSET
     response_id: str | Unset = UNSET
     title: str | Unset = UNSET
+    tool_timeout_ms: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -85,6 +89,8 @@ class ForkSessionRequest:
 
         title = self.title
 
+        tool_timeout_ms = self.tool_timeout_ms
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -108,6 +114,8 @@ class ForkSessionRequest:
             field_dict["response_id"] = response_id
         if title is not UNSET:
             field_dict["title"] = title
+        if tool_timeout_ms is not UNSET:
+            field_dict["tool_timeout_ms"] = tool_timeout_ms
 
         return field_dict
 
@@ -147,6 +155,8 @@ class ForkSessionRequest:
 
         title = d.pop("title", UNSET)
 
+        tool_timeout_ms = d.pop("tool_timeout_ms", UNSET)
+
         fork_session_request = cls(
             agent=agent,
             config_id=config_id,
@@ -158,6 +168,7 @@ class ForkSessionRequest:
             project_id=project_id,
             response_id=response_id,
             title=title,
+            tool_timeout_ms=tool_timeout_ms,
         )
 
         fork_session_request.additional_properties = d

@@ -241,6 +241,20 @@ func reasonOf(arguments, name string) string {
 	return capRunes(strings.Join(strings.Fields(text), " "), maxApprovalReason)
 }
 
+// clonedParts copies parts with approvals of their own. DecideApproval answers an approval in
+// place on the reply being written, while a queued write or a published update of that reply
+// may still be encoding the copy elsewhere.
+func clonedParts(parts []Part) []Part {
+	cloned := append([]Part{}, parts...)
+	for i := range cloned {
+		if approval := cloned[i].Approval; approval != nil {
+			copied := *approval
+			cloned[i].Approval = &copied
+		}
+	}
+	return cloned
+}
+
 // decided records a person's answer to a call awaiting their approval. Allowed, the call
 // goes on as it would have; declined, it is cancelled with their summary. It reports
 // whether the call was waiting for an answer.

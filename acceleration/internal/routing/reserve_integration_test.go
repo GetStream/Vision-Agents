@@ -159,6 +159,29 @@ func (s *ReserveSuite) TestCallReservesBeforeTheVendorAndSettlesAfter() {
 	s.EqualValues(500_000, row.CostMicros)
 }
 
+func (s *ReserveSuite) TestAHoldLastsAsLongAsItsMeterAsks() {
+	// Work that runs past the default two minutes, such as a picture, asks for its own time;
+	// held for less, it would let concurrent work spend past a limit while it still runs.
+	// A short one shows the time is the meter's: the default would still hold here. Two seconds
+	// leaves the first spend, right after the reservation, well inside the hold on a slow
+	// runner, and its lapse well inside the five seconds the test waits for it.
+	s.credit(2_000_000)
+	meter := s.meter()
+	meter.Estimate = pricing.Quantities{pricing.InputTokens: 1_000_000}
+	meter.ReserveFor = 2 * time.Second
+	var held, lapsed error
+
+	_, err := routing.Call(s.ctx, meter, func(context.Context) (worked, error) {
+		held = s.spend()
+		s.Eventually(func() bool { lapsed = s.spend(); return lapsed == nil }, 5*time.Second, 20*time.Millisecond)
+		return worked{pricing.InputTokens: 250_000}, nil
+	})
+
+	s.Require().NoError(err)
+	s.ErrorIs(held, policy.ErrNoCredits, "held while the work starts")
+	s.NoError(lapsed, "let go once the meter's time ran out, though the work had not ended")
+}
+
 func (s *ReserveSuite) TestARefusedReservationCallsNoVendor() {
 	s.credit(0)
 	meter := s.meter()

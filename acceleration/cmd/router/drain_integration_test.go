@@ -89,11 +89,11 @@ func (s *DrainSuite) TestTheDrainWaitsForAScheduledDeliveryInFlight() {
 	s.T().Cleanup(scheduler.Close)
 
 	s.Require().Eventually(func() bool { return scheduler.Running() > 0 }, 10*time.Second, 10*time.Millisecond)
-	s.Positive(running(nil, scheduler, nil, nil, nil, nil), "the drain counts the delivery in flight")
-	s.Equal(scheduler.Running(), running(nil, scheduler, nil, nil, nil, nil))
+	s.Positive(running(nil, scheduler, nil, nil, nil, nil, nil), "the drain counts the delivery in flight")
+	s.Equal(scheduler.Running(), running(nil, scheduler, nil, nil, nil, nil, nil))
 
 	close(release)
-	s.Require().Eventually(func() bool { return running(nil, scheduler, nil, nil, nil, nil) == 0 }, 10*time.Second, 10*time.Millisecond)
+	s.Require().Eventually(func() bool { return running(nil, scheduler, nil, nil, nil, nil, nil) == 0 }, 10*time.Second, 10*time.Millisecond)
 }
 
 func (s *DrainSuite) TestTheDrainWaitsForAChatAnswerInFlight() {
@@ -117,11 +117,11 @@ func (s *DrainSuite) TestTheDrainWaitsForAChatAnswerInFlight() {
 	s.T().Cleanup(deliveries.Close)
 
 	s.Require().Eventually(func() bool { return deliveries.Running() > 0 }, 10*time.Second, 10*time.Millisecond)
-	s.Positive(running(nil, nil, nil, deliveries, nil, nil), "the drain counts the answer in flight")
-	s.Equal(deliveries.Running(), running(nil, nil, nil, deliveries, nil, nil))
+	s.Positive(running(nil, nil, nil, deliveries, nil, nil, nil), "the drain counts the answer in flight")
+	s.Equal(deliveries.Running(), running(nil, nil, nil, deliveries, nil, nil, nil))
 
 	close(release)
-	s.Require().Eventually(func() bool { return running(nil, nil, nil, deliveries, nil, nil) == 0 }, 10*time.Second, 10*time.Millisecond)
+	s.Require().Eventually(func() bool { return running(nil, nil, nil, deliveries, nil, nil, nil) == 0 }, 10*time.Second, 10*time.Millisecond)
 }
 
 // A router told to stop while it writes an inbound message takes no other message, of the
@@ -385,10 +385,10 @@ func (s *DrainSuite) TestTheDrainWaitsForACampaignCallInFlight() {
 	s.T().Cleanup(dialer.Close)
 
 	s.Require().Eventually(func() bool { return dialer.Running() > 0 }, 10*time.Second, 10*time.Millisecond)
-	s.Equal(1, running(nil, nil, nil, nil, nil, dialer), "the drain counts the call in flight")
+	s.Equal(1, running(nil, nil, nil, nil, nil, dialer, nil), "the drain counts the call in flight")
 
 	close(release)
-	s.Require().Eventually(func() bool { return running(nil, nil, nil, nil, nil, dialer) == 0 }, 10*time.Second, 10*time.Millisecond)
+	s.Require().Eventually(func() bool { return running(nil, nil, nil, nil, nil, dialer, nil) == 0 }, 10*time.Second, 10*time.Millisecond)
 }
 
 // heldDial is a dial that lasts until release closes, as a campaign call lasts until its

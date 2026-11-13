@@ -84,7 +84,8 @@ type Config struct {
 	// withdraws them.
 	MaxToolRounds int
 	// ToolTimeout is how long the model waits for one of your functions before carrying on
-	// without it. Zero leaves the backend's default.
+	// without it. Zero leaves the router's default of 30 seconds. A function's own timeout
+	// replaces it for that function.
 	ToolTimeout time.Duration
 	// Backend is where the router is and who is billed. Its zero value reads the
 	// environment.

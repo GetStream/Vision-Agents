@@ -1,3 +1,4 @@
+import { followRewinds, heldIds, pruneRewound } from "./branches.js";
 import type { Client, Schemas } from "./client.js";
 import { Conversation } from "./conversation.js";
 import { ConfigurationError, RouterError } from "./errors.js";
@@ -198,6 +199,10 @@ export class Session {
   private readonly socket: Socket | undefined;
   /** The Stream Chat channel and the video call, each opened on first use. */
   private chatPeer: Promise<SessionChat> | undefined;
+  /** The channel once it has opened, which a regenerate, an edit or an activation prunes. */
+  private chatOpened: SessionChat | undefined;
+  /** Stops following the channel's rewinds. */
+  private unfollowRewinds: (() => void) | undefined;
   private videoPeer: Promise<SessionVideo> | undefined;
   private readonly client: Client;
   private readonly tools: Tools | undefined;
@@ -226,7 +231,12 @@ export class Session {
     this.socket = socket;
     this.tools = tools;
     this.conversation = new Conversation(socket !== undefined);
-    this.responses = new Responses(client, created.id, (asked) => this.conversation.said(asked));
+    this.responses = new Responses(
+      client,
+      created.id,
+      (asked) => this.conversation.said(asked),
+      () => this.branching(),
+    );
     this.voice = new Voice(client, created.id, Boolean(created.call_id), (on) =>
       this.speech.voiceChanged(on),
     );
@@ -659,6 +669,8 @@ export class Session {
       }
     }
     this.stopped = true;
+    this.unfollowRewinds?.();
+    this.unfollowRewinds = undefined;
     this.socket?.close();
     await this.finished;
     if (!this.socket) {
@@ -869,7 +881,33 @@ export class Session {
     const [type, ...rest] = channel.split(":");
 
     const connected = await this.client.peers.chat();
-    return { client: connected, channel: connected.channel(type ?? "agent", rest.join(":")) };
+    const opened: SessionChat = { client: connected, channel: connected.channel(type ?? "agent", rest.join(":")) };
+    // A rewind another device made, or this one, hides messages this client already holds.
+    // Not followed for a session closed while the channel opened: nothing would stop it.
+    if (!this.stopped) {
+      this.unfollowRewinds?.();
+      this.unfollowRewinds = followRewinds(connected, opened.channel, channel);
+    }
+    this.chatOpened = opened;
+    return opened;
+  }
+
+  /**
+   * What a regenerate, an edit or an activation does to the open channel: notes what it holds
+   * before the request goes, and drops what the answer's `rewound_to` hid of that once it
+   * comes back. A channel not opened yet holds nothing, and is not opened for this.
+   */
+  private branching(): (rewoundTo: Schemas["RewoundTo"] | undefined) => void {
+    const chat = this.chatOpened;
+    if (!chat) {
+      return () => undefined;
+    }
+    const before = heldIds(chat.channel);
+    return (rewoundTo) => {
+      if (rewoundTo) {
+        pruneRewound(chat.channel, rewoundTo, before);
+      }
+    };
   }
 
   private async openVideo(): Promise<SessionVideo> {

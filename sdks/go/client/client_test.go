@@ -160,10 +160,56 @@ func newRouter(t *testing.T) *router {
 
 	mux.HandleFunc("POST /v1/agents/sessions/{id}/responses", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
+		backend.mu.Lock()
+		replaces, _ := backend.bodies[r.Method+" "+r.URL.Path]["replaces"].(string)
+		backend.mu.Unlock()
+		if replaces != "" {
+			// A regenerate or an edit, answered as the router answers one that hid the reply.
+			answer(w, http.StatusAccepted, acceleration.AgentResponse{
+				Id: "response-3", SessionId: r.PathValue("id"), Status: "running", CreatedAt: time.Now(),
+				ParentResponseId: ptr("response-1"),
+				Branch:           &acceleration.ResponseBranch{Of: "reply", Index: 2, Count: 2},
+				RewoundTo:        &acceleration.RewoundTo{MessageId: "question-2"},
+			})
+			return
+		}
 		answer(w, http.StatusAccepted, acceleration.AgentResponse{
 			Id: "response-1", SessionId: r.PathValue("id"), Status: "running",
 			Said: ptr("Is Stream better?"), CreatedAt: time.Now(),
 		})
+	})
+
+	mux.HandleFunc("GET /v1/agents/sessions/{id}/responses/{response_id}/siblings", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		if r.URL.Query().Get("cursor") == "" {
+			answer(w, http.StatusOK, acceleration.ResponseSiblingPage{HasMore: true, NextCursor: ptr("sibling-2"),
+				Items: []acceleration.ResponseSibling{{Id: "response-2", Index: 1, CreatedAt: time.Now()}}})
+			return
+		}
+		answer(w, http.StatusOK, acceleration.ResponseSiblingPage{
+			Items: []acceleration.ResponseSibling{{Id: "response-3", Index: 2, Active: true, CreatedAt: time.Now()}}})
+	})
+
+	mux.HandleFunc("GET /v1/agents/sessions/{id}/responses/{response_id}/branch", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		switch r.PathValue("response_id") {
+		case "response-3":
+			answer(w, http.StatusOK, acceleration.BranchMessagePage{Active: true, Items: []acceleration.BranchMessage{}})
+		case "truncated":
+			answer(w, http.StatusGone, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+				Code: "branch_unavailable", Message: "this branch is no longer kept"}})
+		default:
+			answer(w, http.StatusOK, acceleration.BranchMessagePage{Items: []acceleration.BranchMessage{{
+				Id: "reply-2", Text: "Yes.", UserId: "docs", Role: ptr("assistant"), CreatedAt: time.Now(),
+				Attachments: []map[string]interface{}{}, Custom: map[string]interface{}{},
+			}}})
+		}
+	})
+
+	mux.HandleFunc("POST /v1/agents/sessions/{id}/responses/{response_id}/activate", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusOK, acceleration.ActivatedBranch{LeafResponseId: r.PathValue("response_id"), Resent: 1,
+			RewoundTo: &acceleration.RewoundTo{MessageId: "question-2"}})
 	})
 
 	mux.HandleFunc("GET /v1/agents/sessions/{id}/responses", func(w http.ResponseWriter, r *http.Request) {
@@ -1705,6 +1751,37 @@ func TestForkingContinuesTheConversationAsANewOne(t *testing.T) {
 	// thing and only the refusal is worth sending.
 	if _, sent := body["messages"]; sent {
 		t.Error("messages was sent for a fork that wanted the history")
+	}
+}
+
+func TestAForksToolTimeoutGoesOverInMilliseconds(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	forked, err := session.Fork(t.Context(), ForkOptions{ToolTimeout: 3 * time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer forked.Close(t.Context())
+
+	if body := backend.body(t, "POST", "/v1/agents/sessions/session-1/fork"); body["tool_timeout_ms"] != float64(180_000) {
+		t.Errorf("tool_timeout_ms went over as %v", body["tool_timeout_ms"])
+	}
+}
+
+func TestAForksToolTimeoutUnderAMillisecondIsNotSent(t *testing.T) {
+	// Sent, it would be zero: 30 seconds, not the parent's timeout the field promises.
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	forked, err := session.Fork(t.Context(), ForkOptions{ToolTimeout: 500 * time.Microsecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer forked.Close(t.Context())
+
+	if body := backend.body(t, "POST", "/v1/agents/sessions/session-1/fork"); body["tool_timeout_ms"] != nil {
+		t.Errorf("tool_timeout_ms went over as %v", body["tool_timeout_ms"])
 	}
 }
 

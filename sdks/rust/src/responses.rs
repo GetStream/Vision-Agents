@@ -88,8 +88,8 @@ impl Responses {
     /// Goes back to a response and carries on from there, as though nothing after it was said.
     ///
     /// The model forgets the later turns and they drop out of `list` and `items`. A
-    /// conversation kept in Stream Chat is refused, because the channel would still hold the
-    /// later turns: fork it at the response instead.
+    /// conversation kept in Stream Chat is rewound there too: the later turns are hidden in
+    /// the channel and kept as a branch that can be brought back.
     pub async fn rewind(&self, to: impl ResponseRef) -> Result<()> {
         let response_id = to.response_id();
         if response_id.is_empty() {

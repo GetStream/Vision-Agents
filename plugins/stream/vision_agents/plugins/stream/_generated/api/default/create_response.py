@@ -114,6 +114,13 @@ def sync_detailed(
     request that waited them out would time out on anything long enough to be worth asking.
     A voice note in audio is transcribed before the turn starts, and what was said is the question,
     after any text. A voice note that cannot be heard is refused and no turn starts.
+    With replaces, in a conversation kept in Stream Chat, it regenerates or edits an earlier response
+    instead of asking something new. No text answers the replaced response's question again, beside its
+    reply; text asks it in place of that question. Chat hides the conversation from there on, which is
+    kept as a branch (listResponseSiblings, getResponseBranch, activateResponse), and the answer says
+    where the channel was rewound to (rewound_to), so the acting device prunes its view at once. A
+    request_id is required, and images, audio, videos and ui_action cannot go with replaces. A
+    conversation has at most 100 edit and regenerate points; past them it is a 409 branch_limit_reached.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -154,6 +161,13 @@ def sync(
     request that waited them out would time out on anything long enough to be worth asking.
     A voice note in audio is transcribed before the turn starts, and what was said is the question,
     after any text. A voice note that cannot be heard is refused and no turn starts.
+    With replaces, in a conversation kept in Stream Chat, it regenerates or edits an earlier response
+    instead of asking something new. No text answers the replaced response's question again, beside its
+    reply; text asks it in place of that question. Chat hides the conversation from there on, which is
+    kept as a branch (listResponseSiblings, getResponseBranch, activateResponse), and the answer says
+    where the channel was rewound to (rewound_to), so the acting device prunes its view at once. A
+    request_id is required, and images, audio, videos and ui_action cannot go with replaces. A
+    conversation has at most 100 edit and regenerate points; past them it is a 409 branch_limit_reached.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -189,6 +203,13 @@ async def asyncio_detailed(
     request that waited them out would time out on anything long enough to be worth asking.
     A voice note in audio is transcribed before the turn starts, and what was said is the question,
     after any text. A voice note that cannot be heard is refused and no turn starts.
+    With replaces, in a conversation kept in Stream Chat, it regenerates or edits an earlier response
+    instead of asking something new. No text answers the replaced response's question again, beside its
+    reply; text asks it in place of that question. Chat hides the conversation from there on, which is
+    kept as a branch (listResponseSiblings, getResponseBranch, activateResponse), and the answer says
+    where the channel was rewound to (rewound_to), so the acting device prunes its view at once. A
+    request_id is required, and images, audio, videos and ui_action cannot go with replaces. A
+    conversation has at most 100 edit and regenerate points; past them it is a 409 branch_limit_reached.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -227,6 +248,13 @@ async def asyncio(
     request that waited them out would time out on anything long enough to be worth asking.
     A voice note in audio is transcribed before the turn starts, and what was said is the question,
     after any text. A voice note that cannot be heard is refused and no turn starts.
+    With replaces, in a conversation kept in Stream Chat, it regenerates or edits an earlier response
+    instead of asking something new. No text answers the replaced response's question again, beside its
+    reply; text asks it in place of that question. Chat hides the conversation from there on, which is
+    kept as a branch (listResponseSiblings, getResponseBranch, activateResponse), and the answer says
+    where the channel was rewound to (rewound_to), so the acting device prunes its view at once. A
+    request_id is required, and images, audio, videos and ui_action cannot go with replaces. A
+    conversation has at most 100 edit and regenerate points; past them it is a 409 branch_limit_reached.
 
     Args:
         id (str): The session, as returned when it was created.

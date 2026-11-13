@@ -4,6 +4,7 @@ from .account import Account
 from .account_balance_state import AccountBalanceState
 from .account_balance_warning_source import AccountBalanceWarningSource
 from .account_status import AccountStatus
+from .activated_branch import ActivatedBranch
 from .activity_area import ActivityArea
 from .activity_bucket import ActivityBucket
 from .activity_ending import ActivityEnding
@@ -76,6 +77,10 @@ from .authorization import Authorization
 from .authorization_kind import AuthorizationKind
 from .authorization_request import AuthorizationRequest
 from .available_number import AvailableNumber
+from .branch_message import BranchMessage
+from .branch_message_attachments_item import BranchMessageAttachmentsItem
+from .branch_message_custom import BranchMessageCustom
+from .branch_message_page import BranchMessagePage
 from .business_profile import BusinessProfile
 from .business_profile_legal_entity_type import BusinessProfileLegalEntityType
 from .business_profile_organization_type import BusinessProfileOrganizationType
@@ -337,6 +342,7 @@ from .limits import Limits
 from .limits_channels import LimitsChannels
 from .link_channel_request import LinkChannelRequest
 from .list_agent_logs_severity import ListAgentLogsSeverity
+from .list_response_siblings_of import ListResponseSiblingsOf
 from .list_scheduled_tasks_state import ListScheduledTasksState
 from .list_simulation_runs_state import ListSimulationRunsState
 from .llm_options import LlmOptions
@@ -438,6 +444,10 @@ from .recording_status import RecordingStatus
 from .refused_contact import RefusedContact
 from .refused_reason import RefusedReason
 from .respond_request import RespondRequest
+from .response_branch import ResponseBranch
+from .response_branch_of import ResponseBranchOf
+from .response_sibling import ResponseSibling
+from .response_sibling_page import ResponseSiblingPage
 from .resume_history import ResumeHistory
 from .review_actor import ReviewActor
 from .review_analysis import ReviewAnalysis
@@ -448,6 +458,7 @@ from .review_queue import ReviewQueue
 from .review_score_match_type_1 import ReviewScoreMatchType1
 from .review_use_case_request import ReviewUseCaseRequest
 from .rewind_session_request import RewindSessionRequest
+from .rewound_to import RewoundTo
 from .rollup_request import RollupRequest
 from .rollup_result import RollupResult
 from .route import Route
@@ -646,6 +657,7 @@ __all__ = (
     "AccountBalanceState",
     "AccountBalanceWarningSource",
     "AccountStatus",
+    "ActivatedBranch",
     "ActivityArea",
     "ActivityBucket",
     "ActivityEnding",
@@ -718,6 +730,10 @@ __all__ = (
     "AuthorizationKind",
     "AuthorizationRequest",
     "AvailableNumber",
+    "BranchMessage",
+    "BranchMessageAttachmentsItem",
+    "BranchMessageCustom",
+    "BranchMessagePage",
     "BusinessProfile",
     "BusinessProfileLegalEntityType",
     "BusinessProfileOrganizationType",
@@ -973,6 +989,7 @@ __all__ = (
     "LimitsChannels",
     "LinkChannelRequest",
     "ListAgentLogsSeverity",
+    "ListResponseSiblingsOf",
     "ListScheduledTasksState",
     "ListSimulationRunsState",
     "LlmOptions",
@@ -1074,6 +1091,10 @@ __all__ = (
     "RefusedContact",
     "RefusedReason",
     "RespondRequest",
+    "ResponseBranch",
+    "ResponseBranchOf",
+    "ResponseSibling",
+    "ResponseSiblingPage",
     "ResumeHistory",
     "ReviewActor",
     "ReviewAnalysis",
@@ -1084,6 +1105,7 @@ __all__ = (
     "ReviewScoreMatchType1",
     "ReviewUseCaseRequest",
     "RewindSessionRequest",
+    "RewoundTo",
     "RollupRequest",
     "RollupResult",
     "Route",
