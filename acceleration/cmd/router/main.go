@@ -2070,6 +2070,7 @@ func buildSessions(
 		Knowledge:  base,
 		Pricer:     prices,
 		Search:     finding,
+		Image:      streams.Image,
 		Classifier: judging,
 		FlowJudge:  settings.Agent.FlowJudge,
 		Phone:      telephony,

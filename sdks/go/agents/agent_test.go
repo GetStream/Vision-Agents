@@ -720,6 +720,34 @@ func TestSyncSendsTheAgentsTheAgentDeclared(t *testing.T) {
 	}
 }
 
+// agent.yaml's image goes as written, and a file that names none sends none, so the stored one
+// stays and an agent that never asked for drawing is not offered it.
+func TestSyncSendsTheImageTargetTheAgentDeclared(t *testing.T) {
+	for _, c := range []struct {
+		declared string
+		want     *string
+	}{
+		{"mode: text\nimage: image-fast\n", pointer("image-fast")},
+		{"mode: text\nllm: openai/gpt-5.6\n", nil},
+	} {
+		root := filepath.Join(t.TempDir(), "illustrator")
+		write(t, root, "agent.yaml", c.declared)
+		router := newBackend(t)
+		agent := agentOn(t, router, Options{Dir: root})
+
+		if _, err := agent.Sync(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+
+		router.mu.Lock()
+		got := router.syncs[0].Image
+		router.mu.Unlock()
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%q: image went as %v, not %v", c.declared, got, c.want)
+		}
+	}
+}
+
 func describe(floorControl *acceleration.FloorControl) string {
 	raw, _ := json.Marshal(floorControl)
 	return string(raw)

@@ -521,6 +521,8 @@ components:
           $ref: '#/components/schemas/Harness'
         id:
           type: string
+        image:
+          type: string
         instructions:
           type: string
         keyterms:
@@ -648,6 +650,9 @@ components:
           type: string
         harness:
           $ref: '#/components/schemas/Harness'
+        image:
+          description: An empty string removes it, and the agent stops being offered generate_image.
+          type: string
         instructions:
           type: string
         keyterms:
@@ -784,6 +789,9 @@ components:
           type: string
         harness:
           $ref: '#/components/schemas/Harness'
+        image:
+          description: 'What the agent draws pictures with, as a provider/model or a capability shortcut such as image-fast. Naming one offers a text agent with a Chat channel the generate_image tool, whose pictures are attached to its reply and billed like POST /v1/image/generations. Empty offers no such tool: unlike search there is no default.'
+          type: string
         instructions:
           type: string
         keyterms:
@@ -10106,6 +10114,9 @@ components:
           $ref: '#/components/schemas/Harness'
         hash:
           description: A fingerprint of the directory. A second sync with the same hash does nothing.
+          type: string
+        image:
+          description: 'agent.yaml''s image: what the agent draws pictures with. Left out, the stored one stays; an empty string removes it.'
           type: string
         instructions:
           type: string

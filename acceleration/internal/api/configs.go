@@ -1585,6 +1585,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		Agents:             childAgentsOf(request.Agents),
 		Subagent:           value(request.Subagent),
 		Search:             value(request.Search),
+		Image:              value(request.Image),
 		Instructions:       value(request.Instructions),
 		Greeting:           greeting,
 		GreetingMode:       greetingMode,
@@ -1694,6 +1695,7 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	}
 	rendered.Video = &SessionVideo{Source: optional(config.VideoSource), MaxFrames: &frames}
 	rendered.Search = optional(config.Search)
+	rendered.Image = optional(config.Image)
 	rendered.Instructions = optional(config.Instructions)
 	rendered.Greeting = greetingFrom(config.Greeting, config.GreetingMode)
 	rendered.Guardrail = optional(config.Guardrail)
@@ -2008,6 +2010,7 @@ type AgentConfigRequest struct {
 	Sandbox            *Sandbox                 `json:"sandbox,omitempty"`
 	SandboxOptions     *SandboxOptions          `json:"sandbox_options,omitempty"`
 	Search             *string                  `json:"search,omitempty" doc:"What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way."`
+	Image              *string                  `json:"image,omitempty" doc:"What the agent draws pictures with, as a provider/model or a capability shortcut such as image-fast. Naming one offers a text agent with a Chat channel the generate_image tool, whose pictures are attached to its reply and billed like POST /v1/image/generations. Empty offers no such tool: unlike search there is no default."`
 	Skills             *[]string                `json:"skills,omitempty" doc:"Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set."`
 	Sts                *string                  `json:"sts,omitempty" doc:"A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade."`
 	Stt                *string                  `json:"stt,omitempty" doc:"A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it."`
@@ -2051,6 +2054,7 @@ type AgentConfig struct {
 	Sandbox            *Sandbox                 `json:"sandbox,omitempty"`
 	SandboxOptions     *SandboxOptions          `json:"sandbox_options,omitempty"`
 	Search             *string                  `json:"search,omitempty"`
+	Image              *string                  `json:"image,omitempty"`
 	Skills             *[]string                `json:"skills,omitempty"`
 	Sts                *string                  `json:"sts,omitempty" doc:"A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade."`
 	Stt                *string                  `json:"stt,omitempty"`

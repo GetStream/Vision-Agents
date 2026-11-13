@@ -2,6 +2,10 @@
 
 ## Features
 
+### An agent draws pictures without a backend route of its own
+
+`image` on an agent config (`POST`, `PUT` and `PATCH /v1/agents/configs`, and `image:` in agent.yaml through a sync) names what the agent draws with, as a provider/model or a shortcut such as `image-fast`. A text agent whose conversation has a Chat channel is then offered `generate_image(prompt, aspect_ratio?)`: the router draws one picture per call, uploads it to the channel as the agent and attaches it to the reply, and the model is told it in words, never handed it. A draw is billed as `POST /v1/image/generations` is, under the session's attribution, so app, user, team and session spend limits all hold it; the money it may cost is held for the whole draw. It runs on the server, so `tool_timeout_ms` does not bound it: each draw has 240 seconds, the endpoint's own limit, which now lives in the image router. A safety-filter or spend refusal is told to the model as words to relay, not as a failed tool. One reply draws at most four pictures. There is no default and no per-session override, since a session can be opened from a device: an agent draws only when its config says so. A caller tool named `generate_image` keeps the name, and the built-in one is not offered beside it (AI-3200).
+
 ### Trial credit pays for usage but not phone numbers, and a sync that changed nothing costs nothing
 
 Credit has a `trial` kind, written once per organization by the gateway's `/v1/billing/trial`. `GET /v1/account` (and the usage service's account) gives `trial_micros`, the trial credit granted, and `funded`, true once credit other than trial was granted: a top-up or Stream's grant. Renting a phone number and submitting a 10DLC brand or campaign are refused with 402 `top_up_required` while the organization is not funded, so trial credit pays for models and usage only. Writing knowledge skips a document stored with the same text and passage count, so `getstream agents sync` with nothing changed in `knowledge/` writes nothing and is not refused for money (AI-3179).

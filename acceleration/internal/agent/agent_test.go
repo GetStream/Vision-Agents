@@ -34,6 +34,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing/failovertest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -943,6 +944,9 @@ type AgentSuite struct {
 	// finds is what the agent may find out about now, when a test gives it a search
 	// provider.
 	finds *stubSearch
+	// drawer draws the pictures the agent is asked for, when a test gives it an image
+	// provider.
+	drawer *stubDrawer
 	// guards screens what the agent may be asked, when a test gives it a policy.
 	guards *stubGuardrail
 	// performing is what a voice that acts stage directions asks to have said about it.
@@ -1007,6 +1011,7 @@ func (s *AgentSuite) SetupTest() {
 	s.knows = nil
 	s.namespace = ""
 	s.finds = nil
+	s.drawer = nil
 	s.guards = nil
 	s.subagent = nil
 	s.sees = false
@@ -1115,9 +1120,17 @@ func (s *AgentSuite) joinText() {
 	if s.shelf != nil {
 		publish = s.shelf.publish
 	}
+	var drawing *imagerouter.Router
+	imageTarget := ""
+	if s.drawer != nil {
+		drawing = s.imageRouter()
+		imageTarget = "stub/draw"
+	}
 
 	agent, err := New(Options{
 		Text:               true,
+		Image:              drawing,
+		ImageTarget:        imageTarget,
 		Sandbox:            box,
 		Publish:            publish,
 		Instructions:       "be brief",

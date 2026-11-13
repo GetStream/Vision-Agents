@@ -117,6 +117,7 @@ class AgentConfig:
             agent answers in besides agent channels. Absent when there are none.
         agents (list[ChildAgent] | Unset): The app's other text agents this one may hand work to, each as a tool. Absent
             when there are none.
+        image (str | Unset):
     """
 
     created_at: datetime.datetime
@@ -160,6 +161,7 @@ class AgentConfig:
     llm_fallbacks: list[str] | Unset = UNSET
     chat_channels: list[AgentChatChannel] | Unset = UNSET
     agents: list[ChildAgent] | Unset = UNSET
+    image: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -305,6 +307,8 @@ class AgentConfig:
                 agents_item = agents_item_data.to_dict()
                 agents.append(agents_item)
 
+        image = self.image
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -387,6 +391,8 @@ class AgentConfig:
             field_dict["chat_channels"] = chat_channels
         if agents is not UNSET:
             field_dict["agents"] = agents
+        if image is not UNSET:
+            field_dict["image"] = image
 
         return field_dict
 
@@ -602,6 +608,8 @@ class AgentConfig:
 
                 agents.append(agents_item)
 
+        image = d.pop("image", UNSET)
+
         agent_config = cls(
             created_at=created_at,
             id=id,
@@ -644,6 +652,7 @@ class AgentConfig:
             llm_fallbacks=llm_fallbacks,
             chat_channels=chat_channels,
             agents=agents,
+            image=image,
         )
 
         agent_config.additional_properties = d

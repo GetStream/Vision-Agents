@@ -28,6 +28,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -270,6 +271,11 @@ type Options struct {
 	// SearchTarget routes the search, and is a target on that router the way LLMTarget is
 	// on its own.
 	SearchTarget string
+	// Image draws the pictures the agent is asked for. Without it, without a target, or
+	// without somewhere to publish a picture, generate_image is not offered.
+	Image *imagerouter.Router
+	// ImageTarget routes the drawing, a target on that router.
+	ImageTarget string
 	// Guardrail screens what a caller asks before the agent answers it. Nil is an agent
 	// that answers everything, which is every agent that declared no policy.
 	Guardrail guardrail.Guardrail
@@ -316,6 +322,9 @@ type Agent struct {
 	// when the call arrives: the caller can be heard before it runs, and what it hands over is
 	// still that turn's.
 	toolScheduled map[string]bool
+	// drawnTurn and drawnCount are the pictures the latest reply drew (drawAllowed).
+	drawnTurn  string
+	drawnCount int
 	// toolUpdates is what whoever runs a call last said about it, waiting for the line.
 	toolUpdates map[string]toolUpdate
 	// approvals are the calls waiting for a voice caller's yes, by call id (approval.go).

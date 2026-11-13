@@ -61,6 +61,7 @@ func (s *Server) regionComplaint(ctx context.Context, config store.AgentConfig, 
 		{"sts", routing.STS, config.STS, was.STS},
 		{"subagent", routing.LLM, config.Subagent, was.Subagent},
 		{"search", routing.Search, config.Search, was.Search},
+		{"image", routing.Image, config.Image, was.Image},
 	}
 	for _, target := range config.LLMFallbacks {
 		var stood string

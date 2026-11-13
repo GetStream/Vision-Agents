@@ -26,6 +26,7 @@ type AgentConfigPatch struct {
 	Agents             *[]ChildAgent            `json:"agents,omitempty" maxItems:"16" doc:"Replaces the list whole. An empty list removes it."`
 	Subagent           *string                  `json:"subagent,omitempty" doc:"Only a voice agent names one. Switching an agent to text drops it."`
 	Search             *string                  `json:"search,omitempty"`
+	Image              *string                  `json:"image,omitempty" doc:"An empty string removes it, and the agent stops being offered generate_image."`
 	Instructions       *string                  `json:"instructions,omitempty"`
 	Greeting           *Greeting                `json:"greeting,omitempty" doc:"Replaces the greeting whole. An empty text removes it."`
 	Guardrail          *string                  `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail."`
@@ -195,6 +196,7 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	}
 	config.Subagent = override(config.Subagent, patch.Subagent)
 	config.Search = override(config.Search, patch.Search)
+	config.Image = override(config.Image, patch.Image)
 	config.Instructions = override(config.Instructions, patch.Instructions)
 	if patch.Greeting != nil {
 		config.Greeting, config.GreetingMode = greetingOf(patch.Greeting)

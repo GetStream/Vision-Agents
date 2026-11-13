@@ -660,6 +660,11 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		ran = true
 		said, files, err = a.runCode(ctx, requested.Call)
 		parts = llm.TextParts(said)
+	} else if requested.Call.Name == GenerateImageTool && a.draws() {
+		var said string
+		ran = true
+		said, files, err = a.generateImage(ctx, requested.Call)
+		parts = llm.TextParts(said)
 	} else if question := a.approvalQuestion(tool); question != "" {
 		parts = a.askApproval(requested.Call, question)
 	} else {
@@ -928,6 +933,9 @@ func (a *Agent) availableTools() harness.Tools {
 	}
 	if a.runsCode() {
 		available.Tools = append(available.Tools, harness.SandboxTool(a.options.Sandbox))
+	}
+	if a.draws() {
+		available.Tools = append(available.Tools, generateImageTool())
 	}
 	return available
 }

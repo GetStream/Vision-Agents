@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -31,6 +32,11 @@ type Registry = routing.Registry[imagegen.Provider]
 // DefaultTarget is where a request that names nowhere goes: the fast tier, since whoever
 // asked is usually waiting on the answer.
 const DefaultTarget = "image-fast"
+
+// Deadline bounds one generation, wherever it was asked from. A queued provider can hold a job
+// for minutes, and whoever asked is owed an answer rather than a wait until something upstream
+// gives up. The money a generation may cost is held for as long.
+const Deadline = 240 * time.Second
 
 // Options configures a Router. Store and Live are optional: without them the router still
 // routes, it just stops recording.
@@ -50,6 +56,12 @@ type Options struct {
 type Request struct {
 	// CustomerID owns the request. It is what every statistic is keyed by.
 	CustomerID string
+	// AgentID is the agent the picture is for. Empty outside a conversation.
+	AgentID string
+	// CallID is the call the picture is drawn in. Empty outside a conversation.
+	CallID string
+	// Region is where the work is done: the agent's, from its config. Empty names none.
+	Region string
 	// Tags are the customer's own cost labels, recorded on the row this request writes.
 	Tags routing.Tags
 	// Target is a "provider/model" name or a capability shortcut. Empty means
@@ -111,8 +123,13 @@ func New(options Options) (*Router, error) {
 // A failure is an *imagegen.Error. Any other error is a request that names nowhere this
 // router can send it.
 func (r *Router) Generate(ctx context.Context, request Request) (Generation, error) {
+	ctx, cancel := context.WithTimeout(ctx, Deadline)
+	defer cancel()
 	core := routing.Request{
 		CustomerID:  request.CustomerID,
+		AgentID:     request.AgentID,
+		CallID:      request.CallID,
+		Region:      request.Region,
 		Attribution: routing.AttributionFrom(ctx),
 		Spent:       routing.SpentFrom(ctx),
 		Tags:        request.Tags,
@@ -186,8 +203,9 @@ func (r *Router) draw(
 
 	result, err := routing.Call(ctx, routing.Meter{
 		Recorder: r.Recorder(), Config: config, Owner: owner,
-		Code:     func(err error) string { return string(imagegen.CodeOf(err)) },
-		Estimate: pricing.Quantities{pricing.Images: int64(max(request.N, 1))},
+		Code:       func(err error) string { return string(imagegen.CodeOf(err)) },
+		Estimate:   pricing.Quantities{pricing.Images: int64(max(request.N, 1))},
+		ReserveFor: Deadline,
 	}, func(ctx context.Context) (imagegen.Result, error) {
 		return provider.Generate(ctx, request)
 	})

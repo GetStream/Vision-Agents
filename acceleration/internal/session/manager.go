@@ -24,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -96,6 +97,9 @@ type ManagerOptions struct {
 	Knowledge *metered.Knowledge
 	// Search is optional, and is what every session finds out what is true now with.
 	Search *searchrouter.Router
+	// Image is optional, and is what a session whose config names an image target draws
+	// pictures with.
+	Image *imagerouter.Router
 	// Classifier is optional, and is what a session with a guardrail asks whether a turn
 	// may be answered. Without it a session declaring a guardrail that needs one is
 	// refused rather than held unguarded.
@@ -864,6 +868,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 			KnowledgeNamespace: spec.KnowledgeNamespace,
 			Search:             m.options.Search,
 			SearchTarget:       spec.SearchTarget,
+			Image:              m.options.Image,
+			ImageTarget:        spec.ImageTarget,
 			Guardrail:          screening,
 			SpeculativeReplies: m.options.SpeculativeReplies,
 			UnifiedReplies:     m.options.UnifiedReplies,
