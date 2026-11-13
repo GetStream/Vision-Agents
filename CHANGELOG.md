@@ -2,6 +2,26 @@
 
 ## Features
 
+### The router counts a resent Twilio alert once
+
+A Monitor alert whose `Sid` was counted in the last hour is answered 204 and adds nothing to `vendor_account_events_total`. The mark is kept in the router's Redis, so a resend to another replica is caught too. When Redis fails, or a deployment has none, the alert is counted again with a warning rather than dropped. Usage triggers are counted on every callback. (#2000)
+
+### The router counts Twilio Monitor alerts and usage triggers
+
+`POST /v1/phone/hooks/twilio/events` takes the Monitor alerts (the Debugger webhook) and usage-trigger callbacks Twilio signs with `X-Twilio-Signature`, and counts each in `vendor_account_events_total{vendor="twilio",event,level}`, with one log line. Alerts 10001 and 30002 (the account is not active or suspended) are `page`, 20003 and 32017 are `warn`, and any other code is `error.other` at `info`; a `totalprice` trigger is `page`, a `calls` trigger `warn`, and any other is `usage_trigger.other` at `warn`. The route answers 404 while `TWILIO_WEBHOOK_AUTH_TOKEN` or `ROUTER_PUBLIC_URL` is unset, and 401 to an event Twilio did not sign over `ROUTER_PUBLIC_URL` and the path. (#1998)
+
+### The router counts Telnyx account events
+
+`POST /v1/phone/hooks/telnyx/events` takes the account events Telnyx signs, such as a port-out or a number order, and counts each in `vendor_account_events_total{vendor,event,level}`, with one log line. A port-out or a reached messaging spend limit is `page`, a number order that did not succeed is `warn`, and the rest is `info`; a type the router does not name is counted as `other`. The route answers 404 while `TELNYX_PUBLIC_KEY` is unset, and 401 to an event Telnyx did not sign. (#1985)
+
+### The router counts a Telnyx SMS spend limit and a failed 10DLC campaign
+
+A signed `messaging-profile.spend-limit-reached` on an SMS line's hook adds 1 to `vendor_account_events_total{vendor="telnyx",event="messaging-profile.spend-limit-reached",level="page"}` with one log line, and still starts no turn; a campaign still waiting on Telnyx that Telnyx fails, suspends or rejects adds 1 to `{event="10dlc.campaign_failed",level="warn"}` once, when its use case moves to `vendor_rejected` (#1997).
+
+### The router reads a Twilio webhook Auth Token
+
+`TWILIO_WEBHOOK_AUTH_TOKEN` holds the Auth Token the router checks Twilio's `X-Twilio-Signature` with on `/v1/phone/hooks/twilio/events`, and a token with whitespace in it stops the router at start (#1982).
+
 ### A child agent takes a budget of tool rounds
 
 `ChildAgent` (an agent config's `agents`, and agent.yaml's `agents:`) gains `max_tool_rounds`: the reply to a tool result, counted since the child was handed its input, at which it is offered no more tools and made to answer. Zero or left out is the default of 8, as before, and a negative number never withdraws them, as `max_tool_rounds` on `createSession` does. A child that chains many lookups, such as a reviewer reading through a diff, no longer has to answer after 8.

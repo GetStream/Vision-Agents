@@ -12,6 +12,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/vendorevent"
 )
 
 // ErrNotImplemented is every answer this registrar gives.
@@ -20,7 +21,7 @@ var ErrNotImplemented = errors.New("twilio: 10DLC registration is not implemente
 // Registrar is Twilio. It satisfies dlc.Registrar and registers nothing.
 type Registrar struct{}
 
-func (Registrar) Name() string { return "twilio" }
+func (Registrar) Name() string { return vendorevent.VendorTwilio }
 
 func (Registrar) RegisterBrand(context.Context, store.BusinessProfile) (dlc.Brand, error) {
 	return dlc.Brand{}, ErrNotImplemented
