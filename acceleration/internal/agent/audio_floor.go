@@ -308,13 +308,24 @@ func (p pauseAsker) Speaking() bool {
 // Overheard acts at once on a check's ruling to stop or shorten over the agent, asked while
 // the caller talked on, as the agent does on a provisional ruling about a revision's words
 // (overlapRuled): its own voice heard back on the caller's line is dropped from the words
-// first, as from any chorus-asr transcript, and an echo alone, or a murmur, is no reason to
-// stop. Whether the caller had heard any of the agent's answer when they began says whether
-// a stop's words are spent on it (answerHeardBefore).
+// first, as from any chorus-asr transcript, and a murmur is no reason to stop. An echo alone
+// is no reason to shorten either, but a stop the model ruled over it stands: on a line that
+// hears the agent back, the model writes the agent's louder voice and not the caller's word
+// under it, while it rules on the audio. In the gate's stop probe, a bare "stop" on such a
+// line was ruled a stop in half its calls and acted on in none; the most the model gave a
+// stop over any backchannel, cough or laugh on that line was P 0.0025, against 0.50 at least
+// for each stop it ruled. Whether the caller had heard any of the agent's answer when they
+// began says whether a stop's words are spent on it (answerHeardBefore).
 func (p pauseAsker) Overheard(participant stt.Participant, ruled audiofloor.Ruled) {
 	a := p.a
 	left, ok := a.droppingEcho(transcriptOf(participant, ruled), "a check over the agent")
 	if !ok {
+		if ruled.Ruling.Floor != harness.Stop || ruled.Ruling.Disposition == harness.Ignore {
+			return
+		}
+		a.logger.Debug("a check over the agent ruled a stop on words that were all the agent's own echo, which stands",
+			"participant", participant.ID, "words", ruled.Words)
+		a.act(a.converse.Overheard(ruled.Ruling, participant, "", ruled.Utterance, a.answerHeardBefore(ruled.Began), a.floor()))
 		return
 	}
 	if !takesFloor(left) {

@@ -8533,7 +8533,8 @@ func (s *AgentSuite) TestAnInterimIsShownAndNotActedOn() {
 // no pause for the flow controller to be asked at, is acted on at once as a provisional
 // ruling is (Overheard): a stop interrupts the reply before the caller's words settle, and
 // answers nothing. The agent's own voice heard back on the caller's line is dropped from the
-// words first, and an echo alone stops nothing; nor does a murmur.
+// words first, and a murmur stops nothing; nor does an echo alone the model ruled ignore, or
+// ruled to shorten (a stop over it stands: TestAStopRuledOverTheAgentsEchoAloneStopsIt).
 func (s *AgentSuite) TestACheckOverTheAgentStopsItAtOnce() {
 	s.join(true)
 	participant := stt.Participant{ID: "alice"}
@@ -8556,12 +8557,17 @@ func (s *AgentSuite) TestACheckOverTheAgentStopsItAtOnce() {
 
 	echo := stop
 	echo.Words = "Tomorrow in Lisbon it will be sunny"
+	echo.Ruling.Disposition = harness.Ignore
 	asker.Overheard(participant, echo)
+	shorten := stop
+	shorten.Words = "Tomorrow in Lisbon it will be sunny"
+	shorten.Ruling.Floor = harness.Shorten
+	asker.Overheard(participant, shorten)
 	murmur := stop
 	murmur.Words = "uh-huh"
 	asker.Overheard(participant, murmur)
 	time.Sleep(50 * time.Millisecond)
-	s.Zero(countOf[Interrupted](s.reported()), "an echo alone or a murmur stops nothing")
+	s.Zero(countOf[Interrupted](s.reported()), "an echo ruled ignore or to shorten, or a murmur, stops nothing")
 	s.Zero(s.voice.interrupted())
 
 	words := stop
@@ -8574,10 +8580,61 @@ func (s *AgentSuite) TestACheckOverTheAgentStopsItAtOnce() {
 	s.Len(s.model.requests(), 1, "nothing answered: the caller's turn has not ended")
 }
 
+// A stop the model ruled over the agent on words that were all the agent's own voice heard
+// back stands: on a line that carries the agent back, the model writes its louder voice and not
+// the caller's "stop" under it, but rules on the audio. In the gate's stop probe a bare "stop"
+// on such a line was ruled a stop in half its calls and acted on in none, while no backchannel,
+// cough or laugh on it was ever ruled one (P(stop) at most 0.0025). Ruled on none of the
+// caller's words, the stop spends a turn of its utterance that is a stop alone, and one that
+// says more is the caller's to have answered.
+func (s *AgentSuite) TestAStopRuledOverTheAgentsEchoAloneStopsIt() {
+	cases := map[string]bool{"Stop.": false, "No, no.": false, "Wait, hold on.": false, "No wait, I meant Lisbon, not Porto.": true}
+	for said, answered := range cases {
+		s.Run(said, func() {
+			s.join(true)
+			participant := stt.Participant{ID: "alice"}
+			s.model.reply = nil
+			s.speak(participant)
+			s.says(participant, "what's the weather like in Lisbon tomorrow")
+			s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
+			s.heardSomeOf(s.model.requests()[0].ID)
+			s.replyWentOut()
+			s.agent.mu.Lock()
+			s.agent.history = append(s.agent.history, llm.Message{Role: llm.Assistant, Content: "Tomorrow in Lisbon it will be sunny and warm with a high of twenty four degrees"})
+			s.agent.mu.Unlock()
+			// The reply's echo is in audio heard once the reply has gone out, and the check's audio
+			// ended its WordsMs before its words came.
+			time.Sleep(200 * time.Millisecond)
+
+			pauseAsker{s.agent}.Overheard(participant, audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Stop}},
+				Words: "Tomorrow in Lisbon, it will be sunny", Speaking: true, Overheard: true, AudioMs: 1200, WordsMs: 100, Utterance: 2})
+			s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "a stop over the agent's echo alone was not acted on")
+			s.eventually(func() bool { return s.voice.interrupted() == 1 }, "the voice kept talking")
+
+			s.model.reply = []string{"Lisbon it is."}
+			s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Utterance: 2, Text: said,
+				Provider: audiofloor.ProviderName, Language: "en", Confidence: 1})
+			s.eventually(func() bool {
+				return slices.ContainsFunc(s.reported(), func(event Event) bool {
+					d, ok := event.(Decided)
+					return ok && d.Text == said && (d.Kind == string(ActIgnore) || d.Kind == string(ActAnswer))
+				})
+			}, "what the caller said was not ruled on")
+			if !answered {
+				time.Sleep(3 * defaultCadenceGap)
+				s.Len(s.model.requests(), 1, "a stop alone was answered after the agent stopped")
+				return
+			}
+			s.eventually(func() bool { return len(s.model.requests()) == 2 }, "what the caller said after the stop was not answered")
+		})
+	}
+}
+
 // A stop the chorus-asr transcriber ruled at a pause over the agent comes with the pause's
 // words, handed over though the caller was voiced again before they were written, and is held
 // to them as a check's while the caller talks on is: the agent's own voice heard back alone, on
-// a line without echo cancellation, stops nothing, and "no, no" said over it does.
+// a line without echo cancellation, which the model rules ignore, stops nothing, and "no, no"
+// said over it does.
 func (s *AgentSuite) TestAStopRuledAtAPauseOverTheAgentStopsItOnTheCallersWordsAlone() {
 	s.join(true)
 	participant := stt.Participant{ID: "alice"}
@@ -8600,9 +8657,10 @@ func (s *AgentSuite) TestAStopRuledAtAPauseOverTheAgentStopsItOnTheCallersWordsA
 
 	echo := stop
 	echo.Words = "Tomorrow in Lisbon, it will be sunny."
+	echo.Ruling = harness.Decided{Disposition: harness.Ignore, Floor: harness.Continue}
 	asker.Overheard(participant, echo)
 	time.Sleep(50 * time.Millisecond)
-	s.Zero(countOf[Interrupted](s.reported()), "the agent's own voice heard back stops nothing")
+	s.Zero(countOf[Interrupted](s.reported()), "the agent's own voice heard back, ruled ignore, stops nothing")
 	s.Zero(s.voice.interrupted())
 
 	words := stop

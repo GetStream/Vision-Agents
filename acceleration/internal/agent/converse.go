@@ -530,7 +530,9 @@ func (c *converse) stopSpent(ready candidate) (Action, bool) {
 	if !ok || stop.utterance != ready.Utterance || ready.Utterance == 0 {
 		return Action{}, false
 	}
-	if saysMore(ready.Text, stop.words) {
+	// A stop ruled over the agent's echo alone was ruled on no words of the caller's: what they
+	// said is the turn's to show, and it is spent if it is a stop and nothing more.
+	if stop.words == "" && !stopAlone(ready.Text) || stop.words != "" && saysMore(ready.Text, stop.words) {
 		return Action{}, false
 	}
 	c.cadence.Resolve(ready.ID, false)
@@ -666,6 +668,21 @@ func (c *converse) stale(transcript stt.Transcript, saying string, state floor) 
 		Interruption: interruption{cause: causeUnheard, words: saying},
 	}), true
 }
+
+// stopAlone reports whether text says nothing but to stop: words that interrupt alone and
+// murmurs, with what goes with them ("hold on", "excuse me", "wait a second"), and not a word
+// of a request ("no wait, I meant Lisbon").
+func stopAlone(text string) bool {
+	fields := strings.Fields(strings.ToLower(words(text)))
+	return len(fields) > 0 && !slices.ContainsFunc(fields, func(field string) bool {
+		_, murmur := murmurs[field]
+		return !murmur && !interruptsAlone[field] && !stopsWith[field]
+	})
+}
+
+// stopsWith are the words that go with one that interrupts alone in a stop that says nothing
+// more: "hold on", "hang on", "excuse me", "wait a second".
+var stopsWith = map[string]bool{"on": true, "me": true, "a": true, "second": true, "sec": true, "moment": true, "minute": true}
 
 // takesFloor reports whether words are more than a murmur: a cough, "mm", a lone non-interruption,
 // or nothing but assent ("okay okay", "uh huh", "got it"), which is somebody listening.
