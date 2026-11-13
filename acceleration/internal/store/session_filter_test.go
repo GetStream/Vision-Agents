@@ -186,6 +186,33 @@ func (s *StoreSuite) TestFilterMatchesEachFieldAndOperator() {
 	s.Equal([]string{"s1", "s4", "s5"}, s.matching(ReviewScoreIs(SessionLte, 3)))
 }
 
+func (s *StoreSuite) TestFilterMatchesTheConfigStateStartAndLabels() {
+	minutes := func(n int) time.Time { return s.base.Add(time.Duration(n) * time.Minute) }
+	s.opened("c1", "app", minutes(0), func(session *AgentSession) {
+		session.Custom = map[string]any{"origin": "test", "attempt": 2}
+	})
+	s.opened("c2", "app", minutes(1), func(session *AgentSession) {
+		session.ConfigID, session.State = "cfg-sales", SessionClosed
+	})
+	s.opened("c3", "app", minutes(2), func(session *AgentSession) {
+		session.Custom = map[string]any{"origin": "production"}
+	})
+	test := CustomHolds(map[string]string{"origin": "test"})
+
+	s.Equal([]string{"c1", "c3"}, s.matching(SessionIs(SessionFieldConfig, "cfg-docs")))
+	s.Equal([]string{"c1", "c3"}, s.matching(SessionIs(SessionFieldState, SessionRunning)))
+	s.Equal([]string{"c2"}, s.matching(SessionIs(SessionFieldState, SessionClosed)))
+
+	s.Equal([]string{"c2", "c3"}, s.matching(CreatedAtIs(SessionGte, minutes(1))), "$gte holds at the instant itself")
+	s.Equal([]string{"c1"}, s.matching(CreatedAtIs(SessionLt, minutes(1))), "$lt does not")
+	s.Equal([]string{"c2"}, s.matching(AllOf(CreatedAtIs(SessionGte, minutes(1)), CreatedAtIs(SessionLt, minutes(2)))))
+
+	s.Equal([]string{"c1"}, s.matching(test))
+	s.Empty(s.matching(CustomHolds(map[string]string{"origin": "test", "case": "a"})), "every pair has to be held")
+	s.Empty(s.matching(CustomHolds(map[string]string{"attempt": "2"})), "a number is not the string it prints as")
+	s.Equal([]string{"c1", "c2"}, s.matching(AnyOf(test, SessionIs(SessionFieldState, SessionClosed))))
+}
+
 func (s *StoreSuite) TestASessionWithNoReviewMatchesNoScoreCondition() {
 	s.seven()
 
@@ -221,7 +248,7 @@ func (s *StoreSuite) TestFilterCombinesWithAndOrAndNesting() {
 	)))
 	s.Len(s.matching(AllOf()), 7, "nothing asked for is every session")
 	s.Empty(s.matching(AnyOf()), "one of nothing is none")
-	s.Empty(s.matching(SessionExpr{Field: "custom", Op: SessionEq, Strings: []string{"x"}}),
+	s.Empty(s.matching(SessionExpr{Field: "call_id", Op: SessionEq, Strings: []string{"x"}}),
 		"a field the store does not know matches nothing rather than everything")
 }
 

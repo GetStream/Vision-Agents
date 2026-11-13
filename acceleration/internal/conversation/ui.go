@@ -189,11 +189,11 @@ func (c *Conversation) ActedOn(ctx context.Context, action map[string]any) strin
 	cid, agentID := c.data.CID, c.data.Agent
 	c.mu.Unlock()
 	message := found.Data.Message
-	if message.Cid != cid || !writtenByAgent(cid, agentID, message.User.ID) {
+	if message.Cid != cid {
 		return ""
 	}
 	stored, err := messageFromWire(message.ID, message.Text, message.Custom)
-	if err != nil {
+	if err != nil || !readsAsWritten(cid, agentID, message.User.ID, stored.Role) {
 		return ""
 	}
 	return uiWords([]Message{stored}, action)

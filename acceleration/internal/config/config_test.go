@@ -1172,6 +1172,29 @@ func (s *ConfigSuite) TestTelnyxSettingsInAFileReachTheEnvironment() {
 	s.Equal("cHVibGlj", os.Getenv("TELNYX_PUBLIC_KEY"))
 }
 
+func (s *ConfigSuite) TestTheTwilioWebhookAuthTokenIsReadFromTheEnvironment() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Empty(config.Twilio.WebhookAuthToken, "unset, no Twilio webhook is believed")
+
+	s.T().Setenv("TWILIO_WEBHOOK_AUTH_TOKEN", "token-from-env")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+
+	s.Equal("token-from-env", config.Twilio.WebhookAuthToken)
+}
+
+func (s *ConfigSuite) TestTheTwilioWebhookAuthTokenInAFileReachesTheEnvironment() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte("twilio:\n  webhook_auth_token: token-from-file\n"), 0o600))
+
+	config, _, err := Load(path)
+	s.Require().NoError(err)
+
+	s.Equal("token-from-file", config.Twilio.WebhookAuthToken)
+	s.Equal("token-from-file", os.Getenv("TWILIO_WEBHOOK_AUTH_TOKEN"))
+}
+
 func (s *ConfigSuite) TestASingleNodeSetsNoShard() {
 	config, _, err := Load("")
 	s.Require().NoError(err)

@@ -178,45 +178,16 @@ func (s *StoreSuite) TestQueryOrdersTheLastMessageFirst() {
 	s.Equal([]string{"older", "newer"}, sessionIDs(found))
 }
 
-func (s *StoreSuite) TestQueryNarrowsByProjectAndAgent() {
-	s.opened("health", "app", s.base, func(session *AgentSession) { session.Project = "Health" })
-	s.opened("docs", "app", s.base.Add(time.Minute), func(session *AgentSession) { session.Project = "Docs" })
-	s.opened("other-agent", "app", s.base.Add(2*time.Minute), func(session *AgentSession) {
-		session.AgentName = "sales"
-		session.Project = "Health"
-	})
+func (s *StoreSuite) TestASessionKeepsTheTeamItIsCountedUnder() {
+	s.opened("finance", "app", s.base, func(session *AgentSession) { session.Team = "finance" })
+	s.opened("none", "app", s.base.Add(time.Minute), nil)
 
-	byProject, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{Project: "Health"})
+	finance, err := s.store.StoredSession(s.ctx, "app", "finance")
 	s.Require().NoError(err)
-	s.Require().Len(byProject, 2)
-	s.Equal("other-agent", byProject[0].ID)
-
-	byAgent, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{AgentName: "docs"})
+	s.Equal("finance", finance.Team)
+	none, err := s.store.StoredSession(s.ctx, "app", "none")
 	s.Require().NoError(err)
-	s.Len(byAgent, 2)
-}
-
-func (s *StoreSuite) TestQueryAndSearchNarrowToATeam() {
-	s.opened("finance", "app", s.base, func(session *AgentSession) {
-		session.Team = "finance"
-		session.Title = "shared subject"
-	})
-	s.opened("sales", "app", s.base.Add(time.Minute), func(session *AgentSession) {
-		session.Team = "sales"
-		session.Title = "shared subject"
-	})
-	s.opened("none", "app", s.base.Add(2*time.Minute), func(session *AgentSession) { session.Title = "shared subject" })
-
-	listed, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{Team: "finance"})
-	s.Require().NoError(err)
-	s.Require().Len(listed, 1)
-	s.Equal("finance", listed[0].ID)
-	s.Equal("finance", listed[0].Team)
-
-	found, err := s.store.SearchSessions(s.ctx, "app", "shared", SessionFilter{Team: "sales"})
-	s.Require().NoError(err)
-	s.Require().Len(found, 1)
-	s.Equal("sales", found[0].ID)
+	s.Empty(none.Team)
 }
 
 func (s *StoreSuite) TestASessionIsTextWithoutACallAndVoiceWithOne() {
@@ -239,15 +210,12 @@ func (s *StoreSuite) TestSeeingVideoMakesASessionVideoAndItStaysVideo() {
 	// A retried save of the row must not take it back to voice.
 	s.opened("called", "app", s.base, func(session *AgentSession) { session.CallID = "call-1" })
 
-	videos, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{Modality: ModalityVideo})
+	called, err := s.store.StoredSession(s.ctx, "app", "called")
 	s.Require().NoError(err)
-	s.Require().Len(videos, 1)
-	s.Equal("called", videos[0].ID)
-
-	written, err := s.store.QuerySessions(s.ctx, "app", SessionFilter{Modality: ModalityText})
+	s.Equal(ModalityVideo, called.Modality)
+	written, err := s.store.StoredSession(s.ctx, "app", "written")
 	s.Require().NoError(err)
-	s.Require().Len(written, 1)
-	s.Equal("written", written[0].ID)
+	s.Equal(ModalityText, written.Modality)
 }
 
 func (s *StoreSuite) TestQueryPages() {
