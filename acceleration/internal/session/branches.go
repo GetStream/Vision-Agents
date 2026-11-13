@@ -27,8 +27,9 @@ var ErrBranchGone = errors.New("session: this branch is no longer kept")
 
 // ErrSwitchUnfinished is a turn refused because a switch to another branch the session began
 // could not be finished after Chat may have rewound, and still cannot be, as while Chat cannot
-// be read: what the person sees is not known. It clears by itself once Chat answers.
-var ErrSwitchUnfinished = errors.New("session: the conversation's last regenerate, edit or branch switch has not finished yet; try again shortly")
+// be read: what the person sees is not known. The next turn tries again, so it clears once
+// Chat answers.
+var ErrSwitchUnfinished = errors.New("session: the conversation's last regenerate, edit or branch switch has not finished yet; try again")
 
 // rangesWarned is how many hidden ranges a conversation may reach before each switch logs a
 // warning: Chat refuses a rewind past 100.
@@ -435,69 +436,6 @@ func (s *Session) heal(ctx context.Context) error {
 	return nil
 }
 
-// unsettle leaves the switch switchID unsettled, and has it retried in the background so a
-// session nobody asks anything of recovers too. The caller holds commandMu.
-func (s *Session) unsettle(switchID string) {
-	s.unsettled = switchID
-	s.healMu.Lock()
-	defer s.healMu.Unlock()
-	if s.healStopped || s.healCancel != nil {
-		return
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	s.healCancel = cancel
-	first := cmp.Or(s.healFirst, healFirstDelay)
-	s.healing.Go(func() { s.healUnsettled(ctx, first) })
-}
-
-// How long the background retry of an unsettled switch waits: healFirstDelay at first,
-// doubled after each miss up to healMostDelay. What leaves a switch unsettled is mostly a
-// lost answer or a Chat blip of a few seconds, so the first retry comes before the person
-// notices; a longer outage costs Chat at most one read a minute per stuck session, and any
-// turn asked meanwhile tries at once anyway.
-const (
-	healFirstDelay = time.Second
-	healMostDelay  = time.Minute
-)
-
-// healUnsettled retries the unsettled switch until it is finished or the session closes.
-func (s *Session) healUnsettled(ctx context.Context, delay time.Duration) {
-	for {
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-		}
-		s.commandMu.Lock()
-		healed := s.unsettled == "" || s.heal(ctx) == nil
-		if healed {
-			// Cleared under commandMu, so a switch unsettled after this starts a retry of its own.
-			s.healMu.Lock()
-			s.healCancel()
-			s.healCancel = nil
-			s.healMu.Unlock()
-		}
-		s.commandMu.Unlock()
-		if healed {
-			return
-		}
-		delay = min(2*delay, healMostDelay)
-	}
-}
-
-// stopHealing stops the background retry of an unsettled switch, and waits for it.
-func (s *Session) stopHealing() {
-	s.healMu.Lock()
-	s.healStopped = true
-	if s.healCancel != nil {
-		s.healCancel()
-	}
-	s.healMu.Unlock()
-	s.healing.Wait()
-}
-
 // settle finishes target's switch after cause, the error Rewind or Activate failed with, left
 // it unknown whether Chat rewound: a switch whose rewind landed is carried on, and the switch
 // answers as if it had not failed. One whose rewind never landed changed nothing, and cause is
@@ -509,7 +447,7 @@ func (s *Session) settle(ctx context.Context, target persistent.RewindTarget, ch
 	}
 	outcome, carried, err := s.persisted.SettleSwitch(ctx, target, chosen)
 	if err != nil {
-		s.unsettle(target.SwitchID)
+		s.unsettled = target.SwitchID
 		return persistent.RewindOutcome{}, stack.Wrap(errors.Join(ErrSwitchUnfinished, cause, err))
 	}
 	if !carried {
@@ -531,7 +469,7 @@ func (s *Session) moveActivePath(ctx context.Context, leaf string, sw store.Agen
 	}
 	if err := s.tree.MoveActivePathUntil(ctx, s.spec.CustomerID, s.id, leaf, now, until); err != nil {
 		if sw.ID != "" {
-			s.unsettle(sw.ID)
+			s.unsettled = sw.ID
 		}
 		return err
 	}

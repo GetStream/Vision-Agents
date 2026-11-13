@@ -230,17 +230,8 @@ type Session struct {
 	// unsettled is the switch to another branch the session began and could not finish once
 	// Chat may have rewound, which leaves it unsure what the person sees. Every turn but the
 	// retry of that switch's own request tries to finish it first, and is refused only while
-	// that fails (ErrSwitchUnfinished); a background retry finishes it for an idle session
-	// (healUnsettled). Guarded by commandMu.
+	// that fails (ErrSwitchUnfinished). Guarded by commandMu.
 	unsettled string
-	// healMu guards healCancel, which stops the background retry of an unsettled switch while
-	// one runs, and healStopped, set once the session closes so none starts after.
-	healMu      sync.Mutex
-	healCancel  context.CancelFunc
-	healStopped bool
-	healing     sync.WaitGroup
-	// healFirst is the wait before the first background retry, healFirstDelay when zero.
-	healFirst time.Duration
 	mu        sync.Mutex
 	// watchers are the connections being fanned out to, keyed so one can detach without
 	// disturbing the others.
@@ -1824,7 +1815,6 @@ func (s *Session) halt() error {
 func (s *Session) close() error {
 	// The last slice is written before anything else closes, however long the rest takes.
 	s.runtime.Stop()
-	s.stopHealing()
 
 	s.mu.Lock()
 	s.closing = true

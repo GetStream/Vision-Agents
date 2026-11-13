@@ -41,7 +41,7 @@ var errBranchGone = APIError{Type: ErrorTypeGone, Code: codeBranchUnavailable,
 // errSwitchUnfinished is a turn refused while a regenerate, an edit or an activation the
 // session began after Chat may have rewound cannot be finished yet.
 var errSwitchUnfinished = APIError{Type: ErrorTypeConflict, Code: codeSwitchUnfinished,
-	Message: "the conversation's last regenerate, edit or branch switch has not finished yet; try again shortly: it clears by itself once Stream Chat answers"}
+	Message: "the conversation's last regenerate, edit or branch switch has not finished yet; try again: it clears once Stream Chat answers"}
 
 // errUnknownResponse is a response the session does not have.
 var errUnknownResponse = notFound("no such response in this session")

@@ -347,7 +347,7 @@ func (s *ResponseBranchesSuite) TestARegenerateLeftUnfinishedRefusesQuestionsUnt
 	s.Equal(http.StatusConflict, status)
 	s.Equal("switch_unfinished", errorCode(s, body))
 
-	s.Contains(string(body), "try again shortly")
+	s.Contains(string(body), "try again")
 
 	s.chat.Heal("POST", "/query")
 	s.asks(s.client, opened, "And Sunday?")
