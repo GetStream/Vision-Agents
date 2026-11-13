@@ -386,6 +386,46 @@ func (s *ResponseBranchesSuite) rewindsAKeptConversation(as *testClient) {
 	s.Equal(http.StatusOK, status, "the rewound turn is a branch that can be read: %s", body)
 }
 
+// A conversation kept in Chat whose session ended is carried on to be rewound, as it is to be
+// regenerated or edited, rather than refused while nobody holds it open.
+func (s *ResponseBranchesSuite) TestAnEndedConversationKeptInChatIsRewound() {
+	opened := s.opens(s.client)
+	first := s.asks(s.client, opened, "Is it raining?")
+	s.asks(s.client, opened, "And tomorrow?")
+	s.client.stopSession(opened.Id)
+
+	status, body := s.client.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/rewind", RewindSessionRequest{ResponseId: first})
+
+	s.Require().Equal(http.StatusNoContent, status, string(body))
+	var page AgentResponsePage
+	s.Require().Equal(http.StatusOK, s.client.do(http.MethodGet, responsesPath(opened), nil, &page))
+	s.Require().Len(page.Items, 1)
+	s.Equal(first, page.Items[0].Id)
+}
+
+// A turn sent through /respond carries no branch mark, so it cannot be rewound to.
+func (s *ResponseBranchesSuite) TestARewindToATurnSentThroughRespondIsRefusedAsUnmarked() {
+	opened := s.opens(s.serverClient)
+	for i, said := range []string{"First question", "Second question"} {
+		s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
+			"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: said}, nil))
+		s.Require().Eventually(func() bool {
+			_, answered := s.serverClient.call(http.MethodGet, responsesPath(opened), nil)
+			return strings.Count(string(answered), `"completed"`) == i+1
+		}, settleFor, 10*time.Millisecond, "the session answers")
+	}
+	var page AgentResponsePage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, responsesPath(opened), nil, &page))
+	s.Require().Len(page.Items, 2)
+	slices.SortFunc(page.Items, func(a, b AgentResponse) int { return a.CreatedAt.Compare(b.CreatedAt) })
+
+	status, body := s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/rewind",
+		RewindSessionRequest{ResponseId: page.Items[0].Id})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(body), "not asked through createResponse", string(body))
+}
+
 func (s *ResponseBranchesSuite) opens(as *testClient) Session {
 	return as.createSession(CreateSessionRequest{Llm: pointerTo("noted/noted-model")})
 }

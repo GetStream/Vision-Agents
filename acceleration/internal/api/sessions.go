@@ -341,16 +341,20 @@ func (s *Server) interruptSession(ctx context.Context, request *interruptSession
 
 // rewindSession carries a conversation on from the end of one of its responses.
 func (s *Server) rewindSession(ctx context.Context, request *rewindSessionRequest) (*struct{}, error) {
-	found, failure := s.session(ctx, request.Id)
-	if failure != nil {
-		return nil, failure
-	}
 	if request.Body == nil || request.Body.ResponseId == "" {
 		return nil, invalidRequest("name the response to carry on from")
 	}
 	if s.store == nil {
 		return nil, errNoStore
 	}
+	// A conversation kept in Chat that ended is carried on, as a regenerate, an edit or an
+	// activation carries it on: its rewind needs the conversation open.
+	leaveUncosted(ctx)
+	found, sent, failure := s.sessionToAnswer(ctx, request.Id)
+	if failure != nil {
+		return nil, failure
+	}
+	defer sent()
 
 	err := found.Rewind(ctx, s.store, request.Body.ResponseId)
 	// A conversation kept in Chat is rewound the way an edit is, and refused the same ways.
