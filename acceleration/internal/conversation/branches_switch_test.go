@@ -3,6 +3,7 @@ package conversation_test
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -626,4 +627,33 @@ func (s *BranchesSuite) TestARequestAnEditHidRetriedAfterARestartIsADuplicate() 
 	s.Equal(second.UserMessageID, retry.UserMessageID)
 	s.written()
 	s.Equal(before, s.chat.Visible(s.session), "nothing is written: no reply without its question")
+}
+
+// An edit retried while the rewind its first try sent lands keeps the copies of what that
+// rewind hid: the retry's own rewind conflicts, and the channel shows the question gone.
+func (s *BranchesSuite) TestAnEditRetriedWhileItsFirstRewindLandsKeepsItsCopies() {
+	_, second := s.twoTurns()
+	s.chat.FailWith(http.MethodPost, "/rewind", http.StatusGatewayTimeout)
+	_, err := s.conv.Rewind(s.ctx, edit("sw-1", second))
+	s.Require().Error(err)
+	s.chat.Heal(http.MethodPost, "/rewind")
+	waiting, release := s.chat.Hold("/rewind")
+	retried := make(chan error, 1)
+	go func() {
+		_, err := s.conv.Rewind(s.ctx, edit("sw-1", second))
+		retried <- err
+	}()
+	<-waiting
+	// The first try's rewind lands after all, before the retry's reaches Chat.
+	_, err = conversation.NewRewinder(s.chat.Client).Rewind(s.ctx, "agent", s.session, second.UserMessageID, true, second.AssistantMessageID, "agent")
+	s.Require().NoError(err)
+	release()
+
+	s.Require().NoError(<-retried)
+	copies, err := s.branches.BranchMessages(s.ctx, "customer", s.session, []string{"resp-2"})
+	s.Require().NoError(err)
+	s.Len(copies, 2, "the hidden question and reply are still copied")
+	_, journaled := s.branches.row("sw-1")
+	s.True(journaled)
+	s.NotContains(s.chat.Visible(s.session), second.UserMessageID)
 }
