@@ -45,7 +45,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param branch 
  * @param error 
  * @param finishedAt 
- * @param parentResponseId The response this one was answered after, absent for a session's first and for one answered before responses were kept as a tree.
+ * @param parentResponseId The response this one was answered after, absent for a session's first.
  * @param rewoundTo 
  * @param said What the person asked, which is the first item of every response.
  */
@@ -75,7 +75,7 @@ internal data class AgentResponse (
     @SerialName(value = "finished_at")
     val finishedAt: kotlin.String? = null,
 
-    /* The response this one was answered after, absent for a session's first and for one answered before responses were kept as a tree. */
+    /* The response this one was answered after, absent for a session's first. */
     @SerialName(value = "parent_response_id")
     val parentResponseId: kotlin.String? = null,
 

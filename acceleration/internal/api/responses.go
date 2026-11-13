@@ -494,7 +494,7 @@ type AgentResponse struct {
 	Error            *string             `json:"error,omitempty"`
 	FinishedAt       *time.Time          `json:"finished_at,omitempty"`
 	Id               string              `json:"id"`
-	ParentResponseId *string             `json:"parent_response_id,omitempty" doc:"The response this one was answered after, absent for a session's first and for one answered before responses were kept as a tree."`
+	ParentResponseId *string             `json:"parent_response_id,omitempty" doc:"The response this one was answered after, absent for a session's first."`
 	Branch           *ResponseBranch     `json:"branch,omitempty" doc:"Where a regenerate or an edit stands among its alternatives, on the answer to one. Absent when it is the only one."`
 	RewoundTo        *RewoundTo          `json:"rewound_to,omitempty" doc:"Where a regenerate or an edit rewound the conversation's channel to, on the answer to one that hid something: the acting device drops that message, when inclusive, and every message after it."`
 	Said             *string             `json:"said,omitempty" doc:"What the person asked, which is the first item of every response."`

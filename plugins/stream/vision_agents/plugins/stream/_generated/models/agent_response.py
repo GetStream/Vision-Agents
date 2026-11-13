@@ -33,8 +33,7 @@ class AgentResponse:
         finished_at (datetime.datetime | Unset):
         said (str | Unset): What the person asked, which is the first item of every response.
         branch (ResponseBranch | Unset):
-        parent_response_id (str | Unset): The response this one was answered after, absent for a session's first and for
-            one answered before responses were kept as a tree.
+        parent_response_id (str | Unset): The response this one was answered after, absent for a session's first.
         rewound_to (RewoundTo | Unset):
     """
 

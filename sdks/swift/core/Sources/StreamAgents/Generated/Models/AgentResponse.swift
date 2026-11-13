@@ -21,7 +21,7 @@ final class AgentResponse: Sendable, Codable, JSONEncodable {
     let error: String?
     let finishedAt: Date?
     let id: String
-    /// The response this one was answered after, absent for a session's first and for one answered before responses were kept as a tree.
+    /// The response this one was answered after, absent for a session's first.
     let parentResponseId: String?
     let rewoundTo: RewoundTo?
     /// What the person asked, which is the first item of every response.
