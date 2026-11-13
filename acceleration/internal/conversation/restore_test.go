@@ -301,6 +301,17 @@ func TestAWritersLongNameIsCutInTheirLabel(t *testing.T) {
 	}, h)
 }
 
+// A shared conversation's author's name is cut at MaxAuthorName in their envelope too
+// (AuthorName, which a writer's label shares).
+func TestASharedAuthorsLongNameIsCutInTheirEnvelope(t *testing.T) {
+	p := Page{shared: true, Messages: []Message{{Role: "user", Text: "hello", State: "completed", authorID: "ben-2", authorName: strings.Repeat("B", 300)}}}
+
+	h, _ := Restore{}.history(p, nil, "")
+
+	require.Len(t, h, 2)
+	require.JSONEq(t, `{"author":{"user_id":"ben-2","display_name":"`+strings.Repeat("B", MaxAuthorName)+`"},"text":"hello"}`, h[1].Content)
+}
+
 // AI-3153: a writer's label is handed to the model with their words, so it counts in the size
 // history is read back under: the 21 runes of text fit in 50, but not with their 52 of labels.
 func TestAWritersLabelCountsInTheSizeOfHistory(t *testing.T) {
