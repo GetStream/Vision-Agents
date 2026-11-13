@@ -1147,12 +1147,14 @@ type KnowledgeDocument struct {
 	CustomerID string `bun:"customer_id,notnull"`
 	Namespace  string `bun:"namespace,notnull"`
 	// Source is what the passages are keyed by, and what a reader would call the document.
-	Source   string `bun:"source,notnull"`
-	Passages int    `bun:"passages,notnull"`
+	Source string `bun:"source,notnull"`
+	// Passages covers every passage that may be stored for the document: while its passages
+	// are written, and after that write failed, both the old version's and the new one's.
+	Passages int `bun:"passages,notnull"`
 	// Text is the document as it was posted, or as its file was read. Listings leave it out.
 	Text string `bun:"text,notnull"`
-	// State is pending while an uploaded file waits to be read, failed when it could not
-	// be, and indexed otherwise. Error says why it failed.
+	// State is pending while an uploaded file waits to be read or posted text is written,
+	// failed when that could not be done, and indexed otherwise. Error says why it failed.
 	State string `bun:"state,notnull"`
 	Error string `bun:"error,notnull"`
 	// Pages is how many pages the uploaded file had, 0 for text and for a file without pages.
@@ -1171,11 +1173,14 @@ type KnowledgeDocument struct {
 
 // Where a knowledge document has got to.
 const (
-	// KnowledgeDocumentPending is an uploaded file not read yet.
+	// KnowledgeDocumentPending is an uploaded file not read yet, or posted text whose
+	// passages are being written.
 	KnowledgeDocumentPending = "pending"
 	// KnowledgeDocumentIndexed is a document whose passages can be looked up.
 	KnowledgeDocumentIndexed = "indexed"
-	// KnowledgeDocumentFailed is an uploaded file that could not be read, and Error says why.
+	// KnowledgeDocumentFailed is an uploaded file that could not be read, or posted text
+	// whose write stopped part way, and Error says why. The passages written before the
+	// failure can still be looked up.
 	KnowledgeDocumentFailed = "failed"
 )
 
