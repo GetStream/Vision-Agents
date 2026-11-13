@@ -50,8 +50,8 @@ func (s *TwilioEventsSuite) SetupTest() {
 	s.since = len(s.logged.String())
 }
 
-// The alert of the AC, signed with a signature computed apart from twiliosig, so a Sign that
-// is wrong the same way on both sides cannot pass:
+// A Debugger alert for 10001, signed with a signature computed apart from twiliosig, so a Sign
+// that is wrong the same way on both sides cannot pass:
 //
 //	python3 -c 'import hmac,hashlib,base64; u="http://localhost:8080/v1/phone/hooks/twilio/events";
 //	p={"Sid":"NO00000000000000000000000000000001","Level":"ERROR","PayloadType":"application/json",

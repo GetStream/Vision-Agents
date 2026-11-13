@@ -84,7 +84,7 @@ func (s *Server) receiveTwilioEvent(w http.ResponseWriter, r *http.Request) {
 		code := twilioErrorCode(form.Get("Payload"))
 		name, level := vendorevent.TwilioAlert(code)
 		vendorevent.Count(vendorevent.VendorTwilio, name, level)
-		// Twilio's Level is Error or Warning, in either case, so it is logged in one.
+		// Twilio's docs write Level both as Error and as ERROR, so it is logged in lower case.
 		s.logger.Info("received a twilio account event", "vendor", vendorevent.VendorTwilio, "event", name,
 			"level", string(level), "sid", form.Get("Sid"), "error_code", code,
 			"twilio_level", strings.ToLower(form.Get("Level")))
