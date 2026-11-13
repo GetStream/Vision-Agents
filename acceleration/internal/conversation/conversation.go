@@ -1611,6 +1611,13 @@ func (c *Conversation) beginCommand(turn Turn, id, text, clientID string, action
 		receipt.Duplicate = true
 		return receipt, nil
 	}
+	if c.hidden[id] {
+		// A request whose question a switch hid, which a reopened conversation's ledger,
+		// rebuilt from what Chat shows, does not hold: it is the duplicate it would be for the
+		// router that hid it. Its question cannot be written again under the same id, so a new
+		// command would leave a reply with no question.
+		return CommandReceipt{CommandID: id, UserMessageID: id, State: "completed", Duplicate: true}, nil
+	}
 	if c.data.Current != nil && c.data.Current.FinishedAt == nil {
 		return CommandReceipt{}, stack.Wrap(ErrResponseRunning)
 	}
