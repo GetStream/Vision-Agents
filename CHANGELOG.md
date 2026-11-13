@@ -659,6 +659,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### `rewindSession` works on a conversation kept in Stream Chat
+
+Every session that is not incognito keeps its conversation in Stream Chat, and `rewindSession` (`POST /v1/agents/sessions/{id}/rewind`, `responses.rewind` in the SDKs) refused all of them with a 400. Such a conversation is now rewound in Chat as well, the way an edit of the turn after the named response is: the later messages are hidden from every read of the channel, so a reopen does not bring them back, and they are kept as a branch that `listResponseSiblings`, `getResponseBranch` and `activateResponse` read and bring back. It counts toward the conversation's 100 edit and regenerate points, needs the Chat app's agent rewind, and is refused as an edit is, including for a response whose messages carry no branch mark, such as a turn spoken on a call. An unknown response is now a 404, and the call can answer 409. The SDKs' doc comments no longer say to fork instead (AI-3209).
+
 ### A tool call's approval is no longer changed while its reply is being written to Chat
 
 Answering a held tool call's approval changed it in place on the reply, which the router could at the same moment be writing to the Chat channel or sending to the conversation's socket. The queued write and the update now each keep their own copy of the approval, so neither is encoded while it changes (AI-3198).

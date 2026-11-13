@@ -7,9 +7,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 )
 
 // ResponseBranchesSuite covers regenerating and editing an earlier response of a conversation
@@ -351,6 +354,78 @@ func (s *ResponseBranchesSuite) TestARegenerateLeftUnfinishedRefusesQuestionsUnt
 
 	s.chat.Heal("POST", "/query")
 	s.asks(s.client, opened, "And Sunday?")
+}
+
+// AI-3209: a default session keeps its conversation in Chat, which made every rewind a 400.
+// The channel is rewound too, so the later turn leaves the responses and the transcript.
+func (s *ResponseBranchesSuite) TestADeviceRewindsAConversationKeptInChat() {
+	s.rewindsAKeptConversation(s.client)
+}
+
+func (s *ResponseBranchesSuite) TestAServerRewindsAConversationKeptInChat() {
+	s.rewindsAKeptConversation(s.serverClient)
+}
+
+func (s *ResponseBranchesSuite) rewindsAKeptConversation(as *testClient) {
+	opened := s.opens(as)
+	first := s.asks(as, opened, "Is it raining?")
+	second := s.asks(as, opened, "And tomorrow?")
+
+	status, body := as.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/rewind", RewindSessionRequest{ResponseId: first})
+
+	s.Require().Equal(http.StatusNoContent, status, string(body))
+	var page AgentResponsePage
+	s.Require().Equal(http.StatusOK, as.do(http.MethodGet, responsesPath(opened), nil, &page))
+	s.Require().Len(page.Items, 1, "the later turn is no longer part of the conversation")
+	s.Equal(first, page.Items[0].Id)
+	s.True(slices.ContainsFunc(s.chat.Requests(suiteStreamKey), func(r chattest.Request) bool {
+		return r.Method == http.MethodPost && strings.HasSuffix(r.Path, "/rewind")
+	}), "the session's channel is rewound in Chat")
+	status, body = as.call(http.MethodGet, responsesPath(opened)+"/"+second+"/branch", nil)
+	s.Equal(http.StatusOK, status, "the rewound turn is a branch that can be read: %s", body)
+}
+
+// A conversation kept in Chat whose session ended is carried on to be rewound, as it is to be
+// regenerated or edited, rather than refused while nobody holds it open.
+func (s *ResponseBranchesSuite) TestAnEndedConversationKeptInChatIsRewound() {
+	opened := s.opens(s.client)
+	first := s.asks(s.client, opened, "Is it raining?")
+	s.asks(s.client, opened, "And tomorrow?")
+	s.client.stopSession(opened.Id)
+
+	status, body := s.client.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/rewind", RewindSessionRequest{ResponseId: first})
+
+	s.Require().Equal(http.StatusNoContent, status, string(body))
+	var page AgentResponsePage
+	s.Require().Equal(http.StatusOK, s.client.do(http.MethodGet, responsesPath(opened), nil, &page))
+	s.Require().Len(page.Items, 1)
+	s.Equal(first, page.Items[0].Id)
+}
+
+// A turn sent through /respond is written with its response's marks, as one from
+// createResponse is, so it can be rewound to.
+func (s *ResponseBranchesSuite) TestATurnSentThroughRespondCanBeRewoundTo() {
+	opened := s.opens(s.serverClient)
+	for i, said := range []string{"First question", "Second question"} {
+		s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost,
+			"/v1/agents/sessions/"+opened.Id+"/respond", SayRequest{Text: said}, nil))
+		s.Require().Eventually(func() bool {
+			_, answered := s.serverClient.call(http.MethodGet, responsesPath(opened), nil)
+			return strings.Count(string(answered), `"completed"`) == i+1
+		}, settleFor, 10*time.Millisecond, "the session answers")
+	}
+	var page AgentResponsePage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, responsesPath(opened), nil, &page))
+	s.Require().Len(page.Items, 2)
+	slices.SortFunc(page.Items, func(a, b AgentResponse) int { return a.CreatedAt.Compare(b.CreatedAt) })
+
+	status, body := s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/rewind",
+		RewindSessionRequest{ResponseId: page.Items[0].Id})
+
+	s.Require().Equal(http.StatusNoContent, status, string(body))
+	page = AgentResponsePage{}
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, responsesPath(opened), nil, &page))
+	s.Len(page.Items, 1)
 }
 
 // opens a conversation kept in Stream Chat, for as.

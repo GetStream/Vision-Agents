@@ -721,7 +721,7 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 		if s.spec.Caller.UserID != "" {
 			return "", stack.Wrap(errPersonalNeedsCommand)
 		}
-		turn := s.nextTurn()
+		turn := s.nextTurn(ctx)
 		if _, err := s.persisted.BeginCommandWithTurn(turn, uuid.NewString(), text, "", nil, shown...); err != nil {
 			return "", stack.Wrap(err)
 		}
@@ -890,7 +890,7 @@ func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, client
 	if handedOn {
 		return s.followUp(ctx, id, told, images, asked, true)
 	}
-	turn := s.nextTurn()
+	turn := s.nextTurn(ctx)
 	receipt, err := s.persisted.BeginCommandWithTurn(turn, id, text, clientID, action, photos...)
 	if err != nil {
 		return receipt, "", stack.Wrap(err)
@@ -1197,9 +1197,9 @@ type Recorded interface {
 // had been said. The reply being spoken is abandoned and the model's history is rebuilt from
 // what was recorded up to that response.
 //
-// A persistent conversation is refused because its transcript lives in Chat, and reopening
-// it would bring the rewound turns back; forking it at the response is what keeps both. A
-// native model is refused because it holds its own context, which this cannot reach.
+// A conversation kept in Chat is rewound there too (rewindKept), so reopening it does not
+// bring the rewound turns back. A native model is refused because it holds its own context,
+// which this cannot reach.
 func (s *Session) Rewind(ctx context.Context, recorded Recorded, responseID string) error {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
@@ -1209,7 +1209,7 @@ func (s *Session) Rewind(ctx context.Context, recorded Recorded, responseID stri
 	case s.Spec().Native():
 		return stack.Wrap(fmt.Errorf("%w: a speech-to-speech model keeps its own context", ErrCannotRewind))
 	case s.persisted != nil:
-		return stack.Wrap(fmt.Errorf("%w: a persistent conversation keeps its transcript in Chat; fork it at the response instead", ErrCannotRewind))
+		return s.rewindKept(ctx, responseID)
 	}
 
 	s.current().Interrupt()
@@ -2085,14 +2085,33 @@ func (s *Session) openTurnAs(turnID, said string, asked bool) string {
 // the question is written with carry its id: answered after the conversation's newest
 // response, asking its own question. The zero Turn when nothing is recorded, or on a call,
 // where a turn somebody said aloud could open first and take it.
-func (s *Session) nextTurn() persistent.Turn {
+//
+// A question asked where others were asked before, as after a rewind or once an edited branch
+// was left, stands beside them: it carries its place among them, read from the tree.
+func (s *Session) nextTurn(ctx context.Context) persistent.Turn {
 	if s.records == nil || s.Voicing() {
 		return persistent.Turn{}
 	}
 	s.turnsMu.Lock()
+	parent := s.leaf
+	s.turnsMu.Unlock()
+	var place persistent.Place
+	if s.tree != nil {
+		asked, err := s.tree.QuestionsAt(ctx, s.spec.CustomerID, s.id, parent)
+		if err != nil {
+			s.logger.Warn("could not read the questions asked before, so the next one is marked as the only one",
+				"session", s.id, "error", err)
+		}
+		place = placeOf(asked+1, asked+1)
+	}
+	s.turnsMu.Lock()
 	defer s.turnsMu.Unlock()
 	id := newID()
-	return persistent.Turn{ResponseID: id, ParentResponseID: s.leaf, QuestionResponseID: id}
+	turn := persistent.Turn{ResponseID: id, ParentResponseID: s.leaf, QuestionResponseID: id}
+	if s.leaf == parent {
+		turn.Question = place
+	}
+	return turn
 }
 
 // claim has the next asked turn opened (openAskedTurn) recorded as turn. A zero turn claims

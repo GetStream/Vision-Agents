@@ -405,6 +405,100 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 	return branched, nil
 }
 
+// rewindKept carries a conversation kept in Chat on from the end of response keptID, as Rewind
+// does for one that is not: the turn after it on the conversation, and everything after that,
+// is hidden in Chat the way an edit of that turn hides it, and kept as a branch that can be
+// read and brought back. Nothing is asked. Rewinding to the newest response hides nothing.
+// The caller holds commandMu.
+func (s *Session) rewindKept(ctx context.Context, keptID string) error {
+	if err := s.refuseBranches(ctx); err != nil {
+		return err
+	}
+	// The turns are read from the tree below: the newest may not be written to it yet.
+	if err := s.records.Flush(ctx); err != nil {
+		return stack.Wrap(err)
+	}
+	customer := s.spec.CustomerID
+	kept, err := s.tree.SessionResponse(ctx, customer, s.id, keptID)
+	if err != nil {
+		return err
+	}
+	if kept.QuestionResponseID == "" {
+		return stack.Wrap(&persistent.BranchesUnsupportedError{Reason: persistent.UnsupportedUnmarked})
+	}
+	if kept.RewoundAt != nil {
+		return stack.Wrap(fmt.Errorf("%w: response %s is not on the conversation; activate its branch first", persistent.ErrBranchConflict, keptID))
+	}
+	next, after, err := s.tree.ActiveChild(ctx, customer, s.id, keptID)
+	if err != nil {
+		return err
+	}
+	if !after {
+		return s.checkSettled(ctx, "")
+	}
+	// A rewind of this turn left unfinished is carried on from the message it rewound to, which
+	// Chat may hide by now. Any other is a switch of its own: the same rewind made again after
+	// its turn was brought back must not take the id of the one that finished.
+	earlier, err := s.unfinishedRewind(ctx, next.ID)
+	if err != nil {
+		return err
+	}
+	switchedID := earlier.ID
+	if switchedID == "" {
+		switchedID = rewindPrefix + switchID(s.id, newID())[len("sw"):]
+	}
+	if err := s.checkSettled(ctx, switchedID); err != nil {
+		return err
+	}
+
+	s.current().Interrupt()
+	if err := s.records.Flush(ctx); err != nil {
+		return stack.Wrap(err)
+	}
+	found := persistent.ResponseMessages{Question: earlier.ForkMessageID}
+	if earlier.ID == "" {
+		// The messages are found by reading Chat, which has to hold them first.
+		if err := s.persisted.Drain(); err != nil {
+			return err
+		}
+		if found, err = s.persisted.ResponseMessages(ctx, next.ID, next.QuestionResponseID); err != nil {
+			return err
+		}
+	}
+	if next.QuestionResponseID == "" || found.Question == "" {
+		return stack.Wrap(&persistent.BranchesUnsupportedError{Reason: persistent.UnsupportedUnmarked})
+	}
+	documents, err := s.branchDocuments(ctx, next, true)
+	if err != nil {
+		return err
+	}
+	// Journaled as an edit of the next turn: a router that stops partway is finished by the
+	// next open the same way, leaving the conversation at that turn's parent, kept.
+	rewind := persistent.RewindTarget{SwitchID: switchedID, Kind: store.SwitchEdit,
+		TargetResponseID: next.ID, MessageID: found.Question, Inclusive: true}
+	reading, err := s.restoring(ctx)
+	if err != nil {
+		return err
+	}
+	outcome, err := s.persisted.Rewind(reading, rewind)
+	if err != nil {
+		if outcome, err = s.settle(reading, rewind, nil, err); err != nil {
+			return err
+		}
+	}
+	s.turnsMu.Lock()
+	s.leaf = keptID
+	s.turnsMu.Unlock()
+	history, _ := s.persisted.HistoryOf(reading, outcome.Page)
+	s.carryOnFrom(history)
+	s.current().ReplaceDocuments(pinnable(documents)...)
+	if err := s.moveActivePath(ctx, keptID, outcome.Switch); err != nil {
+		return err
+	}
+	s.countRanges(ctx, "rewind")
+	return nil
+}
+
 // lastQuestion is the newest person's message of page, the question a regenerate answers
 // again.
 func lastQuestion(page persistent.Page) (persistent.Message, bool) {
@@ -654,6 +748,25 @@ func (s *Session) countRanges(ctx context.Context, kind string) {
 func switchID(session, request string) string {
 	sum := sha256.Sum256([]byte(session + "\x00" + request))
 	return "sw" + hex.EncodeToString(sum[:])[:30]
+}
+
+// rewindPrefix starts the id of a rewind of a kept conversation (rewindKept), which has no
+// request id to name it by.
+const rewindPrefix = "rw"
+
+// unfinishedRewind is a rewind that hides target and that an earlier try left unfinished; the
+// zero switch for none.
+func (s *Session) unfinishedRewind(ctx context.Context, target string) (store.AgentBranchSwitch, error) {
+	unfinished, err := s.tree.UnfinishedBranchSwitches(ctx, s.spec.CustomerID, s.id)
+	if err != nil {
+		return store.AgentBranchSwitch{}, err
+	}
+	for _, sw := range unfinished {
+		if strings.HasPrefix(sw.ID, rewindPrefix) && sw.TargetResponseID == target {
+			return sw, nil
+		}
+	}
+	return store.AgentBranchSwitch{}, nil
 }
 
 // keptQuestionPrefix starts the id of an activation that kept the person's message its branch
