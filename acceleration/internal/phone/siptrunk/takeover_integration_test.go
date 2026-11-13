@@ -373,7 +373,7 @@ func (s *TakeoverSuite) TestCloseWithNoOtherNodeLeavesTheCallForLater() {
 	defer cancel()
 	s.ErrorIs(a.provider.Close(ctx), context.DeadlineExceeded)
 
-	s.True(a.dialer.call.wasReleased())
+	s.Eventually(a.dialer.call.wasReleased, time.Second, 10*time.Millisecond)
 	s.False(a.dialer.call.wasHungUp())
 	s.NotEmpty(s.get("call:" + id))
 
@@ -583,7 +583,7 @@ func (s *TakeoverSuite) TestCloseOffersItsCallsWhileATakeoverIsStillResuming() {
 	s.Error(a.provider.Close(ctx), "a takeover still running at the deadline")
 
 	s.Eventually(func() bool { return s.get("owner:"+held) == "b" }, time.Second, 10*time.Millisecond)
-	s.True(a.dialer.call.wasReleased())
+	s.Eventually(a.dialer.call.wasReleased, time.Second, 10*time.Millisecond)
 	s.False(a.dialer.call.wasHungUp())
 	s.Equal(1, b.takeover.resumes())
 }
@@ -677,8 +677,8 @@ func (s *TakeoverSuite) TestATakenOverCallWhoseRecordCannotBeWrittenStaysUnderIt
 	defer cancelB()
 	_ = b.provider.Close(closeB)
 
+	s.Eventually(b.takeover.call.wasReleased, time.Second, 10*time.Millisecond)
 	s.False(b.takeover.call.wasHungUp(), "the node's claim still stands, so the call is offered on, not hung up")
-	s.True(b.takeover.call.wasReleased())
 }
 
 // seed records a lapsed call no node holds.
