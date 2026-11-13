@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"slices"
 	"sync/atomic"
+	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
@@ -552,6 +553,9 @@ type ForkOptions struct {
 	// ResponseID carries the history only up to the end of this response, so the fork
 	// branches from that point rather than from where the parent is now.
 	ResponseID string
+	// ToolTimeout is how long the fork's model waits for one of your functions. Zero keeps a
+	// running parent's, and a parent that ended has the router's default of 30 seconds.
+	ToolTimeout time.Duration
 
 	// Tools are the fork's own. Nil inherits this session's, since a conversation continued
 	// without them would offer the model tools nothing can run.
@@ -591,6 +595,10 @@ func (s *Session) Fork(ctx context.Context, options ForkOptions) (*Session, erro
 	if options.WithoutMessages {
 		no := false
 		request.Messages = &no
+	}
+	if options.ToolTimeout > 0 {
+		milliseconds := int(options.ToolTimeout / time.Millisecond)
+		request.ToolTimeoutMs = &milliseconds
 	}
 
 	forked, err := api.ForkSessionWithResponse(ctx, s.ID(), request)

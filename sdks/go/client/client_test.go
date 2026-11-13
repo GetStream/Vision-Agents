@@ -1698,6 +1698,21 @@ func TestForkingContinuesTheConversationAsANewOne(t *testing.T) {
 	}
 }
 
+func TestAForksToolTimeoutGoesOverInMilliseconds(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	forked, err := session.Fork(t.Context(), ForkOptions{ToolTimeout: 3 * time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer forked.Close(t.Context())
+
+	if body := backend.body(t, "POST", "/v1/agents/sessions/session-1/fork"); body["tool_timeout_ms"] != float64(180_000) {
+		t.Errorf("tool_timeout_ms went over as %v", body["tool_timeout_ms"])
+	}
+}
+
 func TestForkingWithoutMessagesSaysSo(t *testing.T) {
 	backend := newRouter(t)
 	session := open(t, backend)
