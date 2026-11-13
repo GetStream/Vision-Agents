@@ -2377,6 +2377,10 @@ export type paths = {
          *     - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
          *     - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
          *     - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+         *     - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename leaves alone
+         *     - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+         *     - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+         *     - `custom`: an object of string labels the session's `custom` holds, every one of them
          *
          *     Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
          *
@@ -3279,6 +3283,46 @@ export type paths = {
          * @description Where Telnyx asks what to do with a call to a number on this router's TeXML application. Unauthenticated because Telnyx is not a customer: each call is checked against the account's Ed25519 signature, and the answer dials that number's own trunk and no other. A deployment with no Telnyx key answers 404, so the path never hands out trunk credentials unsigned.
          */
         readonly post: operations["receiveTelnyxCall"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/phone/hooks/telnyx/events": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Receive a Telnyx account event
+         * @description Where the Telnyx account's notification channel sends account events, such as a port-out or a number order. Unauthenticated because Telnyx is not a customer: each event is checked against the account's Ed25519 signature, then logged and counted in vendor_account_events_total by its type and level. A deployment with no Telnyx key answers 404, so nobody else can raise the count.
+         */
+        readonly post: operations["receiveTelnyxEvent"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/phone/hooks/twilio/events": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Receive a Twilio account event
+         * @description Where the Twilio account sends its Monitor alerts (the Debugger webhook) and its usage triggers' callbacks, as form posts. Unauthenticated because Twilio is not a customer: each event is checked against X-Twilio-Signature, made with the account's Auth Token over ROUTER_PUBLIC_URL and this path, then logged and counted in vendor_account_events_total by its error code or usage category and its level. An alert whose Sid was counted in the last hour is answered 204 and not counted again. A deployment with no Twilio webhook token or no public URL answers 404, so nobody else can raise the count.
+         */
+        readonly post: operations["receiveTwilioEvent"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4627,6 +4671,7 @@ export type components = {
             readonly whatsapp?: components["schemas"]["ChannelLineRequest"];
         };
         readonly AgentChatChannel: {
+            readonly answer?: components["schemas"]["ChatChannelAnswer"];
             /**
              * @description The channel type's name, as it comes before the colon in a channel's cid.
              * @example callouts
@@ -5788,6 +5833,11 @@ export type components = {
              */
             readonly expires_at: string;
         };
+        /**
+         * @description Which messages in a channel of the type are answered. always answers every message. mentioned answers only a message that mentions the agent: its mentioned_users holds the Stream user whose id is the config's id, or its text has @ and that user's id or the config's name, as Stream's clients write a mention. A message that does not mention the agent gets no reply and starts no model; it stays in the channel, and the next answered message reads it as what was said before. Omitted is always.
+         * @enum {string}
+         */
+        readonly ChatChannelAnswer: "always" | "mentioned";
         readonly ChatToken: {
             /** @description The Stream app the channel is in, which the browser SDK connects to. */
             readonly api_key: string;
@@ -9493,10 +9543,20 @@ export type components = {
             readonly $or?: readonly components["schemas"]["SessionFilter"][];
             /** @description The agent name the session was opened against. */
             readonly agent?: components["schemas"]["Equals"];
+            /** @description The agent config the session ran under, which stays the same when the agent is renamed. */
+            readonly config_id?: components["schemas"]["Equals"];
+            /** @description When the session began. */
+            readonly created_at?: components["schemas"]["TimeWindow"];
+            /** @description Labels the session's custom object holds, every one of them: {"origin": "test"} matches a session whose custom has origin set to the string "test". */
+            readonly custom?: {
+                readonly [key: string]: string;
+            };
             /** @description The project the session belongs to. */
             readonly project_id?: components["schemas"]["EqualsOrIn"];
             /** @description The score the review gave the conversation. A session with no review matches no condition on it. Only a server-side caller may use it. */
             readonly review_score?: components["schemas"]["ReviewScoreMatch"];
+            /** @description Whether the agent is still in the call. */
+            readonly state?: components["schemas"]["SessionStateEquals"];
             /** @description Full text over the title, description, project and agent name, sorted by relevance. Once per filter, at its top level or in a top-level $and, and never inside $or. */
             readonly text?: components["schemas"]["TextMatch"];
             /** @description Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for. Only at the top level of the filter or in a top-level $and. */
@@ -9598,6 +9658,10 @@ export type components = {
          * @enum {string}
          */
         readonly SessionState: "live" | "ended";
+        /** @description Matches live or ended: "live" is short for {"$eq": "live"}. */
+        readonly SessionStateEquals: components["schemas"]["SessionState"] | {
+            readonly $eq: components["schemas"]["SessionState"];
+        };
         /** @description One of the caller's own functions. The model is offered it by name and description; running it is the caller's business, over the events socket. */
         readonly SessionTool: {
             readonly approval?: components["schemas"]["SessionToolApproval"];
@@ -10515,6 +10579,13 @@ export type components = {
              */
             readonly tts_ttfb_ms?: number | null;
             readonly turn_id: string;
+        };
+        /** @description A window of time: $gte is its start, which it holds, and $lt its end, which it does not. Either may be left out, and $gte is before $lt. */
+        readonly TimeWindow: {
+            /** Format: date-time */
+            readonly $gte?: string;
+            /** Format: date-time */
+            readonly $lt?: string;
         };
         /** @description A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself. For a connector call whose binding sets require_approval, the answer decides whether the router sends it, and names tool_call_id and request_id; turn_id may be left out. */
         readonly ToolApprovalCommand: {
@@ -18990,6 +19061,100 @@ export interface operations {
                 content?: never;
             };
             /** @description The call is over 64 KiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly receiveTelnyxEvent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The event is counted */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The signed body is not a Telnyx event */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The event is not signed by Telnyx */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Telnyx events are not configured */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The event is over 64 KiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly receiveTwilioEvent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The event is counted, or is an alert already counted in the last hour */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The signed form is not a Monitor alert or a usage trigger */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The event is not signed by Twilio */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Twilio events are not configured */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The event is over 1 MiB */
             readonly 413: {
                 headers: {
                     readonly [name: string]: unknown;

@@ -176,10 +176,16 @@ func (s *Server) answerClaimed(ctx context.Context, origin hookOrigin, thread st
 // runs longer than the lease it was taken with.
 func (s *Server) answerHosted(origin hookOrigin, cid, customer string, event messageEvent,
 	open func(context.Context) (*session.Session, error), hold func(context.Context, time.Time) (bool, error)) {
-	// The author is told to the agent by their Stream user alone: the bridge names that user
-	// after the provider's id for them (channelbridge openThread), a phone number on a texting
-	// line, which no model is told. So each person goes under "Speaker N".
-	asked := agent.WithAuthor(routing.WithAttribution(context.Background(), chatHookAttribution(customer, event)), event.Message.User.ID)
+	// A thread's author is told to the agent by their Stream user alone: the bridge names that
+	// user after the provider's id for them (channelbridge openThread), a phone number on a
+	// texting line, which no model is told. So each person goes under "Speaker N". The people in
+	// a channel of a type an agent config answers in are the customer's own Stream users, whom a
+	// tool may need to name: each goes under their name and user id (agent.WithWriter).
+	attributed := routing.WithAttribution(context.Background(), chatHookAttribution(customer, event))
+	asked := agent.WithAuthor(attributed, event.Message.User.ID)
+	if event.ChannelType != chatlog.ChannelType {
+		asked = agent.WithWriter(attributed, event.Message.User.ID, conversation.AuthorName(event.Message.User.Name))
+	}
 	started := time.Now()
 	turn, cancelTurn := context.WithTimeout(asked, askTimeout)
 	defer cancelTurn()

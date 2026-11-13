@@ -81,6 +81,10 @@ type messageEvent struct {
 		// wrote and hands to the agent itself (bridged). Raw, so a value of another type,
 		// which anyone writing in the app can set, costs only itself.
 		Bridged json.RawMessage `json:"stream_agents_bridged"`
+		// MentionedUsers are the users the writer mentioned, as Stream sends them with the
+		// message: objects with an id (Stream Chat docs, «Webhook Events», message.new). Raw, as
+		// Bridged is, so a list of another shape costs only the mention (mentions).
+		MentionedUsers json.RawMessage `json:"mentioned_users"`
 	} `json:"message"`
 }
 
