@@ -220,9 +220,14 @@ func (s *TwilioEventsSuite) TestTheQueryStringIsPartOfTheSignedURL() {
 		s.signed(twilioSignedURL+"?source=console"))
 	added, _ := s.deliver(twilioUsageTrigger("UT"+rand.Text(), "calls"), "source=console", s.signed(twilioSignedURL))
 
+	// Twilio signed the query as it sent it, so it is not sorted or decoded before the check.
+	const raw = "z=1&a=b%20c"
+	unsorted, _ := s.deliver(twilioUsageTrigger("UT"+rand.Text(), "calls"), raw, s.signed(twilioSignedURL+"?"+raw))
+
 	s.Equal(http.StatusNoContent, signed)
 	s.Equal(http.StatusUnauthorized, added)
-	s.Equal(1.0, accountEvents("twilio", "usage_trigger.calls", "warn")-before)
+	s.Equal(http.StatusNoContent, unsorted)
+	s.Equal(2.0, accountEvents("twilio", "usage_trigger.calls", "warn")-before)
 }
 
 // Signed or not, a form that is neither an alert nor a usage trigger names nothing to count.
