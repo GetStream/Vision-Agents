@@ -184,17 +184,7 @@ func (s *Server) getResponseBranch(ctx context.Context, request *getResponseBran
 		return &getResponseBranchResponse{Body: listed}, nil
 	}
 
-	start := 0
-	if after != nil {
-		start = len(shown)
-		for i, m := range shown {
-			if positionAfter(m.ChatCreatedAt, m.OriginalMessageID, after.At, after.ID) {
-				start = i
-				break
-			}
-		}
-	}
-	rows, more := page(shown[start:], clampLimit(value(request.Limit.ptr()), defaultBranchLimit, maxBranchLimit))
+	rows, more := page(shown[branchFrom(shown, after):], clampLimit(value(request.Limit.ptr()), defaultBranchLimit, maxBranchLimit))
 	listed.HasMore = more
 	for _, row := range rows {
 		listed.Items = append(listed.Items, branchMessageOf(row))
@@ -204,6 +194,26 @@ func (s *Server) getResponseBranch(ctx context.Context, request *getResponseBran
 		listed.NextCursor = encodeCursor(branchPosition{At: last.ChatCreatedAt, ID: last.OriginalMessageID})
 	}
 	return &getResponseBranchResponse{Body: listed}, nil
+}
+
+// branchFrom is where the next page of a branch starts, after the cursor's message. A branch is
+// in the tree's order, not its copies' times, which a message an earlier activation sent again
+// breaks, so the cursor's message is found by id; one no longer shown falls back to time.
+func branchFrom(shown []store.AgentBranchMessage, after *branchPosition) int {
+	if after == nil {
+		return 0
+	}
+	for i, m := range shown {
+		if m.OriginalMessageID == after.ID {
+			return i + 1
+		}
+	}
+	for i, m := range shown {
+		if positionAfter(m.ChatCreatedAt, m.OriginalMessageID, after.At, after.ID) {
+			return i
+		}
+	}
+	return len(shown)
 }
 
 // activateResponse brings a hidden branch back onto the conversation.
