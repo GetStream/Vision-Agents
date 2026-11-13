@@ -355,22 +355,36 @@ func (s *BranchesSuite) TestAQueueThatCannotBeWrittenRefusesTheRewindWithoutWedg
 	s.Equal("interrupted", s.custom(streaming.AssistantMessageID)["support_runtime"].(map[string]any)["state"])
 }
 
-func (s *BranchesSuite) TestASwitchStoppedBeforeChatRewoundIsForgottenOnReopen() {
-	first, second := s.twoTurns()
-	// A router that copied the reply and journaled the switch, then stopped before asking Chat.
+// A switch journaled whose rewind may or may not have reached Chat is never forgotten: a
+// rewind that timed out can still be committed after the channel is read, and a forgotten
+// switch would leave what it hides with no copy.
+func (s *BranchesSuite) TestASwitchWhoseRewindIsNotKnownToHaveLandedIsKeptOnReopen() {
+	_, second := s.twoTurns()
+	// A router that copied the reply and journaled the switch, then lost track of Chat's answer.
 	s.Require().NoError(s.branches.StartBranchSwitch(s.ctx, &store.AgentBranchSwitch{ID: "sw-1", SessionID: s.session, CustomerID: "customer",
 		Kind: store.SwitchRegenerate, TargetResponseID: "resp-2", ForkMessageID: second.UserMessageID}))
 	s.Require().NoError(s.branches.SaveBranchMessages(s.ctx, []store.AgentBranchMessage{{SessionID: s.session, CustomerID: "customer",
 		OriginalMessageID: second.AssistantMessageID, ResponseID: "resp-2", SwitchID: "sw-1", AuthorID: "agent", Message: map[string]any{"text": "Rain."}}}))
 
-	_, history, switched := s.reopened(nil)
+	s.reopened(nil)
 
-	s.Len(history, 4, "nothing was hidden, and nothing is left out")
-	s.Equal([]string{first.UserMessageID, first.AssistantMessageID, second.UserMessageID, second.AssistantMessageID}, s.chat.Visible(s.session))
 	_, journaled := s.branches.row("sw-1")
-	s.False(journaled)
-	s.Empty(s.branches.copied(s.session))
-	s.Empty(*switched)
+	s.True(journaled)
+	s.Equal([]string{second.AssistantMessageID}, s.branches.copied(s.session))
+}
+
+// A switch whose rewind Chat did not answer is settled without forgetting it.
+func (s *BranchesSuite) TestASwitchWhoseRewindTimedOutIsNotForgottenWhenSettled() {
+	_, second := s.twoTurns()
+	s.chat.FailWith("POST", "/rewind", 504)
+	_, err := s.conv.Rewind(s.ctx, regenerate("sw-1", second))
+	s.Require().Error(err)
+
+	_, _, _ = s.conv.SettleSwitch(s.ctx, regenerate("sw-1", second), nil)
+
+	_, journaled := s.branches.row("sw-1")
+	s.True(journaled)
+	s.Equal([]string{second.AssistantMessageID}, s.branches.copied(s.session))
 }
 
 func (s *BranchesSuite) TestASwitchStoppedAfterChatRewoundIsFinishedOnReopen() {

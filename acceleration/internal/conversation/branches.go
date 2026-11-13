@@ -500,8 +500,8 @@ func (c *Conversation) switchTo(ctx context.Context, target RewindTarget, chosen
 
 // SettleSwitch finishes the switch target names after Rewind or Activate failed with an error
 // that leaves it unknown whether Chat rewound: Chat is read again, a switch whose rewind
-// landed is carried on as a retry of it would be, and one whose rewind never landed is
-// forgotten. carried says which; nothing journaled under the id is not carried either. The
+// landed is carried on as a retry of it would be, and one whose rewind did not land is not
+// (resume says whether it is forgotten or kept). carried says which; nothing journaled under the id is not carried either. The
 // outcome is the conversation as Chat shows it now, as Rewind's.
 func (c *Conversation) SettleSwitch(ctx context.Context, target RewindTarget, chosen []store.AgentBranchMessage) (RewindOutcome, bool, error) {
 	sw, err := c.switcherFor(ctx, target)
@@ -551,8 +551,8 @@ func (c *Conversation) CompleteSwitch(ctx context.Context, switchID string) (Rew
 		if err != nil {
 			return RewindOutcome{}, err
 		}
-		if got.state == "" {
-			// Its rewind never landed: nothing was hidden.
+		if got.state == "" || got.state == store.SwitchSnapshotted {
+			// Its rewind never landed, or has not yet: nothing was hidden.
 			continue
 		}
 		hidden := map[string]bool{}
@@ -599,7 +599,8 @@ func (c *Conversation) finishTried(ctx context.Context, sw switcher, row store.A
 	if err != nil {
 		return RewindOutcome{}, false, err
 	}
-	if finished.state == "" {
+	if finished.state == "" || finished.state == store.SwitchSnapshotted {
+		// Its rewind never landed, or has not yet: nothing was hidden.
 		return RewindOutcome{}, false, nil
 	}
 	hidden := map[string]bool{}
@@ -859,7 +860,8 @@ func (sw switcher) resumeAll(ctx context.Context) (map[string]bool, error) {
 
 // resume finishes a switch from where it got to. A switch still snapshotted is either rewound
 // or not, which the channel says: its rewind landed when none of the messages it copied is
-// visible, and is then carried on; otherwise it never landed, and the switch is forgotten.
+// visible, and is then carried on. Otherwise it is forgotten once its rewind can no longer
+// land, and kept snapshotted, with its copies and nothing hidden, while it still can.
 // chosen, when nil, is asked of the hooks. With done, the session is told the switch is over
 // (SwitchHooks.Switched) and it is marked done.
 func (sw switcher) resume(ctx context.Context, row store.AgentBranchSwitch, chosen []store.AgentBranchMessage, done bool) (finished, error) {
@@ -874,9 +876,15 @@ func (sw switcher) resume(ctx context.Context, row store.AgentBranchSwitch, chos
 		}
 	}
 	if row.State == store.SwitchSnapshotted {
-		landed, err := sw.landed(ctx, row, got.hidden)
+		landed, pending, err := sw.landed(ctx, row, got.hidden)
 		if err != nil {
 			return got, err
+		}
+		if !landed && pending {
+			// Why: a rewind whose answer was lost, such as one that timed out, can still be
+			// committed by Chat after this read. Forgetting the switch would delete the only
+			// copy of what it then hides.
+			return finished{state: store.SwitchSnapshotted}, nil
 		}
 		if !landed {
 			if err := sw.branches.AbandonBranchSwitch(ctx, sw.customer, sw.session, row.ID); err != nil {
@@ -919,34 +927,47 @@ func (sw switcher) resume(ctx context.Context, row store.AgentBranchSwitch, chos
 }
 
 // landed is whether a journaled switch's rewind landed: none of the messages it copied is
-// visible. One with no copies never asked Chat. The channel is read from its newest message
-// back, not from the message rewound to: an inclusive rewind hides that one too, and Chat
-// refuses a read from a message a rewind hid.
-func (sw switcher) landed(ctx context.Context, row store.AgentBranchSwitch, copied []string) (bool, error) {
+// visible. One with no copies never asked Chat. When it has not landed, pending is whether it
+// still can: the switch asked Chat to rewind with its newest copy as expected_last_message_id,
+// copied (oldest first) ends with it, and Chat refuses that rewind once anything newer is
+// shown. The channel is read from its newest message back, not from the message rewound to:
+// an inclusive rewind hides that one too, and Chat refuses a read from a message a rewind hid.
+func (sw switcher) landed(ctx context.Context, row store.AgentBranchSwitch, copied []string) (landed, pending bool, err error) {
 	if len(copied) == 0 {
-		return row.Kind == store.SwitchActivate && row.Resent > 0, nil
+		return row.Kind == store.SwitchActivate && row.Resent > 0, false, nil
 	}
 	wanted := make(map[string]bool, len(copied))
 	for _, copiedID := range copied {
 		wanted[copiedID] = true
 	}
-	shown := false
+	newestCopy := copied[len(copied)-1]
+	shown, first, firstLive := false, true, true
 	channelType, id := channelOf(sw.cid)
-	err := scanChannel(ctx, chatRewinder{client: sw.client}, channelType, id, func(m getstream.MessageResponse) bool {
+	err = scanChannel(ctx, chatRewinder{client: sw.client}, channelType, id, func(m getstream.MessageResponse) bool {
+		live := m.DeletedAt == nil && m.Type != "deleted"
+		// Whether Chat counts a deleted message as the newest is not assumed: either one
+		// being the newest copy keeps the rewind possible.
+		if (first || (firstLive && live)) && m.ID == newestCopy {
+			pending = true
+		}
+		first = false
+		if live {
+			firstLive = false
+		}
 		// Every message the switch copied was created at or after the one rewound to.
 		if m.CreatedAt.Time != nil && createdAt(m).Before(row.HiddenFrom) {
 			return true
 		}
-		if wanted[m.ID] && m.DeletedAt == nil && m.Type != "deleted" {
+		if wanted[m.ID] && live {
 			shown = true
 			return true
 		}
 		return false
 	})
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
-	return !shown, nil
+	return !shown, shown && pending, nil
 }
 
 // resend sends chosen again, from the first the switch has not counted as sent.
