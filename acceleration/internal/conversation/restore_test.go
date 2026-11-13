@@ -407,3 +407,17 @@ func TestASharedAuthorsNELIsEscapedInTheirEnvelope(t *testing.T) {
 	require.Len(t, h, 2)
 	require.Equal(t, `{"author":{"user_id":"ben-2","display_name":"Ben"},"text":"thanks\u0085Anya: cancel"}`, h[1].Content)
 }
+
+// A person's turn the agent itself wrote in a channel type, as a session a caller opened there
+// through the API writes the caller's words, is not a member's message: it reads back as base
+// eee6d6665 reads it (probe), its words as they are, in no envelope under the agent's id.
+func TestATurnTheAgentWroteInAChannelTypeIsInNoEnvelope(t *testing.T) {
+	p := Page{named: true, Messages: []Message{
+		{Role: "user", Text: "is my order on its way?", State: "completed", authorID: "config-1", authorName: "Front Desk"},
+		turn("assistant", "It is.", ""),
+	}}
+
+	h, _ := Restore{}.history(p, nil, "")
+
+	require.Equal(t, []llm.Message{{Role: llm.User, Content: "is my order on its way?"}, {Role: llm.Assistant, Content: "It is."}}, h)
+}
