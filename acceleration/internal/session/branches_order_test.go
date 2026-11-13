@@ -3,13 +3,16 @@
 package session
 
 import (
+	"context"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // A branch brought back is sent again in the order of the tree, though a question above it was
@@ -103,4 +106,62 @@ func (s *BranchesSuite) TestAnEditThatCannotBeAskedIsRefusedBeforeAnythingIsHidd
 	for _, request := range s.chat.Requests(s.chat.Key) {
 		s.NotContains(request.Path, "/rewind", "Chat was never asked to rewind")
 	}
+}
+
+// gatedRecords holds back the turns a session records until it is flushed, as a writer that
+// has not caught up yet does.
+type gatedRecords struct {
+	sessionRecords
+	mu   sync.Mutex
+	held []func()
+}
+
+func (g *gatedRecords) hold(write func()) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.held = append(g.held, write)
+}
+
+func (g *gatedRecords) Responding(row store.AgentResponse) {
+	g.hold(func() { g.sessionRecords.Responding(row) })
+}
+
+func (g *gatedRecords) Responded(id, status, failure string, at time.Time) {
+	g.hold(func() { g.sessionRecords.Responded(id, status, failure, at) })
+}
+
+func (g *gatedRecords) Item(item store.AgentResponseItem) {
+	g.hold(func() { g.sessionRecords.Item(item) })
+}
+
+func (g *gatedRecords) Flush(ctx context.Context) error {
+	g.mu.Lock()
+	held := g.held
+	g.held = nil
+	g.mu.Unlock()
+	for _, write := range held {
+		write()
+	}
+	return g.sessionRecords.Flush(ctx)
+}
+
+// A regenerate right after a turn, whose response the writer has not recorded yet, regenerates
+// it rather than answering that the response does not exist.
+func (s *BranchesSuite) TestARegenerateRightAfterATurnNotYetRecordedRegeneratesIt() {
+	gate := &gatedRecords{sessionRecords: s.manager.records}
+	s.manager.records = gate
+	session := s.opens()
+	s.asks(session, "Is it raining?")
+	_, second, err := session.RespondCommand(s.ctx, uuid.NewString(), "And tomorrow?", "", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.Require().Eventually(func() bool {
+		last := s.visible(session)
+		return len(last) == 4 && last[3].state == "completed" && !s.service.Writing()
+	}, 5*time.Second, 5*time.Millisecond, "the reply was never written")
+
+	_, err = session.Regenerate(s.ctx, uuid.NewString(), second, options.LLM{})
+
+	s.Require().NoError(err)
+	s.settled(session)
+	s.NotNil(s.response(session, second).RewoundAt)
 }

@@ -264,6 +264,10 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 		taken.Duplicate = true
 		return Branched{CommandReceipt: taken}, nil
 	}
+	// The response is read from the tree below: the newest may not be written to it yet.
+	if err := s.records.Flush(ctx); err != nil {
+		return Branched{}, stack.Wrap(err)
+	}
 	customer := s.spec.CustomerID
 	replaced, err := s.tree.SessionResponse(ctx, customer, s.id, responseID)
 	if err != nil {
