@@ -374,6 +374,8 @@ async def _declare_settings(
             body.dispatch.text = DispatchSetting(settings.dispatch["text"])
     if settings.search:
         body.search = settings.search
+    if settings.image is not None:
+        body.image = settings.image
     if settings.greeting is not None:
         body.greeting = Greeting(text=settings.greeting.text)
         if settings.greeting.mode:

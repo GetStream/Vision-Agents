@@ -224,7 +224,8 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 	}
 	setString(&body.Subagent, settings.Subagent)
 	setString(&body.Search, settings.Search)
-	setString(&body.Image, settings.Image)
+	// Sent even empty, since that is how a file turns drawing off.
+	body.Image = settings.Image
 	if settings.Greeting != nil {
 		body.Greeting = &acceleration.Greeting{Text: settings.Greeting.Text}
 		if settings.Greeting.Mode != "" {
