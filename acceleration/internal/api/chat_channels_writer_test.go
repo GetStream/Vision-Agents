@@ -56,6 +56,29 @@ func (s *AppHooksSuite) TestEachWriterInAChannelTypeReachesTheModelWithTheirName
 	s.NotContains(toldModel(second), severalWriters, "a thread's note")
 }
 
+// The shape staging showed under answer: mentioned (v0.6.342): Ben's message, which mentions
+// nobody, is kept as context, and Anya's mention asks about it. The model answering her is
+// handed Ben's message under his name and id, not "Speaker 2", so it can tell what Ben said.
+func (s *AppHooksSuite) TestAMessageNobodyAnsweredIsReadUnderItsWritersName() {
+	s.forgetNoted()
+	s.holdsType("callouts", memberWrites)
+	config := s.mentionedIn("callouts")
+	channel := s.emptyChannel("callouts")
+	anya, ben := s.person("Anya"), s.person("Ben")
+	offered := "I can take the 6pm shift " + s.utils.uuid()
+	s.says("callouts", channel, ben, offered, "")
+	time.Sleep(dropped)
+	asked := "@" + config.Name + " what did Ben say? " + s.utils.uuid()
+
+	s.says("callouts", channel, anya, asked, "")
+
+	s.Require().NotNil(s.replyIn("callouts:"+channel), "the mention was not answered")
+	request, _ := s.askedWith(asked)
+	s.Equal([]string{"Ben (user " + ben + "): " + offered, "Anya (user " + anya + "): " + asked}, contentsOf(request.Input))
+	s.Contains(toldModel(request), namedWriters)
+	s.NotContains(s.notedInputs(), "Speaker ", "a person went under a number")
+}
+
 // A name that holds a line break, a colon and brackets cannot make a line of its own or pass for
 // another person's label, live or read back; a person with no name goes under their id.
 func (s *AppHooksSuite) TestAWritersNameCannotPassForAnotherLine() {
