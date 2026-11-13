@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -92,10 +93,10 @@ func (c *chorusASR) toldAbout(instructions string) bool {
 }
 
 // floorManager is a manager over the suite's stub models with client as its chorus-asr
-// server. Each listener has a
-// transcriber of its own, handed to the test as it is opened, and each agent a voice of its
-// own, so that sessions running at once each hear and speak only on their own call.
-func (s *SessionSuite) floorManager(client *audiofloor.Client) (*Manager, chan *pausingEars) {
+// server, and routerDefault as what an agent that chose no floor control gets. Each listener
+// has a transcriber of its own, handed to the test as it is opened, and each agent a voice of
+// its own, so that sessions running at once each hear and speak only on their own call.
+func (s *SessionSuite) floorManager(client *audiofloor.Client, routerDefault string) (*Manager, chan *pausingEars) {
 	s.manages()
 	opened := make(chan *pausingEars, 8)
 	transcription := sttrouter.NewRegistry()
@@ -114,7 +115,7 @@ func (s *SessionSuite) floorManager(client *audiofloor.Client) (*Manager, chan *
 	s.T().Cleanup(speaker.Close)
 	manager, err := NewManager(ManagerOptions{
 		LLM: s.manager.options.LLM, STT: transcriber, TTS: speaker, Edge: s.manager.options.Edge,
-		AudioFloor: client, Logger: slog.New(slog.DiscardHandler),
+		AudioFloor: client, FloorControlDefault: routerDefault, Logger: slog.New(slog.DiscardHandler),
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = manager.Shutdown() })
@@ -176,7 +177,7 @@ func (s *SessionSuite) callerAsks(call *floorCall, opened chan *pausingEars, wor
 // controller all the same.
 func (s *SessionSuite) TestEachSessionOnARouterRunsByItsOwnFloorControl() {
 	server, client := newChorusASR(s)
-	manager, opened := s.floorManager(client)
+	manager, opened := s.floorManager(client, "")
 
 	acting := s.floorSession(manager, "You sell ferry tickets.", store.FloorControl{Model: store.FloorControlChorusASR, MaxWaitMs: 1400})
 	unset := s.floorSession(manager, "You book clinic visits.", store.FloorControl{})
@@ -194,8 +195,97 @@ func (s *SessionSuite) TestEachSessionOnARouterRunsByItsOwnFloorControl() {
 // A session that chose chorus-asr on a router with no chorus-asr server, as a config written
 // on another router may have, asks nothing, and is answered by its flow controller.
 func (s *SessionSuite) TestAFloorControlWithNoServerIsTheFlowControllers() {
-	manager, opened := s.floorManager(nil)
+	manager, opened := s.floorManager(nil, "")
 	acting := s.floorSession(manager, "You sell ferry tickets.", store.FloorControl{Model: store.FloorControlChorusASR})
 	s.callerAsks(acting, opened, "Two tickets to Bilbao, please.")
 	s.False(acting.ears.asked.Load())
+}
+
+// What controls a session's floor is its agent's own choice, whatever the router's default,
+// and the router's default where it chose none: chorus-asr at the server's default point on a
+// router with a server, and the flow controller on one without, as with no default. The
+// opt-out is the flow controller everywhere, and asks nothing; an empty choice is none.
+func (s *SessionSuite) TestTheFloorIsTheAgentsChoiceElseTheRoutersDefault() {
+	none, flow := store.FloorControl{}, store.FloorControl{Model: store.FloorControlFlowController}
+	chorus, waiting := store.FloorControl{Model: store.FloorControlChorusASR}, store.FloorControl{Model: store.FloorControlChorusASR, MaxWaitMs: 1400}
+	for _, row := range []struct {
+		name          string
+		chosen        store.FloorControl
+		routerDefault string
+		served        bool
+		ruling        store.FloorControl
+	}{
+		{"none, no default", none, "", true, none},
+		{"none, no default, no server", none, "", false, none},
+		{"none, flow-controller default", none, store.FloorControlFlowController, true, none},
+		{"none, chorus-asr default", none, store.FloorControlChorusASR, true, chorus},
+		{"none, chorus-asr default, no server", none, store.FloorControlChorusASR, false, none},
+		{"opt-out, no default", flow, "", true, none},
+		{"opt-out, chorus-asr default", flow, store.FloorControlChorusASR, true, none},
+		{"opt-out, chorus-asr default, no server", flow, store.FloorControlChorusASR, false, none},
+		{"chorus-asr, no default", chorus, "", true, chorus},
+		{"chorus-asr, chorus-asr default", chorus, store.FloorControlChorusASR, true, chorus},
+		{"chorus-asr with a wait, chorus-asr default", waiting, store.FloorControlChorusASR, true, waiting},
+		{"chorus-asr with a wait, no default", waiting, "", true, waiting},
+		{"chorus-asr, no server", chorus, store.FloorControlChorusASR, false, chorus},
+	} {
+		s.Equal(row.ruling, FloorControlOf(row.chosen, row.routerDefault, row.served), row.name)
+	}
+	s.Equal(audiofloor.Off, FloorModeOf(flow), "the opt-out asks nothing")
+	s.Equal(audiofloor.Off, FloorModeOf(none))
+	s.Equal(audiofloor.Act, FloorModeOf(FloorControlOf(none, store.FloorControlChorusASR, true)))
+	s.Equal(audiofloor.EndOfTurn{}, EndOfTurnOf(FloorControlOf(none, store.FloorControlChorusASR, true)), "the default is the server's default point")
+}
+
+// A router that defaults every agent to chorus-asr puts the turns of a session that chose
+// nothing to the server, at the server's default point, beside one that chose chorus-asr with
+// a wait of its own; one that opted out is the flow controller's, and nothing of it reaches
+// the server.
+func (s *SessionSuite) TestTheRoutersDefaultRulesEveryFloorThatChoseNone() {
+	server, client := newChorusASR(s)
+	manager, opened := s.floorManager(client, store.FloorControlChorusASR)
+
+	unset := s.floorSession(manager, "You book clinic visits.", store.FloorControl{})
+	optedOut := s.floorSession(manager, "You sell garden tools.", store.FloorControl{Model: store.FloorControlFlowController})
+	acting := s.floorSession(manager, "You sell ferry tickets.", store.FloorControl{Model: store.FloorControlChorusASR, MaxWaitMs: 1400})
+
+	s.callerAsks(unset, opened, "Can I see a doctor on Friday?")
+	s.callerAsks(optedOut, opened, "Do you have a spade?")
+	s.callerAsks(acting, opened, "Two tickets to Bilbao, please.")
+
+	s.Equal(1, server.asked("You book clinic visits."), "the session that chose nothing is the router's default, chorus-asr")
+	s.True(unset.ears.asked.Load(), "and its transcriber asks about its caller's pauses")
+	s.Equal(1, server.asked("You sell ferry tickets."), "the session that chose chorus-asr is as it was")
+	s.False(server.toldAbout("You sell garden tools."), "nothing of the session that opted out reached chorus-asr")
+	s.False(optedOut.ears.asked.Load(), "its transcriber asks on behalf of no agent")
+}
+
+// The default asks nothing of a router with no chorus-asr server: the router warns once as
+// the manager is built, not per session, and a session that chose nothing is the flow
+// controller's.
+func (s *SessionSuite) TestTheRoutersDefaultAsksNothingWithoutAServer() {
+	manager, opened := s.floorManager(nil, store.FloorControlChorusASR)
+	unset := s.floorSession(manager, "You book clinic visits.", store.FloorControl{})
+	s.callerAsks(unset, opened, "Can I see a doctor on Friday?")
+	s.False(unset.ears.asked.Load())
+
+	var said bytes.Buffer
+	warned, err := NewManager(ManagerOptions{
+		LLM: s.manager.options.LLM, Edge: s.manager.options.Edge,
+		FloorControlDefault: store.FloorControlChorusASR, Logger: slog.New(slog.NewTextHandler(&said, nil)),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = warned.Shutdown() })
+	s.Equal(1, strings.Count(said.String(), "ROUTER_FLOOR_CONTROL_DEFAULT"), said.String())
+	s.Contains(said.String(), "ROUTER_CHORUS_ASR_URL")
+
+	said.Reset()
+	quiet, err := NewManager(ManagerOptions{
+		LLM: s.manager.options.LLM, Edge: s.manager.options.Edge,
+		FloorControlDefault: store.FloorControlChorusASR, AudioFloor: audiofloor.New("http://floor:8080", audiofloor.Opus, nil),
+		Logger: slog.New(slog.NewTextHandler(&said, nil)),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = quiet.Shutdown() })
+	s.NotContains(said.String(), "ROUTER_FLOOR_CONTROL_DEFAULT", "with a server there is nothing to warn of")
 }

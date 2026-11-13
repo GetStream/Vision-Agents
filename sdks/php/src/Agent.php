@@ -298,8 +298,8 @@ final class Agent
         );
         $sent = $body->toArray();
         if ($declared->floorControl !== null) {
-            // An empty floor_control is the default flow controller again, so it goes as {} and
-            // not the [] an empty PHP array is written as.
+            // An empty floor_control is no choice again, which the router's default rules, so it
+            // goes as {} and not the [] an empty PHP array is written as.
             $sent['floor_control'] = Json::objectValue($declared->floorControl->toArray());
         }
         $result = SyncAgentResult::fromArray(Json::asObject($this->client->post('/v1/agents/sync', body: $sent)));

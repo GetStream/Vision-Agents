@@ -104,9 +104,14 @@ type ManagerOptions struct {
 	// language model. Empty keeps the language model.
 	FlowJudge string
 	// AudioFloor is optional, and is the chorus-asr model an agent's flow controller asks as
-	// its own floor control says (Spec.FloorControl). An agent that chose none asks it
-	// nothing about turns.
+	// its own floor control says (Spec.FloorControl), or FloorControlDefault where it chose
+	// none. Without one no session asks about turns.
 	AudioFloor *audiofloor.Client
+	// FloorControlDefault is what controls the floor of an agent that chose no floor control
+	// of its own (config.Agent.FloorControlDefault): empty, the flow controller, or
+	// store.FloorControlChorusASR, chorus-asr at the server's default point when AudioFloor
+	// is set, and nothing when it is not (FloorControlOf). An agent's own choice wins.
+	FloorControlDefault string
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
 	// SpeculativeReplies has every agent start its reply before the flow controller has
@@ -269,6 +274,12 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		logger:        options.Logger,
 		sessions:      map[string]*Session{},
 		conversations: options.Conversations,
+	}
+	// Once, here, rather than for each session it would have ruled: the router runs, and the
+	// flow controller rules every floor that chose nothing, as it would with no default.
+	if options.FloorControlDefault == store.FloorControlChorusASR && options.AudioFloor == nil {
+		options.Logger.Warn("agent.floor_control_default (ROUTER_FLOOR_CONTROL_DEFAULT) is stream/chorus-asr, and this router has " +
+			"no chorus-asr server (ROUTER_CHORUS_ASR_URL): the flow controller rules the floor of every agent that chose none")
 	}
 	// written is the recorder behind records, which titles are written through too.
 	var written *sessionRecorder
@@ -810,6 +821,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 			}
 			edge = opened
 		}
+		// What controls the floor: the spec's own choice, else the router's default.
+		ruling := m.floorControl(spec)
 		return agent.New(agent.Options{
 			OnToolStarted: toolStarted,
 			OnHeard:       created.heardCaller,
@@ -842,8 +855,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 			Judge:              m.options.Classifier,
 			JudgeTarget:        m.options.FlowJudge,
 			AudioFloor:         m.options.AudioFloor,
-			AudioFloorMode:     m.floorMode(created.id, spec),
-			EndOfTurn:          EndOfTurnOf(spec.FloorControl),
+			AudioFloorMode:     m.floorMode(created.id, ruling),
+			EndOfTurn:          EndOfTurnOf(ruling),
 			Skills:             skills,
 			Telephony:          line,
 			Destinations:       spec.destinations(),

@@ -22,7 +22,7 @@ final readonly class AgentConfigPatch
         public ?array $connectors = null,
         public ?AgentDispatch $dispatch = null,
         public EpisodeCardsMode|string|null $episodeCards = null,
-        // Replaces the choice whole. Left out or null, the stored choice stays; an empty object is the default flow c...
+        // Replaces the choice whole. Left out or null, the stored choice stays; an empty object is no choice again, w...
         public ?FloorControl $floorControl = null,
         // Replaces the greeting whole. An empty text removes it.
         public ?Greeting $greeting = null,
