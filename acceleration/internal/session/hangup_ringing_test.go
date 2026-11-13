@@ -295,3 +295,56 @@ func (s *RingingSuite) TestASessionTurnedAwayForAnIdAlreadyHeldLeavesTheCallRing
 	s.False(s.hungUp(), "the session turned away hung up the call another one holds")
 	s.Empty(s.outcome(held))
 }
+
+func (s *RingingSuite) TestASessionWithNoPhoneInTheCallDoesNotHangUp() {
+	spec := s.places()
+	spec.Phone = nil
+	created := s.opens(spec)
+
+	_, err := s.manager.Close(created.ID(), OwnerOf(created.Spec()))
+	s.Require().NoError(err)
+	s.settled()
+
+	s.False(s.hungUp(), "a session with no phone in its call hung one up")
+}
+
+func (s *RingingSuite) TestASessionTurnedAwayByShutdownLeavesItsCallRinging() {
+	spec := s.places()
+	joining := make(chan struct{})
+	s.mu.Lock()
+	s.joining = joining
+	s.mu.Unlock()
+
+	refused := make(chan error, 1)
+	go func() {
+		_, err := s.manager.Create(s.ctx, spec)
+		refused <- err
+	}()
+	<-joining
+	s.Require().NoError(s.manager.Shutdown())
+	close(joining)
+	s.Require().ErrorContains(<-refused, "shut down")
+	s.settled()
+
+	s.False(s.hungUp(), "a session turned away by shutdown hung up its call")
+}
+
+func (s *RingingSuite) TestShutdownWaitsNoLongerThanTheHangUpBound() {
+	stall := make(chan struct{})
+	s.mu.Lock()
+	s.stall = stall
+	s.mu.Unlock()
+	s.T().Cleanup(func() { close(stall) })
+	s.rings()
+
+	shut := make(chan error, 1)
+	go func() { shut <- s.manager.Shutdown() }()
+
+	select {
+	case err := <-shut:
+		s.NoError(err)
+	case <-time.After(hangUpTimeout + 3*time.Second):
+		s.Fail("shutdown waited on a vendor that never answered the hangup")
+	}
+	s.True(s.hungUp(), "the ringing call was never hung up")
+}

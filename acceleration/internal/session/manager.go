@@ -1029,6 +1029,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	if m.closed {
 		m.mu.Unlock()
 		turnedAway = true
+		// Left ringing as a failed create leaves it: a hangup now would join m.ended after
+		// Shutdown has stopped waiting on it.
 		created.handedOver.Store(true)
 		fail()
 		return nil, stack.Wrap(errors.New("session: the manager is shut down"))
