@@ -436,14 +436,18 @@ func (s *Session) rewindKept(ctx context.Context, keptID string) error {
 	if !after {
 		return s.checkSettled(ctx, "")
 	}
-	// The same rewind asked again is the same switch, which a retry finishes from the message
-	// it rewound to: Chat may hide that message by now.
-	switchedID := switchID(s.id, "rewind\x00"+next.ID)
-	if err := s.checkSettled(ctx, switchedID); err != nil {
+	// A rewind of this turn left unfinished is carried on from the message it rewound to, which
+	// Chat may hide by now. Any other is a switch of its own: the same rewind made again after
+	// its turn was brought back must not take the id of the one that finished.
+	earlier, err := s.unfinishedRewind(ctx, next.ID)
+	if err != nil {
 		return err
 	}
-	earlier, err := s.unfinishedSwitch(ctx, switchedID, next.ID)
-	if err != nil {
+	switchedID := earlier.ID
+	if switchedID == "" {
+		switchedID = rewindPrefix + switchID(s.id, newID())[len("sw"):]
+	}
+	if err := s.checkSettled(ctx, switchedID); err != nil {
 		return err
 	}
 
@@ -453,6 +457,10 @@ func (s *Session) rewindKept(ctx context.Context, keptID string) error {
 	}
 	found := persistent.ResponseMessages{Question: earlier.ForkMessageID}
 	if earlier.ID == "" {
+		// The messages are found by reading Chat, which has to hold them first.
+		if err := s.persisted.Drain(); err != nil {
+			return err
+		}
 		if found, err = s.persisted.ResponseMessages(ctx, next.ID, next.QuestionResponseID); err != nil {
 			return err
 		}
@@ -478,14 +486,8 @@ func (s *Session) rewindKept(ctx context.Context, keptID string) error {
 			return err
 		}
 	}
-	// The next question is asked beside the turn hidden, so it carries its place among them.
-	questions, err := s.tree.Siblings(ctx, customer, s.id, next.ID, store.SiblingsOfQuestion)
-	if err != nil {
-		return err
-	}
 	s.turnsMu.Lock()
 	s.leaf = keptID
-	s.afterRewind.parent, s.afterRewind.place = keptID, placeOf(len(questions)+1, len(questions)+1)
 	s.turnsMu.Unlock()
 	history, _ := s.persisted.HistoryOf(reading, outcome.Page)
 	s.carryOnFrom(history)
@@ -746,6 +748,25 @@ func (s *Session) countRanges(ctx context.Context, kind string) {
 func switchID(session, request string) string {
 	sum := sha256.Sum256([]byte(session + "\x00" + request))
 	return "sw" + hex.EncodeToString(sum[:])[:30]
+}
+
+// rewindPrefix starts the id of a rewind of a kept conversation (rewindKept), which has no
+// request id to name it by.
+const rewindPrefix = "rw"
+
+// unfinishedRewind is a rewind that hides target and that an earlier try left unfinished; the
+// zero switch for none.
+func (s *Session) unfinishedRewind(ctx context.Context, target string) (store.AgentBranchSwitch, error) {
+	unfinished, err := s.tree.UnfinishedBranchSwitches(ctx, s.spec.CustomerID, s.id)
+	if err != nil {
+		return store.AgentBranchSwitch{}, err
+	}
+	for _, sw := range unfinished {
+		if strings.HasPrefix(sw.ID, rewindPrefix) && sw.TargetResponseID == target {
+			return sw, nil
+		}
+	}
+	return store.AgentBranchSwitch{}, nil
 }
 
 // keptQuestionPrefix starts the id of an activation that kept the person's message its branch

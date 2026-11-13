@@ -195,3 +195,76 @@ func (s *BranchesSuite) TestRewindsAndActivationsAroundARegenerateKeepTheTreesOr
 	s.Equal(want, s.texts(reopened))
 	s.Equal(want, history(reopened))
 }
+
+// The question asked after a rewind is shown beside the rewound one though the session was
+// reopened in between: its place is read from the tree, not held by the session that rewound.
+func (s *BranchesSuite) TestTheQuestionAskedAfterARewindAndAReopenIsShownBesideTheRewoundOne() {
+	session := s.opens()
+	first := s.asks(session, "Q1")
+	s.asks(session, "Q2")
+	s.Require().NoError(session.Rewind(s.ctx, s.store, first))
+	reopened := s.reopens(session)
+
+	next := s.asks(reopened, "Q3")
+
+	onScreen := s.visible(reopened)
+	s.Require().Len(onScreen, 4)
+	s.Equal(map[string]any{"response_id": next, "parent_response_id": first, "question_response_id": next,
+		"of": "question", "index": float64(2), "count": float64(2)}, mark(onScreen[2]))
+}
+
+// The same rewind made again after its turn was brought back, with Chat's answer lost, is a
+// switch of its own: the next question finds it and is answered from what Chat shows.
+func (s *BranchesSuite) TestARewindMadeAgainAfterItsTurnWasBroughtBackIsSettledWhenItsAnswerIsLost() {
+	session := s.opens()
+	first := s.asks(session, "Q1")
+	second := s.asks(session, "Q2")
+	s.Require().NoError(session.Rewind(s.ctx, s.store, first))
+	_, err := session.Activate(s.ctx, second)
+	s.Require().NoError(err)
+	s.written()
+	s.chat.LoseRewindAnswer()
+	waiting, release := s.chat.Hold("/rewind")
+	failed := make(chan error, 1)
+	go func() { failed <- session.Rewind(s.ctx, s.store, first) }()
+	<-waiting
+	// Chat cannot be read once it rewound, so whether it did is not known.
+	s.chat.Fail(http.MethodPost, "/query")
+	release()
+	s.Require().Error(<-failed)
+	s.chat.Heal(http.MethodPost, "/query")
+
+	next := s.asks(session, "Q3")
+
+	s.Equal(first, s.response(session, next).ParentResponseID, "Chat hid Q2, so Q3 follows Q1")
+	s.NotNil(s.response(session, second).RewoundAt)
+	s.Equal(s.texts(session), history(session), "the model holds what Chat shows")
+	reopened := s.reopens(session)
+	s.Equal(s.texts(reopened), history(reopened))
+}
+
+// A rewind asked while the turn after the kept response is still on its way to Chat waits for
+// it, rather than reading a channel without it and refusing the turn as unmarked.
+func (s *BranchesSuite) TestARewindWaitsForTheNextTurnsMessagesToReachChat() {
+	session := s.opens()
+	first := s.asks(session, "Is it raining?")
+	waiting, release := s.chat.Hold("/message")
+	request := uuid.NewString()
+	_, second, err := session.RespondCommand(s.ctx, request, "And tomorrow?", "", nil, options.LLM{})
+	s.Require().NoError(err)
+	<-waiting
+	s.Require().Eventually(func() bool {
+		done, err := session.Command(request)
+		return err == nil && done.State == "completed"
+	}, 5*time.Second, 5*time.Millisecond, "the reply is finished, though not in Chat yet")
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		release()
+	}()
+
+	s.Require().NoError(session.Rewind(s.ctx, s.store, first))
+
+	s.written()
+	s.Equal([]string{"Is it raining?", "Answer 1 to Is it raining?"}, s.texts(session))
+	s.NotNil(s.response(session, second).RewoundAt)
+}
