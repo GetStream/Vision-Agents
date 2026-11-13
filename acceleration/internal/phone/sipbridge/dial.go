@@ -34,32 +34,9 @@ func Dial(ctx context.Context, cfg Config) (*Call, error) {
 		return nil, stack.Wrap(fmt.Errorf("sipbridge: customer trunk: %w", err))
 	}
 
-	ua, err := sipgo.NewUA(
-		sipgo.WithUserAgent("sipbridge"),
-		sipgo.WithUserAgenTLSConfig(&tls.Config{MinVersion: tls.VersionTLS12}),
-	)
+	ua, customerClient, client, srv, err := newUA(guard)
 	if err != nil {
-		return nil, stack.Wrap(err)
-	}
-	// rport: our Via address is private, so responses must go back to where the request
-	// came from.
-	client, err := sipgo.NewClient(ua, sipgo.WithClientNAT())
-	if err != nil {
-		ua.Close()
-		return nil, stack.Wrap(err)
-	}
-	customerClient, err := sipgo.NewClient(ua, sipgo.WithClientNAT())
-	if err != nil {
-		ua.Close()
-		return nil, stack.Wrap(err)
-	}
-	customerClient.TxRequester = guardedRequester{guard: guard, tx: ua.TransactionLayer()}
-	// The server is never started with ListenAndServe. It only handles requests the other
-	// side sends back over the connections we opened.
-	srv, err := sipgo.NewServer(ua)
-	if err != nil {
-		ua.Close()
-		return nil, stack.Wrap(err)
+		return nil, err
 	}
 
 	reg := newRegistry()
@@ -96,16 +73,54 @@ func Dial(ctx context.Context, cfg Config) (*Call, error) {
 		ua.Close()
 		return nil, err
 	}
-	call.establish()
+	run(call, ua, customer, stream, cfg.KeepaliveInterval)
+	return call, nil
+}
 
+// newUA builds what both legs send and receive on. Requests on the customer client pass
+// guard first.
+func newUA(guard guard) (ua *sipgo.UserAgent, customerClient, streamClient *sipgo.Client, srv *sipgo.Server, err error) {
+	ua, err = sipgo.NewUA(
+		sipgo.WithUserAgent("sipbridge"),
+		sipgo.WithUserAgenTLSConfig(&tls.Config{MinVersion: tls.VersionTLS12}),
+	)
+	if err != nil {
+		return nil, nil, nil, nil, stack.Wrap(err)
+	}
+	// rport: our Via address is private, so responses must go back to where the request
+	// came from.
+	streamClient, err = sipgo.NewClient(ua, sipgo.WithClientNAT())
+	if err != nil {
+		ua.Close()
+		return nil, nil, nil, nil, stack.Wrap(err)
+	}
+	customerClient, err = sipgo.NewClient(ua, sipgo.WithClientNAT())
+	if err != nil {
+		ua.Close()
+		return nil, nil, nil, nil, stack.Wrap(err)
+	}
+	customerClient.TxRequester = guardedRequester{guard: guard, tx: ua.TransactionLayer()}
+	// The server is never started with ListenAndServe. It only handles requests the other
+	// side sends back over the connections we opened.
+	srv, err = sipgo.NewServer(ua)
+	if err != nil {
+		ua.Close()
+		return nil, nil, nil, nil, stack.Wrap(err)
+	}
+	return ua, customerClient, streamClient, srv, nil
+}
+
+// run lets requests from one side through to the other and keeps both legs alive until the
+// call ends, then closes ua.
+func run(call *Call, ua *sipgo.UserAgent, customer, stream *sipLeg, keepaliveInterval time.Duration) {
+	call.establish()
 	for _, l := range []*sipLeg{customer, stream} {
-		go keepalive(call, l, cfg.KeepaliveInterval)
+		go keepalive(call, l, keepaliveInterval)
 	}
 	go func() {
 		<-call.Done()
 		ua.Close()
 	}()
-	return call, nil
 }
 
 // newLegs builds the customer leg and the Stream leg of a call. The call id goes on the

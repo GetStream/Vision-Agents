@@ -84,6 +84,9 @@ type sipLeg struct {
 	// lastSDP is the last SDP we sent this leg, repeated when it refreshes the session
 	// with a re-INVITE that carries no offer.
 	lastSDP []byte
+	// resumed says dlg was rebuilt from a stored state rather than set up by Invite. Its
+	// INVITE transaction is gone, and sipgo's ReadBye and WriteBye end that transaction.
+	resumed bool
 }
 
 func (l *sipLeg) newInvite(body []byte) *sip.Request {
@@ -255,7 +258,7 @@ func (l *sipLeg) Reinvite(ctx context.Context, body []byte) ([]byte, error) {
 		}
 	}
 	if !res.IsSuccess() {
-		return nil, stack.Wrap(fmt.Errorf("re-INVITE: %d %s", res.StatusCode, res.Reason))
+		return nil, stack.Wrap(&statusError{method: sip.INVITE, code: res.StatusCode, reason: res.Reason})
 	}
 	// A re-INVITE's 2xx is ACKed like the first one, but outside the initial INVITE
 	// transaction, so WriteAck does not fit.
@@ -296,6 +299,16 @@ func (l *sipLeg) Bye(ctx context.Context) error {
 	if l.answer == nil {
 		return nil
 	}
+	if l.resumed {
+		res, err := l.dlg.Do(ctx, l.inDialog(sip.BYE, "", nil))
+		if err != nil {
+			return stack.Wrap(err)
+		}
+		if !res.IsSuccess() {
+			return stack.Wrap(&statusError{method: sip.BYE, code: res.StatusCode, reason: res.Reason})
+		}
+		return nil
+	}
 	// WriteBye rather than Bye: Bye copies Route from the initial INVITE, which carries
 	// the route set when a 401 with Record-Route was retried, and WriteBye adds it again.
 	return stack.Wrap(l.dlg.WriteBye(ctx, l.inDialog(sip.BYE, "", nil)))
@@ -316,6 +329,9 @@ func (l *sipLeg) keepalive(ctx context.Context) error {
 }
 
 func (l *sipLeg) readBye(req *sip.Request, tx sip.ServerTransaction) error {
+	if l.resumed {
+		return stack.Wrap(tx.Respond(sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil)))
+	}
 	return stack.Wrap(l.dlg.ReadBye(req, tx))
 }
 
