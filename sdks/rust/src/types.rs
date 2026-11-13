@@ -1122,7 +1122,7 @@ pub struct AgentResponse {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub finished_at: ::std::option::Option<::std::string::String>,
     pub id: ::std::string::String,
-    ///The response this one was answered after, absent for a session's first and for one answered before responses were kept as a tree.
+    ///The response this one was answered after, absent for a session's first.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub parent_response_id: ::std::option::Option<::std::string::String>,
     ///Where a regenerate or an edit rewound the conversation's channel to, on the answer to one that hid something: the acting device drops that message, when inclusive, and every message after it.

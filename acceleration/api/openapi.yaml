@@ -1098,7 +1098,7 @@ components:
         id:
           type: string
         parent_response_id:
-          description: The response this one was answered after, absent for a session's first and for one answered before responses were kept as a tree.
+          description: The response this one was answered after, absent for a session's first.
           type: string
         rewound_to:
           $ref: '#/components/schemas/RewoundTo'
@@ -19088,7 +19088,7 @@ paths:
     get:
       description: |-
         What a ‹ i/n › control pages through. of=reply lists every answer to the response's question, the response's own included; of=question lists the questions asked at the same point of the conversation, the original and its edits, each as the first response that answered it. Oldest first, which is the order of their index.
-        active marks the one the conversation goes through now. Reading a sibling's messages is getResponseBranch, and making it the conversation is activateResponse. A response answered before branches were kept has no siblings but itself.
+        active marks the one the conversation goes through now. Reading a sibling's messages is getResponseBranch, and making it the conversation is activateResponse. A response not asked through createResponse, such as a turn sent through /respond or a spoken one, has no siblings but itself.
       operationId: listResponseSiblings
       parameters:
         - description: The session, as returned when it was created.

@@ -55,7 +55,7 @@ var unsupportedBranches = map[string]string{
 	conversation.UnsupportedNotKept:    "only a conversation kept in Stream Chat can be regenerated or edited; an incognito session keeps none",
 	conversation.UnsupportedCall:       "a session on a call cannot be regenerated or edited while it is on the call",
 	conversation.UnsupportedNative:     "a session on a speech-to-speech model cannot be regenerated or edited: the model keeps its own context",
-	conversation.UnsupportedUnmarked:   "this response was answered before responses could be regenerated or edited, so its messages cannot be found",
+	conversation.UnsupportedUnmarked:   "this response was not asked through createResponse, as a turn sent through /respond or a spoken one is not, so its messages carry no mark to find them by",
 }
 
 // branchRefused is the answer to a regenerate, an edit or an activation the session refused,
@@ -301,8 +301,9 @@ func (s *Server) registerBranches(api huma.API) {
 			"point of the conversation, the original and its edits, each as the first response that " +
 			"answered it. Oldest first, which is the order of their index.\n" +
 			"active marks the one the conversation goes through now. Reading a sibling's messages is " +
-			"getResponseBranch, and making it the conversation is activateResponse. A response answered " +
-			"before branches were kept has no siblings but itself.",
+			"getResponseBranch, and making it the conversation is activateResponse. A response not asked " +
+			"through createResponse, such as a turn sent through /respond or a spoken one, has no " +
+			"siblings but itself.",
 		Extensions: map[string]any{clientAccessibleExtension: true},
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The response's siblings, oldest first"},

@@ -2259,7 +2259,7 @@ export type paths = {
         /**
          * The alternatives to one response: its regenerations, or the edits of its question
          * @description What a ‹ i/n › control pages through. of=reply lists every answer to the response's question, the response's own included; of=question lists the questions asked at the same point of the conversation, the original and its edits, each as the first response that answered it. Oldest first, which is the order of their index.
-         *     active marks the one the conversation goes through now. Reading a sibling's messages is getResponseBranch, and making it the conversation is activateResponse. A response answered before branches were kept has no siblings but itself.
+         *     active marks the one the conversation goes through now. Reading a sibling's messages is getResponseBranch, and making it the conversation is activateResponse. A response not asked through createResponse, such as a turn sent through /respond or a spoken one, has no siblings but itself.
          */
         readonly get: operations["listResponseSiblings"];
         readonly put?: never;
@@ -5027,7 +5027,7 @@ export type components = {
             /** Format: date-time */
             readonly finished_at?: string;
             readonly id: string;
-            /** @description The response this one was answered after, absent for a session's first and for one answered before responses were kept as a tree. */
+            /** @description The response this one was answered after, absent for a session's first. */
             readonly parent_response_id?: string;
             /** @description Where a regenerate or an edit rewound the conversation's channel to, on the answer to one that hid something: the acting device drops that message, when inclusive, and every message after it. */
             readonly rewound_to?: components["schemas"]["RewoundTo"];
