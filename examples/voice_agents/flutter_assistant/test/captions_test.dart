@@ -1,7 +1,7 @@
 import 'package:flutter/painting.dart';
 import 'package:flutter_assistant/captions.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:stream_agents_core/stream_agents_core.dart';
+import 'package:stream_agents/stream_agents.dart';
 
 void main() {
   test('Captions reveals the reply at the pace of the voice, whole words only', () {
@@ -129,6 +129,17 @@ void main() {
     expect(shown, '…${said.substring(said.length - shown.length + 1)}');
   });
 
+  test('CaptionView.tail leaves out only the words that do not fit', () {
+    final said = List.generate(60, (i) => 'word$i').join(' ');
+
+    final shown = CaptionView.tail(said, style: _style, maxWidth: 200);
+    final words = shown.substring(1).split(' ');
+    final oneMore = '…${said.split(' ')[60 - words.length - 1]} ${words.join(' ')}';
+
+    expect(_fitsTwoLines(shown, 200), isTrue);
+    expect(_fitsTwoLines(oneMore, 200), isFalse);
+  });
+
   test('CaptionView.tail shows the last word alone when nothing shorter fits', () {
     final shown = CaptionView.tail(
       'A supercalifragilisticexpialidocious',
@@ -144,6 +155,17 @@ void main() {
 const _tick = Duration(milliseconds: 100);
 
 const _style = TextStyle(fontSize: 10);
+
+bool _fitsTwoLines(String text, double maxWidth) {
+  final painter = TextPainter(
+    text: TextSpan(text: text, style: _style),
+    maxLines: 2,
+    textDirection: TextDirection.ltr,
+  )..layout(maxWidth: maxWidth);
+  final fits = !painter.didExceedMaxLines;
+  painter.dispose();
+  return fits;
+}
 
 Turn _reply({
   String id = 'reply',

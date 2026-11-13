@@ -1,0 +1,43 @@
+name: stream_agents
+description: >-
+  The client for Stream Agents: open a conversation with an agent and follow it as it
+  happens, keep it in Stream Chat, and talk to the agent out loud over Stream Video.
+version: 0.1.0
+repository: https://github.com/GetStream/Vision-Agents/tree/accelerate/sdks/dart/stream_agents
+topics: [ai, agents, chat, voice, stream]
+
+# Stream Chat 10.4's floors, which are higher than Stream Video 1.6's.
+environment:
+  sdk: ^3.12.0
+  flutter: ">=3.44.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # core
+  http: ^1.6.0
+  # Marks `AgentSession.camera` as rtc's, not an app's.
+  meta: ^1.16.0
+  web_socket: ^1.0.1
+  # chat. Pure Dart, like core.
+  stream_chat: ^10.4.0
+  # rtc
+  stream_video_flutter: ^1.6.0
+  # Makes the camera's pictures into the JPEGs the agent is sent, in pure Dart.
+  image: ^4.12.0
+
+dev_dependencies:
+  # Signs the device token the keyed-router posture test presents, as an app's backend would.
+  crypto: ^3.0.6
+  # Runs the half second between the camera's pictures in a test without waiting for it.
+  fake_async: ^1.3.0
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+  # core's and chat's tests are plain package:test, so they would run outside Flutter too.
+  # 1.31 is the one that resolves beside Flutter 3.44's flutter_test, which pins test_api.
+  test: ^1.31.0
+  yaml: ^3.1.3
+
+flutter:
+  uses-material-design: true

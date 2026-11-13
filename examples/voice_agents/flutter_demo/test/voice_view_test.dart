@@ -1,7 +1,7 @@
 import 'package:flutter_demo/voice_view.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
-import 'package:stream_agents_core/stream_agents_core.dart';
+import 'package:stream_agents/stream_agents.dart';
 
 void main() {
   test('voicePresence is idle with no word before a call is started', () {

@@ -78,7 +78,7 @@ func run(ctx context.Context, dir string) error {
 	config, err := agents.DefineAgent(ctx, stream.Backend{}, acceleration.AgentConfigRequest{
 		Name:     folder.Name,
 		Stt:      text("deepgram/flux-general-en"),
-		Tts:      text("cartesia/sonic-preview"),
+		Tts:      text("tts-fast"),
 		Llm:      text("gemini/gemini-3.8-flash"),
 		Subagent: text("openai/gpt-5.6-sol"),
 		Greeting: &acceleration.Greeting{Text: "Larkspur support, how can I help?"},

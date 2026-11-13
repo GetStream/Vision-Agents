@@ -1,35 +1,34 @@
-# Dart SDKs
+# Dart SDK
 
-Three packages for talking to an agent from a Dart or Flutter app. The core and chat are pure
-Dart, so the same conversation runs in a Flutter app, a CLI or a server-side Dart process; rtc is
-Flutter. The views are Stream Chat's AI components (`stream_chat_flutter_ai`), which an app adds
-itself, as the Swift SDK leaves them to `StreamChatAI`;
-[`flutter_demo`](../../examples/voice_agents/flutter_demo) is where that composition lives.
+One Flutter package, [`stream_agents`](stream_agents), for talking to an agent from a Flutter
+app. The views are Stream Chat's AI components (`stream_chat_flutter_ai`), which an app adds
+itself; [`flutter_demo`](../../examples/voice_agents/flutter_demo) is where that composition
+lives.
 
-| Package | pub name | Depends on | What it is |
-| --- | --- | --- | --- |
-| `core/` | `stream_agents_core` | `http`, `web_socket` | The generated client, the session socket, and the conversation state |
-| `chat/` | `stream_agents_chat` | `core`, `stream_chat` ^10.4.0 | The Stream Chat channel a conversation is kept in, on one shared client |
-| `rtc/` | `stream_agents_rtc` | `core`, `stream_video_flutter` ^1.6.0 | Joining the call, so the conversation can be spoken |
+Inside it, three areas are kept apart:
 
-They are three packages rather than one pub workspace. A workspace resolves as one, so a
-Flutter member would make the pure-Dart core unresolvable without the Flutter SDK. The others
-depend on `stream_agents_core` from pub.dev, and a committed `pubspec_overrides.yaml` points them
-at `../core` in this repository.
+| Area | Depends on | What it is |
+| --- | --- | --- |
+| `lib/src/core/` | `http`, `web_socket` | The generated client, the session socket, and the conversation state. Pure Dart |
+| `lib/src/chat/` | `core`, `stream_chat` ^10.4.0 | The Stream Chat channel a conversation is kept in, on one shared client |
+| `lib/src/rtc/` | `core`, `stream_video_flutter` ^1.6.0 | Joining the call, so the conversation can be spoken |
 
-Until they are on pub.dev, an app depends on them by git, and names the core in its own
-`dependency_overrides`, since pub ignores a dependency's `pubspec_overrides.yaml`:
+Each area has a barrel (`core.dart`, `chat.dart`, `rtc.dart`), and `lib/stream_agents.dart`, the
+only public library, exports the three. chat and rtc reach core only through its barrel and
+never each other, core and chat import only what an allowlist names, so neither picks up Flutter,
+and each test imports only its own area and the barrels it reaches. Core's and chat's tests
+import no Flutter. `test/area_boundaries_test.dart` fails on a file that breaks one of those
+rules.
+
+Until it is on pub.dev, an app depends on it by git:
 
 ```yaml
 dependencies:
-  stream_agents_chat:
-    git: {url: https://github.com/GetStream/Vision-Agents, ref: accelerate, path: sdks/dart/chat}
-dependency_overrides:
-  stream_agents_core:
-    git: {url: https://github.com/GetStream/Vision-Agents, ref: accelerate, path: sdks/dart/core}
+  stream_agents:
+    git: {url: https://github.com/GetStream/Vision-Agents, ref: accelerate, path: sdks/dart/stream_agents}
 ```
 
-## Using them
+## Using it
 
 ```dart
 final agents = StreamAgents(apiKey: 'your_api_key', userId: 'jlahey', token: yourBackend.agentToken);
@@ -40,7 +39,7 @@ await chat.responses.create('What are your opening hours?');
 // chat.conversation.value is the transcript and what the agent is doing, and
 // chat.conversation.stream says each time it changes. The question shows there at once.
 
-// The Stream Chat channel the conversation is kept in, with stream_agents_chat.
+// The Stream Chat channel the conversation is kept in.
 final channel = await chat.chat();
 
 // Out loud. The agent joins a call and so does this device.
@@ -59,11 +58,12 @@ running locally with nothing in front of it is reached by customer id instead:
 local router too.
 
 Stream is set up once. The key, the user and the token are what the router, Stream Chat and
-Stream Video all connect with. Nothing connects up front: the first session to ask for `chat()`
-or `join()` builds the client, and every session after it shares that one, so the user is one
-connection and one presence to Stream however many conversations are open. The token function
-is asked again when Stream's token expires, an hour in. Leaving a call or closing a session
-disconnects nothing; `agents.disconnect()` does.
+Stream Video all connect with. Nothing connects up front: the token is asked for once and shared
+across requests and sockets, the first session to ask for `chat()` or `join()` builds the client,
+and every session after it shares that one, so the user is one connection and one presence to
+Stream however many conversations are open. The token function is asked again after a 401 or when
+Stream's token expires, an hour in. Leaving a call or closing a session disconnects nothing;
+`agents.disconnect()` does.
 
 An app that already has a `StreamChatClient` or a `StreamVideo` hands it over, connected as the
 same user, and it is used instead of a second one and never disconnected here:
@@ -80,9 +80,9 @@ draws its first frame before the stream's first event, with no data.
 
 A conversation kept in Stream Chat is shown with Stream Chat's AI components:
 `AIConversationView` over the channel's messages, `AIMessagePart.parseAll` for each reply's steps,
-`LiveReasoning` from `stream_agents_chat` for the whole of its thinking and an `AIToolApprover` that answers with
+`LiveReasoning` for the whole of its thinking and an `AIToolApprover` that answers with
 `session.decide`. A call is shown with `AIVoiceGlowView` or `AIVoiceWaveView`, and `AgentVideoView`
-and `VoiceCallView` in `stream_agents_rtc` render its video.
+and `VoiceCallView` render its video.
 
 ### A tool that runs on the device
 
@@ -289,48 +289,41 @@ key also sends its token as `authorization`, which is how Stream's proxy reads i
 ## Regenerating the client
 
 The spec at [`acceleration/api/openapi.yaml`](../../acceleration/api/openapi.yaml) is the source
-of truth. The generated models and operations in `core/lib/src/generated/api.dart` are committed
-and never exported: every public type is hand-written, so a field added to the spec is invisible
-until it is wrapped.
+of truth. The generated models and operations in `stream_agents/lib/src/core/generated/api.dart` are
+committed and never exported: every public type is hand-written, so a field added to the spec is
+invisible until it is wrapped.
 
 ```bash
 docker run --rm -v "$PWD":/repo -v va-dart-pub:/pub-cache -e PUB_CACHE=/pub-cache \
-  -w /repo/sdks/dart/core dart:stable sh -c 'dart pub get && dart run tool/generate.dart --check'
+  -w /repo/sdks/dart/stream_agents ghcr.io/cirruslabs/flutter:3.44.0 \
+  sh -c 'flutter pub get && dart run tool/generate.dart --check'
 ```
 
 Drop `--check` to regenerate.
 
 ## Tests
 
-Everything builds and runs in Docker, with pub's cache in a named volume. The core in the
-official Dart image, offline:
+Everything builds and runs in Docker, in Cirrus Labs' Flutter image at the package's Flutter
+floor, with pub's cache in a named volume. Offline:
 
 ```bash
 docker run --rm -v "$PWD":/repo -v va-dart-pub:/pub-cache -e PUB_CACHE=/pub-cache \
-  -w /repo/sdks/dart/core dart:stable sh -c 'dart pub get && dart analyze && dart test'
+  -w /repo/sdks/dart/stream_agents ghcr.io/cirruslabs/flutter:3.44.0 \
+  sh -c 'flutter pub get && flutter analyze && flutter test'
 ```
 
-`chat` the same way, from `sdks/dart/chat`.
-
-The Flutter package in Cirrus Labs' Flutter image:
-
-```bash
-for pkg in rtc; do
-  docker run --rm -v "$PWD":/repo -v va-dart-pub:/pub-cache -e PUB_CACHE=/pub-cache \
-    -w /repo/sdks/dart/$pkg ghcr.io/cirruslabs/flutter:3.44.0 \
-    sh -c 'flutter pub get && flutter analyze && flutter test'
-done
-```
+core's and chat's tests are plain `package:test` and rtc's are `flutter_test`; `flutter test`
+runs them all, with `area_boundaries_test.dart`.
 
 Nothing is mocked: the unit tests run the client against a real HTTP and WebSocket server on
-loopback. Against a running router, the core's `live` tests create real sessions, ask the model
+loopback. Against a running router, core's `live` tests create real sessions, ask the model
 something and wait for a tool call to come back:
 
 ```bash
 docker run --rm -v "$PWD":/repo -v va-dart-pub:/pub-cache -e PUB_CACHE=/pub-cache \
   -e VISION_AGENTS_URL=http://host.docker.internal:8080 -e VISION_AGENTS_CUSTOMER_ID=examples \
   -e VISION_AGENTS_AGENT=simple_voice_ai \
-  -w /repo/sdks/dart/core dart:stable dart test -t live
+  -w /repo/sdks/dart/stream_agents ghcr.io/cirruslabs/flutter:3.44.0 flutter test -t live
 ```
 
 Without `VISION_AGENTS_URL` they are skipped.
@@ -344,5 +337,6 @@ set the router up as in the [JavaScript README](../js/README.md):
 docker run --rm -v "$PWD":/repo -v va-dart-pub:/pub-cache -e PUB_CACHE=/pub-cache \
   -e INTEGRATION_ROUTER_URL=http://host.docker.internal:8099 \
   -e INTEGRATION_ROUTER_KEY=vak_... -e INTEGRATION_ROUTER_SECRET=vas_... \
-  -w /repo/sdks/dart/core dart:stable dart test -t live test/keyed_router_posture_test.dart
+  -w /repo/sdks/dart/stream_agents ghcr.io/cirruslabs/flutter:3.44.0 \
+  flutter test -t live test/core/keyed_router_posture_test.dart
 ```

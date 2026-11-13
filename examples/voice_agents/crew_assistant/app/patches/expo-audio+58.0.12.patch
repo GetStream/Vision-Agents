@@ -1,0 +1,45 @@
+diff --git a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioModule.kt b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioModule.kt
+index 6c81fce3dd518d3b82e3280940a001c7be84dd0a..99c0446eb87565b9dcdb9263864ea45869fdb673 100644
+--- a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioModule.kt
++++ b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioModule.kt
+@@ -28,6 +28,9 @@ import androidx.media3.exoplayer.hls.HlsMediaSource
+ import androidx.media3.exoplayer.smoothstreaming.SsMediaSource
+ import androidx.media3.exoplayer.source.MediaSource
+ import androidx.media3.exoplayer.source.ProgressiveMediaSource
++import androidx.media3.extractor.DefaultExtractorsFactory
++import androidx.media3.extractor.mp3.Mp3Extractor
++import androidx.media3.extractor.ts.AdtsExtractor
+ import expo.modules.interfaces.permissions.Permissions
+ import expo.modules.kotlin.Promise
+ import expo.modules.kotlin.exception.Exceptions
+@@ -1198,7 +1201,12 @@ class AudioModule : Module() {
+       CONTENT_TYPE_SS -> SsMediaSource.Factory(factory)
+       CONTENT_TYPE_DASH -> DashMediaSource.Factory(factory)
+       CONTENT_TYPE_HLS -> HlsMediaSource.Factory(factory)
+-      CONTENT_TYPE_OTHER -> ProgressiveMediaSource.Factory(factory)
++      CONTENT_TYPE_OTHER -> ProgressiveMediaSource.Factory(
++        factory,
++        DefaultExtractorsFactory()
++          .setAdtsExtractorFlags(AdtsExtractor.FLAG_ENABLE_CONSTANT_BITRATE_SEEKING_ALWAYS)
++          .setMp3ExtractorFlags(Mp3Extractor.FLAG_ENABLE_CONSTANT_BITRATE_SEEKING_ALWAYS)
++      )
+       else -> throw IllegalStateException("Unsupported type: $type")
+     }.createMediaSource(mediaItem)
+   }
+diff --git a/node_modules/expo-audio/expo-module.config.json b/node_modules/expo-audio/expo-module.config.json
+index 259b4ab489907fb5c837526bd4d392a7d339bed1..9a131dd948d2eb5adf3cf9b759829a0e8fed15a1 100644
+--- a/node_modules/expo-audio/expo-module.config.json
++++ b/node_modules/expo-audio/expo-module.config.json
+@@ -4,11 +4,6 @@
+     "modules": ["AudioModule"]
+   },
+   "android": {
+-    "modules": ["expo.modules.audio.AudioModule"],
+-    "publication": {
+-      "groupId": "expo.modules.audio",
+-      "artifactId": "expo.modules.audio",
+-      "repository": "local-maven-repo"
+-    }
++    "modules": ["expo.modules.audio.AudioModule"]
+   }
+ }
