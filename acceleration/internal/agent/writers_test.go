@@ -46,6 +46,23 @@ func (s *AgentSuite) TestEachPersonWritingInAChannelTypeIsNamedWithTheirIdFromTh
 	}
 }
 
+// Once two people have written, the model asked in writing beside them (Ask, compose, a native
+// speech session: instructionsFor) is told they write, not that they talk on a call.
+func (s *AgentSuite) TestTwoWritersInAChannelTypeAreToldAsWritersOutsideTheirTurns() {
+	s.joinText()
+	s.writesAs("anya-1", "Anya", "I'm sick, I can't come at 6")
+	s.writesAs("ben-2", "Ben", "feel better!")
+	before := len(s.model.requests())
+
+	_, err := s.agent.Ask(s.ctx, "who is off tonight?")
+	s.Require().NoError(err)
+
+	s.Require().Len(s.model.requests(), before+1)
+	asked := s.model.requests()[before]
+	s.Contains(asked.Instructions, severalWriters)
+	s.NotContains(asked.Instructions, severalSpeakers)
+}
+
 // The turns read back from the channel come labelled (conversation, agent.WriterLabel) and
 // keep their labels; the agent's own replies have none, and neither has a typed turn nobody
 // wrote, such as a scheduled task's.
