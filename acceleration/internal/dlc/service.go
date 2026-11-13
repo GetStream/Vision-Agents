@@ -17,10 +17,6 @@ import (
 // HookPath is where a registrar reports on brands and campaigns.
 const HookPath = "/v1/phone/hooks/10dlc"
 
-// campaignFailed is the event counted when a registrar suspends, rejects or fails a campaign
-// (Failed): its numbers cannot send A2P texts, which somebody should look at in working hours.
-const campaignFailed = "10dlc.campaign_failed"
-
 // Service moves use cases through review and registration.
 type Service struct {
 	store     *store.Store
@@ -285,9 +281,10 @@ func (s *Service) refresh(ctx context.Context, useCase store.UseCase, report []b
 	}
 	// Counted once the move is stored: a report and the poller reading the same rejection
 	// both get here, and only the one that moved the use case off VendorPending counts it.
+	// A failed campaign leaves its numbers unable to send A2P texts, so somebody looks at it in working hours.
 	if campaign.Outcome == Failed {
-		vendorevent.Count(s.registrar.Name(), campaignFailed, vendorevent.LevelWarn)
-		s.logger.Warn("a vendor failed a 10DLC campaign", "vendor", s.registrar.Name(), "event", campaignFailed,
+		vendorevent.Count(s.registrar.Name(), vendorevent.DLCCampaignFailed, vendorevent.LevelWarn)
+		s.logger.Warn("a vendor failed a 10DLC campaign", "vendor", s.registrar.Name(), "event", vendorevent.DLCCampaignFailed,
 			"event_level", string(vendorevent.LevelWarn), "use_case", useCase.ID, "vendor_status", campaign.Status)
 	}
 	return nil
