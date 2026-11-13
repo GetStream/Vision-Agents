@@ -42,6 +42,28 @@ type rewindState struct {
 	// forking are the cids answered as forks whose copy is not complete.
 	forking map[string]bool
 	made    int
+	// lose is how many of the next rewinds Chat makes are answered with a 500 all the same.
+	lose int
+	// paged answers reads with no cursor or id_lt by their limit (PageNewestFirst).
+	paged bool
+}
+
+// PageNewestFirst answers a read with no cursor, or with id_lt, with at most its limit of
+// messages, the newest of them, as Chat does. Until it is called every such read gets every
+// visible message, in the order they were written, as this fake always answered them.
+func (s *Server) PageNewestFirst() {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	s.db.rewind.paged = true
+}
+
+// LoseRewindAnswer makes the next rewind Chat accepts and answers it with a 500, as a rewind
+// whose answer a timeout or a dropped connection lost: the channel is rewound, and the caller
+// cannot tell.
+func (s *Server) LoseRewindAnswer() {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	s.db.rewind.lose++
 }
 
 // DisableRewind answers every rewind from now on as Chat does for an app that is not
@@ -139,24 +161,44 @@ func (db *store) visibleIn(cid string) []map[string]any {
 
 // pageAfter answers a channel read. With id_gt or id_gte it is the page of at most limit
 // messages from there, oldest first, as Chat reads ascending; any other read gets every
-// visible message, as this fake always has.
-func (db *store) pageAfter(cid string, body map[string]any) []map[string]any {
+// visible message, unless PageNewestFirst was called: then a read with id_lt gets the newest
+// limit messages before the one named, and one with no cursor the channel's newest limit,
+// oldest first, as Chat reads descending. A cursor naming a message Chat does not have, or
+// one a rewind hid, is refused as Chat refuses it (SelectMessageByChannelAndID reads a rewound
+// message as missing): the error is the answer, nil when there is none.
+func (db *store) pageAfter(cid string, body map[string]any) ([]map[string]any, map[string]any) {
 	visible := db.visibleIn(cid)
 	params, _ := body["messages"].(map[string]any)
+	for _, cursor := range []string{"id_gt", "id_gte", "id_lt", "id_lte"} {
+		named, _ := params[cursor].(string)
+		if named == "" {
+			continue
+		}
+		if message := db.messages[named]; message == nil || message["cid"] != cid || db.hidden(message) {
+			return nil, chatError(http.StatusBadRequest, 4, "Message with id "+named+" doesn't exist", nil)
+		}
+	}
 	gt, _ := params["id_gt"].(string)
 	gte, _ := params["id_gte"].(string)
 	if gt == "" && gte == "" {
-		return visible
+		if !db.rewind.paged {
+			return visible, nil
+		}
+		limit, limited := params["limit"].(float64)
+		if lt, _ := params["id_lt"].(string); lt != "" {
+			visible = visible[:slices.IndexFunc(visible, func(message map[string]any) bool { return message["id"] == lt })]
+		}
+		if limited && int(limit) < len(visible) {
+			visible = visible[len(visible)-int(limit):]
+		}
+		return visible, nil
 	}
 	from := gte
 	if from == "" {
 		from = gt
 	}
-	// Chat pages by (created_at, id) of the message named, which need not be visible.
+	// Chat pages by (created_at, id) of the message named.
 	anchor := db.messages[from]
-	if anchor == nil {
-		return []map[string]any{}
-	}
 	at, id := micro(createdAt(anchor)), from
 	page := []map[string]any{}
 	for _, message := range visible {
@@ -172,7 +214,7 @@ func (db *store) pageAfter(cid string, body map[string]any) []map[string]any {
 	if limit, ok := params["limit"].(float64); ok && int(limit) < len(page) {
 		page = page[:int(limit)]
 	}
-	return page
+	return page, nil
 }
 
 // afterHiddenRanges is when a message sent at now is stored: Chat moves a send that is not
@@ -320,6 +362,10 @@ func (db *store) rewindChannel(channelType, id string, body map[string]any) (int
 	}
 	db.rewind.ranges[cid] = merged
 	db.rewind.made++
+	if db.rewind.lose > 0 {
+		db.rewind.lose--
+		return http.StatusInternalServerError, chatError(http.StatusInternalServerError, -1, "the answer was lost", nil)
+	}
 	return http.StatusCreated, map[string]any{
 		"rewind": map[string]any{
 			"id": fmt.Sprintf("rewind-%d", db.rewind.made), "message_id": req.MessageID, "inclusive": req.Inclusive,

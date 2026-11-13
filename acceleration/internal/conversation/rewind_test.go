@@ -228,6 +228,21 @@ func (s *RewindSuite) TestAHiddenMessageCannotBeReadById() {
 	s.Equal(http.StatusNotFound, chat.StatusCode)
 }
 
+// Chat reads a rewound message as missing, so a read from it is refused as one naming a
+// message Chat does not have.
+func (s *RewindSuite) TestReadingFromAHiddenMessageIsRefusedAsAMessageThatDoesNotExist() {
+	ids := s.wrote("one", "two")
+	_, err := s.rewind(ids[1], true, ids[1])
+	s.Require().NoError(err)
+
+	_, err = s.rewinder.ReadFrom(s.ctx, "agent", s.channel, ids[1], true)
+
+	chat, ok := errors.AsType[*getstream.StreamError](err)
+	s.Require().True(ok)
+	s.Equal(http.StatusBadRequest, chat.StatusCode)
+	s.Contains(chat.Error(), "Message with id "+ids[1]+" doesn't exist")
+}
+
 func (s *RewindSuite) TestReadingFromAMessagePagesToTheEndOfTheChannel() {
 	texts := make([]string, 250)
 	for i := range texts {

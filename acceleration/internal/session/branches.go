@@ -25,6 +25,12 @@ import (
 // again, so it cannot be brought back.
 var ErrBranchGone = errors.New("session: this branch is no longer kept")
 
+// ErrSwitchUnfinished is a turn refused because a switch to another branch the session began
+// could not be finished after Chat may have rewound, and still cannot be, as while Chat cannot
+// be read: what the person sees is not known. The next turn tries again, so it clears once
+// Chat answers.
+var ErrSwitchUnfinished = errors.New("session: the conversation's last regenerate, edit or branch switch has not finished yet; try again")
+
 // rangesWarned is how many hidden ranges a conversation may reach before each switch logs a
 // warning: Chat refuses a rewind past 100.
 const rangesWarned = 80
@@ -128,28 +134,42 @@ func (s *Session) Activate(ctx context.Context, responseID string) (Activated, e
 	if err := s.records.Flush(ctx); err != nil {
 		return Activated{}, stack.Wrap(err)
 	}
-	after, err := s.persisted.QuestionAfter(ctx, top.ParentResponseID)
+	rewind := persistent.RewindTarget{TargetResponseID: target.ID}
+	kept := false
+	earlier, err := s.unfinishedActivation(ctx, target.ID)
 	if err != nil {
 		return Activated{}, err
 	}
-	rewind := persistent.RewindTarget{TargetResponseID: target.ID}
-	kept := false
-	switch {
-	case after.Question != "" && after.QuestionResponseID == top.QuestionResponseID:
-		// Another answer to the same question is shown: it goes, the question stays.
-		rewind.MessageID, kept = after.Question, true
-	case after.Question != "":
-		// Another question is shown in its place: it goes with everything after it.
-		rewind.MessageID, rewind.Inclusive = after.Question, true
-	case after.Newest != "":
-		// Nothing is shown after the response's parent, as a question asked again whose reply
-		// never started leaves it: nothing is hidden, and the branch is sent after the end.
-		rewind.MessageID = after.Newest
-	default:
-		return Activated{}, stack.Wrap(persistent.ErrBranchConflict)
+	if earlier.ID != "" {
+		// An earlier try is finished where it rewound to: the channel no longer shows what it
+		// read to choose that point.
+		rewind.SwitchID, rewind.MessageID, rewind.Inclusive, kept = earlier.ID, earlier.ForkMessageID, earlier.Inclusive, keptQuestion(earlier.ID)
+	} else {
+		after, err := s.persisted.QuestionAfter(ctx, top.ParentResponseID)
+		if err != nil {
+			return Activated{}, err
+		}
+		switch {
+		case after.Question != "" && after.QuestionResponseID == top.QuestionResponseID:
+			// Another answer to the same question is shown: it goes, the question stays.
+			rewind.MessageID, kept = after.Question, true
+		case after.Question != "":
+			// Another question is shown in its place: it goes with everything after it.
+			rewind.MessageID, rewind.Inclusive = after.Question, true
+		case after.Newest != "":
+			// Nothing is shown after the response's parent, as a question asked again whose
+			// reply never started leaves it: nothing is hidden, and the branch is sent after
+			// the end.
+			rewind.MessageID = after.Newest
+		default:
+			return Activated{}, stack.Wrap(persistent.ErrBranchConflict)
+		}
+		rewind.SwitchID = "as" + newID()[:30]
+		if kept {
+			rewind.SwitchID = keptQuestionPrefix + newID()[:30]
+		}
 	}
-	rewind.SwitchID, err = s.activationID(ctx, target.ID, kept)
-	if err != nil {
+	if err := s.checkSettled(ctx, rewind.SwitchID); err != nil {
 		return Activated{}, err
 	}
 	chosen, err := chosenFor(ctx, s.tree, top, tail, kept)
@@ -162,20 +182,21 @@ func (s *Session) Activate(ctx context.Context, responseID string) (Activated, e
 	}
 	outcome, err := s.persisted.Activate(reading, rewind, chosen)
 	if err != nil {
-		return Activated{}, err
+		if outcome, err = s.settle(reading, rewind, chosen, err); err != nil {
+			return Activated{}, err
+		}
 	}
+	// The session follows what Chat shows before anything else is written, so a write that
+	// fails below leaves it answering from what the person sees.
 	leaf := tail[len(tail)-1].ID
-	if err := s.tree.MoveActivePath(ctx, customer, s.id, leaf, time.Now().UTC()); err != nil {
-		return Activated{}, err
-	}
-	if err := s.persisted.FinishSwitch(ctx, rewind.SwitchID); err != nil {
-		return Activated{}, err
-	}
 	s.turnsMu.Lock()
 	s.leaf = leaf
 	s.turnsMu.Unlock()
 	history, _ := s.persisted.HistoryOf(reading, outcome.Page)
 	s.carryOnFrom(history)
+	if err := s.moveActivePath(ctx, leaf, outcome.Switch); err != nil {
+		return Activated{}, err
+	}
 	s.pinActivatedDocuments(ctx)
 	s.countRanges(ctx, store.SwitchActivate)
 	return Activated{LeafResponseID: leaf, Resent: len(outcome.Resent),
@@ -216,6 +237,9 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 	if err := s.current().CheckAsked(asked); err != nil {
 		return Branched{}, stack.Wrap(err)
 	}
+	if err := s.checkSettled(ctx, switchID(s.id, id)); err != nil {
+		return Branched{}, err
+	}
 	if taken, err := s.persisted.Command(id); err == nil {
 		// A retry of a request already taken is answered as one: rewinding again would hide
 		// the reply it began.
@@ -239,7 +263,14 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 	if replaced.QuestionResponseID == "" {
 		return Branched{}, stack.Wrap(&persistent.BranchesUnsupportedError{Reason: persistent.UnsupportedUnmarked})
 	}
-	if replaced.RewoundAt != nil {
+	// A retry of a request whose switch an earlier try left unfinished carries it on from the
+	// message it rewound to: Chat may hide that message by now, and the replaced response be
+	// off the conversation.
+	earlier, err := s.unfinishedSwitch(ctx, switchID(s.id, id), replaced.ID)
+	if err != nil {
+		return Branched{}, err
+	}
+	if replaced.RewoundAt != nil && earlier.ID == "" {
 		return Branched{}, stack.Wrap(fmt.Errorf("%w: response %s is not on the conversation; activate its branch first", persistent.ErrBranchConflict, responseID))
 	}
 
@@ -247,12 +278,21 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 	if err := s.records.Flush(ctx); err != nil {
 		return Branched{}, stack.Wrap(err)
 	}
-	found, err := s.persisted.ResponseMessages(ctx, replaced.ID, replaced.QuestionResponseID)
-	if err != nil {
-		return Branched{}, err
+	found := persistent.ResponseMessages{Question: earlier.ForkMessageID}
+	if earlier.ID == "" {
+		if found, err = s.persisted.ResponseMessages(ctx, replaced.ID, replaced.QuestionResponseID); err != nil {
+			return Branched{}, err
+		}
 	}
 	if found.Question == "" {
 		return Branched{}, stack.Wrap(&persistent.BranchesUnsupportedError{Reason: persistent.UnsupportedUnmarked})
+	}
+	if !edit && len(found.QuestionImages) > 0 {
+		// The photos are asked about again: a model that cannot see them is refused before
+		// anything is hidden.
+		if err := s.current().CheckTurn(asked, true); err != nil {
+			return Branched{}, stack.Wrap(err)
+		}
 	}
 	turn, err := s.replacing(ctx, replaced, edit)
 	if err != nil {
@@ -273,21 +313,40 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 	}
 	outcome, err := s.persisted.Rewind(reading, rewind)
 	if err != nil {
-		return Branched{}, err
-	}
-	// The conversation ends at the replaced response's parent until the new one is written:
-	// a router stopping before then opens it there (switchHooks).
-	if err := s.tree.MoveActivePath(ctx, customer, s.id, replaced.ParentResponseID, time.Now().UTC()); err != nil {
-		return Branched{}, err
-	}
-	if outcome.Switch.ID != "" {
-		if err := s.persisted.FinishSwitch(ctx, outcome.Switch.ID); err != nil {
+		if outcome, err = s.settle(reading, rewind, nil, err); err != nil {
 			return Branched{}, err
 		}
 	}
+	// The session follows what Chat shows before anything else is written, so a write that
+	// fails below leaves it answering from what the person sees.
 	s.turnsMu.Lock()
 	s.leaf = replaced.ParentResponseID
 	s.turnsMu.Unlock()
+	history, _ := s.persisted.HistoryOf(reading, outcome.Page)
+	prompt := text
+	var images []llm.ImagePart
+	if !edit {
+		// The question is asked of the model again, so it is not in the history it is handed.
+		prompt = replaced.Said
+		if n := len(history); n > 0 && history[n-1].Role == llm.User {
+			prompt = history[n-1].Content
+			history = history[:n-1]
+		}
+		// Its photos are shown to the model again with it, as they were the first time; the
+		// history's note that they were sent stands for them only once they were seen.
+		if question, ok := lastQuestion(outcome.Page); ok {
+			if images = persistent.Images(question); len(images) > 0 {
+				prompt = question.Text
+			}
+		}
+	}
+	s.carryOnFrom(history)
+	s.current().ReplaceDocuments(pinnable(documents)...)
+	// The conversation ends at the replaced response's parent until the new one is written:
+	// a router stopping before then opens it there (switchHooks).
+	if err := s.moveActivePath(ctx, replaced.ParentResponseID, outcome.Switch); err != nil {
+		return Branched{}, err
+	}
 	s.countRanges(ctx, rewind.Kind)
 
 	var receipt persistent.CommandReceipt
@@ -301,18 +360,6 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 	}
 	s.broadcast(receipt)
 
-	history, _ := s.persisted.HistoryOf(reading, outcome.Page)
-	prompt := text
-	if !edit {
-		// The question is asked of the model again, so it is not in the history it is handed.
-		prompt = replaced.Said
-		if n := len(history); n > 0 && history[n-1].Role == llm.User {
-			prompt = history[n-1].Content
-			history = history[:n-1]
-		}
-	}
-	s.carryOnFrom(history)
-	s.current().ReplaceDocuments(pinnable(documents)...)
 	branched := Branched{CommandReceipt: receipt, ParentResponseID: turn.ParentResponseID, QuestionResponseID: turn.QuestionResponseID,
 		RewoundTo: RewoundTo{MessageID: rewind.MessageID, Inclusive: rewind.Inclusive}, Rewound: outcome.Rewound}
 	place := turn.Reply
@@ -323,7 +370,7 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 	branched.Index, branched.Count = max(place.Index, 1), max(place.Count, 1)
 
 	s.claim(turn)
-	turnID, err := s.current().RespondTo(ctx, prompt, nil, asked)
+	turnID, err := s.current().RespondTo(ctx, prompt, images, asked)
 	if err != nil {
 		s.unclaim()
 		s.persisted.Cancel()
@@ -339,6 +386,103 @@ func (s *Session) branch(ctx context.Context, id, responseID, text, clientID str
 		s.carryQuestionDocuments(ctx, replaced.ID, branched.ResponseID)
 	}
 	return branched, nil
+}
+
+// lastQuestion is the newest person's message of page, the question a regenerate answers
+// again.
+func lastQuestion(page persistent.Page) (persistent.Message, bool) {
+	for i := len(page.Messages) - 1; i >= 0; i-- {
+		if page.Messages[i].Role == "user" {
+			return page.Messages[i], true
+		}
+	}
+	return persistent.Message{}, false
+}
+
+// checkSettled finishes a switch the session began and left unfinished before a turn, but the
+// retry of that switch's own request, switchID, which finishes it itself. The turn is refused
+// only while the switch cannot be finished, as when Chat cannot be read. The caller holds
+// commandMu.
+func (s *Session) checkSettled(ctx context.Context, switchID string) error {
+	if s.unsettled == "" || s.unsettled == switchID {
+		return nil
+	}
+	return s.heal(ctx)
+}
+
+// heal finishes the unsettled switch as the next open would (CompleteSwitch): the session's
+// responses, model history, leaf and documents then follow what Chat shows. The caller holds
+// commandMu.
+func (s *Session) heal(ctx context.Context) error {
+	reading, err := s.restoring(ctx)
+	if err != nil {
+		return stack.Wrap(errors.Join(ErrSwitchUnfinished, err))
+	}
+	outcome, err := s.persisted.CompleteSwitch(reading, s.unsettled)
+	if err != nil {
+		return stack.Wrap(errors.Join(ErrSwitchUnfinished, err))
+	}
+	leaf, err := s.tree.ActiveLeaf(ctx, s.spec.CustomerID, s.id)
+	if err != nil {
+		return stack.Wrap(errors.Join(ErrSwitchUnfinished, err))
+	}
+	s.turnsMu.Lock()
+	s.leaf = leaf
+	s.turnsMu.Unlock()
+	history, _ := s.persisted.HistoryOf(reading, outcome.Page)
+	s.carryOnFrom(history)
+	s.pinActivatedDocuments(ctx)
+	s.unsettled = ""
+	return nil
+}
+
+// settle finishes target's switch after cause, the error Rewind or Activate failed with, left
+// it unknown whether Chat rewound: a switch whose rewind landed is carried on, and the switch
+// answers as if it had not failed. One whose rewind never landed changed nothing, and cause is
+// the answer. A switch that cannot be settled now leaves the session refusing other turns
+// until it is (checkSettled). The caller holds commandMu.
+func (s *Session) settle(ctx context.Context, target persistent.RewindTarget, chosen []store.AgentBranchMessage, cause error) (persistent.RewindOutcome, error) {
+	if persistent.Refused(cause) {
+		return persistent.RewindOutcome{}, cause
+	}
+	outcome, carried, err := s.persisted.SettleSwitch(ctx, target, chosen)
+	if err != nil {
+		s.unsettled = target.SwitchID
+		return persistent.RewindOutcome{}, stack.Wrap(errors.Join(ErrSwitchUnfinished, cause, err))
+	}
+	if !carried {
+		return persistent.RewindOutcome{}, cause
+	}
+	return outcome, nil
+}
+
+// moveActivePath makes the path ending at leaf the session's conversation once Chat shows it,
+// taking off it only the responses created before the switch began, and marks the switch
+// done. A path that cannot be moved leaves the switch unsettled (checkSettled). A switch that
+// cannot be marked done is finished by the next open, which moves the path the same way. The
+// caller holds commandMu.
+func (s *Session) moveActivePath(ctx context.Context, leaf string, sw store.AgentBranchSwitch) error {
+	now := time.Now().UTC()
+	until := sw.CreatedAt
+	if sw.ID == "" {
+		until = now
+	}
+	if err := s.tree.MoveActivePathUntil(ctx, s.spec.CustomerID, s.id, leaf, now, until); err != nil {
+		if sw.ID != "" {
+			s.unsettled = sw.ID
+		}
+		return err
+	}
+	if s.unsettled == sw.ID {
+		s.unsettled = ""
+	}
+	if sw.ID == "" {
+		return nil
+	}
+	if err := s.persisted.FinishSwitch(ctx, sw.ID); err != nil {
+		s.logger.Warn("could not mark a branch switch done; the next open finishes it", "session", s.id, "switch", sw.ID, "error", err)
+	}
+	return nil
 }
 
 // documentScope is the session's conversation whose documents are read, for the person it is
@@ -494,23 +638,34 @@ func switchID(session, request string) string {
 // sends again what it would have sent, without a second copy of that message.
 const keptQuestionPrefix = "aq"
 
-// activationID is the journal id of an activation of target: the one an earlier try left
-// unfinished, so it is finished rather than sent again beside it, else a new one.
-func (s *Session) activationID(ctx context.Context, target string, kept bool) (string, error) {
+// unfinishedSwitch is the switch id an earlier try left unfinished, when it replaces target;
+// the zero switch for none.
+func (s *Session) unfinishedSwitch(ctx context.Context, id, target string) (store.AgentBranchSwitch, error) {
 	unfinished, err := s.tree.UnfinishedBranchSwitches(ctx, s.spec.CustomerID, s.id)
 	if err != nil {
-		return "", err
+		return store.AgentBranchSwitch{}, err
 	}
 	for _, sw := range unfinished {
-		if sw.Kind == store.SwitchActivate && sw.TargetResponseID == target && keptQuestion(sw.ID) == kept {
-			return sw.ID, nil
+		if sw.ID == id && sw.TargetResponseID == target && sw.Kind != store.SwitchActivate {
+			return sw, nil
 		}
 	}
-	prefix := "as"
-	if kept {
-		prefix = keptQuestionPrefix
+	return store.AgentBranchSwitch{}, nil
+}
+
+// unfinishedActivation is the activation of target an earlier try left unfinished, so it is
+// finished rather than sent again beside it; the zero switch for none.
+func (s *Session) unfinishedActivation(ctx context.Context, target string) (store.AgentBranchSwitch, error) {
+	unfinished, err := s.tree.UnfinishedBranchSwitches(ctx, s.spec.CustomerID, s.id)
+	if err != nil {
+		return store.AgentBranchSwitch{}, err
 	}
-	return prefix + newID()[:30], nil
+	for _, sw := range unfinished {
+		if sw.Kind == store.SwitchActivate && sw.TargetResponseID == target {
+			return sw, nil
+		}
+	}
+	return store.AgentBranchSwitch{}, nil
 }
 
 func keptQuestion(switchID string) bool { return strings.HasPrefix(switchID, keptQuestionPrefix) }
@@ -715,7 +870,8 @@ func switchHooks(tree *store.Store) persistent.SwitchHooks {
 				}
 				leaf = target.ParentResponseID
 			}
-			return tree.MoveActivePath(ctx, sw.CustomerID, sw.SessionID, leaf, time.Now().UTC())
+			// The turns asked after the switch began are on the conversation the person sees.
+			return tree.MoveActivePathUntil(ctx, sw.CustomerID, sw.SessionID, leaf, time.Now().UTC(), sw.CreatedAt)
 		},
 	}
 }

@@ -120,6 +120,29 @@ func (s *BranchesSuite) TestARegenerateHidesTheReplyAndKeepsACopyOfIt() {
 	s.Equal(store.SwitchDone, row.State)
 }
 
+// A message no mark names, as a customer's backend writes one into the channel or a router
+// from before branches wrote it, is kept with the turn it was written during, and comes back
+// with its branch.
+func (s *BranchesSuite) TestAnUnmarkedMessageIsKeptWithTheTurnItWasWrittenDuring() {
+	_, second := s.twoTurns()
+	s.written()
+	id, text, user := "backend-note", "Your order shipped.", "backend"
+	_, err := s.chat.Client.Chat().SendMessage(s.ctx, "agent", s.session, &getstream.SendMessageRequest{
+		Message: getstream.MessageRequest{ID: &id, Text: &text, UserID: &user}})
+	s.Require().NoError(err)
+
+	_, err = s.conv.Rewind(s.ctx, regenerate("sw-1", second))
+
+	s.Require().NoError(err)
+	copies, err := s.branches.BranchMessages(s.ctx, "customer", s.session, []string{"resp-2"})
+	s.Require().NoError(err)
+	var kept []string
+	for _, copied := range copies {
+		kept = append(kept, copied.OriginalMessageID)
+	}
+	s.ElementsMatch([]string{second.AssistantMessageID, id}, kept)
+}
+
 func (s *BranchesSuite) TestAnEditHidesTheQuestionAndItsReply() {
 	first, second := s.twoTurns()
 
@@ -332,22 +355,36 @@ func (s *BranchesSuite) TestAQueueThatCannotBeWrittenRefusesTheRewindWithoutWedg
 	s.Equal("interrupted", s.custom(streaming.AssistantMessageID)["support_runtime"].(map[string]any)["state"])
 }
 
-func (s *BranchesSuite) TestASwitchStoppedBeforeChatRewoundIsForgottenOnReopen() {
-	first, second := s.twoTurns()
-	// A router that copied the reply and journaled the switch, then stopped before asking Chat.
+// A switch journaled whose rewind may or may not have reached Chat is never forgotten: a
+// rewind that timed out can still be committed after the channel is read, and a forgotten
+// switch would leave what it hides with no copy.
+func (s *BranchesSuite) TestASwitchWhoseRewindIsNotKnownToHaveLandedIsKeptOnReopen() {
+	_, second := s.twoTurns()
+	// A router that copied the reply and journaled the switch, then lost track of Chat's answer.
 	s.Require().NoError(s.branches.StartBranchSwitch(s.ctx, &store.AgentBranchSwitch{ID: "sw-1", SessionID: s.session, CustomerID: "customer",
 		Kind: store.SwitchRegenerate, TargetResponseID: "resp-2", ForkMessageID: second.UserMessageID}))
 	s.Require().NoError(s.branches.SaveBranchMessages(s.ctx, []store.AgentBranchMessage{{SessionID: s.session, CustomerID: "customer",
 		OriginalMessageID: second.AssistantMessageID, ResponseID: "resp-2", SwitchID: "sw-1", AuthorID: "agent", Message: map[string]any{"text": "Rain."}}}))
 
-	_, history, switched := s.reopened(nil)
+	s.reopened(nil)
 
-	s.Len(history, 4, "nothing was hidden, and nothing is left out")
-	s.Equal([]string{first.UserMessageID, first.AssistantMessageID, second.UserMessageID, second.AssistantMessageID}, s.chat.Visible(s.session))
 	_, journaled := s.branches.row("sw-1")
-	s.False(journaled)
-	s.Empty(s.branches.copied(s.session))
-	s.Empty(*switched)
+	s.True(journaled)
+	s.Equal([]string{second.AssistantMessageID}, s.branches.copied(s.session))
+}
+
+// A switch whose rewind Chat did not answer is settled without forgetting it.
+func (s *BranchesSuite) TestASwitchWhoseRewindTimedOutIsNotForgottenWhenSettled() {
+	_, second := s.twoTurns()
+	s.chat.FailWith("POST", "/rewind", 504)
+	_, err := s.conv.Rewind(s.ctx, regenerate("sw-1", second))
+	s.Require().Error(err)
+
+	_, _, _ = s.conv.SettleSwitch(s.ctx, regenerate("sw-1", second), nil)
+
+	_, journaled := s.branches.row("sw-1")
+	s.True(journaled)
+	s.Equal([]string{second.AssistantMessageID}, s.branches.copied(s.session))
 }
 
 func (s *BranchesSuite) TestASwitchStoppedAfterChatRewoundIsFinishedOnReopen() {
@@ -362,6 +399,61 @@ func (s *BranchesSuite) TestASwitchStoppedAfterChatRewoundIsFinishedOnReopen() {
 	s.Equal([]string{"sw-1"}, *switched)
 	row, _ := s.branches.row("sw-1")
 	s.Equal(store.SwitchDone, row.State)
+}
+
+// An edit hides the message it rewinds to, which Chat then refuses as a read's cursor: whether
+// its rewind landed is read from the newest messages back.
+func (s *BranchesSuite) TestAnEditStoppedAfterChatRewoundIsFinishedOnReopen() {
+	_, second := s.twoTurns()
+	s.branches.failAdvanceTo = store.SwitchRewound
+	_, err := s.conv.Rewind(s.ctx, edit("sw-1", second))
+	s.Require().ErrorIs(err, errStopped)
+
+	_, history, switched := s.reopened(nil)
+
+	s.Equal([]llm.Message{{Role: llm.User, Content: "Is it raining?"}, {Role: llm.Assistant, Content: "No."}}, history)
+	s.Equal([]string{"sw-1"}, *switched)
+	row, _ := s.branches.row("sw-1")
+	s.Equal(store.SwitchDone, row.State)
+}
+
+// Whether a switch landed is read back past more than a page of messages written after it.
+func (s *BranchesSuite) TestAnEditStoppedAfterChatRewoundIsFinishedOnReopenAfterAPageOfMessages() {
+	_, second := s.twoTurns()
+	s.branches.failAdvanceTo = store.SwitchRewound
+	_, err := s.conv.Rewind(s.ctx, edit("sw-1", second))
+	s.Require().ErrorIs(err, errStopped)
+	s.branches.failAdvanceTo = ""
+	s.chat.PageNewestFirst()
+	user := "employee-1"
+	for i := range 101 {
+		text := fmt.Sprintf("note %d", i)
+		_, err := s.chat.Client.Chat().SendMessage(s.ctx, "agent", s.session, &getstream.SendMessageRequest{
+			Message: getstream.MessageRequest{Text: &text, UserID: &user}})
+		s.Require().NoError(err)
+	}
+
+	_, _, switched := s.reopened(nil)
+
+	s.Equal([]string{"sw-1"}, *switched)
+	row, _ := s.branches.row("sw-1")
+	s.Equal(store.SwitchDone, row.State)
+}
+
+// A switch retried after its rewind landed is finished, and Chat refusing a read on the way is
+// the conversation having changed, not a failure of the router.
+func (s *BranchesSuite) TestAnActivationRetriedWhileChatRefusesTheReadIsAConflict() {
+	s.branches.failCountAt = 2
+	_, chosen, err := s.activateAfterEdit()
+	s.Require().ErrorIs(err, errStopped)
+	s.branches.failCountAt = 0
+	edited := s.chat.Visible(s.session)[2]
+	s.chat.FailWith("POST", "/query", 400)
+
+	_, err = s.conv.Activate(s.ctx, conversation.RewindTarget{SwitchID: "sw-2", TargetResponseID: "resp-2",
+		MessageID: edited, Inclusive: true}, chosen)
+
+	s.Require().ErrorIs(err, conversation.ErrBranchConflict)
 }
 
 func (s *BranchesSuite) TestASwitchRewoundButNotFinishedIsFinishedOnReopen() {

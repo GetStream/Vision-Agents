@@ -129,6 +129,13 @@ func (s *Store) BranchTail(ctx context.Context, customerID, sessionID, fromRespo
 // conversation with nothing in it yet, as the first question asked again leaves it: every
 // response is rewound. Running it again changes nothing.
 func (s *Store) MoveActivePath(ctx context.Context, customerID, sessionID, leafResponseID string, at time.Time) error {
+	return s.MoveActivePathUntil(ctx, customerID, sessionID, leafResponseID, at, time.Time{})
+}
+
+// MoveActivePathUntil is MoveActivePath taking off the conversation only responses created at
+// or before until, the zero time for every one: a switch finished after the person carried on
+// leaves the turns asked since it began where they are.
+func (s *Store) MoveActivePathUntil(ctx context.Context, customerID, sessionID, leafResponseID string, at, until time.Time) error {
 	if customerID == "" || sessionID == "" {
 		return stack.Wrap(errors.New("store: a customer and a session id are required"))
 	}
@@ -165,6 +172,9 @@ func (s *Store) MoveActivePath(ctx context.Context, customerID, sessionID, leafR
 			Where("rewound_at IS NULL")
 		if fork != nil {
 			query = query.Where("(created_at, id) > (?, ?)", fork.CreatedAt, fork.ID)
+		}
+		if !until.IsZero() {
+			query = query.Where("created_at <= ?", until)
 		}
 		return query.Exec(ctx)
 	})

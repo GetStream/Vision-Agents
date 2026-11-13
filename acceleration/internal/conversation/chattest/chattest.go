@@ -1034,7 +1034,13 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			result["channel"] = channel
 		}
 		result["members"] = db.channels[id]["members"]
-		result["messages"] = db.pageAfter(id, body)
+		messages, refused := db.pageAfter(id, body)
+		if refused != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(refused)
+			return
+		}
+		result["messages"] = messages
 	case strings.HasSuffix(r.URL.Path, "/message"):
 		message := body["message"].(map[string]any)
 		id, _ := message["id"].(string)

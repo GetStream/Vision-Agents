@@ -264,6 +264,8 @@ func (s *Server) branchResponse(ctx context.Context, id string, body *CreateResp
 // refusedResponse is the answer to a question its session refused before the turn started.
 func refusedResponse(err error) error {
 	switch {
+	case errors.Is(err, session.ErrSwitchUnfinished):
+		return errSwitchUnfinished
 	case errors.Is(err, conversation.ErrCommandConflict):
 		return conflict(err.Error())
 	case errors.Is(err, agent.ErrCannotSeeImages):
