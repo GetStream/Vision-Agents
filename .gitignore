@@ -151,3 +151,6 @@ acceleration/internal/api/.local/
 
 # The price changes the check_prices skill prepares, handed over rather than committed
 .claude/skills/check_prices/out/
+
+# The llm_groups report, generated from its committed inventory
+.claude/skills/llm_groups/out/

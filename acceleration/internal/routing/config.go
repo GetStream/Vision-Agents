@@ -477,6 +477,23 @@ func (c ModalityConfig) Provider(name string) (ProviderConfig, bool) {
 	return ProviderConfig{}, false
 }
 
+// Members returns the models a shortcut routes over, one declaration per instance, in config
+// order and before health or preference orders them. It is nil for a name that is not a
+// shortcut.
+func (c ModalityConfig) Members(alias string) []ProviderConfig {
+	a, ok := c.Aliases[alias]
+	if !ok {
+		return nil
+	}
+	var members []ProviderConfig
+	for _, provider := range c.Providers {
+		if a.matches(provider) {
+			members = append(members, provider)
+		}
+	}
+	return members
+}
+
 // Instances returns every declaration of a "provider/model" name, one per region it runs
 // in, in config order.
 func (c ModalityConfig) Instances(name string) []ProviderConfig {
