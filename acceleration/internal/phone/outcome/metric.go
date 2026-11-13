@@ -59,6 +59,40 @@ var shortCalls = promauto.NewCounterVec(prometheus.CounterOpts{
 		"counts them (internal/phone/outcome/AGENTS.md)",
 }, []string{"vendor", "direction"})
 
+// seed sets every series a call of one of vendors can be counted under to 0, so the first call
+// of a pod moves its series from 0 to 1 and increase() and rate() read it. A call is counted under
+// a vendor the keeper names, else under other. The labels come from where each is counted: an
+// outbound call has any stored outcome, dropped or refused, an inbound one completed, failed
+// (refused by the router) or dropped, and only outbound calls have a SIP response and a
+// post-dial delay. Setting a series again changes nothing.
+func seed(vendors []string) {
+	outcomes := map[string][]string{
+		inbound:  {string(Completed), string(Failed), dropped},
+		outbound: {dropped, refused},
+	}
+	for _, o := range stored {
+		outcomes[outbound] = append(outcomes[outbound], string(o))
+	}
+	var codes []string
+	for code := 200; code <= 699; code++ {
+		if label, _ := sipCodeLabel(code); !slices.Contains(codes, label) {
+			codes = append(codes, label)
+		}
+	}
+	for _, vendor := range append([]string{otherVendor}, vendors...) {
+		for direction, labels := range outcomes {
+			for _, label := range labels {
+				callOutcomes.WithLabelValues(vendor, direction, label)
+			}
+			shortCalls.WithLabelValues(vendor, direction)
+		}
+		for _, code := range codes {
+			sipResponses.WithLabelValues(vendor, outbound, code)
+		}
+		postDialDelay.WithLabelValues(vendor, outbound)
+	}
+}
+
 // shortCall is the shortest an answered call lasts and is not short: Twilio's
 // pstn_short_duration, https://www.twilio.com/docs/voice/voice-insights/api/call/details-call-tags.
 const shortCall = 6 * time.Second

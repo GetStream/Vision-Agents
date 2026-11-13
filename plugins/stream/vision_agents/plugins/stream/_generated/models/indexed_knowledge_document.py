@@ -28,13 +28,18 @@ class IndexedKnowledgeDocument:
         pages (int): How many pages the uploaded file has. 0 for text, and for a file without pages, such as a
             spreadsheet.
         passages (int): How many passages it was last cut into. A file uploaded again keeps its old passages, which are
-            still looked up, until the new file has been read.
+            still looked up, until the new file has been read. A document that is pending or failed can also count the
+            passages of the version before, so that deleting it removes every passage either version wrote.
         source (str): What the document was posted as, and what its passages are keyed by. Example: pricing.md.
         state (KnowledgeDocumentState): Where the document has got to. Pending is an uploaded file waiting to be read or
-            being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
+            being read, or posted text whose passages are being written; text that stays pending was cut off and is fixed by
+            posting it again. Failed is a file that could not be read, or posted text whose write stopped part way, and
+            error says why: the passages written before the failure can still be looked up, and posting the document again
+            or deleting it fixes it.
         updated_at (datetime.datetime): When it was last written.
-        error (str | Unset): Why the uploaded file could not be read, written for whoever uploaded it. Set while a read
-            that failed is tried again, and once it has failed for good.
+        error (str | Unset): Why the uploaded file could not be read, or why the passages of posted text could not all
+            be written, written for whoever sent it. Set while a read that failed is tried again, and once it has failed for
+            good.
         text (str | Unset): The document as it was last posted, or as its file was read: Markdown, each page of a file
             opening with an <!-- page N --> comment. Only reading one document fills it in, and one written before its text
             was kept has none.

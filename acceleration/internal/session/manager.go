@@ -104,9 +104,14 @@ type ManagerOptions struct {
 	// language model. Empty keeps the language model.
 	FlowJudge string
 	// AudioFloor is optional, and is the chorus-asr model an agent's flow controller asks as
-	// its own floor control says (Spec.FloorControl). An agent that chose none asks it
-	// nothing about turns.
+	// its own floor control says (Spec.FloorControl), or FloorControlDefault where it chose
+	// none. Without one no session asks about turns.
 	AudioFloor *audiofloor.Client
+	// FloorControlDefault is what controls the floor of an agent that chose no floor control
+	// of its own (config.Agent.FloorControlDefault): empty, the flow controller, or
+	// store.FloorControlChorusASR, chorus-asr at the server's default point when AudioFloor
+	// is set, and nothing when it is not (FloorControlOf). An agent's own choice wins.
+	FloorControlDefault string
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
 	// SpeculativeReplies has every agent start its reply before the flow controller has
@@ -272,6 +277,12 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 	}
 	if options.Conversations != nil && options.Store != nil {
 		keepBranches(options.Conversations, options.Store)
+	}
+	// Once, here, rather than for each session it would have ruled: the router runs, and the
+	// flow controller rules every floor that chose nothing, as it would with no default.
+	if options.FloorControlDefault == store.FloorControlChorusASR && options.AudioFloor == nil {
+		options.Logger.Warn("agent.floor_control_default (ROUTER_FLOOR_CONTROL_DEFAULT) is stream/chorus-asr, and this router has " +
+			"no chorus-asr server (ROUTER_CHORUS_ASR_URL): the flow controller rules the floor of every agent that chose none")
 	}
 	// written is the recorder behind records, which titles are written through too.
 	var written *sessionRecorder
@@ -815,6 +826,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 			}
 			edge = opened
 		}
+		// What controls the floor: the spec's own choice, else the router's default.
+		ruling := m.floorControl(spec)
 		return agent.New(agent.Options{
 			OnToolStarted: toolStarted,
 			OnHeard:       created.heardCaller,
@@ -847,8 +860,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 			Judge:              m.options.Classifier,
 			JudgeTarget:        m.options.FlowJudge,
 			AudioFloor:         m.options.AudioFloor,
-			AudioFloorMode:     m.floorMode(created.id, spec),
-			EndOfTurn:          EndOfTurnOf(spec.FloorControl),
+			AudioFloorMode:     m.floorMode(created.id, ruling),
+			EndOfTurn:          EndOfTurnOf(ruling),
 			Skills:             skills,
 			Telephony:          line,
 			Destinations:       spec.destinations(),
@@ -1021,6 +1034,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		}
 	}
 
+	if spec.Phone != nil && m.options.Phone != nil {
+		created.closers = append(created.closers, func() { m.hangUpRinging(created, spec) })
+	}
+
 	// The row is queued before the session is reachable, so the call cannot be recorded
 	// as ending before it is recorded as starting. An incognito session has none: the row
 	// names the session, its caller and the instructions it ran with.
@@ -1052,12 +1069,16 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	if m.closed {
 		m.mu.Unlock()
 		turnedAway = true
+		// Left ringing as a failed create leaves it: a hangup now would join m.ended after
+		// Shutdown has stopped waiting on it.
+		created.handedOver.Store(true)
 		fail()
 		return nil, stack.Wrap(errors.New("session: the manager is shut down"))
 	}
 	if held, raced := m.sessions[created.id]; raced && !replaces(spec, held) {
 		m.mu.Unlock()
 		turnedAway = true
+		created.handedOver.Store(true)
 		fail()
 		return nil, stack.Wrap(ErrSessionExists)
 	}
@@ -1168,6 +1189,7 @@ func (m *Manager) supersede(spec Spec) {
 	for _, found := range left {
 		m.logger.Info("ending the session this agent left behind in the call",
 			"session", found.id, "call", spec.CallID, "user", spec.UserID)
+		found.handedOver.Store(true)
 		if err := found.Close(); err != nil {
 			m.logger.Warn("the session left behind did not end cleanly",
 				"session", found.id, "error", err)
@@ -1597,50 +1619,28 @@ func livePosition(live *Session) store.SessionPosition {
 // among the caller's sessions and never reaches another's.
 func matchesLive(live *Session, filter store.SessionFilter) bool {
 	spec := live.Spec()
+	var state string
+	switch live.State() {
+	case Live:
+		state = store.SessionRunning
+	case Ended:
+		state = store.SessionClosed
+	}
 	switch {
 	case filter.UserID != "" && spec.Caller.UserID != filter.UserID:
 		return false
 	case len(filter.CallerKinds) > 0 && !slices.Contains(filter.CallerKinds, string(spec.CallerKind)):
 		return false
-	case filter.ConfigID != "" && spec.ConfigID != filter.ConfigID:
-		return false
-	case filter.AgentName != "" && spec.AgentName != filter.AgentName:
-		return false
-	case filter.Project != "" && spec.Project != filter.Project:
-		return false
-	case filter.Modality != "" && live.Modality() != filter.Modality:
-		return false
 	case filter.AgentID != "" && spec.AgentID != filter.AgentID:
-		return false
-	case filter.Team != "" && usage.Team(spec.Attribution.UsageCategories) != filter.Team:
-		return false
-	case filter.State == store.SessionRunning && live.State() != Live,
-		filter.State == store.SessionClosed && live.State() != Ended:
-		return false
-	case !filter.After.IsZero() && live.CreatedAt().Before(filter.After):
-		return false
-	case !filter.Before.IsZero() && !live.CreatedAt().Before(filter.Before):
-		return false
-	case !contains(spec.Custom, filter.Custom):
 		return false
 	// Nobody has reviewed a session that is still running, so it has no score.
 	case !filter.Where.Matches(store.SessionValues{
-		Project: spec.Project, Agent: spec.AgentName, UserID: spec.Caller.UserID,
+		Project: spec.Project, Agent: spec.AgentName, UserID: spec.Caller.UserID, ConfigID: spec.ConfigID,
+		State: state, CreatedAt: live.CreatedAt().Truncate(time.Microsecond), Custom: spec.Custom,
 	}):
 		return false
 	case filter.Cursor != nil && filter.Order.Compare(livePosition(live), *filter.Cursor) <= 0:
 		return false
-	}
-	return true
-}
-
-// contains is the store's custom @> ?::jsonb, for a session that has no row to ask.
-func contains(custom map[string]any, wanted map[string]string) bool {
-	for key, value := range wanted {
-		held, ok := custom[key]
-		if !ok || fmt.Sprint(held) != value {
-			return false
-		}
 	}
 	return true
 }
@@ -1829,7 +1829,26 @@ func (m *Manager) leaveVoicemail(found *Session, spec Spec, message string) {
 	m.hangUp(found, EndVoicemail)
 }
 
-// hangUpTimeout bounds ending a call at Stream once the voicemail is left.
+// hangUpRinging hangs up the call created placed when it ends before anybody answered,
+// which would otherwise ring on with no agent to answer it. In the background, so a slow
+// vendor holds up neither the rest of the close nor a shutdown closing the next session.
+func (m *Manager) hangUpRinging(created *Session, spec Spec) {
+	if created.CallerJoined() || created.handedOver.Load() {
+		return
+	}
+	m.ended.Add(1)
+	go func() {
+		defer m.ended.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), hangUpTimeout)
+		defer cancel()
+		if err := m.options.Phone.HangUpUnanswered(ctx, spec.CustomerID, spec.CallID); err != nil {
+			m.logger.Warn("could not hang up the call its session left ringing", "session", created.id, "call", spec.CallID, "customer", spec.CustomerID, "error", err)
+		}
+	}()
+}
+
+// hangUpTimeout bounds ending a call: at Stream once the voicemail is left, or at the vendor
+// while it still rings.
 const hangUpTimeout = 5 * time.Second
 
 // releaseTimeout bounds taking back this node's claim on a session. Short, because a

@@ -872,6 +872,38 @@ func (s *ConfigSuite) TestTheRoutersFloorControlIsNoLongerRead() {
 	s.Equal([]string{chorusASRModeRetired}, settings.Retired, "and so is a file that names it")
 }
 
+// What an agent that chose no floor control gets is the router's to say: nothing by default,
+// the flow controller, which flow-controller names too, or stream/chorus-asr for every such
+// agent. It is a default of the model alone, and the retired mode names it as what took its
+// place.
+func (s *ConfigSuite) TestTheFloorControlDefaultIsChorusASROrTheFlowController() {
+	settings, _, err := Load("")
+	s.Require().NoError(err)
+	s.Empty(settings.Agent.FloorControlDefault)
+
+	// Before the variable is set at all: present and empty, it wins over the file, as every
+	// setting's does.
+	file := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(file, []byte("agent:\n  floor_control_default: stream/chorus-asr\n"), 0o600))
+	settings, _, err = Load(file)
+	s.Require().NoError(err)
+	s.Equal("stream/chorus-asr", settings.Agent.FloorControlDefault, "a file names it too")
+
+	for _, named := range []string{"stream/chorus-asr", "flow-controller", ""} {
+		s.T().Setenv("ROUTER_FLOOR_CONTROL_DEFAULT", named)
+		settings, _, err = Load("")
+		s.Require().NoError(err, named)
+		s.Equal(named, settings.Agent.FloorControlDefault)
+	}
+	for _, bad := range []string{"act", "shadow", "on", "chorus-asr", "default"} {
+		s.T().Setenv("ROUTER_FLOOR_CONTROL_DEFAULT", bad)
+		_, _, err = Load("")
+		s.Require().Error(err, bad)
+		s.ErrorContains(err, "agent.floor_control_default (ROUTER_FLOOR_CONTROL_DEFAULT) is stream/chorus-asr, or flow-controller or empty", bad)
+	}
+	s.Contains(chorusASRModeRetired, "ROUTER_FLOOR_CONTROL_DEFAULT")
+}
+
 func (s *ConfigSuite) TestTheAudioFloorsAudioIsOpusOrPCM() {
 	s.T().Setenv("ROUTER_CHORUS_ASR_AUDIO", "mp3")
 	_, _, err := Load("")
@@ -1138,6 +1170,29 @@ func (s *ConfigSuite) TestTelnyxSettingsInAFileReachTheEnvironment() {
 	s.Equal("KEY123", os.Getenv("TELNYX_API_KEY"))
 	s.Equal("conn-1", os.Getenv("TELNYX_CONNECTION_ID"))
 	s.Equal("cHVibGlj", os.Getenv("TELNYX_PUBLIC_KEY"))
+}
+
+func (s *ConfigSuite) TestTheTwilioWebhookAuthTokenIsReadFromTheEnvironment() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Empty(config.Twilio.WebhookAuthToken, "unset, no Twilio webhook is believed")
+
+	s.T().Setenv("TWILIO_WEBHOOK_AUTH_TOKEN", "token-from-env")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+
+	s.Equal("token-from-env", config.Twilio.WebhookAuthToken)
+}
+
+func (s *ConfigSuite) TestTheTwilioWebhookAuthTokenInAFileReachesTheEnvironment() {
+	path := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(path, []byte("twilio:\n  webhook_auth_token: token-from-file\n"), 0o600))
+
+	config, _, err := Load(path)
+	s.Require().NoError(err)
+
+	s.Equal("token-from-file", config.Twilio.WebhookAuthToken)
+	s.Equal("token-from-file", os.Getenv("TWILIO_WEBHOOK_AUTH_TOKEN"))
 }
 
 func (s *ConfigSuite) TestASingleNodeSetsNoShard() {

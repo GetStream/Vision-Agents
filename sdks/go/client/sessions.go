@@ -99,6 +99,10 @@ type SessionOptions struct {
 //   - "agent": set by Sessions.Query to the agent asked, whatever the caller wrote there.
 //   - "user_id": a string or {"$eq": s}, at the top level or directly in the top-level $and.
 //     Server side only.
+//   - "config_id": a string or {"$eq": s}, the agent config, which a rename leaves alone.
+//   - "state": "live" or "ended", or {"$eq": s}.
+//   - "created_at": {"$gte": t, "$lt": t}, either bound or both, as RFC 3339 times.
+//   - "custom": a map of string labels the session's custom object holds, every one of them.
 //
 // Anything else is refused by the router with a 400 that names it.
 //

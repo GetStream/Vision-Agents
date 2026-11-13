@@ -5,8 +5,7 @@ import 'package:flutter_assistant/agent_chat.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stream_chat/stream_chat.dart' as stream;
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
-import 'package:vision_agents_chat/vision_agents_chat.dart';
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents/stream_agents.dart';
 
 import 'support/fake_router.dart';
 
@@ -460,6 +459,51 @@ void main() {
       chat.dispose();
     });
 
+    test('a message that did not change is shown as before when another arrives', () async {
+      sessions.history = [_question('q0'), _agentReply(id: 'r0', text: 'Earlier')];
+      final chat = closing(AgentChat('s1', sessions: sessions));
+      await chat.open();
+      final before = chat.listMessages;
+
+      sessions.receive(_question('q1'));
+      await until(() => chat.listMessages.length == 3);
+
+      expect(chat.listMessages.first, same(before.first));
+      expect(chat.listMessages[1], same(before[1]));
+    });
+
+    test("keeps a reply's thinking from its live updates", () async {
+      final chat = closing(AgentChat('s1', sessions: sessions));
+      await chat.open();
+      sessions.receive(_agentReply(id: 'r1', extraData: {'generating': true}));
+
+      for (final (offset, text) in [(0, 'Weighing '), (9, 'the options.')]) {
+        sessions.update(
+          _agentReply(
+            id: 'r1',
+            extraData: {
+              'generating': true,
+              'reasoning': {'id': 'r1', 'offset': offset, 'text': text},
+            },
+          ),
+        );
+      }
+
+      await until(() => chat.reasoning[(message: 'r1', step: 'r1')] == 'Weighing the options.');
+    });
+
+    test('close lets go of the channel, before the session has closed', () async {
+      final chat = AgentChat('s1', sessions: sessions);
+      await chat.open();
+      final channel = sessions.opened!;
+
+      final closed = chat.close();
+
+      expect(channel.state, isNull);
+      await closed;
+      chat.dispose();
+    });
+
     test('close keeps a conversation from the list, used or not', () async {
       final chat = AgentChat('s1', sessions: sessions);
       await chat.open();
@@ -539,14 +583,17 @@ stream.Message _question(String id) => stream.Message(id: id, text: 'Question $i
 /// a test says arrives in it is all it holds.
 class _FakeSessions extends AgentSessions {
   _FakeSessions._(this._router)
-    : _agents = VisionAgents(url: _router.url, customerId: 'acme', userId: 'ada');
+    : _agents = StreamAgents(url: _router.url, customerId: 'acme', userId: 'ada');
 
   static Future<_FakeSessions> onRouter() async => _FakeSessions._(await FakeRouter.start());
 
   final FakeRouter _router;
-  final VisionAgents _agents;
+  final StreamAgents _agents;
   final _client = stream.StreamChatClient('key');
   stream.Channel? _channel;
+
+  /// The last channel a session was opened with.
+  stream.Channel? get opened => _channel;
 
   /// What was said in the conversation before it is opened.
   List<stream.Message> history = const [];

@@ -594,6 +594,8 @@ func TestSyncSendsTheChatChannelsTheAgentAnswersIn(t *testing.T) {
 		want     *[]acceleration.AgentChatChannel
 	}{
 		{"chat_channels:\n  - type: callouts\n  - type: shifts\n", &[]acceleration.AgentChatChannel{{Type: "callouts"}, {Type: "shifts"}}},
+		{"chat_channels:\n  - type: callouts\n    answer: mentioned\n  - type: shifts\n    answer: always\n",
+			&[]acceleration.AgentChatChannel{{Type: "callouts", Answer: pointer(acceleration.Mentioned)}, {Type: "shifts", Answer: pointer(acceleration.Always)}}},
 		{"chat_channels: []\n", &[]acceleration.AgentChatChannel{}},
 		{"chat_channels: ~\n", nil},
 		{"llm: llm-fast\n", nil},
@@ -691,9 +693,9 @@ func TestSyncSendsTheAgentsTheAgentDeclared(t *testing.T) {
 		declared string
 		want     *[]acceleration.ChildAgent
 	}{
-		{"mode: text\nagents:\n  - config: security-lens\n    tool: security\n    description: Reviews for security bugs.\n    timeout_ms: 90000\n  - {config: ranker, tool: rank}\n",
+		{"mode: text\nagents:\n  - config: security-lens\n    tool: security\n    description: Reviews for security bugs.\n    timeout_ms: 90000\n    max_tool_rounds: -1\n  - {config: ranker, tool: rank}\n",
 			&[]acceleration.ChildAgent{
-				{Config: "security-lens", Tool: "security", Description: pointer("Reviews for security bugs."), TimeoutMs: pointer(int64(90000))},
+				{Config: "security-lens", Tool: "security", Description: pointer("Reviews for security bugs."), TimeoutMs: pointer(int64(90000)), MaxToolRounds: pointer(int64(-1))},
 				{Config: "ranker", Tool: "rank"},
 			}},
 		{"agents: []\n", &[]acceleration.ChildAgent{}},

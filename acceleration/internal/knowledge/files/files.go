@@ -453,9 +453,14 @@ func (s *Service) read(ctx context.Context, owned metered.OwnedKnowledge, payloa
 
 	// A read takes long enough for the document to be removed or replaced meanwhile, and
 	// passages written for it then would bring it back. It is looked for again once
-	// written, since it can go between the look and the write.
-	if _, err := s.waiting(ctx, payload); err != nil {
+	// written, since it can go between the look and the write. The look also counts the
+	// passages about to be written, so a write that stops part way is still deleted whole.
+	covered, err := s.store.CoverKnowledgeFile(ctx, payload.CustomerID, payload.ID, payload.ObjectKey, len(passages))
+	if err != nil {
 		return err
+	}
+	if !covered {
+		return errOvertaken
 	}
 	if err := owned.Upsert(ctx, document.Namespace, passages); err != nil {
 		return err
