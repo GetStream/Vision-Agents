@@ -92,7 +92,7 @@ func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, a
 		note = strings.Join(parts, "\n\n")
 	}
 	stale := a.takeSpeculationsLocked()
-	said := a.userTurnLocked(ready.Participant, ready.Said())
+	said := a.userTurnLocked(ready.Participant, ready.Said(), 0)
 	people := len(a.speakers)
 	if said.Speaker != "" && people == 1 {
 		// The second person's first turn: the reply is written as the turn will be answered,
