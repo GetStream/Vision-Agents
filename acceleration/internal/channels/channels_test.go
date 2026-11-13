@@ -354,7 +354,7 @@ func (s *TelnyxSuite) TestAReportOnTheRoutersOwnMessageIsNotAnswered() {
 // level, logged other than once, or returned as a message.
 func (s *TelnyxSuite) TestAReachedSpendLimitIsCountedAndLoggedAndIsNoMessage() {
 	logged := s.logToBuffer()
-	before := telnyxAccountEvents()
+	before := s.telnyxAccountEvents()
 
 	messages, err := s.provider.Parse([]byte(`{"data":{"event_type":"messaging-profile.spend-limit-reached",
 		"id":"d21a2887-8007-4bb6-bd7d-f2874829918e","record_type":"event",
@@ -362,11 +362,11 @@ func (s *TelnyxSuite) TestAReachedSpendLimitIsCountedAndLoggedAndIsNoMessage() {
 
 	s.Require().NoError(err)
 	s.Nil(messages)
-	after := telnyxAccountEvents()
+	after := s.telnyxAccountEvents()
 	s.Equal(1.0, after["messaging-profile.spend-limit-reached/page"]-before["messaging-profile.spend-limit-reached/page"])
 	s.Equal(sum(before)+1, sum(after), "no other Telnyx series moves")
 	s.Equal(1, strings.Count(logged.String(), "\n"))
-	s.Contains(logged.String(), "vendor=telnyx event=messaging-profile.spend-limit-reached level=page")
+	s.Contains(logged.String(), "vendor=telnyx event=messaging-profile.spend-limit-reached level=page id=d21a2887-8007-4bb6-bd7d-f2874829918e")
 }
 
 // The line's hook gets every message event Telnyx has, and only the spend limit is an account
@@ -376,13 +376,13 @@ func (s *TelnyxSuite) TestNothingButTheSpendLimitIsCounted() {
 		"Messaging-Profile.Spend-Limit-Reached", "messaging-profile.spend-limit-reached ",
 		"messaging-profile.spend-limit", "portout.status_changed"} {
 		logged := s.logToBuffer()
-		before := sum(telnyxAccountEvents())
+		before := sum(s.telnyxAccountEvents())
 
 		messages, err := s.provider.Parse([]byte(`{"data":{"event_type":"` + eventType + `",
 			"payload":{"id":"msg-4","text":"hi","from":{"phone_number":"+12025550123"}}}}`))
 
 		s.Require().NoError(err, eventType)
-		s.Equal(before, sum(telnyxAccountEvents()), eventType)
+		s.Equal(before, sum(s.telnyxAccountEvents()), eventType)
 		s.Empty(logged.String(), eventType)
 		if eventType == "message.received" {
 			s.Len(messages, 1, "a text is still read")
@@ -403,11 +403,9 @@ func (s *TelnyxSuite) logToBuffer() *strings.Builder {
 }
 
 // telnyxAccountEvents is each vendor_account_events_total series of Telnyx, by event/level.
-func telnyxAccountEvents() map[string]float64 {
+func (s *TelnyxSuite) telnyxAccountEvents() map[string]float64 {
 	families, err := prometheus.DefaultGatherer.Gather()
-	if err != nil {
-		panic(err)
-	}
+	s.Require().NoError(err)
 	counted := map[string]float64{}
 	for _, family := range families {
 		if family.GetName() != "vendor_account_events_total" {

@@ -71,6 +71,8 @@ func (p *telnyxProvider) Verify(account Account, header http.Header, body []byte
 // telnyxDelivery is the part of a Telnyx webhook a message is read out of.
 type telnyxDelivery struct {
 	Data struct {
+		// ID is the event's own id, which an account event's log line carries.
+		ID        string `json:"id"`
 		EventType string `json:"event_type"`
 		Payload   struct {
 			ID   string `json:"id"`
@@ -104,7 +106,7 @@ func (p *telnyxProvider) Parse(body []byte) ([]Message, error) {
 			vendorevent.Count(vendorevent.VendorTelnyx, event, level)
 			// The default logger is the router's own: cmd/router/main.go sets it.
 			slog.Default().Info("received a telnyx account event", "vendor", vendorevent.VendorTelnyx,
-				"event", event, "level", string(level))
+				"event", event, "level", string(level), "id", delivered.Data.ID)
 		}
 		return nil, nil
 	}
