@@ -2,6 +2,9 @@
 
 ## Features
 
+### List a modality's routes from the Go and JavaScript SDKs, and image generation is documented
+
+`client.Routes(ctx, acceleration.ModalityImage)` in Go and `api.router().routes("image")` in JavaScript list a modality's shortcuts, default first, with the models each resolves to: `image-fast` and `image-quality` for pictures. JavaScript callers no longer write `client.get("/v1/{modality}/routes", ...)` by hand. The router README documents `POST /v1/image/generations` (its options, routes, time, limits and billing) and lists `image-fast` and `image-quality` among the default groups (AI-3199).
 ### A fork takes tool_timeout_ms, and the default tool timeout is documented as 30 seconds
 
 `POST /v1/agents/sessions/{id}/fork` takes `tool_timeout_ms`, as `createSession` does: how long the fork's model waits for a tool the caller or a worker runs. Left out, a fork keeps a running parent's, now also when the fork names another config, and a fork of a conversation that ended has the default. The default is documented: 30 seconds, and a tool's own `timeout_ms` replaces it for that tool, which is how a slow tool such as one that draws a picture gets longer alone. Go has `ForkOptions.ToolTimeout`; JavaScript sends `tool_timeout_ms` from `fork()` (AI-3201).

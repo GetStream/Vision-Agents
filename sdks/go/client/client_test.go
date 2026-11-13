@@ -304,6 +304,16 @@ func newRouter(t *testing.T) *router {
 		})
 	})
 
+	mux.HandleFunc("GET /v1/image/routes", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		// Listed as a deployment that offers the quality route first would, which is not the
+		// order a client sorting by name or by the default would give.
+		answer(w, http.StatusOK, []acceleration.Route{
+			{Id: "image-quality", Title: "Best images", Candidates: []acceleration.Candidate{{Provider: "google", Model: "gemini-3.1-flash-image"}}},
+			{Id: "image-fast", Title: "Fast images", Candidates: []acceleration.Candidate{{Provider: "fal", Model: "alibaba/qwen-image-3/text-to-image"}}},
+		})
+	})
+
 	mux.HandleFunc("POST /v1/agents/guests/claim", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
 		answer(w, http.StatusOK, acceleration.ClaimGuestResult{
@@ -1962,6 +1972,26 @@ func TestClaimingNeedsBothTheGuestAndTheAccount(t *testing.T) {
 	}
 	if backend.requests("POST", "/v1/agents/guests/claim") != 0 {
 		t.Error("the router was asked to claim a guest for nobody")
+	}
+}
+
+// The router puts the default first; the client keeps its order, whatever it is, so the first
+// route a caller reads is the deployment's default.
+func TestTheImageRoutesAreListedInTheOrderTheRouterGave(t *testing.T) {
+	backend := newRouter(t)
+
+	routes, err := backend.client(t).Routes(t.Context(), acceleration.ModalityImage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 2 || routes[0].Id != "image-quality" || routes[1].Id != "image-fast" {
+		t.Fatalf("listed %v", routes)
+	}
+	if routes[1].Candidates[0].Model != "alibaba/qwen-image-3/text-to-image" {
+		t.Errorf("image-fast resolves to %v", routes[1].Candidates)
+	}
+	if backend.requests("GET", "/v1/image/routes") != 1 {
+		t.Error("the image modality's routes were not asked for")
 	}
 }
 
