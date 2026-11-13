@@ -10928,6 +10928,18 @@ pub struct SessionFilter {
         skip_serializing_if = "::std::option::Option::is_none"
     )]
     pub and: ::std::option::Option<::std::vec::Vec<SessionFilter>>,
+    ///The agent config the session ran under, which stays the same when the agent is renamed.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub config_id: ::std::option::Option<Equals>,
+    ///When the session began.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub created_at: ::std::option::Option<TimeWindow>,
+    ///Labels the session's custom object holds, every one of them: {"origin": "test"} matches a session whose custom has origin set to the string "test".
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub custom: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
     ///At least one of these filters holds. It chooses among the sessions the caller may see and never adds to them. text and user_id are refused inside it.
     #[serde(rename = "$or", skip_serializing_if = "::std::option::Option::is_none")]
     pub or: ::std::option::Option<::std::vec::Vec<SessionFilter>>,
@@ -10937,6 +10949,9 @@ pub struct SessionFilter {
     ///The score the review gave the conversation. A session with no review matches no condition on it. Only a server-side caller may use it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub review_score: ::std::option::Option<ReviewScoreMatch>,
+    ///Whether the agent is still in the call.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub state: ::std::option::Option<SessionStateEquals>,
     ///Full text over the title, description, project and agent name, sorted by relevance. Once per filter, at its top level or in a top-level $and, and never inside $or.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub text: ::std::option::Option<TextMatch>,
@@ -11428,6 +11443,21 @@ impl ::std::convert::TryFrom<::std::string::String> for SessionState {
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
+    }
+}
+///Matches live or ended: "live" is short for {"$eq": "live"}.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum SessionStateEquals {
+    SessionState(SessionState),
+    Object {
+        #[serde(rename = "$eq")]
+        eq: SessionState,
+    },
+}
+impl ::std::convert::From<SessionState> for SessionStateEquals {
+    fn from(value: SessionState) -> Self {
+        Self::SessionState(value)
     }
 }
 ///One of the caller's own functions. The model is offered it by name and description; running it is the caller's business, over the events socket.
@@ -13090,6 +13120,18 @@ impl ::std::convert::TryFrom<::std::string::String> for Tier {
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
+}
+///A window of time: $gte is its start, which it holds, and $lt its end, which it does not. Either may be left out, and $gte is before $lt.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TimeWindow {
+    #[serde(
+        rename = "$gte",
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub gte: ::std::option::Option<::std::string::String>,
+    #[serde(rename = "$lt", skip_serializing_if = "::std::option::Option::is_none")]
+    pub lt: ::std::option::Option<::std::string::String>,
 }
 ///`TimelineEntry`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]

@@ -2377,6 +2377,10 @@ export type paths = {
          *     - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
          *     - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
          *     - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+         *     - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename leaves alone
+         *     - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+         *     - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+         *     - `custom`: an object of string labels the session's `custom` holds, every one of them
          *
          *     Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
          *
@@ -9494,10 +9498,20 @@ export type components = {
             readonly $or?: readonly components["schemas"]["SessionFilter"][];
             /** @description The agent name the session was opened against. */
             readonly agent?: components["schemas"]["Equals"];
+            /** @description The agent config the session ran under, which stays the same when the agent is renamed. */
+            readonly config_id?: components["schemas"]["Equals"];
+            /** @description When the session began. */
+            readonly created_at?: components["schemas"]["TimeWindow"];
+            /** @description Labels the session's custom object holds, every one of them: {"origin": "test"} matches a session whose custom has origin set to the string "test". */
+            readonly custom?: {
+                readonly [key: string]: string;
+            };
             /** @description The project the session belongs to. */
             readonly project_id?: components["schemas"]["EqualsOrIn"];
             /** @description The score the review gave the conversation. A session with no review matches no condition on it. Only a server-side caller may use it. */
             readonly review_score?: components["schemas"]["ReviewScoreMatch"];
+            /** @description Whether the agent is still in the call. */
+            readonly state?: components["schemas"]["SessionStateEquals"];
             /** @description Full text over the title, description, project and agent name, sorted by relevance. Once per filter, at its top level or in a top-level $and, and never inside $or. */
             readonly text?: components["schemas"]["TextMatch"];
             /** @description Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for. Only at the top level of the filter or in a top-level $and. */
@@ -9599,6 +9613,10 @@ export type components = {
          * @enum {string}
          */
         readonly SessionState: "live" | "ended";
+        /** @description Matches live or ended: "live" is short for {"$eq": "live"}. */
+        readonly SessionStateEquals: components["schemas"]["SessionState"] | {
+            readonly $eq: components["schemas"]["SessionState"];
+        };
         /** @description One of the caller's own functions. The model is offered it by name and description; running it is the caller's business, over the events socket. */
         readonly SessionTool: {
             readonly approval?: components["schemas"]["SessionToolApproval"];
@@ -10514,6 +10532,13 @@ export type components = {
              */
             readonly tts_ttfb_ms?: number | null;
             readonly turn_id: string;
+        };
+        /** @description A window of time: $gte is its start, which it holds, and $lt its end, which it does not. Either may be left out, and $gte is before $lt. */
+        readonly TimeWindow: {
+            /** Format: date-time */
+            readonly $gte?: string;
+            /** Format: date-time */
+            readonly $lt?: string;
         };
         /** @description A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself. For a connector call whose binding sets require_approval, the answer decides whether the router sends it, and names tool_call_id and request_id; turn_id may be left out. */
         readonly ToolApprovalCommand: {

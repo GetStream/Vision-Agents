@@ -35,7 +35,7 @@ A tool takes `concurrency`, as Go's `tools.Concurrency(n)` does: at most that ma
 
 ### Session queries take `$and` / `$or` filters and a sort, and sessions can be pinned
 
-**Breaking.** `querySessions` (`POST /v1/agents/sessions/query`) filters on `project_id` (`$eq`, `$in`), `text` (`$q`), `review_score` (`$eq`, `$gt`, `$gte`, `$lt`, `$lte`; server side only), `agent` and `user_id` (server side only), combined with `$and` and `$or`: 1 to 10 filters each, nested at most 3 deep, 30 conditions in a filter. Any other key is a 400 that names it, which includes the filters taken before: `agent_id`, `config_id`, `modality`, `state`, `team`, `created_at` and `custom`. `text` and `user_id` go at the top level or directly in the top-level `$and`, never inside `$or`, and `text` may now be combined with `project_id`.
+**Breaking.** `querySessions` (`POST /v1/agents/sessions/query`) filters on `project_id` (`$eq`, `$in`), `text` (`$q`), `review_score` (`$eq`, `$gt`, `$gte`, `$lt`, `$lte`; server side only), `agent`, `user_id` (server side only), `config_id`, `state` (`live` or `ended`), `created_at` (`$gte`, `$lt`) and `custom` (string labels the session holds, every one of them), combined with `$and` and `$or`: 1 to 10 filters each, nested at most 3 deep, 30 conditions in a filter. Any other key is a 400 that names it, which includes the filters taken before: `agent_id`, `modality` and `team`. `text` and `user_id` go at the top level or directly in the top-level `$and`, never inside `$or`, and `text` may now be combined with `project_id`.
 
 `sort` is `last_message_at` in either direction (the default, descending: when the agent last answered, else when the session began), `pinned` first and then `last_message_at`, `review_score` in either direction for a server-side caller, or `relevance` for a text search. `updated_at` is no longer a sort. A cursor holds for the sort it came from.
 
@@ -1421,6 +1421,10 @@ A chat episode now starts when Stream made the message that opened it. Before, i
 ### Go SDK: phone numbers and end-user ids stay out of Info logs
 
 A dispatch worker's `answering a call` line and an agent's `ringing` line carry the last four characters of each number (`***0111`) where they carried the whole number. `answering a message` no longer says who wrote it; the user id is logged at Debug. The doc of `edge.MonitorURL` and `Session.MonitorURL` says the link carries a token and should be kept out of logs, and the voice example says it prints the caller's speech.
+
+### A member's message is no longer read as the agent's reply
+
+In an `agent` channel that people other than the session's caller can write in (a channel the router answers in on a dispatch, or a conversation shared with its members), a message carrying the custom data of the agent's reply was read as the agent's turn: the model saw it as its own words, an action on it was answered from it, a command was looked up in it, and an unfinished one was rewritten as interrupted. Now a reply counts as the agent's only when the agent wrote it; anybody else's message is read as their own. A person's turn the router wrote keeps its fields. In an app chat, a card line marked as the agent's counts as the agent's only when the agent wrote it (AI-3186).
 
 ## Breaking Changes
 
