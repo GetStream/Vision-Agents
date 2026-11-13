@@ -2,6 +2,10 @@
 
 ## Features
 
+### The router counts Twilio Monitor alerts and usage triggers
+
+`POST /v1/phone/hooks/twilio/events` takes the Monitor alerts (the Debugger webhook) and usage-trigger callbacks Twilio signs with `X-Twilio-Signature`, and counts each in `vendor_account_events_total{vendor="twilio",event,level}`, with one log line. Alerts 10001 and 30002 (the account is not active or suspended) are `page`, 20003 and 32017 are `warn`, and any other code is `error.other` at `info`; a `totalprice` trigger is `page`, a `calls` trigger `warn`, and any other is `usage_trigger.other` at `warn`. The route answers 404 while `TWILIO_WEBHOOK_AUTH_TOKEN` or `ROUTER_PUBLIC_URL` is unset, and 401 to an event Twilio did not sign over `ROUTER_PUBLIC_URL` and the path. (#PRNUM)
+
 ### The router counts Telnyx account events
 
 `POST /v1/phone/hooks/telnyx/events` takes the account events Telnyx signs, such as a port-out or a number order, and counts each in `vendor_account_events_total{vendor,event,level}`, with one log line. A port-out or a reached messaging spend limit is `page`, a number order that did not succeed is `warn`, and the rest is `info`; a type the router does not name is counted as `other`. The route answers 404 while `TELNYX_PUBLIC_KEY` is unset, and 401 to an event Telnyx did not sign. (#1985)
