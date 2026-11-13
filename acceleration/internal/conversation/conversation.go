@@ -94,6 +94,9 @@ type Message struct {
 	// written is a person's message the channel bridge wrote into a thread channel, read
 	// back as a user turn (messageFromThread).
 	written bool
+	// mentioned are the ids of the users a person's message mentions, from its
+	// mentioned_users (messageFromPerson).
+	mentioned []string
 }
 type Page struct {
 	memoryScope memory.Scope
@@ -110,6 +113,11 @@ type Page struct {
 	Messages   []Message `json:"messages"`
 	Before     string    `json:"before,omitempty"`
 	Truncated  bool      `json:"context_truncated"`
+
+	// answering is the message a session is about to be told, when its history is read for it,
+	// and addressed which of the people's messages are addressed to the agent (Answering).
+	answering string
+	addressed func(text string, mentioned []string) bool
 }
 type Updated struct {
 	CID     string  `json:"conversation_id"`
@@ -1205,6 +1213,11 @@ func entries(p Page) []entry {
 	// (Session.FollowUp), so they are not history yet: read here too, the model would see
 	// each one twice.
 	replied := false
+	// unanswered is whether the message being read was written before the one the session is
+	// about to be told (Page.answering) and after the last reply: one nobody answered, unless
+	// it is addressed to the agent too (Page.addressed), which gets a turn of its own, maybe
+	// after this one, as turns can take the channel out of order.
+	unanswered := false
 	// withheld is whether the message being read was judged with a reply the prompt
 	// injection screen refused: every turn since the last reply a model is handed back, as
 	// agent.Withheld does in the live agent's history.
@@ -1220,7 +1233,13 @@ func entries(p Page) []entry {
 				withheld = false
 			}
 		}
-		if m.written && !replied {
+		if m.written && p.answering != "" && m.ID == p.answering {
+			// The session is about to be told it, even when a reply to a later message came
+			// first.
+			unanswered = true
+			continue
+		}
+		if m.written && !replied && (!unanswered || p.addressed != nil && p.addressed(m.Text, m.mentioned)) {
 			continue
 		}
 		if m.State != "completed" {

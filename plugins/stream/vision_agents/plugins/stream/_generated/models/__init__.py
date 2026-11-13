@@ -130,6 +130,7 @@ from .channel_kind import ChannelKind
 from .channel_limits import ChannelLimits
 from .channel_line_request import ChannelLineRequest
 from .channel_link import ChannelLink
+from .chat_channel_answer import ChatChannelAnswer
 from .chat_token import ChatToken
 from .chat_token_request import ChatTokenRequest
 from .child_agent import ChildAgent
@@ -767,6 +768,7 @@ __all__ = (
     "ChannelLimits",
     "ChannelLineRequest",
     "ChannelLink",
+    "ChatChannelAnswer",
     "ChatToken",
     "ChatTokenRequest",
     "ChildAgent",

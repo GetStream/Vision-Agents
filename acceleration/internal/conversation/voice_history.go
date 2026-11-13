@@ -93,6 +93,9 @@ func messageFromPerson(wire getstream.MessageResponse) (Message, bool) {
 	if wire.User.Name != nil {
 		m.authorName = *wire.User.Name
 	}
+	for _, user := range wire.MentionedUsers {
+		m.mentioned = append(m.mentioned, user.ID)
+	}
 	return m, m.Text != "" || len(m.Files) > 0
 }
 

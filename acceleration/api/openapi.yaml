@@ -470,6 +470,8 @@ components:
       type: object
     AgentChatChannel:
       properties:
+        answer:
+          $ref: '#/components/schemas/ChatChannelAnswer'
         type:
           description: The channel type's name, as it comes before the colon in a channel's cid.
           example: callouts
@@ -2522,6 +2524,12 @@ components:
         - code
         - expires_at
       type: object
+    ChatChannelAnswer:
+      description: 'Which messages in a channel of the type are answered. always answers every message. mentioned answers only a message that mentions the agent: its mentioned_users holds the Stream user whose id is the config''s id, or its text has @ and that user''s id or the config''s name, as Stream''s clients write a mention. A message that does not mention the agent gets no reply and starts no model; it stays in the channel, and the next answered message reads it as what was said before. Omitted is always.'
+      enum:
+        - always
+        - mentioned
+      type: string
     ChatToken:
       properties:
         api_key:

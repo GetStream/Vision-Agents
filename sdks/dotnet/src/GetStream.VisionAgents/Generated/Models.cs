@@ -660,6 +660,9 @@ namespace GetStream.VisionAgents.Models
     public partial class AgentChatChannel
     {
 
+        [System.Text.Json.Serialization.JsonPropertyName("answer")]
+        public string? Answer { get; set; } = default!;
+
         /// <summary>
         /// The channel type's name, as it comes before the colon in a channel's cid.
         /// </summary>
