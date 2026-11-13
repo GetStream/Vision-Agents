@@ -20,18 +20,18 @@ void main() {
     });
 
     test('current is none for a format the app does not offer', () async {
-      backend.answer(200, jsonEncode({'format': 'openui'}));
+      backend.answer(200, jsonEncode({'format': 'unknown_format'}));
 
       expect(await ReplyFormat.current(backend: backend.url), isNull);
     });
 
-    test('choose puts the format to the backend', () async {
-      backend.answer(200, jsonEncode({'format': 'a2ui'}));
+    test('choose puts OpenUI and A2UI formats to the backend', () async {
+      backend.answer(200, jsonEncode({'format': 'openui'}));
 
-      await ReplyFormat.a2ui.choose(backend: backend.url);
+      await ReplyFormat.openui.choose(backend: backend.url);
 
       expect(backend.arrived, [
-        'PUT /reply-format ${jsonEncode({'format': 'a2ui'})}',
+        'PUT /reply-format ${jsonEncode({'format': 'openui'})}',
       ]);
     });
 

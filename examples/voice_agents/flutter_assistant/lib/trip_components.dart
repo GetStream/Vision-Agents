@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 // ignore: deprecated_member_use
 import 'package:flutter/material.dart';
@@ -11,6 +12,7 @@ import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 
+import 'brand_theme.dart';
 import 'device_tools.dart';
 
 /// The phone's own views the agent can place in the UI of a reply, such as a trip plan.
@@ -38,6 +40,9 @@ abstract final class TripComponents {
         'place_card' => PlaceCardComponent(definition),
         'trip_map' => TripMapComponent(definition),
         'calendar_check' => CalendarCheckComponent(definition),
+        'restaurant_card' => RestaurantCardComponent(definition),
+        'availability_gauge' => AvailabilityGaugeComponent(definition),
+        'seat_selector' => SeatSelectorComponent(definition),
         _ => null,
       };
 }
@@ -507,6 +512,243 @@ class _CalendarCheckState extends State<CalendarCheck> {
             Text(
               "Only you see this. Juno doesn't.",
               style: text.metadataDefault.copyWith(color: colors.textTertiary),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+typedef RestaurantArguments = ({String name, String cuisine, double rating, String? priceTier});
+
+class RestaurantCardComponent extends AIUIComponent<RestaurantArguments> {
+  RestaurantCardComponent(this.definition);
+
+  @override
+  final AIUIComponentDefinition definition;
+
+  @override
+  RestaurantArguments readArguments(AIUIArguments arguments) => (
+    name: arguments.string('name'),
+    cuisine: arguments.string('cuisine'),
+    rating: arguments.number('rating'),
+    priceTier: arguments.optional('price_tier', arguments.string),
+  );
+
+  @override
+  Widget build(BuildContext context, RestaurantArguments venue, AIUIComponentContext ui) {
+    final colors = context.streamColorScheme;
+    final text = context.streamTextTheme;
+    final brand = BrandProfile.active.value;
+    final badge = venue.priceTier == null
+        ? '★ ${venue.rating.toStringAsFixed(1)}'
+        : '★ ${venue.rating.toStringAsFixed(1)} · ${venue.priceTier}';
+    return Material(
+      color: colors.backgroundSurface,
+      borderRadius: BorderRadius.circular(brand.cornerRadius),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => ui.emit(
+          'inspect_venue',
+          label: 'Show me the menu and highlights for ${venue.name}',
+          payload: {'name': venue.name},
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            spacing: 4,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      venue.name,
+                      style: text.bodyEmphasis.copyWith(color: colors.textPrimary),
+                    ),
+                  ),
+                  Text(badge, style: text.captionEmphasis.copyWith(color: brand.accent)),
+                ],
+              ),
+              Text(venue.cuisine, style: text.captionDefault.copyWith(color: colors.textSecondary)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+typedef AvailabilityArguments = ({double occupancyPct, String waitLabel});
+
+class AvailabilityGaugeComponent extends AIUIComponent<AvailabilityArguments> {
+  AvailabilityGaugeComponent(this.definition);
+
+  @override
+  final AIUIComponentDefinition definition;
+
+  @override
+  AvailabilityArguments readArguments(AIUIArguments arguments) =>
+      (occupancyPct: arguments.number('occupancy_pct'), waitLabel: arguments.string('wait_label'));
+
+  @override
+  Widget build(BuildContext context, AvailabilityArguments gauge, AIUIComponentContext ui) {
+    final colors = context.streamColorScheme;
+    final text = context.streamTextTheme;
+    final brand = BrandProfile.active.value;
+    final clamped = gauge.occupancyPct.clamp(0.0, 100.0);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colors.backgroundSurface,
+        borderRadius: BorderRadius.circular(brand.cornerRadius),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          spacing: 6,
+          children: [
+            SizedBox(
+              width: 140,
+              height: 78,
+              child: CustomPaint(
+                painter: _GaugePainter(
+                  fraction: clamped / 100.0,
+                  accent: brand.accent,
+                  track: colors.borderDefault,
+                ),
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  child: Text(
+                    '${clamped.round()}%',
+                    style: text.headingSm.copyWith(color: colors.textPrimary),
+                  ),
+                ),
+              ),
+            ),
+            Text(gauge.waitLabel, style: text.captionDefault.copyWith(color: colors.textSecondary)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GaugePainter extends CustomPainter {
+  const _GaugePainter({required this.fraction, required this.accent, required this.track});
+
+  final double fraction;
+  final Color accent;
+  final Color track;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height - 6);
+    final radius = math.min(size.width / 2 - 8, size.height - 12);
+    final rect = Rect.fromCircle(center: center, radius: radius);
+    final bgPaint = Paint()
+      ..color = track
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 10
+      ..strokeCap = StrokeCap.round;
+    final fgPaint = Paint()
+      ..color = accent
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 10
+      ..strokeCap = StrokeCap.round;
+    canvas.drawArc(rect, math.pi, math.pi, false, bgPaint);
+    canvas.drawArc(rect, math.pi, math.pi * fraction, false, fgPaint);
+  }
+
+  @override
+  bool shouldRepaint(_GaugePainter oldDelegate) =>
+      oldDelegate.fraction != fraction ||
+      oldDelegate.accent != accent ||
+      oldDelegate.track != track;
+}
+
+typedef DiningTableItem = ({String id, String zone, int seats, bool available});
+
+class SeatSelectorComponent extends AIUIComponent<List<DiningTableItem>> {
+  SeatSelectorComponent(this.definition);
+
+  @override
+  final AIUIComponentDefinition definition;
+
+  @override
+  List<DiningTableItem> readArguments(AIUIArguments arguments) => [
+    for (final item in arguments.objects('tables'))
+      (
+        id: item.string('id'),
+        zone: item.string('zone'),
+        seats: item.number('seats').round(),
+        available: item.boolean('available'),
+      ),
+  ];
+
+  @override
+  Widget build(BuildContext context, List<DiningTableItem> tables, AIUIComponentContext ui) =>
+      _SeatSelectorView(
+        tables: tables,
+        onSelect: (table) => ui.emit(
+          'select_table',
+          label: 'Reserve table ${table.id} (${table.zone} for ${table.seats})',
+          payload: {'id': table.id, 'zone': table.zone, 'seats': table.seats},
+        ),
+      );
+}
+
+class _SeatSelectorView extends StatefulWidget {
+  const _SeatSelectorView({required this.tables, required this.onSelect});
+
+  final List<DiningTableItem> tables;
+  final ValueChanged<DiningTableItem> onSelect;
+
+  @override
+  State<_SeatSelectorView> createState() => _SeatSelectorViewState();
+}
+
+class _SeatSelectorViewState extends State<_SeatSelectorView> {
+  late String? _selected = widget.tables.where((t) => t.available).firstOrNull?.id;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.streamColorScheme;
+    final text = context.streamTextTheme;
+    final brand = BrandProfile.active.value;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colors.backgroundSurface,
+        borderRadius: BorderRadius.circular(brand.cornerRadius),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          spacing: 8,
+          children: [
+            Text(
+              'Select a table zone',
+              style: text.captionEmphasis.copyWith(color: colors.textPrimary),
+            ),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final table in widget.tables)
+                  ChoiceChip(
+                    label: Text('${table.id} · ${table.zone} (${table.seats}p)'),
+                    selected: _selected == table.id,
+                    selectedColor: brand.accent.withValues(alpha: 0.16),
+                    onSelected: table.available
+                        ? (_) {
+                            setState(() => _selected = table.id);
+                            widget.onSelect(table);
+                          }
+                        : null,
+                  ),
+              ],
             ),
           ],
         ),

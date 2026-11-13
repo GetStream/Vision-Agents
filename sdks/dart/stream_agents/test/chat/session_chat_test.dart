@@ -165,4 +165,51 @@ void main() {
       expect(reasoning[(message: 'reply', step: 'r1')], isNull);
     });
   });
+
+  group('LiveUI', () {
+    test('overlays streaming socket UI and yields to settled Stream Chat ai_ui', () {
+      final liveUI = LiveUI();
+      final conversation = const Conversation()
+          .apply(AgentEvent.tryParse('{"type":"responding","turn_id":"t1"}')!)
+          .apply(
+            AgentEvent.tryParse(
+              '{"type":"ui_delta","turn_id":"t1","format":"openui",'
+              r'"delta":"root = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"}',
+            )!,
+          );
+
+      expect(liveUI.observe(conversation), isTrue);
+      expect(liveUI.observe(conversation), isFalse);
+
+      final inFlight = stream.Message(
+        id: 'm1',
+        text: '',
+        extraData: const {'ai_generated': true, 'generating': true},
+      );
+      final overlaid = liveUI.overlay([inFlight]);
+      expect(overlaid.single.extraData['ai_ui'], {
+        'v': 1,
+        'format': 'openui',
+        'status': 'streaming',
+        'content': 'root = Card([hdr])\nhdr = CardHeader("Kaneo")',
+      });
+      expect(identical(liveUI.overlay([inFlight]).single, overlaid.single), isTrue);
+
+      final settled = stream.Message(
+        id: 'm1',
+        text: 'Here is Kaneo.',
+        extraData: const {
+          'ai_generated': true,
+          'generating': false,
+          'ai_ui': {
+            'v': 1,
+            'format': 'openui',
+            'status': 'complete',
+            'content': 'root = Card([hdr])\nhdr = CardHeader("Kaneo")',
+          },
+        },
+      );
+      expect(identical(liveUI.overlay([settled]).single, settled), isTrue);
+    });
+  });
 }

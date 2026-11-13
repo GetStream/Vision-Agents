@@ -1,6 +1,14 @@
 import { nested, text, type Frame } from "./socket.js";
 import type { Participant, ToolApprovalRequest } from "./session.js";
 
+/** Interactive UI streamed alongside an agent turn. */
+export interface TurnUI {
+  readonly format: string;
+  readonly version?: string;
+  readonly status: "streaming" | "complete";
+  readonly content: string;
+}
+
 /** One line of a conversation. */
 export interface Turn {
   /** The router's turn id for an agent turn, and one of our own for a participant's. */
@@ -11,6 +19,8 @@ export interface Turn {
   readonly participant?: Participant;
   /** What was said. The agent's turn in flight grows as its deltas arrive. */
   readonly text: string;
+  /** Interactive UI generated for an agent turn, streaming in and then complete. */
+  readonly ui?: TurnUI;
   /** When the turn began, in milliseconds since the epoch. */
   readonly at: number;
 }
@@ -60,6 +70,7 @@ export interface ConversationRecord {
 export class Conversation {
   private snapshot: ConversationRecord;
   private readonly listeners = new Set<() => void>();
+  private readonly uiRawByTurn = new Map<string, string>();
 
   constructor(connected: boolean) {
     this.snapshot = Object.freeze({
@@ -104,7 +115,10 @@ export class Conversation {
    */
   observe(frame: Frame, now = Date.now()): void {
     const turns = this.snapshot.turns;
-    if (this.snapshot.failure && (frame.type === "heard" || frame.type === "responding" || frame.type === "spoke")) {
+    if (
+      this.snapshot.failure &&
+      (frame.type === "heard" || frame.type === "responding" || frame.type === "ui_delta" || frame.type === "spoke")
+    ) {
       // The agent works again.
       this.change({ failure: "", failureContext: "", failureAt: 0 });
     }
@@ -120,20 +134,75 @@ export class Conversation {
         this.turns([...turns, participantTurn(heard, participantOf(frame), now)]);
         return;
       }
-      case "responding":
-        this.turns([...turns, Object.freeze({ id: text(frame, "turn_id"), speaker: "agent", text: "", at: now })]);
+      case "responding": {
+        const turnId = text(frame, "turn_id");
+        this.uiRawByTurn.delete(turnId);
+        this.turns([...turns, Object.freeze({ id: turnId, speaker: "agent", text: "", at: now })]);
         return;
+      }
       case "response_delta": {
         const delta = text(frame, "text");
         this.write(text(frame, "turn_id"), delta, now, (was) => was + delta);
         return;
       }
+      case "ui_delta": {
+        const delta = text(frame, "delta");
+        if (!delta) {
+          return;
+        }
+        const turnId = text(frame, "turn_id");
+        const format = text(frame, "format");
+        if (!format) {
+          return;
+        }
+        const version = text(frame, "version");
+        const mode = text(frame, "mode") || "replace";
+        const raw = (this.uiRawByTurn.get(turnId) ?? "") + delta;
+        this.uiRawByTurn.set(turnId, raw);
+        const content = this.resolveUIContent(turnId, format, mode, raw);
+        this.writeUI(
+          turnId,
+          Object.freeze({
+            format,
+            ...(version ? { version } : {}),
+            status: "streaming",
+            content,
+          }),
+          now,
+        );
+        return;
+      }
+      case "ui_completed": {
+        const turnId = text(frame, "turn_id");
+        const format = text(frame, "format");
+        if (!format) {
+          return;
+        }
+        const version = text(frame, "version");
+        const mode = text(frame, "mode") || "replace";
+        const raw = text(frame, "content") || (this.uiRawByTurn.get(turnId) ?? "");
+        this.uiRawByTurn.delete(turnId);
+        const content = this.resolveUIContent(turnId, format, mode, raw);
+        this.writeUI(
+          turnId,
+          Object.freeze({
+            format,
+            ...(version ? { version } : {}),
+            status: "complete",
+            content,
+          }),
+          now,
+        );
+        return;
+      }
       case "responded": {
         // The final text is authoritative: the deltas are what was being written, this is
         // what was said. An empty one adds nothing, which is what a spoken-only turn is.
+        const turnId = text(frame, "turn_id");
+        this.uiRawByTurn.delete(turnId);
         const said = text(frame, "text");
         if (said) {
-          this.write(text(frame, "turn_id"), said, now, () => said);
+          this.write(turnId, said, now, () => said);
         }
         return;
       }
@@ -152,6 +221,7 @@ export class Conversation {
 
   /** @internal The socket stopped, with the error that stopped it if it did not end normally. */
   disconnected(cause?: Error): void {
+    this.uiRawByTurn.clear();
     this.change({
       connected: false,
       approvals: Object.freeze([]),
@@ -171,14 +241,49 @@ export class Conversation {
       return;
     }
     const turn = turns[index]!;
-    const text = change(turn.text);
-    if (text === turn.text) {
+    const nextText = change(turn.text);
+    if (nextText === turn.text) {
       // An empty delta, or a final text the deltas already spelled: nothing for a page to redraw.
       return;
     }
     const next = turns.slice();
-    next[index] = Object.freeze({ ...turn, text });
+    next[index] = Object.freeze({ ...turn, text: nextText });
     this.turns(next);
+  }
+
+  private writeUI(turnId: string, ui: TurnUI, now: number): void {
+    const turns = this.snapshot.turns;
+    const index = this.agentTurnIndex(turnId);
+    if (index === -1) {
+      this.turns([...turns, Object.freeze({ id: turnId, speaker: "agent", text: "", ui, at: now })]);
+      return;
+    }
+    const turn = turns[index]!;
+    if (
+      turn.ui?.format === ui.format &&
+      turn.ui.version === ui.version &&
+      turn.ui.status === ui.status &&
+      turn.ui.content === ui.content
+    ) {
+      return;
+    }
+    const next = turns.slice();
+    next[index] = Object.freeze({ ...turn, ui });
+    this.turns(next);
+  }
+
+  private resolveUIContent(turnId: string, format: string, mode: string, raw: string): string {
+    if (mode !== "patch" || format !== "openui") {
+      return raw;
+    }
+    const turns = this.snapshot.turns;
+    for (let index = turns.length - 1; index >= 0; index--) {
+      const earlier = turns[index];
+      if (earlier?.speaker === "agent" && earlier.id !== turnId && earlier.ui?.format === "openui" && earlier.ui.content) {
+        return mergeOpenUIStatements(earlier.ui.content, raw);
+      }
+    }
+    return raw;
   }
 
   /**
@@ -219,6 +324,136 @@ export class Conversation {
       }
     }
   }
+}
+
+const OPENUI_IDENT = /^\$?[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * Merges an OpenUI statement patch onto an earlier OpenUI program: matching identifiers
+ * update in place so `root` stays at the top, component identifiers assigned `null` are
+ * removed, and new identifiers append at the end.
+ */
+export function mergeOpenUIStatements(base: string, patch: string): string {
+  if (!base.trim()) {
+    return patch;
+  }
+  if (!patch.trim()) {
+    return base;
+  }
+  const order: string[] = [];
+  const byIdent = new Map<string, string>();
+
+  for (const raw of splitOpenUIStatements(base)) {
+    const parsed = parseOpenUIAssignment(raw);
+    if (!parsed) {
+      continue;
+    }
+    if (!byIdent.has(parsed.ident)) {
+      order.push(parsed.ident);
+    }
+    byIdent.set(parsed.ident, raw);
+  }
+
+  for (const raw of splitOpenUIStatements(patch)) {
+    const parsed = parseOpenUIAssignment(raw);
+    if (!parsed) {
+      continue;
+    }
+    if (parsed.rhs === "null" && !parsed.ident.startsWith("$")) {
+      byIdent.delete(parsed.ident);
+      const idx = order.indexOf(parsed.ident);
+      if (idx >= 0) {
+        order.splice(idx, 1);
+      }
+      continue;
+    }
+    if (!byIdent.has(parsed.ident)) {
+      order.push(parsed.ident);
+    }
+    byIdent.set(parsed.ident, `${parsed.ident} = ${parsed.rhs}`);
+  }
+
+  return order.flatMap((ident) => {
+    const stmt = byIdent.get(ident);
+    return stmt !== undefined ? [stmt] : [];
+  }).join("\n");
+}
+
+function splitOpenUIStatements(program: string): string[] {
+  const stmts: string[] = [];
+  let current = "";
+  let quote = "";
+  let escaped = false;
+  let depth = 0;
+
+  for (const line of program.split("\n")) {
+    if (!quote && depth === 0) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("//") || trimmed.startsWith("#")) {
+        continue;
+      }
+    }
+    current = current ? `${current}\n${line}` : line;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i]!;
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (quote) {
+        if (ch === "\\") {
+          escaped = true;
+        } else if (ch === quote) {
+          quote = "";
+        }
+        continue;
+      }
+      if (ch === "/" && line[i + 1] === "/") {
+        break;
+      }
+      if (ch === '"' || ch === "'") {
+        quote = ch;
+      } else if (ch === "(" || ch === "[" || ch === "{") {
+        depth++;
+      } else if ((ch === ")" || ch === "]" || ch === "}") && depth > 0) {
+        depth--;
+      }
+    }
+    if (!quote && depth === 0) {
+      const finished = current.trim();
+      if (finished) {
+        stmts.push(finished);
+      }
+      current = "";
+    }
+  }
+  const tail = current.trim();
+  if (tail) {
+    stmts.push(tail);
+  }
+  return stmts;
+}
+
+function parseOpenUIAssignment(stmt: string): { ident: string; rhs: string } | undefined {
+  for (let i = 0; i < stmt.length; i++) {
+    if (stmt[i] !== "=") {
+      continue;
+    }
+    const prev = i > 0 ? stmt[i - 1] : "";
+    if (prev === "!" || prev === "<" || prev === ">" || prev === "=") {
+      continue;
+    }
+    if (stmt[i + 1] === "=") {
+      i++;
+      continue;
+    }
+    const ident = stmt.slice(0, i).trim();
+    if (!OPENUI_IDENT.test(ident)) {
+      return undefined;
+    }
+    return { ident, rhs: stmt.slice(i + 1).trim() };
+  }
+  return undefined;
 }
 
 function participantTurn(said: string, participant: Participant | undefined, now: number): Turn {

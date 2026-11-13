@@ -172,6 +172,31 @@ type ReasoningDelta struct {
 
 func (ReasoningDelta) isAgentEvent() {}
 
+// UIDelta is a piece of a reply's interactive UI as it streams back, separated from the
+// spoken or fallback words before stage directions and speech chunking run.
+type UIDelta struct {
+	TurnID  string
+	Format  string
+	Version string
+	// Mode is "replace" for a full UI program or "patch" for statement updates to the
+	// conversation's previous UI of the same format.
+	Mode  string
+	Delta string
+}
+
+func (UIDelta) isAgentEvent() {}
+
+// UICompleted means the reply's interactive UI block has finished streaming.
+type UICompleted struct {
+	TurnID  string
+	Format  string
+	Version string
+	Mode    string
+	Content string
+}
+
+func (UICompleted) isAgentEvent() {}
+
 // Responded means the model finished. The reply may still be being spoken.
 type Responded struct {
 	// PendingWork says this model reply is followed by tools or delegated work.

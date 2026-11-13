@@ -225,6 +225,7 @@ type Settings struct {
 	Tags     map[string]string `yaml:"tags"`
 	Video    *VideoSettings    `yaml:"video"`
 	Dispatch *DispatchSettings `yaml:"dispatch"`
+	UI       *UISettings       `yaml:"ui"`
 	// App is the application's own section of the declaration, which this SDK never reads
 	// and the backend is never sent. It is the one place an unknown key is not refused.
 	App map[string]any `yaml:"app"`
@@ -616,6 +617,17 @@ func Load(path string) (*Folder, error) {
 	}
 	if folder.Simulations, err = loadSimulations(filepath.Join(path, SimulationsDir)); err != nil {
 		return nil, err
+	}
+	if folder.Settings.UI != nil {
+		uiPrompt, err := loadUIPrompt(path, *folder.Settings.UI)
+		if err != nil {
+			return nil, err
+		}
+		if folder.Instructions != "" {
+			folder.Instructions += "\n\n" + uiPrompt
+		} else {
+			folder.Instructions = uiPrompt
+		}
 	}
 	return folder, nil
 }

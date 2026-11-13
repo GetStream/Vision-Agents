@@ -5,6 +5,7 @@ import { DEFAULT_CALL_TYPE, Edge } from "./edge.js";
 import { ConfigurationError, RouterError, SocketClosedError } from "./errors.js";
 import { Session, type SessionOptions } from "./session.js";
 import { Tools } from "./tools.js";
+import type { UIDeclaration } from "./ui-catalog.js";
 import type { InboundCall, InboundMessage } from "./inbound.js";
 
 /** The memory filter key naming who the memories are about. Everything else narrows recall. */
@@ -152,6 +153,8 @@ export interface Declaration {
    * is the default flow controller again.
    */
   floorControl?: Schemas["FloorControl"];
+  /** Declarative UI catalog, component allowlist, portable components, and layout blueprints. */
+  ui?: UIDeclaration;
 }
 
 /** One connector an agent binds, as agent.yaml names it. */

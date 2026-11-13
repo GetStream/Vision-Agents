@@ -696,6 +696,36 @@ func frameOf(event session.Event) (frame, bool) {
 	case agent.ResponseDelta:
 		return frame{"type": "response_delta", "turn_id": typed.TurnID, "text": typed.Text}, true
 
+	case agent.UIDelta:
+		out := frame{
+			"type":    "ui_delta",
+			"turn_id": typed.TurnID,
+			"format":  typed.Format,
+			"delta":   typed.Delta,
+		}
+		if typed.Version != "" {
+			out["version"] = typed.Version
+		}
+		if typed.Mode != "" && typed.Mode != "replace" {
+			out["mode"] = typed.Mode
+		}
+		return out, true
+
+	case agent.UICompleted:
+		out := frame{
+			"type":    "ui_completed",
+			"turn_id": typed.TurnID,
+			"format":  typed.Format,
+			"content": typed.Content,
+		}
+		if typed.Version != "" {
+			out["version"] = typed.Version
+		}
+		if typed.Mode != "" && typed.Mode != "replace" {
+			out["mode"] = typed.Mode
+		}
+		return out, true
+
 	case agent.Responded:
 		return withPurpose(frame{
 			"pending_work":           typed.PendingWork,

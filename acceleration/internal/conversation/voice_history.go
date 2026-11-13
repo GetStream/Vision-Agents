@@ -64,8 +64,11 @@ func messageFromVoice(wire getstream.MessageResponse, voiceAgent string) (Messag
 	}
 	if role == "assistant" {
 		m.Artifacts = artifactsFromAttachments(wire.Attachments)
+		if ui, ok := wire.Custom["ai_ui"].(map[string]any); ok {
+			m.UI = ui
+		}
 	}
-	return m, m.Text != "" || len(m.Artifacts) > 0
+	return m, m.Text != "" || len(m.Artifacts) > 0 || len(m.UI) > 0
 }
 
 // messageFromThread reads a person's message the channel bridge wrote into a thread channel:

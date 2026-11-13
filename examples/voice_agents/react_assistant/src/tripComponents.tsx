@@ -11,6 +11,7 @@ import {
 
 // The components are described once, for the iOS and Android apps too, beside the iOS app.
 import described from "../../swift_assistant/app/SwiftAssistant/UIComponents.json";
+import bookingDescribed from "./bookingComponents.json";
 import { calendarDays } from "./reminders";
 
 // Each component's view, by the name the agent places it by.
@@ -18,18 +19,23 @@ const views: Record<string, (definition: AIUIComponentDefinition) => AIUICompone
   place_card: (definition) => defineAIUIComponent(definition, PlaceCard),
   trip_map: (definition) => defineAIUIComponent(definition, TripMap),
   calendar_check: (definition) => defineAIUIComponent(definition, CalendarCheck),
+  restaurant_card: (definition) => defineAIUIComponent(definition, RestaurantCard),
+  availability_gauge: (definition) => defineAIUIComponent(definition, AvailabilityGauge),
+  seat_selector: (definition) => defineAIUIComponent(definition, SeatSelector),
 };
 
 /**
  * The views the agent can place in a reply's UI, besides the ones its format has: a card for a
- * place with its Wikipedia photo, a map of a plan, and the person's own calendar for its days.
- * The same components, by the same names, as the iOS app's.
+ * place with its Wikipedia photo, a map of a plan, the person's own calendar, and hospitality
+ * booking elements (restaurant summary, live occupancy gauge, and table zone selector).
  */
-export const tripComponents: AIUIComponent[] = (described as unknown[]).flatMap((json) => {
-  const definition = parseAIUIComponentDefinition(json);
-  const view = definition && views[definition.name];
-  return definition && view ? [view(definition)] : [];
-});
+export const tripComponents: AIUIComponent[] = [...(described as unknown[]), ...(bookingDescribed as unknown[])].flatMap(
+  (json) => {
+    const definition = parseAIUIComponentDefinition(json);
+    const view = definition && views[definition.name];
+    return definition && view ? [view(definition)] : [];
+  },
+);
 
 type PlaceArguments = { title: string; note?: string };
 
@@ -180,5 +186,105 @@ function CalendarCheck({ args }: AIUIComponentProps<CalendarArguments>) {
       </ul>
       <p className="calendar-check-private">Only you see this. Juno doesn't.</p>
     </section>
+  );
+}
+
+type RestaurantCardArguments = {
+  name: string;
+  cuisine: string;
+  rating: number;
+  priceTier?: string;
+};
+
+function RestaurantCard({ args, context }: AIUIComponentProps<RestaurantCardArguments>) {
+  return (
+    <button
+      className="restaurant-card"
+      onClick={() =>
+        context.emit("inspect_venue", `Show me the menu and highlights for ${args.name}`, {
+          name: args.name,
+        })
+      }
+      type="button"
+    >
+      <div className="restaurant-card-head">
+        <strong>{args.name}</strong>
+        <span className="restaurant-card-rating">
+          ★ {args.rating.toFixed(1)}
+          {args.priceTier ? ` · ${args.priceTier}` : ""}
+        </span>
+      </div>
+      <span className="restaurant-card-cuisine">{args.cuisine}</span>
+    </button>
+  );
+}
+
+type AvailabilityGaugeArguments = {
+  occupancyPct: number;
+  waitLabel: string;
+};
+
+function AvailabilityGauge({ args }: AIUIComponentProps<AvailabilityGaugeArguments>) {
+  const clamped = Math.max(0, Math.min(100, args.occupancyPct));
+  const arcLength = 176;
+  const filled = (clamped / 100) * arcLength;
+  return (
+    <div aria-label={`Occupancy ${Math.round(clamped)} percent, ${args.waitLabel}`} className="availability-gauge">
+      <svg viewBox="0 0 140 84" className="availability-gauge-svg" role="img">
+        <path
+          d="M 14 72 A 56 56 0 0 1 126 72"
+          fill="none"
+          stroke="var(--border)"
+          strokeLinecap="round"
+          strokeWidth="10"
+        />
+        <path
+          d="M 14 72 A 56 56 0 0 1 126 72"
+          fill="none"
+          stroke="var(--accent)"
+          strokeDasharray={`${filled} ${arcLength}`}
+          strokeLinecap="round"
+          strokeWidth="10"
+        />
+        <text x="70" y="58" textAnchor="middle" className="availability-gauge-value">
+          {Math.round(clamped)}%
+        </text>
+      </svg>
+      <span className="availability-gauge-label">{args.waitLabel}</span>
+    </div>
+  );
+}
+
+type DiningTable = { id: string; zone: string; seats: number; available: boolean };
+type SeatSelectorArguments = { tables: DiningTable[] };
+
+function SeatSelector({ args, context }: AIUIComponentProps<SeatSelectorArguments>) {
+  const [selected, setSelected] = useState<string | undefined>(
+    () => args.tables.find((t) => t.available)?.id,
+  );
+  return (
+    <div className="seat-selector">
+      <span className="seat-selector-title">Select a table zone</span>
+      <div className="seat-selector-grid">
+        {args.tables.map((table) => (
+          <button
+            className={`seat-pill${selected === table.id ? " active" : ""}`}
+            disabled={!table.available}
+            key={table.id}
+            onClick={() => {
+              setSelected(table.id);
+              context.emit(
+                "select_table",
+                `Reserve table ${table.id} (${table.zone} for ${table.seats})`,
+                { id: table.id, zone: table.zone, seats: table.seats },
+              );
+            }}
+            type="button"
+          >
+            <strong>{table.id}</strong> · {table.zone} ({table.seats}p)
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }

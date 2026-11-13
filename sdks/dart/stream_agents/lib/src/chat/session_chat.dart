@@ -99,6 +99,103 @@ final class LiveReasoning {
   }
 }
 
+/// Overlays 0ms WebSocket `ui_delta` and `ui_completed` updates from [Conversation] onto
+/// Stream Chat assistant messages while they stream, handing off cleanly once Stream Chat's
+/// durable `extraData['ai_ui']` settles (`status == 'complete'`).
+final class LiveUI {
+  final _byTurn = <String, TurnUI>{};
+  String? _latestTurnId;
+  final _cache = Expando<({TurnUI ui, stream.Message overlaid})>();
+
+  /// The live UI recorded for [turnId], or null.
+  TurnUI? operator [](String turnId) => _byTurn[turnId];
+
+  /// The latest agent turn's live UI, for voice screens or an in-flight reply before its
+  /// `turn_id` lands in Stream Chat.
+  TurnUI? get latest => _latestTurnId == null ? null : _byTurn[_latestTurnId!];
+
+  /// Folds [conversation]'s turns in and reports whether any turn's UI changed.
+  bool observe(Conversation conversation) {
+    var changed = false;
+    for (final turn in conversation.turns) {
+      if (!turn.speaker.isAgent || turn.ui == null) continue;
+      final next = turn.ui!;
+      if (_byTurn[turn.id] != next) {
+        _byTurn[turn.id] = next;
+        _latestTurnId = turn.id;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  /// Returns [messages] with live socket UI overlaid onto any assistant reply whose durable
+  /// Stream Chat `ai_ui` has not yet reached `status == 'complete'`.
+  List<stream.Message> overlay(List<stream.Message> messages) {
+    if (_byTurn.isEmpty || messages.isEmpty) return messages;
+    final latestGenerating = _findLatestGenerating(messages);
+    List<stream.Message>? mutated;
+
+    for (var i = 0; i < messages.length; i++) {
+      final message = messages[i];
+      if (!_isAssistant(message)) continue;
+      if (_existingStatus(message) == 'complete') continue;
+      final turnId = _turnIdOf(message);
+      final ui =
+          (turnId != null ? _byTurn[turnId] : null) ?? (i == latestGenerating ? latest : null);
+      if (ui == null) continue;
+      final next = _withUI(message, ui);
+      if (!identical(next, message)) {
+        mutated ??= [...messages];
+        mutated[i] = next;
+      }
+    }
+    return mutated ?? messages;
+  }
+
+  stream.Message _withUI(stream.Message message, TurnUI ui) {
+    final cached = _cache[message];
+    if (cached != null && cached.ui == ui) return cached.overlaid;
+    final overlaid = message.copyWith(extraData: {...message.extraData, 'ai_ui': ui.toWireJson()});
+    _cache[message] = (ui: ui, overlaid: overlaid);
+    return overlaid;
+  }
+
+  static int _findLatestGenerating(List<stream.Message> messages) {
+    for (var i = messages.length - 1; i >= 0; i--) {
+      final m = messages[i];
+      if (_isAssistant(m) && m.extraData['generating'] == true) return i;
+    }
+    return -1;
+  }
+
+  static bool _isAssistant(stream.Message message) {
+    if (message.extraData['ai_generated'] == true) return true;
+    if (message.extraData['support_runtime'] case {'role': 'assistant'}) return true;
+    return false;
+  }
+
+  static String? _existingStatus(stream.Message message) {
+    if (message.extraData['ai_ui'] case final Map<Object?, Object?> ui) {
+      if (ui['overflow'] == true) return null;
+      if (ui['status'] case final String status) return status;
+    }
+    return null;
+  }
+
+  static String? _turnIdOf(stream.Message message) {
+    if (message.extraData['turn_id'] case final String turnId when turnId.isNotEmpty) {
+      return turnId;
+    }
+    if (message.extraData['support_runtime'] case {
+      'turn_id': final String turnId,
+    } when turnId.isNotEmpty) {
+      return turnId;
+    }
+    return null;
+  }
+}
+
 /// A client connected as the agents' user, asking them for a fresh token when Stream says
 /// the last one expired.
 Future<stream.StreamChatClient> _connect(Backend backend, StreamCredentials credentials) async {
