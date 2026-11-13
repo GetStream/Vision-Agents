@@ -85,6 +85,10 @@ type Generation struct {
 	// CostMicros is millionths of a dollar, priced from the provider's configured rates.
 	// A generation that failed costs nothing.
 	CostMicros int64
+	// Queued and Drawn are how long the job waited in the provider's queue and how long it was
+	// drawn for, zero where the provider cannot tell them apart (imagegen.Result).
+	Queued time.Duration
+	Drawn  time.Duration
 }
 
 // Router selects an image provider and draws with it.
@@ -214,6 +218,7 @@ func (r *Router) draw(
 		return generation, err
 	}
 	generation.Images = result.Images
+	generation.Queued, generation.Drawn = result.Queued, result.Drawn
 	// Priced as its row is, size included.
 	var stat routing.Stat
 	stat.Use(result.Used())
