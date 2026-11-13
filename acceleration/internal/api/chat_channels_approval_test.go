@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"testing"
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -82,6 +83,49 @@ func (s *AppHooksSuite) TestAnApprovalAnsweredOnAnotherNodeReachesTheCall() {
 	s.Require().NotNil(s.replyIn(cid), "the reply never finished")
 	s.Greater(s.provider.Hits(fakeprovider.PathMCP), before, "allowed, the call ran")
 	s.Equal(http.StatusNotFound, s.approves(s.serverClient.on(other), cid, step, request, true), "answered already")
+}
+
+// ChannelTypeTurnSuite is AppHooksSuite with the ten minutes a held call waits for its
+// person outside a test, so what ends the call is the turn, not the wait.
+type ChannelTypeTurnSuite struct{ AppHooksSuite }
+
+func TestChannelTypeTurnSuite(t *testing.T) { runSuite(t, new(ChannelTypeTurnSuite)) }
+
+func (s *ChannelTypeTurnSuite) SetupSuite() {
+	s.approvalWait = 10 * time.Minute
+	s.AppHooksSuite.SetupSuite()
+}
+
+// BeforeTest runs this suite's own test alone: the rest are AppHooksSuite's, run there.
+func (s *ChannelTypeTurnSuite) BeforeTest(suiteName, testName string) {
+	if testName != "TestAWritersApprovalAfterTheTurnEndsIsTooLate" {
+		s.T().Skip("an AppHooksSuite test, run there")
+	}
+	s.AppHooksSuite.BeforeTest(suiteName, testName)
+}
+
+// The Router answers one message in a channel of a type for at most askTimeout (two minutes)
+// and then closes the session it opened for it, so Anya's call, held for her, is stopped then,
+// within seconds, eight minutes before the call's own wait would end: her answer after it is a
+// 404, and nothing reaches the provider. The operation's description and the connectors skill
+// say two minutes.
+func (s *ChannelTypeTurnSuite) TestAWritersApprovalAfterTheTurnEndsIsTooLate() {
+	s.holdsType("callouts", memberWrites)
+	s.approvingIn("callouts")
+	anya := s.person("Anya")
+	channel := s.teamChannel("callouts", anya)
+	cid := "callouts:" + channel
+	start := time.Now()
+	s.says("callouts", channel, anya, "can you check the crm for my shift?", "")
+	step, request := s.awaitingIn(cid)
+	before := s.provider.Hits(fakeprovider.PathMCP)
+
+	s.Require().Eventually(func() bool { return s.stepIn(cid)["status"] == "cancelled" },
+		askTimeout+30*time.Second, time.Second, "the call outlived the turn")
+	s.T().Logf("the call was stopped %s after Anya wrote", time.Since(start).Round(time.Second))
+	s.GreaterOrEqual(time.Since(start), askTimeout, "the call was stopped before the turn ended")
+	s.Equal(http.StatusNotFound, s.approves(s.data.signedInAs(anya), cid, step, request, true))
+	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP), "nothing reached the provider")
 }
 
 // Anya's and Ben's calls wait at once, each in a channel of the type: each asks its own writer,

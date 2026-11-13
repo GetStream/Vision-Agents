@@ -46,8 +46,11 @@ func (s *AppHooksSuite) SetupSuite() {
 	}
 	s.connectorHTTP = s.provider.Client()
 	// A call held for approval that a test leaves unanswered ends its turn this soon, not in
-	// ten minutes, so the turn is over by the time the test's cleanup waits for it.
-	s.approvalWait = 10 * time.Second
+	// ten minutes, so the turn is over by the time the test's cleanup waits for it. A suite
+	// built on this one may keep a wait of its own (ChannelTypeTurnSuite).
+	if s.approvalWait == 0 {
+		s.approvalWait = 10 * time.Second
+	}
 	s.RouterSuite.SetupSuite()
 	s.token = issuedToken(&s.RouterSuite, s.provider)
 }

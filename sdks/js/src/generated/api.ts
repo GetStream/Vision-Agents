@@ -1409,6 +1409,7 @@ export type paths = {
         /**
          * Answer a call waiting for a person's approval
          * @description Allows or declines a connector call whose binding sets `require_approval`, held on its `ai_tool_call` step (`awaiting_approval`) in the conversation's channel, as `tool_approval` on the session's socket does. The step's `target_user_id` is who may answer: the session's user, or in a channel of a type an agent config answers in (`chat_channels`), the person whose message the reply answers, with their own user token while they are a member of the channel. The app's backend may answer any. Allowed, the call is sent; declined, it is not, and the model is told so.
+         *     In such a channel the writer has two minutes when the Router opened the session for the message: it answers one message for at most two minutes and then closes that session, which stops the call.
          *     A call held for another person to allow is a 403. A call nobody waits on, answered or stopped already, or in a channel the caller is not a member of, is a 404.
          */
         readonly post: operations["answerConversationToolApproval"];

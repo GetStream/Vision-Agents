@@ -149,6 +149,8 @@ func (s *Server) registerConversations(api huma.API) {
 			"in a channel of a type an agent config answers in (`chat_channels`), the person whose message " +
 			"the reply answers, with their own user token while they are a member of the channel. The app's " +
 			"backend may answer any. Allowed, the call is sent; declined, it is not, and the model is told so.\n" +
+			"In such a channel the writer has two minutes when the Router opened the session for the message: " +
+			"it answers one message for at most two minutes and then closes that session, which stops the call.\n" +
 			"A call held for another person to allow is a 403. A call nobody waits on, answered or stopped " +
 			"already, or in a channel the caller is not a member of, is a 404.",
 		DefaultStatus: http.StatusNoContent,

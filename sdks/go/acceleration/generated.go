@@ -13574,6 +13574,7 @@ type ClientInterface interface {
 	// AnswerConversationToolApprovalWithBody Answer a call waiting for a person's approval
 	//
 	// Allows or declines a connector call whose binding sets `require_approval`, held on its `ai_tool_call` step (`awaiting_approval`) in the conversation's channel, as `tool_approval` on the session's socket does. The step's `target_user_id` is who may answer: the session's user, or in a channel of a type an agent config answers in (`chat_channels`), the person whose message the reply answers, with their own user token while they are a member of the channel. The app's backend may answer any. Allowed, the call is sent; declined, it is not, and the model is told so.
+	// In such a channel the writer has two minutes when the Router opened the session for the message: it answers one message for at most two minutes and then closes that session, which stops the call.
 	// A call held for another person to allow is a 403. A call nobody waits on, answered or stopped already, or in a channel the caller is not a member of, is a 404.
 	//
 	// Takes any type of body and a specified content type.
@@ -13584,6 +13585,7 @@ type ClientInterface interface {
 	// AnswerConversationToolApproval Answer a call waiting for a person's approval
 	//
 	// Allows or declines a connector call whose binding sets `require_approval`, held on its `ai_tool_call` step (`awaiting_approval`) in the conversation's channel, as `tool_approval` on the session's socket does. The step's `target_user_id` is who may answer: the session's user, or in a channel of a type an agent config answers in (`chat_channels`), the person whose message the reply answers, with their own user token while they are a member of the channel. The app's backend may answer any. Allowed, the call is sent; declined, it is not, and the model is told so.
+	// In such a channel the writer has two minutes when the Router opened the session for the message: it answers one message for at most two minutes and then closes that session, which stops the call.
 	// A call held for another person to allow is a 403. A call nobody waits on, answered or stopped already, or in a channel the caller is not a member of, is a 404.
 	//
 	// Takes a body of the `application/json` content type.
@@ -17810,6 +17812,7 @@ func (c *Client) GetConversationMessages(ctx context.Context, cid string, params
 // AnswerConversationToolApprovalWithBody Answer a call waiting for a person's approval
 //
 // Allows or declines a connector call whose binding sets `require_approval`, held on its `ai_tool_call` step (`awaiting_approval`) in the conversation's channel, as `tool_approval` on the session's socket does. The step's `target_user_id` is who may answer: the session's user, or in a channel of a type an agent config answers in (`chat_channels`), the person whose message the reply answers, with their own user token while they are a member of the channel. The app's backend may answer any. Allowed, the call is sent; declined, it is not, and the model is told so.
+// In such a channel the writer has two minutes when the Router opened the session for the message: it answers one message for at most two minutes and then closes that session, which stops the call.
 // A call held for another person to allow is a 403. A call nobody waits on, answered or stopped already, or in a channel the caller is not a member of, is a 404.
 //
 // Takes any type of body and a specified content type.
@@ -17830,6 +17833,7 @@ func (c *Client) AnswerConversationToolApprovalWithBody(ctx context.Context, cid
 // AnswerConversationToolApproval Answer a call waiting for a person's approval
 //
 // Allows or declines a connector call whose binding sets `require_approval`, held on its `ai_tool_call` step (`awaiting_approval`) in the conversation's channel, as `tool_approval` on the session's socket does. The step's `target_user_id` is who may answer: the session's user, or in a channel of a type an agent config answers in (`chat_channels`), the person whose message the reply answers, with their own user token while they are a member of the channel. The app's backend may answer any. Allowed, the call is sent; declined, it is not, and the model is told so.
+// In such a channel the writer has two minutes when the Router opened the session for the message: it answers one message for at most two minutes and then closes that session, which stops the call.
 // A call held for another person to allow is a 403. A call nobody waits on, answered or stopped already, or in a channel the caller is not a member of, is a 404.
 //
 // Takes a body of the `application/json` content type.
@@ -36023,6 +36027,7 @@ type ClientWithResponsesInterface interface {
 	// AnswerConversationToolApprovalWithBodyWithResponse Answer a call waiting for a person's approval
 	//
 	// Allows or declines a connector call whose binding sets `require_approval`, held on its `ai_tool_call` step (`awaiting_approval`) in the conversation's channel, as `tool_approval` on the session's socket does. The step's `target_user_id` is who may answer: the session's user, or in a channel of a type an agent config answers in (`chat_channels`), the person whose message the reply answers, with their own user token while they are a member of the channel. The app's backend may answer any. Allowed, the call is sent; declined, it is not, and the model is told so.
+	// In such a channel the writer has two minutes when the Router opened the session for the message: it answers one message for at most two minutes and then closes that session, which stops the call.
 	// A call held for another person to allow is a 403. A call nobody waits on, answered or stopped already, or in a channel the caller is not a member of, is a 404.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -36033,6 +36038,7 @@ type ClientWithResponsesInterface interface {
 	// AnswerConversationToolApprovalWithResponse Answer a call waiting for a person's approval
 	//
 	// Allows or declines a connector call whose binding sets `require_approval`, held on its `ai_tool_call` step (`awaiting_approval`) in the conversation's channel, as `tool_approval` on the session's socket does. The step's `target_user_id` is who may answer: the session's user, or in a channel of a type an agent config answers in (`chat_channels`), the person whose message the reply answers, with their own user token while they are a member of the channel. The app's backend may answer any. Allowed, the call is sent; declined, it is not, and the model is told so.
+	// In such a channel the writer has two minutes when the Router opened the session for the message: it answers one message for at most two minutes and then closes that session, which stops the call.
 	// A call held for another person to allow is a 403. A call nobody waits on, answered or stopped already, or in a channel the caller is not a member of, is a 404.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -66752,6 +66758,7 @@ func (c *ClientWithResponses) GetConversationMessagesWithResponse(ctx context.Co
 // AnswerConversationToolApprovalWithBodyWithResponse Answer a call waiting for a person's approval
 //
 // Allows or declines a connector call whose binding sets `require_approval`, held on its `ai_tool_call` step (`awaiting_approval`) in the conversation's channel, as `tool_approval` on the session's socket does. The step's `target_user_id` is who may answer: the session's user, or in a channel of a type an agent config answers in (`chat_channels`), the person whose message the reply answers, with their own user token while they are a member of the channel. The app's backend may answer any. Allowed, the call is sent; declined, it is not, and the model is told so.
+// In such a channel the writer has two minutes when the Router opened the session for the message: it answers one message for at most two minutes and then closes that session, which stops the call.
 // A call held for another person to allow is a 403. A call nobody waits on, answered or stopped already, or in a channel the caller is not a member of, is a 404.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -66768,6 +66775,7 @@ func (c *ClientWithResponses) AnswerConversationToolApprovalWithBodyWithResponse
 // AnswerConversationToolApprovalWithResponse Answer a call waiting for a person's approval
 //
 // Allows or declines a connector call whose binding sets `require_approval`, held on its `ai_tool_call` step (`awaiting_approval`) in the conversation's channel, as `tool_approval` on the session's socket does. The step's `target_user_id` is who may answer: the session's user, or in a channel of a type an agent config answers in (`chat_channels`), the person whose message the reply answers, with their own user token while they are a member of the channel. The app's backend may answer any. Allowed, the call is sent; declined, it is not, and the model is told so.
+// In such a channel the writer has two minutes when the Router opened the session for the message: it answers one message for at most two minutes and then closes that session, which stops the call.
 // A call held for another person to allow is a 403. A call nobody waits on, answered or stopped already, or in a channel the caller is not a member of, is a 404.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).

@@ -170,7 +170,11 @@ minutes, the call is not sent and the model is told. A session with nobody to as
 run, a shared chat, an MCP event's) refuses the call at once. In a channel of a type
 `chat_channels` names, the call asks the writer of the message the reply answers, who answers
 with their own user token through `POST /v1/agents/conversations/{cid}/tool_approvals` while a
-member of the channel; the backend may answer any (`api/conversations.go`, AI-3154). An entry must match a tool the
+member of the channel; the backend may answer any (`api/conversations.go`, AI-3154). There the
+writer has two minutes, not ten, when the Router opened the session for the message, as it does
+unless a session opened through the API answers in the channel: it answers one message for at
+most two minutes (`askTimeout`, `api/messagehooks.go`) and then closes that session, which stops
+the call, and an answer after that is a 404 (`answerHosted`, `api/threadhooks.go`). An entry must match a tool the
 binding grants, and `sandbox: true` is refused beside it (`session/connector_approval.go`).
 Beside a sensitive connector (Nessy), a binding's write tool needs `require_approval`: the
 config is refused unless each tool it grants only reads (`read_only_tools`) or is held, and a
