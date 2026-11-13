@@ -25,6 +25,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/telnyxsig"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/vendorevent"
 )
 
 const (
@@ -94,7 +95,7 @@ func New(options Options) (*Registrar, error) {
 }
 
 // Name is the vendor numbers bought here are recorded under.
-func (r *Registrar) Name() string { return "telnyx" }
+func (r *Registrar) Name() string { return vendorevent.VendorTelnyx }
 
 // brand is the part of a Telnyx brand this reads.
 type brand struct {

@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"runtime/pprof"
 	"strings"
@@ -30,6 +31,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/twiliosig"
 )
 
 // RouterStartSuite starts the router as its serve command does, on a database of the suite's
@@ -402,6 +404,49 @@ func (s *RouterStartSuite) TestARouterHandedNoSocketFailsOnAProxyAddressAnotherP
 		<-stopped
 		s.Require().Fail("the router waited for a proxy address it was not handed a socket to take over")
 	}
+}
+
+// The router run builds from its settings hands TWILIO_WEBHOOK_AUTH_TOKEN and ROUTER_PUBLIC_URL to
+// the Twilio events route; an unwired token leaves the route answering 404 to every alert.
+func (s *RouterStartSuite) TestAStartingRouterAcceptsAnAlertSignedWithTheTwilioToken() {
+	settings := s.settings
+	settings.Addr = freeAddress(s.T())
+	settings.PublicURL = "https://router.example.test"
+	settings.Twilio.WebhookAuthToken = rand.Text()
+	s.start(settings)
+
+	form := url.Values{"Sid": {"NO" + rand.Text()}, "Payload": {`{"error_code":"10001"}`}}
+	signature := twiliosig.Sign(settings.Twilio.WebhookAuthToken, settings.PublicURL+"/v1/phone/hooks/twilio/events", form)
+
+	s.Equal(http.StatusNoContent, s.postTwilioAlert(settings.Addr, form, signature))
+	other := twiliosig.Sign(rand.Text(), settings.PublicURL+"/v1/phone/hooks/twilio/events", form)
+	s.Equal(http.StatusUnauthorized, s.postTwilioAlert(settings.Addr, form, other), "a signature of another token")
+}
+
+// A router given no token answers 404, so the test above fails on the wiring and not on a route that
+// always answers 204.
+func (s *RouterStartSuite) TestAStartingRouterWithNoTwilioTokenHasNoTwilioEventsRoute() {
+	settings := s.settings
+	settings.Addr = freeAddress(s.T())
+	settings.PublicURL = "https://router.example.test"
+	s.start(settings)
+
+	form := url.Values{"Sid": {"NO" + rand.Text()}, "Payload": {`{"error_code":"10001"}`}}
+	signature := twiliosig.Sign("any-token", settings.PublicURL+"/v1/phone/hooks/twilio/events", form)
+
+	s.Equal(http.StatusNotFound, s.postTwilioAlert(settings.Addr, form, signature))
+}
+
+func (s *RouterStartSuite) postTwilioAlert(address string, form url.Values, signature string) int {
+	request, err := http.NewRequest(http.MethodPost, "http://"+address+"/v1/phone/hooks/twilio/events",
+		strings.NewReader(form.Encode()))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set(twiliosig.SignatureHeader, signature)
+	response, err := http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	s.Require().NoError(response.Body.Close())
+	return response.StatusCode
 }
 
 // proxySettings is a router that serves the sandbox egress proxy: it needs redis, connectors

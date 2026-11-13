@@ -1,6 +1,12 @@
 // Package vendorevent counts the account events a telephony vendor sends the router: a
 // port-out, a spend limit, a failed number order. A monitor pages on the counter, so it
 // depends on nothing in the router, and every receiver of such events can count with it.
+//
+// A type a vendor's map does not name is counted under one label that ends in "other", so a
+// new or misspelled type adds no series. The labels are "other" (Telnyx), "error.other" (a
+// Twilio Monitor alert) and "usage_trigger.other" (a Twilio usage trigger); the kind in front
+// of the dot tells a monitor what kind of event it was. A monitor that wants every unnamed
+// event of every vendor matches event=~".*other".
 package vendorevent
 
 import (
@@ -32,8 +38,13 @@ var events = promauto.NewCounterVec(prometheus.CounterOpts{
 		"(other for a type the router does not name) and level (page, warn or info).",
 }, []string{"vendor", "event", "level"})
 
-// Count adds one event. The event is a name from the vendor's map or Other, never a value
-// the vendor sent unchecked.
+// DLCCampaignFailed is the event of a campaign a registrar suspended, rejected or failed
+// (dlc.Failed): its numbers cannot send A2P texts. The router raises it from the registrar's
+// report, not from a vendor's account event, so no vendor map holds it.
+const DLCCampaignFailed = "10dlc.campaign_failed"
+
+// Count adds one event. The event is a name from the vendor's map, Other or a constant of
+// this package (DLCCampaignFailed), never a value the vendor sent unchecked.
 func Count(vendor, event string, level Level) {
 	events.WithLabelValues(vendor, event, string(level)).Inc()
 }

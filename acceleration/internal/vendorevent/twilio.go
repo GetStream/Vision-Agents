@@ -1,6 +1,7 @@
 package vendorevent
 
-// VendorTwilio is the vendor label of Twilio's events.
+// VendorTwilio is the vendor label of Twilio's events. It is also the vendor name a 10DLC registrar
+// stores (dlc.Registrar.Name()), so changing it orphans stored rows.
 const VendorTwilio = "twilio"
 
 // twilioAlertLevels is every Monitor alert error code the router names, with its level. The
