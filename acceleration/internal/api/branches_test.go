@@ -356,7 +356,6 @@ func (s *ResponseBranchesSuite) TestARegenerateLeftUnfinishedRefusesQuestionsUnt
 	s.asks(s.client, opened, "And Sunday?")
 }
 
-// opens a conversation kept in Stream Chat, for as.
 // AI-3209: a default session keeps its conversation in Chat, which made every rewind a 400.
 // The channel is rewound too, so the later turn leaves the responses and the transcript.
 func (s *ResponseBranchesSuite) TestADeviceRewindsAConversationKeptInChat() {
@@ -429,6 +428,7 @@ func (s *ResponseBranchesSuite) TestATurnSentThroughRespondCanBeRewoundTo() {
 	s.Len(page.Items, 1)
 }
 
+// opens a conversation kept in Stream Chat, for as.
 func (s *ResponseBranchesSuite) opens(as *testClient) Session {
 	return as.createSession(CreateSessionRequest{Llm: pointerTo("noted/noted-model")})
 }
