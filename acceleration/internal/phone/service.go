@@ -1184,12 +1184,13 @@ func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Pl
 		}
 		// Call refuses to run without a store, so report always has its keeper.
 		outbound.Ended = s.trunkCallEnded(ctx, token, callID)
-		outbound.Resume = &TrunkCallRef{
-			CustomerID: customerID, SIPTrunkID: held.SIPTrunkID, BridgeURI: outbound.Bridge.URI,
-			From: request.From, CallID: callID, Token: token,
-		}
+		// A per-call Stream trunk's password is never stored, and Stream challenges the
+		// re-INVITE a takeover sends, so only a call on a shared line can move.
 		if shared {
-			outbound.Resume.StreamTrunkID = line.TrunkID
+			outbound.Resume = &TrunkCallRef{
+				CustomerID: customerID, SIPTrunkID: held.SIPTrunkID, StreamTrunkID: line.TrunkID,
+				BridgeURI: outbound.Bridge.URI, From: request.From, CallID: callID, Token: token,
+			}
 		}
 	}
 

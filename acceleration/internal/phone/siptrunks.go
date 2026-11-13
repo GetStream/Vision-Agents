@@ -330,27 +330,22 @@ type ResumedTrunkCall struct {
 	Ended func(CallStatus)
 }
 
-// ResumeTrunkCall opens the credentials of both sides of a call another node placed, read
-// fresh since none are kept with the call. A per-call Stream trunk's password was never
-// stored, so its bridge has none.
+// ResumeTrunkCall opens the credentials of both sides of a call another node placed on a
+// shared line, read fresh since none are kept with the call.
 func (s *Service) ResumeTrunkCall(ctx context.Context, ref TrunkCallRef) (ResumedTrunkCall, error) {
 	trunk, err := s.openSIPTrunk(ctx, ref.CustomerID, ref.SIPTrunkID)
 	if err != nil {
 		return ResumedTrunkCall{}, err
 	}
-	bridge := Bridge{URI: ref.BridgeURI}
-	if ref.StreamTrunkID != "" {
-		shared, err := s.store.StreamTrunk(ctx, ref.CustomerID, ref.StreamTrunkID)
-		if err != nil {
-			return ResumedTrunkCall{}, err
-		}
-		line, err := s.lineOn(shared, ref.From, "")
-		if err != nil {
-			return ResumedTrunkCall{}, err
-		}
-		bridge = line.Bridge
+	shared, err := s.store.StreamTrunk(ctx, ref.CustomerID, ref.StreamTrunkID)
+	if err != nil {
+		return ResumedTrunkCall{}, err
 	}
-	return ResumedTrunkCall{Trunk: trunk, Bridge: bridge, Ended: s.trunkCallEnded(ctx, ref.Token, ref.CallID)}, nil
+	line, err := s.lineOn(shared, ref.From, "")
+	if err != nil {
+		return ResumedTrunkCall{}, err
+	}
+	return ResumedTrunkCall{Trunk: trunk, Bridge: line.Bridge, Ended: s.trunkCallEnded(ctx, ref.Token, ref.CallID)}, nil
 }
 
 // Close hands the calls this node holds through customers' own trunks to another node, or

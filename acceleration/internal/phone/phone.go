@@ -439,7 +439,7 @@ type Outbound struct {
 	// router's own bridge sees. Nil tells nobody.
 	Ended func(CallStatus)
 	// Resume is what another node needs to continue a call through a customer's own SIP
-	// trunk if this one stops. Set whenever Trunk is.
+	// trunk if this one stops. Set only for a call on a shared line; nil, the call cannot move.
 	Resume *TrunkCallRef
 }
 
@@ -448,8 +448,7 @@ type Outbound struct {
 type TrunkCallRef struct {
 	CustomerID string
 	SIPTrunkID string
-	// StreamTrunkID is the shared line's Stream trunk, empty when the call has a Stream
-	// trunk of its own.
+	// StreamTrunkID is the shared line's Stream trunk. Only a call on a shared line moves.
 	StreamTrunkID string
 	BridgeURI     string
 	From          string

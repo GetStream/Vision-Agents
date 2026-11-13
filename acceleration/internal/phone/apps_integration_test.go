@@ -1169,22 +1169,11 @@ func (s *AppsSuite) TestACallThroughACustomersTrunkKeepsHowItEnded() {
 	s.Empty(call.vendor.dialed.StatusURL, "the bridge tells the router itself")
 }
 
-func (s *AppsSuite) TestACallThroughACustomersTrunkOnItsOwnStreamTrunkCanBeResumed() {
+func (s *AppsSuite) TestACallThroughACustomersTrunkOnItsOwnStreamTrunkCannotBeResumed() {
 	call := s.callsThroughATrunk()
 
-	resume := call.vendor.dialed.Resume
-	s.Require().NotNil(resume)
-	number, err := s.store.Number(s.ctx, s.customer, call.vendor.dialed.From)
-	s.Require().NoError(err)
-	s.Equal(TrunkCallRef{
-		CustomerID: s.customer, SIPTrunkID: number.SIPTrunkID, BridgeURI: call.vendor.dialed.Bridge.URI,
-		From: call.vendor.dialed.From, CallID: call.placed.CallID, Token: resume.Token,
-	}, *resume)
-	byToken, err := call.service.Outcomes().ByToken(s.ctx, resume.Token)
-	s.Require().NoError(err)
-	s.Equal(call.placed.CallID, byToken.CallID, "the token is the placed call's")
-	s.NotEmpty(resume.BridgeURI)
-	s.NotEmpty(resume.SIPTrunkID)
+	// Its Stream trunk's password was never stored, and Stream challenges a re-INVITE.
+	s.Nil(call.vendor.dialed.Resume)
 }
 
 func (s *AppsSuite) TestACallThroughACustomersTrunkOnASharedLineCanBeResumed() {

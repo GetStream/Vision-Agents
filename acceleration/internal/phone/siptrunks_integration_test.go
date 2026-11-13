@@ -260,7 +260,11 @@ func (s *SIPTrunkSuite) TestABoughtNumberStillGoesThroughTheRegistry() {
 func (s *SIPTrunkSuite) TestResumingATrunkCallOpensItsTrunkPassword() {
 	trunk := s.create("acme", "s3cret")
 
-	resumed, err := s.service.ResumeTrunkCall(s.ctx, TrunkCallRef{CustomerID: "acme", SIPTrunkID: trunk.ID})
+	s.shareLine("stream-trunk-1", "+15125550100")
+
+	resumed, err := s.service.ResumeTrunkCall(s.ctx, TrunkCallRef{
+		CustomerID: "acme", SIPTrunkID: trunk.ID, StreamTrunkID: "stream-trunk-1", From: "+15125550100",
+	})
 
 	s.Require().NoError(err)
 	s.Equal("s3cret", resumed.Trunk.Password)
@@ -274,30 +278,34 @@ func (s *SIPTrunkSuite) TestResumingAnotherCustomersTrunkIsRefused() {
 	s.ErrorIs(err, store.ErrNoSIPTrunk)
 }
 
-func (s *SIPTrunkSuite) TestResumingACallOnItsOwnStreamTrunkHasNoBridgePassword() {
+func (s *SIPTrunkSuite) TestACallOnItsOwnStreamTrunkCannotBeResumed() {
 	trunk := s.create("acme", "s3cret")
 
-	resumed, err := s.service.ResumeTrunkCall(s.ctx, TrunkCallRef{
+	_, err := s.service.ResumeTrunkCall(s.ctx, TrunkCallRef{
 		CustomerID: "acme", SIPTrunkID: trunk.ID, BridgeURI: "sip:+15125550100@per-call.example.test",
 	})
 
-	s.Require().NoError(err)
-	s.Equal("sip:+15125550100@per-call.example.test", resumed.Bridge.URI)
-	s.Empty(resumed.Bridge.Password)
+	s.ErrorIs(err, store.ErrNoStreamTrunk)
 }
 
-func (s *SIPTrunkSuite) TestResumingACallOnASharedLineOpensItsBridgePassword() {
-	trunk := s.create("acme", "s3cret")
-	sealed, err := s.service.sealer.SealWithAAD("bridge-secret", trunkAAD("acme", "stream-trunk-1"))
+// shareLine saves acme a shared Stream trunk for number, whose bridge password is
+// bridge-secret.
+func (s *SIPTrunkSuite) shareLine(id, number string) {
+	sealed, err := s.service.sealer.SealWithAAD("bridge-secret", trunkAAD("acme", id))
 	s.Require().NoError(err)
 	s.Require().NoError(s.store.InTrunkGroup(s.ctx, store.TrunkGroup{CustomerID: "acme", Vendor: SIPTrunkVendor},
 		func(_ context.Context, tx *store.TrunkGroupTx) error {
 			return tx.SaveTrunk(store.StreamTrunk{
-				ID: "stream-trunk-1", Numbers: []string{"+15125550100"}, BridgeURI: "sip:old@shared.example.test",
+				ID: id, Numbers: []string{number}, BridgeURI: "sip:old@shared.example.test",
 				BridgeUsername: "bridge-user", BridgePasswordSealed: sealed,
 				BridgePasswordKEKVersion: s.service.sealer.CurrentVersion(),
 			})
 		}))
+}
+
+func (s *SIPTrunkSuite) TestResumingACallOnASharedLineOpensItsBridgePassword() {
+	trunk := s.create("acme", "s3cret")
+	s.shareLine("stream-trunk-1", "+15125550100")
 
 	resumed, err := s.service.ResumeTrunkCall(s.ctx, TrunkCallRef{
 		CustomerID: "acme", SIPTrunkID: trunk.ID, StreamTrunkID: "stream-trunk-1", From: "+15125550100",
@@ -317,8 +325,10 @@ func (s *SIPTrunkSuite) TestAResumedCallReportsHowItEndedWithItsToken() {
 		Vendor: SIPTrunkVendor, Reports: true,
 	})
 	s.Require().NoError(err)
+	s.shareLine("stream-trunk-1", "+15125550100")
 	resumed, err := s.service.ResumeTrunkCall(s.ctx, TrunkCallRef{
-		CustomerID: "acme", SIPTrunkID: trunk.ID, CallID: "session-resumed", Token: token,
+		CustomerID: "acme", SIPTrunkID: trunk.ID, StreamTrunkID: "stream-trunk-1", From: "+15125550100",
+		CallID: "session-resumed", Token: token,
 	})
 	s.Require().NoError(err)
 
