@@ -118,6 +118,7 @@ type Config struct {
 	CodeSandbox CodeSandbox `koanf:"code_sandbox"`
 	Models      Models      `koanf:"models"`
 	Telnyx      Telnyx      `koanf:"telnyx"`
+	Twilio      Twilio      `koanf:"twilio"`
 	Usage       Usage       `koanf:"usage"`
 	Knowledge   Knowledge   `koanf:"knowledge"`
 	Limits      Limits      `koanf:"limits"`
@@ -553,6 +554,14 @@ type Telnyx struct {
 	PublicKey string `koanf:"public_key"`
 }
 
+// Twilio is what the router checks Twilio's webhooks with. The Twilio provider reads its own
+// credentials, TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN.
+type Twilio struct {
+	// WebhookAuthToken is the Auth Token of the account whose webhooks are checked. It only
+	// checks signatures: nothing calls Twilio with it.
+	WebhookAuthToken string `koanf:"webhook_auth_token"`
+}
+
 // variables maps each setting to the environment variable that has always carried it.
 // Both directions are read from here: the variable wins over the file on the way in, and
 // the effective value is written back to it on the way out.
@@ -647,6 +656,8 @@ var variables = map[string]string{
 	"telnyx.api_key":       "TELNYX_API_KEY",
 	"telnyx.connection_id": "TELNYX_CONNECTION_ID",
 	"telnyx.public_key":    "TELNYX_PUBLIC_KEY",
+
+	"twilio.webhook_auth_token": "TWILIO_WEBHOOK_AUTH_TOKEN",
 
 	"usage.url":        "ROUTER_USAGE_URL",
 	"usage.token":      "ROUTER_USAGE_TOKEN",
@@ -1211,6 +1222,8 @@ func (c Config) export() error {
 		"telnyx.api_key":       c.Telnyx.APIKey,
 		"telnyx.connection_id": c.Telnyx.ConnectionID,
 		"telnyx.public_key":    c.Telnyx.PublicKey,
+
+		"twilio.webhook_auth_token": c.Twilio.WebhookAuthToken,
 
 		"usage.url":        c.Usage.URL,
 		"usage.token":      c.Usage.Token,

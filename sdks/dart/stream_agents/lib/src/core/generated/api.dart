@@ -1794,8 +1794,12 @@ final class SessionFilter {
     this.and,
     this.or,
     this.agent,
+    this.configId,
+    this.createdAt,
+    this.custom,
     this.projectId,
     this.reviewScore,
+    this.state,
     this.text,
     this.userId,
   });
@@ -1819,11 +1823,27 @@ final class SessionFilter {
         null => null,
         final Object value => value,
       },
+      configId: switch (json['config_id']) {
+        null => null,
+        final Object value => value,
+      },
+      createdAt: switch (json['created_at']) {
+        null => null,
+        final Object value => TimeWindow.fromJson(value),
+      },
+      custom: switch (json['custom']) {
+        null => null,
+        final Object value => _strings(value, 'SessionFilter.custom'),
+      },
       projectId: switch (json['project_id']) {
         null => null,
         final Object value => value,
       },
       reviewScore: switch (json['review_score']) {
+        null => null,
+        final Object value => value,
+      },
+      state: switch (json['state']) {
         null => null,
         final Object value => value,
       },
@@ -1841,8 +1861,12 @@ final class SessionFilter {
   final List<SessionFilter>? and;
   final List<SessionFilter>? or;
   final Object? agent;
+  final Object? configId;
+  final TimeWindow? createdAt;
+  final Map<String, String>? custom;
   final Object? projectId;
   final Object? reviewScore;
+  final Object? state;
   final TextMatch? text;
   final Object? userId;
 
@@ -1850,8 +1874,12 @@ final class SessionFilter {
     if (and case final value?) '\$and': [for (final item in value) item.toJson()],
     if (or case final value?) '\$or': [for (final item in value) item.toJson()],
     'agent': ?agent,
+    'config_id': ?configId,
+    if (createdAt case final value?) 'created_at': value.toJson(),
+    'custom': ?custom,
     'project_id': ?projectId,
     'review_score': ?reviewScore,
+    'state': ?state,
     if (text case final value?) 'text': value.toJson(),
     'user_id': ?userId,
   };
@@ -2196,6 +2224,33 @@ final class TextMatch {
   final String q;
 
   Map<String, Object?> toJson() => {'\$q': q};
+}
+
+/// A window of time: $gte is its start, which it holds, and $lt its end, which it does not.
+final class TimeWindow {
+  const TimeWindow({this.gte, this.lt});
+
+  factory TimeWindow.fromJson(Object? value) {
+    final json = _object(value, 'TimeWindow');
+    return TimeWindow(
+      gte: switch (json['\$gte']) {
+        null => null,
+        final Object value => _date(value, 'TimeWindow.\$gte'),
+      },
+      lt: switch (json['\$lt']) {
+        null => null,
+        final Object value => _date(value, 'TimeWindow.\$lt'),
+      },
+    );
+  }
+
+  final DateTime? gte;
+  final DateTime? lt;
+
+  Map<String, Object?> toJson() => {
+    if (gte case final value?) '\$gte': value.toUtc().toIso8601String(),
+    if (lt case final value?) '\$lt': value.toUtc().toIso8601String(),
+  };
 }
 
 /// What to change about one session.

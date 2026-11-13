@@ -355,6 +355,9 @@ type ChannelsSettings struct {
 type ChatChannelSettings struct {
 	// Type is the channel type's name, as it comes before the colon in a channel's cid.
 	Type string `yaml:"type"`
+	// Answer is which messages there the agent answers: always, the default, or mentioned,
+	// only a message that mentions the agent.
+	Answer string `yaml:"answer"`
 }
 
 // SchedulingSettings is an agent's scheduled tasks: whether its users may ask
