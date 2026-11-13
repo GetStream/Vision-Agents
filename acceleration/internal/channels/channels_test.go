@@ -366,7 +366,7 @@ func (s *TelnyxSuite) TestAReachedSpendLimitIsCountedAndLoggedAndIsNoMessage() {
 	s.Equal(1.0, after["messaging-profile.spend-limit-reached/page"]-before["messaging-profile.spend-limit-reached/page"])
 	s.Equal(sum(before)+1, sum(after), "no other Telnyx series moves")
 	s.Equal(1, strings.Count(logged.String(), "\n"))
-	s.Contains(logged.String(), "vendor=telnyx event=messaging-profile.spend-limit-reached level=page id=d21a2887-8007-4bb6-bd7d-f2874829918e")
+	s.Contains(logged.String(), "vendor=telnyx event=messaging-profile.spend-limit-reached event_level=page id=d21a2887-8007-4bb6-bd7d-f2874829918e")
 }
 
 // The line's hook gets every message event Telnyx has, and only the spend limit is an account

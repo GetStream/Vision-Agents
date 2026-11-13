@@ -271,7 +271,7 @@ func (s *DLCSuite) TestACampaignTheVendorRejectedIsCountedOnce() {
 		if strings.Contains(line, "a vendor failed a 10DLC campaign") {
 			lines++
 			s.Contains(line, "level=WARN ")
-			s.Contains(line, "vendor=telnyx event=10dlc.campaign_failed level=warn use_case="+id+" vendor_status=MNO_REJECTED")
+			s.Contains(line, "vendor=telnyx event=10dlc.campaign_failed event_level=warn use_case="+id+" vendor_status=MNO_REJECTED")
 		}
 	}
 	s.Equal(1, lines)

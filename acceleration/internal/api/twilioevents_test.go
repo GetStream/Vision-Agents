@@ -67,7 +67,7 @@ func (s *TwilioEventsSuite) TestASignedAccountNotActiveAlertIsCountedAtPageAndLo
 	s.Equal(http.StatusNoContent, status)
 	s.Equal(1.0, accountEvents("twilio", "error.10001", "page")-before)
 	s.Equal(1, s.loggedLines("received a twilio account event"))
-	s.Equal(1, s.loggedLines("vendor=twilio", "event=error.10001", "level=page",
+	s.Equal(1, s.loggedLines("vendor=twilio", "event=error.10001", "event_level=page",
 		"sid=NO00000000000000000000000000000001", "error_code=10001", "twilio_level=error"))
 	s.NotContains(s.logged.String()[s.since:], twilioTestToken)
 	s.NotContains(s.logged.String()[s.since:], signature)
@@ -135,7 +135,7 @@ func (s *TwilioEventsSuite) TestASignedTotalPriceTriggerIsCountedAtPageAndLogged
 	s.Equal(1.0, accountEvents("twilio", "usage_trigger.totalprice", "page")-before)
 	s.Equal(1, s.loggedLines("received a twilio account event"))
 	s.neverLogged(twiliosig.Sign(twilioTestToken, twilioSignedURL, form))
-	s.Equal(1, s.loggedLines("vendor=twilio", "event=usage_trigger.totalprice", "level=page",
+	s.Equal(1, s.loggedLines("vendor=twilio", "event=usage_trigger.totalprice", "event_level=page",
 		"usage_trigger_sid="+sid, "usage_category=totalprice"))
 }
 

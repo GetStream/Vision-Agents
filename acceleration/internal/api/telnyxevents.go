@@ -85,6 +85,6 @@ func (s *Server) receiveTelnyxEvent(w http.ResponseWriter, r *http.Request) {
 	name, level := vendorevent.Telnyx(fields.EventType, status)
 	vendorevent.Count(vendorevent.VendorTelnyx, name, level)
 	s.logger.Info("received a telnyx account event", "vendor", vendorevent.VendorTelnyx, "event", name,
-		"level", string(level), "event_type", fields.EventType, "id", fields.ID)
+		"event_level", string(level), "event_type", fields.EventType, "id", fields.ID)
 	w.WriteHeader(http.StatusNoContent)
 }

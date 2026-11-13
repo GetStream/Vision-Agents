@@ -77,7 +77,7 @@ func (s *Server) receiveTwilioEvent(w http.ResponseWriter, r *http.Request) {
 		name, level := vendorevent.TwilioUsageTrigger(form.Get("UsageCategory"))
 		vendorevent.Count(vendorevent.VendorTwilio, name, level)
 		s.logger.Info("received a twilio account event", "vendor", vendorevent.VendorTwilio, "event", name,
-			"level", string(level), "usage_trigger_sid", form.Get("UsageTriggerSid"),
+			"event_level", string(level), "usage_trigger_sid", form.Get("UsageTriggerSid"),
 			"usage_category", form.Get("UsageCategory"), "trigger_by", form.Get("TriggerBy"),
 			"trigger_value", form.Get("TriggerValue"), "current_value", form.Get("CurrentValue"))
 	case form.Get("Sid") != "" && form.Get("Payload") != "":
@@ -86,7 +86,7 @@ func (s *Server) receiveTwilioEvent(w http.ResponseWriter, r *http.Request) {
 		vendorevent.Count(vendorevent.VendorTwilio, name, level)
 		// Twilio's docs write Level both as Error and as ERROR, so it is logged in lower case.
 		s.logger.Info("received a twilio account event", "vendor", vendorevent.VendorTwilio, "event", name,
-			"level", string(level), "sid", form.Get("Sid"), "error_code", code,
+			"event_level", string(level), "sid", form.Get("Sid"), "error_code", code,
 			"twilio_level", strings.ToLower(form.Get("Level")))
 	default:
 		// The form is not logged: it may hold numbers.

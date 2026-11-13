@@ -55,7 +55,7 @@ func (s *TelnyxEventsSuite) TestASignedPortOutIsCountedAtPageAndLogged() {
 
 	s.Equal(http.StatusNoContent, status)
 	s.Equal(1.0, accountEvents("telnyx", "portout.status_changed", "page")-before)
-	s.Equal(1, s.loggedLines("vendor=telnyx", "event=portout.status_changed", "level=page", "id="+id))
+	s.Equal(1, s.loggedLines("vendor=telnyx", "event=portout.status_changed", "event_level=page", "id="+id))
 }
 
 // A number order that did not succeed left numbers unbought; one that succeeded needs nobody.
@@ -84,7 +84,7 @@ func (s *TelnyxEventsSuite) TestAPortInEventWithItsFieldsAtTheTopLevelIsCounted(
 
 		s.Equal(http.StatusNoContent, status, eventType)
 		s.Equal(1.0, accountEvents("telnyx", eventType, "info")-before, eventType)
-		s.Equal(1, s.loggedLines("event="+eventType, "level=info", "id="+id), eventType)
+		s.Equal(1, s.loggedLines("event="+eventType, "event_level=info", "id="+id), eventType)
 	}
 }
 
