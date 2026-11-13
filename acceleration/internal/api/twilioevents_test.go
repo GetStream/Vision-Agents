@@ -128,11 +128,13 @@ func (s *TwilioEventsSuite) TestASignedTotalPriceTriggerIsCountedAtPageAndLogged
 	sid := "UT" + rand.Text()
 	before := accountEvents("twilio", "usage_trigger.totalprice", "page")
 
-	status, _ := s.deliver(twilioUsageTrigger(sid, "totalprice"), "", s.signed(twilioSignedURL))
+	form := twilioUsageTrigger(sid, "totalprice")
+	status, _ := s.deliver(form, "", s.signed(twilioSignedURL))
 
 	s.Equal(http.StatusNoContent, status)
 	s.Equal(1.0, accountEvents("twilio", "usage_trigger.totalprice", "page")-before)
 	s.Equal(1, s.loggedLines("received a twilio account event"))
+	s.neverLogged(twiliosig.Sign(twilioTestToken, twilioSignedURL, form))
 	s.Equal(1, s.loggedLines("vendor=twilio", "event=usage_trigger.totalprice", "level=page",
 		"usage_trigger_sid="+sid, "usage_category=totalprice"))
 }
@@ -171,6 +173,7 @@ func (s *TwilioEventsSuite) TestAWronglySignedAlertIsRefusedAndNotCounted() {
 	s.Contains(answer, "unauthenticated")
 	s.Zero(accountEvents("twilio", "error.10001", "page") - before)
 	s.Equal(1, s.loggedLines("level=WARN", "refused a twilio account event"))
+	s.neverLogged(string(signature))
 }
 
 func (s *TwilioEventsSuite) TestAnUnsignedAlertIsRefusedAndNotCounted() {
@@ -240,9 +243,11 @@ func (s *TwilioEventsSuite) TestASignedFormThatIsNoEventIsRefusedAndNotCounted()
 	page := accountEvents("twilio", "error.10001", "page")
 	triggers := accountEvents("twilio", "usage_trigger.totalprice", "page")
 
+	var signatures []string
 	for _, form := range forms {
 		status, _ := s.deliver(form, "", s.signed(twilioSignedURL))
 		s.Equal(http.StatusBadRequest, status, form.Encode())
+		signatures = append(signatures, twiliosig.Sign(twilioTestToken, twilioSignedURL, form))
 	}
 
 	s.Zero(accountEvents("twilio", "error.other", "info") - alerts)
@@ -250,6 +255,7 @@ func (s *TwilioEventsSuite) TestASignedFormThatIsNoEventIsRefusedAndNotCounted()
 	s.Zero(accountEvents("twilio", "usage_trigger.totalprice", "page") - triggers)
 	s.Equal(len(forms), s.loggedLines("level=WARN", "refused a signed twilio account event that is no event"))
 	s.NotContains(s.logged.String()[s.since:], caller)
+	s.neverLogged(signatures...)
 }
 
 // A body that is no form cannot be checked against a signature over its parameters.
@@ -297,6 +303,15 @@ func (s *TwilioEventsSuite) TestWithoutAPublicURLNoEventIsCounted() {
 	s.Equal(http.StatusNotFound, status)
 	s.Contains(answer, "twilio events are not configured")
 	s.Zero(accountEvents("twilio", "error.10001", "page") - before)
+}
+
+// neverLogged fails when what the current test logged holds the token or any of the signatures.
+func (s *TwilioEventsSuite) neverLogged(signatures ...string) {
+	logged := s.logged.String()[s.since:]
+	s.NotContains(logged, twilioTestToken)
+	for _, signature := range signatures {
+		s.NotContains(logged, signature)
+	}
 }
 
 // loggedLines counts the lines the current test logged that hold every part.
