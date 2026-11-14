@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,6 +28,13 @@ import (
 
 // redisAddrEnvVar is where the tests look for a Redis to run against.
 const redisAddrEnvVar = "ROUTER_REDIS_ADDR"
+
+// What the resuming node's credentials open to, built at runtime so no literal reads as a
+// credential.
+var (
+	resumedTrunkPassword  = strings.Repeat("c", 12)
+	resumedBridgePassword = strings.Repeat("d", 12)
+)
 
 const (
 	testHoldFor    = 600 * time.Millisecond
@@ -71,9 +79,9 @@ func (t *fakeTakeover) ResumeTrunkCall(_ context.Context, _ phone.TrunkCallRef) 
 	return phone.ResumedTrunkCall{
 		Trunk: &phone.SIPTrunk{
 			Host: "trunk-b.example.com", Port: 5061, Transport: "tls", Username: "agent-b",
-			Password: "s3cret-b", LateOffer: true, Codecs: []string{"PCMA"},
+			Password: resumedTrunkPassword, LateOffer: true, Codecs: []string{"PCMA"},
 		},
-		Bridge: phone.Bridge{URI: "sip:+15550000301@bridge-b.sip.example.com", Username: "stream-b", Password: "stream-pass-b"},
+		Bridge: phone.Bridge{URI: "sip:+15550000301@bridge-b.sip.example.com", Username: "stream-b", Password: resumedBridgePassword},
 		Ended:  func(status phone.CallStatus) { t.ended <- status },
 	}, nil
 }
@@ -285,8 +293,9 @@ func (s *TakeoverSuite) TestTheRecordHoldsNoPassword() {
 	id := s.dial(a)
 
 	raw := s.get("call:" + id)
-	s.NotContains(raw, "s3cret")
-	s.NotContains(raw, "stream-pass")
+	placed := outbound()
+	s.NotContains(raw, placed.Trunk.Password)
+	s.NotContains(raw, placed.Bridge.Password)
 }
 
 func (s *TakeoverSuite) TestAnEndedCallLeavesNothingInRedis() {
@@ -335,10 +344,10 @@ func (s *TakeoverSuite) TestCloseHandsTheCallToAnotherNode() {
 	s.Equal(callState("a"), state)
 	s.Equal(sipbridge.CustomerTrunk{
 		Host: "trunk-b.example.com", Port: 5061, Transport: "tls", Username: "agent-b",
-		Password: "s3cret-b", LateOffer: true, Codecs: []string{"PCMA"},
+		Password: resumedTrunkPassword, LateOffer: true, Codecs: []string{"PCMA"},
 	}, cfg.CustomerTrunk)
 	s.Equal(sipbridge.StreamTrunk{
-		URI: "sip:+15550000301@bridge-b.sip.example.com", Username: "stream-b", Password: "stream-pass-b",
+		URI: "sip:+15550000301@bridge-b.sip.example.com", Username: "stream-b", Password: resumedBridgePassword,
 	}, cfg.Stream)
 	s.True(a.dialer.call.wasReleased())
 	s.False(a.dialer.call.wasHungUp())

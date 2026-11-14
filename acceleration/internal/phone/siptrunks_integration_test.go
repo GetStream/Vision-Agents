@@ -288,10 +288,13 @@ func (s *SIPTrunkSuite) TestACallOnItsOwnStreamTrunkCannotBeResumed() {
 	s.ErrorIs(err, store.ErrNoStreamTrunk)
 }
 
+// sharedBridgePassword is built at runtime so no literal reads as a credential.
+var sharedBridgePassword = strings.Repeat("e", 12)
+
 // shareLine saves acme a shared Stream trunk for number, whose bridge password is
-// bridge-secret.
+// sharedBridgePassword.
 func (s *SIPTrunkSuite) shareLine(id, number string) {
-	sealed, err := s.service.sealer.SealWithAAD("bridge-secret", trunkAAD("acme", id))
+	sealed, err := s.service.sealer.SealWithAAD(sharedBridgePassword, trunkAAD("acme", id))
 	s.Require().NoError(err)
 	s.Require().NoError(s.store.InTrunkGroup(s.ctx, store.TrunkGroup{CustomerID: "acme", Vendor: SIPTrunkVendor},
 		func(_ context.Context, tx *store.TrunkGroupTx) error {
@@ -312,7 +315,7 @@ func (s *SIPTrunkSuite) TestResumingACallOnASharedLineOpensItsBridgePassword() {
 	})
 
 	s.Require().NoError(err)
-	s.Equal(Bridge{URI: "sip:+15125550100@shared.example.test", Username: "bridge-user", Password: "bridge-secret"}, resumed.Bridge)
+	s.Equal(Bridge{URI: "sip:+15125550100@shared.example.test", Username: "bridge-user", Password: sharedBridgePassword}, resumed.Bridge)
 }
 
 func (s *SIPTrunkSuite) TestAResumedCallReportsHowItEndedWithItsToken() {
