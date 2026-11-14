@@ -325,15 +325,16 @@ func (p *Provider) hold(id string, held *heldCall, changed <-chan struct{}, log 
 			}
 			return
 		case <-stopping:
+			held.mu.Lock()
 			select {
 			case <-bridged.Done():
-				// Let go meanwhile, as a renewal does when another node holds the call: the case
-				// above says how it ended.
+				// Let go meanwhile, as a renewal does under the lock when another node holds the
+				// call: the case above says how it ended.
+				held.mu.Unlock()
 				stopping = nil
 				continue
 			default:
 			}
-			held.mu.Lock()
 			held.ended = true
 			lapsed := held.movable && !time.Now().Before(held.lapse)
 			held.mu.Unlock()

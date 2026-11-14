@@ -495,6 +495,30 @@ func (s *TakeoverSuite) TestACallOfferedToANodeThatStopsWithoutTakingItIsHungUp(
 	s.True(s.gone(id))
 }
 
+func (s *TakeoverSuite) TestACallWonBackWithItsReplyLostIsStillHungUp() {
+	s.holdFor = time.Minute
+	a := s.node("a")
+	id := s.dial(a)
+	s.advertise("z")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	closed := make(chan error, 1)
+	go func() { closed <- a.provider.Close(ctx) }()
+	s.Eventually(func() bool {
+		lapse, inSet := s.lapse(id)
+		return inSet && lapse.UnixMilli() == 0 && !s.exists("owner:"+id)
+	}, time.Second, 10*time.Millisecond, "a never offered the call")
+
+	// As a's own win-back would leave it had its reply been lost.
+	s.Require().NoError(s.redis.Do(context.Background(), s.redis.B().Set().Key(s.prefix+":owner:"+id).Value("a").Build()).Error())
+	s.Require().NoError(s.redis.Do(context.Background(), s.redis.B().Zrem().Key(s.prefix+":nodes").Member("z").Build()).Error())
+
+	s.Require().NoError(<-closed)
+	s.True(a.dialer.call.wasHungUp(), "a call a won back was let go with no node to take it")
+	s.Equal(phone.CallStatus{Result: phone.CallCompleted, Word: "bye", SIPCode: 200}, s.reported(a.ended))
+	s.True(s.gone(id))
+}
+
 func (s *TakeoverSuite) TestANodeStoppingPastItsLeaseLetsTheCallGoUnhungAndUnreported() {
 	a := s.node("a")
 	id := s.dial(a)

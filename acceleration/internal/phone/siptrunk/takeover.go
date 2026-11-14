@@ -163,10 +163,15 @@ return 1
 `)
 
 // reclaimScript wins back a call ARGV[1] gave up, while no node holds it and no node says it
-// takes calls over, so the call can be hung up rather than left with no node to relay it.
+// takes calls over, so the call can be hung up rather than left with no node to relay it. It
+// says 1 too when ARGV[1] holds it already: an earlier win whose reply was lost.
 // KEYS: owner, calls, nodes. ARGV: node, holdFor ms, now ms, id.
 var reclaimScript = rueidis.NewLuaScript(`
-if redis.call('GET', KEYS[1]) then
+local owner = redis.call('GET', KEYS[1])
+if owner == ARGV[1] then
+  return 1
+end
+if owner then
   return 0
 end
 if redis.call('ZSCORE', KEYS[2], ARGV[4]) ~= '0' then
@@ -632,7 +637,9 @@ func (p *Provider) handOver(ctx context.Context, id string, held *heldCall) {
 			return
 		case <-ticker.C:
 			owner, err := p.redis.Do(ctx, p.redis.B().Get().Key(p.keys.owner(id)).Build()).ToString()
-			if rueidis.IsRedisNil(err) && p.reclaim(ctx, id, log) {
+			// Its own owner only after a win-back whose reply was lost, since the claim was given up.
+			unowned := rueidis.IsRedisNil(err) || (err == nil && owner == p.node)
+			if unowned && p.reclaim(ctx, id, log) {
 				p.hangUpUntaken(held, log)
 				return
 			}
@@ -651,7 +658,9 @@ func (p *Provider) reclaim(ctx context.Context, id string, log *slog.Logger) boo
 	won, err := reclaimScript.Exec(ctx, p.redis, []string{p.keys.owner(id), p.keys.calls(), p.keys.nodes()},
 		[]string{p.node, ms(p.holdFor), strconv.FormatInt(time.Now().UnixMilli(), 10), id}).AsInt64()
 	if err != nil {
-		log.Warn("could not find whether a node is left to take a call through a customer's sip trunk", "error", err)
+		if ctx.Err() == nil {
+			log.Warn("could not find whether a node is left to take a call through a customer's sip trunk", "error", err)
+		}
 		return false
 	}
 	return won == 1

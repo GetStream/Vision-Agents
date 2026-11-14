@@ -2544,9 +2544,9 @@ func checkCallHook(ctx context.Context, settings config.Config, logger *slog.Log
 }
 
 // closePhone hands the calls this node holds through customers' own SIP trunks to another
-// node, or hangs them up when there is no Redis to hand them through. Their signalling runs
-// through this process, so stopping with neither would leave both ends of each call
-// connected to nothing.
+// node, or hangs them up when no other node takes them or there is no Redis to hand them
+// through. Their signalling runs through this process, so stopping with neither would leave
+// both ends of each call connected to nothing.
 func closePhone(telephony *phone.Service, logger *slog.Logger) {
 	ctx, cancel := context.WithTimeout(context.Background(), phoneHangupGrace)
 	defer cancel()
