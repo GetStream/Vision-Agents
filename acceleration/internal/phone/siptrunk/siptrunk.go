@@ -98,10 +98,14 @@ type heldCall struct {
 	// rather than hanging it up.
 	movable bool
 
-	// mu orders renewal against the call ending: ended is set once the call is over or let
-	// go, and renewal writes no record for it from then on.
+	// mu orders the writes of the call's record against each other and against the call
+	// ending: ended is set once the call is over or let go, and no record is written for it
+	// from then on.
 	mu    sync.Mutex
 	ended bool
+	// lapse is when this node's claim runs out by its own clock, as its last claim or renewal
+	// wrote it.
+	lapse time.Time
 }
 
 // New returns a Provider that dials and resumes with sipbridge.

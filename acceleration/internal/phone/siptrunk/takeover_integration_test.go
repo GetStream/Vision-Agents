@@ -795,3 +795,63 @@ func (s *TakeoverSuite) TestACSeqThatMovedWithoutAnSDPChangeIsRecorded() {
 		return rec.State.Customer.LocalCSeq == 7 && rec.State.Stream.LocalCSeq == 9
 	}, 2*testRenewEvery, 10*time.Millisecond, "the record keeps CSeqs the call already sent past")
 }
+
+func (s *TakeoverSuite) heldOn(n *testNode, id string) *heldCall {
+	n.provider.mu.Lock()
+	defer n.provider.mu.Unlock()
+	h := n.provider.calls[id]
+	s.Require().NotNil(h, "the node does not hold the call")
+	return h
+}
+
+func (s *TakeoverSuite) TestANodeCutOffPastItsLeaseDoesNotBringBackACallThatEndedElsewhere() {
+	a := s.node("a")
+	id := s.dial(a)
+	b := s.node("b")
+
+	// a stops renewing but keeps relaying the call, as a node cut off from Redis would.
+	a.stop()
+	s.Eventually(func() bool { return live(b.provider, id) && s.get("owner:"+id) == "b" }, 3*time.Second, 10*time.Millisecond)
+	b.takeover.call.bye()
+	s.Eventually(func() bool { return s.gone(id) }, time.Second, 10*time.Millisecond)
+
+	a.provider.renew(context.Background())
+
+	s.True(a.dialer.call.wasReleased(), "a went on relaying a call another node moved on")
+	s.True(s.gone(id), "a brought back the record of a call that ended")
+}
+
+func (s *TakeoverSuite) TestRenewDoesNotClaimBackACallItGaveUp() {
+	a := s.node("a")
+	id := s.dial(a)
+	ctx, cancel := context.WithCancel(context.Background())
+	closed := make(chan error, 1)
+	go func() { closed <- a.provider.Close(ctx) }()
+	defer func() {
+		cancel()
+		<-closed
+	}()
+	s.Eventually(func() bool {
+		lapse, inSet := s.lapse(id)
+		return inSet && lapse.UnixMilli() == 0 && !s.exists("owner:"+id)
+	}, time.Second, 10*time.Millisecond, "a never gave the call up")
+
+	a.provider.renew(context.Background())
+
+	s.Empty(s.get("owner:"+id), "a claimed back a call it offered to other nodes")
+	lapse, inSet := s.lapse(id)
+	s.Require().True(inSet)
+	s.Zero(lapse.UnixMilli(), "a call given up no longer looks free to scans")
+}
+
+func (s *TakeoverSuite) TestRenewDoesNotWriteBackACallThatEnded() {
+	a := s.node("a")
+	id := s.dial(a)
+	h := s.heldOn(a, id)
+
+	a.dialer.call.bye()
+	s.Eventually(func() bool { return s.gone(id) }, time.Second, 10*time.Millisecond)
+	a.provider.renewOne(context.Background(), id, h)
+
+	s.True(s.gone(id), "renewal wrote back the keys of a call that ended")
+}
