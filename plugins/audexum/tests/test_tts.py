@@ -218,6 +218,24 @@ class TestAudexumTTS:
             await tts.close()
             await server.close()
 
+    async def test_truncated_wav_raises(self) -> None:
+        body = _wav()[:-4]  # header promises more frames than the data holds
+
+        async def handler(request: web.Request) -> web.Response:
+            return web.Response(body=body, content_type="audio/wav")
+
+        app = web.Application()
+        app.router.add_post("/v1/audio/speech", handler)
+        server = TestServer(app)
+        await server.start_server()
+        tts = audexum.TTS(api_key="k", base_url=str(server.make_url("/v1")))
+        try:
+            with pytest.raises(RuntimeError, match="truncated WAV"):
+                await tts.stream_audio("Hello")
+        finally:
+            await tts.close()
+            await server.close()
+
     async def test_http_error_raises(self) -> None:
         async def handler(request: web.Request) -> web.Response:
             return web.Response(status=402, text="out of credits")

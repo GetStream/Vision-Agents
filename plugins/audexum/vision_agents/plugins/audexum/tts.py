@@ -116,7 +116,8 @@ class TTS(tts.TTS):
         try:
             with wave.open(io.BytesIO(audio), "rb") as wf:
                 width = wf.getsampwidth()
-                frames = wf.readframes(wf.getnframes())
+                frame_count = wf.getnframes()
+                frames = wf.readframes(frame_count)
                 rate, channels = wf.getframerate(), wf.getnchannels()
         except (wave.Error, EOFError) as e:
             raise RuntimeError(
@@ -124,6 +125,8 @@ class TTS(tts.TTS):
             ) from e
         if width != 2:
             raise RuntimeError("Audexum TTS returned non 16-bit WAV audio")
+        if len(frames) != frame_count * width * channels:
+            raise RuntimeError("Audexum TTS returned truncated WAV audio")
         return PcmData.from_numpy(
             np.frombuffer(frames, dtype=np.int16),
             sample_rate=rate,
