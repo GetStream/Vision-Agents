@@ -60,6 +60,7 @@ import (
 	dlctelnyx "github.com/GetStream/Vision-Agents/acceleration/internal/dlc/telnyx"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/imagejobs"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/extract"
@@ -1199,13 +1200,30 @@ func run(settings config.Config, logger *slog.Logger) error {
 			dialer.Close()
 		}
 	}()
+	// The pictures agents are asked for are queued in Postgres and drawn after their turn by
+	// whichever router claims them, where there is an image router to draw with.
+	var drawings *imagejobs.Service
+	if pgStore != nil && streams.Image != nil {
+		if drawings, err = imagejobs.New(imagejobs.Options{Store: pgStore, Images: streams.Image, Logger: logger}); err != nil {
+			return err
+		}
+	}
 	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, floor, streamClients,
-		sessionConnectors, prices, policies, customerKeys, logger)
+		sessionConnectors, prices, policies, customerKeys, drawings, logger)
 	if err != nil {
 		return err
 	}
 	if sessions != nil {
 		defer sessions.Shutdown()
+	}
+	// A picture is posted into its conversation, which only sessions reach Stream Chat for.
+	if drawings != nil && sessions != nil {
+		if conversations, err := sessions.Conversations(); err == nil {
+			drawings.Start(ctx, conversations)
+			defer drawings.Close()
+		} else {
+			drawings = nil
+		}
 	}
 	// A simulation is a conversation, a model to judge it and a row, so it too runs only
 	// where all three are configured. Elsewhere a simulation can be written down but the
@@ -1692,7 +1710,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			public:          httpServer,
 			peers:           peerServer,
 			drainWork:       server.Drain,
-			held:            func() int { return running(sessions, scheduler, bridge, deliveries, server, dialer) },
+			held:            func() int { return running(sessions, scheduler, bridge, deliveries, server, dialer, drawings) },
 			telephony:       telephony,
 			handOverMetrics: handOverMetrics,
 			handOverProxy:   handOverSandboxProxy,
@@ -1807,12 +1825,16 @@ func stopServing(s stopping) error {
 }
 
 // running is how many sessions, scheduled deliveries, inbound writes and the turns they handed
-// over, chat answers, the app chat's episode cards and campaign calls a router holds; one
+// over, chat answers, the app chat's episode cards, campaign calls and pictures being drawn a
+// router holds; one
 // without one of them holds none of its work. A turn counts until it ends, also before the
 // session it opens is counted, and so does a campaign call placed before its session exists.
 func running(sessions *session.Manager, scheduler *scheduling.Scheduler, bridge *channelbridge.Bridge,
-	deliveries *chatinbound.Worker, server *api.Server, dialer *campaign.Runner) int {
+	deliveries *chatinbound.Worker, server *api.Server, dialer *campaign.Runner, drawings *imagejobs.Service) int {
 	held := 0
+	if drawings != nil {
+		held += drawings.Running()
+	}
 	if dialer != nil {
 		held += dialer.Running()
 	}
@@ -2056,6 +2078,7 @@ func buildSessions(
 	prices pricing.Pricer,
 	policies *policy.Enforcer,
 	keys routing.CustomerKeys,
+	drawings *imagejobs.Service,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.LLM == nil {
@@ -2081,6 +2104,7 @@ func buildSessions(
 		Knowledge:  base,
 		Pricer:     prices,
 		Search:     finding,
+		Drawings:   drawings,
 		Classifier: judging,
 		FlowJudge:  settings.Agent.FlowJudge,
 		Phone:      telephony,

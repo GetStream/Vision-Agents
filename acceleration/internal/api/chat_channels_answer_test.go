@@ -95,7 +95,7 @@ func (s *AppHooksSuite) TestAMessageNobodyAnsweredIsReadWithTheNextMention() {
 	request, _ := s.askedWith(asked)
 	input := request.Input
 	ben := slices.IndexFunc(input, func(m llm.Message) bool { return strings.Contains(m.Content, "the 6pm shift is short one person") })
-	anya := slices.IndexFunc(input, func(m llm.Message) bool { return strings.HasSuffix(m.Content, asked) })
+	anya := slices.IndexFunc(input, func(m llm.Message) bool { return strings.Contains(m.Content, asked) })
 	s.Require().NotEqual(-1, ben, "the message nobody answered did not reach the model: %+v", input)
 	s.Less(ben, anya, "the message nobody answered came after the one answered")
 	s.Equal(1, s.count(input, asked), "the message answered was handed twice: %+v", input)
@@ -215,16 +215,21 @@ func (s *AppHooksSuite) writes(channelType, channel, user, text string, mentione
 }
 
 // delivers the message.new of the message id the user wrote in channelType:channel, with
-// mentioned_users as given (raw JSON, none when empty).
+// mentioned_users as given (raw JSON, none when empty). The user is named as the app holds
+// them, or after their id when it holds no name for them, as Stream names them.
 func (s *AppHooksSuite) delivers(channelType, channel, id, user, text, mentioned string) {
 	listed := ""
 	if mentioned != "" {
 		listed = `, "mentioned_users": ` + mentioned
 	}
+	name := user
+	if held, ok := s.chat.User(user); ok && held["name"] != nil {
+		name = fmt.Sprint(held["name"])
+	}
 	s.Require().Equal(http.StatusOK, s.fromApp(s.appPath("/v1/chat/hooks/stream"), fmt.Sprintf(`{
   "type": "message.new", "cid": "%s:%s", "channel_id": %q, "channel_type": %q, "created_at": %q, "channel_custom": {},
   "message": {"id": %q, "text": %q, "user": {"id": %q, "name": %q}%s}
-}`, channelType, channel, channel, channelType, time.Now().UTC().Format(time.RFC3339Nano), id, text, user, user, listed)))
+}`, channelType, channel, channel, channelType, time.Now().UTC().Format(time.RFC3339Nano), id, text, user, name, listed)))
 }
 
 // notedInputs is every message any "noted" model opened so far was handed, as one string.

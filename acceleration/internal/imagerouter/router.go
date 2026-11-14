@@ -16,6 +16,9 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -31,6 +34,11 @@ type Registry = routing.Registry[imagegen.Provider]
 // DefaultTarget is where a request that names nowhere goes: the fast tier, since whoever
 // asked is usually waiting on the answer.
 const DefaultTarget = "image-fast"
+
+// Deadline bounds one generation, wherever it was asked from. A queued provider can hold a job
+// for minutes, and whoever asked is owed an answer rather than a wait until something upstream
+// gives up. The money a generation may cost is held for as long.
+const Deadline = 240 * time.Second
 
 // Options configures a Router. Store and Live are optional: without them the router still
 // routes, it just stops recording.
@@ -50,6 +58,16 @@ type Options struct {
 type Request struct {
 	// CustomerID owns the request. It is what every statistic is keyed by.
 	CustomerID string
+	// AgentID is the agent the picture is for. Empty outside a conversation.
+	AgentID string
+	// CallID is the call the picture is drawn in. Empty outside a conversation.
+	CallID string
+	// Region is where the work is done: the agent's, from its config. Empty names none.
+	Region string
+	// UsageID names a generation that may be drawn again, such as a picture an agent asked for
+	// that a stopped router drew without keeping, so its row is written, and billed, once. Zero
+	// gives each generation an id of its own.
+	UsageID uuid.UUID
 	// Tags are the customer's own cost labels, recorded on the row this request writes.
 	Tags routing.Tags
 	// Target is a "provider/model" name or a capability shortcut. Empty means
@@ -73,6 +91,10 @@ type Generation struct {
 	// CostMicros is millionths of a dollar, priced from the provider's configured rates.
 	// A generation that failed costs nothing.
 	CostMicros int64
+	// Queued and Drawn are how long the job waited in the provider's queue and how long it was
+	// drawn for, zero where the provider cannot tell them apart (imagegen.Result).
+	Queued time.Duration
+	Drawn  time.Duration
 }
 
 // Router selects an image provider and draws with it.
@@ -111,8 +133,13 @@ func New(options Options) (*Router, error) {
 // A failure is an *imagegen.Error. Any other error is a request that names nowhere this
 // router can send it.
 func (r *Router) Generate(ctx context.Context, request Request) (Generation, error) {
+	ctx, cancel := context.WithTimeout(ctx, Deadline)
+	defer cancel()
 	core := routing.Request{
 		CustomerID:  request.CustomerID,
+		AgentID:     request.AgentID,
+		CallID:      request.CallID,
+		Region:      request.Region,
 		Attribution: routing.AttributionFrom(ctx),
 		Spent:       routing.SpentFrom(ctx),
 		Tags:        request.Tags,
@@ -153,7 +180,7 @@ func (r *Router) Generate(ctx context.Context, request Request) (Generation, err
 			continue
 		}
 
-		generation, err := r.draw(ctx, provider, config, core.Owner(), request.Image)
+		generation, err := r.draw(ctx, provider, config, core.Owner(), request.UsageID, request.Image)
 		if err == nil {
 			return generation, nil
 		}
@@ -180,14 +207,16 @@ func (r *Router) draw(
 	provider imagegen.Provider,
 	config routing.ProviderConfig,
 	owner routing.Owner,
+	usageID uuid.UUID,
 	request imagegen.Request,
 ) (Generation, error) {
 	defer provider.Close()
 
 	result, err := routing.Call(ctx, routing.Meter{
-		Recorder: r.Recorder(), Config: config, Owner: owner,
-		Code:     func(err error) string { return string(imagegen.CodeOf(err)) },
-		Estimate: pricing.Quantities{pricing.Images: int64(max(request.N, 1))},
+		Recorder: r.Recorder(), Config: config, Owner: owner, UsageID: usageID,
+		Code:       func(err error) string { return string(imagegen.CodeOf(err)) },
+		Estimate:   pricing.Quantities{pricing.Images: int64(max(request.N, 1))},
+		ReserveFor: Deadline,
 	}, func(ctx context.Context) (imagegen.Result, error) {
 		return provider.Generate(ctx, request)
 	})
@@ -196,6 +225,7 @@ func (r *Router) draw(
 		return generation, err
 	}
 	generation.Images = result.Images
+	generation.Queued, generation.Drawn = result.Queued, result.Drawn
 	// Priced as its row is, size included.
 	var stat routing.Stat
 	stat.Use(result.Used())

@@ -73,7 +73,7 @@ func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) erro
 // dropped on every update after, which reads as a setting that will not save.
 var configColumns = []string{
 	"name", "role", "mode", "region", "stt", "tts", "sts", "voice", "llm", "llm_fallbacks", "agents", "subagent",
-	"video_source", "video_max_frames", "search", "instructions", "greeting", "greeting_mode", "guardrail", "review_instructions",
+	"video_source", "video_max_frames", "search", "image", "instructions", "greeting", "greeting_mode", "guardrail", "review_instructions",
 	"skills", "connectors", "left_out_connectors", "channels", "chat_channels", "scheduling", "calls", "keyterms", "visible_tools", "knowledge_namespace", "sandbox", "sandbox_options", "harness", "tags",
 	"dispatch_incoming_call", "dispatch_text", "episode_cards", "episode_cards_record", "progressive_tools", "tool_output_retention", "resume_history", "floor_control", "sync_hash", "updated_at",
 }

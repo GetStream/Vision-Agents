@@ -122,8 +122,8 @@ public class Responses internal constructor(
      *
      * The model forgets the later turns and they drop out of [list] and [items]. A transcript
      * an [AgentSession] is showing still has them, so read it back after this. A conversation
-     * kept in Stream Chat cannot be rewound, because the channel would still hold the later
-     * turns: fork it at the response instead.
+     * kept in Stream Chat is rewound there too: the later turns are hidden in the channel and
+     * kept as a branch that can be brought back.
      */
     public suspend fun rewind(responseId: String) {
         if (responseId.isEmpty()) {

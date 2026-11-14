@@ -32,6 +32,18 @@ export class Router {
     this.options = options;
   }
 
+  /**
+   * The capability shortcuts a modality offers as a choice, default first, each with the models
+   * it resolves to now: `image-fast` and `image-quality` for `"image"`. Server side only.
+   *
+   * ```ts
+   * const [fastest] = await api.router().routes("image");
+   * ```
+   */
+  routes(modality: Schemas["Modality"]): Promise<readonly Schemas["Route"][]> {
+    return this.client.get("/v1/{modality}/routes", { path: { modality } });
+  }
+
   /** Answers one question out of what is true now. */
   search(query: string, options?: Schemas["SearchOptions"]): Promise<Schemas["SearchAnswer"]> {
     const { config, tags } = this.options;

@@ -65,6 +65,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = ErrorResponse.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 500:
         response_500 = ErrorResponse.from_dict(response.json())
 
@@ -106,9 +111,15 @@ def sync_detailed(
     response itself is kept.
     The history is rebuilt from what the session recorded, the question and the answer of each turn, so
     a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no
-    store, and a native speech-to-speech one, whose model keeps its own context. A persistent
-    conversation is refused as well, because its transcript lives in Chat and would bring the rewound
-    turns back the next time it opened; fork it at the response instead.
+    store, and a native speech-to-speech one, whose model keeps its own context.
+    A conversation kept in Stream Chat is rewound there too, the way an edit of the turn after the named
+    response is: every later message is hidden from every read of the channel, so reopening the
+    conversation does not bring the rewound turns back, and they are kept as a branch that
+    listResponseSiblings, getResponseBranch and activateResponse read and bring back. It counts toward
+    the conversation's 100 edit and regenerate points (409 branch_limit_reached), and is refused as an
+    edit is: in a thread, dispatched or shared conversation, on a call, for a response whose messages
+    carry no branch mark, such as a turn spoken on a call, and while an earlier switch is unfinished
+    (409 switch_unfinished). Rewinding to the newest response changes nothing.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -148,9 +159,15 @@ def sync(
     response itself is kept.
     The history is rebuilt from what the session recorded, the question and the answer of each turn, so
     a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no
-    store, and a native speech-to-speech one, whose model keeps its own context. A persistent
-    conversation is refused as well, because its transcript lives in Chat and would bring the rewound
-    turns back the next time it opened; fork it at the response instead.
+    store, and a native speech-to-speech one, whose model keeps its own context.
+    A conversation kept in Stream Chat is rewound there too, the way an edit of the turn after the named
+    response is: every later message is hidden from every read of the channel, so reopening the
+    conversation does not bring the rewound turns back, and they are kept as a branch that
+    listResponseSiblings, getResponseBranch and activateResponse read and bring back. It counts toward
+    the conversation's 100 edit and regenerate points (409 branch_limit_reached), and is refused as an
+    edit is: in a thread, dispatched or shared conversation, on a call, for a response whose messages
+    carry no branch mark, such as a turn spoken on a call, and while an earlier switch is unfinished
+    (409 switch_unfinished). Rewinding to the newest response changes nothing.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -185,9 +202,15 @@ async def asyncio_detailed(
     response itself is kept.
     The history is rebuilt from what the session recorded, the question and the answer of each turn, so
     a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no
-    store, and a native speech-to-speech one, whose model keeps its own context. A persistent
-    conversation is refused as well, because its transcript lives in Chat and would bring the rewound
-    turns back the next time it opened; fork it at the response instead.
+    store, and a native speech-to-speech one, whose model keeps its own context.
+    A conversation kept in Stream Chat is rewound there too, the way an edit of the turn after the named
+    response is: every later message is hidden from every read of the channel, so reopening the
+    conversation does not bring the rewound turns back, and they are kept as a branch that
+    listResponseSiblings, getResponseBranch and activateResponse read and bring back. It counts toward
+    the conversation's 100 edit and regenerate points (409 branch_limit_reached), and is refused as an
+    edit is: in a thread, dispatched or shared conversation, on a call, for a response whose messages
+    carry no branch mark, such as a turn spoken on a call, and while an earlier switch is unfinished
+    (409 switch_unfinished). Rewinding to the newest response changes nothing.
 
     Args:
         id (str): The session, as returned when it was created.
@@ -225,9 +248,15 @@ async def asyncio(
     response itself is kept.
     The history is rebuilt from what the session recorded, the question and the answer of each turn, so
     a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no
-    store, and a native speech-to-speech one, whose model keeps its own context. A persistent
-    conversation is refused as well, because its transcript lives in Chat and would bring the rewound
-    turns back the next time it opened; fork it at the response instead.
+    store, and a native speech-to-speech one, whose model keeps its own context.
+    A conversation kept in Stream Chat is rewound there too, the way an edit of the turn after the named
+    response is: every later message is hidden from every read of the channel, so reopening the
+    conversation does not bring the rewound turns back, and they are kept as a branch that
+    listResponseSiblings, getResponseBranch and activateResponse read and bring back. It counts toward
+    the conversation's 100 edit and regenerate points (409 branch_limit_reached), and is refused as an
+    edit is: in a thread, dispatched or shared conversation, on a call, for a response whose messages
+    carry no branch mark, such as a turn spoken on a call, and while an earlier switch is unfinished
+    (409 switch_unfinished). Rewinding to the newest response changes nothing.
 
     Args:
         id (str): The session, as returned when it was created.

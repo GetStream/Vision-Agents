@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -10,6 +10,11 @@ from typing_extensions import Self
 
 from ..models.agent_response_status import AgentResponseStatus
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.response_branch import ResponseBranch
+    from ..models.rewound_to import RewoundTo
+
 
 T = TypeVar("T", bound="AgentResponse")
 
@@ -27,6 +32,9 @@ class AgentResponse:
         error (str | Unset):
         finished_at (datetime.datetime | Unset):
         said (str | Unset): What the person asked, which is the first item of every response.
+        branch (ResponseBranch | Unset):
+        parent_response_id (str | Unset): The response this one was answered after, absent for a session's first.
+        rewound_to (RewoundTo | Unset):
     """
 
     created_at: datetime.datetime
@@ -36,6 +44,9 @@ class AgentResponse:
     error: str | Unset = UNSET
     finished_at: datetime.datetime | Unset = UNSET
     said: str | Unset = UNSET
+    branch: ResponseBranch | Unset = UNSET
+    parent_response_id: str | Unset = UNSET
+    rewound_to: RewoundTo | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -55,6 +66,16 @@ class AgentResponse:
 
         said = self.said
 
+        branch: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.branch, Unset):
+            branch = self.branch.to_dict()
+
+        parent_response_id = self.parent_response_id
+
+        rewound_to: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.rewound_to, Unset):
+            rewound_to = self.rewound_to.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -71,11 +92,20 @@ class AgentResponse:
             field_dict["finished_at"] = finished_at
         if said is not UNSET:
             field_dict["said"] = said
+        if branch is not UNSET:
+            field_dict["branch"] = branch
+        if parent_response_id is not UNSET:
+            field_dict["parent_response_id"] = parent_response_id
+        if rewound_to is not UNSET:
+            field_dict["rewound_to"] = rewound_to
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.response_branch import ResponseBranch
+        from ..models.rewound_to import RewoundTo
+
         d = dict(src_dict)
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
@@ -96,6 +126,22 @@ class AgentResponse:
 
         said = d.pop("said", UNSET)
 
+        _branch = d.pop("branch", UNSET)
+        branch: ResponseBranch | Unset
+        if isinstance(_branch, Unset):
+            branch = UNSET
+        else:
+            branch = ResponseBranch.from_dict(_branch)
+
+        parent_response_id = d.pop("parent_response_id", UNSET)
+
+        _rewound_to = d.pop("rewound_to", UNSET)
+        rewound_to: RewoundTo | Unset
+        if isinstance(_rewound_to, Unset):
+            rewound_to = UNSET
+        else:
+            rewound_to = RewoundTo.from_dict(_rewound_to)
+
         agent_response = cls(
             created_at=created_at,
             id=id,
@@ -104,6 +150,9 @@ class AgentResponse:
             error=error,
             finished_at=finished_at,
             said=said,
+            branch=branch,
+            parent_response_id=parent_response_id,
+            rewound_to=rewound_to,
         )
 
         agent_response.additional_properties = d

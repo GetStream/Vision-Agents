@@ -24,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/imagejobs"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -96,6 +97,9 @@ type ManagerOptions struct {
 	Knowledge *metered.Knowledge
 	// Search is optional, and is what every session finds out what is true now with.
 	Search *searchrouter.Router
+	// Drawings is optional, and is where a session whose config names an image target queues
+	// the pictures it is asked for, to be drawn after the turn and posted into its conversation.
+	Drawings *imagejobs.Service
 	// Classifier is optional, and is what a session with a guardrail asks whether a turn
 	// may be answered. Without it a session declaring a guardrail that needs one is
 	// refused rather than held unguarded.
@@ -274,6 +278,9 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		logger:        options.Logger,
 		sessions:      map[string]*Session{},
 		conversations: options.Conversations,
+	}
+	if options.Conversations != nil && options.Store != nil {
+		keepBranches(options.Conversations, options.Store)
 	}
 	// Once, here, rather than for each session it would have ruled: the router runs, and the
 	// flow controller rules every floor that chose nothing, as it would with no default.
@@ -560,7 +567,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		if cid == "" {
 			open, cid = service.CreateInApp, streamapp.AgentChannelType+":"+spec.ID
 		}
-		conv, previous, truncated, err = open(reading, spec.StreamApp, spec.CustomerID, spec.AgentID, cid, spec.Caller.UserID, spec.UserID, spec.Custom, spec.ChannelTeam, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
+		// The session's branch switches are kept under its id, and one a router left unfinished
+		// is finished as the conversation opens.
+		conv, previous, truncated, err = open(persistent.WithSession(reading, spec.ID), spec.StreamApp, spec.CustomerID, spec.AgentID, cid, spec.Caller.UserID, spec.UserID, spec.Custom, spec.ChannelTeam, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
 		if errors.Is(err, streamapp.ErrReadOnly) {
 			return nil, ErrConversationReadOnly
 		}
@@ -881,6 +890,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 			KnowledgeNamespace: spec.KnowledgeNamespace,
 			Search:             m.options.Search,
 			SearchTarget:       spec.SearchTarget,
+			Draws:              m.drawer(spec, conv),
+			ImageTarget:        spec.ImageTarget,
 			Guardrail:          screening,
 			SpeculativeReplies: m.options.SpeculativeReplies,
 			UnifiedReplies:     m.options.UnifiedReplies,
@@ -953,6 +964,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	if created.carded {
 		created.cardsFor = person
 	}
+	created.cards = cards
 	built.RestoreHistory(append(cards, previous...))
 	if !spec.Native() {
 		built.PinDocuments(m.documents(ctx, spec)...)
@@ -979,6 +991,27 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	// fan-out records is held until the row is queued below (startRecording).
 	if m.records != nil && !spec.Incognito {
 		created.records = m.records
+		if m.options.Store != nil {
+			created.tree = m.options.Store
+			created.restoring = func(ctx context.Context) (context.Context, error) { return m.restoring(ctx, spec) }
+		}
+		// A reopened session carries on from the newest response on its conversation, which a
+		// branch switch may have made an older one. Its last turns may still be on their way to
+		// the store.
+		if m.options.Store != nil && !spec.Reopened.IsZero() {
+			// Carrying on from the wrong one would answer the next question after a response the
+			// conversation does not show, so a store that cannot say refuses the reopen.
+			if err := m.records.Flush(ctx); err != nil {
+				fail()
+				return nil, stack.Wrap(err)
+			}
+			leaf, err := m.options.Store.ActiveLeaf(ctx, spec.CustomerID, spec.ID)
+			if err != nil {
+				fail()
+				return nil, err
+			}
+			created.leaf = leaf
+		}
 	}
 
 	run := created.track(built)
@@ -1920,9 +1953,17 @@ func (m *Manager) mayRemember(ctx context.Context, customerID, id string) bool {
 
 // TruncateMemories deletes everything remembered about one of the customer's users, from
 // every session and every agent.
+//
+// The copies of the user's hidden branches go with them: they are what the user said as much
+// as what was learned from it.
 func (m *Manager) TruncateMemories(ctx context.Context, customerID, userID string) error {
 	if m.options.Memory == nil {
 		return stack.Wrap(ErrNoMemory)
+	}
+	if m.options.Store != nil {
+		if _, err := m.options.Store.DeleteUserBranchMessages(ctx, customerID, userID); err != nil {
+			return err
+		}
 	}
 	return memoryFailed(ctx, m.options.Memory.For(forgetting(ctx, customerID)).Truncate(ctx, customerID, userID))
 }
@@ -2439,6 +2480,13 @@ func newID() string {
 	return hex.EncodeToString(raw)
 }
 
+// keepBranches has service keep its conversations' branch switches in tree, and finish the
+// ones a router left unfinished with the sessions' responses there.
+func keepBranches(service *persistent.Service, tree *store.Store) {
+	service.SetBranches(tree)
+	service.SetSwitchHooks(switchHooks(tree))
+}
+
 func (m *Manager) Conversations() (*persistent.Service, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -2451,10 +2499,28 @@ func (m *Manager) Conversations() (*persistent.Service, error) {
 		service := persistent.NewForChats(persistent.StreamApps(m.options.Stream))
 		if m.options.Store != nil {
 			service.SetPins(m.options.Store.ConversationPin)
+			keepBranches(service, m.options.Store)
 		}
 		m.conversations = service
 	}
 	return m.conversations, nil
+}
+
+// drawer queues the pictures a session is asked for into its conversation, as the agent's
+// messages. Nil, which offers no generate_image, without a deployment that draws, a
+// conversation kept in a channel to post into, or an image target.
+func (m *Manager) drawer(spec Spec, conv *persistent.Conversation) agent.Drawer {
+	if m.options.Drawings == nil || conv == nil || spec.ImageTarget == "" {
+		return nil
+	}
+	return func(ctx context.Context, request agent.DrawRequest) (bool, error) {
+		return m.options.Drawings.Queue(ctx, imagejobs.Request{
+			CustomerID: spec.CustomerID, StreamApp: conv.StreamApp(), CID: conv.CID(), AgentUser: conv.Agent(),
+			SessionID: request.SessionID, TurnID: request.TurnID, ToolCallID: request.ToolCallID, AgentID: request.AgentID, CallID: request.CallID, Region: request.Region,
+			Target: request.Target, Tags: request.Tags, Attribution: request.Attribution,
+			Prompt: request.Prompt, AspectRatio: request.AspectRatio,
+		})
+	}
 }
 
 // publisher is where files the subagent's code hands back are shown: the conversation's

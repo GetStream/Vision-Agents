@@ -390,10 +390,11 @@ func (s *SessionVerbsSuite) TestRewindingNeedsAResponseToCarryOnFrom() {
 func (s *SessionVerbsSuite) TestRewindingToATurnNobodyTookIsRefused() {
 	opened := s.serverClient.createSession(textSession(nil))
 
-	status, _ := s.serverClient.call(http.MethodPost,
+	status, body := s.serverClient.call(http.MethodPost,
 		"/v1/agents/sessions/"+opened.Id+"/rewind", RewindSessionRequest{ResponseId: s.utils.uuid()})
 
-	s.Equal(http.StatusBadRequest, status)
+	// Not found rather than the 400 every persistent session got before it could be rewound.
+	s.Equal(http.StatusNotFound, status, string(body))
 }
 
 func (s *SessionVerbsSuite) TestAnotherAppCannotRewindASession() {

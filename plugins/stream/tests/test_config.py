@@ -820,6 +820,27 @@ class TestSyncAgent:
             )
             assert router.configs[result.config.id]["sts"] == target
 
+    async def test_image_can_be_selected_and_cleared(self, router: Router, support_dir):
+        # An empty image is how a file turns drawing off, so it is sent rather than dropped.
+        for written, target in (("image-fast", "image-fast"), ('""', "")):
+            (support_dir / "agent.yaml").write_text(
+                f"name: support\nimage: {written}\n"
+            )
+            await stream.sync_agent(
+                "support", path=str(support_dir), url=router.url, customer_id="acme"
+            )
+            assert router.bodies[-1]["image"] == target
+
+    async def test_a_bare_image_leaves_the_stored_one(
+        self, router: Router, support_dir
+    ):
+        # Only image: "" turns drawing off; a key with nothing after it says nothing.
+        (support_dir / "agent.yaml").write_text("name: support\nimage:\n")
+        await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+        assert "image" not in router.bodies[-1]
+
     async def test_a_setting_the_declaration_leaves_out_is_not_sent(
         self, router: Router, support_dir
     ):
