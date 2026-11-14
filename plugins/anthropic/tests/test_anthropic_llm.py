@@ -1,6 +1,12 @@
 import os
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
+import httpx
 import pytest
+from anthropic import AsyncAnthropic, AsyncStream
+from anthropic.types import Message as ClaudeMessage
+from anthropic.types import TextBlock, ToolUseBlock, Usage
 from dotenv import load_dotenv
 from vision_agents.core.agents.conversation import InMemoryConversation, Message
 from vision_agents.plugins.anthropic.anthropic_llm import ClaudeLLM
@@ -99,6 +105,124 @@ class TestClaudeLLM:
         assert messages[0].content == "hello world"
         assert isinstance(messages[0].content, str)
         assert messages[0].role == "assistant"
+
+
+def _message(content: list, input_tokens: int, output_tokens: int):
+    return ClaudeMessage(
+        id="msg_1",
+        type="message",
+        role="assistant",
+        model="claude-sonnet-4-6",
+        content=content,
+        stop_reason="end_turn",
+        usage=Usage(input_tokens=input_tokens, output_tokens=output_tokens),
+    )
+
+
+def _text(text: str):
+    return TextBlock(type="text", text=text)
+
+
+def _tool_use():
+    return ToolUseBlock(type="tool_use", id="toolu_1", name="probe", input={})
+
+
+def _events(*events):
+    async def iterator():
+        for event in events:
+            yield event
+
+    stream = AsyncStream(
+        cast_to=object,
+        response=httpx.Response(200),
+        client=AsyncAnthropic(api_key="test"),
+    )
+    stream._iterator = iterator()
+    return stream
+
+
+def _start(input_tokens: int):
+    return SimpleNamespace(
+        type="message_start",
+        message=SimpleNamespace(usage=SimpleNamespace(input_tokens=input_tokens)),
+    )
+
+
+def _delta(output_tokens: int):
+    return SimpleNamespace(
+        type="message_delta", usage=SimpleNamespace(output_tokens=output_tokens)
+    )
+
+
+def _tool_events():
+    return [
+        SimpleNamespace(
+            type="content_block_start",
+            index=0,
+            content_block=SimpleNamespace(type="tool_use", id="toolu_1", name="probe"),
+        ),
+        SimpleNamespace(type="content_block_stop", index=0),
+    ]
+
+
+class TestClaudeLLMUsage:
+    async def _run(self, llm: ClaudeLLM, responses: list):
+        @llm.register_function(description="probe")
+        async def probe() -> str:
+            return "ok"
+
+        llm.client = SimpleNamespace(
+            messages=SimpleNamespace(create=AsyncMock(side_effect=responses)),
+            close=AsyncMock(),
+        )
+        _, final = await collect_simple_response(llm.simple_response("hi"))
+        return final
+
+    async def test_non_streaming_usage_is_summed_across_tool_hops(self, llm: ClaudeLLM):
+        # initial call (tool_use) -> follow-up hop -> finalization pass
+        responses = [
+            _message([_tool_use()], 10, 5),
+            _message([_text("thinking")], 20, 6),
+            _message([_text("done")], 30, 7),
+        ]
+        final = await self._run_non_streaming(llm, responses)
+        assert final.input_tokens == 60
+        assert final.output_tokens == 18
+        assert final.total_tokens == 78
+
+    async def _run_non_streaming(self, llm: ClaudeLLM, responses: list):
+        @llm.register_function(description="probe")
+        async def probe() -> str:
+            return "ok"
+
+        llm.client = SimpleNamespace(
+            messages=SimpleNamespace(create=AsyncMock(side_effect=responses)),
+            close=AsyncMock(),
+        )
+        final = None
+        async for item in llm._stream_message(
+            messages=[{"role": "user", "content": "hi"}], stream=False
+        ):
+            final = item
+        return final
+
+    async def test_streaming_usage_is_summed_across_tool_hops(self, llm: ClaudeLLM):
+        responses = [
+            _events(_start(10), *_tool_events(), _delta(5)),
+            _events(_start(20), _delta(6)),
+            _events(_start(30), _delta(7)),
+        ]
+        final = await self._run(llm, responses)
+        assert final.input_tokens == 60
+        assert final.output_tokens == 18
+        assert final.total_tokens == 78
+
+    async def test_streaming_usage_without_tools_is_unchanged(self, llm: ClaudeLLM):
+        # message_delta reports a running total for the message
+        responses = [_events(_start(10), _delta(3), _delta(5))]
+        final = await self._run(llm, responses)
+        assert final.input_tokens == 10
+        assert final.output_tokens == 5
 
 
 @pytest.mark.integration
