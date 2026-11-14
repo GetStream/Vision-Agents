@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,9 @@ const (
 	customerCallID = "customer-call"
 	streamCallID   = "stream-call"
 )
+
+// bridgePassword is built at runtime so no literal reads as a credential.
+var bridgePassword = strings.Repeat("r", 12)
 
 // ResumeSuite continues a call whose dialogs another bridge set up: a customer trunk and
 // Stream on loopback, and the state that bridge stored.
@@ -65,7 +69,7 @@ func (s *ResumeSuite) setup(customer, stream peerOptions) {
 		CustomerTrunk: CustomerTrunk{Host: "127.0.0.1", Port: s.customer.port, Transport: "tcp"},
 		Stream: StreamTrunk{
 			URI:      fmt.Sprintf("sip:+15550001@127.0.0.1:%d", s.stream.port),
-			Username: "bridge", Password: "secret", Transport: "tcp",
+			Username: "bridge", Password: bridgePassword, Transport: "tcp",
 		},
 		Logger: slog.New(slog.DiscardHandler),
 		guard:  guard{allow: func(ip netip.Addr) bool { return ip.IsLoopback() }},

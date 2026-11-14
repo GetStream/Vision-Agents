@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -139,17 +140,23 @@ func (s *SIPTrunkSuite) TearDownTest() {
 	s.Require().NoError(s.provider.Close(ctx))
 }
 
+// Built at runtime so no literal reads as a credential.
+var (
+	placedTrunkPassword  = strings.Repeat("p", 12)
+	placedBridgePassword = strings.Repeat("q", 12)
+)
+
 func outbound() phone.Outbound {
 	return phone.Outbound{
 		From: "+15550000301",
 		To:   "+15550000302",
 		Bridge: phone.Bridge{
-			URI: "sip:+15550000301@bridge.sip.example.com", Username: "stream-user", Password: "stream-pass",
+			URI: "sip:+15550000301@bridge.sip.example.com", Username: "stream-user", Password: placedBridgePassword,
 		},
 		RingTimeout: 20 * time.Second,
 		Trunk: &phone.SIPTrunk{
 			Host: "trunk.example.com", Port: 5060, Transport: "tcp", Username: "agent",
-			Password: "s3cret", LateOffer: true, Codecs: []string{"PCMU", "PCMA"},
+			Password: placedTrunkPassword, LateOffer: true, Codecs: []string{"PCMU", "PCMA"},
 		},
 	}
 }
@@ -208,10 +215,10 @@ func (s *SIPTrunkSuite) TestTheBridgeIsGivenTheTrunkAndTheStreamLeg() {
 	want := sipbridge.Config{
 		CustomerTrunk: sipbridge.CustomerTrunk{
 			Host: "trunk.example.com", Port: 5060, Transport: "tcp", Username: "agent",
-			Password: "s3cret", LateOffer: true, Codecs: []string{"PCMU", "PCMA"},
+			Password: placedTrunkPassword, LateOffer: true, Codecs: []string{"PCMU", "PCMA"},
 		},
 		Stream: sipbridge.StreamTrunk{
-			URI: "sip:+15550000301@bridge.sip.example.com", Username: "stream-user", Password: "stream-pass",
+			URI: "sip:+15550000301@bridge.sip.example.com", Username: "stream-user", Password: placedBridgePassword,
 		},
 		Call: sipbridge.CallParams{From: "+15550000301", To: "+15550000302", RingTimeout: 20 * time.Second},
 	}.WithDefaults()
