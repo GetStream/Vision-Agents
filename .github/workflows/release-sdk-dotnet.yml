@@ -31,6 +31,9 @@ jobs:
   release:
     if: github.ref == 'refs/heads/accelerate'
     runs-on: ubuntu-latest
+    # The NuGet trusted publisher accepts only a token minted in this environment. A run enters
+    # it only from the branches its rules name, and only after a reviewer approves it.
+    environment: release
     permissions:
       contents: write   # push the release tag
       id-token: write   # NuGet trusted publishing (OIDC)
