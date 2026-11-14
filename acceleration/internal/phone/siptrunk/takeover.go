@@ -281,7 +281,9 @@ func (p *Provider) renewOne(ctx context.Context, id string, h *heldCall) {
 	// deleted its keys.
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.ended {
+	// A call being handed over may look lost once a failed take moved its score off the given-up
+	// 0, and claiming it back would undo the offer.
+	if h.ended || h.handingOver {
 		return
 	}
 	record, err := json.Marshal(callRecord{ID: id, Ref: *h.ref, State: h.call.State(), PostDialDelay: h.postDialDelay})
@@ -616,6 +618,9 @@ func (p *Provider) forget(id string, log *slog.Logger) {
 // once the call ended.
 func (p *Provider) handOver(ctx context.Context, id string, held *heldCall) {
 	log := p.logger.With("vendor", phone.SIPTrunkVendor, "vendor_call_id", id)
+	held.mu.Lock()
+	held.handingOver = true
+	held.mu.Unlock()
 	record, err := json.Marshal(callRecord{ID: id, Ref: *held.ref, State: held.call.State(), PostDialDelay: held.postDialDelay})
 	if err != nil {
 		log.Warn("could not record a call to hand it to another node", "error", err)
@@ -700,6 +705,17 @@ func (p *Provider) hangUpUntaken(held *heldCall, log *slog.Logger) {
 		return
 	}
 	log.Info("hung up a call through a customer's sip trunk because no node is left to take it")
+}
+
+// ownsInRedis says whether Redis names this node the call's owner, false when it cannot say.
+func (p *Provider) ownsInRedis(id string, log *slog.Logger) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), redisTimeout)
+	defer cancel()
+	owner, err := p.redis.Do(ctx, p.redis.B().Get().Key(p.keys.owner(id)).Build()).ToString()
+	if err != nil && !rueidis.IsRedisNil(err) {
+		log.Warn("could not read who holds a call through a customer's sip trunk", "error", err)
+	}
+	return err == nil && owner == p.node
 }
 
 func ms(d time.Duration) string { return strconv.FormatInt(d.Milliseconds(), 10) }

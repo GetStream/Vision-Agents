@@ -590,23 +590,94 @@ func (s *TakeoverSuite) TestACallWonBackWithItsReplyLostIsStillHungUp() {
 	s.True(s.gone(id))
 }
 
-func (s *TakeoverSuite) TestANodeStoppingPastItsLeaseLetsTheCallGoUnhungAndUnreported() {
-	a := s.node("a")
-	id := s.dial(a)
-	// a stops renewing, as a node cut off from Redis would, so its lease runs out by its clock.
-	a.stop()
-	h := s.heldOn(a, id)
+// stopPastLease stops n's renewals and makes its lease on id look run out by its own clock, as
+// a node cut off from Redis would see it, with owner as the call's owner in Redis ("" for none).
+func (s *TakeoverSuite) stopPastLease(n *testNode, id, owner string) {
+	n.stop()
+	h := s.heldOn(n, id)
 	h.mu.Lock()
 	h.lapse = time.Now().Add(-time.Second)
 	h.mu.Unlock()
+	if owner == "" {
+		s.del("owner:" + id)
+		return
+	}
+	s.Require().NoError(s.redis.Do(context.Background(), s.redis.B().Set().Key(s.prefix+":owner:"+id).Value(owner).Build()).Error())
+}
+
+func (s *TakeoverSuite) TestANodeStoppingPastItsLeaseLetsAnotherNodesCallGoAndSaysSo() {
+	s.holdFor = time.Minute
+	a := s.node("a")
+	id := s.dial(a)
+	s.stopPastLease(a, id, "z")
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	s.Error(a.provider.Close(ctx), "a call let go with no node known to relay it went unsaid")
+
+	s.True(a.dialer.call.wasReleased(), "another node holds the call")
+	s.False(a.dialer.call.wasHungUp(), "a sent a BYE on a call another node relays")
+	s.noReport(a.ended)
+	s.Equal("z", s.get("owner:"+id))
+}
+
+func (s *TakeoverSuite) TestANodeStoppingPastItsLeaseLetsAnUnownedCallGoUnhung() {
+	s.holdFor = time.Minute
+	a := s.node("a")
+	id := s.dial(a)
+	// No owner may be a node that took the call and ended it: a BYE and report here would be a
+	// second end.
+	s.stopPastLease(a, id, "")
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	s.Error(a.provider.Close(ctx))
+
+	s.True(a.dialer.call.wasReleased())
+	s.False(a.dialer.call.wasHungUp())
+	s.noReport(a.ended)
+}
+
+func (s *TakeoverSuite) TestANodeStoppingPastItsLeaseStillHangsUpACallRedisSaysIsItsOwn() {
+	s.holdFor = time.Minute
+	a := s.node("a")
+	id := s.dial(a)
+	s.stopPastLease(a, id, "a")
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	s.Require().NoError(a.provider.Close(ctx))
 
-	s.True(a.dialer.call.wasReleased(), "another node may hold the call")
-	s.False(a.dialer.call.wasHungUp(), "a sent a BYE on a call another node may relay")
-	s.noReport(a.ended)
+	s.True(a.dialer.call.wasHungUp(), "a let go a call no other node holds")
+	s.Equal(phone.CallStatus{Result: phone.CallCompleted, Word: "bye", SIPCode: 200}, s.reported(a.ended))
+	s.Never(func() bool { return len(a.ended) > 0 }, 200*time.Millisecond, 10*time.Millisecond, "the call was reported twice")
+	s.True(s.gone(id))
+}
+
+func (s *TakeoverSuite) TestRenewDoesNotClaimBackACallBeingHandedOverOnceItsScoreMoved() {
+	s.holdFor = time.Minute
+	a := s.node("a")
+	id := s.dial(a)
+	s.advertise("z")
+	ctx, cancel := context.WithCancel(context.Background())
+	closed := make(chan error, 1)
+	go func() { closed <- a.provider.Close(ctx) }()
+	defer func() {
+		cancel()
+		<-closed
+	}()
+	s.Eventually(func() bool {
+		lapse, inSet := s.lapse(id)
+		return inSet && lapse.UnixMilli() == 0 && !s.exists("owner:"+id)
+	}, time.Second, 10*time.Millisecond, "a never offered the call")
+	h := s.heldOn(a, id)
+	// As a take that failed on another node gives the call back.
+	later := float64(time.Now().Add(time.Second).UnixMilli())
+	s.Require().NoError(s.redis.Do(context.Background(), s.redis.B().Zadd().Key(s.prefix+":calls").ScoreMember().ScoreMember(later, id).Build()).Error())
+
+	a.provider.renewOne(context.Background(), id, h)
+
+	s.Empty(s.get("owner:"+id), "a claimed back a call it is handing over")
 }
 
 func (s *TakeoverSuite) TestASecondCloseDoesNotHangUpACallTheFirstIsHandingOver() {

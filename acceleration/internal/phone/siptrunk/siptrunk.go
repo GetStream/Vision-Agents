@@ -114,6 +114,9 @@ type heldCall struct {
 	// from then on.
 	mu    sync.Mutex
 	ended bool
+	// handingOver is set once Close offers the call to other nodes, so renewal no longer claims
+	// it back.
+	handingOver bool
 	// lapse is when this node's claim runs out by its own clock, as its last claim or renewal
 	// wrote it.
 	lapse time.Time
@@ -340,9 +343,11 @@ func (p *Provider) hold(id string, held *heldCall, changed <-chan struct{}, log 
 			held.ended = true
 			lapsed := held.movable && !time.Now().Before(held.lapse)
 			held.mu.Unlock()
-			if lapsed {
+			if lapsed && !p.ownsInRedis(id, log) {
 				// Past this node's lease another node may relay the call, and a BYE from here would
-				// end it under that node.
+				// end it under that node. With no owner one may have ended it already.
+				log.Warn("letting a call through a customer's sip trunk go past this node's claim; no node may relay it")
+				p.notTaken.Store(true)
 				bridged.Release()
 				stopping = nil
 				continue
@@ -441,7 +446,11 @@ func (p *Provider) Close(ctx context.Context) error {
 		return stack.Wrap(fmt.Errorf("phone: calls through customers' sip trunks still up at shutdown: %w", err))
 	}
 	if p.notTaken.Load() {
-		return stack.Wrap(fmt.Errorf("phone: no other node took a call through a customer's sip trunk before shutdown: %w", ctx.Err()))
+		const notTaken = "phone: no other node took a call through a customer's sip trunk before shutdown"
+		if ctx.Err() != nil {
+			return stack.Wrap(fmt.Errorf(notTaken+": %w", ctx.Err()))
+		}
+		return stack.Wrap(errors.New(notTaken))
 	}
 	return nil
 }
