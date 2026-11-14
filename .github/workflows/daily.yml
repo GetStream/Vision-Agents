@@ -15,7 +15,7 @@ jobs:
       marker: 'integration'
       pytest-params: "--json-report --json-report-file=.report.json"
       notify-on-failure: true
-      # The provider keys and the Slack webhook live in this environment. Its branch rules
-      # refuse Run workflow on any branch other than main and accelerate.
+      # The provider keys and the Slack webhook live in this environment. Its rules let only
+      # main, accelerate and v* tags run this workflow.
       environment: integration
     secrets: inherit
