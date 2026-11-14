@@ -377,6 +377,8 @@ func (s *TakeoverSuite) TestClosingTwiceHandsTheCallOverOnce() {
 func (s *TakeoverSuite) TestCloseWithNoOtherNodeLeavesTheCallForLater() {
 	a := s.node("a")
 	id := s.dial(a)
+	// A node that takes calls but never gets to this one before a stops.
+	s.advertise("z")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
@@ -388,6 +390,85 @@ func (s *TakeoverSuite) TestCloseWithNoOtherNodeLeavesTheCallForLater() {
 
 	b := s.node("b")
 	s.Eventually(func() bool { return b.takeover.resumes() == 1 }, 2*time.Second, 10*time.Millisecond)
+}
+
+// advertise marks node as one that takes calls, for a minute.
+func (s *TakeoverSuite) advertise(node string) {
+	lapse := float64(time.Now().Add(time.Minute).UnixMilli())
+	s.Require().NoError(s.redis.Do(context.Background(), s.redis.B().Zadd().Key(s.prefix+":nodes").ScoreMember().ScoreMember(lapse, node).Build()).Error())
+}
+
+// advertised is until when node says it takes calls, and false when it does not say so.
+func (s *TakeoverSuite) advertised(node string) (time.Time, bool) {
+	score, err := s.redis.Do(context.Background(), s.redis.B().Zscore().Key(s.prefix+":nodes").Member(node).Build()).AsFloat64()
+	if rueidis.IsRedisNil(err) {
+		return time.Time{}, false
+	}
+	s.Require().NoError(err)
+	return time.UnixMilli(int64(score)), true
+}
+
+func (s *TakeoverSuite) TestCloseWithNoOtherNodeHangsTheCallUp() {
+	a := s.node("a")
+	id := s.dial(a)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	s.Require().NoError(a.provider.Close(ctx))
+
+	s.True(a.dialer.call.wasHungUp(), "a call no node can take is left with no relay")
+	s.Equal(phone.CallStatus{Result: phone.CallCompleted, Word: "bye", SIPCode: 200}, s.reported(a.ended))
+	s.Never(func() bool { return len(a.ended) > 0 }, 200*time.Millisecond, 10*time.Millisecond, "the call was reported twice")
+	s.True(s.gone(id))
+}
+
+func (s *TakeoverSuite) TestANodeSaysItTakesCallsUntilItCloses() {
+	a := s.node("a")
+
+	until, ok := s.advertised("a")
+	s.Require().True(ok, "a started node does not say it takes calls")
+	s.True(until.After(time.Now()))
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	s.Require().NoError(a.provider.Close(ctx))
+	_, ok = s.advertised("a")
+	s.False(ok, "a closed node still says it takes calls")
+}
+
+func (s *TakeoverSuite) TestATakeThatFailsBeforeResumingGivesTheCallBackForLater() {
+	a := s.node("a")
+	id := s.dial(a)
+	b := s.node("b")
+	fails := make([]error, 100)
+	for i := range fails {
+		fails[i] = errors.New("store: sip trunk: connection refused")
+	}
+	b.takeover.lookupErrs = fails
+
+	a.stop()
+
+	// Later than now, so a call that lapsed since sorts before it in the next scan.
+	s.Eventually(func() bool {
+		lapse, inSet := s.lapse(id)
+		return !s.exists("owner:"+id) && inSet && lapse.After(time.Now())
+	}, 3*time.Second, 5*time.Millisecond, "a failed take kept its claim, or left the call looking lapsed")
+	s.Zero(b.takeover.resumes())
+}
+
+func (s *TakeoverSuite) TestATakenOverCallReportsItsPostDialDelay() {
+	s.holdFor = time.Minute
+	a, b := s.node("a"), s.node("b")
+	a.dialer.respondsAfter = 1500 * time.Millisecond
+	id := s.dial(a)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s.Require().NoError(a.provider.Close(ctx))
+	s.Eventually(func() bool { return live(b.provider, id) }, time.Second, 10*time.Millisecond)
+	b.takeover.call.bye()
+
+	s.Equal(1500*time.Millisecond, s.reported(b.takeover.ended).PostDialDelay)
 }
 
 func (s *TakeoverSuite) TestALapsedClaimIsTakenByAScan() {
@@ -730,6 +811,7 @@ func (s *TakeoverSuite) TestATakenOverCallWhoseRecordCannotBeWrittenStaysUnderIt
 	s.Require().NoError(a.provider.Close(ctx))
 	s.Eventually(func() bool { return live(b.provider, id) }, time.Second, 10*time.Millisecond)
 
+	s.advertise("z")
 	closeB, cancelB := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancelB()
 	_ = b.provider.Close(closeB)
@@ -824,6 +906,7 @@ func (s *TakeoverSuite) TestANodeCutOffPastItsLeaseDoesNotBringBackACallThatEnde
 func (s *TakeoverSuite) TestRenewDoesNotClaimBackACallItGaveUp() {
 	a := s.node("a")
 	id := s.dial(a)
+	s.advertise("z")
 	ctx, cancel := context.WithCancel(context.Background())
 	closed := make(chan error, 1)
 	go func() { closed <- a.provider.Close(ctx) }()

@@ -81,11 +81,17 @@ type Provider struct {
 
 	// notTaken is set when Close let a recorded call go that no other node had taken.
 	notTaken atomic.Bool
+	// hangUp is closed when the node stops with no other node to take its calls, so the calls
+	// it would have offered are hung up instead.
+	hangUp chan struct{}
+	// advertising orders this node's word that it takes calls against Close withdrawing it.
+	advertising sync.Mutex
 
 	mu        sync.Mutex
 	calls     map[string]*heldCall
 	stopLoops context.CancelFunc
-	// closing is Close's context once it began, so a call adopted after that is handed over too.
+	// closing is Close's context once it began handing calls over, so a call adopted after that
+	// is handed over too.
 	closing context.Context
 }
 
@@ -97,6 +103,9 @@ type heldCall struct {
 	// movable is whether the call is recorded and claimed, so Close offers it to another node
 	// rather than hanging it up.
 	movable bool
+	// postDialDelay is how long the dialled side took to first answer, as the dialling node
+	// measured it.
+	postDialDelay time.Duration
 
 	// mu orders the writes of the call's record against each other and against the call
 	// ending: ended is set once the call is over or let go, and no record is written for it
@@ -145,7 +154,7 @@ func newProvider(options Options, dial dialer, resume resumer) *Provider {
 	return &Provider{
 		dial: dial, resume: resume, logger: options.Logger, ctx: ctx, stop: stop, calls: map[string]*heldCall{},
 		redis: options.Redis, node: options.Node, keys: keys(options.prefix),
-		holdFor: options.holdFor, renewEvery: options.renewEvery,
+		holdFor: options.holdFor, renewEvery: options.renewEvery, hangUp: make(chan struct{}),
 	}
 }
 
@@ -233,7 +242,7 @@ func (p *Provider) run(id string, config sipbridge.Config, connected func(sipbri
 		// Its own goroutine, so a slow write of where the audio goes cannot hold up a hang-up.
 		p.running.Go(func() { connected(bridged.Media()) })
 	}
-	if held := p.adopt(id, bridged, ref, false, log); held != nil {
+	if held := p.adopt(id, bridged, ref, time.Duration(postDialDelay.Load()), false, log); held != nil {
 		p.hold(id, held, changed, log, func() { report(nil) })
 	}
 }
@@ -241,8 +250,8 @@ func (p *Provider) run(id string, config sipbridge.Config, connected func(sipbri
 // adopt records and claims a connected call, and adds it to the calls this node holds. It
 // lets the call go and returns nil when another node holds it. takenOver is a call this node
 // already won the claim on. A call adopted while Close runs is handed over at once.
-func (p *Provider) adopt(id string, bridged call, ref *phone.TrunkCallRef, takenOver bool, log *slog.Logger) *heldCall {
-	held := &heldCall{call: bridged, ref: ref}
+func (p *Provider) adopt(id string, bridged call, ref *phone.TrunkCallRef, postDialDelay time.Duration, takenOver bool, log *slog.Logger) *heldCall {
+	held := &heldCall{call: bridged, ref: ref, postDialDelay: postDialDelay}
 	if p.redis != nil && ref != nil {
 		claimed, err := p.claim(id, held)
 		switch {
@@ -285,10 +294,10 @@ func (p *Provider) hold(id string, held *heldCall, changed <-chan struct{}, log 
 		p.mu.Unlock()
 	}()
 
-	// A movable call is offered to another node by Close instead.
-	var stopping <-chan struct{}
-	if !held.movable {
-		stopping = p.ctx.Done()
+	// A movable call is offered to another node by Close instead, while one takes calls.
+	stopping := p.ctx.Done()
+	if held.movable {
+		stopping = p.hangUp
 	}
 	for {
 		select {
@@ -316,6 +325,9 @@ func (p *Provider) hold(id string, held *heldCall, changed <-chan struct{}, log 
 			}
 			return
 		case <-stopping:
+			held.mu.Lock()
+			held.ended = true
+			held.mu.Unlock()
 			ctx, cancel := context.WithTimeout(context.Background(), hangupTimeout)
 			err := bridged.Hangup(ctx)
 			cancel()
@@ -325,6 +337,9 @@ func (p *Provider) hold(id string, held *heldCall, changed <-chan struct{}, log 
 				log.Info("hung up a call through a customer's sip trunk because the node is stopping")
 			}
 			report()
+			if held.movable {
+				p.forget(id, log)
+			}
 			return
 		}
 	}
@@ -368,17 +383,31 @@ func statusOf(err error) phone.CallStatus {
 
 // Close stops placing and taking calls, offers each recorded call to another node and lets
 // it go once one took it, hangs up the rest, and waits for them, up to ctx. A recorded call
-// no node took by then is let go too, and its record stays for the next node to scan.
+// no node took by then is let go too, and its record stays for the next node to scan. With no
+// other node taking calls, the recorded calls are hung up too.
 func (p *Provider) Close(ctx context.Context) error {
 	p.mu.Lock()
 	p.stop()
-	p.closing = ctx
+	p.mu.Unlock()
+	// After stopping, so two nodes stopping at once never count on each other.
+	handing := p.redis != nil && p.withdraw(ctx)
+	p.mu.Lock()
 	stopLoops := p.stopLoops
-	// Under the lock adopt registers under, so each call is handed over once: here, or by
-	// adopt for a call that connects or is taken over from now on.
-	for id, held := range p.calls {
-		if held.movable {
-			go p.handOver(ctx, id, held)
+	select {
+	case <-p.hangUp:
+		// An earlier Close found no node to take the calls, and they are hanging up.
+	default:
+		if !handing {
+			close(p.hangUp)
+			break
+		}
+		p.closing = ctx
+		// Under the lock adopt registers under, so each call is handed over once: here, or by
+		// adopt for a call that connects or is taken over from now on.
+		for id, held := range p.calls {
+			if held.movable {
+				go p.handOver(ctx, id, held)
+			}
 		}
 	}
 	p.mu.Unlock()
