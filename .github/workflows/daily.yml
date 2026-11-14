@@ -18,6 +18,7 @@ jobs:
       # The provider keys and the Slack webhook live in this environment.
       environment: integration
       # A schedule only fires on the default branch, so it tests accelerate, where the
-      # work happens; Run workflow on any other branch tests that branch.
+      # work happens. Only main and accelerate can run this workflow: the environment's
+      # branch rules refuse Run workflow on any other branch.
       ref: ${{ github.ref_name == github.event.repository.default_branch && 'accelerate' || '' }}
     secrets: inherit
