@@ -452,9 +452,6 @@ func (p *Provider) rewrite(id string, held *heldCall, log *slog.Logger) {
 	// So a renewal that read the call's state later is not overwritten by this older one.
 	held.mu.Lock()
 	defer held.mu.Unlock()
-	if held.ended {
-		return
-	}
 	record, err := json.Marshal(callRecord{ID: id, Ref: *held.ref, State: held.call.State()})
 	if err != nil {
 		log.Warn("could not record a call's changed dialogs", "error", err)
