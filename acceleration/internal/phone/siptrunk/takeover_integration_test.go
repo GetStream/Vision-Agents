@@ -174,10 +174,11 @@ func (s *TakeoverSuite) node(name string) *testNode {
 		Logger: slog.New(slog.DiscardHandler), Redis: s.redis, Node: name,
 		holdFor: s.holdFor, renewEvery: s.renewEvery, prefix: s.prefix,
 	}, n.dialer.dial, n.takeover.resume)
-	n.provider.SetResumer(n.takeover)
-	ctx, stop := context.WithCancel(context.Background())
-	n.stop = stop
-	n.provider.Start(ctx)
+	n.provider.Start(n.takeover)
+	// Stopping the loops, renewal included, is how a node that dies looks to the others.
+	n.provider.mu.Lock()
+	n.stop = n.provider.stopLoops
+	n.provider.mu.Unlock()
 	s.nodes = append(s.nodes, n)
 	return n
 }
@@ -434,6 +435,76 @@ func (s *TakeoverSuite) TestANodeSaysItTakesCallsUntilItCloses() {
 	s.Require().NoError(a.provider.Close(ctx))
 	_, ok = s.advertised("a")
 	s.False(ok, "a closed node still says it takes calls")
+}
+
+// Defect: a draining node keeps scanning, and takes a call only to hand it on again at Close.
+func (s *TakeoverSuite) TestANodeThatStoppedTakingTakesNoLapsedCall() {
+	a := s.node("a")
+	a.provider.StopTaking()
+
+	s.seed("lapsed")
+
+	s.Never(func() bool { return a.takeover.resumes() > 0 }, 5*testRenewEvery, 10*time.Millisecond,
+		"a node that stopped taking calls took one over")
+}
+
+// Defect: stopping taking stops renewal too, so another node takes a call this one still
+// relays, and two nodes relay it.
+func (s *TakeoverSuite) TestANodeThatStoppedTakingKeepsRenewingItsCalls() {
+	a := s.node("a")
+	id := s.dial(a)
+
+	a.provider.StopTaking()
+
+	s.Never(func() bool {
+		lapse, inSet := s.lapse(id)
+		return !inSet || !lapse.After(time.Now())
+	}, 2*testHoldFor, 20*time.Millisecond, "the claim on a call the node still relays lapsed")
+	s.Equal("a", s.get("owner:"+id))
+}
+
+// Defect: a stopping node hands its calls to a draining one, which takes none.
+func (s *TakeoverSuite) TestANodeThatStoppedTakingNoLongerSaysItTakesCalls() {
+	a := s.node("a")
+
+	a.provider.StopTaking()
+	a.provider.StopTaking()
+
+	s.Never(func() bool {
+		err := s.redis.Do(context.Background(), s.redis.B().Zscore().Key(s.prefix+":nodes").Member("a").Build()).Error()
+		return !rueidis.IsRedisNil(err)
+	}, 3*testRenewEvery, 10*time.Millisecond, "a node that stopped taking calls still says it takes them")
+}
+
+// Defect: stopping taking leaves Close thinking it already decided the calls' way out.
+func (s *TakeoverSuite) TestCloseAfterStopTakingHandsTheCallToAnotherNode() {
+	s.holdFor = time.Minute
+	a, b := s.node("a"), s.node("b")
+	id := s.dial(a)
+	a.provider.StopTaking()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s.Require().NoError(a.provider.Close(ctx))
+
+	s.Eventually(func() bool { return live(b.provider, id) }, time.Second, 10*time.Millisecond)
+	s.False(a.dialer.call.wasHungUp())
+	s.noReport(a.ended)
+	s.Equal("b", s.get("owner:"+id))
+}
+
+func (s *TakeoverSuite) TestCloseAfterStopTakingWithNoOtherNodeHangsTheCallUp() {
+	a := s.node("a")
+	id := s.dial(a)
+	a.provider.StopTaking()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	s.Require().NoError(a.provider.Close(ctx))
+
+	s.True(a.dialer.call.wasHungUp(), "a call no node can take is left with no relay")
+	s.Equal(phone.CallStatus{Result: phone.CallCompleted, Word: "bye", SIPCode: 200}, s.reported(a.ended))
+	s.True(s.gone(id))
 }
 
 func (s *TakeoverSuite) TestATakeThatFailsBeforeResumingGivesTheCallBackForLater() {

@@ -1146,7 +1146,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if policies != nil {
 		dlcGate.Charging(policies).Limiting(settings.Limits.Mode)
 	}
-	telephony, err := buildPhone(ctx, settings, vendorConfig, pgStore, liveClient, phoneRecorder, streamClients, dlcGate, secrets, logger)
+	telephony, stopTakingTrunkCalls, err := buildPhone(settings, vendorConfig, pgStore, liveClient, phoneRecorder, streamClients, dlcGate, secrets, logger)
 	if err != nil {
 		return err
 	}
@@ -1713,6 +1713,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			held:            func() int { return running(sessions, scheduler, bridge, deliveries, server, dialer, drawings) },
 			telephony:       telephony,
 			handOverMetrics: handOverMetrics,
+			stopTaking:      stopTakingTrunkCalls,
 			handOverProxy:   handOverSandboxProxy,
 			drain:           settings.Shutdown.Drain,
 			logger:          logger,
@@ -1750,6 +1751,9 @@ type stopping struct {
 	// over on the same address is the one scraped. Without a drain the caller stops it at
 	// exit.
 	handOverMetrics func()
+	// stopTaking stops this node taking calls through customers' own SIP trunks over from
+	// other nodes when a drain starts, while it keeps relaying its own.
+	stopTaking func()
 	// handOverProxy stops the sandbox egress proxy taking connections when a drain starts,
 	// so the router taking over on the same address serves the sandboxes; the tunnels already
 	// open stay until the process ends. Without a drain the caller stops it at exit. It does
@@ -1793,6 +1797,9 @@ func stopServing(s stopping) error {
 
 	if s.handOverMetrics != nil {
 		s.handOverMetrics()
+	}
+	if s.stopTaking != nil {
+		s.stopTaking()
 	}
 	if s.handOverProxy != nil {
 		s.handOverProxy()
@@ -2453,9 +2460,8 @@ func newActivePrices(ctx context.Context, pgStore *store.Store, capabilities rou
 // buildPhone wires the telephony service. Stream credentials are only needed to attach a
 // number, so a deployment without them still lists vendors and searches for numbers, and
 // the operations that need them say so. The calls through customers' own SIP trunks are
-// taken over from other nodes until the provider closes.
+// taken over from other nodes until stopTaking, nil without them, or the provider closes.
 func buildPhone(
-	ctx context.Context,
 	settings config.Config,
 	vendorConfig phone.Config,
 	pgStore *store.Store,
@@ -2465,7 +2471,7 @@ func buildPhone(
 	gate *dlc.Gate,
 	secrets *auth.Sealer,
 	logger *slog.Logger,
-) (*phone.Service, error) {
+) (service *phone.Service, stopTaking func(), err error) {
 	if settings.Stream.APIKey == "" || settings.Stream.APISecret == "" {
 		logger.Warn("no stream credentials, numbers cannot be attached to a call in the deployment's app")
 	}
@@ -2487,7 +2493,7 @@ func buildPhone(
 		logger.Info("no key encryption key, calls through customers' own sip trunks are off")
 	}
 
-	service, err := phone.NewService(phone.ServiceOptions{
+	service, err = phone.NewService(phone.ServiceOptions{
 		Registry:  vendors.Registry(vendorConfig),
 		Redis:     shared,
 		Store:     pgStore,
@@ -2500,15 +2506,13 @@ func buildPhone(
 		SIPTrunks: trunks,
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if trunkCalls != nil {
-		trunkCalls.SetResumer(service)
-		// Not ctx: it ends at the signal, but this node keeps relaying its calls through a
-		// drain and must keep renewing their claims until closePhone.
-		trunkCalls.Start(context.WithoutCancel(ctx))
+		trunkCalls.Start(service)
+		stopTaking = trunkCalls.StopTaking
 	}
-	return service, nil
+	return service, stopTaking, nil
 }
 
 // callHookCheckTimeout bounds the one read of the deployment's app hooks at boot.

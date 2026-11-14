@@ -90,6 +90,8 @@ type Provider struct {
 	mu        sync.Mutex
 	calls     map[string]*heldCall
 	stopLoops context.CancelFunc
+	// stopTaking ends the loops that take calls over, not renewal.
+	stopTaking context.CancelFunc
 	// closing is Close's context once it began handing calls over, so a call adopted after that
 	// is handed over too.
 	closing context.Context

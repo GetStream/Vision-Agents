@@ -196,29 +196,52 @@ redis.call('ZREM', KEYS[3], ARGV[2])
 return 1
 `)
 
-// SetResumer gives the provider what opens a call's credentials to take it over. Call it
-// before Start.
-func (p *Provider) SetResumer(r Resumer) { p.resumer = r }
-
-// Start renews this node's claims and, with a Resumer, takes over the calls other nodes gave
-// up or stopped renewing, until ctx ends or Close. Without Redis it does nothing.
-func (p *Provider) Start(ctx context.Context) {
+// Start renews this node's claims until Close and, with r to open a call's credentials,
+// takes over the calls other nodes gave up or stopped renewing until StopTaking. It takes no
+// context: a signal starts a drain, through which this node still relays its calls and must
+// keep its claims on them. Without Redis it does nothing.
+func (p *Provider) Start(r Resumer) {
 	if p.redis == nil {
 		return
 	}
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(context.Background())
 	p.mu.Lock()
 	p.stopLoops = cancel
 	p.mu.Unlock()
 	p.loops.Go(func() { p.renewLoop(ctx) })
-	if p.resumer == nil {
+	if r == nil {
 		return
 	}
+	p.resumer = r
+	taking, stopTaking := context.WithCancel(ctx)
+	p.mu.Lock()
+	p.stopTaking = stopTaking
+	p.mu.Unlock()
 	// Before any call can be offered: a node stopping now must see this one to hand its calls on.
-	p.advertise(ctx)
+	p.advertise(taking)
 	offered := make(chan struct{}, 1)
-	p.loops.Go(func() { p.listen(ctx, offered) })
-	p.loops.Go(func() { p.scanLoop(ctx, offered) })
+	p.loops.Go(func() { p.listen(taking, offered) })
+	p.loops.Go(func() { p.scanLoop(taking, offered) })
+}
+
+// StopTaking stops this node taking calls over and saying it does, while it keeps renewing
+// the claims on its own calls: a draining node would only hand them on again at Close.
+func (p *Provider) StopTaking() {
+	p.mu.Lock()
+	stop := p.stopTaking
+	p.mu.Unlock()
+	if stop == nil {
+		return
+	}
+	p.advertising.Lock()
+	defer p.advertising.Unlock()
+	// Under the lock advertise checks under, so no word lands after it is taken back here.
+	stop()
+	ctx, cancel := context.WithTimeout(context.Background(), redisTimeout)
+	defer cancel()
+	if err := p.redis.Do(ctx, p.redis.B().Zrem().Key(p.keys.nodes()).Member(p.node).Build()).Error(); err != nil {
+		p.logger.Warn("could not tell other nodes this one stopped taking calls through customers' sip trunks over", "error", err)
+	}
 }
 
 func (p *Provider) renewLoop(ctx context.Context) {
@@ -337,8 +360,9 @@ func (p *Provider) scanLoop(ctx context.Context, offered <-chan struct{}) {
 func (p *Provider) advertise(ctx context.Context) {
 	p.advertising.Lock()
 	defer p.advertising.Unlock()
-	// Under the lock withdraw takes after the node began stopping, so no word lands after it.
-	if p.ctx.Err() != nil {
+	// Under the lock withdraw and StopTaking take after the node began stopping, so no word
+	// lands after theirs.
+	if p.ctx.Err() != nil || ctx.Err() != nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, redisTimeout)
