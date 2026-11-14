@@ -588,14 +588,8 @@ func (s *RouterStartSuite) TestARunningRouterSaysItTakesTrunkCallsOverUntilItSto
 	client, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(client.Close)
-	// The nodes that say they take calls now: another router on this Redis may be one.
-	live := func() []string {
-		nodes, err := client.Do(s.ctx, client.B().Zrangebyscore().Key("{siptrunk}:nodes").
-			Min("("+strconv.FormatInt(time.Now().UnixMilli(), 10)).Max("+inf").Build()).AsStrSlice()
-		s.Require().NoError(err)
-		return nodes
-	}
-	before := live()
+	// Another router on this Redis may be one already.
+	before := s.takingTrunkCalls(client)
 	settings := s.settings
 	settings.Addr = freeAddress(s.T())
 	settings.Redis.Addr = address
@@ -605,16 +599,33 @@ func (s *RouterStartSuite) TestARunningRouterSaysItTakesTrunkCallsOverUntilItSto
 
 	var node string
 	s.Require().Eventually(func() bool {
-		for _, n := range live() {
-			if !slices.Contains(before, n) {
-				node = n
-				return true
-			}
-		}
-		return false
+		node = joined(before, s.takingTrunkCalls(client))
+		return node != ""
 	}, 10*time.Second, 20*time.Millisecond, "the running router does not say it takes trunk calls over")
 	s.Require().NoError(stop())
-	s.NotContains(live(), node, "the stopped router still says it takes trunk calls over")
+	s.NotContains(s.takingTrunkCalls(client), node, "the stopped router still says it takes trunk calls over")
+}
+
+// takingTrunkCalls is every node that says now that it takes trunk calls over.
+func (s *RouterStartSuite) takingTrunkCalls(client rueidis.Client) []string {
+	nodes, err := trunkCallTakers(s.ctx, client)
+	s.Require().NoError(err)
+	return nodes
+}
+
+func trunkCallTakers(ctx context.Context, client rueidis.Client) ([]string, error) {
+	return client.Do(ctx, client.B().Zrangebyscore().Key("{siptrunk}:nodes").
+		Min("("+strconv.FormatInt(time.Now().UnixMilli(), 10)).Max("+inf").Build()).AsStrSlice()
+}
+
+// joined is a node in now that is not in before, or "" when there is none.
+func joined(before, now []string) string {
+	for _, n := range now {
+		if !slices.Contains(before, n) {
+			return n
+		}
+	}
+	return ""
 }
 
 // goroutines is every goroutine's stack, as the pprof endpoint prints it.

@@ -225,7 +225,8 @@ func (p *Provider) Start(r Resumer) {
 }
 
 // StopTaking stops this node taking calls over and saying it does, while it keeps renewing
-// the claims on its own calls: a draining node would only hand them on again at Close.
+// the claims on its own calls: a draining node would only hand them on again at Close. Before
+// Start it does nothing.
 func (p *Provider) StopTaking() {
 	p.mu.Lock()
 	stop := p.stopTaking
