@@ -15,7 +15,10 @@ jobs:
       marker: 'integration'
       pytest-params: "--json-report --json-report-file=.report.json"
       notify-on-failure: true
+      # The provider keys and the Slack webhook live in this environment.
+      environment: integration
       # A schedule only fires on the default branch, so it tests accelerate, where the
-      # work happens; Run workflow on any other branch tests that branch.
+      # work happens. The environment's rules let only main, accelerate and v* tags run this
+      # workflow: Run workflow from any other branch is refused.
       ref: ${{ github.ref_name == github.event.repository.default_branch && 'accelerate' || '' }}
     secrets: inherit
