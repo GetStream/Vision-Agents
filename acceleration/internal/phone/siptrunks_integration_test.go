@@ -282,7 +282,7 @@ func (s *SIPTrunkSuite) TestACallOnItsOwnStreamTrunkCannotBeResumed() {
 	trunk := s.create("acme", "s3cret")
 
 	_, err := s.service.ResumeTrunkCall(s.ctx, TrunkCallRef{
-		CustomerID: "acme", SIPTrunkID: trunk.ID, BridgeURI: "sip:+15125550100@per-call.example.test",
+		CustomerID: "acme", SIPTrunkID: trunk.ID,
 	})
 
 	s.ErrorIs(err, store.ErrNoStreamTrunk)

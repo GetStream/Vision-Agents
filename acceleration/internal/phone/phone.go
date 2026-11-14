@@ -450,7 +450,6 @@ type TrunkCallRef struct {
 	SIPTrunkID string
 	// StreamTrunkID is the shared line's Stream trunk. Only a call on a shared line moves.
 	StreamTrunkID string
-	BridgeURI     string
 	From          string
 	CallID        string
 	// Token is the call's outcome token, which Ended reports with.

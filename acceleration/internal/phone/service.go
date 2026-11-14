@@ -1189,7 +1189,7 @@ func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Pl
 		if shared {
 			outbound.Resume = &TrunkCallRef{
 				CustomerID: customerID, SIPTrunkID: held.SIPTrunkID, StreamTrunkID: line.TrunkID,
-				BridgeURI: outbound.Bridge.URI, From: request.From, CallID: callID, Token: token,
+				From: request.From, CallID: callID, Token: token,
 			}
 		}
 	}

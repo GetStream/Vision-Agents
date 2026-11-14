@@ -193,7 +193,7 @@ func callState(tag string) sipbridge.CallState {
 
 func ref() *phone.TrunkCallRef {
 	return &phone.TrunkCallRef{
-		CustomerID: "acme", SIPTrunkID: "trunk-1", BridgeURI: "sip:+15550000301@bridge.sip.example.com",
+		CustomerID: "acme", SIPTrunkID: "trunk-1",
 		From: "+15550000301", CallID: "call-1", Token: "outcome-token",
 	}
 }

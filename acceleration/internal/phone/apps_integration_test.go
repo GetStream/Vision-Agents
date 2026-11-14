@@ -1186,7 +1186,7 @@ func (s *AppsSuite) TestACallThroughACustomersTrunkOnASharedLineCanBeResumed() {
 	s.NotEmpty(number.StreamTrunkID)
 	s.Equal(TrunkCallRef{
 		CustomerID: s.customer, SIPTrunkID: number.SIPTrunkID, StreamTrunkID: number.StreamTrunkID,
-		BridgeURI: call.vendor.dialed.Bridge.URI, From: call.vendor.dialed.From, CallID: call.placed.CallID,
+		From: call.vendor.dialed.From, CallID: call.placed.CallID,
 		Token: resume.Token,
 	}, *resume)
 	byToken, err := call.service.Outcomes().ByToken(s.ctx, resume.Token)
