@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
@@ -138,4 +141,26 @@ func TestInfoStatusIs200WithoutAnError(t *testing.T) {
 
 	require.Equal(t, 200, code)
 	require.Equal(t, "OK", reason)
+}
+
+func TestDialTellsWhenAReinviteFromTheCustomerIsPassedOn(t *testing.T) {
+	customer := startPeer(t, peerOptions{sdp: customerPCMU})
+	stream := startPeer(t, peerOptions{sdp: streamAnswerSDP})
+	var changes atomic.Int32
+	cfg := Config{
+		CustomerTrunk: CustomerTrunk{Host: "127.0.0.1", Port: customer.port, Transport: "tcp", Username: "alice", Password: bridgePassword},
+		Stream:        StreamTrunk{URI: fmt.Sprintf("sip:trunk-1@127.0.0.1:%d", stream.port), Username: "bridge", Password: bridgePassword, Transport: "tcp"},
+		Call:          CallParams{From: "+15550002222", To: "+15550001111", RingTimeout: 5 * time.Second},
+		Logger:        slog.New(slog.DiscardHandler),
+		OnChange:      func() { changes.Add(1) },
+		guard:         guard{allow: func(ip netip.Addr) bool { return ip.IsLoopback() }},
+	}
+	call, err := Dial(t.Context(), cfg)
+	require.NoError(t, err)
+	t.Cleanup(call.Release)
+	callID := call.State().Customer.CallID
+
+	customer.sendReinvite(callID, customerPCMA)
+
+	require.Eventually(t, func() bool { return changes.Load() > 0 }, 2*time.Second, 10*time.Millisecond)
 }

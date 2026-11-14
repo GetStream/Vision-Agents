@@ -18,6 +18,12 @@ type peerOptions struct {
 	reinviteStatus int
 	// challengeOnce answers the first INVITE with a 401.
 	challengeOnce bool
+	// sdp is the body of the 200 to an INVITE; empty answers with a made-up one.
+	sdp []byte
+	// natReceived and natRport are added to the Via of the answer to an OPTIONS, as a server
+	// does that saw the request come from behind NAT.
+	natReceived string
+	natRport    int
 }
 
 // peer is the far end of a dialog on loopback: a trunk or Stream after the bridge that held
@@ -47,6 +53,9 @@ func startPeer(t *testing.T, opts peerOptions) *peer {
 	t.Cleanup(func() { _ = listener.Close() })
 	p := &peer{t: t, port: listener.Addr().(*net.TCPAddr).Port, client: client}
 	p.sdp = []byte("v=0 peer " + strconv.Itoa(p.port) + "\r\n")
+	if opts.sdp != nil {
+		p.sdp = opts.sdp
+	}
 	if opts.reinviteStatus == 0 {
 		opts.reinviteStatus = sip.StatusOK
 	}
@@ -76,7 +85,15 @@ func startPeer(t *testing.T, opts peerOptions) *peer {
 		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil))
 	}
 	srv.OnBye(ok)
-	srv.OnOptions(ok)
+	srv.OnOptions(func(req *sip.Request, tx sip.ServerTransaction) {
+		p.record(req)
+		res := sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil)
+		if opts.natReceived != "" {
+			res.Via().Params.Add("received", opts.natReceived)
+			res.Via().Params.Add("rport", strconv.Itoa(opts.natRport))
+		}
+		_ = tx.Respond(res)
+	})
 	go func() { _ = srv.ServeTCP(listener) }()
 	return p
 }
@@ -141,4 +158,31 @@ func (p *peer) sendBye(callID string) {
 	res, err := p.client.Do(ctx, bye)
 	require.NoError(p.t, err)
 	require.Equal(p.t, sip.StatusOK, res.StatusCode)
+}
+
+// sendReinvite sends a re-INVITE with sdp in the dialog callID, back over the connection its
+// last INVITE came in on, and returns the body of the answer.
+func (p *peer) sendReinvite(callID string, sdp []byte) []byte {
+	p.t.Helper()
+	invites := p.requests(sip.INVITE, callID)
+	require.NotEmpty(p.t, invites)
+	last := invites[len(invites)-1]
+	inv := sip.NewRequest(sip.INVITE, *last.Contact().Address.Clone())
+	inv.AppendHeader(&sip.FromHeader{Address: last.To().Address, Params: last.To().Params.Clone()})
+	inv.AppendHeader(&sip.ToHeader{Address: last.From().Address, Params: last.From().Params.Clone()})
+	inv.AppendHeader(sip.HeaderClone(last.CallID()))
+	inv.AppendHeader(&sip.CSeqHeader{SeqNo: 800, MethodName: sip.INVITE})
+	contact := &sip.ContactHeader{Address: sip.Uri{User: "peer", Host: "127.0.0.1", Port: p.port, UriParams: sip.NewParams()}}
+	contact.Address.UriParams.Add("transport", "tcp")
+	inv.AppendHeader(contact)
+	inv.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
+	inv.SetBody(sdp)
+	inv.SetTransport("TCP")
+	inv.SetDestination(last.Source())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	res, err := p.client.Do(ctx, inv)
+	require.NoError(p.t, err)
+	require.Equal(p.t, sip.StatusOK, res.StatusCode)
+	return res.Body()
 }

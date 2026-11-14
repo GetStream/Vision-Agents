@@ -1,6 +1,7 @@
 package sipbridge
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -8,6 +9,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -220,4 +222,71 @@ func (s *ResumeSuite) TestStateOfAResumedCallCarriesItsDialog() {
 	s.Equal("sip:stream-sip@10.9.9.9:5060;alias=10.0.0.7~5060~1", state.Stream.RemoteTarget)
 	s.Equal(s.state.Stream.RouteSet, state.Stream.RouteSet)
 	s.GreaterOrEqual(state.Stream.LocalCSeq, uint32(23180))
+}
+
+func (s *ResumeSuite) TestResumeKeepsTheRouteSetInSendingOrder() {
+	routes := []string{
+		fmt.Sprintf("<sip:127.0.0.1:%d;transport=tcp;lr;did=1.2>", s.stream.port),
+		"<sip:192.0.2.9;lr>",
+	}
+	s.state.Stream.RouteSet = routes
+	ctx, cancel := context.WithTimeout(s.T().Context(), 3*time.Second)
+	defer cancel()
+
+	call, err := Resume(ctx, s.cfg, s.state)
+	s.Require().NoError(err)
+	s.T().Cleanup(call.Release)
+
+	invites := s.stream.requests(sip.INVITE, streamCallID)
+	s.Require().Len(invites, 1)
+	var sent []string
+	for _, h := range invites[0].GetHeaders("Route") {
+		sent = append(sent, h.Value())
+	}
+	s.Equal(routes, sent)
+	s.Equal(routes, call.State().Stream.RouteSet)
+}
+
+func (s *ResumeSuite) TestResumeNamesTheAddressThePeerSawInTheContact() {
+	s.setup(peerOptions{natReceived: "192.0.2.44", natRport: 40404}, peerOptions{})
+
+	s.resume()
+
+	invites := s.customer.requests(sip.INVITE, customerCallID)
+	s.Require().Len(invites, 1)
+	contact := invites[0].Contact()
+	s.Require().NotNil(contact)
+	s.Equal("192.0.2.44", contact.Address.Host)
+	s.Equal(40404, contact.Address.Port)
+}
+
+func (s *ResumeSuite) TestAResumedCallKeepsWhereTheAudioFlows() {
+	s.state.Media = MediaAddrs{Customer: "198.51.100.7", Stream: "203.0.113.10"}
+
+	call := s.resume()
+
+	s.Equal(s.state.Media, call.Media())
+	s.Equal(s.state.Media, call.State().Media)
+}
+
+func (s *ResumeSuite) TestAResumedCallTellsWhenAPassedOnReinviteChangedWhatEachLegSent() {
+	var call atomic.Pointer[Call]
+	var last atomic.Pointer[CallState]
+	s.cfg.OnChange = func() {
+		if c := call.Load(); c != nil {
+			state := c.State()
+			last.Store(&state)
+		}
+	}
+	resumed := s.resume()
+	call.Store(resumed)
+	offer := []byte("v=0 customer offer\r\n")
+
+	answer := s.customer.sendReinvite(customerCallID, offer)
+
+	s.Equal(s.stream.sdp, answer)
+	s.Eventually(func() bool {
+		state := last.Load()
+		return state != nil && string(state.Customer.LastSDP) == string(answer) && string(state.Stream.LastSDP) == string(offer)
+	}, 2*time.Second, 10*time.Millisecond, "last change notice must see both legs' new SDP")
 }
