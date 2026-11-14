@@ -536,7 +536,55 @@ func (s *TakeoverSuite) TestANodeThatLostItsClaimLetsTheCallGo() {
 	s.Equal("z", s.get("owner:"+id))
 }
 
+func (s *TakeoverSuite) TestANodeWhoseClaimWasTakenWhileResumingLetsTheCallGo() {
+	s.holdFor = time.Minute
+	a, b := s.node("a"), s.node("b")
+	id := s.dial(a)
+	b.takeover.before = func() error {
+		return s.redis.Do(context.Background(), s.redis.B().Set().Key(s.prefix+":owner:"+id).Value("z").Build()).Error()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s.Require().NoError(a.provider.Close(ctx))
+
+	s.Eventually(b.takeover.call.wasReleased, 2*time.Second, 10*time.Millisecond)
+	s.False(b.takeover.call.wasHungUp())
+	s.Equal("z", s.get("owner:"+id))
+}
+
+func (s *TakeoverSuite) TestANodeThatLostACallDoesNotRewriteItsRecord() {
+	a, b := s.node("a"), s.node("b")
+	id := s.dial(a)
+	b.takeover.call.setState(callState("a"))
+	a.dialer.mu.Lock()
+	onChange := a.dialer.config.OnChange
+	a.dialer.mu.Unlock()
+	s.Require().NotNil(onChange)
+
+	// a stops renewing but keeps relaying the call, as a node cut off from Redis would.
+	a.stop()
+	s.Eventually(func() bool { return live(b.provider, id) && s.get("owner:"+id) == "b" }, 3*time.Second, 10*time.Millisecond)
+	a.dialer.call.setState(callState("stale"))
+	onChange()
+
+	s.Never(func() bool { return string(s.record(id).State.Customer.LastSDP) != "v=0 a" },
+		200*time.Millisecond, 10*time.Millisecond, "a overwrote the record of the node that took the call")
+}
+
+func (s *TakeoverSuite) TestARenewedClaimPushesItsLapseOut() {
+	a := s.node("a")
+	id := s.dial(a)
+
+	s.Never(func() bool {
+		lapse, inSet := s.lapse(id)
+		return !inSet || !lapse.After(time.Now())
+	}, 2*testHoldFor, 20*time.Millisecond, "a call its node renews looked lapsed")
+}
+
 func (s *TakeoverSuite) TestAByeDuringTheHandoffEndsTheCallOnce() {
+	// Claims far longer than the test, so a claim b left behind would not lapse by itself.
+	s.holdFor = time.Minute
 	a, b := s.node("a"), s.node("b")
 	id := s.dial(a)
 	// The BYE reaches a while b is taking the call over.
