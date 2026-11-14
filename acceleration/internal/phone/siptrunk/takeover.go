@@ -102,15 +102,29 @@ end
 return 1
 `)
 
-// renewScript extends ARGV[1]'s claim, and says 0 when it holds the claim no more.
-// KEYS: owner, calls. ARGV: node, holdFor ms, lapse ms, id.
+// renewScript writes a call's record again and extends ARGV[1]'s claim. It says 0 when another
+// node holds the claim, and 2, changing nothing, when no node does because the call was given up
+// to another node. A claim gone for any other reason is Redis losing it, so it is won again and
+// says 3: letting the call go would hang up a call no node could take over without its record.
+// KEYS: record, owner, calls. ARGV: node, record, recordFor ms, holdFor ms, lapse ms, id.
 var renewScript = rueidis.NewLuaScript(`
-if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+local owner = redis.call('GET', KEYS[2])
+if owner == ARGV[1] then
+  redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
+  redis.call('PEXPIRE', KEYS[2], ARGV[4])
+  redis.call('ZADD', KEYS[3], ARGV[5], ARGV[6])
+  return 1
+end
+if owner then
   return 0
 end
-redis.call('PEXPIRE', KEYS[1], ARGV[2])
-redis.call('ZADD', KEYS[2], ARGV[3], ARGV[4])
-return 1
+if redis.call('ZSCORE', KEYS[3], ARGV[6]) == '0' then
+  return 2
+end
+redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
+redis.call('SET', KEYS[2], ARGV[1], 'PX', ARGV[4])
+redis.call('ZADD', KEYS[3], ARGV[5], ARGV[6])
+return 3
 `)
 
 // giveUpScript writes the call's record one last time and gives up ARGV[1]'s claim, marking
@@ -174,8 +188,9 @@ func (p *Provider) renewLoop(ctx context.Context) {
 	}
 }
 
-// renew extends the claim on every call this node holds, and lets go of each one another
-// node now holds.
+// renew writes the record of every call this node holds again, so it keeps CSeqs that moved
+// with no change of SDP, extends the claim on each, and lets go of each one another node now
+// holds.
 func (p *Provider) renew(ctx context.Context) {
 	p.mu.Lock()
 	held := make(map[string]*heldCall, len(p.calls))
@@ -187,21 +202,44 @@ func (p *Provider) renew(ctx context.Context) {
 	p.mu.Unlock()
 
 	for id, h := range held {
-		lapse := time.Now().Add(p.holdFor).UnixMilli()
-		kept, err := renewScript.Exec(ctx, p.redis, []string{p.keys.owner(id), p.keys.calls()},
-			[]string{p.node, ms(p.holdFor), strconv.FormatInt(lapse, 10), id}).AsInt64()
-		if err != nil {
-			if ctx.Err() == nil {
-				p.logger.Warn("could not renew the claim on a call through a customer's sip trunk",
-					"vendor_call_id", id, "error", err)
-			}
-			continue
+		p.renewOne(ctx, id, h)
+	}
+}
+
+func (p *Provider) renewOne(ctx context.Context, id string, h *heldCall) {
+	// Held across the script, so a call that ends meanwhile is not written back after hold
+	// deleted its keys.
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.ended {
+		return
+	}
+	record, err := json.Marshal(callRecord{ID: id, Ref: *h.ref, State: h.call.State()})
+	if err != nil {
+		p.logger.Warn("could not record a call through a customer's sip trunk to renew its claim",
+			"vendor_call_id", id, "error", err)
+		return
+	}
+	// Bounded: hold waits on the lock to report the call's end.
+	scriptCtx, cancel := context.WithTimeout(ctx, redisTimeout)
+	defer cancel()
+	lapse := time.Now().Add(p.holdFor).UnixMilli()
+	kept, err := renewScript.Exec(scriptCtx, p.redis, []string{p.keys.record(id), p.keys.owner(id), p.keys.calls()},
+		[]string{p.node, string(record), ms(recordFor), ms(p.holdFor), strconv.FormatInt(lapse, 10), id}).AsInt64()
+	if err != nil {
+		if ctx.Err() == nil {
+			p.logger.Warn("could not renew the claim on a call through a customer's sip trunk",
+				"vendor_call_id", id, "error", err)
 		}
-		if kept == 0 {
-			// Another node took it, or will: two nodes relaying one call would answer each
-			// other's re-INVITEs out of order.
-			h.call.Release()
-		}
+		return
+	}
+	switch kept {
+	case 0:
+		// Another node took it, or will: two nodes relaying one call would answer each
+		// other's re-INVITEs out of order.
+		h.call.Release()
+	case 3:
+		p.logger.Warn("claimed a call again after its claim went missing", "vendor_call_id", id)
 	}
 }
 

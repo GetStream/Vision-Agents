@@ -97,6 +97,11 @@ type heldCall struct {
 	// movable is whether the call is recorded and claimed, so Close offers it to another node
 	// rather than hanging it up.
 	movable bool
+
+	// mu orders renewal against the call ending: ended is set once the call is over or let
+	// go, and renewal writes no record for it from then on.
+	mu    sync.Mutex
+	ended bool
 }
 
 // New returns a Provider that dials and resumes with sipbridge.
@@ -288,6 +293,9 @@ func (p *Provider) hold(id string, held *heldCall, changed <-chan struct{}, log 
 				p.rewrite(id, held, log)
 			}
 		case <-bridged.Done():
+			held.mu.Lock()
+			held.ended = true
+			held.mu.Unlock()
 			err := bridged.Err()
 			if errors.Is(err, sipbridge.ErrReleased) {
 				log.Info("let a call through a customer's sip trunk go to another node")

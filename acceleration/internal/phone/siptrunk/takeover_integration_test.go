@@ -745,3 +745,53 @@ func (s *TakeoverSuite) seed(id string) {
 	s.Require().NoError(s.redis.Do(context.Background(), s.redis.B().Set().Key(s.prefix+":call:"+id).Value(string(rec)).Build()).Error())
 	s.Require().NoError(s.redis.Do(context.Background(), s.redis.B().Zadd().Key(s.prefix+":calls").ScoreMember().ScoreMember(0, id).Build()).Error())
 }
+
+func (s *TakeoverSuite) del(keys ...string) {
+	for _, key := range keys {
+		s.Require().NoError(s.redis.Do(context.Background(), s.redis.B().Del().Key(s.prefix+":"+key).Build()).Error())
+	}
+}
+
+func (s *TakeoverSuite) TestARedisThatLostACallsKeysDoesNotEndIt() {
+	a := s.node("a")
+	id := s.dial(a)
+
+	// As a Redis that restarted empty, or failed over to a replica that never saw the call.
+	s.del("call:"+id, "owner:"+id)
+	s.Require().NoError(s.redis.Do(context.Background(), s.redis.B().Zrem().Key(s.prefix+":calls").Member(id).Build()).Error())
+
+	s.Never(a.dialer.call.wasReleased, 5*testRenewEvery, 10*time.Millisecond, "a let a live call go because Redis forgot it")
+	s.Equal(callState("a"), s.record(id).State)
+	s.Equal("a", s.get("owner:"+id))
+	lapse, inSet := s.lapse(id)
+	s.Require().True(inSet)
+	s.True(lapse.After(time.Now()))
+}
+
+func (s *TakeoverSuite) TestANodeWhoseClaimWentMissingKeepsTheCall() {
+	a := s.node("a")
+	id := s.dial(a)
+	b := s.node("b")
+
+	s.del("owner:" + id)
+
+	s.Never(func() bool { return a.dialer.call.wasReleased() || b.takeover.resumes() > 0 },
+		testHoldFor+2*testRenewEvery, 10*time.Millisecond, "the call left a, or b took it over")
+	s.Equal("a", s.get("owner:"+id))
+}
+
+func (s *TakeoverSuite) TestACSeqThatMovedWithoutAnSDPChangeIsRecorded() {
+	a := s.node("a")
+	id := s.dial(a)
+
+	// A re-INVITE that carried the same SDP moves the CSeq and tells the provider nothing.
+	moved := callState("a")
+	moved.Customer.LocalCSeq = 7
+	moved.Stream.LocalCSeq = 9
+	a.dialer.call.setState(moved)
+
+	s.Eventually(func() bool {
+		rec := s.record(id)
+		return rec.State.Customer.LocalCSeq == 7 && rec.State.Stream.LocalCSeq == 9
+	}, 2*testRenewEvery, 10*time.Millisecond, "the record keeps CSeqs the call already sent past")
+}
