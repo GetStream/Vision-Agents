@@ -2,6 +2,10 @@
 
 ## Features
 
+### A call through a customer's own SIP trunk survives the router node that holds it stopping
+
+A call through a customer's own SIP trunk on a shared Stream line no longer ends when the router node that dialled it is deployed or crashes. Another node sends each side a re-INVITE in the old dialog, from its own address, and holds the call from then on; the audio never passes through a node, so the people keep talking. On a deploy the node hands its calls over before it stops. After a crash another node takes them within about 40 s. Either way a node takes calls one at a time, so when many calls move, the last ones wait longer. A hang-up on either side still ends both. This needs Redis. A node that stops with no other node left to take its calls hangs them up, as on a single node or when the others run an older version. Calls on a Stream trunk of their own, transfer legs, and deployments without Redis are hung up at shutdown as before (#2014).
+
 ### List a modality's routes from the Go and JavaScript SDKs, and image generation is documented
 
 `client.Routes(ctx, acceleration.ModalityImage)` in Go and `api.router().routes("image")` in JavaScript list a modality's shortcuts, default first, with the models each resolves to: `image-fast` and `image-quality` for pictures. JavaScript callers no longer write `client.get("/v1/{modality}/routes", ...)` by hand. The router README documents `POST /v1/image/generations` (its options, routes, time, limits and billing) and lists `image-fast` and `image-quality` among the default groups (AI-3199).

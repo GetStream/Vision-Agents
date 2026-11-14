@@ -17,6 +17,7 @@ type fakeLeg struct {
 	byeErr         error
 	byeBlocks      bool // Bye waits for ctx to end, like a trunk that does not answer
 	onBye          func(ctx context.Context)
+	state          LegState
 
 	mu         sync.Mutex
 	methods    []string
@@ -104,3 +105,5 @@ func (f *fakeLeg) last() string {
 	}
 	return calls[len(calls)-1]
 }
+
+func (f *fakeLeg) State() LegState { return f.state }

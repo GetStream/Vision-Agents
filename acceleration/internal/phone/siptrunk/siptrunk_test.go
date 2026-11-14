@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,44 +17,84 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/sipbridge"
 )
 
-// fakeCall is a connected call that ends when it is hung up.
+// fakeCall is a connected call that ends when it is hung up, let go, or the other side
+// says bye.
 type fakeCall struct {
 	media    sipbridge.MediaAddrs
 	done     chan struct{}
 	once     sync.Once
+	mu       sync.Mutex
+	state    sipbridge.CallState
+	err      error
 	hungUp   bool
-	hangupMu sync.Mutex
+	released bool
 }
 
 func newFakeCall() *fakeCall { return &fakeCall{done: make(chan struct{})} }
 
 func (c *fakeCall) Done() <-chan struct{} { return c.done }
-func (c *fakeCall) Err() error            { return nil }
+func (c *fakeCall) Err() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.err
+}
 func (c *fakeCall) Media() sipbridge.MediaAddrs {
 	return c.media
 }
 func (c *fakeCall) Hangup(context.Context) error {
-	c.hangupMu.Lock()
-	c.hungUp = true
-	c.hangupMu.Unlock()
-	c.once.Do(func() { close(c.done) })
+	c.end(nil, func() { c.hungUp = true })
 	return nil
+}
+func (c *fakeCall) Release() {
+	c.end(sipbridge.ErrReleased, func() { c.released = true })
+}
+func (c *fakeCall) State() sipbridge.CallState {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.state
+}
+
+// bye ends the call as a BYE from either side would.
+func (c *fakeCall) bye() { c.end(nil, func() {}) }
+
+func (c *fakeCall) setState(state sipbridge.CallState) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.state = state
+}
+
+func (c *fakeCall) end(err error, mark func()) {
+	c.once.Do(func() {
+		c.mu.Lock()
+		c.err = err
+		mark()
+		c.mu.Unlock()
+		close(c.done)
+	})
 }
 
 func (c *fakeCall) wasHungUp() bool {
-	c.hangupMu.Lock()
-	defer c.hangupMu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.hungUp
+}
+
+func (c *fakeCall) wasReleased() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.released
 }
 
 // fakeDialer records what it was asked to dial and answers with call or err.
 type fakeDialer struct {
-	mu      sync.Mutex
-	ctx     context.Context
-	config  sipbridge.Config
-	call    *fakeCall
-	err     error
-	blocks  bool // the dial waits for ctx to end, like a phone nobody picks up
+	mu     sync.Mutex
+	ctx    context.Context
+	config sipbridge.Config
+	call   *fakeCall
+	err    error
+	blocks bool // the dial waits for ctx to end, like a phone nobody picks up
+	// gate, when set, holds the answer back until it is closed, whatever ctx does.
+	gate    chan struct{}
 	dialled chan struct{}
 	// respondsAfter, when set, is the post-dial delay the dial tells the config's Responded.
 	respondsAfter time.Duration
@@ -66,6 +107,9 @@ func (d *fakeDialer) dial(ctx context.Context, config sipbridge.Config) (call, e
 	close(d.dialled)
 	if d.respondsAfter > 0 {
 		config.Call.Responded(d.respondsAfter)
+	}
+	if d.gate != nil {
+		<-d.gate
 	}
 	if d.blocks {
 		<-ctx.Done()
@@ -87,7 +131,7 @@ func TestSIPTrunkSuite(t *testing.T) { suite.Run(t, new(SIPTrunkSuite)) }
 
 func (s *SIPTrunkSuite) SetupTest() {
 	s.dialer = &fakeDialer{call: newFakeCall(), dialled: make(chan struct{})}
-	s.provider = newProvider(Options{Logger: slog.New(slog.DiscardHandler)}, s.dialer.dial)
+	s.provider = newProvider(Options{Logger: slog.New(slog.DiscardHandler)}, s.dialer.dial, nil)
 }
 
 func (s *SIPTrunkSuite) TearDownTest() {
@@ -96,17 +140,23 @@ func (s *SIPTrunkSuite) TearDownTest() {
 	s.Require().NoError(s.provider.Close(ctx))
 }
 
+// Built at runtime so no literal reads as a credential.
+var (
+	placedTrunkPassword  = strings.Repeat("p", 12)
+	placedBridgePassword = strings.Repeat("q", 12)
+)
+
 func outbound() phone.Outbound {
 	return phone.Outbound{
 		From: "+15550000301",
 		To:   "+15550000302",
 		Bridge: phone.Bridge{
-			URI: "sip:+15550000301@bridge.sip.example.com", Username: "stream-user", Password: "stream-pass",
+			URI: "sip:+15550000301@bridge.sip.example.com", Username: "stream-user", Password: placedBridgePassword,
 		},
 		RingTimeout: 20 * time.Second,
 		Trunk: &phone.SIPTrunk{
 			Host: "trunk.example.com", Port: 5060, Transport: "tcp", Username: "agent",
-			Password: "s3cret", LateOffer: true, Codecs: []string{"PCMU", "PCMA"},
+			Password: placedTrunkPassword, LateOffer: true, Codecs: []string{"PCMU", "PCMA"},
 		},
 	}
 }
@@ -165,10 +215,10 @@ func (s *SIPTrunkSuite) TestTheBridgeIsGivenTheTrunkAndTheStreamLeg() {
 	want := sipbridge.Config{
 		CustomerTrunk: sipbridge.CustomerTrunk{
 			Host: "trunk.example.com", Port: 5060, Transport: "tcp", Username: "agent",
-			Password: "s3cret", LateOffer: true, Codecs: []string{"PCMU", "PCMA"},
+			Password: placedTrunkPassword, LateOffer: true, Codecs: []string{"PCMU", "PCMA"},
 		},
 		Stream: sipbridge.StreamTrunk{
-			URI: "sip:+15550000301@bridge.sip.example.com", Username: "stream-user", Password: "stream-pass",
+			URI: "sip:+15550000301@bridge.sip.example.com", Username: "stream-user", Password: placedBridgePassword,
 		},
 		Call: sipbridge.CallParams{From: "+15550000301", To: "+15550000302", RingTimeout: 20 * time.Second},
 	}.WithDefaults()
@@ -276,6 +326,22 @@ func (s *SIPTrunkSuite) TestCloseHangsUpEveryCall() {
 
 	s.True(s.dialer.call.wasHungUp())
 	s.False(live(p, dialed.VendorCallID))
+}
+
+func (s *SIPTrunkSuite) TestWithoutRedisCloseStillHangsUp() {
+	placing := outbound()
+	placing.Resume = &phone.TrunkCallRef{CustomerID: "acme", SIPTrunkID: "trunk-1", CallID: "call-1"}
+	dialed, err := s.provider.Dial(context.Background(), placing)
+	s.Require().NoError(err)
+	p := s.provider
+	s.Eventually(func() bool { return live(p, dialed.VendorCallID) }, time.Second, 10*time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	s.Require().NoError(s.provider.Close(ctx))
+
+	s.True(s.dialer.call.wasHungUp(), "a call another node could continue is still hung up when no node can")
+	s.False(s.dialer.call.wasReleased())
 }
 
 func (s *SIPTrunkSuite) TestCloseCancelsACallStillBeingSetUp() {

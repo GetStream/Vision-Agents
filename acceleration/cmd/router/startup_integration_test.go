@@ -15,6 +15,8 @@ import (
 	"net/url"
 	"os"
 	"runtime/pprof"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -22,6 +24,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
@@ -31,6 +34,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/twiliosig"
 )
 
@@ -572,6 +576,56 @@ func (s *RouterStartSuite) TestARunningRouterCountsAnAppsRequestAndWritesItWhenI
 		"SELECT COALESCE(sum(requests), 0) FROM customer_activity WHERE app_id = ? AND area = 'agent_setup' AND client = ?",
 		customer, store.AuditSourceCLI).Scan(&requests))
 	s.Equal(int64(1), requests)
+}
+
+// Defect: the router builds the trunk call provider but never starts it, so no node it stops
+// beside hands it calls, and a drain started with this one's claims unrenewed.
+func (s *RouterStartSuite) TestARunningRouterSaysItTakesTrunkCallsOverUntilItStops() {
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" {
+		s.T().Skip("ROUTER_REDIS_ADDR not set")
+	}
+	client, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	s.Require().NoError(err)
+	s.T().Cleanup(client.Close)
+	// Another router on this Redis may be one already.
+	before := s.takingTrunkCalls(client)
+	settings := s.settings
+	settings.Addr = freeAddress(s.T())
+	settings.Redis.Addr = address
+	settings.Auth.KEK = "trunk-key"
+
+	stop := s.start(settings)
+
+	var node string
+	s.Require().Eventually(func() bool {
+		node = joined(before, s.takingTrunkCalls(client))
+		return node != ""
+	}, 10*time.Second, 20*time.Millisecond, "the running router does not say it takes trunk calls over")
+	s.Require().NoError(stop())
+	s.NotContains(s.takingTrunkCalls(client), node, "the stopped router still says it takes trunk calls over")
+}
+
+// takingTrunkCalls is every node that says now that it takes trunk calls over.
+func (s *RouterStartSuite) takingTrunkCalls(client rueidis.Client) []string {
+	nodes, err := trunkCallTakers(s.ctx, client)
+	s.Require().NoError(err)
+	return nodes
+}
+
+func trunkCallTakers(ctx context.Context, client rueidis.Client) ([]string, error) {
+	return client.Do(ctx, client.B().Zrangebyscore().Key("{siptrunk}:nodes").
+		Min("("+strconv.FormatInt(time.Now().UnixMilli(), 10)).Max("+inf").Build()).AsStrSlice()
+}
+
+// joined is a node in now that is not in before, or "" when there is none.
+func joined(before, now []string) string {
+	for _, n := range now {
+		if !slices.Contains(before, n) {
+			return n
+		}
+	}
+	return ""
 }
 
 // goroutines is every goroutine's stack, as the pprof endpoint prints it.

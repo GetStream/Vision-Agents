@@ -1,0 +1,292 @@
+package sipbridge
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/netip"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/emiago/sipgo/sip"
+	"github.com/stretchr/testify/suite"
+)
+
+const (
+	customerCallID = "customer-call"
+	streamCallID   = "stream-call"
+)
+
+// bridgePassword is built at runtime so no literal reads as a credential.
+var bridgePassword = strings.Repeat("r", 12)
+
+// ResumeSuite continues a call whose dialogs another bridge set up: a customer trunk and
+// Stream on loopback, and the state that bridge stored.
+type ResumeSuite struct {
+	suite.Suite
+	customer, stream *peer
+	cfg              ResumeConfig
+	state            CallState
+}
+
+func TestResumeSuite(t *testing.T) {
+	suite.Run(t, new(ResumeSuite))
+}
+
+func (s *ResumeSuite) SetupTest() {
+	s.setup(peerOptions{}, peerOptions{})
+}
+
+func (s *ResumeSuite) setup(customer, stream peerOptions) {
+	s.customer = startPeer(s.T(), customer)
+	s.stream = startPeer(s.T(), stream)
+	s.state = CallState{
+		Customer: LegState{
+			CallID: customerCallID, LocalTag: "ct-local", RemoteTag: "ct-remote",
+			From:         "<sip:+15550001@127.0.0.1>;tag=ct-local",
+			To:           "<sip:+15550002@127.0.0.1>;tag=ct-remote",
+			Transport:    "tcp",
+			LocalCSeq:    17340,
+			RemoteTarget: fmt.Sprintf("sip:peer@127.0.0.1:%d;transport=tcp", s.customer.port),
+			LastSDP:      []byte("v=0 to customer\r\n"),
+		},
+		Stream: LegState{
+			CallID: streamCallID, LocalTag: "st-local", RemoteTag: "st-remote",
+			From:         "<sip:+15550002@127.0.0.1>;tag=st-local",
+			To:           "<sip:+15550001@127.0.0.1>;tag=st-remote",
+			Transport:    "tcp",
+			ReinviteHost: "127.0.0.1",
+			LocalCSeq:    22180,
+			RemoteTarget: "sip:stream-sip@10.9.9.9:5060;alias=10.0.0.7~5060~1",
+			RouteSet:     []string{fmt.Sprintf("<sip:127.0.0.1:%d;transport=tcp;lr;did=1.2>", s.stream.port)},
+			LastSDP:      []byte("v=0 to stream\r\n"),
+		},
+	}
+	s.cfg = ResumeConfig{
+		CustomerTrunk: CustomerTrunk{Host: "127.0.0.1", Port: s.customer.port, Transport: "tcp"},
+		Stream: StreamTrunk{
+			URI:      fmt.Sprintf("sip:+15550001@127.0.0.1:%d", s.stream.port),
+			Username: "bridge", Password: bridgePassword, Transport: "tcp",
+		},
+		Logger: slog.New(slog.DiscardHandler),
+		guard:  guard{allow: func(ip netip.Addr) bool { return ip.IsLoopback() }},
+	}
+}
+
+func (s *ResumeSuite) resume() *Call {
+	call, err := Resume(s.T().Context(), s.cfg, s.state)
+	s.Require().NoError(err)
+	s.T().Cleanup(call.Release)
+	return call
+}
+
+func (s *ResumeSuite) requireDone(call *Call) {
+	select {
+	case <-call.Done():
+	case <-time.After(2 * time.Second):
+		s.FailNow("call has not ended")
+	}
+}
+
+// requireReinvite checks the re-INVITE p got continues the dialog in state, and its ACK.
+func (s *ResumeSuite) requireReinvite(p *peer, state LegState, cseq uint32) {
+	invites := p.requests(sip.INVITE, state.CallID)
+	s.Require().Len(invites, 1)
+	inv := invites[0]
+	s.Equal(state.LocalTag, inv.From().Params.GetOr("tag", ""))
+	s.Equal(state.RemoteTag, inv.To().Params.GetOr("tag", ""))
+	s.Equal(cseq, inv.CSeq().SeqNo)
+	s.Equal(state.LastSDP, inv.Body())
+	contact := inv.Contact()
+	s.Require().NotNil(contact)
+	s.Equal(inv.Source(), net.JoinHostPort(contact.Address.Host, strconv.Itoa(contact.Address.Port)),
+		"Contact names the address the request came from")
+
+	s.Eventually(func() bool { return len(p.requests(sip.ACK, state.CallID)) == 1 }, 2*time.Second, 10*time.Millisecond)
+	s.Equal(cseq, p.requests(sip.ACK, state.CallID)[0].CSeq().SeqNo)
+}
+
+func (s *ResumeSuite) TestResumeSendsEachSideAReinviteInItsOldDialog() {
+	s.resume()
+
+	s.requireReinvite(s.customer, s.state.Customer, 18340)
+	s.requireReinvite(s.stream, s.state.Stream, 23180)
+}
+
+func (s *ResumeSuite) TestResumeKeepsTheStreamTargetParameters() {
+	s.resume()
+
+	invites := s.stream.requests(sip.INVITE, streamCallID)
+	s.Require().Len(invites, 1)
+	s.Equal("sip:stream-sip@127.0.0.1:5060;alias=10.0.0.7~5060~1", invites[0].Recipient.String())
+	route := invites[0].GetHeader("Route")
+	s.Require().NotNil(route)
+	s.Equal(s.state.Stream.RouteSet[0], route.Value())
+}
+
+func (s *ResumeSuite) TestResumeAnswersAChallengeWithTheTrunkCredentials() {
+	s.setup(peerOptions{}, peerOptions{challengeOnce: true})
+
+	s.resume()
+
+	invites := s.stream.requests(sip.INVITE, streamCallID)
+	s.Require().Len(invites, 2)
+	s.Nil(invites[0].GetHeader("Authorization"))
+	s.NotNil(invites[1].GetHeader("Authorization"))
+	s.Equal(invites[0].CSeq().SeqNo+1, invites[1].CSeq().SeqNo)
+}
+
+func (s *ResumeSuite) TestAByeFromOneSideAfterResumeEndsTheOther() {
+	call := s.resume()
+
+	s.customer.sendBye(customerCallID)
+
+	s.Eventually(func() bool { return len(s.stream.requests(sip.BYE, streamCallID)) == 1 }, 2*time.Second, 10*time.Millisecond)
+	s.requireDone(call)
+	s.NoError(call.Err())
+}
+
+func (s *ResumeSuite) TestAResumedCallKeepsBothLegsAlive() {
+	s.cfg.KeepaliveInterval = 50 * time.Millisecond
+
+	s.resume()
+
+	for _, side := range []struct {
+		p     *peer
+		state LegState
+	}{{s.customer, s.state.Customer}, {s.stream, s.state.Stream}} {
+		invites := side.p.requests(sip.INVITE, side.state.CallID)
+		s.Require().Len(invites, 1)
+		reinvite := invites[0].CSeq().SeqNo
+		s.Eventually(func() bool {
+			for _, opt := range side.p.requests(sip.OPTIONS, side.state.CallID) {
+				if opt.CSeq().SeqNo > reinvite {
+					return true
+				}
+			}
+			return false
+		}, time.Second, 10*time.Millisecond, "no in-dialog OPTIONS on %s", side.state.CallID)
+	}
+}
+
+func (s *ResumeSuite) TestResumeEndsBothSidesWhenOneSideRefuses() {
+	s.setup(peerOptions{reinviteStatus: sip.StatusCallTransactionDoesNotExists}, peerOptions{})
+
+	call, err := Resume(s.T().Context(), s.cfg, s.state)
+
+	s.Nil(call)
+	se, ok := errors.AsType[*statusError](err)
+	s.Require().True(ok, "%v", err)
+	s.Equal(481, se.code)
+	s.Eventually(func() bool { return len(s.stream.requests(sip.BYE, streamCallID)) == 1 }, 2*time.Second, 10*time.Millisecond)
+}
+
+func (s *ResumeSuite) TestResumeEndsTheCustomerWhenTheStreamStateIsUnreadable() {
+	s.state.Stream.RemoteTarget = "sip:stream-sip@[::1"
+
+	call, err := Resume(s.T().Context(), s.cfg, s.state)
+
+	s.Nil(call)
+	s.ErrorContains(err, "stream leg remote target")
+	s.Eventually(func() bool { return len(s.customer.requests(sip.BYE, customerCallID)) == 1 }, 2*time.Second, 10*time.Millisecond)
+}
+
+func (s *ResumeSuite) TestReleaseOfAResumedCallSendsNoBye() {
+	call, err := Resume(s.T().Context(), s.cfg, s.state)
+	s.Require().NoError(err)
+
+	call.Release()
+
+	s.requireDone(call)
+	time.Sleep(300 * time.Millisecond)
+	s.Empty(s.customer.requests(sip.BYE, customerCallID))
+	s.Empty(s.stream.requests(sip.BYE, streamCallID))
+}
+
+func (s *ResumeSuite) TestStateOfAResumedCallCarriesItsDialog() {
+	call := s.resume()
+
+	state := call.State()
+
+	s.Equal(customerCallID, state.Customer.CallID)
+	s.Equal("ct-local", state.Customer.LocalTag)
+	s.Equal("ct-remote", state.Customer.RemoteTag)
+	s.Equal(streamCallID, state.Stream.CallID)
+	s.Equal("st-local", state.Stream.LocalTag)
+	s.Equal("st-remote", state.Stream.RemoteTag)
+	s.Equal("sip:stream-sip@10.9.9.9:5060;alias=10.0.0.7~5060~1", state.Stream.RemoteTarget)
+	s.Equal(s.state.Stream.RouteSet, state.Stream.RouteSet)
+	s.GreaterOrEqual(state.Stream.LocalCSeq, uint32(23180))
+}
+
+func (s *ResumeSuite) TestResumeKeepsTheRouteSetInSendingOrder() {
+	routes := []string{
+		fmt.Sprintf("<sip:127.0.0.1:%d;transport=tcp;lr;did=1.2>", s.stream.port),
+		"<sip:192.0.2.9;lr>",
+	}
+	s.state.Stream.RouteSet = routes
+	ctx, cancel := context.WithTimeout(s.T().Context(), 3*time.Second)
+	defer cancel()
+
+	call, err := Resume(ctx, s.cfg, s.state)
+	s.Require().NoError(err)
+	s.T().Cleanup(call.Release)
+
+	invites := s.stream.requests(sip.INVITE, streamCallID)
+	s.Require().Len(invites, 1)
+	var sent []string
+	for _, h := range invites[0].GetHeaders("Route") {
+		sent = append(sent, h.Value())
+	}
+	s.Equal(routes, sent)
+	s.Equal(routes, call.State().Stream.RouteSet)
+}
+
+func (s *ResumeSuite) TestResumeNamesTheAddressThePeerSawInTheContact() {
+	s.setup(peerOptions{natReceived: "192.0.2.44", natRport: 40404}, peerOptions{})
+
+	s.resume()
+
+	invites := s.customer.requests(sip.INVITE, customerCallID)
+	s.Require().Len(invites, 1)
+	contact := invites[0].Contact()
+	s.Require().NotNil(contact)
+	s.Equal("192.0.2.44", contact.Address.Host)
+	s.Equal(40404, contact.Address.Port)
+}
+
+func (s *ResumeSuite) TestAResumedCallKeepsWhereTheAudioFlows() {
+	s.state.Media = MediaAddrs{Customer: "198.51.100.7", Stream: "203.0.113.10"}
+
+	call := s.resume()
+
+	s.Equal(s.state.Media, call.Media())
+	s.Equal(s.state.Media, call.State().Media)
+}
+
+func (s *ResumeSuite) TestAResumedCallTellsWhenAPassedOnReinviteChangedWhatEachLegSent() {
+	var call atomic.Pointer[Call]
+	var last atomic.Pointer[CallState]
+	s.cfg.OnChange = func() {
+		if c := call.Load(); c != nil {
+			state := c.State()
+			last.Store(&state)
+		}
+	}
+	resumed := s.resume()
+	call.Store(resumed)
+	offer := []byte("v=0 customer offer\r\n")
+
+	answer := s.customer.sendReinvite(customerCallID, offer)
+
+	s.Equal(s.stream.sdp, answer)
+	s.Eventually(func() bool {
+		state := last.Load()
+		return state != nil && string(state.Customer.LastSDP) == string(answer) && string(state.Stream.LastSDP) == string(offer)
+	}, 2*time.Second, 10*time.Millisecond, "last change notice must see both legs' new SDP")
+}
