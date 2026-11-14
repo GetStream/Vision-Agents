@@ -65,6 +65,7 @@ jobs:
           - internal/metered
           - internal/omnichannel
           - internal/phone
+          - internal/phone/siptrunk
           - internal/policy
           - internal/quota
           - internal/routing
