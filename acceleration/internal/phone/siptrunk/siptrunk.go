@@ -8,7 +8,7 @@
 // The dialogs live on one node at a time. With Redis, that node records each connected call
 // and holds a claim on it; when it stops it offers its calls to the other nodes, and when it
 // dies its claims lapse, and either way another node continues both dialogs from the record.
-// Without Redis, stopping the node hangs its calls up.
+// Stopping the node hangs its calls up when no other node takes calls over, or without Redis.
 package siptrunk
 
 import (
@@ -325,9 +325,25 @@ func (p *Provider) hold(id string, held *heldCall, changed <-chan struct{}, log 
 			}
 			return
 		case <-stopping:
+			select {
+			case <-bridged.Done():
+				// Let go meanwhile, as a renewal does when another node holds the call: the case
+				// above says how it ended.
+				stopping = nil
+				continue
+			default:
+			}
 			held.mu.Lock()
 			held.ended = true
+			lapsed := held.movable && !time.Now().Before(held.lapse)
 			held.mu.Unlock()
+			if lapsed {
+				// Past this node's lease another node may relay the call, and a BYE from here would
+				// end it under that node.
+				bridged.Release()
+				stopping = nil
+				continue
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), hangupTimeout)
 			err := bridged.Hangup(ctx)
 			cancel()
@@ -387,30 +403,30 @@ func statusOf(err error) phone.CallStatus {
 // other node taking calls, the recorded calls are hung up too.
 func (p *Provider) Close(ctx context.Context) error {
 	p.mu.Lock()
+	// The first Close decides each call's way out; a later one only waits, so it cannot hang up
+	// a call the first is handing over.
+	again := p.ctx.Err() != nil
 	p.stop()
-	p.mu.Unlock()
-	// After stopping, so two nodes stopping at once never count on each other.
-	handing := p.redis != nil && p.withdraw(ctx)
-	p.mu.Lock()
 	stopLoops := p.stopLoops
-	select {
-	case <-p.hangUp:
-		// An earlier Close found no node to take the calls, and they are hanging up.
-	default:
-		if !handing {
-			close(p.hangUp)
-			break
-		}
-		p.closing = ctx
-		// Under the lock adopt registers under, so each call is handed over once: here, or by
-		// adopt for a call that connects or is taken over from now on.
-		for id, held := range p.calls {
-			if held.movable {
-				go p.handOver(ctx, id, held)
-			}
-		}
-	}
 	p.mu.Unlock()
+	if !again {
+		// After stopping, so two nodes stopping at once never count on each other.
+		handing := p.redis != nil && p.withdraw(ctx)
+		p.mu.Lock()
+		if handing {
+			p.closing = ctx
+			// Under the lock adopt registers under, so each call is handed over once: here, or by
+			// adopt for a call that connects or is taken over from now on.
+			for id, held := range p.calls {
+				if held.movable {
+					go p.handOver(ctx, id, held)
+				}
+			}
+		} else {
+			close(p.hangUp)
+		}
+		p.mu.Unlock()
+	}
 	if stopLoops != nil {
 		stopLoops()
 	}

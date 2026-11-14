@@ -471,6 +471,112 @@ func (s *TakeoverSuite) TestATakenOverCallReportsItsPostDialDelay() {
 	s.Equal(1500*time.Millisecond, s.reported(b.takeover.ended).PostDialDelay)
 }
 
+func (s *TakeoverSuite) TestACallOfferedToANodeThatStopsWithoutTakingItIsHungUp() {
+	s.holdFor = time.Minute
+	a := s.node("a")
+	id := s.dial(a)
+	// z takes calls, then stops before taking a's, as a node stopping alongside a would.
+	s.advertise("z")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	closed := make(chan error, 1)
+	go func() { closed <- a.provider.Close(ctx) }()
+	s.Eventually(func() bool {
+		lapse, inSet := s.lapse(id)
+		return inSet && lapse.UnixMilli() == 0 && !s.exists("owner:"+id)
+	}, time.Second, 10*time.Millisecond, "a never offered the call")
+
+	s.Require().NoError(s.redis.Do(context.Background(), s.redis.B().Zrem().Key(s.prefix+":nodes").Member("z").Build()).Error())
+
+	s.Require().NoError(<-closed)
+	s.True(a.dialer.call.wasHungUp(), "a call no node will take was left with no relay")
+	s.Equal(phone.CallStatus{Result: phone.CallCompleted, Word: "bye", SIPCode: 200}, s.reported(a.ended))
+	s.Never(func() bool { return len(a.ended) > 0 }, 200*time.Millisecond, 10*time.Millisecond, "the call was reported twice")
+	s.True(s.gone(id))
+}
+
+func (s *TakeoverSuite) TestANodeStoppingPastItsLeaseLetsTheCallGoUnhungAndUnreported() {
+	a := s.node("a")
+	id := s.dial(a)
+	// a stops renewing, as a node cut off from Redis would, so its lease runs out by its clock.
+	a.stop()
+	h := s.heldOn(a, id)
+	h.mu.Lock()
+	h.lapse = time.Now().Add(-time.Second)
+	h.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	s.Require().NoError(a.provider.Close(ctx))
+
+	s.True(a.dialer.call.wasReleased(), "another node may hold the call")
+	s.False(a.dialer.call.wasHungUp(), "a sent a BYE on a call another node may relay")
+	s.noReport(a.ended)
+}
+
+func (s *TakeoverSuite) TestASecondCloseDoesNotHangUpACallTheFirstIsHandingOver() {
+	s.holdFor = time.Minute
+	a := s.node("a")
+	id := s.dial(a)
+	s.advertise("z")
+	first, cancelFirst := context.WithCancel(context.Background())
+	closed := make(chan error, 1)
+	go func() { closed <- a.provider.Close(first) }()
+	defer func() {
+		cancelFirst()
+		<-closed
+	}()
+	s.Eventually(func() bool {
+		lapse, inSet := s.lapse(id)
+		return inSet && lapse.UnixMilli() == 0 && !s.exists("owner:"+id)
+	}, time.Second, 10*time.Millisecond, "a never offered the call")
+	// A set of nodes that is not a set: whether any node takes calls cannot be read.
+	s.Require().NoError(s.redis.Do(context.Background(), s.redis.B().Set().Key(s.prefix+":nodes").Value("not a set").Build()).Error())
+
+	second, cancelSecond := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancelSecond()
+	_ = a.provider.Close(second)
+
+	s.False(a.dialer.call.wasHungUp(), "a second Close hung up a call the first was handing over")
+	s.noReport(a.ended)
+}
+
+func (s *TakeoverSuite) TestAFailedTakeLeavesAnotherNodesClaimAlone() {
+	a := s.node("a")
+	id := s.dial(a)
+	b := s.node("b")
+	looked := make(chan struct{})
+	var once sync.Once
+	// z wins the call while b opens its credentials, as one would after b's claim lapsed.
+	b.takeover.beforeLookup = func() {
+		_ = s.redis.Do(context.Background(), s.redis.B().Set().Key(s.prefix+":owner:"+id).Value("z").Build()).Error()
+		once.Do(func() { close(looked) })
+	}
+	b.takeover.lookupErrs = []error{errors.New("store: sip trunk: connection refused")}
+
+	a.stop()
+	select {
+	case <-looked:
+	case <-time.After(3 * time.Second):
+		s.FailNow("b never tried to take the call")
+	}
+
+	s.Never(func() bool { return s.get("owner:"+id) != "z" }, 300*time.Millisecond, 10*time.Millisecond,
+		"b's failed take gave away a claim that was z's")
+}
+
+func (s *TakeoverSuite) TestATakeoverThatFailsToResumeReportsThePostDialDelay() {
+	a := s.node("a")
+	a.dialer.respondsAfter = 1500 * time.Millisecond
+	s.dial(a)
+	b := s.node("b")
+	b.takeover.err = fmt.Errorf("sipbridge: customer leg: %w", &sipbridge.Unanswered{Code: 481, Reason: "Call/Transaction Does Not Exist"})
+
+	a.stop()
+
+	s.Equal(1500*time.Millisecond, s.reported(b.takeover.ended).PostDialDelay)
+}
+
 func (s *TakeoverSuite) TestALapsedClaimIsTakenByAScan() {
 	a := s.node("a")
 	id := s.dial(a)

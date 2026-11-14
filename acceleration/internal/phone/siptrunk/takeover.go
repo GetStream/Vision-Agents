@@ -162,6 +162,23 @@ redis.call('ZADD', KEYS[2], 'XX', ARGV[2], ARGV[3])
 return 1
 `)
 
+// reclaimScript wins back a call ARGV[1] gave up, while no node holds it and no node says it
+// takes calls over, so the call can be hung up rather than left with no node to relay it.
+// KEYS: owner, calls, nodes. ARGV: node, holdFor ms, now ms, id.
+var reclaimScript = rueidis.NewLuaScript(`
+if redis.call('GET', KEYS[1]) then
+  return 0
+end
+if redis.call('ZSCORE', KEYS[2], ARGV[4]) ~= '0' then
+  return 0
+end
+if redis.call('ZCOUNT', KEYS[3], '(' .. ARGV[3], '+inf') > 0 then
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+return 1
+`)
+
 // forgetScript deletes an ended call, and its claim only when ARGV[1] holds it: a node
 // still taking it over keeps its own.
 // KEYS: record, owner, calls. ARGV: node, id.
@@ -564,7 +581,9 @@ func (p *Provider) forget(id string, log *slog.Logger) {
 
 // handOver gives up this node's claim on a call, tells the other nodes, and lets the call go
 // once one of them holds it. Until then the call keeps relaying, so a BYE still ends it here.
-// A call let go that no node took sets notTaken first, so Close sees it once the call ended.
+// When every node that took calls stopped first, as when all stop together, it wins the call
+// back and hangs it up. A call let go that no node took sets notTaken first, so Close sees it
+// once the call ended.
 func (p *Provider) handOver(ctx context.Context, id string, held *heldCall) {
 	log := p.logger.With("vendor", phone.SIPTrunkVendor, "vendor_call_id", id)
 	record, err := json.Marshal(callRecord{ID: id, Ref: *held.ref, State: held.call.State(), PostDialDelay: held.postDialDelay})
@@ -599,12 +618,24 @@ func (p *Provider) handOver(ctx context.Context, id string, held *heldCall) {
 		case <-held.call.Done():
 			return
 		case <-ctx.Done():
+			// Not ctx, which ran out: whether any node is left to take the call is still worth asking.
+			lastCtx, cancel := context.WithTimeout(context.Background(), redisTimeout)
+			won := p.reclaim(lastCtx, id, log)
+			cancel()
+			if won {
+				p.hangUpUntaken(held, log)
+				return
+			}
 			log.Warn("no node took a call through a customer's sip trunk before this one stopped; leaving it for the next to scan")
 			p.notTaken.Store(true)
 			held.call.Release()
 			return
 		case <-ticker.C:
 			owner, err := p.redis.Do(ctx, p.redis.B().Get().Key(p.keys.owner(id)).Build()).ToString()
+			if rueidis.IsRedisNil(err) && p.reclaim(ctx, id, log) {
+				p.hangUpUntaken(held, log)
+				return
+			}
 			if err == nil && owner != p.node {
 				log.Info("handed a call through a customer's sip trunk to another node", "node", owner)
 				held.call.Release()
@@ -612,6 +643,29 @@ func (p *Provider) handOver(ctx context.Context, id string, held *heldCall) {
 			}
 		}
 	}
+}
+
+// reclaim wins back a call this node gave up, and says true, when no node holds it and none
+// says it takes calls over.
+func (p *Provider) reclaim(ctx context.Context, id string, log *slog.Logger) bool {
+	won, err := reclaimScript.Exec(ctx, p.redis, []string{p.keys.owner(id), p.keys.calls(), p.keys.nodes()},
+		[]string{p.node, ms(p.holdFor), strconv.FormatInt(time.Now().UnixMilli(), 10), id}).AsInt64()
+	if err != nil {
+		log.Warn("could not find whether a node is left to take a call through a customer's sip trunk", "error", err)
+		return false
+	}
+	return won == 1
+}
+
+// hangUpUntaken hangs up a call no node is left to take; hold reports its end and deletes it.
+func (p *Provider) hangUpUntaken(held *heldCall, log *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), hangupTimeout)
+	defer cancel()
+	if err := held.call.Hangup(ctx); err != nil {
+		log.Warn("could not hang up a call through a customer's sip trunk no node is left to take", "error", err)
+		return
+	}
+	log.Info("hung up a call through a customer's sip trunk because no node is left to take it")
 }
 
 func ms(d time.Duration) string { return strconv.FormatInt(d.Milliseconds(), 10) }
