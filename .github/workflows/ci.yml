@@ -42,16 +42,15 @@ on:
       - '.idea/**'
 
 permissions:
-  actions: write
   contents: read
   pull-requests: read
 
 jobs:
+  # No secrets: unit tests reach no provider, and a pull request's code runs here.
   unit:
     uses: ./.github/workflows/run_tests.yml
     with:
       marker: 'not integration'
-    secrets: inherit
 
 # Cancel in-flight runs for the same branch/PR when new commits arrive
 concurrency:
