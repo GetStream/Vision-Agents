@@ -1210,3 +1210,94 @@ func (s *TakeoverSuite) TestRenewDoesNotWriteBackACallThatEnded() {
 
 	s.True(s.gone(id), "renewal wrote back the keys of a call that ended")
 }
+
+// Defect: a node says it takes calls once, at start, and stopping nodes stop seeing it.
+func (s *TakeoverSuite) TestANodeKeepsSayingItTakesCallsWhileItRuns() {
+	s.node("a")
+
+	s.Never(func() bool {
+		until, ok := s.advertised("a")
+		return !ok || !until.After(time.Now())
+	}, 3*testHoldFor, 20*time.Millisecond, "a running node's word on taking calls lapsed")
+}
+
+// Defect: the words of nodes that are gone pile up in the set.
+func (s *TakeoverSuite) TestStartingANodeDropsTheWordsOfNodesThatLapsed() {
+	lapsed := float64(time.Now().Add(-time.Minute).UnixMilli())
+	s.Require().NoError(s.redis.Do(context.Background(), s.redis.B().Zadd().Key(s.prefix+":nodes").ScoreMember().ScoreMember(lapsed, "gone").Build()).Error())
+
+	s.node("a")
+
+	s.Eventually(func() bool {
+		_, ok := s.advertised("gone")
+		return !ok
+	}, time.Second, 10*time.Millisecond, "the word of a node that lapsed stayed in the set")
+}
+
+// Defect: a Redis that cannot say whether another node is left reads as one being left, and
+// the calls go with no node to relay them.
+func (s *TakeoverSuite) TestCloseHangsTheCallUpWhenRedisCannotSayWhetherANodeIsLeft() {
+	s.holdFor = time.Minute
+	a := s.node("a")
+	s.dial(a)
+	a.stop()
+	a.provider.loops.Wait()
+	broken, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv(redisAddrEnvVar)}, DisableCache: true})
+	s.Require().NoError(err)
+	broken.Close()
+	a.provider.redis = broken
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_ = a.provider.Close(ctx)
+
+	s.True(a.dialer.call.wasHungUp(), "a call was let go with no node known to relay it")
+}
+
+// Defect: a Close that ran out of time lets the calls go though no node is left to take them.
+func (s *TakeoverSuite) TestACloseThatRanOutOfTimeStillHangsUpACallNoNodeIsLeftFor() {
+	s.holdFor = time.Minute
+	a := s.node("a")
+	s.dial(a)
+	// z's word lapses before Close's deadline, as a node stopping alongside a would.
+	lapse := float64(time.Now().Add(40 * time.Millisecond).UnixMilli())
+	s.Require().NoError(s.redis.Do(context.Background(), s.redis.B().Zadd().Key(s.prefix+":nodes").ScoreMember().ScoreMember(lapse, "z").Build()).Error())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	_ = a.provider.Close(ctx)
+
+	s.Eventually(a.dialer.call.wasHungUp, time.Second, 10*time.Millisecond, "a call no node was left for went unhung")
+}
+
+// Defect: a call no node took before Close ran out of time goes unsaid.
+func (s *TakeoverSuite) TestACloseThatRanOutOfTimeSaysACallWasNotTaken() {
+	s.holdFor = time.Minute
+	a := s.node("a")
+	s.dial(a)
+	s.advertise("z")
+
+	short, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	_ = a.provider.Close(short)
+	s.Eventually(a.dialer.call.wasReleased, time.Second, 10*time.Millisecond)
+
+	later, cancelLater := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelLater()
+	s.ErrorContains(a.provider.Close(later), "no other node took a call")
+}
+
+// Defect: a node that closing missed when a call was forgotten wins the dead call back and
+// reports its end a second time.
+func (s *TakeoverSuite) TestACallForgottenAfterItWasGivenUpIsNotWonBack() {
+	a := s.node("a")
+	a.provider.StopTaking()
+	s.seed("forgotten")
+	s.del("call:forgotten")
+	s.Require().NoError(s.redis.Do(context.Background(), s.redis.B().Zrem().Key(s.prefix+":calls").Member("forgotten").Build()).Error())
+
+	won := a.provider.reclaim(context.Background(), "forgotten", slog.New(slog.DiscardHandler))
+
+	s.False(won, "a node won back a call that was forgotten")
+	s.Empty(s.get("owner:forgotten"))
+}
