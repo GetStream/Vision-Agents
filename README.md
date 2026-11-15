@@ -81,7 +81,7 @@ agent = Agent(
 
 ## Out-of-the-Box Integrations
 
-**LLMs:** [OpenAI](https://visionagents.ai/integrations/openai) · [Gemini](https://visionagents.ai/integrations/gemini) · [xAI](https://visionagents.ai/integrations/xai) · [OpenRouter](https://visionagents.ai/integrations/openrouter) · [Hugging Face](https://visionagents.ai/integrations/huggingface) · [Kimi AI](https://visionagents.ai/integrations/kimi) · [MiniMax](https://visionagents.ai/integrations/minimax) · [Telnyx](https://github.com/GetStream/Vision-Agents/tree/main/plugins/telnyx)
+**LLMs:** [OpenAI](https://visionagents.ai/integrations/openai) · [Gemini](https://visionagents.ai/integrations/gemini) · [xAI](https://visionagents.ai/integrations/xai) · [OpenRouter](https://visionagents.ai/integrations/openrouter) · [Requesty](https://github.com/GetStream/Vision-Agents/tree/main/plugins/requesty) · [Hugging Face](https://visionagents.ai/integrations/huggingface) · [Kimi AI](https://visionagents.ai/integrations/kimi) · [MiniMax](https://visionagents.ai/integrations/minimax) · [Telnyx](https://github.com/GetStream/Vision-Agents/tree/main/plugins/telnyx)
 
 **Realtime:** [OpenAI Realtime](https://visionagents.ai/integrations/openai) · [Gemini Live](https://visionagents.ai/integrations/gemini) · [AWS Nova Sonic](https://visionagents.ai/integrations/aws-bedrock) · [Qwen](https://visionagents.ai/integrations/qwen) · [Inworld](https://visionagents.ai/integrations/inworld)
 
