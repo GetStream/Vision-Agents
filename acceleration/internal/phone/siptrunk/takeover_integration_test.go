@@ -1362,8 +1362,6 @@ func (s *TakeoverSuite) redisThatHangs(hang *atomic.Bool) rueidis.Client {
 // follow get none.
 func (s *TakeoverSuite) TestAStalledRedisLeavesTimeToHangTheCallUp() {
 	s.holdFor = time.Minute
-	// No renewal or scan is in flight when the Redis stalls, so only withdraw waits on it.
-	s.renewEvery = time.Minute
 	hang := &atomic.Bool{}
 	s.nodeRedis = s.redisThatHangs(hang)
 	a := s.node("a")

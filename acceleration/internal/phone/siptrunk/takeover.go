@@ -41,9 +41,11 @@ const handoffPoll = 100 * time.Millisecond
 // redisTimeout bounds a write about one call.
 const redisTimeout = 5 * time.Second
 
-// withdrawTimeout bounds the first thing Close does, so a Redis that answers nothing leaves
-// time of Close's grace to hang the calls up.
-const withdrawTimeout = time.Second
+// lockedRedisTimeout bounds the Redis calls Close waits on behind a lock (withdraw, a renewal
+// holding its call's lock, advertise), so a Redis that answers nothing leaves time of Close's
+// grace to hang the calls up. A renewal it cuts short counts as failed, and the lease leaves
+// more tries.
+const lockedRedisTimeout = time.Second
 
 // Resumer opens what continuing a call another node placed needs: both sides' credentials,
 // read fresh, and how to report the call's end. *phone.Service is one.
@@ -297,7 +299,7 @@ func (p *Provider) renewOne(ctx context.Context, id string, h *heldCall) {
 		return
 	}
 	// Bounded: hold waits on the lock to report the call's end.
-	scriptCtx, cancel := context.WithTimeout(ctx, redisTimeout)
+	scriptCtx, cancel := context.WithTimeout(ctx, lockedRedisTimeout)
 	defer cancel()
 	now := time.Now()
 	leased := "0"
@@ -372,7 +374,7 @@ func (p *Provider) advertise(ctx context.Context) {
 	if p.ctx.Err() != nil || ctx.Err() != nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(ctx, redisTimeout)
+	ctx, cancel := context.WithTimeout(ctx, lockedRedisTimeout)
 	defer cancel()
 	now := time.Now()
 	for _, resp := range p.redis.DoMulti(ctx,
@@ -395,7 +397,7 @@ func (p *Provider) advertise(ctx context.Context) {
 func (p *Provider) withdraw(ctx context.Context) bool {
 	p.advertising.Lock()
 	defer p.advertising.Unlock()
-	ctx, cancel := context.WithTimeout(ctx, withdrawTimeout)
+	ctx, cancel := context.WithTimeout(ctx, lockedRedisTimeout)
 	defer cancel()
 	resps := p.redis.DoMulti(ctx,
 		p.redis.B().Zrem().Key(p.keys.nodes()).Member(p.node).Build(),
