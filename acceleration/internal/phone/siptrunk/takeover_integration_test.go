@@ -1375,3 +1375,28 @@ func (s *TakeoverSuite) TestAStalledRedisLeavesTimeToHangTheCallUp() {
 
 	s.Eventually(a.dialer.call.wasHungUp, 2*time.Second, 10*time.Millisecond, "a stalled Redis used up the time to hang the call up")
 }
+
+// Defect: a re-INVITE during a stall leaves the record rewrite holding the call's lock, and the
+// BYE at stop waits on it.
+func (s *TakeoverSuite) TestARecordRewriteOnAStalledRedisLeavesTimeToHangTheCallUp() {
+	s.holdFor = time.Minute
+	s.renewEvery = time.Minute
+	hang := &atomic.Bool{}
+	s.nodeRedis = s.redisThatHangs(hang)
+	a := s.node("a")
+	s.dial(a)
+	hang.Store(true)
+	defer hang.Store(false)
+	a.dialer.mu.Lock()
+	onChange := a.dialer.config.OnChange
+	a.dialer.mu.Unlock()
+	onChange()
+	// The rewrite shows nowhere until it is stuck, so this only gives it time to start.
+	time.Sleep(50 * time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	go func() { _ = a.provider.Close(ctx) }()
+
+	s.Eventually(a.dialer.call.wasHungUp, 2*time.Second, 10*time.Millisecond, "a record rewrite on a stalled Redis held up the BYE")
+}

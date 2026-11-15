@@ -41,10 +41,10 @@ const handoffPoll = 100 * time.Millisecond
 // redisTimeout bounds a write about one call.
 const redisTimeout = 5 * time.Second
 
-// lockedRedisTimeout bounds the Redis calls Close waits on behind a lock (withdraw, a renewal
-// holding its call's lock, advertise), so a Redis that answers nothing leaves time of Close's
-// grace to hang the calls up. A renewal it cuts short counts as failed, and the lease leaves
-// more tries.
+// lockedRedisTimeout bounds the Redis calls Close waits on behind a lock (withdraw, a renewal or
+// record rewrite holding its call's lock, advertise, the owner check), so a Redis that answers
+// nothing leaves time of Close's grace to hang the calls up. A renewal it cuts short counts as
+// failed, and the lease leaves more tries.
 const lockedRedisTimeout = time.Second
 
 // Resumer opens what continuing a call another node placed needs: both sides' credentials,
@@ -597,7 +597,7 @@ func (p *Provider) rewrite(id string, held *heldCall, log *slog.Logger) {
 		log.Warn("could not record a call's changed dialogs", "error", err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), redisTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), lockedRedisTimeout)
 	defer cancel()
 	err = writeScript.Exec(ctx, p.redis, []string{p.keys.record(id), p.keys.owner(id)},
 		[]string{p.node, string(record), ms(recordFor)}).Error()
@@ -715,7 +715,7 @@ func (p *Provider) hangUpUntaken(held *heldCall, log *slog.Logger) {
 
 // ownsInRedis says whether Redis names this node the call's owner, false when it cannot say.
 func (p *Provider) ownsInRedis(id string, log *slog.Logger) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), redisTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), lockedRedisTimeout)
 	defer cancel()
 	owner, err := p.redis.Do(ctx, p.redis.B().Get().Key(p.keys.owner(id)).Build()).ToString()
 	if err != nil && !rueidis.IsRedisNil(err) {
