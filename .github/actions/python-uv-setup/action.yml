@@ -20,12 +20,12 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Install the latest version of uv
+    - name: Install uv
       id: setup_uv
       uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
       with:
         python-version: ${{ inputs.python-version }}
-        version: "latest"
+        version: "0.13.6"
         enable-cache: ${{ inputs.enable-cache }}
         prune-cache: false
         cache-suffix: ${{ inputs.python-version }}
