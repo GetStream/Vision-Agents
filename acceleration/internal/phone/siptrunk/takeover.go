@@ -41,6 +41,10 @@ const handoffPoll = 100 * time.Millisecond
 // redisTimeout bounds a write about one call.
 const redisTimeout = 5 * time.Second
 
+// withdrawTimeout bounds the first thing Close does, so a Redis that answers nothing leaves
+// time of Close's grace to hang the calls up.
+const withdrawTimeout = time.Second
+
 // Resumer opens what continuing a call another node placed needs: both sides' credentials,
 // read fresh, and how to report the call's end. *phone.Service is one.
 type Resumer interface {
@@ -391,7 +395,7 @@ func (p *Provider) advertise(ctx context.Context) {
 func (p *Provider) withdraw(ctx context.Context) bool {
 	p.advertising.Lock()
 	defer p.advertising.Unlock()
-	ctx, cancel := context.WithTimeout(ctx, redisTimeout)
+	ctx, cancel := context.WithTimeout(ctx, withdrawTimeout)
 	defer cancel()
 	resps := p.redis.DoMulti(ctx,
 		p.redis.B().Zrem().Key(p.keys.nodes()).Member(p.node).Build(),

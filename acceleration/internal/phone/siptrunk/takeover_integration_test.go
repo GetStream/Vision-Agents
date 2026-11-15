@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -119,9 +121,11 @@ type testNode struct {
 
 type TakeoverSuite struct {
 	suite.Suite
-	redis  rueidis.Client
-	prefix string
-	nodes  []*testNode
+	redis rueidis.Client
+	// nodeRedis, when set, is the client nodes use in place of redis.
+	nodeRedis rueidis.Client
+	prefix    string
+	nodes     []*testNode
 	// holdFor is how long the claims of the nodes a test starts last, and renewEvery how often
 	// they renew and scan.
 	holdFor, renewEvery time.Duration
@@ -149,6 +153,7 @@ func (s *TakeoverSuite) TearDownSuite() {
 func (s *TakeoverSuite) SetupTest() {
 	s.prefix = "{test:siptrunk:" + uuid.NewString() + "}"
 	s.nodes = nil
+	s.nodeRedis = nil
 	s.holdFor = testHoldFor
 	s.renewEvery = testRenewEvery
 }
@@ -170,8 +175,12 @@ func (s *TakeoverSuite) node(name string) *testNode {
 		ended:    make(chan phone.CallStatus, 4),
 	}
 	n.dialer.call.state = callState("a")
+	client := s.redis
+	if s.nodeRedis != nil {
+		client = s.nodeRedis
+	}
 	n.provider = newProvider(Options{
-		Logger: slog.New(slog.DiscardHandler), Redis: s.redis, Node: name,
+		Logger: slog.New(slog.DiscardHandler), Redis: client, Node: name,
 		holdFor: s.holdFor, renewEvery: s.renewEvery, prefix: s.prefix,
 	}, n.dialer.dial, n.takeover.resume)
 	n.provider.Start(n.takeover)
@@ -1263,6 +1272,7 @@ func (s *TakeoverSuite) TestACloseThatRanOutOfTimeStillHangsUpACallNoNodeIsLeftF
 	lapse := float64(time.Now().Add(40 * time.Millisecond).UnixMilli())
 	s.Require().NoError(s.redis.Do(context.Background(), s.redis.B().Zadd().Key(s.prefix+":nodes").ScoreMember().ScoreMember(lapse, "z").Build()).Error())
 
+	// Under handoffPoll, so no poll runs and only the deadline branch can hang the call up.
 	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
 	defer cancel()
 	_ = a.provider.Close(ctx)
@@ -1300,4 +1310,70 @@ func (s *TakeoverSuite) TestACallForgottenAfterItWasGivenUpIsNotWonBack() {
 
 	s.False(won, "a node won back a call that was forgotten")
 	s.Empty(s.get("owner:forgotten"))
+}
+
+// redisThatHangs is a client of the suite's Redis through a proxy that, while hang is set,
+// passes nothing on in either direction: a Redis that is up and answers nothing.
+func (s *TakeoverSuite) redisThatHangs(hang *atomic.Bool) rueidis.Client {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { listener.Close() })
+	pass := func(to, from net.Conn) {
+		defer to.Close()
+		defer from.Close()
+		buffer := make([]byte, 32*1024)
+		for {
+			n, err := from.Read(buffer)
+			for hang.Load() {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if n > 0 {
+				if _, err := to.Write(buffer[:n]); err != nil {
+					return
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+	}
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			upstream, err := net.Dial("tcp", os.Getenv(redisAddrEnvVar))
+			if err != nil {
+				conn.Close()
+				continue
+			}
+			go pass(upstream, conn)
+			go pass(conn, upstream)
+		}
+	}()
+	client, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{listener.Addr().String()}, DisableCache: true})
+	s.Require().NoError(err)
+	s.T().Cleanup(client.Close)
+	return client
+}
+
+// Defect: Close waits out its whole grace on a Redis that answers nothing, and the BYEs that
+// follow get none.
+func (s *TakeoverSuite) TestAStalledRedisLeavesTimeToHangTheCallUp() {
+	s.holdFor = time.Minute
+	// No renewal or scan is in flight when the Redis stalls, so only withdraw waits on it.
+	s.renewEvery = time.Minute
+	hang := &atomic.Bool{}
+	s.nodeRedis = s.redisThatHangs(hang)
+	a := s.node("a")
+	s.dial(a)
+	hang.Store(true)
+	defer hang.Store(false)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	go func() { _ = a.provider.Close(ctx) }()
+
+	s.Eventually(a.dialer.call.wasHungUp, 2*time.Second, 10*time.Millisecond, "a stalled Redis used up the time to hang the call up")
 }
