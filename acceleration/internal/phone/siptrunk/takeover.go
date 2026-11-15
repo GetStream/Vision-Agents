@@ -151,14 +151,14 @@ return 1
 `)
 
 // giveBackScript lets go of ARGV[1]'s claim on a call it could not take over, and marks the
-// call lapsing at ARGV[2], unless it was forgotten meanwhile.
+// call lapsing at ARGV[2].
 // KEYS: owner, calls. ARGV: node, lapse ms, id.
 var giveBackScript = rueidis.NewLuaScript(`
 if redis.call('GET', KEYS[1]) ~= ARGV[1] then
   return 0
 end
 redis.call('DEL', KEYS[1])
-redis.call('ZADD', KEYS[2], 'XX', ARGV[2], ARGV[3])
+redis.call('ZADD', KEYS[2], ARGV[2], ARGV[3])
 return 1
 `)
 
