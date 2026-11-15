@@ -119,6 +119,28 @@ class TestFunctionRegistry:
                 """Sync function."""
                 return x * 2
 
+    async def test_optional_parameter_schema(self):
+        """Optional parameters keep the JSON schema type of the wrapped type."""
+        registry = FunctionRegistry()
+
+        @registry.register(description="Optional parameters")
+        async def optional_func(
+            a: Optional[int] = None,
+            b: int | None = None,
+            c: list[str] | None = None,
+            d: bool | None = None,
+        ) -> None:
+            """Optional parameters."""
+
+        (schema,) = registry.get_tool_schemas()
+        properties = schema["parameters_schema"]["properties"]
+        assert properties == {
+            "a": {"type": "integer"},
+            "b": {"type": "integer"},
+            "c": {"type": "array", "items": {"type": "string"}},
+            "d": {"type": "boolean"},
+        }
+
 
 class TestGlobalRegistry:
     """Test the global function registry."""
