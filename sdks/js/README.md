@@ -113,6 +113,18 @@ A connection lost while reading a response body follows the same retry policy. I
 is reported with the operation and request id and is not retried. Text responses remain
 strings; event-stream responses return a `ReadableStream<Uint8Array>` for the caller to read.
 
+### What a modality routes to
+
+`api.router().routes(modality)` lists the capability shortcuts a modality offers as a choice,
+default first, each with the models it resolves to now, best first. For `"image"` they are
+`image-fast` and `image-quality`, the values an agent config's `image` takes. It is server side
+only.
+
+```ts
+const [fastest] = await api.router().routes("image");
+console.log(fastest.id, fastest.candidates.map((c) => `${c.provider}/${c.model}`));
+```
+
 ## Spend limits and teams
 
 A backend caps what the organization, its apps, keys, end users, teams and usage categories may
