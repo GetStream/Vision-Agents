@@ -2,6 +2,10 @@
 
 ## Features
 
+### The Swift SDK shows a reply's interactive UI as the socket streams it
+
+`AgentEvent` reads `ui_delta` and `ui_completed`, and `Conversation` folds them onto the agent's turn as `Turn.ui` (`TurnUI`), merging an `openui-patch` onto the card before it. While OpenUI streams, `TurnUI.content` holds only finished statements, so a card grows a part at a time. `LiveUI` lays that UI over the Stream Chat reply being written until Chat's own `ai_ui` is complete, by the same rules as JavaScript and Dart, so a new reply never shows the card of the one before it. On a call, where there is no channel, an app shows the newest `Turn.ui` itself. `swift_assistant` shows it in chat and on calls, with restaurant cards, an availability gauge, a seat selector and brands switched live in Settings (#2026).
+
 ### A call through a customer's own SIP trunk survives the router node that holds it stopping
 
 A call through a customer's own SIP trunk on a shared Stream line no longer ends when the router node that dialled it is deployed or crashes. Another node sends each side a re-INVITE in the old dialog, from its own address, and holds the call from then on; the audio never passes through a node, so the people keep talking. On a deploy the node hands its calls over before it stops. After a crash another node takes them within about 40 s. Either way a node takes calls one at a time, so when many calls move, the last ones wait longer. A hang-up on either side still ends both. This needs Redis. A node that stops with no other node left to take its calls hangs them up, as on a single node or when the others run an older version. Calls on a Stream trunk of their own, transfer legs, and deployments without Redis are hung up at shutdown as before (#2014).

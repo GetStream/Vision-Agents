@@ -56,9 +56,10 @@ struct BackendError: LocalizedError {
     }
 }
 
-/// The app's settings: how the agent answers.
+/// The app's settings: how the agent answers, and the brand its UI wears.
 struct SettingsScreen: View {
     @Environment(\.dismiss) private var dismiss
+    @AppStorage(Brand.storageKey) private var brand = Brand.stream
     @State private var format: ReplyFormat?
     @State private var isChoosing = false
     @State private var failure: String?
@@ -84,15 +85,46 @@ struct SettingsScreen: View {
                 } footer: {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("""
-                        Markdown answers in text. A2UI and OpenUI answer plans with interactive UI, \
-                        made of the app's own views. New conversations answer this way, and earlier \
-                        replies keep theirs.
+                        Markdown answers in text. A2UI and OpenUI answer plans and bookings with \
+                        interactive UI, made of the app's own views: maps, restaurant cards, gauges \
+                        and forms. New conversations answer this way, and earlier replies keep theirs.
                         """)
                         if let failure {
                             Text(failure)
                                 .foregroundStyle(.red)
                         }
                     }
+                }
+                Section {
+                    ForEach(Brand.allCases) { choice in
+                        Button {
+                            brand = choice
+                        } label: {
+                            HStack(spacing: 12) {
+                                RoundedRectangle(cornerRadius: choice.cornerRadius / 2)
+                                    .fill(choice.accent)
+                                    .frame(width: 28, height: 28)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(choice.title)
+                                        .foregroundStyle(.primary)
+                                    Text(choice.subtitle)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if choice == brand {
+                                    Image(systemName: "checkmark")
+                                        .fontWeight(.semibold)
+                                        .foregroundStyle(choice.accent)
+                                }
+                            }
+                        }
+                        .accessibilityAddTraits(choice == brand ? .isSelected : [])
+                    }
+                } header: {
+                    Text("Brand")
+                } footer: {
+                    Text("The accent and corners the agent's UI wears, in every conversation, straight away.")
                 }
             }
             .navigationTitle("Settings")

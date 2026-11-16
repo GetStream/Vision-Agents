@@ -126,4 +126,154 @@ private func event(_ json: String) throws -> AgentEvent {
 
         #expect(conversation == before)
     }
+
+    @Test func aRepliesUIStreamsOntoItsTurnBesideItsText() throws {
+        var conversation = Conversation()
+        conversation.apply(try event(#"{"type":"responding","turn_id":"t1"}"#))
+        conversation.apply(try event(#"{"type":"response_delta","turn_id":"t1","text":"Table at 19:15."}"#))
+
+        conversation.apply(
+            try event(#"{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"root = Card([hdr])\n"}"#))
+        conversation.apply(
+            try event(#"{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"hdr = CardHeader(\"Kan"}"#))
+
+        #expect(conversation.turns.count == 1)
+        #expect(conversation.turns[0].text == "Table at 19:15.")
+        #expect(conversation.turns[0].ui?.isStreaming == true)
+        // The header shows once it is finished, not a letter at a time.
+        #expect(conversation.turns[0].ui?.content == "root = Card([hdr])")
+
+        conversation.apply(
+            try event(
+                #"{"type":"ui_completed","turn_id":"t1","format":"openui","content":"root = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"}"#
+            ))
+        conversation.apply(try event(#"{"type":"responded","turn_id":"t1","text":"Table at 19:15."}"#))
+
+        #expect(conversation.turns[0].ui?.isStreaming == false)
+        #expect(conversation.turns[0].ui?.content == "root = Card([hdr])\nhdr = CardHeader(\"Kaneo\")")
+        #expect(conversation.turns[0].text == "Table at 19:15.")
+        #expect(conversation.state == .idle)
+    }
+
+    @Test func aValueShowsOnceItsLineEnds() throws {
+        var conversation = Conversation()
+        conversation.apply(
+            try event(#"{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"root = Card([gauge])\ngauge = AvailabilityGauge(8"}"#))
+        conversation.apply(
+            try event(#"{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"6, \"12 min wait\")\n$party = 4"}"#))
+
+        #expect(
+            conversation.turns[0].ui?.content == "root = Card([gauge])\ngauge = AvailabilityGauge(86, \"12 min wait\")")
+
+        conversation.apply(try event(#"{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"2\n"}"#))
+
+        #expect(conversation.turns[0].ui?.content.hasSuffix("\n$party = 42") == true)
+    }
+
+    @Test func aStatementOverSeveralLinesShowsOnceItCloses() throws {
+        var conversation = Conversation()
+        conversation.apply(
+            try event(
+                #"{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"root = Card([map])\nmap = TripMap([\n  {name: \"Kaneo\"},\n"}"#
+            ))
+
+        #expect(conversation.turns[0].ui?.content == "root = Card([map])")
+
+        conversation.apply(try event(#"{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"])\n"}"#))
+
+        #expect(conversation.turns[0].ui?.content == "root = Card([map])\nmap = TripMap([\n  {name: \"Kaneo\"},\n])")
+    }
+
+    @Test func aCompletedUIWithNoContentKeepsWhatStreamed() throws {
+        var conversation = Conversation()
+        conversation.apply(
+            try event(#"{"type":"ui_delta","turn_id":"t1","format":"a2ui","version":"1.0","delta":"[{\"version\":\"v1.0\"}]"}"#))
+
+        conversation.apply(try event(#"{"type":"ui_completed","turn_id":"t1","format":"a2ui","version":"1.0","content":""}"#))
+
+        #expect(conversation.turns.map(\.speaker) == [.agent])
+        #expect(conversation.turns[0].ui == TurnUI(
+            format: "a2ui", version: "1.0", isStreaming: false, content: #"[{"version":"v1.0"}]"#))
+    }
+
+    @Test func anOpenUIPatchIsMergedOntoTheCardBeforeIt() throws {
+        var conversation = Conversation()
+        conversation.apply(try event(#"{"type":"responding","turn_id":"t1"}"#))
+        conversation.apply(
+            try event(
+                #"{"type":"ui_completed","turn_id":"t1","format":"openui","content":"$party = 2\nroot = Card([hdr, gauge])\nhdr = CardHeader(\"Kaneo\")\ngauge = AvailabilityGauge(86, \"12 min wait\")"}"#
+            ))
+        conversation.apply(try event(#"{"type":"responding","turn_id":"t2"}"#))
+
+        conversation.apply(
+            try event(#"{"type":"ui_delta","turn_id":"t2","format":"openui","mode":"patch","delta":"$party = 4\n"}"#))
+        #expect(conversation.turns[1].ui?.isStreaming == true)
+        #expect(
+            conversation.turns[1].ui?.content
+                == "$party = 4\nroot = Card([hdr, gauge])\nhdr = CardHeader(\"Kaneo\")\ngauge = AvailabilityGauge(86, \"12 min wait\")")
+
+        conversation.apply(
+            try event(
+                #"{"type":"ui_completed","turn_id":"t2","format":"openui","mode":"patch","content":"$party = 4\ngauge = null\ntip = Callout(\"info\", \"Book\", \"Ask for the terrace.\")"}"#
+            ))
+
+        #expect(
+            conversation.turns[1].ui?.content
+                == "$party = 4\nroot = Card([hdr, gauge])\nhdr = CardHeader(\"Kaneo\")\ntip = Callout(\"info\", \"Book\", \"Ask for the terrace.\")")
+        // The card it was merged onto stays as it was.
+        #expect(conversation.turns[0].ui?.content.contains("AvailabilityGauge") == true)
+    }
+
+    @Test func aPatchWithNoCardBeforeItSetsNoUI() throws {
+        var conversation = Conversation()
+        conversation.apply(try event(#"{"type":"responding","turn_id":"t1"}"#))
+
+        // As after a reload: the card it changes is only in Stream Chat, which shows it merged.
+        conversation.apply(
+            try event(#"{"type":"ui_delta","turn_id":"t1","format":"openui","mode":"patch","delta":"$party = 4\n"}"#))
+        conversation.apply(
+            try event(#"{"type":"ui_completed","turn_id":"t1","format":"openui","mode":"patch","content":"$party = 4"}"#))
+
+        #expect(conversation.turns.map(\.ui) == [nil])
+    }
+
+    @Test func aPatchDeltaThatShowsNothingNewIsStillKept() throws {
+        var conversation = Conversation()
+        conversation.apply(
+            try event(#"{"type":"ui_completed","turn_id":"t1","format":"openui","content":"$party = 2\nroot = Card([hdr])"}"#))
+        conversation.apply(try event(#"{"type":"responding","turn_id":"t2"}"#))
+
+        conversation.apply(try event(#"{"type":"ui_delta","turn_id":"t2","format":"openui","mode":"patch","delta":"$party"}"#))
+        #expect(conversation.turns[1].ui?.content == "$party = 2\nroot = Card([hdr])")
+        conversation.apply(try event(#"{"type":"ui_delta","turn_id":"t2","format":"openui","mode":"patch","delta":" = 4\n"}"#))
+
+        #expect(conversation.turns[1].ui?.content == "$party = 4\nroot = Card([hdr])")
+    }
+
+    @Test func aStatementOverSeveralLinesIsReplacedWhole() {
+        let base = """
+            root = Card([map, tip])
+            map = TripMap([
+              {name: "Kaneo", latitude: 41.11, longitude: 20.78},
+              {name: "St. Naum", latitude: 40.91, longitude: 20.74}
+            ])
+            // the tip
+            tip = Callout("info", "Note", "Closed (Mondays) = no boats")
+            """
+
+        let merged = TurnUI.merge(base, patch: #"map = TripMap([{name: "Bay of Bones", latitude: 41.01, longitude: 20.79}])"#)
+
+        #expect(
+            merged == """
+                root = Card([map, tip])
+                map = TripMap([{name: "Bay of Bones", latitude: 41.01, longitude: 20.79}])
+                tip = Callout("info", "Note", "Closed (Mondays) = no boats")
+                """)
+    }
+
+    @Test func aVariableSetToNullKeepsItsNull() {
+        let merged = TurnUI.merge("$open = true\nroot = Card([hdr])", patch: "$open = null")
+
+        #expect(merged == "$open = null\nroot = Card([hdr])")
+    }
 }

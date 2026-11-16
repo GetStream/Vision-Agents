@@ -185,6 +185,27 @@ message says what they did in words, such as "Update the plan", and carries the 
 the form's values, as `custom.ai_ui_action` (`session.responses.create(_:uiAction:)`). The
 model is told it after their words.
 
+Ask "Where should we eat in Ohrid tonight?" for the other kind of card: a `RestaurantCard` per
+venue, an `AvailabilityGauge` of how full the first one is and a `SeatSelector` of its tables,
+also the app's own views (`TripComponents.swift`). Tapping a free table asks to reserve it.
+
+- **The UI streams in over the socket.** The router sends a reply's UI on the session's socket
+  as the model writes it (`ui_delta`, then `ui_completed`), apart from the words people read or
+  hear, and writes it on the reply's message in Chat later, on a slower tick. `AgentChat` reads
+  each turn's UI from the session (`Turn.ui`) into the SDK's `LiveUI`, which shows it on the
+  reply until the message's own `ai_ui` is complete.
+- **A change to the last card is a patch.** Asked to change the card it just wrote, such as the
+  party size, the agent writes only the statements that change, in an ```` ```openui-patch ````
+  block. The router merges them into that card before it writes the message, and the SDK does
+  the same with what streams in, so the reply shows the whole card, changed.
+- **The UI shows on a call too.** In voice mode the agent says a sentence or two and writes the
+  same UI, which the router keeps out of what is spoken. Voice mode shows the newest of it under
+  the glow, from the call's session, and tapping it asks the agent as in the chat.
+- **Settings › Brand** chooses the accent and corners the UI wears: Stream Default, Ember
+  Hospitality or Nordic Mobility (`Brand.swift`). The open conversation shows it at once: its
+  renderers are made again with the brand's OpenUI and A2UI themes, and the app's components
+  read it from the environment. The agent writes the same UI whichever is chosen.
+
 ## What does not work yet
 
 - **Sources.** A reply lists what it read in `support_message.sources` only when a shown
