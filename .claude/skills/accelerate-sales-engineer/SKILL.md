@@ -52,7 +52,7 @@ curl -fsSL https://getstream.io/SKILL-agents.md
 That means `getstream init`, then `getstream agents init` with a template that matches the modality, then `getstream docs` for the platform quickstart. Read `-h` before inventing a flag.
 
 
-The head of the SDK live on this Github branch: https://github.com/GetStream/Vision-Agents/tree/accelerate. Always pull the latest code and check the API and SDKs before starting to code. The API spec can be found here: https://github.com/GetStream/Vision-Agents/blob/accelerate/acceleration/api/openapi.yaml
+The head of the SDK live on this Github branch: https://github.com/GetStream/Vision-Agents/tree/main. Always pull the latest code and check the API and SDKs before starting to code. The API spec can be found here: https://github.com/GetStream/Vision-Agents/blob/main/acceleration/api/openapi.yaml
 
 The page is web. The agent client is `@stream-io/stream-agents`. Chat UI is `stream-chat-react`, with `stream-chat-react/ai-components` for the streaming reply. Voice and video go through `@stream-io/stream-agents`, not a second client stack.
 
