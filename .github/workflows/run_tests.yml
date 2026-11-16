@@ -16,11 +16,6 @@ on:
         required: false
         default: false
         type: boolean
-      ref:
-        description: 'Branch to check out; empty checks out the commit that triggered the run'
-        required: false
-        default: ""
-        type: string
       environment:
         description: 'Environment the test job runs in, for its provider keys; empty runs it in none'
         required: false
@@ -44,8 +39,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.ref }}
       - name: Install dependencies
         uses: ./.github/actions/python-uv-setup
         with:
@@ -122,8 +115,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.ref }}
       # Ubuntu 26.04's PortAudio (19.7) has a PulseAudio backend, and `import sounddevice`
       # fails without a server to connect to, so the job runs one.
       - name: Install system dependencies
