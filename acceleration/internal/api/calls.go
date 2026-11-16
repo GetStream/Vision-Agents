@@ -618,6 +618,7 @@ func (s *Server) transcriptReads(ctx context.Context, customerID string, call st
 	window := chatlog.Read{
 		Customer: customerID,
 		Agent:    call.AgentID,
+		Writer:   call.AgentUserID,
 		From:     call.StartedAt.Add(-transcriptSlack),
 	}
 	if call.EndedAt != nil {

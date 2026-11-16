@@ -60,6 +60,7 @@ func (s *Store) StartCall(ctx context.Context, call *Call) error {
 		On("CONFLICT (id) DO UPDATE").
 		Set("ended_at = NULL").
 		Set("conversation_id = COALESCE(c.conversation_id, EXCLUDED.conversation_id)").
+		Set("agent_user_id = COALESCE(c.agent_user_id, EXCLUDED.agent_user_id)").
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("store: start call: %w", err)
