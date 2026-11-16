@@ -681,7 +681,7 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ### The key_refused alert says why a key was refused
 
-The Sentry title of a `key_refused` alert now ends with the reason, such as `usage alert: key_refused GOOGLE_API_KEY/402: out of funds, top up the account`. The same reason is given for `400`, `401` and `403` (key not valid, replace it), `429` (rate limited), `quota_exceeded` (quota spent) and `invalid_key`. A status with no reason keeps its title. The fingerprint and the `item` tag are unchanged, so existing Sentry issues and rules still match (AI-3301).
+The Sentry title of a `key_refused` alert now ends with the reason, such as `usage alert: key_refused GOOGLE_API_KEY/402: out of funds, top up the account`. The other statuses say `400`, `403` and `invalid_key` (key not valid, replace it), `401` (key not valid or its quota spent), `429` (rate limited or spend cap reached) and `quota_exceeded` (quota spent). A status with no reason keeps its title. The fingerprint and the `item` tag are unchanged, so existing Sentry issues and rules still match (AI-3301).
 
 ### OpenAI agents answer every turn on an account with Zero Data Retention
 
