@@ -334,11 +334,13 @@ func TestAShutdownThatFailsForAnotherReasonIsStillAnError(t *testing.T) {
 }
 
 // draining is a router on its way down with a drain, a public, a peer, a metrics and a
-// sandbox egress proxy listener, and a session count the test decides.
+// sandbox egress proxy listener, and a session count the test decides. stoppedTaking closes
+// when it stops taking trunk calls over from other nodes.
 type draining struct {
 	public, peers, metrics, proxy string
 	held                          atomic.Int64
 	stopped                       chan error
+	stoppedTaking                 chan struct{}
 }
 
 func startDraining(t *testing.T, drain time.Duration) *draining {
@@ -367,7 +369,7 @@ func startDraining(t *testing.T, drain time.Duration) *draining {
 	require.NoError(t, err)
 
 	d := &draining{public: public.Addr().String(), peers: peers.Addr().String(), metrics: metrics, proxy: proxy,
-		stopped: make(chan error, 1)}
+		stopped: make(chan error, 1), stoppedTaking: make(chan struct{})}
 	d.held.Store(1)
 	go func() {
 		d.stopped <- stopServing(stopping{
@@ -378,6 +380,7 @@ func startDraining(t *testing.T, drain time.Duration) *draining {
 			telephony:       service,
 			handOverMetrics: handOverMetrics,
 			handOverProxy:   handOverProxy,
+			stopTaking:      func() { close(d.stoppedTaking) },
 			drain:           drain,
 			grace:           shutdownGrace,
 			logger:          slog.New(slog.DiscardHandler),
@@ -534,6 +537,25 @@ func TestARouterWithoutADrainServesMetricsUntilItStops(t *testing.T) {
 	require.True(t, servesMetrics(metrics), "metrics stopped before the router exited")
 	stopMetrics()
 	require.False(t, servesMetrics(metrics), "metrics outlived the router")
+}
+
+// Defect: a draining router takes other nodes' trunk calls over until closePhone, only to
+// hand them on again.
+func TestADrainingRouterStopsTakingTrunkCallsWhileItStillHoldsSessions(t *testing.T) {
+	d := startDraining(t, time.Hour)
+
+	select {
+	case <-d.stoppedTaking:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a draining router kept taking trunk calls over")
+	}
+	select {
+	case <-d.stopped:
+		t.Fatal("the router stopped while it still held a session")
+	default:
+	}
+	d.held.Store(0)
+	require.NoError(t, <-d.stopped)
 }
 
 func TestADrainingRouterStillAnswersItsPeersUntilItsLastSessionEnds(t *testing.T) {

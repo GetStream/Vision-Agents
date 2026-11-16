@@ -13,6 +13,13 @@ type LegState struct {
 	CallID    string
 	LocalTag  string
 	RemoteTag string
+	// From and To are the dialog's full header values, tags included.
+	From string
+	To   string
+	// Transport is udp, tcp or tls.
+	Transport string
+	// ReinviteHost is the host swapped into a re-INVITE's Request-URI. Empty on the customer leg.
+	ReinviteHost string
 	// LocalCSeq is the last CSeq this side sent in the dialog.
 	LocalCSeq uint32
 	// RemoteTarget is the Contact of the peer's 2xx, the Request-URI of in-dialog requests.
@@ -23,13 +30,23 @@ type LegState struct {
 	LastSDP []byte
 }
 
-func legState(invite *sip.Request, answer *sip.Response, cseq uint32, sdp []byte) LegState {
+// CallState is what another node needs to continue a call.
+type CallState struct {
+	Customer, Stream LegState
+	Media            MediaAddrs
+}
+
+func legState(invite *sip.Request, answer *sip.Response, cseq uint32, sdp []byte, transport, reinviteHost string) LegState {
 	state := LegState{
-		CallID:    invite.CallID().Value(),
-		LocalTag:  invite.From().Params.GetOr("tag", ""),
-		RemoteTag: answer.To().Params.GetOr("tag", ""),
-		LocalCSeq: cseq,
-		LastSDP:   slices.Clone(sdp),
+		CallID:       invite.CallID().Value(),
+		LocalTag:     invite.From().Params.GetOr("tag", ""),
+		RemoteTag:    answer.To().Params.GetOr("tag", ""),
+		From:         invite.From().Value(),
+		To:           answer.To().Value(),
+		Transport:    transport,
+		ReinviteHost: reinviteHost,
+		LocalCSeq:    cseq,
+		LastSDP:      slices.Clone(sdp),
 	}
 	if contact := answer.Contact(); contact != nil {
 		state.RemoteTarget = contact.Address.String()
