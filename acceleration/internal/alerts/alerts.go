@@ -51,6 +51,10 @@ type Condition struct {
 	// item is its own alert, fingerprinted usage_<name>:<item> and limited on its own, so one
 	// item that keeps failing does not hide another.
 	Items ItemCheck
+	// Describe, with Items, says in plain words what an item means, such as why a key was
+	// refused. It follows the item in the alert's message; the fingerprint and the tags do not
+	// have it. A nil Describe, or an empty answer, leaves the message as it is.
+	Describe func(item string) string
 }
 
 // Options configure a Loop.
@@ -134,7 +138,7 @@ func (l *Loop) check() {
 			continue
 		}
 		l.sent[condition.Name] = now
-		send(l.options.Hub, l.options.Logger, l.options.Source, l.options.Tags, condition.Name, "", condition.Level, extra)
+		send(l.options.Hub, l.options.Logger, l.options.Source, l.options.Tags, condition.Name, "", "", condition.Level, extra)
 	}
 }
 
@@ -148,7 +152,11 @@ func (l *Loop) checkItems(now time.Time, condition Condition) {
 			continue
 		}
 		l.sent[key] = now
-		send(l.options.Hub, l.options.Logger, l.options.Source, l.options.Tags, condition.Name, item, condition.Level, held[item])
+		var description string
+		if condition.Describe != nil {
+			description = condition.Describe(item)
+		}
+		send(l.options.Hub, l.options.Logger, l.options.Source, l.options.Tags, condition.Name, item, description, condition.Level, held[item])
 	}
 }
 
@@ -161,11 +169,12 @@ func Send(name string, level Level, extra map[string]any) {
 // SendItem is Send for one item, such as the hour a job missed: the alert names it, and one
 // item's alert is kept apart from another's.
 func SendItem(name, item string, level Level, extra map[string]any) {
-	send(sentry.CurrentHub(), slog.Default(), filepath.Base(os.Args[0]), nil, name, item, level, extra)
+	send(sentry.CurrentHub(), slog.Default(), filepath.Base(os.Args[0]), nil, name, item, "", level, extra)
 }
 
-// send sends one alert, of one item of the condition when item is not empty.
-func send(hub *sentry.Hub, logger *slog.Logger, source string, tags map[string]string, name, item string, level Level, extra map[string]any) {
+// send sends one alert, of one item of the condition when item is not empty, and with the
+// item's description after it in the message when there is one.
+func send(hub *sentry.Hub, logger *slog.Logger, source string, tags map[string]string, name, item, description string, level Level, extra map[string]any) {
 	fields := []any{"alert", name, "level", level, "source", source, "extra", extra}
 	if item != "" {
 		fields = append(fields, "item", item)
@@ -181,6 +190,9 @@ func send(hub *sentry.Hub, logger *slog.Logger, source string, tags map[string]s
 	}
 	if item != "" {
 		event.Message += " " + item
+		if description != "" {
+			event.Message += ": " + description
+		}
 		event.Fingerprint = []string{"usage_" + name + ":" + item}
 		event.Tags["item"] = item
 	}

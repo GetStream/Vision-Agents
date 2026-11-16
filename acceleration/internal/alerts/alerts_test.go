@@ -313,3 +313,37 @@ func (s *AlertsSuite) TestAnItemConditionCountsOnlyTheSeriesItIsAbout() {
 
 	s.Equal([]string{"b"}, slices.Collect(maps.Keys(check(time.Now()))))
 }
+
+func (s *AlertsSuite) TestAnItemIsDescribedInTheMessageAndNowhereElse() {
+	missing := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "test_described_total"}, []string{"model"})
+	missing.WithLabelValues("a").Inc()
+	missing.WithLabelValues("b").Inc()
+	described := Condition{Name: "missing", Level: Warn,
+		Items:    IncreasedPer(missing, time.Hour, []string{"model"}, nil),
+		Describe: func(item string) string { return map[string]string{"a": "gone for good"}[item] }}
+
+	s.run(s.loop(time.Hour, time.Hour, described), 50*time.Millisecond)
+
+	events := s.sent()
+	s.Require().Len(events, 2)
+	s.Equal("usage alert: missing a: gone for good", events[0].Message)
+	s.Equal("usage alert: missing b", events[1].Message, "an item with no description keeps its message")
+	s.Equal([]string{"usage_missing:a"}, events[0].Fingerprint)
+	s.Equal(map[string]string{"usage_alert": "missing", "source": "usage/test", "shard": "here", "item": "a"}, events[0].Tags)
+	s.Equal(map[string]string{"usage_alert": "missing", "source": "usage/test", "shard": "here", "item": "b"}, events[1].Tags)
+}
+
+// What a message was before a condition could describe its items.
+func (s *AlertsSuite) TestWithoutADescriptionTheMessagesAreAsTheyWere() {
+	missing := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "test_plain_total"}, []string{"model"})
+	missing.WithLabelValues("a").Inc()
+	items := Condition{Name: "missing", Level: Warn, Items: IncreasedPer(missing, time.Hour, []string{"model"}, nil)}
+	checked := Condition{Name: "lost", Level: Warn, Check: func(time.Time) (bool, map[string]any) { return true, nil }}
+
+	s.run(s.loop(time.Hour, time.Hour, items, checked), 50*time.Millisecond)
+
+	events := s.sent()
+	s.Require().Len(events, 2)
+	s.Equal("usage alert: missing a", events[0].Message)
+	s.Equal("usage alert: lost", events[1].Message)
+}
