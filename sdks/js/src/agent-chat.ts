@@ -1,4 +1,6 @@
+import type { Turn } from "./conversation.js";
 import { RouterError } from "./errors.js";
+import { LiveUI } from "./live-ui.js";
 import { LiveReasoning } from "./reasoning.js";
 import type { CreateResponseOptions, ImageSource, UIAction } from "./responses.js";
 import { messageField } from "./message-field.js";
@@ -169,6 +171,9 @@ export class AgentChat<M extends AgentChatMessage = AgentChatMessage> {
   /** Each reply's thinking in full, from its live updates. A stored step only keeps its opening. */
   readonly reasoning = new LiveReasoning();
 
+  /** Fast-lane 0ms WebSocket UI updates overlaid ahead of Stream Chat's 150ms ephemeral tick. */
+  readonly liveUI = new LiveUI();
+
   /** The conversation, to follow with `useStateStore` or `subscribe`. */
   readonly state: AgentChatStore<AgentChatState<M>>;
 
@@ -176,6 +181,7 @@ export class AgentChat<M extends AgentChatMessage = AgentChatMessage> {
   private readonly openSession: OpenAgentSession;
   private readonly pageSize: number;
   private reader: ChannelReader | undefined;
+  private rawMessages: readonly M[] = [];
   private readonly stops: (() => void)[] = [];
   private stopFollowingSession: (() => void) | undefined;
   private opening: Promise<Session> | undefined;
@@ -247,14 +253,16 @@ export class AgentChat<M extends AgentChatMessage = AgentChatMessage> {
       return;
     }
     const reader = readerFor(channel, this.pageSize, {
-      messages: (messages, hasOlderMessages) =>
+      messages: (messages, hasOlderMessages) => {
+        this.rawMessages = messages as readonly M[];
         this.state.partialNext({
-          messages: messages as readonly M[],
+          messages: this.liveUI.overlay(this.rawMessages),
           hasOlderMessages,
           failure: undefined,
           // Messages this client read before show at once, while the latest page loads.
           ...(messages.length > 0 ? { isLoaded: true } : {}),
-        }),
+        });
+      },
       updated: (message) => {
         this.reasoning.read(message);
         this.state.partialNext({
@@ -345,6 +353,14 @@ export class AgentChat<M extends AgentChatMessage = AgentChatMessage> {
   }
 
   /**
+   * Reads the channel's latest messages again, for messages its socket may not have brought.
+   * Rejects when they couldn't be read.
+   */
+  async readLatest(): Promise<void> {
+    await this.reader?.readLatest();
+  }
+
+  /**
    * Stops following the channel and lets the session go: deleted when it was a new conversation's
    * that nothing was asked in, closed otherwise. Safe to call twice.
    */
@@ -383,6 +399,7 @@ export class AgentChat<M extends AgentChatMessage = AgentChatMessage> {
     // The next question creates another conversation, in a channel of its own.
     this.reader?.stop();
     this.reader = undefined;
+    this.rawMessages = [];
     this.state.partialNext({
       session: undefined,
       usedSessionId: undefined,
@@ -433,9 +450,17 @@ export class AgentChat<M extends AgentChatMessage = AgentChatMessage> {
     // A failure reported before this session was followed belongs to an earlier one.
     const since = session.conversation.get().failureAt;
     const update = () => {
+      const current = this.state.getLatestValue();
       const activity = activityOf(session, since);
-      if (!sameActivity(activity, this.state.getLatestValue().activity)) {
-        this.state.partialNext({ activity });
+      const activityChanged = !sameActivity(activity, current.activity);
+      const uiChanged = this.liveUI.observeTurns((session.conversation.get() as { turns?: readonly Turn[] }).turns);
+      const overlaid = uiChanged && this.rawMessages.length > 0 ? this.liveUI.overlay(this.rawMessages) : undefined;
+      const messagesChanged = overlaid !== undefined && overlaid !== current.messages;
+      if (activityChanged || messagesChanged) {
+        this.state.partialNext({
+          ...(activityChanged ? { activity } : {}),
+          ...(messagesChanged ? { messages: overlaid } : {}),
+        });
       }
     };
     const stopState = session.state.subscribe(update);
@@ -533,6 +558,8 @@ interface ReaderEvents {
 interface ChannelReader {
   start(): Promise<void>;
   loadOlder(loaded: readonly AgentChatMessage[]): Promise<void>;
+  /** Reads the latest page again, into `messages`. */
+  readLatest(): Promise<void>;
   stop(): void;
 }
 
@@ -563,6 +590,7 @@ interface ChannelV10 {
   on(type: string, handler: (event: ChatEvent) => void): Subscription;
   activate(): () => void;
   watch(options: { messages: { limit: number } }): Promise<unknown>;
+  reload(): Promise<unknown>;
 }
 
 /** What this module reads of a stream-chat 9 channel. */
@@ -618,6 +646,10 @@ function readerV10(channel: ChannelV10, pageSize: number, events: ReaderEvents):
         throw paginator.lastQueryError;
       }
     },
+    async readLatest() {
+      // 10's query places no messages; reload pages them in again.
+      await channel.reload();
+    },
     stop() {
       for (const stop of stops.splice(0)) {
         stop();
@@ -646,7 +678,14 @@ function readerV9(channel: ChannelV9, pageSize: number, events: ReaderEvents): C
         if (event.type === "message.updated" && event.message) {
           events.updated(event.message);
         }
-        if (event.type === "message.new" || event.type === "message.updated" || event.type === "message.deleted") {
+        // A rewind is pruned from the state before the channel's listeners run (see followRewinds).
+        if (
+          event.type === "message.new" ||
+          event.type === "message.updated" ||
+          event.type === "message.deleted" ||
+          event.type === "channel.rewound" ||
+          event.type === "notification.channel_rewound"
+        ) {
           publish();
         }
       });
@@ -679,6 +718,7 @@ function readerV9(channel: ChannelV9, pageSize: number, events: ReaderEvents): C
       hasOlderMessages = page.messages.length >= pageSize;
       publish();
     },
+    readLatest: watchLatest,
     stop() {
       stopped = true;
       for (const stop of stops.splice(0)) {

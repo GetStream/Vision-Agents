@@ -74,7 +74,7 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
     let timezone: String?
     /// What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.
     let title: String?
-    /// How long the model waits for a tool result. Zero is the default.
+    /// How long the model waits for the result of a tool the caller or a worker runs, in milliseconds. Zero or omitted is 30 seconds. A tool's own timeout_ms replaces it for that tool, which is how one slow tool, such as one that draws a picture, gets longer without every tool waiting as long.
     let toolTimeoutMs: Int?
     let tools: [SessionTool]?
     /// Omit it and the config decides, or en-low-latency when there is no config.

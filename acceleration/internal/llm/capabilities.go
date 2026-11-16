@@ -80,6 +80,13 @@ func (c Capabilities) Validate(params ResponseParams) error {
 	if params.Conversation != "" && params.PreviousResponseID != "" {
 		return stack.Wrap(fmt.Errorf("llm: a response continues from a conversation or from a previous response, not both"))
 	}
+	// A provider that keeps nothing would answer from only the messages sent with the request.
+	if params.PreviousResponseID != "" && !c.Store {
+		return stack.Wrap(fmt.Errorf("llm: this model keeps no response to continue from, so send the whole conversation"))
+	}
+	if params.Conversation != "" && !c.Conversations {
+		return stack.Wrap(fmt.Errorf("llm: this model holds no conversation, so send the whole conversation"))
+	}
 	for _, message := range params.Input {
 		if message.Content != "" && len(message.Parts) > 0 {
 			return stack.Wrap(fmt.Errorf("llm: content and parts are mutually exclusive"))

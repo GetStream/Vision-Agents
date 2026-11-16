@@ -18,6 +18,7 @@ const installed: { readonly StreamChat: ChatConstructor; readonly version?: Chat
 
 registerChat(installed.StreamChat, installed.version);
 
+export { LiveUI } from "./live-ui.js";
 export {
   AGENT_CHAT_PAGE_SIZE,
   AgentChat,
@@ -31,6 +32,7 @@ export {
 } from "./agent-chat.js";
 export {
   AGENT_ACTIVITY_STATES,
+  AgentBranchError,
   agentChatTransport,
   type AgentChatTransportOptions,
   type AgentTransport,

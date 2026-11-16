@@ -79,10 +79,20 @@ export {
   AgentResponse,
   Items,
   Responses,
+  type BranchResponseOptions,
   type CreateResponseOptions,
   type ImageSource,
+  type ResponseRef,
   type UIAction,
 } from "./responses.js";
+
+export {
+  branchErrorOf,
+  supportBranchOf,
+  type BranchErrorCode,
+  type RewoundTo,
+  type SupportBranch,
+} from "./branches.js";
 
 export {
   GUEST_STORAGE_KEY,
@@ -134,9 +144,24 @@ export {
 } from "./tools.js";
 
 export { LiveReasoning } from "./reasoning.js";
+export { LiveUI } from "./live-ui.js";
+export {
+  compileUIPrompt,
+  uiPascalName,
+  validateOpenUIProgram,
+  type UIBlueprint,
+  type UIDeclaration,
+  type UIPortableComponent,
+} from "./ui-catalog.js";
 
 export { ConversationState, type AgentState, type ConversationSnapshot } from "./state.js";
-export { Conversation, type ConversationRecord, type Turn } from "./conversation.js";
+export {
+  Conversation,
+  mergeOpenUIStatements,
+  type ConversationRecord,
+  type Turn,
+  type TurnUI,
+} from "./conversation.js";
 
 export { CameraFrames, NoFrames, type CameraFrame } from "./frames.js";
 

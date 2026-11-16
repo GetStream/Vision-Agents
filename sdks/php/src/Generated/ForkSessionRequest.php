@@ -30,6 +30,8 @@ final readonly class ForkSessionRequest
         // Carry the parent's history only up to the end of this response, so the fork continues from that point rathe...
         public ?string $responseId = null,
         public ?string $title = null,
+        // How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as o...
+        public ?int $toolTimeoutMs = null,
     ) {
     }
 
@@ -49,6 +51,7 @@ final readonly class ForkSessionRequest
             projectId: array_key_exists('project_id', $data) && $data['project_id'] !== null ? Json::string($data, 'project_id') : null,
             responseId: array_key_exists('response_id', $data) && $data['response_id'] !== null ? Json::string($data, 'response_id') : null,
             title: array_key_exists('title', $data) && $data['title'] !== null ? Json::string($data, 'title') : null,
+            toolTimeoutMs: array_key_exists('tool_timeout_ms', $data) && $data['tool_timeout_ms'] !== null ? Json::int($data, 'tool_timeout_ms') : null,
         );
     }
 
@@ -89,6 +92,9 @@ final readonly class ForkSessionRequest
         }
         if ($this->title !== null) {
             $out['title'] = $this->title;
+        }
+        if ($this->toolTimeoutMs !== null) {
+            $out['tool_timeout_ms'] = $this->toolTimeoutMs;
         }
         return $out;
     }

@@ -60,6 +60,7 @@ import (
 	dlctelnyx "github.com/GetStream/Vision-Agents/acceleration/internal/dlc/telnyx"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/imagejobs"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/extract"
@@ -159,9 +160,10 @@ const (
 	sentryFlushTimeout = 2 * time.Second
 	// traceFlushTimeout bounds the same thing for spans, on the same reasoning.
 	traceFlushTimeout = 2 * time.Second
-	// phoneHangupGrace bounds hanging up the calls this node holds through customers' own
-	// SIP trunks. A BYE is one round trip, so this is generous. On a signal the hangup runs
-	// first, and the HTTP drain gets the rest of shutdownGrace, so both fit inside the
+	// phoneHangupGrace bounds handing the calls this node holds through customers' own SIP
+	// trunks to another node, or hanging them up when there is no Redis to hand them through.
+	// A BYE is one round trip and a takeover a few, so this is generous. On a signal this
+	// runs first, and the HTTP drain gets the rest of shutdownGrace, so both fit inside the
 	// orchestrator's termination grace period.
 	phoneHangupGrace = 5 * time.Second
 	// usageDrainTimeout is how long the usage writer has to write what is queued once
@@ -296,9 +298,10 @@ func logLevel(settings config.Config) slog.Level {
 }
 
 // newLogger is the router's logger, which writes text to w and takes every credential out of
-// what it prints: a provider's error can echo the key the router sent it.
+// what it prints: a provider's error can echo the key the router sent it. A line logged with an
+// authenticated request's context carries its app_id and api_key.
 func newLogger(w io.Writer, level slog.Level) *slog.Logger {
-	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level, ReplaceAttr: store.RedactLogAttr}))
+	return slog.New(api.NewLogHandler(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level, ReplaceAttr: store.RedactLogAttr})))
 }
 
 // sentryOptions are the router's Sentry options. An event carries an error's text, which can
@@ -1144,7 +1147,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if policies != nil {
 		dlcGate.Charging(policies).Limiting(settings.Limits.Mode)
 	}
-	telephony, err := buildPhone(settings, vendorConfig, pgStore, liveClient, phoneRecorder, streamClients, dlcGate, secrets, logger)
+	telephony, stopTakingTrunkCalls, err := buildPhone(settings, vendorConfig, pgStore, liveClient, phoneRecorder, streamClients, dlcGate, secrets, logger)
 	if err != nil {
 		return err
 	}
@@ -1198,13 +1201,30 @@ func run(settings config.Config, logger *slog.Logger) error {
 			dialer.Close()
 		}
 	}()
+	// The pictures agents are asked for are queued in Postgres and drawn after their turn by
+	// whichever router claims them, where there is an image router to draw with.
+	var drawings *imagejobs.Service
+	if pgStore != nil && streams.Image != nil {
+		if drawings, err = imagejobs.New(imagejobs.Options{Store: pgStore, Images: streams.Image, Logger: logger}); err != nil {
+			return err
+		}
+	}
 	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, floor, streamClients,
-		sessionConnectors, prices, policies, customerKeys, logger)
+		sessionConnectors, prices, policies, customerKeys, drawings, logger)
 	if err != nil {
 		return err
 	}
 	if sessions != nil {
 		defer sessions.Shutdown()
+	}
+	// A picture is posted into its conversation, which only sessions reach Stream Chat for.
+	if drawings != nil && sessions != nil {
+		if conversations, err := sessions.Conversations(); err == nil {
+			drawings.Start(ctx, conversations)
+			defer drawings.Close()
+		} else {
+			drawings = nil
+		}
 	}
 	// A simulation is a conversation, a model to judge it and a row, so it too runs only
 	// where all three are configured. Elsewhere a simulation can be written down but the
@@ -1691,9 +1711,10 @@ func run(settings config.Config, logger *slog.Logger) error {
 			public:          httpServer,
 			peers:           peerServer,
 			drainWork:       server.Drain,
-			held:            func() int { return running(sessions, scheduler, bridge, deliveries, server, dialer) },
+			held:            func() int { return running(sessions, scheduler, bridge, deliveries, server, dialer, drawings) },
 			telephony:       telephony,
 			handOverMetrics: handOverMetrics,
+			stopTaking:      stopTakingTrunkCalls,
 			handOverProxy:   handOverSandboxProxy,
 			drain:           settings.Shutdown.Drain,
 			logger:          logger,
@@ -1731,6 +1752,9 @@ type stopping struct {
 	// over on the same address is the one scraped. Without a drain the caller stops it at
 	// exit.
 	handOverMetrics func()
+	// stopTaking stops this node taking calls through customers' own SIP trunks over from
+	// other nodes when a drain starts, while it keeps relaying its own.
+	stopTaking func()
 	// handOverProxy stops the sandbox egress proxy taking connections when a drain starts,
 	// so the router taking over on the same address serves the sandboxes; the tunnels already
 	// open stay until the process ends. Without a drain the caller stops it at exit. It does
@@ -1748,13 +1772,13 @@ const drainPoll = 250 * time.Millisecond
 
 // stopServing stops taking work, then lets what is running finish.
 //
-// Without a drain it hangs up the calls through customers' own SIP trunks, then drains HTTP,
-// both inside the grace: the drain gets whatever the hangup left of it, and metrics and the
-// sandbox egress proxy are served until the process exits. With one, the metrics, sandbox
-// egress proxy and public listeners close first and the sessions this process holds, phone
-// calls included, keep going until they end or the drain runs out, still answering their
-// peers' requests. A second signal stops
-// waiting. The sessions left are ended by the caller's sessions.Shutdown either way.
+// Without a drain it hands the calls through customers' own SIP trunks to another node (or
+// hangs them up without Redis), then drains HTTP, both inside the grace: the drain gets
+// whatever that left of it, and metrics and the sandbox egress proxy are served until the
+// process exits. With one, the metrics, sandbox egress proxy and public listeners close first
+// and the sessions this process holds, phone calls included, keep going until they end or the
+// drain runs out, still answering their peers' requests. A second signal stops waiting. The
+// sessions left are ended by the caller's sessions.Shutdown either way.
 func stopServing(s stopping) error {
 	s.drainWork()
 	grace := cmp.Or(s.grace, shutdownGrace)
@@ -1774,6 +1798,9 @@ func stopServing(s stopping) error {
 
 	if s.handOverMetrics != nil {
 		s.handOverMetrics()
+	}
+	if s.stopTaking != nil {
+		s.stopTaking()
 	}
 	if s.handOverProxy != nil {
 		s.handOverProxy()
@@ -1806,12 +1833,16 @@ func stopServing(s stopping) error {
 }
 
 // running is how many sessions, scheduled deliveries, inbound writes and the turns they handed
-// over, chat answers, the app chat's episode cards and campaign calls a router holds; one
+// over, chat answers, the app chat's episode cards, campaign calls and pictures being drawn a
+// router holds; one
 // without one of them holds none of its work. A turn counts until it ends, also before the
 // session it opens is counted, and so does a campaign call placed before its session exists.
 func running(sessions *session.Manager, scheduler *scheduling.Scheduler, bridge *channelbridge.Bridge,
-	deliveries *chatinbound.Worker, server *api.Server, dialer *campaign.Runner) int {
+	deliveries *chatinbound.Worker, server *api.Server, dialer *campaign.Runner, drawings *imagejobs.Service) int {
 	held := 0
+	if drawings != nil {
+		held += drawings.Running()
+	}
 	if dialer != nil {
 		held += dialer.Running()
 	}
@@ -2055,6 +2086,7 @@ func buildSessions(
 	prices pricing.Pricer,
 	policies *policy.Enforcer,
 	keys routing.CustomerKeys,
+	drawings *imagejobs.Service,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.LLM == nil {
@@ -2080,6 +2112,7 @@ func buildSessions(
 		Knowledge:  base,
 		Pricer:     prices,
 		Search:     finding,
+		Drawings:   drawings,
 		Classifier: judging,
 		FlowJudge:  settings.Agent.FlowJudge,
 		Phone:      telephony,
@@ -2427,7 +2460,8 @@ func newActivePrices(ctx context.Context, pgStore *store.Store, capabilities rou
 
 // buildPhone wires the telephony service. Stream credentials are only needed to attach a
 // number, so a deployment without them still lists vendors and searches for numbers, and
-// the operations that need them say so.
+// the operations that need them say so. The calls through customers' own SIP trunks are
+// taken over from other nodes until stopTaking, nil without them, or the provider closes.
 func buildPhone(
 	settings config.Config,
 	vendorConfig phone.Config,
@@ -2438,7 +2472,7 @@ func buildPhone(
 	gate *dlc.Gate,
 	secrets *auth.Sealer,
 	logger *slog.Logger,
-) (*phone.Service, error) {
+) (service *phone.Service, stopTaking func(), err error) {
 	if settings.Stream.APIKey == "" || settings.Stream.APISecret == "" {
 		logger.Warn("no stream credentials, numbers cannot be attached to a call in the deployment's app")
 	}
@@ -2446,21 +2480,23 @@ func buildPhone(
 	// Passwords of customers' own SIP trunks are sealed under the router's keyring. Without
 	// a key those trunks are off, rather than their passwords stored in the clear.
 	var trunks phone.Provider
+	var trunkCalls *siptrunk.Provider
+	// The Redis of every shard: the node that ends a refused call's leg need not be the one
+	// that refused it, and the node that stops need not be the one that continues a call.
+	var shared rueidis.Client
+	if liveClient != nil {
+		shared = liveClient.Redis()
+	}
 	if secrets != nil {
-		trunks = siptrunk.New(siptrunk.Options{Logger: logger})
+		trunkCalls = siptrunk.New(siptrunk.Options{Logger: logger, Redis: shared})
+		trunks = trunkCalls
 	} else {
 		logger.Info("no key encryption key, calls through customers' own sip trunks are off")
 	}
 
-	// The Redis of every shard: the node that ends a refused call's leg need not be the one
-	// that refused it.
-	var refusals rueidis.Client
-	if liveClient != nil {
-		refusals = liveClient.Redis()
-	}
-	return phone.NewService(phone.ServiceOptions{
+	service, err = phone.NewService(phone.ServiceOptions{
 		Registry:  vendors.Registry(vendorConfig),
-		Redis:     refusals,
+		Redis:     shared,
 		Store:     pgStore,
 		Apps:      phone.AppsOf(stream),
 		Recorder:  recorder,
@@ -2470,6 +2506,14 @@ func buildPhone(
 		Sealer:    secrets,
 		SIPTrunks: trunks,
 	})
+	if err != nil {
+		return nil, nil, err
+	}
+	if trunkCalls != nil {
+		trunkCalls.Start(service)
+		stopTaking = trunkCalls.StopTaking
+	}
+	return service, stopTaking, nil
 }
 
 // callHookCheckTimeout bounds the one read of the deployment's app hooks at boot.
@@ -2504,9 +2548,10 @@ func checkCallHook(ctx context.Context, settings config.Config, logger *slog.Log
 	}
 }
 
-// closePhone hangs up the calls this node holds through customers' own SIP trunks. Their
-// signalling runs through this process, so stopping without a BYE would leave both ends of
-// each call connected to nothing.
+// closePhone hands the calls this node holds through customers' own SIP trunks to another
+// node, or hangs them up when no other node takes them or there is no Redis to hand them
+// through. Their signalling runs through this process, so stopping with neither would leave
+// both ends of each call connected to nothing.
 func closePhone(telephony *phone.Service, logger *slog.Logger) {
 	ctx, cancel := context.WithTimeout(context.Background(), phoneHangupGrace)
 	defer cancel()

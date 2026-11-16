@@ -251,7 +251,11 @@ type Spec struct {
 	// SearchTarget routes what the agent finds out about today. Unlike the three above it
 	// is not needed for a conversation to happen, so a deployment that routes no search
 	// simply leaves the tool unoffered.
-	SearchTarget  string
+	SearchTarget string
+	// ImageTarget routes the pictures the agent draws. Unlike SearchTarget it has no
+	// default and no per-session override: a picture costs enough that only the agent's
+	// config turns drawing on, and a device opening a session cannot.
+	ImageTarget   string
 	Voice         string
 	LanguageHints []string
 	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
@@ -332,7 +336,8 @@ type Spec struct {
 	// functions: the session carries the request out to whoever asked for the session
 	// and waits for them to answer it.
 	Tools []harness.Tool
-	// ToolTimeoutMs bounds how long the model waits on one of them. Zero is the default.
+	// ToolTimeoutMs bounds how long the model waits on one of them. Zero is the default,
+	// defaultToolTimeout.
 	ToolTimeoutMs int
 	// MaxToolRounds is the reply to a tool result, since the caller last spoke, made to
 	// answer rather than reach for another tool. Zero is the agent's default; negative is
@@ -424,6 +429,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		SubagentTarget: config.Subagent,
 		VideoSource:    config.VideoSource, VideoMaxFrames: config.VideoMaxFrames,
 		SearchTarget:       config.Search,
+		ImageTarget:        config.Image,
 		Instructions:       config.Instructions,
 		Greeting:           config.Greeting,
 		VaryGreeting:       config.GreetingMode == store.GreetingVariation,

@@ -3,7 +3,9 @@ package conversation
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -269,4 +271,98 @@ func TestAnActionTellsTheModelWhichReplyItWasIn(t *testing.T) {
 	require.NoError(t, err)
 	history, _ := history(page)
 	require.Contains(t, history[2].Content, `your earlier reply "A weekend in Ohrid, by the lake."`)
+}
+
+func TestOpenUIStatementPatchMergesUpdatesDeletesAndAppendsInOrder(t *testing.T) {
+	base := strings.Join([]string{
+		`$slot = "19:15"`,
+		`$party = 2`,
+		`root = Card([header, oldBanner, form])`,
+		`header = CardHeader("Kaneo Cliffside")`,
+		`oldBanner = Callout("info", "Wait", "20 min")`,
+		`form = Form("reserve", btns, [slotChips])`,
+	}, "\n")
+
+	patch := strings.Join([]string{
+		`$party = 4`,
+		`oldBanner = null`,
+		`root = Card([header, form, gauge])`,
+		`gauge = AvailabilityGauge(86, "12m wait")`,
+	}, "\n")
+
+	merged := MergeOpenUIStatements(base, patch)
+	require.Equal(t, strings.Join([]string{
+		`$slot = "19:15"`,
+		`$party = 4`,
+		`root = Card([header, form, gauge])`,
+		`header = CardHeader("Kaneo Cliffside")`,
+		`form = Form("reserve", btns, [slotChips])`,
+		`gauge = AvailabilityGauge(86, "12m wait")`,
+	}, "\n"), merged)
+}
+
+func TestUIDeltaPatchTurnMergesIntoEarlierReplyUIAndCoalescesSnapshots(t *testing.T) {
+	db, client := newChat(t)
+	s := NewForChat(client)
+	defer s.Close()
+	c, _, _, err := s.Open(context.Background(), "customer", "juno", "")
+	require.NoError(t, err)
+
+	var updates atomic.Int32
+	c.Attach(func(Updated) { updates.Add(1) })
+
+	first, err := c.BeginCommand("cmd-1", "Book Kaneo", "")
+	require.NoError(t, err)
+	updates.Store(0)
+	c.Observe(agent.Responding{TurnID: "t1"})
+	c.Observe(agent.ResponseDelta{TurnID: "t1", Text: "Table for two at 19:15."})
+	for _, piece := range []string{"$party = 2\n", "root = Card([hdr])\n", "hdr = CardHeader(\"Kaneo\")"} {
+		c.Observe(agent.UIDelta{TurnID: "t1", Format: "openui", Mode: "replace", Delta: piece})
+	}
+	c.Observe(agent.UICompleted{TurnID: "t1", Format: "openui", Mode: "replace", Content: "$party = 2\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"})
+	c.Observe(agent.Responded{TurnID: "t1"})
+	saved(t, c)
+
+	require.LessOrEqual(t, updates.Load(), int32(6), "rapid streaming deltas coalesce instead of publishing per token")
+
+	second, err := c.BeginCommand("cmd-2", "Make that four people", "")
+	require.NoError(t, err)
+	c.Observe(agent.Responding{TurnID: "t2"})
+	c.Observe(agent.ResponseDelta{TurnID: "t2", Text: "Updated to four guests."})
+	c.Observe(agent.UIDelta{TurnID: "t2", Format: "openui", Mode: "patch", Delta: "$party = 4"})
+	c.Observe(agent.UICompleted{TurnID: "t2", Format: "openui", Mode: "patch", Content: "$party = 4"})
+	c.Observe(agent.Responded{TurnID: "t2"})
+	saved(t, c)
+
+	db.mu.Lock()
+	reply1 := db.messages[first.AssistantMessageID]
+	reply2 := db.messages[second.AssistantMessageID]
+	db.mu.Unlock()
+
+	require.Equal(t, "$party = 2\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")",
+		reply1["custom"].(map[string]any)["ai_ui"].(map[string]any)["content"])
+	require.Equal(t, "$party = 4\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")",
+		reply2["custom"].(map[string]any)["ai_ui"].(map[string]any)["content"])
+}
+
+func TestWordsHeldBackWhileStreamingReachWatchersWhenTheReplyPauses(t *testing.T) {
+	_, client := newChat(t)
+	s := NewForChat(client)
+	defer s.Close()
+	c, _, _, err := s.Open(context.Background(), "customer", "juno", "")
+	require.NoError(t, err)
+	var shown atomic.Pointer[string]
+	c.Attach(func(u Updated) { shown.Store(&u.Message.Text) })
+
+	_, err = c.BeginCommand("cmd-1", "Check the weather", "")
+	require.NoError(t, err)
+	c.Observe(agent.Responding{TurnID: "t1"})
+	c.Observe(agent.ResponseDelta{TurnID: "t1", Text: "Let me check"})
+	c.Observe(agent.ResponseDelta{TurnID: "t1", Text: " that for you."})
+
+	// Nothing else comes, as while the model writes a tool call.
+	require.Eventually(t, func() bool {
+		text := shown.Load()
+		return text != nil && *text == "Let me check that for you."
+	}, 2*time.Second, 10*time.Millisecond, "the words after the last snapshot never reached watchers")
 }

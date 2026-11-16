@@ -169,6 +169,10 @@ class AgentConfigRequest:
             connectors and sandbox, and its spend is added to the parent run's usage. Only a text agent has them, and an
             agent named here must be a text agent with no agents of its own and not this one. Omitted or null on an update,
             the list stored stays as it is; an empty list removes it.
+        image (str | Unset): What the agent draws pictures with, as a provider/model or a capability shortcut such as
+            image-fast. Naming one offers a text agent with a Chat channel the generate_image tool, whose pictures are drawn
+            after the turn and posted into the conversation when ready, billed like POST /v1/image/generations. Empty offers
+            no such tool: unlike search there is no default.
     """
 
     name: str
@@ -210,6 +214,7 @@ class AgentConfigRequest:
     llm_fallbacks: list[str] | Unset = UNSET
     chat_channels: list[AgentChatChannel] | Unset = UNSET
     agents: list[ChildAgent] | Unset = UNSET
+    image: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -371,6 +376,8 @@ class AgentConfigRequest:
                 agents_item = agents_item_data.to_dict()
                 agents.append(agents_item)
 
+        image = self.image
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -454,6 +461,8 @@ class AgentConfigRequest:
             field_dict["chat_channels"] = chat_channels
         if agents is not UNSET:
             field_dict["agents"] = agents
+        if image is not UNSET:
+            field_dict["image"] = image
 
         return field_dict
 
@@ -710,6 +719,8 @@ class AgentConfigRequest:
 
                 agents.append(agents_item)
 
+        image = d.pop("image", UNSET)
+
         agent_config_request = cls(
             name=name,
             calls=calls,
@@ -750,6 +761,7 @@ class AgentConfigRequest:
             llm_fallbacks=llm_fallbacks,
             chat_channels=chat_channels,
             agents=agents,
+            image=image,
         )
 
         agent_config_request.additional_properties = d

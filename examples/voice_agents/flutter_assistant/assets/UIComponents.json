@@ -68,5 +68,91 @@
       "x-order": ["start", "end"]
     },
     "events": []
+  },
+  {
+    "name": "restaurant_card",
+    "description": "Venue summary card showing restaurant name, cuisine, star rating, and optional price tier.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Restaurant name, such as \"Kaneo Cliffside Kitchen\""
+        },
+        "cuisine": {
+          "type": "string",
+          "description": "Cuisine and distance summary, such as \"Macedonian Grill · 1.2 km\""
+        },
+        "rating": {
+          "type": "number",
+          "description": "Star rating from 0 to 5, such as 4.9"
+        },
+        "price_tier": {
+          "type": "string",
+          "enum": ["$", "$$", "$$$", "$$$$"],
+          "description": "Optional price tier"
+        }
+      },
+      "required": ["name", "cuisine", "rating"],
+      "x-order": ["name", "cuisine", "rating", "price_tier"]
+    },
+    "events": [
+      {
+        "name": "inspect_venue",
+        "description": "Tapping the restaurant card asks for its menu and highlights."
+      }
+    ]
+  },
+  {
+    "name": "availability_gauge",
+    "description": "Live radial occupancy and wait-time gauge for a restaurant or booking venue.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "occupancy_pct": {
+          "type": "number",
+          "description": "Current occupancy percentage from 0 to 100"
+        },
+        "wait_label": {
+          "type": "string",
+          "description": "Estimated wait time label, such as \"12 min wait\""
+        }
+      },
+      "required": ["occupancy_pct", "wait_label"],
+      "x-order": ["occupancy_pct", "wait_label"]
+    },
+    "events": []
+  },
+  {
+    "name": "seat_selector",
+    "description": "Interactive floorplan zone and table selector for choosing a specific dining area.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "tables": {
+          "type": "array",
+          "description": "Available and occupied tables by zone and seat count",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "zone": { "type": "string" },
+              "seats": { "type": "number" },
+              "available": { "type": "boolean" }
+            },
+            "required": ["id", "zone", "seats", "available"],
+            "x-order": ["id", "zone", "seats", "available"]
+          }
+        }
+      },
+      "required": ["tables"],
+      "x-order": ["tables"]
+    },
+    "events": [
+      {
+        "name": "select_table",
+        "description": "Tapping an available table requests that table zone."
+      }
+    ]
   }
 ]

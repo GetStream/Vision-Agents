@@ -100,6 +100,8 @@ jobs:
     needs: version
     if: github.event_name == 'push' && needs.version.outputs.channel != 'none'
     runs-on: ubuntu-latest
+    # The signing key lives in this environment, which only the publishing branches may enter.
+    environment: release
     defaults:
       run:
         working-directory: sdks/kotlin
@@ -153,6 +155,8 @@ jobs:
     name: Upload to the Stream repository
     needs: [ version, publish ]
     runs-on: ubuntu-latest
+    # The repository endpoint and bucket live in this environment, as the signing key does.
+    environment: release
     permissions:
       contents: write   # the sdk-kotlin-v* tag of a release
     steps:

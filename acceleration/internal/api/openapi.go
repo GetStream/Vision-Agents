@@ -391,6 +391,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerGuests(api)
 	s.registerSessions(api)
 	s.registerResponses(api)
+	s.registerBranches(api)
 	s.registerSearch(api)
 	s.registerClassify(api)
 	s.registerRecordings(api)

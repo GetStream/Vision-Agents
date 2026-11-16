@@ -248,6 +248,7 @@ func messageFromWire(id, text string, custom map[string]any) (Message, error) {
 	if action, ok := custom["ai_ui_action"].(map[string]any); ok && ValidUIAction(action) {
 		message.UIAction = action
 	}
+	message.Branch = branchFrom(custom[BranchField])
 	return message, nil
 }
 

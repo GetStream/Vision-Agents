@@ -130,6 +130,7 @@ class AgentConfigPatch:
             llm_fallbacks (list[str] | Unset): Replaces the list whole. An empty list removes it.
             chat_channels (list[AgentChatChannel] | Unset): Replaces the list whole. An empty list removes it.
             agents (list[ChildAgent] | Unset): Replaces the list whole. An empty list removes it.
+            image (str | Unset): An empty string removes it, and the agent stops being offered generate_image.
     """
 
     calls: AgentCalls | Unset = UNSET
@@ -171,6 +172,7 @@ class AgentConfigPatch:
     llm_fallbacks: list[str] | Unset = UNSET
     chat_channels: list[AgentChatChannel] | Unset = UNSET
     agents: list[ChildAgent] | Unset = UNSET
+    image: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.agent_config_patch_plugins_item_type_1 import (
@@ -331,6 +333,8 @@ class AgentConfigPatch:
                 agents_item = agents_item_data.to_dict()
                 agents.append(agents_item)
 
+        image = self.image
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
@@ -412,6 +416,8 @@ class AgentConfigPatch:
             field_dict["chat_channels"] = chat_channels
         if agents is not UNSET:
             field_dict["agents"] = agents
+        if image is not UNSET:
+            field_dict["image"] = image
 
         return field_dict
 
@@ -668,6 +674,8 @@ class AgentConfigPatch:
 
                 agents.append(agents_item)
 
+        image = d.pop("image", UNSET)
+
         agent_config_patch = cls(
             calls=calls,
             channels=channels,
@@ -708,6 +716,7 @@ class AgentConfigPatch:
             llm_fallbacks=llm_fallbacks,
             chat_channels=chat_channels,
             agents=agents,
+            image=image,
         )
 
         return agent_config_patch

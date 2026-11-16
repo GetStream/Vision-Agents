@@ -5,6 +5,7 @@ import { DEFAULT_CALL_TYPE, Edge } from "./edge.js";
 import { ConfigurationError, RouterError, SocketClosedError } from "./errors.js";
 import { Session, type SessionOptions } from "./session.js";
 import { Tools } from "./tools.js";
+import type { UIDeclaration } from "./ui-catalog.js";
 import type { InboundCall, InboundMessage } from "./inbound.js";
 
 /** The memory filter key naming who the memories are about. Everything else narrows recall. */
@@ -85,6 +86,10 @@ export interface Pipeline {
   /** Murmur while a caller is still talking, the way a person does. */
   backchannel?: boolean;
   maxTokens?: number;
+  /**
+   * How long the model waits for one of your tools, in milliseconds. Left out, the router waits
+   * 30 seconds. A tool's own `timeoutMs` replaces it for that tool.
+   */
   toolTimeoutMs?: number;
   video?: Schemas["SessionVideo"];
 }
@@ -118,6 +123,11 @@ export interface Declaration {
   /** The model a voice agent hands its skills to. A text agent runs on its llm alone. */
   subagent?: string;
   search?: string;
+  /**
+   * What the agent draws pictures with, such as `image-fast`, which offers it `generate_image`.
+   * An empty string turns drawing off; left out, the stored one stays.
+   */
+  image?: string;
   greeting?: Schemas["Greeting"];
   sandbox?: Schemas["Sandbox"];
   /**
@@ -153,6 +163,8 @@ export interface Declaration {
    * the flow controller whatever that default.
    */
   floorControl?: Schemas["FloorControl"];
+  /** Declarative UI catalog, component allowlist, portable components, and layout blueprints. */
+  ui?: UIDeclaration;
 }
 
 /** One connector an agent binds, as agent.yaml names it. */
@@ -766,6 +778,7 @@ function declaredRequest(declared: Declaration): Partial<Schemas["SyncAgentReque
     ...(declared.llm ? { llm: declared.llm } : {}),
     ...(declared.harness ? { harness: declared.harness } : {}),
     ...(declared.search ? { search: declared.search } : {}),
+    ...(declared.image === undefined ? {} : { image: declared.image }),
     ...(declared.greeting ? { greeting: declared.greeting } : {}),
     ...(declared.channels ? { channels: declared.channels } : {}),
     ...(declared.scheduling ? { scheduling: declared.scheduling } : {}),

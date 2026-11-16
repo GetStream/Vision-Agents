@@ -99,6 +99,111 @@ final class LiveReasoning {
   }
 }
 
+/// Overlays 0ms WebSocket `ui_delta` and `ui_completed` updates from [Conversation] onto
+/// Stream Chat assistant messages while they stream, handing off cleanly once Stream Chat's
+/// durable `extraData['ai_ui']` settles (`status == 'complete'`).
+final class LiveUI {
+  final _byTurn = <String, TurnUI>{};
+  TurnUI? _latest;
+  final _cache = Expando<({TurnUI ui, stream.Message overlaid})>();
+
+  /// The live UI recorded for [turnId], or null.
+  TurnUI? operator [](String turnId) => _byTurn[turnId];
+
+  /// The UI of the turn the agent is on, for an in-flight reply before its `turn_id` lands in
+  /// Stream Chat: the newest turn's, when that turn is the agent's. Null once the person asks
+  /// again, and while the agent's new turn has no UI yet, so a new reply never shows the card
+  /// of the one before it.
+  TurnUI? get latest => _latest;
+
+  /// Folds [conversation]'s turns in and reports whether what it overlays changed.
+  bool observe(Conversation conversation) {
+    var changed = false;
+    for (final turn in conversation.turns) {
+      if (!turn.speaker.isAgent || turn.ui == null) continue;
+      final next = turn.ui!;
+      if (_byTurn[turn.id] != next) {
+        _byTurn[turn.id] = next;
+        changed = true;
+      }
+    }
+    final newest = conversation.turns.lastOrNull;
+    final latest = newest != null && newest.speaker.isAgent ? newest.ui : null;
+    if (latest != _latest) {
+      _latest = latest;
+      changed = true;
+    }
+    return changed;
+  }
+
+  /// Returns [messages] with live socket UI overlaid onto any assistant reply Stream Chat is
+  /// still writing whose durable `ai_ui` has not yet reached `status == 'complete'`. A reply
+  /// shows its own turn's UI, or, before its `turn_id` lands in Chat, the UI of the turn the
+  /// agent is on ([latest]). Once Chat says it is written, what Chat stored shows, such as no
+  /// UI for a refused reply.
+  List<stream.Message> overlay(List<stream.Message> messages) {
+    if (_byTurn.isEmpty || messages.isEmpty) return messages;
+    final latestGenerating = _findLatestGenerating(messages);
+    List<stream.Message>? mutated;
+
+    for (var i = 0; i < messages.length; i++) {
+      final message = messages[i];
+      if (!_isAssistant(message) || !_showsLiveUI(message)) continue;
+      final turnId = _turnIdOf(message);
+      final ui = turnId != null ? _byTurn[turnId] : (i == latestGenerating ? latest : null);
+      if (ui == null) continue;
+      final next = _withUI(message, ui);
+      if (!identical(next, message)) {
+        mutated ??= [...messages];
+        mutated[i] = next;
+      }
+    }
+    return mutated ?? messages;
+  }
+
+  stream.Message _withUI(stream.Message message, TurnUI ui) {
+    final cached = _cache[message];
+    if (cached != null && cached.ui == ui) return cached.overlaid;
+    final overlaid = message.copyWith(extraData: {...message.extraData, 'ai_ui': ui.toWireJson()});
+    _cache[message] = (ui: ui, overlaid: overlaid);
+    return overlaid;
+  }
+
+  static int _findLatestGenerating(List<stream.Message> messages) {
+    for (var i = messages.length - 1; i >= 0; i--) {
+      final m = messages[i];
+      if (_isAssistant(m) && m.extraData['generating'] == true) return i;
+    }
+    return -1;
+  }
+
+  static bool _isAssistant(stream.Message message) {
+    if (message.extraData['ai_generated'] == true) return true;
+    if (message.extraData['support_runtime'] case {'role': 'assistant'}) return true;
+    return false;
+  }
+
+  /// Whether a reply shows the socket's UI rather than what Chat stored: while Chat says it is
+  /// being written and its UI isn't complete there.
+  static bool _showsLiveUI(stream.Message message) {
+    final stored = message.extraData['ai_ui'];
+    return message.extraData['generating'] == true &&
+        !(stored is Map<Object?, Object?> && stored['status'] == 'complete');
+  }
+
+  static String? _turnIdOf(stream.Message message) {
+    if (message.extraData['turn_id'] case final String turnId when turnId.isNotEmpty) {
+      return turnId;
+    }
+    if (message.extraData['support_runtime'] case {
+      'turn_id': final String turnId,
+    } when turnId.isNotEmpty) {
+      return turnId;
+    }
+    return null;
+  }
+}
+
 /// A client connected as the agents' user, asking them for a fresh token when Stream says
 /// the last one expired.
 Future<stream.StreamChatClient> _connect(Backend backend, StreamCredentials credentials) async {

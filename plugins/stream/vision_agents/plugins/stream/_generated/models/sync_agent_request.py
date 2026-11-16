@@ -150,6 +150,8 @@ class SyncAgentRequest:
             agents (list[ChildAgent] | Unset): agent.yaml's agents: the app's other text agents this one may hand work to,
                 each as a tool, by name. Sent, they replace the stored list whole, an empty list removing it; left out, the
                 stored list stays. An agent named must already exist, so a directory is synced after the agents it names.
+            image (str | Unset): agent.yaml's image: what the agent draws pictures with. Left out, the stored one stays; an
+                empty string removes it.
     """
 
     hash_: str
@@ -193,6 +195,7 @@ class SyncAgentRequest:
     voice: str | Unset = UNSET
     chat_channels: list[AgentChatChannel] | Unset = UNSET
     agents: list[ChildAgent] | Unset = UNSET
+    image: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -373,6 +376,8 @@ class SyncAgentRequest:
                 agents_item = agents_item_data.to_dict()
                 agents.append(agents_item)
 
+        image = self.image
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -459,6 +464,8 @@ class SyncAgentRequest:
             field_dict["chat_channels"] = chat_channels
         if agents is not UNSET:
             field_dict["agents"] = agents
+        if image is not UNSET:
+            field_dict["image"] = image
 
         return field_dict
 
@@ -754,6 +761,8 @@ class SyncAgentRequest:
 
                 agents.append(agents_item)
 
+        image = d.pop("image", UNSET)
+
         sync_agent_request = cls(
             hash_=hash_,
             name=name,
@@ -796,6 +805,7 @@ class SyncAgentRequest:
             voice=voice,
             chat_channels=chat_channels,
             agents=agents,
+            image=image,
         )
 
         sync_agent_request.additional_properties = d

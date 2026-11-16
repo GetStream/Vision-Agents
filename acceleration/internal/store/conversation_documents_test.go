@@ -93,3 +93,72 @@ func (s *StoreSuite) TestDeletingASessionDeletesItsDocuments() {
 	s.Equal([]string{"other"}, s.documentIDs(DocumentScope{ConversationID: "agent:chat-1", Owner: "jlahey"}),
 		"the person's file goes with the session it was sent in")
 }
+
+func (s *StoreSuite) TestARegeneratedTurnKeepsACopyOfItsQuestionsDocuments() {
+	s.opened("one", "app", s.base, nil)
+	s.branchAnswered(s.store, "asked", "", "", s.base)
+	s.attached("lease", "one", "", "jlahey", "asked", s.base.Add(time.Second))
+	// A regenerate leaves the conversation at the replaced turn's parent, then answers again.
+	s.Require().NoError(s.store.MoveActivePath(s.ctx, "app", "one", "", s.base.Add(time.Minute)))
+	s.branchAnswered(s.store, "asked-again", "", "asked", s.base.Add(time.Minute))
+
+	s.Require().NoError(s.store.CopyResponseDocuments(s.ctx, "app", "one", "asked", "asked-again"))
+
+	documents, err := s.store.ConversationDocuments(s.ctx, "app", DocumentScope{SessionID: "one", Owner: "jlahey"})
+	s.Require().NoError(err)
+	s.Require().Len(documents, 1, "the replaced turn's own is off the conversation")
+	copied := documents[0]
+	s.NotEqual("lease", copied.ID, "a copy has an id of its own")
+	s.Equal("asked-again", copied.ResponseID)
+	s.Equal([]string{"jlahey", "lease.pdf", "digest", "text of lease"}, []string{copied.OwnerUserID, copied.Name, copied.SHA256, copied.Markdown})
+	s.Equal(2, copied.Pages)
+	s.True(copied.CreatedAt.Equal(s.base.Add(time.Second)), "attached when the original was")
+
+	s.Require().NoError(s.store.MoveActivePath(s.ctx, "app", "one", "asked", s.base.Add(2*time.Minute)))
+	s.Equal([]string{"lease"}, s.documentIDs(DocumentScope{SessionID: "one", Owner: "jlahey"}),
+		"activating the replaced turn finds its own, and the copy goes with the regenerated one")
+}
+
+func (s *StoreSuite) TestCopyingATurnsDocumentsLeavesAnotherCustomersAlone() {
+	s.opened("one", "app", s.base, nil)
+	s.branchAnswered(s.store, "asked", "", "", s.base)
+	s.attached("lease", "one", "", "jlahey", "asked", s.base.Add(time.Second))
+	s.Require().NoError(s.store.AddConversationDocument(s.ctx, &ConversationDocument{
+		ID: "theirs", CustomerID: "other-app", OwnerUserID: "jlahey", SessionID: "one", ResponseID: "asked",
+		Name: "theirs.pdf", SHA256: "digest", Markdown: "text of theirs", CreatedAt: s.base,
+	}))
+
+	s.Require().NoError(s.store.CopyResponseDocuments(s.ctx, "app", "one", "asked", "asked-again"))
+
+	documents, err := s.store.ConversationDocuments(s.ctx, "app", DocumentScope{SessionID: "one", Owner: "jlahey"})
+	s.Require().NoError(err)
+	s.Len(documents, 2, "the original and its one copy")
+	for _, document := range documents {
+		s.Equal("lease.pdf", document.Name)
+	}
+	theirs, err := s.store.ConversationDocuments(s.ctx, "other-app", DocumentScope{SessionID: "one", Owner: "jlahey"})
+	s.Require().NoError(err)
+	s.Require().Len(theirs, 1, "no copy of another customer's file, and none of ours made into theirs")
+	s.Equal("theirs", theirs[0].ID)
+}
+
+// The regenerated turn was answered by a router of the other shard: the copy is written there,
+// beside the turn, so it drops out with it.
+func (s *ShardedStoreSuite) TestACopyIsWrittenBesideTheTurnItWasCopiedTo() {
+	s.opened("one", "app", s.base, nil)
+	s.branchAnswered(s.store, "asked", "", "", s.base)
+	s.attached("lease", "one", "", "jlahey", "asked", s.base.Add(time.Second))
+	s.Require().NoError(s.other.SaveSession(s.ctx, &AgentSession{ID: "one", CustomerID: "app", AgentName: "docs", UserID: "jlahey", CallerKind: "user", CreatedAt: s.base}))
+	s.Require().NoError(s.other.MoveActivePath(s.ctx, "app", "one", "", s.base.Add(time.Minute)))
+	s.branchAnswered(s.other, "asked-again", "", "asked", s.base.Add(time.Minute))
+
+	s.Require().NoError(s.other.CopyResponseDocuments(s.ctx, "app", "one", "asked", "asked-again"))
+
+	documents, err := s.store.ConversationDocuments(s.ctx, "app", DocumentScope{SessionID: "one", Owner: "jlahey"})
+	s.Require().NoError(err)
+	s.Require().Len(documents, 1)
+	s.Equal("asked-again", documents[0].ResponseID)
+	s.Require().NoError(s.store.MoveActivePath(s.ctx, "app", "one", "asked", s.base.Add(2*time.Minute)))
+	s.Equal([]string{"lease"}, s.documentIDs(DocumentScope{SessionID: "one", Owner: "jlahey"}),
+		"the copy is rewound with the turn beside it")
+}
