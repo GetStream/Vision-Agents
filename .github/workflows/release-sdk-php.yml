@@ -1,0 +1,111 @@
+name: Release PHP SDK
+
+# Run by hand from accelerate, or started by release-sdks.yml with every other SDK. Packagist
+# reads composer.json at a repository's root and a version from its tags, so a release is
+# sdks/php split out with its history, pushed to the SDK's own read-only repository and tagged
+# v<version> there, where Packagist picks it up. The commit here is then tagged
+# sdk-php-v<version>. The version is the last sdk-php-v* raised by the chosen part, or the exact
+# one typed in.
+#
+# The split repository is the variable SDK_PHP_SPLIT_REPOSITORY (owner/name), and the token that
+# may push to it the secret SDK_PHP_SPLIT_TOKEN. A dry run needs neither.
+# No GitHub Release: publishing one runs release.yml, which uploads the Python packages to PyPI.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Part of the last version to raise
+        type: choice
+        options: [ patch, minor, major ]
+        default: patch
+      version:
+        description: Exact version to release instead, such as 0.2.0 or 0.2.0-beta.1
+        type: string
+        default: ''
+      dry_run:
+        description: Work out the version, test and split, without pushing or tagging
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-sdk-php
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/accelerate'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # push the release tag
+    defaults:
+      run:
+        working-directory: sdks/php
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Every sdk-php-v* tag, for the last version, and the history the split walks.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./.github/actions/sdk-version
+        id: version
+        with:
+          sdk: php
+          package: getstream/vision-agents
+          path: sdks/php
+          bump: ${{ inputs.bump }}
+          version: ${{ inputs.version }}
+          dry-run: ${{ inputs.dry_run }}
+
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.4'
+          tools: composer
+
+      - name: Install
+        run: |
+          composer validate --strict
+          composer install --no-interaction --no-progress
+
+      - name: Check the generated classes are in step with the spec
+        run: composer generate-check
+
+      - name: Analyse
+        run: composer stan
+
+      - name: Test
+        run: composer test
+
+      # The same history gives the same commits every time, so each release adds to the split
+      # repository's main rather than replacing it.
+      - name: Split sdks/php out
+        working-directory: .
+        run: git subtree split --prefix=sdks/php -b sdk-php-split
+
+      - name: Push to the split repository
+        if: ${{ !inputs.dry_run }}
+        working-directory: .
+        env:
+          SPLIT_REPOSITORY: ${{ vars.SDK_PHP_SPLIT_REPOSITORY }}
+          SPLIT_TOKEN: ${{ secrets.SDK_PHP_SPLIT_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [ -z "$SPLIT_REPOSITORY" ] || [ -z "$SPLIT_TOKEN" ]; then
+            echo "::error::set the variable SDK_PHP_SPLIT_REPOSITORY and the secret SDK_PHP_SPLIT_TOKEN"; exit 1
+          fi
+          git push "https://x-access-token:$SPLIT_TOKEN@github.com/$SPLIT_REPOSITORY.git" \
+            sdk-php-split:refs/heads/main "sdk-php-split:refs/tags/v$VERSION"
+
+      # After the push, so a failed push leaves no tag behind for the next bump to skip past.
+      - name: Tag
+        if: ${{ !inputs.dry_run }}
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git tag "sdk-php-v$VERSION" "$GITHUB_SHA"
+          git push "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" "sdk-php-v$VERSION"

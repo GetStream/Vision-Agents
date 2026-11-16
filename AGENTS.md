@@ -29,6 +29,9 @@ Leave a note in the sdk skill at the bottom that other SDKs also need to udpate.
 We run this periodically, you don't need to change all SDKs at once.
 Go goes first, and later on we update the others.
 
+To release every SDK at once, or one of them, read the `release-sdks` skill
+(`.claude/skills/release-sdks/SKILL.md`). Publishing a GitHub Release releases them all.
+
 ## Local dev
 
 Everything reads the repo-root `.env` for provider credentials.

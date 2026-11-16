@@ -271,7 +271,9 @@ docker run --rm -v "$PWD":/repo -v va-dart-pub:/pub-cache -e PUB_CACHE=/pub-cach
 
 ## Releasing
 
-`flutter pub publish` from `sdks/dart/stream_agents`, after the CI dry run passes. The first
+The first version is `flutter pub publish` from `sdks/dart/stream_agents`, after the CI dry run
+passes. Later ones are `.github/workflows/release-sdk-dart.yml`, for the version `pubspec.yaml`
+names, by hand or with every other SDK (see the `release-sdks` skill). The first
 release of `stream_agents` also discontinues `stream_agents_core`, `stream_agents_chat` and
 `stream_agents_rtc` on pub.dev, each with `stream_agents` as its replacement (the package's
 admin page, "Mark as discontinued"), so an app on 0.1.0 is pointed at the one package.

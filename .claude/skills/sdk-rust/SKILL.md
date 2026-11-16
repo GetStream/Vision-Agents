@@ -10,7 +10,8 @@ The per-language half of [sdk](../sdk/SKILL.md), server side only. It records th
 re-litigating them.
 
 Edition 2024, MSRV 1.88 (async closures and let chains are used). One crate, `vision-agents`,
-plus the `generate` binary in the same workspace, which is not published.
+plus the `generate` binary in the same workspace, which is not published. The crate is released
+by `.github/workflows/release-sdk-rust.yml` (see the `release-sdks` skill).
 
 ## Dependencies
 

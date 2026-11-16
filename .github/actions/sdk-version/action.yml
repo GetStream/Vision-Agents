@@ -1,0 +1,72 @@
+name: Work out an SDK's next version
+description: >-
+  Raises the last sdk-<sdk>-v* tag by the chosen part, or takes the exact version given, fails
+  if that version is already tagged, and writes the changes since the last release to the run
+  summary. Needs a checkout with every tag (fetch-depth 0).
+inputs:
+  sdk:
+    description: 'The tag family: ruby for sdk-ruby-v*.'
+    required: true
+  package:
+    description: 'The package name, for the summary.'
+    required: true
+  path:
+    description: 'The SDK directory, whose commits the summary lists.'
+    required: true
+  bump:
+    description: 'Part of the last version to raise: patch, minor or major.'
+    required: false
+    default: patch
+  version:
+    description: 'Exact version to release instead, such as 0.2.0 or 0.2.0-beta.1.'
+    required: false
+    default: ''
+  dry-run:
+    description: 'Whether this run publishes nothing, for the summary.'
+    required: false
+    default: 'true'
+outputs:
+  version:
+    description: 'The version to release.'
+    value: ${{ steps.version.outputs.version }}
+runs:
+  using: composite
+  steps:
+    - id: version
+      shell: bash
+      env:
+        SDK: ${{ inputs.sdk }}
+        PACKAGE: ${{ inputs.package }}
+        DIR: ${{ inputs.path }}
+        BUMP: ${{ inputs.bump }}
+        OVERRIDE: ${{ inputs.version }}
+        DRY_RUN: ${{ inputs.dry-run }}
+      run: |
+        set -euo pipefail
+        prefix="sdk-$SDK-v"
+        last=$(git tag -l "$prefix*" | sed "s/^$prefix//" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)
+        if [ -n "$OVERRIDE" ]; then
+          version=$OVERRIDE
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::$version is not X.Y.Z or X.Y.Z-suffix"; exit 1
+          fi
+        else
+          IFS=. read -r major minor patch <<< "${last:-0.0.0}"
+          case "$BUMP" in
+            major) version="$((major + 1)).0.0" ;;
+            minor) version="$major.$((minor + 1)).0" ;;
+            patch) version="$major.$minor.$((patch + 1))" ;;
+            *) echo "::error::$BUMP is not patch, minor or major"; exit 1 ;;
+          esac
+        fi
+        if git rev-parse -q --verify "refs/tags/$prefix$version" >/dev/null; then
+          echo "::error::$prefix$version already exists"; exit 1
+        fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+        {
+          echo "### $PACKAGE $version$([ "$DRY_RUN" = true ] && echo ' (dry run)')"
+          echo "Last release: ${last:-none}. Changes under $DIR since then:"
+          echo '```'
+          git log --oneline --no-merges "${last:+$prefix$last..}HEAD" -- "$GITHUB_WORKSPACE/$DIR"
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
