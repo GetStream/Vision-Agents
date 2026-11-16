@@ -348,8 +348,7 @@ func (p *Provider) hold(id string, held *heldCall, changed <-chan struct{}, log 
 			held.mu.Lock()
 			select {
 			case <-bridged.Done():
-				// Let go meanwhile by a renewal that found another node's claim: the case above
-				// says how it ended.
+				// Ended or let go meanwhile: the case above says how.
 				held.mu.Unlock()
 				stopping = nil
 				continue
@@ -370,6 +369,9 @@ func (p *Provider) hold(id string, held *heldCall, changed <-chan struct{}, log 
 			ctx, cancel := context.WithTimeout(context.Background(), hangupTimeout)
 			err := bridged.Hangup(ctx)
 			cancel()
+			// Hangup returns at once when something else is already ending the call, and Err is set
+			// only once Done is closed.
+			<-bridged.Done()
 			if errors.Is(bridged.Err(), sipbridge.ErrReleased) {
 				// A renewal that found another node's claim let the call go first, so no BYE went
 				// out and the call is that node's now.
