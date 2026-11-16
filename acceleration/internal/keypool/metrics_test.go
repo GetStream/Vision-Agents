@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/alerts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool/keypooltest"
 )
 
 // RefusedAttemptsSuite proves each attempt a provider refuses on a pooled key is counted
@@ -169,7 +170,7 @@ func (s *RefusedAttemptsSuite) dial(pool *Pool) (*http.Response, string, error) 
 	return response, key, err
 }
 
-// refusals is every series of the counter, as key_var → status → count.
+// refusals is every series of the counter, as key_var → status → count, whoever owns the key.
 func refusals(t *testing.T) map[string]map[string]float64 {
 	registry := prometheus.NewPedanticRegistry()
 	registry.MustRegister(refusedAttempts)
@@ -187,7 +188,7 @@ func refusals(t *testing.T) map[string]map[string]float64 {
 			if counted[labels["key_var"]] == nil {
 				counted[labels["key_var"]] = map[string]float64{}
 			}
-			counted[labels["key_var"]][labels["status"]] = metric.GetCounter().GetValue()
+			counted[labels["key_var"]][labels["status"]] += metric.GetCounter().GetValue()
 		}
 	}
 	return counted
@@ -601,7 +602,7 @@ func (s *RefusedAttemptsSuite) TestAStatusWithNoReasonKeepsItsTitle() {
 	keyVar := "RA_NOREASON_" + strings.ToUpper(rand.Text()) + "_API_KEY"
 	item := keyVar + "/418"
 
-	events := s.sentEvents(keyVar, func() { refusedAttempts.WithLabelValues(keyVar, "418").Inc() })
+	events := s.sentEvents(keyVar, func() { refusedAttempts.WithLabelValues(keyVar, "418", ourOwner).Inc() })
 
 	s.Require().Contains(events, item)
 	s.Equal("usage alert: key_refused "+item, events[item].Message)
@@ -643,6 +644,98 @@ func (s *RefusedAttemptsSuite) TestWhatIsNotARefusalAlertsNothing() {
 			}
 		})
 	}
+}
+
+// owners is how many refusals the counter holds under keyVar and status, by whose key it is.
+func owners(t *testing.T, keyVar, status string) map[string]float64 {
+	registry := prometheus.NewPedanticRegistry()
+	registry.MustRegister(refusedAttempts)
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	counted := map[string]float64{}
+	for _, family := range families {
+		for _, metric := range family.GetMetric() {
+			labels := map[string]string{}
+			for _, pair := range metric.GetLabel() {
+				labels[pair.GetName()] = pair.GetValue()
+			}
+			if labels["key_var"] == keyVar && labels["status"] == status {
+				counted[labels["owner"]] += metric.GetCounter().GetValue()
+			}
+		}
+	}
+	return counted
+}
+
+// A key the router read from its variable is its own: a refusal of it raises key_refused.
+func (s *RefusedAttemptsSuite) TestARefusedKeyReadFromItsVariableIsOursAndAlerts() {
+	start := time.Now()
+	refused := s.refusedAlert(start)
+	p := s.pool("ours")
+	s.answer(http.StatusUnauthorized, p.keys...)
+
+	s.Equal(http.StatusUnauthorized, s.post(p.Pool))
+
+	s.Equal(map[string]float64{"ours": 1}, owners(s.T(), p.keyVars[0], "401"))
+	s.Equal(1.0, keypooltest.Refused(s.T(), p.keyVars[0], "401"), "the providers' tests read it whoever owns the key")
+	s.Contains(refused(start.Add(time.Second)), p.keyVars[0]+"/401")
+}
+
+// A customer's own key passed to FromEnv beside the router's variable, as a provider is built
+// for a customer who keeps a key for the vendor, is theirs: each way a refusal is counted counts
+// it as the customer's, and none raises key_refused, though the router's keys sit in the same
+// variable.
+func (s *RefusedAttemptsSuite) TestARefusedCustomersKeyIsTheirsAndRaisesNoAlert() {
+	for _, tc := range []struct {
+		name, status string
+		refuse       func(pool *Pool, key string)
+	}{
+		{"wrong key over HTTP", "401", func(pool *Pool, key string) {
+			s.answer(http.StatusUnauthorized, key)
+			s.Equal(http.StatusUnauthorized, s.post(pool))
+		}},
+		{"wrong key at the handshake", "401", func(pool *Pool, key string) {
+			s.answer(http.StatusUnauthorized, key)
+			_, _, err := s.dial(pool)
+			s.Error(err)
+		}},
+		{"wrong key after the handshake", invalidKeyStatus, func(pool *Pool, _ string) { pool.InvalidKey() }},
+		{"spent quota in a frame", quotaExceededStatus, func(pool *Pool, key string) { pool.QuotaExceeded(key) }},
+		{"out of funds in a frame", outOfFundsStatus, func(pool *Pool, _ string) { pool.OutOfFunds() }},
+	} {
+		s.Run(tc.name, func() {
+			start := time.Now()
+			refused := s.refusedAlert(start)
+			ours := s.pool("theirs")
+			customerKey := "ra-customer-" + rand.Text()
+			pool := FromEnv(customerKey, ours.keyVars[0])
+
+			tc.refuse(pool, customerKey)
+
+			s.Equal(map[string]float64{"customer": 1}, owners(s.T(), ours.keyVars[0], tc.status))
+			s.NotContains(refused(start.Add(time.Second)), ours.keyVars[0]+"/"+tc.status)
+		})
+	}
+}
+
+// Keys passed in before the router reads the same keys from a variable are its own from then
+// on, as they take that variable's name: the pool is the same.
+func (s *RefusedAttemptsSuite) TestKeysPassedInThatTheRouterReadsLaterAreOurs() {
+	id := rand.Text()
+	keys := []string{fmt.Sprintf("ra-later-%s-1", id), fmt.Sprintf("ra-later-%s-2", id)}
+	keyVar := fmt.Sprintf("RA_LATER_%s_API_KEY", id)
+	passed := FromEnv(strings.Join(keys, ","), keyVar)
+	s.answer(http.StatusUnauthorized, keys...)
+	s.post(passed)
+	s.Equal(map[string]float64{"customer": 1}, owners(s.T(), keyVar, "401"), "not read from the variable yet")
+
+	s.T().Setenv(keyVar, strings.Join(keys, ","))
+	FromEnv("", keyVar)
+	s.post(passed)
+
+	s.Equal(map[string]float64{"customer": 1, "ours": 1}, owners(s.T(), keyVar, "401"))
 }
 
 // badKeyAnswers are how each provider that does not answer a made-up key with a 401 answered
