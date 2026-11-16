@@ -2106,8 +2106,9 @@ is left out when the request has none:
 A socket is logged once, when it closes, so its `duration` is how long the connection lived
 rather than a time to respond and its status is the `101` of the upgrade. A `5xx` is logged
 at error instead, because an access log at a busy deployment is the one stream nobody reads
-all of. A preflight is not logged, and the query string is never logged: a socket names its
-customer there and a telephony vendor names a token.
+all of. A preflight is not logged, nor is a `/health` probe answered below `400` with no error:
+the load balancer and kubelet ask every few seconds. A probe that fails is logged. The query
+string is never logged: a socket names its customer there and a telephony vendor names a token.
 
 ### Stream staff's operations (`/v1/ops`)
 
