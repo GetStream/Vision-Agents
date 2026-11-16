@@ -38,7 +38,7 @@ var (
 	checks = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
 		Name:      "chorus_asr_checks_total",
-		Help:      "Turns put to the chorus-asr model, by what became of them. Acting on it, every outcome but answered and superseded is a turn the flow controller decided instead.",
+		Help:      "Turns put to the chorus-asr model, by what became of them. Acting on it, every outcome but answered and superseded is a turn the flow controller decided instead; backed_off is one over the agent not put to it while the server asked for time (Retry-After).",
 	}, []string{"outcome"})
 	checkSeconds = promauto.NewHistogram(prometheus.HistogramOpts{
 		Namespace: "router",
@@ -205,6 +205,8 @@ func outcome(err error) string {
 		return "refused"
 	case errors.Is(err, ErrUnsupported):
 		return "unsupported"
+	case errors.Is(err, ErrBackingOff):
+		return "backed_off"
 	}
 	return "error"
 }
