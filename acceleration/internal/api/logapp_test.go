@@ -156,6 +156,34 @@ func (s *LogAppSuite) TestThePanicLineNamesTheAppAndItsPublicKey() {
 	s.Contains(line, " api_key="+s.app.key)
 }
 
+func (s *LogAppSuite) TestTheAccessLineOfAServerErrorNamesTheAppAndItsPublicKey() {
+	routes := chi.NewRouter()
+	routes.Get("/probe-500", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) })
+	node := httptest.NewServer(s.router.withCustomer(s.router.withRequestLog(routes, routes)))
+	s.T().Cleanup(node.Close)
+	request, err := http.NewRequest(http.MethodGet, node.URL+"/probe-500", nil)
+	s.Require().NoError(err)
+	request.Header = s.serverClient.header.Clone()
+
+	response, err := node.Client().Do(request)
+	s.Require().NoError(err)
+	s.Require().NoError(response.Body.Close())
+
+	var line string
+	s.Require().Eventually(func() bool {
+		for l := range strings.Lines(s.logged.String()) {
+			if strings.Contains(l, `msg="served a request"`) && strings.Contains(l, " path=/probe-500 ") {
+				line = l
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 20*time.Millisecond)
+	s.Contains(line, "level=ERROR")
+	s.Contains(line, " app_id="+s.customerID()+" ")
+	s.Contains(line, " api_key="+s.app.key)
+}
+
 // servedAs is the access line of a GET by client.
 func (s *appLogSuite) servedAs(client *testClient) string {
 	id := s.utils.uuid()

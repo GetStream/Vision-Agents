@@ -27,7 +27,7 @@ func (s *LogHandlerSuite) SetupTest() {
 }
 
 func (s *LogHandlerSuite) TestALineLoggedWithTheRequestsContextNamesItsAppAndKey() {
-	ctx := withLoggedApp(context.Background(), "1732479", "pubkey123")
+	ctx := WithLoggedApp(context.Background(), "1732479", "pubkey123")
 
 	s.logger.InfoContext(ctx, "probe", "x", 1)
 
@@ -43,14 +43,21 @@ func (s *LogHandlerSuite) TestALineLoggedWithoutTheContextNamesNeither() {
 }
 
 func (s *LogHandlerSuite) TestAKeyNobodyNamedIsNotLoggedEmpty() {
-	s.logger.InfoContext(withLoggedApp(context.Background(), "1732479", ""), "probe")
+	s.logger.InfoContext(WithLoggedApp(context.Background(), "1732479", ""), "probe")
 
 	s.Contains(s.out.String(), "app_id=1732479")
 	s.NotContains(s.out.String(), "api_key")
 }
 
+func (s *LogHandlerSuite) TestARequestWithNoAppNamesNothing() {
+	s.logger.InfoContext(WithLoggedApp(context.Background(), "", ""), "probe")
+
+	s.NotContains(s.out.String(), "app_id")
+	s.NotContains(s.out.String(), "api_key")
+}
+
 func (s *LogHandlerSuite) TestALineThatNamesTheAppItselfIsNotGivenASecondOne() {
-	ctx := withLoggedApp(context.Background(), "1732479", "pubkey123")
+	ctx := WithLoggedApp(context.Background(), "1732479", "pubkey123")
 
 	s.logger.InfoContext(ctx, "probe", "app_id", "other")
 	s.logger.InfoContext(ctx, "probe", "api_key", "other")
@@ -66,7 +73,7 @@ func (s *LogHandlerSuite) TestALineThatNamesTheAppItselfIsNotGivenASecondOne() {
 }
 
 func (s *LogHandlerSuite) TestALoggerThatAlreadyNamesTheAppIsNotGivenASecondOne() {
-	ctx := withLoggedApp(context.Background(), "1732479", "pubkey123")
+	ctx := WithLoggedApp(context.Background(), "1732479", "pubkey123")
 
 	s.logger.With("app_id", "other").InfoContext(ctx, "probe")
 	s.logger.With("api_key", "other").With("x", 1).InfoContext(ctx, "probe")
@@ -80,7 +87,7 @@ func (s *LogHandlerSuite) TestALoggerThatAlreadyNamesTheAppIsNotGivenASecondOne(
 }
 
 func (s *LogHandlerSuite) TestALoggerWithAFieldDoesNotHideTheAppFromItsSiblings() {
-	ctx := withLoggedApp(context.Background(), "1732479", "pubkey123")
+	ctx := WithLoggedApp(context.Background(), "1732479", "pubkey123")
 	named := s.logger.With("app_id", "other")
 
 	s.logger.InfoContext(ctx, "probe")

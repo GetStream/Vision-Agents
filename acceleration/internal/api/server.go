@@ -1230,7 +1230,7 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 			ctx = context.WithValue(ctx, serverSideContextKey{}, principal.ServerSide)
 			ctx = context.WithValue(ctx, kindContextKey{}, principal.Kind)
 			ctx = context.WithValue(ctx, requestKeyContextKey{}, s.vouchedKey(r, principal))
-			ctx = withLoggedApp(ctx, principal.AppID, principal.APIKey)
+			ctx = WithLoggedApp(ctx, principal.AppID, principal.APIKey)
 			ctx = routing.WithCaller(ctx, routing.Caller{
 				UserID:     principal.UserID,
 				IP:         s.callerIP(r, principal.UserID),

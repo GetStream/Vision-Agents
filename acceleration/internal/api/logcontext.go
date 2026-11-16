@@ -21,8 +21,8 @@ type loggedApp struct {
 	appID, apiKey string
 }
 
-// withLoggedApp is ctx marked with the app and public key to log beside every line written with it.
-func withLoggedApp(ctx context.Context, appID, apiKey string) context.Context {
+// WithLoggedApp is ctx marked with the app and public key to log beside every line written with it.
+func WithLoggedApp(ctx context.Context, appID, apiKey string) context.Context {
 	return context.WithValue(ctx, loggedAppContextKey{}, loggedApp{appID: appID, apiKey: apiKey})
 }
 
@@ -72,5 +72,6 @@ func (h logHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 }
 
 func (h logHandler) WithGroup(name string) slog.Handler {
-	return logHandler{Handler: h.Handler.WithGroup(name), attached: h.attached}
+	// What Handle adds lands inside the group, so no field attached before it is repeated.
+	return logHandler{Handler: h.Handler.WithGroup(name)}
 }
