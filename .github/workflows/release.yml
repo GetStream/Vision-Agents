@@ -7,7 +7,8 @@ permissions:
   contents: read
 
 # Only a release of the Python packages, tagged vX.Y.Z, publishes them. A release made for
-# another tag, such as accelerate-vX.Y.Z or sdk-dotnet-vX.Y.Z, runs nothing here.
+# another tag, such as the Go SDK's sdks/go/vX.Y.Z, sdk-js-vX.Y.Z, accelerate-vX.Y.Z or
+# sdk-dotnet-vX.Y.Z, runs nothing here.
 jobs:
   integration:
     if: startsWith(github.event.release.tag_name, 'v')
@@ -44,6 +45,8 @@ jobs:
           rm -rf dist
 
       - name: Build all distributions
+        env:
+          UV_BUILD_CONSTRAINT: ${{ github.workspace }}/.github/release-build-constraints.txt
         run: |
           uv build --all
 
@@ -51,7 +54,7 @@ jobs:
         id: get_version
         working-directory: sdks/python
         run: |
-          VERSION=$(uvx -q hatch version)
+          VERSION=$(uvx -q --from 'hatch==1.18.2' hatch version)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Publish to PyPI (Trusted Publishing)
