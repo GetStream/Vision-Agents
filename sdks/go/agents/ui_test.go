@@ -89,6 +89,56 @@ ui:
 	s.NotContains(loaded1.Instructions, "BarChart(")
 }
 
+func (s *FolderUISuite) TestArrayPropertyWithItemSchemaLoadsAsArray() {
+	// The examples' UIComponents.json files describe what an array holds, as seat_selector does.
+	dir := s.T().TempDir()
+	s.Require().NoError(os.WriteFile(filepath.Join(dir, "agent.yaml"), []byte("name: concierge\nui:\n  format: openui\n"), 0o644))
+	s.Require().NoError(os.MkdirAll(filepath.Join(dir, "ui"), 0o755))
+	s.Require().NoError(os.WriteFile(filepath.Join(dir, "ui", "components.json"), []byte(`[
+  {
+    "name": "seat_selector",
+    "description": "Pick a table by zone.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "tables": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": { "id": { "type": "string" }, "seats": { "type": "number" } },
+            "required": ["id", "seats"],
+            "x-order": ["id", "seats"]
+          }
+        }
+      },
+      "required": ["tables"],
+      "x-order": ["tables"]
+    },
+    "events": [{ "name": "select_table", "description": "Tapping a table asks for it." }]
+  }
+]`), 0o644))
+
+	loaded, err := Load(dir)
+	s.Require().NoError(err)
+	s.Contains(loaded.Instructions, "SeatSelector(tables: array) — Pick a table by zone.")
+}
+
+func (s *FolderUISuite) TestFoldedBlueprintWhenStaysOnOneLine() {
+	dir := s.T().TempDir()
+	s.Require().NoError(os.WriteFile(filepath.Join(dir, "agent.yaml"), []byte("name: concierge\nui:\n  format: openui\n"), 0o644))
+	s.Require().NoError(os.MkdirAll(filepath.Join(dir, "ui"), 0o755))
+	s.Require().NoError(os.WriteFile(filepath.Join(dir, "ui", "blueprints.yaml"), []byte(`- name: booking
+  when: >
+    booking a table
+    for tonight
+  order: [CardHeader]
+`), 0o644))
+
+	loaded, err := Load(dir)
+	s.Require().NoError(err)
+	s.Contains(loaded.Instructions, "- **booking** (when booking a table for tonight): `Card([CardHeader])`")
+}
+
 func (s *FolderUISuite) TestUIPathLeavingAgentDirectoryIsRefused() {
 	outer := s.T().TempDir()
 	outside := filepath.Join(outer, "secret.json")

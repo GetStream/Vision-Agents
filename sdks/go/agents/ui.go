@@ -97,6 +97,9 @@ type UIPortableProperty struct {
 	Format      string   `json:"format,omitempty"`
 	Description string   `json:"description,omitempty"`
 	Enum        []string `json:"enum,omitempty"`
+	// Items is an array's item schema, which the apps read and the prompt leaves out: the
+	// signature says only `array`.
+	Items json.RawMessage `json:"items,omitempty"`
 }
 
 type UIPortableEvent struct {
@@ -404,7 +407,7 @@ func compileUIPrompt(settings UISettings, components []UIPortableComponent, blue
 		b.WriteString("\n### Canonical Layout Blueprints (Predictability Rules)\n")
 		b.WriteString("Match similar prompts to the exact component sequence below so repeated asks produce a consistent layout:\n")
 		for _, bp := range blueprints {
-			b.WriteString(fmt.Sprintf("- **%s** (when %s): `Card([%s])`", bp.Name, bp.When, strings.Join(bp.Order, " -> ")))
+			b.WriteString(fmt.Sprintf("- **%s** (when %s): `Card([%s])`", bp.Name, strings.TrimSpace(bp.When), strings.Join(bp.Order, " -> ")))
 			if len(bp.Rules) > 0 {
 				b.WriteString(" — ")
 				b.WriteString(strings.Join(bp.Rules, "; "))

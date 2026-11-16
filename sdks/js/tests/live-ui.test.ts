@@ -350,6 +350,19 @@ describe("loadFolder declarative ui catalog and blueprints", () => {
     assert.doesNotMatch(first.instructions, /BarChart\(/);
   });
 
+  it("places a component that takes no parameters, as the Go SDK does", async () => {
+    const dir = join(root, "badge");
+    await mkdir(join(dir, "ui"), { recursive: true });
+    await writeFile(join(dir, "agent.yaml"), "name: badge\nui:\n  format: openui\n");
+    await writeFile(
+      join(dir, "ui", "components.json"),
+      JSON.stringify([{ name: "brand_badge", description: "Northwind's logo, for the top of a card." }]),
+    );
+
+    const loaded = await loadFolder(dir);
+    assert.match(loaded.instructions, /BrandBadge\(\) — Northwind's logo, for the top of a card\./);
+  });
+
   it("refuses a ui components path that leaves the agent directory", async () => {
     const dir = join(root, "escaped");
     await mkdir(dir, { recursive: true });

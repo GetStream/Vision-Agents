@@ -15,7 +15,7 @@ export interface UIDeclaration {
 export interface UIPortableComponent {
   name: string;
   description: string;
-  parameters: {
+  parameters?: {
     type: string;
     properties?: Record<string, { type: string; format?: string; description?: string; enum?: string[] }>;
     required?: string[];
@@ -105,7 +105,7 @@ export function compileUIPrompt(
   const byName = new Map(BUILTINS.map((b) => [b.name, b]));
   const customArity = new Map<string, number>();
   for (const comp of components) {
-    const order = comp.parameters["x-order"] ?? [];
+    const order = comp.parameters?.["x-order"] ?? [];
     customArity.set(uiPascalName(comp.name), order.length + (comp.slots?.length ?? 0));
   }
 
@@ -266,9 +266,9 @@ function validatePortableComponents(components: readonly UIPortableComponent[], 
 }
 
 function portableSignature(comp: UIPortableComponent): string {
-  const required = new Set(comp.parameters.required ?? []);
-  const props = comp.parameters.properties ?? {};
-  const order = comp.parameters["x-order"] ?? [];
+  const required = new Set(comp.parameters?.required ?? []);
+  const props = comp.parameters?.properties ?? {};
+  const order = comp.parameters?.["x-order"] ?? [];
   const params: string[] = [];
   for (const key of order) {
     const prop = props[key];
