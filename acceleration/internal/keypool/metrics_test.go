@@ -562,13 +562,21 @@ func (s *RefusedAttemptsSuite) TestEveryRefusalStatusAlertsWithItsReason() {
 			s.answerWith(http.StatusBadRequest, `{"error":{"details":[{"reason":"API_KEY_INVALID"}]}}`, p.keys[0])
 			s.post(p.Pool)
 		}},
-		{"401", "401", "key not valid, replace it", func(p pooled) { s.answer(http.StatusUnauthorized, p.keys[0]); s.post(p.Pool) }},
+		{"401", "401", "key not valid or its quota spent, replace it or top it up", func(p pooled) { s.answer(http.StatusUnauthorized, p.keys[0]); s.post(p.Pool) }},
+		{"401 spent quota", "401", "key not valid or its quota spent, replace it or top it up", func(p pooled) {
+			s.answerWith(http.StatusUnauthorized, `{"detail":{"status":"quota_exceeded","message":"This request exceeds your API key quota."}}`, p.keys[0])
+			s.post(p.Pool)
+		}},
 		{"402", "402", "out of funds, top up the account", func(p pooled) { s.answer(http.StatusPaymentRequired, p.keys[0]); s.post(p.Pool) }},
 		{"403 key not valid", "403", "key not valid, replace it", func(p pooled) {
 			s.answerWith(http.StatusForbidden, "Authentication failed", p.keys[0])
 			s.post(p.Pool)
 		}},
-		{"429", "429", "rate limited, wait or add keys", func(p pooled) { s.answer(http.StatusTooManyRequests, p.keys[0]); s.post(p.Pool) }},
+		{"429", "429", "rate limited or spend cap reached, wait, add keys or raise the cap", func(p pooled) { s.answer(http.StatusTooManyRequests, p.keys[0]); s.post(p.Pool) }},
+		{"429 spend cap", "429", "rate limited or spend cap reached, wait, add keys or raise the cap", func(p pooled) {
+			s.answerWith(http.StatusTooManyRequests, anthropicSpendCapBody, p.keys[0])
+			s.post(p.Pool)
+		}},
 		{"quota frame", "quota_exceeded", "quota spent, wait for it to reset or raise it", func(p pooled) { p.QuotaExceeded(p.keys[0]) }},
 		{"invalid key frame", "invalid_key", "key not valid, replace it", func(p pooled) { p.InvalidKey() }},
 		{"out of funds frame", "402", "out of funds, top up the account", func(p pooled) { p.OutOfFunds() }},

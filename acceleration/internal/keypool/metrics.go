@@ -42,10 +42,10 @@ func Alerts(limit time.Duration) []alerts.Condition {
 // alert. The statuses are the ones refusedAttempts documents.
 var refusalReasons = map[string]string{
 	strconv.Itoa(http.StatusBadRequest):      "key not valid, replace it",
-	strconv.Itoa(http.StatusUnauthorized):    "key not valid, replace it",
+	strconv.Itoa(http.StatusUnauthorized):    "key not valid or its quota spent, replace it or top it up",
 	outOfFundsStatus:                         "out of funds, top up the account",
 	strconv.Itoa(http.StatusForbidden):       "key not valid, replace it",
-	strconv.Itoa(http.StatusTooManyRequests): "rate limited, wait or add keys",
+	strconv.Itoa(http.StatusTooManyRequests): "rate limited or spend cap reached, wait, add keys or raise the cap",
 	quotaExceededStatus:                      "quota spent, wait for it to reset or raise it",
 	invalidKeyStatus:                         "key not valid, replace it",
 }
