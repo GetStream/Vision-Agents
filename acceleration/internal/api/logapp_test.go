@@ -3,11 +3,15 @@
 package api
 
 import (
+	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 )
@@ -122,13 +126,43 @@ func (s *LogAppSuite) TestALineAHandlerLogsWithTheRequestsContextNamesTheAppAndI
 	s.NotContains(without, "app_id")
 }
 
+func (s *LogAppSuite) TestThePanicLineNamesTheAppAndItsPublicKey() {
+	routes := chi.NewRouter()
+	routes.Get("/probe", func(http.ResponseWriter, *http.Request) { panic("probe panic") })
+	node := httptest.NewUnstartedServer(s.router.withCustomer(s.router.withRequestLog(routes, routes)))
+	node.Config.ErrorLog = log.New(io.Discard, "", 0)
+	node.Start()
+	s.T().Cleanup(node.Close)
+	request, err := http.NewRequest(http.MethodGet, node.URL+"/probe", nil)
+	s.Require().NoError(err)
+	request.Header = s.serverClient.header.Clone()
+
+	// The panic goes on to net/http after the 500, which drops the connection.
+	if response, err := node.Client().Do(request); err == nil {
+		s.Require().NoError(response.Body.Close())
+	}
+
+	var line string
+	s.Require().Eventually(func() bool {
+		for l := range strings.Lines(s.logged.String()) {
+			if strings.Contains(l, `msg="a request panicked"`) && strings.Contains(l, " path=/probe ") {
+				line = l
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 20*time.Millisecond)
+	s.Contains(line, " app_id="+s.customerID()+" ")
+	s.Contains(line, " api_key="+s.app.key)
+}
+
 // servedAs is the access line of a GET by client.
 func (s *appLogSuite) servedAs(client *testClient) string {
 	id := s.utils.uuid()
 	named := *client
 	named.header = client.header.Clone()
 	named.header.Set(RequestIDHeader, id)
-	named.call(http.MethodGet, "/v1/agents/sessions", nil)
+	named.call(http.MethodGet, "/v1/account", nil)
 	return s.lineOf(id)
 }
 
@@ -183,6 +217,6 @@ func (s *LogAppProxiedSuite) TestTheAccessLineOfACallerTheProxyNamedNoKeyForName
 
 	line := s.servedAs(&testClient{suite: &s.RouterSuite, header: header})
 
-	s.Contains(line, " app_id="+s.customerID()+" ")
+	s.Contains(line, " app_id="+s.customerID())
 	s.NotContains(line, "api_key")
 }
