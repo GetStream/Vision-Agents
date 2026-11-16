@@ -1183,6 +1183,26 @@ impl Client {
         )
         .await
     }
+    /// Answer a call waiting for a person's approval
+    ///
+    /// `POST /v1/agents/conversations/{cid}/tool_approvals` (`answerConversationToolApproval`).
+    pub async fn answer_conversation_tool_approval(
+        &self,
+        cid: &str,
+        body: &types::ToolApprovalAnswer,
+    ) -> Result<()> {
+        self.send(
+            Method::POST,
+            &format!(
+                "/v1/agents/conversations/{cid}/tool_approvals",
+                cid = segment(cid)
+            ),
+            None::<&()>,
+            Some(body),
+            "answerConversationToolApproval",
+        )
+        .await
+    }
     /// Mint a guest so somebody can talk to an agent before signing up
     ///
     /// `POST /v1/agents/guests` (`createGuestUser`).
