@@ -10,7 +10,7 @@ Bring every repo below up to date. Run them in parallel; each is independent.
 | Repo | Branch | Then merge |
 | --- | --- | --- |
 | `~/workspace/chat` | `master` | |
-| `~/workspace/Vision-Agents` | `accelerate` | |
+| `~/workspace/Vision-Agents` | `main` | |
 | `~/workspace/artemis-impl` | current | |
 | `~/workspace/getstream.io` | `main` | |
 | `~/workspace/volt-dashboard` | `main` | |

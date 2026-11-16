@@ -25,7 +25,7 @@ Only Go hosting counts: the mocks bill nothing, and model cost is not the router
 
 ## 0. Once, before round 1
 
-- Work on a branch off `accelerate` (`thierry/router-perf-loop` style). One commit per fix,
+- Work on a branch off `main` (`thierry/router-perf-loop` style). One commit per fix,
   `perf(<scope>): ...`.
 - The benchmark router must stay at **2 pods on 2 n4a-standard-4 nodes** (HPA 2/2 in
   `shards/us-east1-acceleration/accelerate-benchmark.yaml` in the private infra repo, with

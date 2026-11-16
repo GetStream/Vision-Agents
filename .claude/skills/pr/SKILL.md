@@ -19,7 +19,7 @@ description: Create a draft pull request for the Vision-Agents repo using gh CLI
 
 ## Title
 
-- Aim for 50 characters, never more than 65. The repo only squash-merges and uses the PR title as the commit subject on `accelerate`/`main` once a PR has two or more commits, and GitHub appends ` (#NNN)`. 65 plus that suffix stays within the 72 GitHub's docs give as the commit title maximum; 50 is what `git help commit` and Pro Git recommend.
+- Aim for 50 characters, never more than 65. The repo only squash-merges and uses the PR title as the commit subject on `main` once a PR has two or more commits, and GitHub appends ` (#NNN)`. 65 plus that suffix stays within the 72 GitHub's docs give as the commit title maximum; 50 is what `git help commit` and Pro Git recommend.
 - Say what changes, not how. The ticket id (`AI-833`) counts toward the limit; details go in the body.
 - Bad, 85 characters: `feat(connectors): connector definitions table seeded from built-in manifests (AI-833)`. Good, 44: `AI-833: connector definitions with revisions`.
 

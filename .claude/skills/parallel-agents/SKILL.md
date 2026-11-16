@@ -57,7 +57,7 @@ a mistake that actually happened.
   - Give each PR its own version slot before the agents start, spaced apart. Never let two agents
     pick "the current time".
   - Merge in version order. Before each merge, check the newest file under `acceleration/migrations`
-    on `origin/accelerate`.
+    on `origin/main`.
   - A database that ran an earlier build of a PR can hold a version that a later merge lands below.
     Recreate that database.
 - **Shared append files.** Every PR adds a note at the end of `.claude/skills/sdk/SKILL.md` and
@@ -66,7 +66,7 @@ a mistake that actually happened.
   `<<<<<<<`, `=======` and `>>>>>>>`. Markers were committed twice by agents that skipped this.
 - **Generated files.** Do not hand-merge `acceleration/api/openapi.yaml` or the generated clients.
   Take either side, regenerate them (see `acceleration/README.md`), and check the result with
-  `.agents/skills/pr-review/scripts/generated.sh <repo root> origin/accelerate`.
+  `.agents/skills/pr-review/scripts/generated.sh <repo root> origin/main`.
 - **CI runs the integration suites.** `Integration (router)` (`.github/workflows/integration.yml`)
   runs each package in its matrix in its own job, on a PR that changes `acceleration/**` (not
   only `.md`), `go.work`, `go.work.sum` or the workflow. Do not repeat those packages locally:
@@ -75,7 +75,7 @@ a mistake that actually happened.
     detection). CI also leaves out `imagerouter` and `dlc` (AI-2040), and the Postgres packages
     `internal/campaign`, `internal/phone/outcome`, `internal/searchrouter` and
     `internal/simulation`. Run those by hand when you touch them, and list the runs in the PR.
-  - The check is not required on `accelerate`. When it ran, wait for it to pass before you merge.
+  - The check is not required on `main`. When it ran, wait for it to pass before you merge.
     A check that did not run leaves nothing to wait for.
 
 ## Review and merge one PR at a time
@@ -85,12 +85,12 @@ Authors may write in parallel. Reviews and merges run one PR at a time.
 - **Why.** Each merge makes the other open PRs conflict. When four PRs were reviewed at once, each
   review had to be redone on the merged tree, and some three or four times.
 - **Order.** Merge one PR, then rebase the next one once onto the new base, then review it.
-- **Review against the current base.** Build and test the PR merged onto `origin/accelerate`, not
+- **Review against the current base.** Build and test the PR merged onto `origin/main`, not
   the PR head alone. Two PRs built cleanly on their own and failed to compile together.
 - **Findings live in agent messages, not on GitHub.** Put the full list of earlier findings into
   every re-review prompt.
 - **Re-review the delta.** The same reviewer reads
-  `git range-diff <old base>..<old head> origin/accelerate..<new head>` and checks its own findings.
+  `git range-diff <old base>..<old head> origin/main..<new head>` and checks its own findings.
   A new finding in code the delta did not touch blocks the merge only if it is a Blocker.
 - **A rebase after GO needs no new review** when the range-diff shows only `=` commits plus commits
   that change docs or tests. When Go code changed, the same reviewer checks the delta.

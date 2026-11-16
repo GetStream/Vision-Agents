@@ -32,7 +32,7 @@ echo 'agents_base: https://appkey@accelerate-staging.gcp.stream-io-api.com' > /t
 HOME=/tmp/clihome getstream agents test my-agent
 ```
 
-The hosted router is deployed less often than `accelerate` moves, so test new router behaviour against the local one (rebuild it first, see `AGENTS.md`). The SDKs pick their router separately, from `STREAM_ACCELERATION_URL` and `STREAM_ACCELERATION_CUSTOMER_ID`; set the customer id to the app id to reach the same agents the CLI does locally.
+The hosted router is deployed less often than `main` moves, so test new router behaviour against the local one (rebuild it first, see `AGENTS.md`). The SDKs pick their router separately, from `STREAM_ACCELERATION_URL` and `STREAM_ACCELERATION_CUSTOMER_ID`; set the customer id to the app id to reach the same agents the CLI does locally.
 
 ## Projects
 

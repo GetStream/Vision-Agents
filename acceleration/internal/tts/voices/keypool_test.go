@@ -119,7 +119,7 @@ func (s *KeyPoolSuite) keysSeen() []string {
 	return append([]string(nil), s.keys...)
 }
 
-// refusals is the counter's series under keyVar, as status → count.
+// refusals is the counter's series under keyVar, as status → count, whoever owns the key.
 func (s *KeyPoolSuite) refusals(keyVar string) map[string]float64 {
 	families, err := prometheus.DefaultGatherer.Gather()
 	s.Require().NoError(err)
@@ -134,7 +134,7 @@ func (s *KeyPoolSuite) refusals(keyVar string) map[string]float64 {
 				labels[pair.GetName()] = pair.GetValue()
 			}
 			if labels["key_var"] == keyVar {
-				counted[labels["status"]] = metric.GetCounter().GetValue()
+				counted[labels["status"]] += metric.GetCounter().GetValue()
 			}
 		}
 	}

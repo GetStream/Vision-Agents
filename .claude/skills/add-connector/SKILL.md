@@ -81,7 +81,7 @@ Start from the closest existing file:
    the `go-testing` and `parallel-agents` skills.
 6. **Try it live.** Start the router locally (`dashboard` skill), connect an account, bind
    one tool and call it in Playground. Then follow the `connectors` skill.
-7. **Open the PR** on the `accelerate` branch. Its body lists the sources and every
+7. **Open the PR** on the `main` branch. Its body lists the sources and every
    `# unverified` value.
 
 ### Changing a built-in
