@@ -943,3 +943,41 @@ func (s *SessionCreateSuite) answerAs(as *testClient, id, question string) strin
 	answered, _ := s.await(watching, "responded")["text"].(string)
 	return answered
 }
+
+// A call row keeps the session's user_id as the user its spoken lines are written as. A line
+// written under it with the agent's source mark is the agent's, however the agent was named.
+func (s *SessionCreateSuite) TestASpokenLineWrittenAsTheSessionsUserIsTheAgents() {
+	request := historySession(false)
+	request.UserId = pointerTo("front-desk")
+	opened := s.serverClient.createSession(request)
+	answered := s.answerTo(opened.Id, "When is my shift?")
+	transcript := func() map[string]bool {
+		var read []TranscriptMessage
+		s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+			"/v1/agents/calls/"+opened.Id+"/transcript", nil, &read))
+		agentLines := map[string]bool{}
+		for _, line := range read {
+			agentLines[line.Speaker+": "+line.Text] = value(line.Agent)
+		}
+		return agentLines
+	}
+	s.Require().Eventually(func() bool {
+		if _, err := s.store.Call(s.T().Context(), s.customerID(), opened.Id); err != nil {
+			return false
+		}
+		for line := range transcript() {
+			if strings.HasSuffix(line, answered) {
+				return true
+			}
+		}
+		return false
+	}, settleFor, 20*time.Millisecond, "the call's row and transcript were never written")
+	channelType, channel, _ := strings.Cut(value(opened.ConversationId), ":")
+	spoken, writer := "Your shift is at six.", "front-desk"
+	_, err := s.chat.Client.Chat().SendMessage(s.T().Context(), channelType, channel,
+		&getstream.SendMessageRequest{Message: getstream.MessageRequest{Text: &spoken, UserID: &writer,
+			Custom: map[string]any{chatlog.SourceField: chatlog.SourceAgent}}})
+	s.Require().NoError(err)
+	agentLines := transcript()
+	s.True(agentLines[writer+": "+spoken], "a spoken line written as the session's user_id is the agent's: %v", agentLines)
+}
