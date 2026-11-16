@@ -119,6 +119,78 @@ void main() {
       expect(conversation.state, ConversationState.idle);
     });
 
+    test('ui_delta and ui_completed fold onto the turn and merge openui patches', () {
+      var conversation = const Conversation()
+          .apply(frame('{"type":"responding","turn_id":"t1"}'))
+          .apply(frame('{"type":"response_delta","turn_id":"t1","text":"Table at 19:15."}'))
+          .apply(
+            frame(
+              '{"type":"ui_delta","turn_id":"t1","format":"openui",'
+              r'"delta":"$party = 2\nroot = Card([hdr])\n"}',
+            ),
+          );
+
+      expect(conversation.turns.single.ui?.isStreaming, isTrue);
+      expect(conversation.turns.single.ui?.content, '\$party = 2\nroot = Card([hdr])\n');
+
+      conversation = conversation
+          .apply(
+            frame(
+              '{"type":"ui_completed","turn_id":"t1","format":"openui",'
+              r'"content":"$party = 2\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"}',
+            ),
+          )
+          .apply(frame('{"type":"responded","turn_id":"t1","text":"Table at 19:15."}'));
+
+      expect(conversation.turns.single.ui?.status, 'complete');
+      expect(
+        conversation.turns.single.ui?.content,
+        '\$party = 2\nroot = Card([hdr])\nhdr = CardHeader("Kaneo")',
+      );
+
+      conversation = conversation
+          .apply(frame('{"type":"responding","turn_id":"t2"}'))
+          .apply(
+            frame(
+              '{"type":"ui_delta","turn_id":"t2","format":"openui","mode":"patch",'
+              r'"delta":"$party = 4"}',
+            ),
+          )
+          .apply(
+            frame(
+              '{"type":"ui_completed","turn_id":"t2","format":"openui","mode":"patch",'
+              r'"content":"$party = 4"}',
+            ),
+          );
+
+      expect(conversation.turns.last.ui?.status, 'complete');
+      expect(
+        conversation.turns.last.ui?.content,
+        '\$party = 4\nroot = Card([hdr])\nhdr = CardHeader("Kaneo")',
+      );
+    });
+
+    test('a patch with no UI before it in this transcript is left to Chat\'s merged copy', () {
+      // After a reload the socket's transcript starts empty, while the router merged the patch
+      // onto the card it remembers: the bare patch has no root and would blank the card.
+      final conversation = const Conversation()
+          .apply(frame('{"type":"responding","turn_id":"t9"}'))
+          .apply(
+            frame(
+              '{"type":"ui_delta","turn_id":"t9","format":"openui","mode":"patch",'
+              r'"delta":"$party = 4"}',
+            ),
+          )
+          .apply(
+            frame(
+              '{"type":"ui_completed","turn_id":"t9","format":"openui","mode":"patch",'
+              r'"content":"$party = 4"}',
+            ),
+          );
+
+      expect(conversation.turns.single.ui, isNull);
+    });
+
     test('a task settling after the agent left keeps the conversation over', () {
       final conversation = const Conversation()
           .apply(frame('{"type":"left","at":"2026-09-02T17:05:00Z"}'))

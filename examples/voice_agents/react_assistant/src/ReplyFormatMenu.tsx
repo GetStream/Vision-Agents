@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Assistant } from "./assistant";
+import { BRAND_PROFILES, useBrandProfile } from "./brandTheme";
 import { messageOf } from "./errors";
 
 /** How the agent answers: in Markdown, or with interactive UI in a format. */
@@ -39,6 +40,7 @@ export function ReplyFormatMenu() {
   const [isOpen, setOpen] = useState(false);
   const [format, setFormat] = useState<ReplyFormat | undefined>(undefined);
   const [failure, setFailure] = useState<string | undefined>(undefined);
+  const [brand, setBrand] = useBrandProfile();
   const menu = useRef<HTMLDivElement>(null);
 
   // A tap anywhere else, or Escape, closes it, as a menu does.
@@ -114,6 +116,24 @@ export function ReplyFormatMenu() {
             ))}
           </div>
           <p className="reply-format-note">New conversations answer this way.</p>
+          <hr className="reply-format-divider" />
+          <h3>Brand Design Tokens</h3>
+          <div role="radiogroup" aria-label="Brand Design Tokens">
+            {BRAND_PROFILES.map((profile) => (
+              <label className="reply-format-option" key={profile.id}>
+                <input
+                  checked={brand === profile.id}
+                  name="brand-profile"
+                  onChange={() => setBrand(profile.id)}
+                  type="radio"
+                />
+                <span>
+                  <strong>{profile.title}</strong>
+                  <span>{profile.description}</span>
+                </span>
+              </label>
+            ))}
+          </div>
           {failure && <p className="failure-pill">{failure}</p>}
         </div>
       )}
