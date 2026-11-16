@@ -1,0 +1,170 @@
+# How each LLM shortcut (group) in acceleration/internal/routing/router.yaml is judged.
+#
+# Membership is not written here: it comes from router.yaml through
+# `go run ./cmd/llmgroups snapshot`, so a model added to a tier shows up in every group
+# that tier feeds. What is here is what the group is for and how its members are ranked.
+#
+# score = 100 × Σ(weight × normalised metric) / Σ(weight of the metrics the model has)
+#
+# Each metric is normalised across the group's ranked members to 0..1, best = 1. `log`
+# metrics (latency, price, context) are compared on a log scale, because the spread is
+# orders of magnitude and a 2× gap should count the same at 200 ms as at 2 s. A model is
+# ranked only when the metrics it has carry at least `min_coverage` of the weight and none
+# of its `required` metrics is missing; the rest are listed as needing data. Without that, a
+# model nobody has scored for intelligence would be ranked on speed and price alone, and
+# win. A gate is a hard limit: a member past it is not ranked.
+#
+# Metrics (report.py computes them; see SKILL.md for where each comes from):
+#   intelligence      Artificial Analysis Intelligence Index at the effort the router sends
+#   ttft_live_p50/p95 measured time to the first token or tool-call byte over the
+#                     conversational tasks (spoken reply, tool call, JSON), ms
+#   ttft_p50 / p95    the same over every task, maths included, ms
+#   total_p50         measured time to the whole answer, ms
+#   cost_per_call     measured mean tokens × vendor.json rates, USD
+#   blended_price     (3 × input + output) / 4 per 1M tokens, USD, from vendor.json
+#   input_price       input per 1M tokens, USD
+#   pass_voice / pass_tool / pass_json / pass_reasoning / pass_image   suite pass rates, 0..1
+#   context_window    tokens, from router.yaml
+#   languages         how many languages router.yaml declares
+#   trains_on_data    router.yaml data_policy, for gates only ("no" | "yes" | "unknown")
+
+defaults:
+  min_coverage: 0.8
+  # A preferred model within this many points of the top is close enough to keep: the
+  # suite is small and one bad run moves a score by about that much.
+  keep_margin: 5
+
+groups:
+  llm-fast:
+    used_in: "Default model for every session that names none (session.go), the default of a new router config (api/routerconfigs.go), session titles (session/title.go). Offered in the model picker as Fast."
+    explainer: "Answers the caller on a live voice call. The caller is waiting in silence, so a slow first word is the worst failure; it must also call tools reliably, because that is how an agent ends, transfers or looks things up."
+    criteria:
+      - { metric: ttft_live_p95, weight: 0.30, scale: log, why: "the slow turns are the ones a caller notices" }
+      - { metric: intelligence, weight: 0.25, required: true, why: "a wrong answer fast is still wrong" }
+      - { metric: pass_tool, weight: 0.20, why: "tools are how a conversation does anything" }
+      - { metric: cost_per_call, weight: 0.15, scale: log, why: "most traffic lands here" }
+      - { metric: ttft_live_p50, weight: 0.10, scale: log, why: "the typical turn" }
+
+  llm-conversational:
+    used_in: "Offered in the model picker as Conversational. No code default."
+    explainer: "Cheap small talk for agents whose turns are short and whose instructions are simple. Cost first, then speed; it only has to be good enough."
+    criteria:
+      - { metric: cost_per_call, weight: 0.40, required: true, scale: log, why: "the reason this group exists" }
+      - { metric: ttft_live_p50, weight: 0.30, scale: log, why: "still a live conversation" }
+      - { metric: intelligence, weight: 0.20, why: "a floor, not a goal" }
+      - { metric: pass_voice, weight: 0.10, why: "answers in one short spoken sentence" }
+
+  llm-smart:
+    used_in: "Offered in the model picker as Smart. No code default."
+    explainer: "Still a live conversation, but for agents that must get hard questions right and whose owners accept a slower answer. Quality first, with a ceiling on the wait because someone is on the line."
+    gates:
+      - { metric: ttft_live_p95, max: 10000, why: "proposed ceiling: past 10 s at p95 the caller assumes the line dropped" }
+    criteria:
+      - { metric: intelligence, weight: 0.45, required: true, why: "the reason this group exists" }
+      - { metric: pass_tool, weight: 0.20, why: "agents still act through tools" }
+      - { metric: cost_per_call, weight: 0.20, scale: log, why: "strong models differ 5× in price" }
+      - { metric: ttft_live_p95, weight: 0.15, scale: log, why: "inside the ceiling, sooner is better" }
+
+  llm-thinking:
+    used_in: "Default model for skills and subagents (session.go); the dashboard's default thinking model (agent-draft.form.ts)."
+    explainer: "When the talking model hands over a question it cannot answer itself, this model works on it while the conversation carries on. Nobody waits on its first word, but a result that arrives after the moment has passed is wasted."
+    criteria:
+      - { metric: intelligence, weight: 0.45, required: true, why: "the hard part of a turn is what lands here" }
+      - { metric: pass_tool, weight: 0.20, why: "skills run tools" }
+      - { metric: cost_per_call, weight: 0.20, scale: log, why: "thinking is billed as output" }
+      - { metric: pass_reasoning, weight: 0.10, why: "multi-step answers with a known result" }
+      - { metric: total_p50, weight: 0.05, scale: log, why: "a late result is wasted" }
+
+  llm-flow:
+    used_in: "The turn-taking controller (session.go defaultControllerTarget): rules on every transcript revision who holds the floor, including while the caller talks."
+    explainer: "A referee that must rule in a fraction of a second, constantly. A ruling on speech over the agent must land within 750 ms, so a model that thinks before writing is out."
+    gates:
+      - { metric: ttft_live_p95, max: 750, why: "the controller's deadline for a ruling on speech over the agent" }
+    criteria:
+      - { metric: ttft_live_p95, weight: 0.45, scale: log, why: "every ruling is on the clock" }
+      - { metric: pass_json, weight: 0.30, required: true, why: "a ruling is one small JSON object" }
+      - { metric: cost_per_call, weight: 0.25, scale: log, why: "it is called on every transcript revision" }
+
+  llm-scenario-runner:
+    used_in: "Plays the caller in simulations (simulation/caller.go; dashboard simulation form)."
+    explainer: "A stand-in for a real person in a test. It has to keep up in real time and follow a persona; it is test traffic, so cost matters more than brilliance."
+    criteria:
+      - { metric: cost_per_call, weight: 0.40, scale: log, why: "test traffic, run in bulk" }
+      - { metric: ttft_live_p50, weight: 0.30, scale: log, why: "keeps up with the agent in real time" }
+      - { metric: pass_voice, weight: 0.15, why: "speaks like a caller, briefly" }
+      - { metric: intelligence, weight: 0.15, required: true, why: "follows a persona and a script" }
+
+  llm-judge:
+    used_in: "Rules on simulated conversations (simulation/judge.go; dashboard simulation form)."
+    explainer: "Marks the test. It must be right and consistent, return a structured verdict, and read any language. Nobody waits for it. Prefer a vendor other than the agent's under test, since a model favours its own vendor's writing."
+    criteria:
+      - { metric: intelligence, weight: 0.45, required: true, why: "a verdict is only as good as its judge" }
+      - { metric: pass_json, weight: 0.25, why: "the verdict is structured" }
+      - { metric: cost_per_call, weight: 0.20, scale: log, why: "every simulated conversation is judged" }
+      - { metric: pass_reasoning, weight: 0.10, why: "consistency on answers with a known result" }
+
+  llm-moderator:
+    used_in: "The agent_moderator template (Nora), reviewing flagged content."
+    explainer: "A short ruling on whether flagged content breaks a set of labels, at moderation volume. It reads user content, so a provider that trains on it is out."
+    gates:
+      - { metric: trains_on_data, equals: "no", why: "it reads customers' users' content" }
+    criteria:
+      - { metric: cost_per_call, weight: 0.35, scale: log, why: "moderation volume" }
+      - { metric: pass_json, weight: 0.30, required: true, why: "a ruling against labels; the closest the suite has to label accuracy" }
+      - { metric: intelligence, weight: 0.25, why: "edge cases need judgement" }
+      - { metric: ttft_live_p50, weight: 0.10, scale: log, why: "a review should not queue" }
+
+  llm-analysis:
+    used_in: "Product-data analysis, per its router.yaml comment. No caller in this repo names it."
+    explainer: "Reads a week of calls, tickets and threads and writes what customers are asking for. It reads far more than it writes, so the context window and the input price matter; nobody waits."
+    criteria:
+      - { metric: intelligence, weight: 0.40, required: true, why: "the write-up is the product" }
+      - { metric: input_price, weight: 0.35, scale: log, why: "it reads far more than it writes" }
+      - { metric: context_window, weight: 0.25, scale: log, why: "a week of data in one prompt" }
+
+  vlm:
+    used_in: "Named by callers that need a picture understood. No code default."
+    explainer: "Answers questions about an image. It has to actually see; after that, cheap and quick."
+    criteria:
+      - { metric: pass_image, weight: 0.35, required: true, why: "the one thing this group is for" }
+      - { metric: cost_per_call, weight: 0.25, scale: log, why: "image tokens add up" }
+      - { metric: ttft_live_p50, weight: 0.20, scale: log, why: "often asked mid-conversation" }
+      - { metric: intelligence, weight: 0.20, why: "reasoning about what it sees" }
+
+  multilingual-high-accuracy:
+    used_in: "Session reviews (session/review.go, api/reviews.go), campaign classification (campaign/classify.go)."
+    explainer: "Reads a finished conversation in any language and writes a verdict or a label. Nobody waits. It has no preferred model today, so whichever member is healthiest answers."
+    criteria:
+      - { metric: intelligence, weight: 0.40, required: true, why: "a review is judgement" }
+      - { metric: pass_json, weight: 0.25, why: "reviews and labels are structured" }
+      - { metric: cost_per_call, weight: 0.25, scale: log, why: "every session can be reviewed" }
+      - { metric: languages, weight: 0.10, scale: log, why: "any language a call was in" }
+
+  en-high-accuracy:
+    used_in: "Callers that name a language and a quality rather than a model. Shared name with the STT and TTS routers."
+    explainer: "Any healthy strong model that speaks English. Ordered by health; the ranking only shows what the formula would pick and flags members that do not belong."
+    informational: true
+    criteria:
+      - { metric: intelligence, weight: 0.50, required: true }
+      - { metric: cost_per_call, weight: 0.30, scale: log }
+      - { metric: ttft_live_p50, weight: 0.20, scale: log }
+
+  en-low-latency:
+    used_in: "Callers that name a language and a speed rather than a model. Shared name with the STT and TTS routers, where it is the default."
+    explainer: "Any healthy fast English model that calls tools. Ordered by health; the ranking flags members that do not belong."
+    informational: true
+    criteria:
+      - { metric: ttft_live_p95, weight: 0.40, scale: log }
+      - { metric: pass_tool, weight: 0.20 }
+      - { metric: intelligence, weight: 0.20, required: true }
+      - { metric: cost_per_call, weight: 0.20, scale: log }
+
+  multilingual-low-latency:
+    used_in: "Callers that name a speed in any language rather than a model. Shared name with the STT and TTS routers."
+    explainer: "Any healthy fast multilingual model. Ordered by health; the ranking flags members that do not belong."
+    informational: true
+    criteria:
+      - { metric: ttft_live_p95, weight: 0.40, scale: log }
+      - { metric: intelligence, weight: 0.25, required: true }
+      - { metric: cost_per_call, weight: 0.25, scale: log }
+      - { metric: languages, weight: 0.10, scale: log }

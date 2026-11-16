@@ -1,0 +1,1700 @@
+{
+  "models": {
+    "anthropic/claude-haiku-5-5": {
+      "aa": {
+        "by_effort": {
+          "high": {
+            "intelligence": 30,
+            "output_tokens_per_second": null,
+            "slug": "claude-haiku-5-5-high"
+          },
+          "low": {
+            "intelligence": 19,
+            "output_tokens_per_second": null,
+            "slug": "claude-haiku-5-5-low"
+          },
+          "max": {
+            "intelligence": 36,
+            "output_tokens_per_second": null,
+            "slug": "claude-haiku-5-5"
+          },
+          "medium": {
+            "intelligence": 25,
+            "output_tokens_per_second": null,
+            "slug": "claude-haiku-5-5-medium"
+          },
+          "xhigh": {
+            "intelligence": 35,
+            "output_tokens_per_second": null,
+            "slug": "claude-haiku-5-5-xhigh"
+          }
+        },
+        "family": "Claude Haiku 5.5",
+        "read": "2026-11-13"
+      },
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 0,
+          "calls": 21,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 111.3,
+          "output_tokens_mean": 296.5,
+          "pass_by_kind": {
+            "image": 1,
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 162.7,
+          "suite": "v2",
+          "total_p50_ms": 967,
+          "total_p95_ms": 6746,
+          "ttft_live_p50_ms": 523,
+          "ttft_live_p95_ms": 1740,
+          "ttft_p50_ms": 660,
+          "ttft_p95_ms": 4717
+        }
+      },
+      "routed_effort": "default"
+    },
+    "anthropic/claude-opus-5-5": {
+      "aa": {
+        "by_effort": {
+          "high": {
+            "intelligence": 52,
+            "output_tokens_per_second": null,
+            "slug": "claude-opus-5-5-high"
+          },
+          "low": {
+            "intelligence": 35,
+            "output_tokens_per_second": null,
+            "slug": "claude-opus-5-5-low"
+          },
+          "max": {
+            "intelligence": 59,
+            "output_tokens_per_second": null,
+            "slug": "claude-opus-5-5"
+          },
+          "medium": {
+            "intelligence": 48,
+            "output_tokens_per_second": null,
+            "slug": "claude-opus-5-5-medium"
+          },
+          "xhigh": {
+            "intelligence": 57,
+            "output_tokens_per_second": null,
+            "slug": "claude-opus-5-5-xhigh"
+          }
+        },
+        "family": "Claude Opus 5.5",
+        "read": "2026-11-13",
+        "routed_as": "medium"
+      },
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 0,
+          "calls": 21,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 111.3,
+          "output_tokens_mean": 202.1,
+          "pass_by_kind": {
+            "image": 1,
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 68.7,
+          "suite": "v2",
+          "total_p50_ms": 1568,
+          "total_p95_ms": 6707,
+          "ttft_live_p50_ms": 678,
+          "ttft_live_p95_ms": 1778,
+          "ttft_p50_ms": 1151,
+          "ttft_p95_ms": 2802
+        }
+      },
+      "notes": [
+        "The router sends Anthropic no effort; Opus then runs at medium (refresh_model_stats)."
+      ],
+      "routed_effort": "default"
+    },
+    "anthropic/claude-sonnet-5-5": {
+      "aa": {
+        "by_effort": {
+          "high": {
+            "intelligence": 42,
+            "output_tokens_per_second": null,
+            "slug": "claude-sonnet-5-5-high"
+          },
+          "low": {
+            "intelligence": 26,
+            "output_tokens_per_second": null,
+            "slug": "claude-sonnet-5-5-low"
+          },
+          "max": {
+            "intelligence": 55,
+            "output_tokens_per_second": null,
+            "slug": "claude-sonnet-5-5"
+          },
+          "medium": {
+            "intelligence": 31,
+            "output_tokens_per_second": null,
+            "slug": "claude-sonnet-5-5-medium"
+          },
+          "xhigh": {
+            "intelligence": 50,
+            "output_tokens_per_second": null,
+            "slug": "claude-sonnet-5-5-xhigh"
+          }
+        },
+        "family": "Claude Sonnet 5.5",
+        "read": "2026-11-13"
+      },
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 0,
+          "calls": 21,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 111.3,
+          "output_tokens_mean": 157.2,
+          "pass_by_kind": {
+            "image": 1,
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 42.9,
+          "suite": "v2",
+          "total_p50_ms": 1446,
+          "total_p95_ms": 5063,
+          "ttft_live_p50_ms": 653,
+          "ttft_live_p95_ms": 849,
+          "ttft_p50_ms": 685,
+          "ttft_p95_ms": 2711
+        }
+      },
+      "routed_effort": "default"
+    },
+    "baseten/moonshotai/Kimi-K3": {
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 35.6,
+          "calls": 18,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 79.3,
+          "output_tokens_mean": 478.5,
+          "pass_by_kind": {
+            "json": 1,
+            "reasoning": 1,
+            "tool": 0.667,
+            "voice": 1
+          },
+          "pass_rate": 0.944,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 525,
+          "total_p95_ms": 10776,
+          "ttft_live_p50_ms": 292,
+          "ttft_live_p95_ms": 361,
+          "ttft_p50_ms": 292,
+          "ttft_p95_ms": 471
+        }
+      },
+      "routed_effort": "default"
+    },
+    "baseten/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B": {
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 42.7,
+          "calls": 18,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 99.2,
+          "output_tokens_mean": 554.3,
+          "pass_by_kind": {
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 405,
+          "total_p95_ms": 4196,
+          "ttft_live_p50_ms": 331,
+          "ttft_live_p95_ms": 403,
+          "ttft_p50_ms": 329,
+          "ttft_p95_ms": 447
+        }
+      },
+      "routed_effort": "default"
+    },
+    "baseten/zai-org/GLM-5.2": {
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 17.8,
+          "calls": 18,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 69.2,
+          "output_tokens_mean": 389.9,
+          "pass_by_kind": {
+            "json": 1,
+            "reasoning": 0.889,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 0.944,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 2926,
+          "total_p95_ms": 13204,
+          "ttft_live_p50_ms": 1473,
+          "ttft_live_p95_ms": 2746,
+          "ttft_p50_ms": 1473,
+          "ttft_p95_ms": 2192
+        }
+      },
+      "routed_effort": "default"
+    },
+    "baseten/zai-org/GLM-5.3": {
+      "aa": {
+        "by_effort": {
+          "low": {
+            "intelligence": 23,
+            "output_tokens_per_second": null,
+            "slug": "glm-5-3-low"
+          },
+          "max": {
+            "intelligence": 32,
+            "output_tokens_per_second": null,
+            "slug": "glm-5-3"
+          }
+        },
+        "family": "GLM-5.3",
+        "read": "2026-11-13"
+      },
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 28.4,
+          "calls": 18,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 75.2,
+          "output_tokens_mean": 138.9,
+          "pass_by_kind": {
+            "json": 1,
+            "reasoning": 0.889,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 0.944,
+          "reasoning_tokens_mean": 86.9,
+          "suite": "v2",
+          "total_p50_ms": 900,
+          "total_p95_ms": 3682,
+          "ttft_live_p50_ms": 658,
+          "ttft_live_p95_ms": 837,
+          "ttft_p50_ms": 774,
+          "ttft_p95_ms": 2972
+        }
+      },
+      "routed_effort": "default"
+    },
+    "baseten/zai-org/GLM-5.3-Flash": {
+      "aa": {
+        "by_effort": {
+          "default": {
+            "intelligence": 28,
+            "output_tokens_per_second": null,
+            "slug": "glm-5-3-flash"
+          }
+        },
+        "family": "GLM-5.3-Flash",
+        "read": "2026-11-13"
+      },
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 0,
+          "calls": 18,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 75.2,
+          "output_tokens_mean": 161.1,
+          "pass_by_kind": {
+            "json": 1,
+            "reasoning": 0.778,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 0.889,
+          "reasoning_tokens_mean": 111.2,
+          "suite": "v2",
+          "total_p50_ms": 1188,
+          "total_p95_ms": 8171,
+          "ttft_live_p50_ms": 648,
+          "ttft_live_p95_ms": 3012,
+          "ttft_p50_ms": 669,
+          "ttft_p95_ms": 7118
+        }
+      },
+      "routed_effort": "default"
+    },
+    "deepseek/DeepSeek-V4-Flash-0731": {
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 0,
+          "calls": 18,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 87.2,
+          "output_tokens_mean": 308.9,
+          "pass_by_kind": {
+            "json": 1,
+            "reasoning": 0.889,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 0.944,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 1419,
+          "total_p95_ms": 4231,
+          "ttft_live_p50_ms": 362,
+          "ttft_live_p95_ms": 522,
+          "ttft_p50_ms": 346,
+          "ttft_p95_ms": 491
+        }
+      },
+      "routed_effort": "default"
+    },
+    "deepseek/DeepSeek-V4-Pro-0813": {
+      "aa": {
+        "by_effort": {
+          "max": {
+            "intelligence": 23,
+            "output_tokens_per_second": null,
+            "slug": "deepseek-v4-pro"
+          },
+          "none": {
+            "intelligence": 13,
+            "output_tokens_per_second": null,
+            "slug": "deepseek-v4-pro-non-reasoning"
+          }
+        },
+        "family": "DeepSeek V4 Pro 0813",
+        "read": "2026-11-13"
+      },
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 14.2,
+          "calls": 18,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 87.2,
+          "output_tokens_mean": 315.2,
+          "pass_by_kind": {
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 1835,
+          "total_p95_ms": 7329,
+          "ttft_live_p50_ms": 1209,
+          "ttft_live_p95_ms": 2083,
+          "ttft_p50_ms": 851,
+          "ttft_p95_ms": 1919
+        }
+      },
+      "routed_effort": "default"
+    },
+    "deepseek/DeepSeek-V4.1-Flash": {
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 42.7,
+          "calls": 18,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 86.8,
+          "output_tokens_mean": 492.1,
+          "pass_by_kind": {
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 923,
+          "total_p95_ms": 7095,
+          "ttft_live_p50_ms": 384,
+          "ttft_live_p95_ms": 855,
+          "ttft_p50_ms": 368,
+          "ttft_p95_ms": 1171
+        }
+      },
+      "routed_effort": "default"
+    },
+    "gemini/gemini-3.8-flash": {
+      "aa": {
+        "by_effort": {
+          "high": {
+            "intelligence": 31,
+            "output_tokens_per_second": null,
+            "slug": "gemini-3-8-flash"
+          },
+          "low": {
+            "intelligence": 23,
+            "output_tokens_per_second": null,
+            "slug": "gemini-3-8-flash-low"
+          },
+          "medium": {
+            "intelligence": 30,
+            "output_tokens_per_second": null,
+            "slug": "gemini-3-8-flash-medium"
+          }
+        },
+        "family": "Gemini 3.8 Flash",
+        "read": "2026-11-13"
+      },
+      "measured": {
+        "low": {
+          "cached_tokens_mean": 0,
+          "calls": 21,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 199.1,
+          "output_tokens_mean": 476.9,
+          "pass_by_kind": {
+            "image": 1,
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 353.1,
+          "suite": "v2",
+          "total_p50_ms": 3249,
+          "total_p95_ms": 11826,
+          "ttft_live_p50_ms": 2537,
+          "ttft_live_p95_ms": 3297,
+          "ttft_p50_ms": 2832,
+          "ttft_p95_ms": 9548
+        }
+      },
+      "notes": [
+        "Introductory rates; Google double them on 2027-01-01, to Gemini 4 Hydrogen's $1.50 in / $7.50 out."
+      ],
+      "routed_effort": "low"
+    },
+    "gemini/gemini-4-argon": {
+      "aa": {
+        "by_effort": {
+          "high": {
+            "intelligence": 50,
+            "output_tokens_per_second": null,
+            "slug": "gemini-4-argon"
+          }
+        },
+        "family": "Gemini 4 Argon",
+        "read": "2026-11-13"
+      },
+      "measured": {
+        "high": {
+          "cached_tokens_mean": 0,
+          "calls": 21,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 233.4,
+          "output_tokens_mean": 961.8,
+          "pass_by_kind": {
+            "image": 1,
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 785,
+          "suite": "v2",
+          "total_p50_ms": 12215,
+          "total_p95_ms": 37104,
+          "ttft_live_p50_ms": 9324,
+          "ttft_live_p95_ms": 14038,
+          "ttft_p50_ms": 11010,
+          "ttft_p95_ms": 34128
+        }
+      },
+      "notes": [
+        "Introductory rates; Google double them on 2026-12-01 to $4 in / $20 out."
+      ],
+      "routed_effort": "high"
+    },
+    "gemini/gemini-4-hydrogen": {
+      "aa": {
+        "by_effort": {
+          "high": {
+            "intelligence": 51,
+            "output_tokens_per_second": null,
+            "slug": "gemini-4-hydrogen-high"
+          },
+          "low": {
+            "intelligence": 27,
+            "output_tokens_per_second": null,
+            "slug": "gemini-4-hydrogen-low"
+          },
+          "medium": {
+            "intelligence": 41,
+            "output_tokens_per_second": null,
+            "slug": "gemini-4-hydrogen-medium"
+          },
+          "xhigh": {
+            "intelligence": 54,
+            "output_tokens_per_second": null,
+            "slug": "gemini-4-hydrogen"
+          }
+        },
+        "family": "Gemini 4 Hydrogen",
+        "read": "2026-11-13"
+      },
+      "measured": {
+        "high": {
+          "cached_tokens_mean": 0,
+          "calls": 21,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 233.4,
+          "output_tokens_mean": 899.9,
+          "pass_by_kind": {
+            "image": 1,
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 713.3,
+          "suite": "v2",
+          "total_p50_ms": 3024,
+          "total_p95_ms": 10863,
+          "ttft_live_p50_ms": 2294,
+          "ttft_live_p95_ms": 4634,
+          "ttft_p50_ms": 2629,
+          "ttft_p95_ms": 10241
+        },
+        "low": {
+          "cached_tokens_mean": 0,
+          "calls": 21,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 233.4,
+          "output_tokens_mean": 651.9,
+          "pass_by_kind": {
+            "image": 1,
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 483,
+          "suite": "v2",
+          "total_p50_ms": 3355,
+          "total_p95_ms": 8055,
+          "ttft_live_p50_ms": 2455,
+          "ttft_live_p95_ms": 4849,
+          "ttft_p50_ms": 3348,
+          "ttft_p95_ms": 6893
+        },
+        "medium": {
+          "cached_tokens_mean": 0,
+          "calls": 21,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 233.4,
+          "output_tokens_mean": 943.8,
+          "pass_by_kind": {
+            "image": 1,
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 772.8,
+          "suite": "v2",
+          "total_p50_ms": 3248,
+          "total_p95_ms": 10510,
+          "ttft_live_p50_ms": 2471,
+          "ttft_live_p95_ms": 4562,
+          "ttft_p50_ms": 2782,
+          "ttft_p95_ms": 9824
+        },
+        "xhigh": {
+          "cached_tokens_mean": 0,
+          "calls": 21,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 233.4,
+          "output_tokens_mean": 2252.3,
+          "pass_by_kind": {
+            "image": 1,
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 2070.3,
+          "suite": "v2",
+          "total_p50_ms": 4382,
+          "total_p95_ms": 32669,
+          "ttft_live_p50_ms": 2928,
+          "ttft_live_p95_ms": 4522,
+          "ttft_p50_ms": 4201,
+          "ttft_p95_ms": 31614
+        }
+      },
+      "routed_effort": "high"
+    },
+    "gemma/gemma-4-26B-A4B-it": {
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 0,
+          "calls": 18,
+          "date": "2026-11-13",
+          "error_sample": "POST \"https://model-qvmmvrrq.api.baseten.co/environments/production/sync/v1/chat/completions\": 400 Bad Request \"Model version 32z4vp2 is deactivated. It needs t",
+          "errors": 18,
+          "input_tokens_mean": 0,
+          "output_tokens_mean": 0,
+          "pass_by_kind": {
+            "json": 0,
+            "reasoning": 0,
+            "tool": 0,
+            "voice": 0
+          },
+          "pass_rate": 0,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 0,
+          "total_p95_ms": 0,
+          "ttft_live_p50_ms": 0,
+          "ttft_live_p95_ms": 0,
+          "ttft_p50_ms": 0,
+          "ttft_p95_ms": 0
+        }
+      },
+      "notes": [
+        "Runs on Nebius in the deployments (provider_audit); a local GEMMA_BASE_URL still on Baseten answers 'model version deactivated'."
+      ],
+      "routed_effort": "default"
+    },
+    "meta/muse-spark-1.3": {
+      "measured": {
+        "low": {
+          "cached_tokens_mean": 47.3,
+          "calls": 21,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 119,
+          "output_tokens_mean": 659.9,
+          "pass_by_kind": {
+            "image": 1,
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 547.8,
+          "suite": "v2",
+          "total_p50_ms": 3214,
+          "total_p95_ms": 21022,
+          "ttft_live_p50_ms": 2069,
+          "ttft_live_p95_ms": 4543,
+          "ttft_p50_ms": 2720,
+          "ttft_p95_ms": 18387
+        }
+      },
+      "routed_effort": "low"
+    },
+    "meta/muse-wonder-1.0": {
+      "aa": {
+        "by_effort": {
+          "high": {
+            "intelligence": 41,
+            "output_tokens_per_second": null,
+            "slug": "muse-wonder-high"
+          },
+          "max": {
+            "intelligence": 44,
+            "output_tokens_per_second": null,
+            "slug": "muse-wonder"
+          }
+        },
+        "family": "Muse Wonder",
+        "read": "2026-11-13"
+      },
+      "measured": {
+        "low": {
+          "cached_tokens_mean": 35.4,
+          "calls": 21,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 111.1,
+          "output_tokens_mean": 501.9,
+          "pass_by_kind": {
+            "image": 1,
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 399.7,
+          "suite": "v2",
+          "total_p50_ms": 2785,
+          "total_p95_ms": 17084,
+          "ttft_live_p50_ms": 1847,
+          "ttft_live_p95_ms": 3448,
+          "ttft_p50_ms": 2729,
+          "ttft_p95_ms": 14767
+        }
+      },
+      "routed_effort": "low"
+    },
+    "minimax/MiniMax-M3.1-Flash": {
+      "aa": {
+        "by_effort": {
+          "default": {
+            "intelligence": 29,
+            "output_tokens_per_second": null,
+            "slug": "minimax-m3-1-flash"
+          }
+        },
+        "family": "MiniMax-M3.1-Flash",
+        "read": "2026-11-13"
+      },
+      "measured": {
+        "low": {
+          "cached_tokens_mean": 171.8,
+          "calls": 18,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 271.1,
+          "output_tokens_mean": 219.6,
+          "pass_by_kind": {
+            "json": 1,
+            "reasoning": 0.889,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 0.944,
+          "reasoning_tokens_mean": 157.5,
+          "suite": "v2",
+          "total_p50_ms": 2049,
+          "total_p95_ms": 8125,
+          "ttft_live_p50_ms": 838,
+          "ttft_live_p95_ms": 7954,
+          "ttft_p50_ms": 1499,
+          "ttft_p95_ms": 7954
+        }
+      },
+      "routed_effort": "low"
+    },
+    "moondream/moondream3-preview": {
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 8.2,
+          "calls": 18,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 160.2,
+          "output_tokens_mean": 921.6,
+          "pass_by_kind": {
+            "image": 1,
+            "json": 1,
+            "reasoning": 0,
+            "voice": 1
+          },
+          "pass_rate": 0.5,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 565,
+          "total_p95_ms": 826,
+          "ttft_live_p50_ms": 547,
+          "ttft_live_p95_ms": 823,
+          "ttft_p50_ms": 542,
+          "ttft_p95_ms": 602
+        }
+      },
+      "routed_effort": "default"
+    },
+    "ollama/deepseek-v4.1-flash:1017": {
+      "aa": {
+        "by_effort": {
+          "high": {
+            "intelligence": 29,
+            "output_tokens_per_second": null,
+            "slug": "deepseek-v4-1-flash-1017-high"
+          },
+          "max": {
+            "intelligence": 33,
+            "output_tokens_per_second": null,
+            "slug": "deepseek-v4-1-flash-1017"
+          },
+          "none": {
+            "intelligence": 19,
+            "output_tokens_per_second": null,
+            "slug": "deepseek-v4-1-flash-1017-non-reasoning"
+          }
+        },
+        "family": "DeepSeek V4.1 Flash 1017",
+        "read": "2026-11-13"
+      },
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 42.7,
+          "calls": 18,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 85.5,
+          "output_tokens_mean": 455.8,
+          "pass_by_kind": {
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 1103,
+          "total_p95_ms": 8404,
+          "ttft_live_p50_ms": 451,
+          "ttft_live_p95_ms": 823,
+          "ttft_p50_ms": 447,
+          "ttft_p95_ms": 730
+        }
+      },
+      "routed_effort": "default"
+    },
+    "openai/gpt-5.6-luna": {
+      "measured": {
+        "none": {
+          "cached_tokens_mean": 0,
+          "calls": 21,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 48.1,
+          "output_tokens_mean": 80.5,
+          "pass_by_kind": {
+            "image": 1,
+            "json": 1,
+            "reasoning": 0.667,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 0.857,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 1564,
+          "total_p95_ms": 4218,
+          "ttft_live_p50_ms": 615,
+          "ttft_live_p95_ms": 737,
+          "ttft_p50_ms": 664,
+          "ttft_p95_ms": 906
+        }
+      },
+      "routed_effort": "none"
+    },
+    "openai/gpt-5.6-sol": {
+      "measured": {
+        "none": {
+          "cached_tokens_mean": 0,
+          "calls": 21,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 48.1,
+          "output_tokens_mean": 90,
+          "pass_by_kind": {
+            "image": 1,
+            "json": 1,
+            "reasoning": 0.889,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 0.952,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 1873,
+          "total_p95_ms": 5052,
+          "ttft_live_p50_ms": 970,
+          "ttft_live_p95_ms": 1580,
+          "ttft_p50_ms": 970,
+          "ttft_p95_ms": 1580
+        }
+      },
+      "routed_effort": "none"
+    },
+    "openai/gpt-5.6-terra": {
+      "measured": {
+        "none": {
+          "cached_tokens_mean": 0,
+          "calls": 21,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 48.1,
+          "output_tokens_mean": 93.5,
+          "pass_by_kind": {
+            "image": 1,
+            "json": 1,
+            "reasoning": 0.667,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 0.857,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 1736,
+          "total_p95_ms": 4089,
+          "ttft_live_p50_ms": 598,
+          "ttft_live_p95_ms": 967,
+          "ttft_p50_ms": 709,
+          "ttft_p95_ms": 1005
+        }
+      },
+      "routed_effort": "none"
+    },
+    "openai/gpt-6-astra": {
+      "aa": {
+        "by_effort": {
+          "high": {
+            "intelligence": 55,
+            "output_tokens_per_second": null,
+            "slug": "gpt-6-astra-high"
+          },
+          "low": {
+            "intelligence": 43,
+            "output_tokens_per_second": null,
+            "slug": "gpt-6-astra-low"
+          },
+          "max": {
+            "intelligence": 57,
+            "output_tokens_per_second": null,
+            "slug": "gpt-6-astra"
+          },
+          "medium": {
+            "intelligence": 52,
+            "output_tokens_per_second": null,
+            "slug": "gpt-6-astra-medium"
+          },
+          "xhigh": {
+            "intelligence": 55,
+            "output_tokens_per_second": null,
+            "slug": "gpt-6-astra-xhigh"
+          }
+        },
+        "family": "GPT-6 Astra",
+        "read": "2026-11-13"
+      },
+      "measured": {
+        "low": {
+          "cached_tokens_mean": 0,
+          "calls": 21,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 49.6,
+          "output_tokens_mean": 81.5,
+          "pass_by_kind": {
+            "image": 1,
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 42.3,
+          "suite": "v2",
+          "total_p50_ms": 2982,
+          "total_p95_ms": 10423,
+          "ttft_live_p50_ms": 1465,
+          "ttft_live_p95_ms": 2012,
+          "ttft_p50_ms": 1766,
+          "ttft_p95_ms": 8484
+        }
+      },
+      "routed_effort": "low"
+    },
+    "openai/gpt-6-luna": {
+      "aa": {
+        "by_effort": {
+          "high": {
+            "intelligence": 21,
+            "output_tokens_per_second": null,
+            "slug": "gpt-6-luna-high"
+          },
+          "low": {
+            "intelligence": 10,
+            "output_tokens_per_second": null,
+            "slug": "gpt-6-luna-low"
+          },
+          "max": {
+            "intelligence": 28,
+            "output_tokens_per_second": null,
+            "slug": "gpt-6-luna"
+          },
+          "medium": {
+            "intelligence": 18,
+            "output_tokens_per_second": null,
+            "slug": "gpt-6-luna-medium"
+          },
+          "none": {
+            "intelligence": 9,
+            "output_tokens_per_second": null,
+            "slug": "gpt-6-luna-non-reasoning"
+          },
+          "xhigh": {
+            "intelligence": 23,
+            "output_tokens_per_second": null,
+            "slug": "gpt-6-luna-xhigh"
+          }
+        },
+        "family": "GPT-6 Luna",
+        "read": "2026-11-13"
+      },
+      "measured": {
+        "none": {
+          "cached_tokens_mean": 0,
+          "calls": 21,
+          "date": "2026-11-13",
+          "error_sample": "received error while streaming: {\"type\":\"invalid_request_error\",\"code\":\"invalid_prompt\",\"message\":\"Invalid prompt: your prompt was flagged as potentially violat",
+          "errors": 1,
+          "input_tokens_mean": 48.3,
+          "output_tokens_mean": 52.8,
+          "pass_by_kind": {
+            "image": 1,
+            "json": 1,
+            "reasoning": 0.444,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 0.762,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 1555,
+          "total_p95_ms": 2506,
+          "ttft_live_p50_ms": 762,
+          "ttft_live_p95_ms": 1300,
+          "ttft_p50_ms": 741,
+          "ttft_p95_ms": 1300
+        }
+      },
+      "routed_effort": "none"
+    },
+    "openai/gpt-6-sol": {
+      "aa": {
+        "family": "GPT-6 Sol"
+      },
+      "measured": {
+        "none": {
+          "cached_tokens_mean": 0,
+          "calls": 21,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 48.1,
+          "output_tokens_mean": 50.2,
+          "pass_by_kind": {
+            "image": 1,
+            "json": 1,
+            "reasoning": 0.778,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 0.905,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 1537,
+          "total_p95_ms": 3561,
+          "ttft_live_p50_ms": 815,
+          "ttft_live_p95_ms": 2893,
+          "ttft_p50_ms": 737,
+          "ttft_p95_ms": 1358
+        }
+      },
+      "routed_effort": "none"
+    },
+    "openai/gpt-6.1-sol": {
+      "aa": {
+        "by_effort": {
+          "high": {
+            "intelligence": 50,
+            "output_tokens_per_second": null,
+            "slug": "gpt-6-1-sol-high"
+          },
+          "low": {
+            "intelligence": 35,
+            "output_tokens_per_second": null,
+            "slug": "gpt-6-1-sol-low"
+          },
+          "max": {
+            "intelligence": 55,
+            "output_tokens_per_second": null,
+            "slug": "gpt-6-1-sol"
+          },
+          "medium": {
+            "intelligence": 46,
+            "output_tokens_per_second": null,
+            "slug": "gpt-6-1-sol-medium"
+          },
+          "xhigh": {
+            "intelligence": 52,
+            "output_tokens_per_second": null,
+            "slug": "gpt-6-1-sol-xhigh"
+          }
+        },
+        "family": "GPT-6.1 Sol",
+        "read": "2026-11-13"
+      },
+      "measured": {
+        "low": {
+          "cached_tokens_mean": 0,
+          "calls": 21,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 48.1,
+          "output_tokens_mean": 87.1,
+          "pass_by_kind": {
+            "image": 1,
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 48.3,
+          "suite": "v2",
+          "total_p50_ms": 2800,
+          "total_p95_ms": 10553,
+          "ttft_live_p50_ms": 1243,
+          "ttft_live_p95_ms": 3285,
+          "ttft_p50_ms": 1733,
+          "ttft_p95_ms": 9260
+        }
+      },
+      "routed_effort": "low"
+    },
+    "openai/gpt-6.1-terra": {
+      "aa": {
+        "by_effort": {
+          "high": {
+            "intelligence": 42,
+            "output_tokens_per_second": null,
+            "slug": "gpt-6-1-terra-high"
+          },
+          "low": {
+            "intelligence": 29,
+            "output_tokens_per_second": null,
+            "slug": "gpt-6-1-terra-low"
+          },
+          "max": {
+            "intelligence": 51,
+            "output_tokens_per_second": null,
+            "slug": "gpt-6-1-terra"
+          },
+          "medium": {
+            "intelligence": 38,
+            "output_tokens_per_second": null,
+            "slug": "gpt-6-1-terra-medium"
+          },
+          "none": {
+            "intelligence": 31,
+            "output_tokens_per_second": null,
+            "slug": "gpt-6-1-terra-non-reasoning"
+          },
+          "xhigh": {
+            "intelligence": 45,
+            "output_tokens_per_second": null,
+            "slug": "gpt-6-1-terra-xhigh"
+          }
+        },
+        "family": "GPT-6.1 Terra",
+        "read": "2026-11-13"
+      },
+      "measured": {
+        "none": {
+          "cached_tokens_mean": 0,
+          "calls": 21,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 48.1,
+          "output_tokens_mean": 49.8,
+          "pass_by_kind": {
+            "image": 1,
+            "json": 1,
+            "reasoning": 0.889,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 0.952,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 2097,
+          "total_p95_ms": 4883,
+          "ttft_live_p50_ms": 859,
+          "ttft_live_p95_ms": 2603,
+          "ttft_p50_ms": 967,
+          "ttft_p95_ms": 2578
+        }
+      },
+      "routed_effort": "none"
+    },
+    "together/MiniMaxAI/MiniMax-M3": {
+      "aa": {
+        "by_effort": {
+          "default": {
+            "intelligence": 19,
+            "output_tokens_per_second": null,
+            "slug": "minimax-m3"
+          }
+        },
+        "family": "MiniMax-M3",
+        "read": "2026-11-13"
+      },
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 0,
+          "calls": 18,
+          "date": "2026-11-13",
+          "error_sample": "POST \"https://api.together.xyz/v1/chat/completions\": 400 Bad Request {\"message\":\"Endpoint has no deployments configured for routing. Assign a weight to a deploy",
+          "errors": 18,
+          "input_tokens_mean": 0,
+          "output_tokens_mean": 0,
+          "pass_by_kind": {
+            "json": 0,
+            "reasoning": 0,
+            "tool": 0,
+            "voice": 0
+          },
+          "pass_rate": 0,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 0,
+          "total_p95_ms": 0,
+          "ttft_live_p50_ms": 0,
+          "ttft_live_p95_ms": 0,
+          "ttft_p50_ms": 0,
+          "ttft_p95_ms": 0
+        }
+      },
+      "routed_effort": "default"
+    },
+    "together/Qwen/Qwen3.8-2.4T-A95B": {
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 0,
+          "calls": 18,
+          "date": "2026-11-13",
+          "error_sample": "POST \"https://api.together.xyz/v1/chat/completions\": 400 Bad Request {",
+          "errors": 18,
+          "input_tokens_mean": 0,
+          "output_tokens_mean": 0,
+          "pass_by_kind": {
+            "json": 0,
+            "reasoning": 0,
+            "tool": 0,
+            "voice": 0
+          },
+          "pass_rate": 0,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 0,
+          "total_p95_ms": 0,
+          "ttft_live_p50_ms": 0,
+          "ttft_live_p95_ms": 0,
+          "ttft_p50_ms": 0,
+          "ttft_p95_ms": 0
+        }
+      },
+      "routed_effort": "default"
+    },
+    "together/Qwen/Qwen3.8-Flash": {
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 0,
+          "calls": 18,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 98,
+          "output_tokens_mean": 930.4,
+          "pass_by_kind": {
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 2352,
+          "total_p95_ms": 57464,
+          "ttft_live_p50_ms": 1398,
+          "ttft_live_p95_ms": 2231,
+          "ttft_p50_ms": 1320,
+          "ttft_p95_ms": 1669
+        }
+      },
+      "routed_effort": "default"
+    },
+    "together/deepseek-ai/DeepSeek-V4-Flash-0731": {
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 0,
+          "calls": 18,
+          "date": "2026-11-13",
+          "error_sample": "POST \"https://api.together.xyz/v1/chat/completions\": 400 Bad Request {\"message\":\"Endpoint has no deployments configured for routing. Assign a weight to a deploy",
+          "errors": 18,
+          "input_tokens_mean": 0,
+          "output_tokens_mean": 0,
+          "pass_by_kind": {
+            "json": 0,
+            "reasoning": 0,
+            "tool": 0,
+            "voice": 0
+          },
+          "pass_rate": 0,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 0,
+          "total_p95_ms": 0,
+          "ttft_live_p50_ms": 0,
+          "ttft_live_p95_ms": 0,
+          "ttft_p50_ms": 0,
+          "ttft_p95_ms": 0
+        }
+      },
+      "routed_effort": "default"
+    },
+    "together/deepseek-ai/DeepSeek-V4-Pro-0813": {
+      "aa": {
+        "by_effort": {
+          "max": {
+            "intelligence": 23,
+            "output_tokens_per_second": null,
+            "slug": "deepseek-v4-pro"
+          },
+          "none": {
+            "intelligence": 13,
+            "output_tokens_per_second": null,
+            "slug": "deepseek-v4-pro-non-reasoning"
+          }
+        },
+        "family": "DeepSeek V4 Pro 0813",
+        "read": "2026-11-13"
+      },
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 16.3,
+          "calls": 18,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 86.8,
+          "output_tokens_mean": 381.3,
+          "pass_by_kind": {
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 1229,
+          "total_p95_ms": 10957,
+          "ttft_live_p50_ms": 570,
+          "ttft_live_p95_ms": 10769,
+          "ttft_p50_ms": 570,
+          "ttft_p95_ms": 7547
+        }
+      },
+      "routed_effort": "default"
+    },
+    "together/deepseek-ai/DeepSeek-V4.1-Flash": {
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 0,
+          "calls": 18,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 85.5,
+          "output_tokens_mean": 486.2,
+          "pass_by_kind": {
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 303,
+          "total_p95_ms": 10998,
+          "ttft_live_p50_ms": 198,
+          "ttft_live_p95_ms": 206,
+          "ttft_p50_ms": 197,
+          "ttft_p95_ms": 278
+        }
+      },
+      "routed_effort": "default"
+    },
+    "together/moonshotai/Kimi-K3": {
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 79.3,
+          "calls": 18,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 79.3,
+          "output_tokens_mean": 324.6,
+          "pass_by_kind": {
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 1216,
+          "total_p95_ms": 8929,
+          "ttft_live_p50_ms": 747,
+          "ttft_live_p95_ms": 1411,
+          "ttft_p50_ms": 641,
+          "ttft_p95_ms": 1169
+        }
+      },
+      "routed_effort": "default"
+    },
+    "together/nvidia/NVIDIA-Nemotron-3.5-Super-VL": {
+      "aa": {
+        "by_effort": {
+          "default": {
+            "intelligence": 14,
+            "output_tokens_per_second": null,
+            "slug": "nemotron-3-5-super-vl"
+          }
+        },
+        "family": "Nemotron 3.5 Super VL",
+        "read": "2026-11-13"
+      },
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 0,
+          "calls": 21,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 126,
+          "output_tokens_mean": 164.7,
+          "pass_by_kind": {
+            "image": 1,
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 465,
+          "total_p95_ms": 1599,
+          "ttft_live_p50_ms": 320,
+          "ttft_live_p95_ms": 405,
+          "ttft_p50_ms": 298,
+          "ttft_p95_ms": 400
+        }
+      },
+      "routed_effort": "default"
+    },
+    "together/zai-org/GLM-5.2": {
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 17.8,
+          "calls": 18,
+          "date": "2026-11-13",
+          "errors": 0,
+          "input_tokens_mean": 68.2,
+          "output_tokens_mean": 368.9,
+          "pass_by_kind": {
+            "json": 1,
+            "reasoning": 1,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 1,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 526,
+          "total_p95_ms": 4460,
+          "ttft_live_p50_ms": 328,
+          "ttft_live_p95_ms": 420,
+          "ttft_p50_ms": 297,
+          "ttft_p95_ms": 420
+        }
+      },
+      "routed_effort": "default"
+    },
+    "together/zai-org/GLM-5.3": {
+      "aa": {
+        "by_effort": {
+          "low": {
+            "intelligence": 23,
+            "output_tokens_per_second": null,
+            "slug": "glm-5-3-low"
+          },
+          "max": {
+            "intelligence": 32,
+            "output_tokens_per_second": null,
+            "slug": "glm-5-3"
+          }
+        },
+        "family": "GLM-5.3",
+        "read": "2026-11-13"
+      },
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 0,
+          "calls": 18,
+          "date": "2026-11-13",
+          "error_sample": "POST \"https://api.together.xyz/v1/chat/completions\": 400 Bad Request {\"message\":\"thinking cannot be disabled for this model\",\"type\":\"invalid_request_error\",\"par",
+          "errors": 18,
+          "input_tokens_mean": 0,
+          "output_tokens_mean": 0,
+          "pass_by_kind": {
+            "json": 0,
+            "reasoning": 0,
+            "tool": 0,
+            "voice": 0
+          },
+          "pass_rate": 0,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 0,
+          "total_p95_ms": 0,
+          "ttft_live_p50_ms": 0,
+          "ttft_live_p95_ms": 0,
+          "ttft_p50_ms": 0,
+          "ttft_p95_ms": 0
+        }
+      },
+      "routed_effort": "default"
+    },
+    "together/zai-org/GLM-5.3-Flash": {
+      "aa": {
+        "by_effort": {
+          "default": {
+            "intelligence": 28,
+            "output_tokens_per_second": null,
+            "slug": "glm-5-3-flash"
+          }
+        },
+        "family": "GLM-5.3-Flash",
+        "read": "2026-11-13"
+      },
+      "measured": {
+        "default": {
+          "cached_tokens_mean": 0,
+          "calls": 18,
+          "date": "2026-11-13",
+          "error_sample": "POST \"https://api.together.xyz/v1/chat/completions\": 400 Bad Request {\"message\":\"thinking cannot be disabled for this model\",\"type\":\"invalid_request_error\",\"par",
+          "errors": 18,
+          "input_tokens_mean": 0,
+          "output_tokens_mean": 0,
+          "pass_by_kind": {
+            "json": 0,
+            "reasoning": 0,
+            "tool": 0,
+            "voice": 0
+          },
+          "pass_rate": 0,
+          "reasoning_tokens_mean": 0,
+          "suite": "v2",
+          "total_p50_ms": 0,
+          "total_p95_ms": 0,
+          "ttft_live_p50_ms": 0,
+          "ttft_live_p95_ms": 0,
+          "ttft_p50_ms": 0,
+          "ttft_p95_ms": 0
+        }
+      },
+      "routed_effort": "default"
+    },
+    "xai/grok-4.7": {
+      "aa": {
+        "by_effort": {
+          "high": {
+            "intelligence": 35,
+            "output_tokens_per_second": null,
+            "slug": "grok-4-7-high"
+          },
+          "low": {
+            "intelligence": 31,
+            "output_tokens_per_second": null,
+            "slug": "grok-4-7-low"
+          },
+          "xhigh": {
+            "intelligence": 35,
+            "output_tokens_per_second": null,
+            "slug": "grok-4-7"
+          }
+        },
+        "family": "Grok 4.7",
+        "read": "2026-11-13"
+      },
+      "measured": {
+        "low": {
+          "cached_tokens_mean": 1216,
+          "calls": 21,
+          "date": "2026-11-13",
+          "error_sample": "context deadline exceeded",
+          "errors": 1,
+          "input_tokens_mean": 1296,
+          "output_tokens_mean": 773,
+          "pass_by_kind": {
+            "image": 1,
+            "json": 1,
+            "reasoning": 0.889,
+            "tool": 1,
+            "voice": 1
+          },
+          "pass_rate": 0.952,
+          "reasoning_tokens_mean": 707.6,
+          "suite": "v2",
+          "total_p50_ms": 2250,
+          "total_p95_ms": 72301,
+          "ttft_live_p50_ms": 1874,
+          "ttft_live_p95_ms": 2898,
+          "ttft_p50_ms": 2158,
+          "ttft_p95_ms": 68960
+        }
+      },
+      "routed_effort": "low"
+    }
+  }
+}
