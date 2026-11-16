@@ -41,12 +41,12 @@ const handoffPoll = 100 * time.Millisecond
 // redisTimeout bounds a write about one call.
 const redisTimeout = 5 * time.Second
 
-// lockedRedisTimeout bounds the Redis calls Close waits on (withdraw, advertise ahead of it on
-// their lock, the owner check) and each write of a call's record, which hold waits on to delete
-// it, so a Redis that answers nothing leaves time of Close's grace to hang the calls up. Close
-// also stops waiting on withdraw after it, since a call that joins a reconnect another call began
-// waits for that reconnect whatever its own context. A renewal it cuts short counts as failed,
-// and the lease leaves more tries.
+// lockedRedisTimeout bounds the Redis calls Close waits on: withdraw, advertise ahead of it on
+// their lock, and the owner check. It also bounds each write of a call's record, since hold
+// waits on that write to delete the call's keys. So a Redis that answers nothing leaves time of
+// Close's grace to hang the calls up. Close also stops waiting on withdraw after it. A call that
+// joins a reconnect another call began waits for that reconnect, whatever its own context. A
+// renewal it cuts short counts as failed, and the lease leaves more tries.
 const lockedRedisTimeout = time.Second
 
 // Resumer opens what continuing a call another node placed needs: both sides' credentials,
@@ -325,8 +325,8 @@ func (p *Provider) renewOne(ctx context.Context, id string, h *heldCall) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	// Ended or offered while the script ran: hold or handOver decides the call's way out.
-	if h.ended || h.handingOver {
+	// Ended while the script ran: hold decides the call's way out.
+	if h.ended {
 		return
 	}
 	switch kept {
