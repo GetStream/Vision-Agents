@@ -132,13 +132,13 @@ func (s *ChatInboundStartupSuite) TestTheAccessLineNamesTheRelease() {
 	s.T().Cleanup(transport.CloseIdleConnections)
 	client := http.Client{Timeout: time.Second, Transport: transport}
 	s.Require().Eventually(func() bool {
-		response, err := client.Get("http://" + s.settings.Addr + "/health")
+		response, err := client.Get("http://" + s.settings.Addr + "/v1/account")
 		if err != nil {
 			return false
 		}
 		s.Require().NoError(response.Body.Close())
 		for line := range strings.Lines(logged.String()) {
-			if strings.Contains(line, `msg="served a request"`) && strings.Contains(line, " path=/health ") {
+			if strings.Contains(line, `msg="served a request"`) && strings.Contains(line, " path=/v1/account ") {
 				s.Contains(line, " build_version=v9.9.9-test")
 				return true
 			}

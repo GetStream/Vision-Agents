@@ -994,6 +994,8 @@ func withTrace(mux *chi.Mux, next http.Handler) http.Handler {
 // The path is logged without the query, because a socket names its customer there and a
 // vendor names a token, and an access log is the last place either should end up.
 //
+// A successful health probe is not logged (answeredHealthy).
+//
 // A 5xx is logged at error level. An access log at a busy deployment is the one stream
 // nobody reads all of, and a server error that only appears in it is a server error nobody
 // notices.
@@ -1034,6 +1036,9 @@ func (s *Server) withRequestLog(routes *chi.Mux, next http.Handler) http.Handler
 		}()
 		next.ServeHTTP(recorder, r)
 		s.recordActivity(routes, r, recorder, started)
+		if answeredHealthy(routes, r, recorder.status(), failure) {
+			return
+		}
 
 		customer, _ := CustomerFrom(r.Context())
 		// A socket reports the life of the connection rather than a time to respond,
@@ -1062,6 +1067,14 @@ func (s *Server) withRequestLog(routes *chi.Mux, next http.Handler) http.Handler
 		}
 		s.logger.InfoContext(r.Context(), "served a request", fields...)
 	})
+}
+
+// answeredHealthy is whether r is a health probe the router answered below 400 with no error
+// recorded. The load balancer and kubelet ask every few seconds, so the lines would crowd out
+// every request of a customer. A probe that fails keeps its line, so a failing check stays
+// visible. A panic is logged on its own line.
+func answeredHealthy(routes *chi.Mux, r *http.Request, status int, failure *requestFailure) bool {
+	return routeLabel(routes, r) == healthPath && status < http.StatusBadRequest && failure.err == nil
 }
 
 // maxLoggedValue caps a value the caller chose, a header or an anonymous caller's user id, on
@@ -1537,6 +1550,9 @@ const (
 	Degraded HealthStatusStatus = "degraded"
 )
 
+// healthPath is the route the load balancer and kubelet probe.
+const healthPath = "/health"
+
 type healthResponse struct {
 	Status int
 	Body   HealthStatus
@@ -1546,7 +1562,7 @@ func (s *Server) registerHealth(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "getHealth",
 		Method:      http.MethodGet,
-		Path:        "/health",
+		Path:        healthPath,
 		Summary:     "Liveness and dependency check",
 		Security:    []map[string][]string{},
 		Responses: map[string]*huma.Response{
