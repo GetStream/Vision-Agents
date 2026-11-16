@@ -592,6 +592,40 @@ func (s *ClientSuite) TestAChecksOverTheAgentAreHeldBackBrieflyAndInterimsLonger
 	s.Equal(1, strings.Count(logged.String(), "Retry-After has passed"), logged.String())
 }
 
+// A server that goes on shedding load goes on being given time, each Retry-After counted from
+// the 503 that carried it, and the pauses' words are asked for all the while. Once it answers
+// again nothing more is held back than the last Retry-After it sent: the hold ends by itself,
+// and checks over the agent and interims are sent to the server that recovered.
+func (s *ClientSuite) TestAHoldLastsWhileTheServerShedsLoadAndEndsOnceItRecovers() {
+	var skew atomic.Int64
+	s.client.now = skewed(&skew)
+	over := Turn{Speaker: caller, Speaking: true, Unfinished: true}
+	s.server.mu.Lock()
+	s.server.failing, s.server.failWith, s.server.retryAfter = 3, http.StatusServiceUnavailable, "1"
+	s.server.mu.Unlock()
+	for i := range 3 {
+		skew.Store(int64(i) * int64(500*time.Millisecond))
+		_, err := s.client.Transcribe(context.Background(), some, nil)
+		s.Require().Error(err, "a pause's words, asked for though the server sheds load")
+		_, err = s.client.Decide(context.Background(), booking, over, some)
+		s.Require().ErrorIs(err, ErrBackingOff, "held back %d ms in", i*500)
+		s.True(s.client.backingOff(kindInterim))
+	}
+	asked := s.decisionsAsked()
+	_, err := s.client.Transcribe(context.Background(), some, nil)
+	s.Require().NoError(err, "the server has recovered")
+	_, err = s.client.Decide(context.Background(), booking, over, some)
+	s.Require().ErrorIs(err, ErrBackingOff, "the last Retry-After has yet to pass")
+	s.Equal(asked, s.decisionsAsked(), "not sent")
+
+	// The last 503 was answered 1 s in, with a Retry-After of 1 s.
+	skew.Store(int64(2 * time.Second))
+	s.False(s.client.backingOff(kindInterim), "interims are asked for again")
+	_, err = s.client.Decide(context.Background(), booking, over, some)
+	s.Require().NoError(err, "and so are checks over the agent")
+	s.Equal(asked+1, s.decisionsAsked())
+}
+
 // A 503 read once the router has given its request up is no sign of a server shedding load:
 // the server answers 503 to a request whose X-Timeout-Ms ran out before a lane was free. It
 // holds nothing back.
