@@ -133,4 +133,48 @@ tables = SeatSelector([{id: "T1", zone: "Cliff Terrace", seats: 2, available: tr
       expect(actions.single.payload['zone'], 'Harbor Window');
     },
   );
+
+  testWidgets('a budget card shows each pie slice as a share and keeps a slider still arriving', (
+    tester,
+  ) async {
+    final host = AIUIHost(
+      components: TripComponents.all,
+      renderers: [OpenUIRenderer()],
+      send: (_) async {},
+    );
+    addTearDown(host.dispose);
+
+    // Cut off where the slider's max is still on its way, so its range is 50 to the default 10.
+    const program = '''
+root = Card([split, refine])
+split = PieChart(["Hotel", "Food", "Transport"], [300, 150, 50])
+refine = Form("budget", btns, [spend])
+btns = Buttons([Button("Update", @ToAssistant("Update"), "primary")])
+spend = FormControl("Daily spend", Slider("budget", "continuous", 50
+''';
+    final document = AIUIDocument.fromCustomData({
+      'ai_ui': {'v': 1, 'format': 'openui', 'status': 'streaming', 'content': program},
+    })!;
+    host.receive([_TestMessage('m2', document)]);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(extensions: [StreamTheme.light()]),
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: BrandThemeScope(
+              child: AIUIView(host: host, document: document, messageId: 'm2'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('60%'), findsOneWidget);
+    expect(find.text('30%'), findsOneWidget);
+    expect(find.text('10%'), findsOneWidget);
+    expect(find.byType(Slider), findsNothing);
+  });
 }

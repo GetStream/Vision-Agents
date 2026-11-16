@@ -412,7 +412,9 @@ class _OpenUISurfaceState extends State<_OpenUISurface> {
         ).map((e) => e is num ? e.toDouble() : double.tryParse('$e') ?? 0).toList();
         if (labels.isEmpty || values.isEmpty) return null;
         final total = values.fold<double>(0, (a, b) => a + math.max(0, b));
-        final firstPct = total > 0 ? ((values.first / total) * 100).round() : 0;
+        // Each slice as its share of the whole, as a pie shows it.
+        String share(double value) =>
+            total > 0 ? '${(math.max(0, value) / total * 100).round()}%' : '0%';
         return Row(
           spacing: 12,
           children: [
@@ -433,7 +435,7 @@ class _OpenUISurfaceState extends State<_OpenUISurface> {
                           style: textTheme.metadataDefault.copyWith(color: colors.textSecondary),
                         ),
                         Text(
-                          i == 0 ? '$firstPct%' : '${values[i]}',
+                          share(values[i]),
                           style: textTheme.headingSm.copyWith(color: brand.accent),
                         ),
                       ],
@@ -505,6 +507,8 @@ class _OpenUISurfaceState extends State<_OpenUISurface> {
         final fieldName = _evalString(resolved.argAt(0));
         final min = _evalNumber(resolved.argAt(2), 0);
         final max = _evalNumber(resolved.argAt(3), 10);
+        // No range yet, while its max is still on its way, or none at all: nothing to slide.
+        if (max <= min) return null;
         final step = _evalNumber(resolved.argAt(4), 1);
         final defList = _evalList(resolved.argAt(5));
         final defVal = defList.isNotEmpty && defList.first is num
