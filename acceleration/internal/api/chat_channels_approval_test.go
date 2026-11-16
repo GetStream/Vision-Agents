@@ -11,6 +11,7 @@ import (
 	getstream "github.com/GetStream/getstream-go/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 )
 
 // AI-3154: in a channel of a type a config answers in, a connector call the config holds for
@@ -104,7 +105,7 @@ func (s *ChannelTypeTurnSuite) SetupSuite() {
 
 // BeforeTest runs this suite's own test alone: the rest are AppHooksSuite's, run there.
 func (s *ChannelTypeTurnSuite) BeforeTest(suiteName, testName string) {
-	if testName != "TestAWritersApprovalAfterTheTurnEndsIsTooLate" {
+	if testName != "TestAWritersApprovalAfterTheTurnEndsIsTooLate" && testName != "TestASessionNotOpenedForTheMessageIsNotExpiredWithTheTurn" {
 		s.T().Skip("an AppHooksSuite test, run there")
 	}
 	s.AppHooksSuite.BeforeTest(suiteName, testName)
@@ -141,6 +142,40 @@ func (s *ChannelTypeTurnSuite) TestAWritersApprovalAfterTheTurnEndsIsTooLate() {
 	s.Equal("Let me ask.\n\n"+expiredApproval, ended["text"])
 	s.Equal("Not allowed in time", s.stepIn(cid)["summary"])
 	s.Equal(map[string]any{"decision": "declined", "title": "Allow crm to run echo?"}, s.stepIn(cid)["approval"])
+}
+
+// A session a caller opened on the channel is not the Router's to close with the turn: a
+// message answered in it leaves its call waiting past the two minutes, and when the caller
+// closes it, the reply ends as any closed session's does, without the expired line, which is for
+// the session the Router opened for the message. (The API cannot name a channel of a customer's
+// own type, so the session is opened as the Router opens one for a hook, but not by one.)
+func (s *ChannelTypeTurnSuite) TestASessionNotOpenedForTheMessageIsNotExpiredWithTheTurn() {
+	const twoMinutes = 2 * time.Minute
+	s.holdsType("callouts", memberWrites)
+	configID := s.approvingIn("callouts")
+	anya := s.person("Anya")
+	channel := s.teamChannel("callouts", anya)
+	cid := "callouts:" + channel
+	asked := "can you check the crm for my shift?"
+	written := s.writes("callouts", channel, anya, asked)
+	config, err := s.store.AgentConfig(s.T().Context(), s.customerID(), configID)
+	s.Require().NoError(err)
+	opened, err := s.router.chatChannelSession(s.T().Context(), hookOrigin{customer: s.customerID(), app: s.appID()},
+		config, cid, messageEvent{ChannelType: "callouts", ChannelID: channel})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _, _ = s.manager.Close(opened.ID(), session.OwnerOf(opened.Spec())) })
+	s.delivers("callouts", channel, written, anya, asked, "")
+	s.awaitingIn(cid)
+
+	s.Never(func() bool { return s.stepIn(cid)["status"] != "awaiting_approval" },
+		twoMinutes+10*time.Second, time.Second, "the call stopped with the turn of a session the Router did not open for it")
+	_, err = s.manager.Close(opened.ID(), session.OwnerOf(opened.Spec()))
+	s.Require().NoError(err)
+
+	ended := s.agentReplyIn(cid, "cancelled")
+	s.Require().NotNil(ended, "the reply never ended")
+	s.NotContains(ended["text"], "approval expired", "the Router did not close this session with the turn")
+	s.NotEqual("Not allowed in time", s.stepIn(cid)["summary"])
 }
 
 // expiredApproval is the line a reply ends with when its turn ended while a call still waited
