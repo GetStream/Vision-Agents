@@ -50,7 +50,7 @@ func (s *ConnectorApprovalSuite) TestACallIsSentOnlyOnceTheUserAllowsIt() {
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 	s.Never(func() bool { return len(answer) > 0 }, 200*time.Millisecond, 20*time.Millisecond, "it waits for the person")
 	s.Zero(s.provider.calls("primary"), "nothing reached the provider before they answered")
-	s.True(d.answerApproval("call-1", "command-1", true, ""))
+	s.NoError(d.answerApproval("call-1", "command-1", anyone, true, ""))
 	got := s.answerOf(answer)
 
 	s.Require().NoError(got.err)
@@ -81,7 +81,7 @@ func (s *ConnectorApprovalSuite) TestADeclinedCallIsNotSentAndTheModelIsTold() {
 
 	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
-	s.True(d.answerApproval("call-1", "command-1", false, "Not now"))
+	s.NoError(d.answerApproval("call-1", "command-1", anyone, false, "Not now"))
 	got := s.answerOf(answer)
 
 	s.Require().NoError(got.err)
@@ -101,12 +101,12 @@ func (s *ConnectorApprovalSuite) TestAnAnswerNamingAnotherCommandOrCallIsRefused
 	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 
-	s.False(d.answerApproval("call-1", "command-2", true, ""), "another command")
-	s.False(d.answerApproval("call-1", "", true, ""), "no command")
-	s.False(d.answerApproval("call-2", "command-1", true, ""), "a call that is not held")
+	s.Error(d.answerApproval("call-1", "command-2", anyone, true, ""), "another command")
+	s.Error(d.answerApproval("call-1", "", anyone, true, ""), "no command")
+	s.Error(d.answerApproval("call-2", "command-1", anyone, true, ""), "a call that is not held")
 	s.Never(func() bool { return len(answer) > 0 }, 200*time.Millisecond, 20*time.Millisecond, "still waiting")
-	s.True(d.answerApproval("call-1", "command-1", false, ""))
-	s.False(d.answerApproval("call-1", "command-1", true, ""), "answered already")
+	s.NoError(d.answerApproval("call-1", "command-1", anyone, false, ""))
+	s.Error(d.answerApproval("call-1", "command-1", anyone, true, ""), "answered already")
 	s.Contains(s.answerOf(answer).said, `"status":"declined"`)
 	s.Zero(s.provider.calls("primary"))
 }
@@ -175,7 +175,7 @@ func (s *ConnectorApprovalSuite) TestATurnThatEndsStopsTheWait() {
 	s.ErrorIs(got.err, context.Canceled)
 	s.Zero(s.provider.calls("primary"))
 	s.Equal(store.InvocationClientTimeout, s.rows(connection)[0].ErrorType)
-	s.False(d.answerApproval("call-1", "command-1", true, ""), "the call no longer waits")
+	s.Error(d.answerApproval("call-1", "command-1", anyone, true, ""), "the call no longer waits")
 }
 
 // The reply ended and left the call running, as an interruption that lets tools finish does
@@ -200,7 +200,7 @@ func (s *ConnectorApprovalSuite) TestAnAllowAfterTheReplyStoppedRunsNothing() {
 	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 	s.stop("call-1")
-	s.True(d.answerApproval("call-1", "command-1", true, ""))
+	s.NoError(d.answerApproval("call-1", "command-1", anyone, true, ""))
 	got := s.answerOf(answer)
 
 	s.Contains(got.said, `"status":"stopped"`)
@@ -226,7 +226,7 @@ func (s *ConnectorApprovalSuite) TestAPatternHoldsTheToolsItMatches() {
 	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
-	s.True(d.answerApproval("call-1", "command-1", true, ""))
+	s.NoError(d.answerApproval("call-1", "command-1", anyone, true, ""))
 	s.Equal("primary", s.answerOf(answer).said)
 }
 
@@ -244,7 +244,7 @@ func (s *ConnectorApprovalSuite) TestApprovalAddedToTheConfigHoldsTheNextCall() 
 
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 	s.Zero(s.provider.calls("primary"))
-	s.True(d.answerApproval("call-1", "command-1", false, ""))
+	s.NoError(d.answerApproval("call-1", "command-1", anyone, false, ""))
 	s.Contains(s.answerOf(answer).said, `"status":"declined"`)
 }
 
@@ -261,7 +261,7 @@ func (s *ConnectorApprovalSuite) TestApprovalTakenOffTheConfigStillHoldsTheSessi
 	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
-	s.True(d.answerApproval("call-1", "command-1", false, ""))
+	s.NoError(d.answerApproval("call-1", "command-1", anyone, false, ""))
 	s.Contains(s.answerOf(answer).said, `"status":"declined"`)
 	s.Zero(s.provider.calls("primary"))
 }
@@ -274,22 +274,22 @@ func (s *ConnectorApprovalSuite) TestOnlyTheSessionsUserOrItsBackendMayAnswer() 
 	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 
-	s.False(session.AnswerConnectorApproval("call-1", "command-1", true, "",
-		Owner{CustomerID: s.customerID, UserID: "bob", Kind: auth.KindAuthenticated}), "another user")
-	s.False(session.AnswerConnectorApproval("call-1", "command-1", true, "",
-		Owner{CustomerID: s.customerID, Kind: auth.KindAuthenticated}), "a user naming nobody")
-	s.False((&Session{spec: d.spec}).AnswerConnectorApproval("call-1", "command-1", true, "",
-		Owner{CustomerID: s.customerID, Kind: auth.KindServer}), "a session with no connectors")
-	s.False(session.AnswerConnectorApproval("call-1", "command-1", true, "",
-		Owner{CustomerID: "another-customer", UserID: "alice", Kind: auth.KindServer}), "another customer's backend")
+	s.ErrorIs(session.AnswerConnectorApproval("call-1", "command-1", true, "",
+		Owner{CustomerID: s.customerID, UserID: "bob", Kind: auth.KindAuthenticated}), ErrApprovalAskedOfAnother, "another user")
+	s.ErrorIs(session.AnswerConnectorApproval("call-1", "command-1", true, "",
+		Owner{CustomerID: s.customerID, Kind: auth.KindAuthenticated}), ErrApprovalAskedOfAnother, "a user naming nobody")
+	s.ErrorIs((&Session{spec: d.spec}).AnswerConnectorApproval("call-1", "command-1", true, "",
+		Owner{CustomerID: s.customerID, Kind: auth.KindServer}), ErrNoApprovalHeld, "a session with no connectors")
+	s.ErrorIs(session.AnswerConnectorApproval("call-1", "command-1", true, "",
+		Owner{CustomerID: "another-customer", UserID: "alice", Kind: auth.KindServer}), ErrNoApprovalHeld, "another customer's backend")
 	s.Never(func() bool { return len(answer) > 0 }, 200*time.Millisecond, 20*time.Millisecond, "still waiting")
-	s.True(session.AnswerConnectorApproval("call-1", "command-1", true, "",
+	s.NoError(session.AnswerConnectorApproval("call-1", "command-1", true, "",
 		Owner{CustomerID: s.customerID, Kind: auth.KindServer}), "the backend")
 	s.Equal("primary", s.answerOf(answer).said)
 
 	again := s.callInBackground(s.ctx, d, "call-2", "crm__whoami", "{}")
 	s.Require().Eventually(func() bool { return s.questionOf("call-2") != nil }, 5*time.Second, 10*time.Millisecond)
-	s.True(session.AnswerConnectorApproval("call-2", "command-1", true, "",
+	s.NoError(session.AnswerConnectorApproval("call-2", "command-1", true, "",
 		Owner{CustomerID: s.customerID, UserID: "alice", Kind: auth.KindAuthenticated}), "the user")
 	s.Equal("primary", s.answerOf(again).said)
 }
@@ -319,7 +319,7 @@ func (s *ConnectorApprovalSuite) TestTheQuestionCarriesTheCallsArguments() {
 		answer <- answered{said: llm.TextOf(parts), err: err}
 	}()
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
-	s.True(d.answerApproval("call-1", "command-1", false, ""))
+	s.NoError(d.answerApproval("call-1", "command-1", anyone, false, ""))
 	s.answerOf(answer)
 
 	s.mu.Lock()
@@ -337,7 +337,7 @@ func (s *ConnectorApprovalSuite) TestABindingRemovedWhileTheCallWaitsIsNotSent()
 	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 	s.rebind(config)
-	s.True(d.answerApproval("call-1", "command-1", true, ""))
+	s.NoError(d.answerApproval("call-1", "command-1", anyone, true, ""))
 	got := s.answerOf(answer)
 
 	s.Require().Error(got.err)
@@ -353,7 +353,7 @@ func (s *ConnectorApprovalSuite) TestAConfigDeletedWhileTheCallWaitsIsNotSent() 
 	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 	s.Require().NoError(s.store.DeleteAgentConfig(s.ctx, s.customerID, d.spec.ConfigID))
-	s.True(d.answerApproval("call-1", "command-1", true, ""))
+	s.NoError(d.answerApproval("call-1", "command-1", anyone, true, ""))
 	got := s.answerOf(answer)
 
 	s.Require().Error(got.err)
@@ -371,7 +371,7 @@ func (s *ConnectorApprovalSuite) TestAnAllowedCallsLatencyLeavesOutTheWait() {
 	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 	s.Never(func() bool { return len(answer) > 0 }, wait, 20*time.Millisecond)
-	s.True(d.answerApproval("call-1", "command-1", true, ""))
+	s.NoError(d.answerApproval("call-1", "command-1", anyone, true, ""))
 	s.Equal("primary", s.answerOf(answer).said)
 
 	s.Less(s.rows(connection)[0].LatencyMs, wait.Milliseconds())
@@ -386,7 +386,7 @@ func (s *ConnectorApprovalSuite) TestAReplyThatEndsAsTheAnswerComesRunsNothing()
 	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
 	s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
 	s.stop("call-1")
-	s.True(d.answerApproval("call-1", "command-1", true, ""))
+	s.NoError(d.answerApproval("call-1", "command-1", anyone, true, ""))
 
 	s.Contains(s.answerOf(answer).said, `"status":"stopped"`)
 	s.Zero(s.provider.calls("primary"))
@@ -397,12 +397,12 @@ func (s *ConnectorApprovalSuite) TestAnAnswerAsTheQuestionIsShownFindsTheCall() 
 	d, _ := s.holding("whoami")
 	shows := d.approvals.await
 	taken := make(chan bool, 1)
-	d.approvals.await = func(owner, callID, arguments string, approval persistent.ToolApproval) (string, bool) {
-		commandID, asked := shows(owner, callID, arguments, approval)
-		go func() { taken <- d.answerApproval(callID, commandID, true, "") }()
+	d.approvals.await = func(owner, callID, arguments string, approval persistent.ToolApproval) (string, string, bool) {
+		commandID, person, asked := shows(owner, callID, arguments, approval)
+		go func() { taken <- d.answerApproval(callID, commandID, anyone, true, "") == nil }()
 		// Time for the answer to arrive before await returns.
 		time.Sleep(100 * time.Millisecond)
-		return commandID, asked
+		return commandID, person, asked
 	}
 
 	answer := s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
@@ -432,14 +432,14 @@ func (s *ConnectorApprovalSuite) holdingWith(change func(*store.ConnectorBinding
 func (s *ConnectorApprovalSuite) asking(config store.AgentConfig, user string) *dispatcher {
 	d, _, _, err := s.attach(s.spec(config, user, nil))
 	s.Require().NoError(err)
-	d.approvals.await = func(owner, callID, arguments string, approval persistent.ToolApproval) (string, bool) {
+	d.approvals.await = func(owner, callID, arguments string, approval persistent.ToolApproval) (string, string, bool) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if owner != "alice" {
-			return "", false
+			return "", "", false
 		}
 		s.asked[callID], s.shown[callID] = approval, arguments
-		return "command-1", true
+		return "command-1", owner, true
 	}
 	d.approvals.waits = func(callID string) bool {
 		s.mu.Lock()
@@ -507,3 +507,7 @@ func (s *ConnectorApprovalSuite) rows(connection string) []store.ConnectorInvoca
 	}, 5*time.Second, 20*time.Millisecond)
 	return rows
 }
+
+// anyone lets whoever answers a held call answer it, for a test of the hold rather than of who
+// may answer (Session.AnswerConnectorApproval).
+func anyone(string) bool { return true }

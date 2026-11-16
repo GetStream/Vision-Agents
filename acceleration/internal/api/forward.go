@@ -23,7 +23,9 @@ const forwardTimeout = 30 * time.Second
 // it does not answer, which is a different thing from a session that is not there.
 const unreachableNode = "the node running this session could not be reached"
 
-// onOwningNode carries a request about a session to the node running it.
+// onOwningNode carries a request about a session to the node running it, and an answer to a
+// call held for a person's approval in a conversation (answerToolApproval) to the node running
+// the session that holds it.
 //
 // A session lives in one process's memory and a load balancer has no reason to prefer
 // that process, so without this a request lands on a node that cannot answer it and is
@@ -65,18 +67,8 @@ func (s *Server) owningNode(r *http.Request) (string, bool) {
 	if r.Header.Get(node.ForwardedHeader) != "" {
 		return "", false
 	}
-	id, ok := sessionInPath(r.URL.Path)
+	address, ok := s.nodeFor(r)
 	if !ok {
-		return "", false
-	}
-	if s.sessions != nil && s.sessions.Running(id) {
-		return "", false
-	}
-
-	address, err := s.directory.Node(r.Context(), id)
-	if err != nil {
-		s.logger.Warn("could not find out which node is running a session",
-			"session", id, "error", err)
 		return "", false
 	}
 	// Nothing says it is running: the session ended, or never existed, and what reads the
@@ -94,6 +86,40 @@ func (s *Server) owningNode(r *http.Request) (string, bool) {
 			return "", false
 		}
 		return address, other
+	}
+	return address, true
+}
+
+// nodeFor is the node the directory says runs the session a request is about, false when
+// the request is about none or this node runs it.
+func (s *Server) nodeFor(r *http.Request) (string, bool) {
+	if cid, ok := approvalInPath(r.URL.Path); ok {
+		if s.sessions != nil {
+			if _, running := s.sessions.ByConversationWhere(cid, nil); running {
+				return "", false
+			}
+		}
+		address, err := s.directory.NodeByConversation(r.Context(), cid)
+		if err != nil {
+			s.logger.Warn("could not find out which node is answering in a conversation",
+				"conversation", cid, "error", err)
+			return "", false
+		}
+		return address, true
+	}
+	id, ok := sessionInPath(r.URL.Path)
+	if !ok {
+		return "", false
+	}
+	if s.sessions != nil && s.sessions.Running(id) {
+		return "", false
+	}
+
+	address, err := s.directory.Node(r.Context(), id)
+	if err != nil {
+		s.logger.Warn("could not find out which node is running a session",
+			"session", id, "error", err)
+		return "", false
 	}
 	return address, true
 }
@@ -128,6 +154,18 @@ func sessionInPath(path string) (string, bool) {
 	id, _, _ := strings.Cut(rest, "/")
 
 	return id, id != ""
+}
+
+// approvalInPath returns the conversation an answer to a held call is about, if the path is
+// one (POST /v1/agents/conversations/{cid}/tool_approvals).
+func approvalInPath(path string) (string, bool) {
+	rest, ok := strings.CutPrefix(path, "/v1/agents/conversations/")
+	if !ok {
+		return "", false
+	}
+	cid, ok := strings.CutSuffix(rest, "/tool_approvals")
+
+	return cid, ok && cid != "" && !strings.Contains(cid, "/")
 }
 
 // forwardedMessage hands an arriving message to the node running the conversation on its
