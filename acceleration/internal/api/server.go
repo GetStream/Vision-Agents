@@ -1073,13 +1073,15 @@ const maxLoggedValue = 256
 // accessFields are the access line's fields named as the Stream platform's access logs name
 // them, each left out when the request has none.
 //
+// trace_id is logged for a sampled span only: the sampler's dropped span is never exported, so
+// its id would name a trace nobody can open.
 // operation_type is the route's pattern (routeLabel), never the path, since a token route's
 // path is its secret. user_id is the end user's: a backend's request is its own, whichever
 // user it says it acts for. request_size is the declared Content-Length, so a chunked body
 // names none.
 func (s *Server) accessFields(routes *chi.Mux, r *http.Request, answered *loggedResponse) []any {
 	var fields []any
-	if span := trace.SpanContextFromContext(r.Context()); span.IsValid() {
+	if span := trace.SpanContextFromContext(r.Context()); span.IsValid() && span.IsSampled() {
 		fields = append(fields, "trace_id", span.TraceID().String())
 	}
 	if route := routeLabel(routes, r); route != unmatchedRoute {

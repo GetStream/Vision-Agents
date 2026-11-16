@@ -230,6 +230,21 @@ func (s *LogAppSuite) TestTheAccessLineOfARequestWithNoSpanNamesNoTrace() {
 	s.NotContains(line, "trace_id")
 }
 
+// Defect: the sampler dropped the span, and the line named a trace that was never exported.
+func (s *LogAppSuite) TestTheAccessLineOfAnUnsampledRequestNamesNoTrace() {
+	var traceID trace.TraceID
+	var spanID trace.SpanID
+	traceID[0], spanID[0] = 1, 1
+	unsampled := trace.NewSpanContext(trace.SpanContextConfig{TraceID: traceID, SpanID: spanID})
+	s.Require().True(unsampled.IsValid())
+
+	line := s.servedWithin(func(r *http.Request) *http.Request {
+		return r.WithContext(trace.ContextWithSpanContext(r.Context(), unsampled))
+	})
+
+	s.NotContains(line, "trace_id")
+}
+
 // servedWithin is the access line withRequestLog writes for a GET whose request was prepared
 // by within first, as withTrace prepares it with the request's span.
 func (s *LogAppSuite) servedWithin(within func(*http.Request) *http.Request) string {

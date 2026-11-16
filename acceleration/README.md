@@ -2095,7 +2095,7 @@ is left out when the request has none:
 
 | Field | What it is |
 | --- | --- |
-| `trace_id` | The trace of the request's span. None when tracing is off |
+| `trace_id` | The trace of the request's span. None when tracing is off or the request was not sampled |
 | `operation_type` | The route's pattern, such as `/v1/agents/sessions/{id}`. None for a path no route serves |
 | `error_code` | The `code` of the error the request was answered with |
 | `x_stream_client`, `stream_auth_type`, `user_agent` | The `X-Stream-Client`, `Stream-Auth-Type` and `User-Agent` headers, each cut to 256 bytes |
