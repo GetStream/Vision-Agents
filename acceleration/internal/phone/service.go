@@ -1183,12 +1183,13 @@ func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Pl
 			s.recordBridgeMedia(context.WithoutCancel(ctx), customerID, sessionID, media)
 		}
 		// Call refuses to run without a store, so report always has its keeper.
-		outbound.Ended = func(status CallStatus) {
-			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), trunkReportTimeout)
-			defer cancel()
-			if _, err := s.report(ctx, token, status); err != nil {
-				s.logger.Error("could not keep how a call through a customer's sip trunk ended",
-					"call", callID, "result", status.Result, "error", err)
+		outbound.Ended = s.trunkCallEnded(ctx, token, callID)
+		// A per-call Stream trunk's password is never stored, and Stream challenges the
+		// re-INVITE a takeover sends, so only a call on a shared line can move.
+		if shared {
+			outbound.Resume = &TrunkCallRef{
+				CustomerID: customerID, SIPTrunkID: held.SIPTrunkID, StreamTrunkID: line.TrunkID,
+				From: request.From, CallID: callID, Token: token,
 			}
 		}
 	}
@@ -1332,6 +1333,19 @@ func (s *Service) recordPlaced(
 	})
 	if err != nil {
 		s.logger.Warn("could not record a placed call", "session_id", sessionID, "error", err)
+	}
+}
+
+// trunkCallEnded is what a call through a customer's own trunk tells when it ends. It never
+// fails the caller: the call is over either way.
+func (s *Service) trunkCallEnded(ctx context.Context, token, callID string) func(CallStatus) {
+	return func(status CallStatus) {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), trunkReportTimeout)
+		defer cancel()
+		if _, err := s.report(ctx, token, status); err != nil {
+			s.logger.Error("could not keep how a call through a customer's sip trunk ended",
+				"call", callID, "result", status.Result, "error", err)
+		}
 	}
 }
 

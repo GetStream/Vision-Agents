@@ -15,12 +15,14 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
@@ -35,6 +37,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // DrainSuite is what a router holds its shutdown drain for, on a database of
@@ -282,6 +285,100 @@ func (s *DrainSuite) TestARouterDrainsAChatCardInFlight() {
 	s.Require().NoError(syscall.Kill(os.Getpid(), syscall.SIGTERM))
 	s.Never(func() bool { return isClosed(stopped) || !serving(settings.Node.Listen) }, 3*time.Second, 50*time.Millisecond,
 		"the drain ended with the card in flight")
+	release()
+
+	select {
+	case <-stopped:
+		s.Require().NoError(runErr)
+	case <-time.After(30 * time.Second):
+		s.Require().Fail("the drain did not end with the card")
+	}
+}
+
+// Defect: run never hands stopServing the trunk call provider's StopTaking, so a draining
+// router takes other nodes' trunk calls over only to hand them on again when it stops.
+func (s *DrainSuite) TestADrainingRouterStopsSayingItTakesTrunkCallsOver() {
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" {
+		s.T().Skip("ROUTER_REDIS_ADDR not set")
+	}
+	client, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	s.Require().NoError(err)
+	s.T().Cleanup(client.Close)
+	takers := func() []string {
+		nodes, err := trunkCallTakers(s.ctx, client)
+		s.Require().NoError(err)
+		return nodes
+	}
+	chat := chattest.NewServer(s.T())
+	settings := config.Defaults()
+	settings.Postgres.DSN = s.dsn
+	settings.Auth.Mode = string(auth.NoAuth)
+	settings.Auth.KEK = "drain-key"
+	settings.Redis.Addr = address
+	settings.Stream.APIKey, settings.Stream.APISecret, settings.Stream.BaseURL = "deploy-key", "deploy-secret", chat.URL
+	settings.Stream.AppID = 1
+	settings.Shutdown.Drain = time.Minute
+	for _, address := range []*string{&settings.Addr, &settings.Node.Listen} {
+		free, err := net.Listen("tcp", "127.0.0.1:0")
+		s.Require().NoError(err)
+		*address = free.Addr().String()
+		s.Require().NoError(free.Close())
+	}
+	// An episode card held in flight is what keeps the router draining.
+	agent := store.AgentConfig{CustomerID: "customer-" + uuid.NewString(), Name: "chat-" + uuid.NewString(),
+		Mode: store.AgentModeText, LLM: "llm-flow", EpisodeCards: true}
+	s.Require().NoError(s.db.CreateAgentConfig(s.ctx, &agent))
+	waiting, release := chat.Hold("/message")
+	before := takers()
+
+	stopped := make(chan struct{})
+	var runErr error
+	go func() {
+		runErr = run(settings, slog.New(slog.DiscardHandler))
+		close(stopped)
+	}()
+	s.T().Cleanup(func() {
+		release()
+		if isClosed(stopped) {
+			return
+		}
+		s.NoError(syscall.Kill(os.Getpid(), syscall.SIGTERM))
+		select {
+		case <-stopped:
+		case <-time.After(30 * time.Second):
+			s.Fail("the router did not stop on SIGTERM")
+		}
+	})
+	s.Require().Eventually(func() bool { return serving(settings.Addr) }, 15*time.Second, 10*time.Millisecond)
+	var node string
+	s.Require().Eventually(func() bool {
+		node = joined(before, takers())
+		return node != ""
+	}, 10*time.Second, 20*time.Millisecond, "the running router does not say it takes trunk calls over")
+	body := fmt.Sprintf(`{"type":"message.new","app_id":1,"channel_id":%q,"channel_type":"agent","created_at":%q,
+"channel_custom":{"agent_config_id":%q},"channel":{"members":[{"user_id":"anya_123"}]},"message":{"id":%q,"text":"where is my order?","user":{"id":"anya_123","name":"Anya"}}}`,
+		"chat-"+uuid.NewString(), time.Now().UTC().Format(time.RFC3339Nano), agent.ID, "message-"+uuid.NewString())
+	mac := hmac.New(sha256.New, []byte(settings.Stream.APISecret))
+	mac.Write([]byte(body))
+	request, err := http.NewRequest(http.MethodPost, "http://"+settings.Addr+chathooks.MessageHookPath, strings.NewReader(body))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Signature", hex.EncodeToString(mac.Sum(nil)))
+	response, err := http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	s.Require().NoError(response.Body.Close())
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	select {
+	case <-waiting:
+	case <-time.After(15 * time.Second):
+		s.Require().Fail("the router never wrote the card")
+	}
+
+	s.Require().NoError(syscall.Kill(os.Getpid(), syscall.SIGTERM))
+	s.Require().Eventually(func() bool { return !slices.Contains(takers(), node) }, 5*time.Second, 20*time.Millisecond,
+		"a draining router still says it takes trunk calls over")
+	s.Require().True(serving(settings.Node.Listen), "the drain ended before the check, so stopping alone withdrew the router")
 	release()
 
 	select {
