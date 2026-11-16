@@ -63,6 +63,13 @@ type Service struct {
 	// connecting, when set, runs in Connect between reading the phone's kept leave and
 	// connecting its leg, where a leave delivered at the same moment lands.
 	connecting func()
+	// agentJoinTimeout is how long an answered outbound leg waits before the agent check
+	// (awaitAgent). Zero turns the check off. agentWait is the timer of that wait.
+	agentJoinTimeout time.Duration
+	agentWait        func(time.Duration) <-chan time.Time
+	// closing is closed by Close, which stops the agent checks still waiting.
+	closing   chan struct{}
+	closeOnce sync.Once
 }
 
 // ServiceOptions configures a Service. Only the registry is required: without a store
@@ -95,8 +102,12 @@ type ServiceOptions struct {
 	// Redis is where an arriving call the router refused is marked (Refused), for the node
 	// that ends its leg, whichever it is, to count it failed. Without it such a call is
 	// counted completed.
-	Redis  rueidis.Client
-	Logger *slog.Logger
+	Redis rueidis.Client
+	// AgentJoinTimeout is how long the person who answered a placed call waits for someone
+	// else to be in the call. After it, a call with only the person in it is ended. Zero turns
+	// the check off.
+	AgentJoinTimeout time.Duration
+	Logger           *slog.Logger
 }
 
 // NewService returns a Service.
@@ -121,6 +132,10 @@ func NewService(options ServiceOptions) (*Service, error) {
 		clock:     options.Now,
 		redis:     options.Redis,
 		logger:    options.Logger,
+
+		agentJoinTimeout: options.AgentJoinTimeout,
+		agentWait:        time.After,
+		closing:          make(chan struct{}),
 	}
 	if options.Store != nil {
 		vendors := []string{SIPTrunkVendor}

@@ -29,8 +29,8 @@ type store struct {
 	messages map[string]map[string]any
 	users    map[string]map[string]any
 	trunks   map[string]map[string]any
-	// calls are the participant ids in each call's session, by "<type>:<id>".
-	calls map[string][]string
+	// calls are the participants in each call's session, by "<type>:<id>".
+	calls map[string][]Participant
 	// callMembers are the member ids of each call, by "<type>:<id>".
 	callMembers map[string][]string
 	// made are the bodies calls were created with, by "<type>:<id>", with the custom an
@@ -144,7 +144,7 @@ func NewServer(t *testing.T) *Server {
 	db := &store{
 		channels: map[string]map[string]any{}, messages: map[string]map[string]any{},
 		users: map[string]map[string]any{}, trunks: map[string]map[string]any{},
-		rules: map[string]map[string]any{}, calls: map[string][]string{}, callMembers: map[string][]string{}, made: map[string]map[string]any{}, hooks: map[string][]json.RawMessage{},
+		rules: map[string]map[string]any{}, calls: map[string][]Participant{}, callMembers: map[string][]string{}, made: map[string]map[string]any{}, hooks: map[string][]json.RawMessage{},
 		updates: map[string][]json.RawMessage{}, events: map[string][]map[string]any{}, now: time.Now,
 		app: App{ID: 1, ChannelTypes: map[string]map[string][]string{"agent": safeGrants}, CallTypes: []string{"agent"}},
 	}
@@ -320,6 +320,21 @@ func (s *Server) Members(id string) []string {
 // PutCall puts a call in session with the participants named, for a reader of the call's
 // session to find: a SIP caller is sip-<number>.
 func (s *Server) PutCall(callType, id string, participants ...string) {
+	sessions := make([]Participant, 0, len(participants))
+	for _, participant := range participants {
+		sessions = append(sessions, Participant{UserID: participant})
+	}
+	s.PutCallParticipants(callType, id, sessions...)
+}
+
+// Participant is a user in a call's session, and the user session they joined it with.
+type Participant struct {
+	UserID, UserSessionID string
+}
+
+// PutCallParticipants puts a call in session with the participants given. No participants is
+// a call in session with nobody in it.
+func (s *Server) PutCallParticipants(callType, id string, participants ...Participant) {
 	s.db.mu.Lock()
 	defer s.db.mu.Unlock()
 	s.db.calls[callType+":"+id] = participants
@@ -821,10 +836,11 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		// whose session has not started reads as.
 		cid := parts[len(parts)-2] + ":" + parts[len(parts)-1]
 		call := map[string]any{"cid": cid, "type": parts[len(parts)-2], "id": parts[len(parts)-1]}
-		if ids, ok := db.calls[cid]; ok {
+		if inSession, ok := db.calls[cid]; ok {
 			participants := []map[string]any{}
-			for _, id := range ids {
-				participants = append(participants, map[string]any{"user": map[string]any{"id": id}, "role": "user"})
+			for _, participant := range inSession {
+				participants = append(participants, map[string]any{"user": map[string]any{"id": participant.UserID}, "role": "user",
+					"user_session_id": participant.UserSessionID})
 			}
 			call["session"] = map[string]any{"id": "session-" + cid, "participants": participants}
 		}

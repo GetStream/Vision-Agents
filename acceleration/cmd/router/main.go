@@ -2506,6 +2506,8 @@ func buildPhone(
 		Logger:    logger,
 		Sealer:    secrets,
 		SIPTrunks: trunks,
+
+		AgentJoinTimeout: settings.Phone.AgentJoinTimeout,
 	})
 	if err != nil {
 		return nil, nil, err

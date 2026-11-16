@@ -640,6 +640,26 @@ func (s *ConfigSuite) TestAnEpisodeIsIdleAfterAnHourUnlessAskedFor() {
 	s.Equal(30*time.Minute, config.Episodes.IdleAfter)
 }
 
+func (s *ConfigSuite) TestAPlacedCallWaitsTenSecondsForAnAgentUnlessAskedFor() {
+	config, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(10*time.Second, config.Phone.AgentJoinTimeout)
+
+	s.T().Setenv("ROUTER_PHONE_AGENT_JOIN_TIMEOUT", "25s")
+	config, _, err = Load("")
+	s.Require().NoError(err)
+	s.Equal(25*time.Second, config.Phone.AgentJoinTimeout)
+}
+
+// A wait of nothing ends every answered call before its agent can be in it.
+func (s *ConfigSuite) TestNoWaitForAnAgentIsRefused() {
+	for _, wait := range []string{"0s", "-1s"} {
+		s.T().Setenv("ROUTER_PHONE_AGENT_JOIN_TIMEOUT", wait)
+		_, _, err := Load("")
+		s.ErrorContains(err, "phone.agent_join_timeout", wait)
+	}
+}
+
 // WhatsApp's window is 24 hours from the person's last message, so an episode closes inside
 // it; and an episode that closes at once would summarize every message alone.
 func (s *ConfigSuite) TestAnEpisodeIdlePeriodOfADayOrOfNothingIsRefused() {

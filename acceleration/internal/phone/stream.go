@@ -337,6 +337,23 @@ func (s *Stream) EndCall(ctx context.Context, callType, callID string) error {
 	return nil
 }
 
+// CallParticipants are the user sessions in the call's session now. A call with no session
+// has none.
+func (s *Stream) CallParticipants(ctx context.Context, callType, callID string) ([]string, error) {
+	call, err := s.client.Video().GetCall(ctx, callType, callID, &getstream.GetCallRequest{})
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("phone: get call %s:%s: %w", callType, callID, err))
+	}
+	if call.Data.Call.Session == nil {
+		return nil, nil
+	}
+	var sessions []string
+	for _, participant := range call.Data.Call.Session.Participants {
+		sessions = append(sessions, participant.UserSessionID)
+	}
+	return sessions, nil
+}
+
 // sipURI makes sure the trunk address is a SIP uri, since Stream reports the host without
 // the scheme and a vendor needs the whole thing.
 func sipURI(uri string) string {
