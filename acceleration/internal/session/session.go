@@ -1024,6 +1024,22 @@ func (s *Session) chose(name, connectionID string) {
 	}
 }
 
+// SetToolTimeout gives a running session a new tool_timeout_ms, in milliseconds, for the tool
+// calls that start after it, and keeps it on the spec and the row, so the conversation goes on
+// with it when it is carried on after it ends. Zero is the default.
+func (s *Session) SetToolTimeout(milliseconds int) {
+	milliseconds = max(milliseconds, 0)
+	s.labelMu.Lock()
+	s.spec.ToolTimeoutMs = milliseconds
+	s.labelMu.Unlock()
+	if s.tools != nil {
+		s.tools.setTimeout(time.Duration(milliseconds) * time.Millisecond)
+	}
+	if s.records != nil {
+		s.afterRow(func() { s.records.ToolTimeout(s.id, milliseconds) })
+	}
+}
+
 // FollowUp answers text the way RespondCommand does with no message of the end user's
 // shown for it: the model is told text, and the conversation shows only the reply. The
 // id is the caller's own, so a follow-up delivered twice is started once: when the

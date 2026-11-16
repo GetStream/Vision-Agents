@@ -98,6 +98,10 @@ func (s *Store) SaveSession(ctx context.Context, session *AgentSession) error {
 		Set("closed_at = NULL").
 		Set("end_reason = ''").
 		Set("updated_at = EXCLUDED.updated_at").
+		// A reopened session runs with what its spec says now, which is the row's unless the
+		// request that reopened it said otherwise.
+		Set("tool_timeout_ms = EXCLUDED.tool_timeout_ms").
+		Set("caller_tools = EXCLUDED.caller_tools").
 		// A session reopened from its row is opened without the memory it had, and what it
 		// remembered before is still in the store, so once true it stays true. Not known
 		// stays not known: NULL OR false is NULL.
@@ -105,6 +109,26 @@ func (s *Store) SaveSession(ctx context.Context, session *AgentSession) error {
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("store: save session: %w", err)
+	}
+	return nil
+}
+
+// SetSessionToolTimeout records the tool_timeout_ms a running session was given since it
+// opened. Zero is the default.
+func (s *Store) SetSessionToolTimeout(ctx context.Context, id string, milliseconds int) error {
+	if id == "" {
+		return errors.New("store: a session id is required")
+	}
+	var timeout *int
+	if milliseconds > 0 {
+		timeout = &milliseconds
+	}
+	_, err := s.shard.NewUpdate().Model((*AgentSession)(nil)).
+		Set("tool_timeout_ms = ?", timeout).
+		Where("id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: set session tool timeout: %w", err)
 	}
 	return nil
 }

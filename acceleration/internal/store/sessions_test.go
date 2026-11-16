@@ -31,6 +31,51 @@ func (s *StoreSuite) opened(id, customerID string, at time.Time, change func(*Ag
 	return session
 }
 
+func (s *StoreSuite) TestASessionSavedAgainKeepsTheToolSettingsItWasSavedWithLast() {
+	s.opened("one", "app", s.base, func(session *AgentSession) {
+		session.ToolTimeoutMs = 180_000
+		session.CallerTools = []CallerTool{{Name: "lookup_order", Description: "find an order"}}
+	})
+	reopened := []CallerTool{{
+		Name: "book_flight", Description: "book a flight", Parameters: map[string]any{"type": "object"},
+		Client: true, DisplayTitle: "Booking", Interruptible: true, TimeoutMs: 5000,
+		Approval: &CallerToolApproval{Title: "Book it?", ReasonArgument: "why"},
+	}}
+	s.opened("one", "app", s.base, func(session *AgentSession) {
+		session.ToolTimeoutMs = 60_000
+		session.CallerTools = reopened
+	})
+
+	found, err := s.store.StoredSession(s.ctx, "app", "one")
+	s.Require().NoError(err)
+	s.Equal(60_000, found.ToolTimeoutMs)
+	s.Equal(reopened, found.CallerTools)
+}
+
+func (s *StoreSuite) TestASessionSavedWithoutToolSettingsKeepsNone() {
+	s.opened("one", "app", s.base, nil)
+
+	found, err := s.store.StoredSession(s.ctx, "app", "one")
+	s.Require().NoError(err)
+	s.Zero(found.ToolTimeoutMs)
+	s.Nil(found.CallerTools)
+	var timeout, tools *string
+	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
+		"SELECT tool_timeout_ms::text, caller_tools::text FROM agent_sessions WHERE id = 'one'").Scan(&timeout, &tools))
+	s.Nil(timeout, "no timeout is NULL, the default")
+	s.Nil(tools, "no tools is NULL, as on a row from before they were kept")
+}
+
+func (s *StoreSuite) TestARunningSessionsNewToolTimeoutIsKept() {
+	s.opened("one", "app", s.base, func(session *AgentSession) { session.ToolTimeoutMs = 180_000 })
+
+	s.Require().NoError(s.store.SetSessionToolTimeout(s.ctx, "one", 60_000))
+
+	found, err := s.store.StoredSession(s.ctx, "app", "one")
+	s.Require().NoError(err)
+	s.Equal(60_000, found.ToolTimeoutMs)
+}
+
 func (s *StoreSuite) TestSavingASessionTwiceIsOneConversation() {
 	s.opened("one", "app", s.base, func(session *AgentSession) { session.Title = "first" })
 	s.opened("one", "app", s.base, func(session *AgentSession) { session.Title = "renamed" })
