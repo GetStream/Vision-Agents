@@ -114,8 +114,8 @@ type heldCall struct {
 	// follows it. Taken before mu.
 	writing sync.Mutex
 	// mu guards ended, handingOver and lapse, and is never held across a Redis call: hold takes
-	// it before the BYE. ended is set once the call is over or let go, and no record is written
-	// for it from then on.
+	// it before the BYE. ended is set once the call is over or let go, so renewal starts no new
+	// write for it.
 	mu    sync.Mutex
 	ended bool
 	// handingOver is set once Close offers the call to other nodes, so renewal no longer claims
@@ -348,8 +348,8 @@ func (p *Provider) hold(id string, held *heldCall, changed <-chan struct{}, log 
 			held.mu.Lock()
 			select {
 			case <-bridged.Done():
-				// Let go meanwhile, as a renewal does under the lock when another node holds the
-				// call: the case above says how it ended.
+				// Let go meanwhile by a renewal that found another node's claim: the case above
+				// says how it ended.
 				held.mu.Unlock()
 				stopping = nil
 				continue
