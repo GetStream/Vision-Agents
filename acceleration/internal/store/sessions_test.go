@@ -60,7 +60,7 @@ func (s *StoreSuite) TestASessionSavedWithoutToolSettingsKeepsNone() {
 	s.Zero(found.ToolTimeoutMs)
 	s.Nil(found.CallerTools)
 	var timeout, tools *string
-	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
+	s.Require().NoError(s.store.ShardDB().QueryRowContext(s.ctx,
 		"SELECT tool_timeout_ms::text, caller_tools::text FROM agent_sessions WHERE id = 'one'").Scan(&timeout, &tools))
 	s.Nil(timeout, "no timeout is NULL, the default")
 	s.Nil(tools, "no tools is NULL, as on a row from before they were kept")
