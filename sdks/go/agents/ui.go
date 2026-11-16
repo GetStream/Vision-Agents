@@ -32,7 +32,7 @@ var (
 // UISettings configures an agent's dynamic UI catalog, component allowlist, custom
 // portable components, and canonical layout blueprints in agent.yaml.
 type UISettings struct {
-	// Format is openui (the default) or a2ui.
+	// Format is openui, the default. a2ui is refused: the compiled prompt teaches only OpenUI.
 	Format string `yaml:"format"`
 	// Keep restricts the built-in component catalog to the named components (plus their
 	// required child types), shrinking prompt prefill and improving model consistency.
@@ -70,8 +70,8 @@ func (u *UISettings) UnmarshalYAML(node *yaml.Node) error {
 	if err := node.Decode((*plain)(u)); err != nil {
 		return err
 	}
-	if u.Format != "" && u.Format != "openui" && u.Format != "a2ui" {
-		return fmt.Errorf("line %d: ui.format must be openui or a2ui, not %q", keyLine(node, "format"), u.Format)
+	if u.Format != "" && u.Format != "openui" {
+		return fmt.Errorf("line %d: ui.format must be openui, not %q", keyLine(node, "format"), u.Format)
 	}
 	return nil
 }
@@ -309,11 +309,6 @@ func validateUIComponents(components []UIPortableComponent) error {
 }
 
 func compileUIPrompt(settings UISettings, components []UIPortableComponent, blueprints []UIBlueprint) (string, error) {
-	format := settings.Format
-	if format == "" {
-		format = "openui"
-	}
-
 	byName := make(map[string]uiBuiltin, len(uiBuiltins))
 	for _, b := range uiBuiltins {
 		byName[b.Name] = b
@@ -367,7 +362,7 @@ func compileUIPrompt(settings UISettings, components []UIPortableComponent, blue
 	}
 
 	for _, bp := range blueprints {
-		if bp.Example != "" && format == "openui" {
+		if bp.Example != "" {
 			if problems := checkOpenUIProgram(extractUIFence(bp.Example), arity); len(problems) > 0 {
 				return "", fmt.Errorf("agents: blueprint %q example is invalid: %s", bp.Name, strings.Join(problems, "; "))
 			}

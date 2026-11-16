@@ -157,3 +157,28 @@ func (s *ShardedStoreSuite) TestACallAnotherShardPlacedIsStoredAsOutbound() {
 	s.Equal(Outbound, read.Direction)
 	s.Equal("+15125550199", read.ToNumber)
 }
+
+func (s *StoreSuite) TestACallStartedAgainLearnsWhoTheAgentWroteAsAndKeepsIt() {
+	// A call row from before the column names no writer. The session carrying on under the
+	// same id names it, and the row keeps the first one it was told.
+	call := Call{
+		ID: "session-learns-writer", CustomerID: "acme",
+		CallID: "call-1", AgentID: "agent-learns-writer", StartedAt: s.base,
+	}
+	s.Require().NoError(s.store.StartCall(s.ctx, &call))
+	before, err := s.store.Call(s.ctx, "acme", call.ID)
+	s.Require().NoError(err)
+	s.Require().Empty(before.AgentUserID)
+
+	learned := call
+	learned.AgentUserID = "vision-agent"
+	s.Require().NoError(s.store.StartCall(s.ctx, &learned))
+	other := call
+	other.AgentUserID = "another-agent"
+	s.Require().NoError(s.store.StartCall(s.ctx, &other))
+	s.Require().NoError(s.store.StartCall(s.ctx, &call))
+
+	read, err := s.store.Call(s.ctx, "acme", call.ID)
+	s.Require().NoError(err)
+	s.Equal("vision-agent", read.AgentUserID)
+}

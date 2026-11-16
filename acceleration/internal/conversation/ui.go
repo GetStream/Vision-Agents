@@ -38,12 +38,6 @@ const (
 	maxActedOnRunes = 200
 )
 
-// UIOverflowStore stores generated UI programs that exceed Stream Chat's 50 KB custom-field
-// budget, returning an artifact attachment the message points to instead of dropping the UI.
-type UIOverflowStore interface {
-	StoreUI(ctx context.Context, customer, cid, messageID, format, content string) (ArtifactAttachment, error)
-}
-
 // uiFences are the fences formats ask models for, by the format they hold.
 var uiFences = map[string]string{
 	"openui-lang":  "openui",
@@ -210,22 +204,17 @@ func fitUI(set map[string]any, own ...string) bool {
 	if _, ok := set["ai_ui"]; !ok {
 		return false
 	}
-	if fitsCustomBudget(set, own...) {
-		return false
-	}
-	delete(set, "ai_ui")
-	return true
-}
-
-func fitsCustomBudget(set map[string]any, own ...string) bool {
 	custom := make(map[string]any, len(set))
 	for key, value := range set {
 		if !slices.Contains(own, key) {
 			custom[key] = value
 		}
 	}
-	encoded, err := json.Marshal(custom)
-	return err == nil && len(encoded) <= maxMessageCustom
+	if encoded, err := json.Marshal(custom); err == nil && len(encoded) <= maxMessageCustom {
+		return false
+	}
+	delete(set, "ai_ui")
+	return true
 }
 
 // uiUnset fits an update's UI (fitUI), and unsets the UI an earlier update set when this one
@@ -235,47 +224,6 @@ func uiUnset(set map[string]any) []string {
 		return []string{"ai_ui"}
 	}
 	return nil
-}
-
-// spillOversizedUI moves an oversized settled ai_ui payload into overflow storage when
-// configured, replacing custom.ai_ui with a compact artifact pointer that fits under 48 KiB.
-func spillOversizedUI(
-	ctx context.Context,
-	store UIOverflowStore,
-	customer, cid, messageID string,
-	ui map[string]any,
-	probe map[string]any,
-	own ...string,
-) (map[string]any, *ArtifactAttachment) {
-	if store == nil || ui == nil {
-		return ui, nil
-	}
-	probe["ai_ui"] = ui
-	if fitsCustomBudget(probe, own...) {
-		return ui, nil
-	}
-	format, _ := ui["format"].(string)
-	content, _ := ui["content"].(string)
-	status, _ := ui["status"].(string)
-	if format == "" || content == "" {
-		return ui, nil
-	}
-	stored, err := store.StoreUI(ctx, customer, cid, messageID, format, content)
-	if err != nil || !validArtifact(stored) {
-		return ui, nil
-	}
-	pointer := map[string]any{
-		"v":           uiVersion,
-		"format":      format,
-		"status":      status,
-		"overflow":    true,
-		"artifact_id": stored.ArtifactID,
-		"revision":    stored.Revision,
-	}
-	if version, ok := ui["version"].(string); ok && version != "" {
-		pointer["version"] = version
-	}
-	return pointer, &stored
 }
 
 // MergeOpenUIStatements merges an OpenUI statement patch onto an earlier OpenUI program,

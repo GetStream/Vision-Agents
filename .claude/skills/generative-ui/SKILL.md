@@ -34,7 +34,7 @@ prefix stays cacheable across turns.
 name: concierge
 llm: llm-fast
 ui:
-  format: openui            # openui (default). a2ui is accepted but still writes an OpenUI prompt
+  format: openui            # the default, and the only format there is a prompt for
   keep: [CardHeader, Form, Chips, FollowUpBlock]   # built-ins to offer; their children come along
   components: ui/components.json   # default path; read when the file exists
   blueprints: ui/blueprints.yaml   # default path; read when the file exists
@@ -46,7 +46,7 @@ ui:
 
 | Key | What it does |
 | --- | --- |
-| `format` | `openui` or `a2ui`. Anything else is refused. |
+| `format` | `openui`. Anything else, `a2ui` included, is refused until there is an A2UI prompt to compile. |
 | `keep` | Restricts the built-in OpenUI catalog (`uiBuiltins` in `sdks/go/agents/ui.go`) to these names plus their required children (`Form` brings `FormControl`, `Buttons`, `Button`). `Card` is always in. Empty offers all of them. A name that is neither built in nor a custom component is refused. |
 | `components` | The app's own components in the portable format every app reads (`UIComponents.json`): `name` (snake_case), `description`, `parameters` (JSON schema with `x-order`, the positional order), `events`, optional `slots`. Each becomes a PascalCase signature: `restaurant_card` -> `RestaurantCard(name: string, ...)`. |
 | `blueprints` | A YAML list of `name`, `when`, `order`, `rules`, `example`. Each is a line telling the model which components, in which order, for which kind of ask. An `example` is an OpenUI program, checked at load for unknown components, too many arguments and undefined or orphan references, with the line of the problem. |
@@ -61,8 +61,10 @@ Loaded by: Go (`sdks/go/agents/ui.go`, from `Load`) and JavaScript (`sdks/js/src
 from `loadFolder` in `folder.ts`). Python, .NET, Ruby, Rust and PHP don't read `ui:` yet (see the
 note at the end of the `sdk` skill), and the `getstream` CLI refuses it as an unknown key
 (`cli/internal/agentrc/agentrc.go`, `KnownFields`), so `getstream agents sync` fails on it. The two compilers must produce the same bytes for the same
-folder; there is no shared golden test yet, and JavaScript parses this YAML by hand, so they
-still differ on comments in list items, `ui:` with no value, and a few scalar forms.
+folder: `sdks/testdata/ui/concierge/` is compiled by a Go test and a JavaScript test, both held to
+`sdks/testdata/ui/concierge.instructions.txt`, which Go writes. An SDK that adds `ui:` checks itself
+against the same pair. JavaScript parses this YAML by hand; it still differs from yaml.v3 on
+escapes inside quoted strings (`'it''s'`), empty list items, and `ui:` written as a flow mapping.
 
 ## How the model writes UI
 
@@ -72,10 +74,11 @@ The compiled prompt asks for one short sentence, then the card in a ```` ```open
 
 - ```` ```openui-lang ```` and ```` ```openui-patch ```` (OpenUI, replace or patch)
 - ```` ```ui:<format>[@<version>][+patch] ````, such as `ui:a2ui@1.0`
-- `<ui format="..." mode="replace|patch">...</ui>`. No prompt asks for the tag form.
 
-Only the first UI block of a reply is its UI. Fences and tags split across tokens are held back
-until they are known, never shown as prose for a moment.
+A block opens only on a fence at the start of a line. The splitter runs on every agent's reply,
+UI or not, so prose that mentions UI (`wrap the list in a <ui> element`) stays prose. Only the
+first UI block of a reply is its UI. A fence split across tokens is held back until it is known,
+never shown as prose for a moment.
 
 A patch is statements that replace those with the same identifier, add new ones at the end, or
 remove one with `name = null` (a `$variable` set to `null` stays). `MergeOpenUIStatements`
@@ -98,29 +101,34 @@ remove one with `name = null` (a `$variable` set to `null` stays). `MergeOpenUIS
   (`{v, format, version?, status: "streaming"|"complete", content}`), merging a patch onto the
   last completed UI of the conversation (seeded from history when it reopens). Stream Chat gets
   partial updates every `answerEvery` (150ms) while the reply is written and the settled UI when
-  it finishes. `conversation_updated` broadcasts for text deltas are coalesced to the same 150ms.
+  it finishes. `conversation_updated` broadcasts for text deltas are coalesced to the same 150ms;
+  one held back is sent from the live loop's tick (`publishHeld`), so the last words before a
+  pause reach watchers without waiting for the next event.
 - A UI that would take the message's custom data over 48 KiB is left out of that write
-  (`fitUI`). `UIOverflowStore` / `SetUIOverflow` can spill it to an artifact, but nothing wires a
-  store in yet, so today the UI is dropped.
+  (`fitUI`): the reply keeps its words and has no card.
 - `chatlog/chatlog.go` keeps `custom.ai_ui` on a call's transcript message, so a card drawn on a
   call is in the chat afterwards.
 
 ## In the client SDKs
 
-- `Turn.ui` (JavaScript `TurnUI`, Dart `TurnUI`) is the turn's UI from the socket:
+- `Turn.ui` (JavaScript, Dart and Swift `TurnUI`) is the turn's UI from the socket:
   `format`, `version`, `status`, `content`, with patches merged onto the transcript's previous
   card. A patch with no card before it in this transcript, as after a reload, sets no `ui`:
   Stream Chat's copy, which the router merged, is the one to show.
 - `LiveUI` lays the socket's UI over the Stream Chat reply while it is written, so the card draws
   at socket speed instead of at Chat's 150ms. JavaScript's `AgentChat` applies it to every
   message it hands out; in Dart, the app calls `liveUI.observe` and `liveUI.overlay` itself
-  (`flutter_assistant/lib/agent_chat.dart`). The rules, which keep a card from jumping:
+  (`flutter_assistant/lib/agent_chat.dart`), and in Swift too (`swift_assistant`'s
+  `AgentChat.swift`, which publishes each change inside an animation). Swift's `TurnUI.content`
+  also holds back the OpenUI statement no newline has ended yet while it streams, so a card grows
+  a part at a time rather than reflowing with every delta. The rules, which keep a card from
+  jumping:
   - A reply that names its turn (`support_runtime.turn_id`) shows only that turn's UI.
   - Before its turn id is in Chat, the newest generating reply shows `latest()`: the newest
     turn's UI, only when that turn is the agent's. The person's question (`said`) and a new
     `responding` turn clear it, so a new reply never shows the card before it.
   - Once Chat says the reply is written (`generating` false) or its `ai_ui` is complete, what
-    Chat stored shows. An `overflow` pointer keeps the socket's copy.
+    Chat stored shows.
 
 ## Debugging
 
@@ -137,7 +145,6 @@ remove one with `name = null` (a `$variable` set to `null` stays). `MergeOpenUIS
 
 ## Known gaps
 
-- `format: a2ui` still writes an OpenUI prompt.
 - The agent, the conversation and the chatlog each keep their own "previous UI" for patches; a
   patch after a tool round can be merged onto a different base in each.
 - An interrupted call reply can leave a half-written `ai_ui` with `status: "streaming"` in the
@@ -145,4 +152,3 @@ remove one with `name = null` (a `$variable` set to `null` stays). `MergeOpenUIS
 - The UI block is in the assistant's history `Content`, which `lastAssistantSaid`, the echo
   filter and the flow controller read as speech.
 - `ui_delta` and `ui_completed` aren't declared in `internal/api/handwritten.go` yet.
-- `acceleration/internal/ui` is an unused copy of `sdks/go/agents/ui.go`.

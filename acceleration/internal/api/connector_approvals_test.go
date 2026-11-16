@@ -190,6 +190,22 @@ func (s *SessionConnectorsSuite) TestAnotherUserCannotAnswerTheCall() {
 	s.Equal(connectorEchoText, s.await(held.events, "tool_ran")["result"])
 }
 
+// The session's user may answer through its conversation too (AI-3154), the step asking them
+// as on base (probe on eee6d6665: target_user_id the user); another user, outside its
+// channel, finds no call to answer.
+func (s *SessionConnectorsSuite) TestTheUserMayAnswerThroughTheirConversation() {
+	held := s.heldCall(s.client)
+	step := s.awaitingApprovalOn(held.events)
+	path := "/v1/agents/conversations/agent:" + held.id + "/tool_approvals"
+	answer := map[string]any{"tool_call_id": step["id"], "request_id": held.request, "allowed": true}
+
+	s.Equal(s.client.userID, step["target_user_id"])
+	s.Equal(http.StatusNotFound, s.data.createUser().do(http.MethodPost, path, answer, nil))
+	s.Equal(held.before, s.provider.Hits(fakeprovider.PathMCP))
+	s.Equal(http.StatusNoContent, s.client.do(http.MethodPost, path, answer, nil))
+	s.Equal(connectorEchoText, s.await(held.events, "tool_ran")["result"])
+}
+
 // A held call is answered once: a second answer reaches nothing, and its sender is told so.
 func (s *SessionConnectorsSuite) TestASecondAnswerToAHeldCallIsAnswered() {
 	held := s.heldCall(s.client)

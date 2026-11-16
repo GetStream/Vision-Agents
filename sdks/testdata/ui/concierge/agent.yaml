@@ -1,0 +1,15 @@
+# Compiled by both the Go and the JavaScript SDK, which must write the same instructions:
+# ../concierge.instructions.txt holds what they write.
+name: concierge
+llm: llm-fast
+ui:
+  format: openui
+  # Form brings FormControl, Buttons and Button; Chips and FollowUpBlock bring their items.
+  # RestaurantCard is a custom component, so keeping it adds nothing built in.
+  keep: [CardHeader, Form, "Chips", FollowUpBlock, RestaurantCard]
+  patch_mode: true
+  voice_ui: true
+  rules:
+  - "Write times as 24h, like 19:15, never 7:15 PM." # a comment after a quoted item
+  - 'Say the price tier in words, then show it'
+  - Always pair RestaurantCard with AvailabilityGauge when the wait is known. # plain

@@ -2,6 +2,14 @@
 
 ## Features
 
+### The Swift SDK shows a reply's interactive UI as the socket streams it
+
+`AgentEvent` reads `ui_delta` and `ui_completed`, and `Conversation` folds them onto the agent's turn as `Turn.ui` (`TurnUI`), merging an `openui-patch` onto the card before it. While OpenUI streams, `TurnUI.content` holds only finished statements, so a card grows a part at a time. `LiveUI` lays that UI over the Stream Chat reply being written until Chat's own `ai_ui` is complete, by the same rules as JavaScript and Dart, so a new reply never shows the card of the one before it. On a call, where there is no channel, an app shows the newest `Turn.ui` itself. `swift_assistant` shows it in chat and on calls, with restaurant cards, an availability gauge, a seat selector and brands switched live in Settings (#2026).
+
+### A call through a customer's own SIP trunk survives the router node that holds it stopping
+
+A call through a customer's own SIP trunk on a shared Stream line no longer ends when the router node that dialled it is deployed or crashes. Another node sends each side a re-INVITE in the old dialog, from its own address, and holds the call from then on; the audio never passes through a node, so the people keep talking. On a deploy the node hands its calls over before it stops. After a crash another node takes them within about 40 s. Either way a node takes calls one at a time, so when many calls move, the last ones wait longer. A hang-up on either side still ends both. This needs Redis. A node that stops with no other node left to take its calls hangs them up, as on a single node or when the others run an older version. Calls on a Stream trunk of their own, transfer legs, and deployments without Redis are hung up at shutdown as before (#2014).
+
 ### List a modality's routes from the Go and JavaScript SDKs, and image generation is documented
 
 `client.Routes(ctx, acceleration.ModalityImage)` in Go and `api.router().routes("image")` in JavaScript list a modality's shortcuts, default first, with the models each resolves to: `image-fast` and `image-quality` for pictures. JavaScript callers no longer write `client.get("/v1/{modality}/routes", ...)` by hand. The router README documents `POST /v1/image/generations` (its options, routes, time, limits and billing) and lists `image-fast` and `image-quality` among the default groups (AI-3199).
@@ -106,6 +114,8 @@ An agent config's `chat_channels` names Stream Chat channel types of the app's o
 Each entry may say `answer: mentioned` (`always` when left out, as before): a message in a channel of that type is then answered only when it mentions the agent, by `mentioned_users` holding the config's id or by `@` and the config's id or name in its text. Any other message gets no reply and starts no model; the next message the agent answers reads it as what was said before. `agent.yaml` takes it too, as `answer` on a `chat_channels` entry (AI-3152).
 
 The model answering in a channel of a named type sees each person's message as a JSON envelope of their Stream user id, name and words, `{"author":{"user_id":"anya-1","display_name":"Anya"},"text":"..."}`, as a shared conversation's history is, from the first message, both live and read back from the channel, and is told that only the envelope's author says who wrote a message and that the id grants no access. A line inside a message that looks like another person's message stays in the text of its writer's envelope. A name is cut at 256 characters. `agent` channels and thread channels are labelled as before (AI-3153, AI-3281).
+
+In a channel of a named type, a connector call whose binding sets `require_approval` asks the person whose message the reply answers: its `ai_tool_call` step's `target_user_id` is that writer, not the session's user. The writer answers with their own user token through `POST /v1/agents/conversations/{cid}/tool_approvals` (`tool_call_id`, `request_id`, `allowed`, `summary`), while they are a member of the channel; the app's backend may answer any. Another person is refused with a 403, and a call nobody waits on, or a channel the caller is not in, is a 404. The writer has two minutes, not ten, when the Router opened the session for the message: it answers one message for at most two minutes and then closes that session, which stops the call, so a later answer is a 404. `agent` channels ask whom they asked before, and a shared conversation in one still asks nobody; a channel of a named type shared with other members now asks the writer, where it asked nobody before. The session's user may answer through the new operation too (AI-3154).
 
 ### The router counts the voice sessions judged for silence
 
@@ -668,6 +678,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 `Folder.load`, and so `Agent.new(folder: "…")`, raise a `ConfigurationError` for a folder whose agent.yaml names `plugins:`, with an error that names the file and points to `connectors:`. An empty or null `plugins` still loads and sends nothing, as before. Folder sync no longer sends `plugins`, and the warning that plugins are deprecated is gone, as is the check that no name is under both `connectors` and `plugins`. Move each plugin to a `connectors:` entry (AI-2528).
 
 ## Bug Fixes
+
+### The key_refused alert says why a key was refused
+
+The Sentry title of a `key_refused` alert now ends with the reason, such as `usage alert: key_refused GOOGLE_API_KEY/402: out of funds, top up the account`. The other statuses say `400`, `403` and `invalid_key` (key not valid, replace it), `401` (key not valid or its quota spent), `429` (rate limited or spend cap reached) and `quota_exceeded` (quota spent). A status with no reason keeps its title. The fingerprint and the `item` tag are unchanged, so existing Sentry issues and rules still match (AI-3301).
 
 ### OpenAI agents answer every turn on an account with Zero Data Retention
 
@@ -1481,6 +1495,10 @@ A dispatch worker's `answering a call` line and an agent's `ringing` line carry 
 ### A member's message is no longer read as the agent's reply
 
 In an `agent` channel that people other than the session's caller can write in (a channel the router answers in on a dispatch, or a conversation shared with its members), a message carrying the custom data of the agent's reply was read as the agent's turn: the model saw it as its own words, an action on it was answered from it, a command was looked up in it, and an unfinished one was rewritten as interrupted. Now a reply counts as the agent's only when the agent wrote it; anybody else's message is read as their own. A person's turn the router wrote keeps its fields. In an app chat, a card line marked as the agent's counts as the agent's only when the agent wrote it (AI-3186).
+
+### A member's line in a call's transcript is no longer read as the agent's
+
+A call's transcript, its timeline and a campaign's outcome read every line marked `source: agent` as the agent's, whoever wrote it, so a member of the channel the transcript is in could put words in the agent's mouth. A call now records the user the agent wrote as, and only that user's lines, or the agent id's, are the agent's; a person's typed turn reads as theirs too. A call from before this change reads as it did (AI-3265).
 
 ## Breaking Changes
 

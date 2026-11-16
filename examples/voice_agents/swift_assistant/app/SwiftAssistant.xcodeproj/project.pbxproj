@@ -21,6 +21,7 @@
 		B200010D /* Photos.swift in Sources */ = {isa = PBXBuildFile; fileRef = B200000D /* Photos.swift */; };
 		B200010F /* Gmail.swift in Sources */ = {isa = PBXBuildFile; fileRef = B200000F /* Gmail.swift */; };
 		B2000111 /* TripComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000011 /* TripComponents.swift */; };
+		B2000114 /* Brand.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000014 /* Brand.swift */; };
 		B2000113 /* Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000013 /* Settings.swift */; };
 		B2000112 /* UIComponents.json in Resources */ = {isa = PBXBuildFile; fileRef = B2000012 /* UIComponents.json */; };
 		B2000201 /* StreamAgents in Frameworks */ = {isa = PBXBuildFile; productRef = B2000301 /* StreamAgents */; };
@@ -48,6 +49,7 @@
 		B200000F /* Gmail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gmail.swift; sourceTree = "<group>"; };
 		B200000E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B2000011 /* TripComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripComponents.swift; sourceTree = "<group>"; };
+		B2000014 /* Brand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Brand.swift; sourceTree = "<group>"; };
 		B2000013 /* Settings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Settings.swift; sourceTree = "<group>"; };
 		B2000012 /* UIComponents.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = UIComponents.json; sourceTree = "<group>"; };
 		B2000010 /* SwiftAssistant.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SwiftAssistant.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -96,6 +98,7 @@
 				B200000B /* DeviceTools.swift */,
 				B200000F /* Gmail.swift */,
 				B2000011 /* TripComponents.swift */,
+				B2000014 /* Brand.swift */,
 				B2000013 /* Settings.swift */,
 				B2000012 /* UIComponents.json */,
 				B200000E /* Info.plist */,
@@ -208,6 +211,7 @@
 				B200010D /* Photos.swift in Sources */,
 				B200010F /* Gmail.swift in Sources */,
 				B2000111 /* TripComponents.swift in Sources */,
+				B2000114 /* Brand.swift in Sources */,
 				B2000113 /* Settings.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

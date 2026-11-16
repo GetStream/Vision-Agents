@@ -67,10 +67,11 @@ final class TurnUI {
       other.format == format &&
       other.version == version &&
       other.status == status &&
-      other.content == content;
+      other.content == content &&
+      other.raw == raw;
 
   @override
-  int get hashCode => Object.hash(format, version, status, content);
+  int get hashCode => Object.hash(format, version, status, content, raw);
 
   @override
   String toString() => 'TurnUI($format, $status, ${content.length} chars)';
@@ -359,7 +360,7 @@ final class Conversation {
     }
     final nextUI = change(turns[index].ui);
     if (nextUI == null) return this;
-    if (turns[index].ui == nextUI && turns[index].ui?.raw == nextUI.raw) {
+    if (turns[index].ui == nextUI) {
       return this;
     }
     final changed = [...turns];

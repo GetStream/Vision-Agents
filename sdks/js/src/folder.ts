@@ -692,7 +692,10 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
         declared.floorControl = chosen;
       }
     } else if (key === "ui") {
-      declared.ui = parseUIDeclaration(indented, inline, where);
+      const ui = parseUIDeclaration(indented, inline, where);
+      if (ui) {
+        declared.ui = ui;
+      }
     } else {
       throw new ConfigurationError(
         `${where} declares ${JSON.stringify(key)}, which is not something an agent has`,
@@ -1334,18 +1337,19 @@ function block(lines: string[], style: string): string {
 }
 
 function flowList(value: string, key: string, where: string): string[] {
-  const listed = /^\[(.*)\]$/.exec(value);
-  if (!listed) {
+  // flow reads a comma inside a quoted item as part of it.
+  const listed = /^\[.*\]$/.test(value) ? flow(value, key, where) : undefined;
+  if (!Array.isArray(listed) || listed.some((item) => item !== undefined && typeof item !== "string")) {
     throw new ConfigurationError(`${where}: ${key} should be a list`);
   }
-  return (listed[1] as string).split(",").map((item) => scalar(item.trim()) ?? "");
+  return listed.map((item) => (typeof item === "string" ? item : ""));
 }
 
 function listItem(line: string, key: string, where: string): string {
   if (!line.startsWith("-")) {
     throw new ConfigurationError(`${where}: ${key} should be a list`);
   }
-  return scalar(line.slice(1).trim()) ?? "";
+  return scalar(uncomment(line.slice(1)).trim()) ?? "";
 }
 
 function mapping(nested: string[], inline: string, key: string, where: string): Record<string, string> {
@@ -1415,7 +1419,22 @@ const UI_KEYS = new Set([
   "rules",
 ]);
 
-function parseUIDeclaration(indented: string[], inline: string, where: string): UIDeclaration {
+/** What ui/components.json may say, as Go reads it; anything else is refused there too. */
+const UI_COMPONENT_KEYS = new Set(["name", "description", "parameters", "events", "slots"]);
+const UI_PARAMETERS_KEYS = new Set(["type", "properties", "required", "x-order"]);
+const UI_PROPERTY_KEYS = new Set(["type", "format", "description", "enum", "items"]);
+const UI_EVENT_KEYS = new Set(["name", "description"]);
+
+function parseUIDeclaration(indented: string[], inline: string, where: string): UIDeclaration | undefined {
+  // `ui:` with nothing under it is null, which turns no catalog on; `ui: {}` turns on all of it.
+  if (!indented.some((line) => line.trim() && !line.trim().startsWith("#"))) {
+    if (scalar(inline) === undefined) {
+      return undefined;
+    }
+    if (/^\{\s*\}$/.test(inline)) {
+      return {};
+    }
+  }
   if (inline) {
     throw new ConfigurationError(`${where}: ui should be a mapping`);
   }
@@ -1443,7 +1462,7 @@ function parseUIDeclaration(indented: string[], inline: string, where: string): 
     const children: string[] = [];
     while (i + 1 < lines.length) {
       const next = lines[i + 1]!;
-      if (next.trim() && next.length - next.trimStart().length <= column) {
+      if (next.trim() && !ownsLine(next, column, val)) {
         break;
       }
       children.push(next.trim());
@@ -1454,9 +1473,9 @@ function parseUIDeclaration(indented: string[], inline: string, where: string): 
     switch (key) {
       case "format": {
         const fmt = scalar(val);
-        if (fmt !== undefined) {
-          if (fmt !== "openui" && fmt !== "a2ui") {
-            throw new ConfigurationError(`${where}: ui.format must be openui or a2ui, not ${JSON.stringify(fmt)}`);
+        if (fmt) {
+          if (fmt !== "openui") {
+            throw new ConfigurationError(`${where}: ui.format must be openui, not ${JSON.stringify(fmt)}`);
           }
           out.format = fmt;
         }
@@ -1505,6 +1524,12 @@ function uiBool(raw: string, key: string, where: string): boolean {
   return val === "true";
 }
 
+/** Whether a line is under the key at `column`: deeper, or a list at the key's own column, as YAML allows. */
+function ownsLine(line: string, column: number, inline: string): boolean {
+  const indent = line.length - line.trimStart().length;
+  return indent > column || (indent === column && !inline && /^-(\s|$)/.test(line.trim()));
+}
+
 async function loadUIPrompt(root: string, ui: UIDeclaration): Promise<string> {
   let components: UIPortableComponent[] = [];
   const compRel = ui.components || ((await existsInside(root, DEFAULT_UI_COMPONENTS)) ? DEFAULT_UI_COMPONENTS : "");
@@ -1520,6 +1545,17 @@ async function loadUIPrompt(root: string, ui: UIDeclaration): Promise<string> {
       throw new ConfigurationError(`${full}: expected an array of portable UI components`);
     }
     components = parsed as UIPortableComponent[];
+    for (const comp of components) {
+      const named = `component ${JSON.stringify(comp?.name)}`;
+      refuseUnknown(Object.keys(comp ?? {}), UI_COMPONENT_KEYS, named, full);
+      refuseUnknown(Object.keys(comp?.parameters ?? {}), UI_PARAMETERS_KEYS, `${named} parameters`, full);
+      for (const [key, prop] of Object.entries(comp?.parameters?.properties ?? {})) {
+        refuseUnknown(Object.keys(prop ?? {}), UI_PROPERTY_KEYS, `${named} property ${JSON.stringify(key)}`, full);
+      }
+      for (const event of comp?.events ?? []) {
+        refuseUnknown(Object.keys(event ?? {}), UI_EVENT_KEYS, `${named} event`, full);
+      }
+    }
   }
 
   let blueprints: UIBlueprint[] = [];
@@ -1593,11 +1629,11 @@ export function parseBlueprints(content: string, where = DEFAULT_UI_BLUEPRINTS):
       throw new ConfigurationError(`${where}: ${JSON.stringify(trimmed)} is not a key and value`);
     }
     const key = entry[1]!;
-    const inline = (entry[2] ?? "").trim();
+    const inline = uncomment(entry[2] ?? "").trim();
     const nested: string[] = [];
     while (i + 1 < lines.length) {
       const next = lines[i + 1]!;
-      if (next.trim() && next.length - next.trimStart().length <= column) {
+      if (next.trim() && !ownsLine(next, column, inline)) {
         break;
       }
       nested.push(next);
@@ -1607,13 +1643,13 @@ export function parseBlueprints(content: string, where = DEFAULT_UI_BLUEPRINTS):
 
     switch (key) {
       case "name":
-        current.name = scalar(uncomment(inline)) ?? "";
+        current.name = scalar(inline) ?? "";
         break;
       case "when":
-        current.when = /^[|>]-?$/.test(inline) ? block(nested, inline).trim() : (scalar(uncomment(inline)) ?? "");
+        current.when = /^[|>]-?$/.test(inline) ? block(nested, inline).trim() : (scalar(inline) ?? "");
         break;
       case "example":
-        current.example = /^[|>]-?$/.test(inline) ? block(nested, inline).trim() : (scalar(uncomment(inline)) ?? "");
+        current.example = /^[|>]-?$/.test(inline) ? block(nested, inline).trim() : (scalar(inline) ?? "");
         break;
       case "order":
         current.order = inline ? flowList(inline, "order", where) : written.map((w) => listItem(w, "order", where));

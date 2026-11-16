@@ -262,9 +262,12 @@ func (t *Transcriber) decideWords(ctx context.Context, agent Agent, turn Turn, a
 // row, the last at least failoverWindow after the first. A check answered starts the count
 // again. One that ran out of a deadline shorter than a check at a pause has, a check over the
 // agent's (harness.HearDeadline), counts neither way: it says the server took longer than that
-// to answer, not that it is down.
+// to answer, not that it is down. Nor does one held back while the server asked for time
+// (ErrBackingOff), which was never asked, or one a replica answered without knowing the agent
+// though it was told again (ErrAgentUnknown): the server is up, but did not rule, so the
+// checks it did not answer before it are still in a row with those after it.
 func (t *Transcriber) checked(err error, deadline time.Duration, participant stt.Participant) {
-	if t.words == nil || errors.Is(err, context.Canceled) {
+	if t.words == nil || errors.Is(err, context.Canceled) || errors.Is(err, ErrBackingOff) || errors.Is(err, ErrAgentUnknown) {
 		return
 	}
 	if errors.Is(err, context.DeadlineExceeded) && deadline < pauseDeadline() {

@@ -123,7 +123,7 @@ func (s *DispatchedChannelSuite) TestTheChannelIsReadBackWithWhatThePersonWrote(
 	c, history, _, err := s.service.Open(s.routerOpens(s.cid), "customer", s.channel, s.cid)
 	s.Require().NoError(err)
 	s.Empty(history)
-	_, err = c.BeginFollowUp("message-1", "is it raining in Rome?")
+	_, err = c.BeginFollowUp("message-1", "is it raining in Rome?", "")
 	s.Require().NoError(err)
 	c.Observe(agent.Responding{TurnID: "turn-1"})
 	c.Observe(agent.ResponseDelta{TurnID: "turn-1", Text: "It is."})

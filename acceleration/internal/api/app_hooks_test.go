@@ -11,6 +11,10 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/fakeprovider"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/bearer"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -23,6 +27,10 @@ type AppHooksSuite struct {
 
 	channelID string
 	apiKey    string
+	// provider is the MCP server of a connector a config answering in a channel type binds,
+	// and token an access token it issued (chat_channels_approval_test.go).
+	provider *fakeprovider.Server
+	token    string
 }
 
 func TestAppHooksSuite(t *testing.T) {
@@ -31,7 +39,20 @@ func TestAppHooksSuite(t *testing.T) {
 
 func (s *AppHooksSuite) SetupSuite() {
 	s.appMode = true
+	s.provider = fakeprovider.New(s.T(), fakeprovider.ClientCredentials)
+	s.connectors = core.Registry{
+		Schemes:     map[string]core.Scheme{bearer.Name: bearer.New()},
+		ToolSources: map[string]core.ToolSource{mcp.Kind: mcp.New()},
+	}
+	s.connectorHTTP = s.provider.Client()
+	// A call held for approval that a test leaves unanswered ends its turn this soon, not in
+	// ten minutes, so the turn is over by the time the test's cleanup waits for it. A suite
+	// built on this one may keep a wait of its own (ChannelTypeTurnSuite).
+	if s.approvalWait == 0 {
+		s.approvalWait = 10 * time.Second
+	}
 	s.RouterSuite.SetupSuite()
+	s.token = issuedToken(&s.RouterSuite, s.provider)
 }
 
 func (s *AppHooksSuite) SetupTest() {
