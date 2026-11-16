@@ -1549,8 +1549,8 @@ as long. A fork takes its own `tool_timeout_ms` and otherwise keeps a running pa
 
 The session row keeps the timeout and the tools the caller declared (definitions only), so a
 conversation carried on after it ended, in this process or another, waits as long and offers
-the same tools. `POST /v1/agents/sessions/{id}/resume`, which the SDKs' `resume` sends when it
-has something to say, writes a `tool_timeout_ms` and `tools` over those, the caller's own
+the same tools. `POST /v1/agents/sessions/{id}/resume`, which JavaScript's and Go's `resume` send when
+they have something to say, writes a `tool_timeout_ms` and `tools` over those, the caller's own
 winning; an empty `tools` offers none. A conversation still running takes the new timeout for
 the calls that start after it and keeps its tools until it ends and is carried on.
 

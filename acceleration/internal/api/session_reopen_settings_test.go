@@ -93,6 +93,16 @@ func (s *SessionReopenSettingsSuite) TestAResumedRunningSessionWaitsForItsToolsA
 	s.await(watching, "tool_cancel")
 }
 
+func (s *SessionReopenSettingsSuite) TestAResumedRunningSessionKeepsTheToolsItRunsWith() {
+	request := textSession(nil)
+	request.Tools = s.declared("lookup_order")
+	running := s.serverClient.createSession(request)
+
+	s.resume(running.Id, ResumeSessionRequest{Tools: s.declared("book_flight")})
+
+	s.Equal(s.harnessTools("lookup_order"), s.heldSpec(running.Id).Tools)
+}
+
 func (s *SessionReopenSettingsSuite) TestARunningSessionsResumedToolTimeoutOutlivesItsEnding() {
 	running := s.serverClient.createSession(textSession(nil))
 	s.Require().Eventually(func() bool { return s.stored(running.Id) }, settleFor, 20*time.Millisecond)
