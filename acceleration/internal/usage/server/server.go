@@ -45,7 +45,7 @@ const (
 	// maxLoggedEvent is the most of a rejected event its log line carries.
 	maxLoggedEvent = 16 << 10
 	// routerSource starts the source of a router's events, the one producer that ships as it
-	// works; rollups and reconcile jobs ship late by design.
+	// works; rollups, reconcile jobs and the router's usage jobs (job/...) ship late by design.
 	routerSource = "router/"
 )
 

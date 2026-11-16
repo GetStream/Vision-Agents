@@ -14,6 +14,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/GetStream/Vision-Agents/sdks/go/internal/redact"
 	"github.com/GetStream/Vision-Agents/sdks/go/tools"
 )
 
@@ -527,7 +528,8 @@ func (d *Dispatch) answer(ctx context.Context, workID string, call InboundCall) 
 		return
 	}
 
-	d.logger.Info("answering a call", "from", call.CallerNumber, "on", call.CalledNumber)
+	d.logger.Info("answering a call",
+		"from", redact.Number(call.CallerNumber), "on", redact.Number(call.CalledNumber))
 	d.running.Add(1)
 	d.active.Add(1)
 	d.handling.Add(1)
@@ -552,7 +554,8 @@ func (d *Dispatch) reply(ctx context.Context, workID string, message InboundMess
 		return
 	}
 
-	d.logger.Info("answering a message", "from", message.UserID, "channel", message.ChannelID)
+	d.logger.Info("answering a message", "channel", message.ChannelID)
+	d.logger.Debug("who wrote the message", "from", message.UserID, "channel", message.ChannelID)
 	d.running.Add(1)
 	d.active.Add(1)
 	d.handling.Add(1)

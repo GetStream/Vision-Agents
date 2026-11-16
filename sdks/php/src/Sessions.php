@@ -4,21 +4,38 @@ declare(strict_types=1);
 
 namespace GetStream\VisionAgents;
 
+use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Generated\CreateSessionRequest;
 use GetStream\VisionAgents\Generated\ModelOverwrites;
 use GetStream\VisionAgents\Generated\Session as SessionRow;
-use GetStream\VisionAgents\Generated\SessionFilter;
 use GetStream\VisionAgents\Generated\SessionPage;
-use GetStream\VisionAgents\Generated\SessionQuery;
-use GetStream\VisionAgents\Generated\TextMatch;
+use GetStream\VisionAgents\Generated\SessionSortField;
 use GetStream\VisionAgents\Generated\UpdateSessionRequest;
 
 /**
  * An agent's conversations: the one being held and the ones that were.
  *
- * `query` filters and pages; `search` reads the words a caller titled and described their
- * conversations with, best match first. Both page by cursor: pass a page's `nextCursor` back
- * with the same filters for the next one.
+ * `query` filters, sorts and pages; `search` reads the words a caller titled and described
+ * their conversations with, best match first. Both take the filter as the router reads it, an
+ * array with the wire's own keys, and both are narrowed to this agent whatever the filter
+ * says. Both page by cursor: pass a page's `nextCursor` back with the same filter and sort for
+ * the next one.
+ *
+ * A filter is field keys and/or `$and` / `$or`; the keys of one array are ANDed. `$and` and
+ * `$or` take 1 to 10 filters and nest up to 3 deep. The fields, and there are no others:
+ *
+ * - `project_id`: `'health'`, `['$eq' => 'health']` or `['$in' => ['health', 'legal']]` (1 to 50)
+ * - `text`: `['$q' => 'words']`, once, at the top level or directly in the top-level `$and`,
+ *   never inside an `$or`
+ * - `review_score`: `4`, or any of `$eq`, `$gt`, `$gte`, `$lt`, `$lte`, ANDed:
+ *   `['$gte' => 2, '$lt' => 4]`. Server side only
+ * - `user_id`: `'u1'` or `['$eq' => 'u1']`, at the top level or directly in the top-level
+ *   `$and`. Server side only
+ * - `agent`: set by this SDK to the agent the sessions were asked of
+ *
+ * Anything else is refused by the router with a 400 that names it.
+ *
+ * @phpstan-type SortRule array{field: SessionSortField|string, direction?: -1|1}
  */
 final readonly class Sessions
 {
@@ -70,44 +87,59 @@ final readonly class Sessions
     }
 
     /**
-     * A page of the agent's conversations, most recently updated first, the ones that ended
-     * included. Rows rather than live handles: reading a conversation back is not holding one.
+     * A page of the agent's conversations, the ones that ended included. Rows rather than live
+     * handles: reading a conversation back is not holding one.
      *
-     * @param 'text'|'voice'|'video'|null $modality how the user took part
-     * @param 'live'|'ended'|null $state
-     * @param ?string $agentId the agent id the sessions were created with
-     * @param ?int $limit up to 200; null is the router's 25
+     *     $sessions->query(filter: ['$or' => [['project_id' => 'health'], ['project_id' => 'legal']]]);
+     *     $sessions->query(sort: [['field' => 'pinned'], ['field' => 'last_message_at', 'direction' => -1]]);
+     *
+     * @param array<string, mixed> $filter in the wire's shape, see the class comment. Its top
+     *     level `agent` is always this agent
+     * @param list<SortRule>|null $sort null is the agent's last answer, newest first.
+     *     `direction` is -1, descending and the default, or 1. One of: `last_message_at`
+     *     either way; `pinned`, descending, alone or followed by `last_message_at`;
+     *     `review_score` either way, server side only; `relevance`, descending, only with a
+     *     `text` filter
+     * @param ?int $limit 1 to 200; null is the router's 25
+     * @param ?string $cursor the previous page's `nextCursor`, good only with the filter and
+     *     sort it came from
      */
-    public function query(
-        ?string $projectId = null,
-        ?string $userId = null,
-        ?string $modality = null,
-        ?string $state = null,
-        ?string $agentId = null,
-        ?int $limit = null,
-        ?string $cursor = null,
-    ): SessionPage {
-        return $this->page(null, $projectId, $userId, $modality, $state, $agentId, $limit, $cursor);
+    public function query(array $filter = [], ?array $sort = null, ?int $limit = null, ?string $cursor = null): SessionPage
+    {
+        $body = [];
+        if ($cursor !== null) {
+            $body['cursor'] = $cursor;
+        }
+        // The agent first, so it is this one whatever the caller's filter names. The caller's
+        // keys stay at the top level beside it: text and user_id are only read there.
+        $body['filter'] = self::filterObject(['agent' => $this->agent] + $filter);
+        if ($limit !== null) {
+            $body['limit'] = $limit;
+        }
+        if ($sort !== null) {
+            $body['sort'] = array_map(self::sortRule(...), $sort);
+        }
+        return SessionPage::fromArray(Json::asObject($this->client->post('/v1/agents/sessions/query', body: $body)));
     }
 
     /**
-     * Finds a conversation by what it was called: the title, description and opening question.
-     * Nothing about an incognito session is searchable, because nothing about it was written
-     * down. A search covers every project.
+     * Finds a conversation by what it was called: the title, description, project and agent
+     * name, best match first, which is why it takes no sort. Nothing about an incognito
+     * session is searchable, because nothing about it was written down.
      *
-     * @param 'text'|'voice'|'video'|null $modality
-     * @param 'live'|'ended'|null $state
+     *     $sessions->search('pricing', filter: ['project_id' => 'health'], limit: 5);
+     *
+     * @param array<string, mixed> $filter as `query` takes it, without a top-level `text`:
+     *     the words are this call's
+     *
+     * @throws ConfigurationException when the filter has a top-level `text` of its own
      */
-    public function search(
-        string $text,
-        ?string $userId = null,
-        ?string $modality = null,
-        ?string $state = null,
-        ?string $agentId = null,
-        ?int $limit = null,
-        ?string $cursor = null,
-    ): SessionPage {
-        return $this->page($text, null, $userId, $modality, $state, $agentId, $limit, $cursor);
+    public function search(string $text, array $filter = [], ?int $limit = null, ?string $cursor = null): SessionPage
+    {
+        if (array_key_exists('text', $filter)) {
+            throw new ConfigurationException('search() sets the filter\'s text itself; leave text out of the filter, or call query()');
+        }
+        return $this->query($filter + ['text' => ['$q' => $text]], null, $limit, $cursor);
     }
 
     /**
@@ -120,12 +152,15 @@ final readonly class Sessions
 
     /**
      * Changes one conversation, whether or not it is still being held, and returns it as it
-     * now is. One that ended takes only a title, description and custom labels; models and
-     * voice need it running, and apply from its next turn. A field left null is
+     * now is. One that ended takes only a title, description, custom labels and a pin; models
+     * and voice need it running, and apply from its next turn. A field left null is
      * left as it is; an empty `sts` makes the session a cascade again and an empty `voice`
      * returns to the provider's default.
      *
      * @param array<string, mixed>|null $custom
+     * @param ?bool $pinned true pins the session and false unpins it; the row's `pinnedAt` says
+     *     when, and is null for one that is not pinned. A pin does not move a session in
+     *     `last_message_at` order: sort by `pinned` to list the pinned first
      */
     public function update(
         string $id,
@@ -141,12 +176,14 @@ final readonly class Sessions
         ?float $temperature = null,
         ?int $maxOutputTokens = null,
         ?string $verbosity = null,
+        ?bool $pinned = null,
     ): SessionRow {
         $request = new UpdateSessionRequest(
             custom: $custom,
             description: $description,
             llm: $llm,
             maxOutputTokens: $maxOutputTokens,
+            pinned: $pinned,
             sts: $sts,
             stt: $stt,
             temperature: $temperature,
@@ -157,6 +194,23 @@ final readonly class Sessions
             voice: $voice,
         );
         return SessionRow::fromArray(Json::asObject($this->client->patch('/v1/agents/sessions/{id}', ['id' => $id], $request->toArray())));
+    }
+
+    /**
+     * Pins a conversation, running or ended, and returns it as it now is. Pinning one that is
+     * already pinned keeps the time it was first pinned.
+     */
+    public function pin(string $id): SessionRow
+    {
+        return $this->update($id, pinned: true);
+    }
+
+    /**
+     * Unpins a conversation, and returns it as it now is.
+     */
+    public function unpin(string $id): SessionRow
+    {
+        return $this->update($id, pinned: false);
     }
 
     /**
@@ -187,32 +241,44 @@ final readonly class Sessions
     }
 
     /**
-     * One function for the listing and the search, so the two cannot drift apart in which
-     * filters they honour. Text makes it a search.
+     * A filter as JSON has to carry it: every filter and every condition an object, so one
+     * with nothing in it is sent as `{}` where PHP's own encoding of an empty array is `[]`.
+     * `$and` and `$or` stay lists of filters, and an operator's operand (the list of `$in`)
+     * is sent as it was given.
+     *
+     * @param array<array-key, mixed> $filter
      */
-    private function page(
-        ?string $text,
-        ?string $projectId,
-        ?string $userId,
-        ?string $modality,
-        ?string $state,
-        ?string $agentId,
-        ?int $limit,
-        ?string $cursor,
-    ): SessionPage {
-        $query = new SessionQuery(
-            cursor: $cursor,
-            filter: new SessionFilter(
-                agent: $this->agent,
-                agentId: $agentId,
-                modality: $modality,
-                projectId: $projectId,
-                state: $state,
-                text: $text === null ? null : new TextMatch($text),
-                userId: $userId,
-            ),
-            limit: $limit,
-        );
-        return SessionPage::fromArray(Json::asObject($this->client->post('/v1/agents/sessions/query', body: $query->toArray())));
+    private static function filterObject(array $filter): \stdClass
+    {
+        $out = new \stdClass();
+        foreach ($filter as $key => $value) {
+            $key = (string) $key;
+            if (($key === '$and' || $key === '$or') && is_array($value)) {
+                $out->{$key} = array_map(
+                    static fn (mixed $each): mixed => is_array($each) ? self::filterObject($each) : $each,
+                    array_values($value),
+                );
+            } elseif (is_array($value)) {
+                $out->{$key} = (object) $value;
+            } else {
+                $out->{$key} = $value;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * @param array<array-key, mixed> $rule
+     *
+     * @return array<string, mixed>
+     */
+    private static function sortRule(array $rule): array
+    {
+        $field = $rule['field'] ?? null;
+        $out = ['field' => $field instanceof SessionSortField ? $field->value : $field];
+        if (array_key_exists('direction', $rule)) {
+            $out['direction'] = $rule['direction'];
+        }
+        return $out;
     }
 }

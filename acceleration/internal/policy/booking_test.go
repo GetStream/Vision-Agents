@@ -84,6 +84,31 @@ func (s *PolicySuite) TestASuspendedOrganizationBooksNothing() {
 	s.Require().ErrorIs(err, ErrSuspended)
 }
 
+func (s *PolicySuite) TestAnOrganizationWithOnlyTrialCreditBooksNothingInEveryLimitsMode() {
+	for _, m := range modes {
+		s.Run(string(m), func() {
+			s.SetupTest()
+			enforcer := s.billed(mode(m))
+			s.usage().Trial(s.T(), s.org, 5_000_000)
+
+			_, err := s.book(enforcer.Enforcer, 1)
+			s.Require().ErrorIs(err, ErrTopUpRequired)
+			s.Equal("top_up_required", Code(err))
+			s.False(Transient(err))
+		})
+	}
+}
+
+func (s *PolicySuite) TestAnOrganizationThatToppedUpBooksOnItsTrialCreditToo() {
+	enforcer := s.billed(mode(config.LimitsOff))
+	s.usage().Trial(s.T(), s.org, 5_000_000)
+	s.usage().Credit(s.T(), s.org, 1_000_000)
+
+	booked, err := s.book(enforcer.Enforcer, 6_000_000)
+	s.Require().NoError(err, "once funded, all of its credit pays for a purchase")
+	booked.Release()
+}
+
 func (s *PolicySuite) TestABookingWhoseCreditCannotBeReadIsRefusedUntilItCan() {
 	enforcer := s.billed(mode(config.LimitsOff))
 	s.usage().Credit(s.T(), s.org, 1_000_000)

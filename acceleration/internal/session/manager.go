@@ -24,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/imagejobs"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -96,6 +97,9 @@ type ManagerOptions struct {
 	Knowledge *metered.Knowledge
 	// Search is optional, and is what every session finds out what is true now with.
 	Search *searchrouter.Router
+	// Drawings is optional, and is where a session whose config names an image target queues
+	// the pictures it is asked for, to be drawn after the turn and posted into its conversation.
+	Drawings *imagejobs.Service
 	// Classifier is optional, and is what a session with a guardrail asks whether a turn
 	// may be answered. Without it a session declaring a guardrail that needs one is
 	// refused rather than held unguarded.
@@ -104,9 +108,14 @@ type ManagerOptions struct {
 	// language model. Empty keeps the language model.
 	FlowJudge string
 	// AudioFloor is optional, and is the chorus-asr model an agent's flow controller asks as
-	// its own floor control says (Spec.FloorControl). An agent that chose none asks it
-	// nothing about turns.
+	// its own floor control says (Spec.FloorControl), or FloorControlDefault where it chose
+	// none. Without one no session asks about turns.
 	AudioFloor *audiofloor.Client
+	// FloorControlDefault is what controls the floor of an agent that chose no floor control
+	// of its own (config.Agent.FloorControlDefault): empty, the flow controller, or
+	// store.FloorControlChorusASR, chorus-asr at the server's default point when AudioFloor
+	// is set, and nothing when it is not (FloorControlOf). An agent's own choice wins.
+	FloorControlDefault string
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
 	// SpeculativeReplies has every agent start its reply before the flow controller has
@@ -270,6 +279,15 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		sessions:      map[string]*Session{},
 		conversations: options.Conversations,
 	}
+	if options.Conversations != nil && options.Store != nil {
+		keepBranches(options.Conversations, options.Store)
+	}
+	// Once, here, rather than for each session it would have ruled: the router runs, and the
+	// flow controller rules every floor that chose nothing, as it would with no default.
+	if options.FloorControlDefault == store.FloorControlChorusASR && options.AudioFloor == nil {
+		options.Logger.Warn("agent.floor_control_default (ROUTER_FLOOR_CONTROL_DEFAULT) is stream/chorus-asr, and this router has " +
+			"no chorus-asr server (ROUTER_CHORUS_ASR_URL): the flow controller rules the floor of every agent that chose none")
+	}
 	// written is the recorder behind records, which titles are written through too.
 	var written *sessionRecorder
 	if options.Store != nil {
@@ -348,11 +366,15 @@ func (m *Manager) startRuntime(spec Spec) *routing.Slices {
 // newSession is the session spec opens, timed from now by runtime, which every session is
 // given so that none is open unbilled.
 func (m *Manager) newSession(spec Spec, conv *persistent.Conversation, skills harness.Skills, opening time.Time, runtime *routing.Slices) *Session {
+	// The files a fork carried are pinned and kept below, and are not the session's to hand
+	// on: a spec read off it (a fork, a reopen) reads its own files by their owner.
+	held := spec
+	held.Documents = nil
 	created := &Session{
 		logs:      m.logs,
 		persisted: conv,
 		id:        spec.ID,
-		spec:      spec,
+		spec:      held,
 		// Postgres keeps microseconds. The live session sorts by the same instant as its
 		// row, or a cursor taken from one would hand the other back on the next page.
 		created:       opening.Truncate(time.Microsecond),
@@ -372,6 +394,23 @@ func (m *Manager) newSession(spec Spec, conv *persistent.Conversation, skills ha
 		created.runtimeMode = store.ModalityText
 	}
 	return created
+}
+
+// channelTeam is the Chat team a session's agent channels are made in. An app that keeps each
+// team's agent configs to its own users keeps their channels in the config's team too, so
+// that Chat shows them to that team's users alone. A config of no team asks nothing.
+func (m *Manager) channelTeam(ctx context.Context, spec Spec) (string, error) {
+	if spec.ConfigTeam == "" || m.options.Configs == nil {
+		return "", nil
+	}
+	settings, err := m.options.Configs.AppSettings(ctx, spec.CustomerID)
+	if err != nil {
+		return "", stack.Wrap(fmt.Errorf("%w: %w", ErrAppSettingsUnreadable, err))
+	}
+	if !settings.AgentTeamsChecked() {
+		return "", nil
+	}
+	return spec.ConfigTeam, nil
 }
 
 // Create joins a call and returns the session running it.
@@ -482,6 +521,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		}
 		remembering = m.options.Memory
 	}
+	// Set over whatever a forked spec was copied with: the app's setting is read now.
+	if spec.ChannelTeam, err = m.channelTeam(ctx, spec); err != nil {
+		return nil, err
+	}
 
 	opened := false
 	// A new conversation is kept in Stream Chat by default, but a deployment without Chat
@@ -513,7 +556,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		}
 		// A channel OpenInApp refuses, such as a thread channel a request named, takes over
 		// no session that holds it.
-		if spec.ConversationID != "" && persistent.Openable(spec.ConversationID) {
+		if spec.ConversationID != "" && persistent.Openable(ctx, spec.ConversationID) {
 			m.awaitRetiring(ctx, spec.CustomerID, spec.ConversationID)
 			m.takeOver(spec.CustomerID, spec.ConversationID, spec.Thread)
 		}
@@ -524,7 +567,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		if cid == "" {
 			open, cid = service.CreateInApp, streamapp.AgentChannelType+":"+spec.ID
 		}
-		conv, previous, truncated, err = open(reading, spec.StreamApp, spec.CustomerID, spec.AgentID, cid, spec.Caller.UserID, spec.UserID, spec.Custom, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
+		// The session's branch switches are kept under its id, and one a router left unfinished
+		// is finished as the conversation opens.
+		conv, previous, truncated, err = open(persistent.WithSession(reading, spec.ID), spec.StreamApp, spec.CustomerID, spec.AgentID, cid, spec.Caller.UserID, spec.UserID, spec.Custom, spec.ChannelTeam, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
 		if errors.Is(err, streamapp.ErrReadOnly) {
 			return nil, ErrConversationReadOnly
 		}
@@ -673,8 +718,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	// after the caller's so a caller cannot quietly replace a transfer, and the agent
 	// drops whichever of them nothing on this call can carry out.
 	tools := append([]harness.Tool(nil), spec.Tools...)
+	sources := map[string]ToolSource{}
+	markTools(sources, tools, ToolFromSession)
 	var callers agent.ToolRunner = created.tools
 	tools, callers = m.hostedTools(spec, created.id, hostedProgress{created}, tools, callers)
+	markTools(sources, tools[len(spec.Tools):], ToolFromWorker)
 	tools, callers = moderationTools(spec, stream, tools, callers)
 	if line != nil || m.reading(spec) || m.searching(spec) || spec.endsCalls() {
 		builtin, err := harness.DefaultTools()
@@ -715,6 +763,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 			return nil, err
 		}
 		tools = append(tools, connectorTools...)
+		markTools(sources, connectorTools, ToolFromConnector)
 		connectors.next = runner
 		runner = connectors
 		connectors.askIn(conv, created.chose)
@@ -723,6 +772,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 		created.closers = append(created.closers, connectors.Close, connectors.closeLogins)
 	}
 	created.connectorsUnavailable = connectorsUnavailable
+	created.toolSources = sources
+	// Last, so every other tool's name is taken first and a child cannot shadow one.
+	tools, runner = m.childAgents(spec, created, tools, runner)
 	if spec.ProgressiveTools {
 		tools, runner = progressively(tools, connectorTools, runner)
 	}
@@ -778,6 +830,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 			}
 			edge = opened
 		}
+		// What controls the floor: the spec's own choice, else the router's default.
+		ruling := m.floorControl(spec)
 		return agent.New(agent.Options{
 			OnToolStarted: toolStarted,
 			OnHeard:       created.heardCaller,
@@ -796,6 +850,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 			Tags:          spec.Tags,
 			LLM:           m.options.LLM,
 			LLMTarget:     spec.LLMTarget,
+			LLMFallbacks:  spec.LLMFallbacks,
 			STT:           m.options.STT,
 			STTTarget:     spec.STTTarget,
 			TTS:           m.options.TTS,
@@ -809,8 +864,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 			Judge:              m.options.Classifier,
 			JudgeTarget:        m.options.FlowJudge,
 			AudioFloor:         m.options.AudioFloor,
-			AudioFloorMode:     m.floorMode(created.id, spec),
-			EndOfTurn:          EndOfTurnOf(spec.FloorControl),
+			AudioFloorMode:     m.floorMode(created.id, ruling),
+			EndOfTurn:          EndOfTurnOf(ruling),
 			Skills:             skills,
 			Telephony:          line,
 			Destinations:       spec.destinations(),
@@ -835,6 +890,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 			KnowledgeNamespace: spec.KnowledgeNamespace,
 			Search:             m.options.Search,
 			SearchTarget:       spec.SearchTarget,
+			Draws:              m.drawer(spec, conv),
+			ImageTarget:        spec.ImageTarget,
 			Guardrail:          screening,
 			SpeculativeReplies: m.options.SpeculativeReplies,
 			UnifiedReplies:     m.options.UnifiedReplies,
@@ -907,7 +964,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	if created.carded {
 		created.cardsFor = person
 	}
+	created.cards = cards
 	built.RestoreHistory(append(cards, previous...))
+	if !spec.Native() {
+		built.PinDocuments(m.documents(ctx, spec)...)
+	}
 	// A reopened chat is reviewed again when it ends, and its summary is of all of it.
 	if !spec.Reopened.IsZero() {
 		earlier := spokenOf(previous)
@@ -930,6 +991,27 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	// fan-out records is held until the row is queued below (startRecording).
 	if m.records != nil && !spec.Incognito {
 		created.records = m.records
+		if m.options.Store != nil {
+			created.tree = m.options.Store
+			created.restoring = func(ctx context.Context) (context.Context, error) { return m.restoring(ctx, spec) }
+		}
+		// A reopened session carries on from the newest response on its conversation, which a
+		// branch switch may have made an older one. Its last turns may still be on their way to
+		// the store.
+		if m.options.Store != nil && !spec.Reopened.IsZero() {
+			// Carrying on from the wrong one would answer the next question after a response the
+			// conversation does not show, so a store that cannot say refuses the reopen.
+			if err := m.records.Flush(ctx); err != nil {
+				fail()
+				return nil, stack.Wrap(err)
+			}
+			leaf, err := m.options.Store.ActiveLeaf(ctx, spec.CustomerID, spec.ID)
+			if err != nil {
+				fail()
+				return nil, err
+			}
+			created.leaf = leaf
+		}
 	}
 
 	run := created.track(built)
@@ -956,6 +1038,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 			fail()
 			return nil, stack.Wrap(fmt.Errorf("session: greet: %w", err))
 		}
+	}
+
+	if spec.Phone != nil && m.options.Phone != nil {
+		created.closers = append(created.closers, func() { m.hangUpRinging(created, spec) })
 	}
 
 	// The row is queued before the session is reachable, so the call cannot be recorded
@@ -989,12 +1075,16 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	if m.closed {
 		m.mu.Unlock()
 		turnedAway = true
+		// Left ringing as a failed create leaves it: a hangup now would join m.ended after
+		// Shutdown has stopped waiting on it.
+		created.handedOver.Store(true)
 		fail()
 		return nil, stack.Wrap(errors.New("session: the manager is shut down"))
 	}
 	if held, raced := m.sessions[created.id]; raced && !replaces(spec, held) {
 		m.mu.Unlock()
 		turnedAway = true
+		created.handedOver.Store(true)
 		fail()
 		return nil, stack.Wrap(ErrSessionExists)
 	}
@@ -1105,6 +1195,7 @@ func (m *Manager) supersede(spec Spec) {
 	for _, found := range left {
 		m.logger.Info("ending the session this agent left behind in the call",
 			"session", found.id, "call", spec.CallID, "user", spec.UserID)
+		found.handedOver.Store(true)
 		if err := found.Close(); err != nil {
 			m.logger.Warn("the session left behind did not end cleanly",
 				"session", found.id, "error", err)
@@ -1438,10 +1529,17 @@ func (m *Manager) find(ctx context.Context, owner Owner, text string, filter sto
 		filter.CallerKinds = owner.reachedKinds()
 	}
 
+	// A search is sorted by relevance and nothing else, as the store sorts it.
+	if text != "" {
+		filter.Order = store.SessionOrder{By: store.SessionSortRelevance}
+	} else if filter.Order.By == store.SessionSortRelevance {
+		filter.Order.By = store.SessionSortLastMessage
+	}
+
 	found := make([]Found, 0, filter.Limit)
 	seen := map[string]int{}
 	// Only a live session nothing records is listed from memory. A recorded one is listed
-	// by its row, so it sorts and pages on the row's updated_at like every other.
+	// by its row, so it sorts and pages on the row's keys like every other.
 	for _, live := range m.List(owner) {
 		// A live session has no title to search, so a search skips them unless the row
 		// behind them matches. Whatever the store turns up is merged in below.
@@ -1487,17 +1585,12 @@ func (m *Manager) find(ctx context.Context, owner Owner, text string, filter sto
 		}
 	}
 
-	// A search is already ranked by the store, so only a plain query is sorted here, on
-	// the same keys as the store so a cursor from either half holds for both.
-	if text == "" {
-		sort.Slice(found, func(i, j int) bool {
-			a, b := found[i].updatedAt(), found[j].updatedAt()
-			if !a.Equal(b) {
-				return a.After(b)
-			}
-			return found[i].ID() > found[j].ID()
-		})
-	}
+	// Both halves are sorted here on the same keys as the store, so a cursor from either
+	// half holds for both. The sort is stable and the store's rows arrive in this order
+	// already, so it only places the sessions nothing records among them.
+	sort.SliceStable(found, func(i, j int) bool {
+		return filter.Order.Compare(found[i].Position(), found[j].Position()) < 0
+	})
 	// One more than the page, which is how the caller tells there is another.
 	if limit := store.SessionLimit(filter.Limit) + 1; len(found) > limit {
 		found = found[:limit]
@@ -1506,78 +1599,77 @@ func (m *Manager) find(ctx context.Context, owner Owner, text string, filter sto
 }
 
 // Position is where the session sits in the list it was found in, which is what a cursor
-// holds.
+// holds: the row's keys, or for a session nothing records, when it began, which has no
+// later message, pin or review written anywhere to sort by.
 func (f Found) Position() store.SessionPosition {
-	position := store.SessionPosition{UpdatedAt: f.updatedAt(), ID: f.ID()}
 	if f.Stored != nil {
-		position.Rank = f.Stored.Rank
-	}
-	return position
-}
-
-// updatedAt is what the list sorts on: the row's updated_at, or when it began for a session
-// nothing records, which has no later change written anywhere to sort by.
-func (f Found) updatedAt() time.Time {
-	if f.Stored != nil {
-		return f.Stored.UpdatedAt
+		return f.Stored.Position()
 	}
 	if f.Live != nil {
-		return f.Live.CreatedAt()
+		return livePosition(f.Live)
 	}
-	return time.Time{}
+	return store.SessionPosition{}
+}
+
+// livePosition is where a session nothing records sits. Its time is cut to the microsecond
+// a row's is kept to, so a cursor on it compares the same way here and in the store.
+func livePosition(live *Session) store.SessionPosition {
+	return store.SessionPosition{LastMessageAt: live.CreatedAt().Truncate(time.Microsecond), ID: live.ID()}
 }
 
 // matchesLive applies the filter to a session that has not been written down, so a query
 // answers the same way with a store and without one.
+//
+// The filter's own fields are who the caller may see, and what the request spelled out is
+// its Where. They are ANDed here as the store ANDs them, so an $or in the request chooses
+// among the caller's sessions and never reaches another's.
 func matchesLive(live *Session, filter store.SessionFilter) bool {
 	spec := live.Spec()
+	var state string
+	switch live.State() {
+	case Live:
+		state = store.SessionRunning
+	case Ended:
+		state = store.SessionClosed
+	}
 	switch {
 	case filter.UserID != "" && spec.Caller.UserID != filter.UserID:
 		return false
-	case filter.ConfigID != "" && spec.ConfigID != filter.ConfigID:
-		return false
-	case filter.AgentName != "" && spec.AgentName != filter.AgentName:
-		return false
-	case filter.Project != "" && spec.Project != filter.Project:
-		return false
-	case filter.Modality != "" && live.Modality() != filter.Modality:
+	case len(filter.CallerKinds) > 0 && !slices.Contains(filter.CallerKinds, string(spec.CallerKind)):
 		return false
 	case filter.AgentID != "" && spec.AgentID != filter.AgentID:
 		return false
-	case filter.State == store.SessionRunning && live.State() != Live,
-		filter.State == store.SessionClosed && live.State() != Ended:
+	// Nobody has reviewed a session that is still running, so it has no score.
+	case !filter.Where.Matches(store.SessionValues{
+		Project: spec.Project, Agent: spec.AgentName, UserID: spec.Caller.UserID, ConfigID: spec.ConfigID,
+		State: state, CreatedAt: live.CreatedAt().Truncate(time.Microsecond), Custom: spec.Custom,
+	}):
 		return false
-	case !filter.After.IsZero() && live.CreatedAt().Before(filter.After):
-		return false
-	case !filter.Before.IsZero() && !live.CreatedAt().Before(filter.Before):
-		return false
-	case !contains(spec.Custom, filter.Custom):
-		return false
-	case filter.Cursor != nil && !before(live.CreatedAt(), live.ID(), *filter.Cursor):
+	case filter.Cursor != nil && filter.Order.Compare(livePosition(live), *filter.Cursor) <= 0:
 		return false
 	}
 	return true
 }
 
-// contains is the store's custom @> ?::jsonb, for a session that has no row to ask.
-func contains(custom map[string]any, wanted map[string]string) bool {
-	for key, value := range wanted {
-		held, ok := custom[key]
-		if !ok || fmt.Sprint(held) != value {
-			return false
-		}
+// ErrNotRecorded is a session nothing records, which has no row to keep a pin on.
+var ErrNotRecorded = errors.New("session: nothing records this session, so it cannot be pinned")
+
+// Pin pins a running session, or unpins it, and returns when it was pinned: nil once it is
+// not. The pin is kept on the session's row, which is written behind the conversation, so
+// the writer is waited for first. A session nothing records is ErrNotRecorded.
+func (m *Manager) Pin(ctx context.Context, live *Session, pinned bool) (*time.Time, error) {
+	if live.records == nil || m.options.Store == nil {
+		return nil, stack.Wrap(ErrNotRecorded)
 	}
-	return true
+	if err := live.records.Flush(ctx); err != nil {
+		return nil, stack.Wrap(err)
+	}
+	return m.options.Store.PinSession(ctx, live.spec.CustomerID, live.id, pinned, time.Now().UTC())
 }
 
-// before is the store's (updated_at, id) < (?, ?), for a session that has no row to ask.
-// Ids are lowercase hex, which Postgres collates the same way Go compares bytes.
-func before(updated time.Time, id string, cursor store.SessionPosition) bool {
-	if !updated.Equal(cursor.UpdatedAt) {
-		return updated.Before(cursor.UpdatedAt)
-	}
-	return id < cursor.ID
-}
+// Recorded reports whether the session has a row: false for an incognito one and for a
+// deployment that keeps nothing.
+func (s *Session) Recorded() bool { return s.records != nil }
 
 // Close ends a session its owner may have, reporting whether they had one by that id.
 func (m *Manager) Close(id string, owner Owner) (bool, error) {
@@ -1743,7 +1835,26 @@ func (m *Manager) leaveVoicemail(found *Session, spec Spec, message string) {
 	m.hangUp(found, EndVoicemail)
 }
 
-// hangUpTimeout bounds ending a call at Stream once the voicemail is left.
+// hangUpRinging hangs up the call created placed when it ends before anybody answered,
+// which would otherwise ring on with no agent to answer it. In the background, so a slow
+// vendor holds up neither the rest of the close nor a shutdown closing the next session.
+func (m *Manager) hangUpRinging(created *Session, spec Spec) {
+	if created.CallerJoined() || created.handedOver.Load() {
+		return
+	}
+	m.ended.Add(1)
+	go func() {
+		defer m.ended.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), hangUpTimeout)
+		defer cancel()
+		if err := m.options.Phone.HangUpUnanswered(ctx, spec.CustomerID, spec.CallID); err != nil {
+			m.logger.Warn("could not hang up the call its session left ringing", "session", created.id, "call", spec.CallID, "customer", spec.CustomerID, "error", err)
+		}
+	}()
+}
+
+// hangUpTimeout bounds ending a call: at Stream once the voicemail is left, or at the vendor
+// while it still rings.
 const hangUpTimeout = 5 * time.Second
 
 // releaseTimeout bounds taking back this node's claim on a session. Short, because a
@@ -1842,9 +1953,17 @@ func (m *Manager) mayRemember(ctx context.Context, customerID, id string) bool {
 
 // TruncateMemories deletes everything remembered about one of the customer's users, from
 // every session and every agent.
+//
+// The copies of the user's hidden branches go with them: they are what the user said as much
+// as what was learned from it.
 func (m *Manager) TruncateMemories(ctx context.Context, customerID, userID string) error {
 	if m.options.Memory == nil {
 		return stack.Wrap(ErrNoMemory)
+	}
+	if m.options.Store != nil {
+		if _, err := m.options.Store.DeleteUserBranchMessages(ctx, customerID, userID); err != nil {
+			return err
+		}
 	}
 	return memoryFailed(ctx, m.options.Memory.For(forgetting(ctx, customerID)).Truncate(ctx, customerID, userID))
 }
@@ -2204,19 +2323,27 @@ func (m *Manager) keepable(ctx context.Context, spec Spec, stream streamapp.Boun
 	if !stream.Identity.Registered {
 		return nil
 	}
-	readiness, err := m.options.Stream.Readiness(ctx, stream)
+	// A conversation the Router holds on a channel of another type, one an agent config answers
+	// in, trusts that type's grants as an agent channel's are trusted.
+	channelType, _ := spec.ConversationChannel()
+	named := cmp.Or(channelType, streamapp.AgentChannelType)
+	readiness, err := m.options.Stream.ReadinessOf(ctx, stream, named)
 	if err != nil {
 		// Stream being out of reach is found out by the conversation itself, which says so.
 		m.logger.Warn("could not check the Stream app a conversation is kept in", "customer_id", spec.CustomerID, "error", err)
 		return nil
 	}
+	var refused error
 	switch readiness.ChannelType {
 	case streamapp.TypeMissing:
-		return ErrNoAgentChannelType
+		refused = ErrNoAgentChannelType
 	case streamapp.TypeUnsafe:
-		return ErrUnsafeAgentChannelType
+		refused = ErrUnsafeAgentChannelType
 	}
-	return nil
+	if refused != nil && named != streamapp.AgentChannelType {
+		return fmt.Errorf("session: the %s channel type, checked as the agent channel type is: %w", named, refused)
+	}
+	return refused
 }
 
 // ErrNoAgentChannelType is a conversation to keep in a Stream app of the customer's own that
@@ -2316,6 +2443,10 @@ func (m *Manager) line(spec Spec) (agent.Telephony, error) {
 // ErrSessionExists is a session asked for by an id some session already has.
 var ErrSessionExists = errors.New("session: a session with that id already exists")
 
+// ErrAppSettingsUnreadable is an app's settings that could not be read. It is the router's
+// failure, not the caller's request.
+var ErrAppSettingsUnreadable = errors.New("session: the app's settings could not be read")
+
 // ErrNoMemory is memory asked of a deployment with no memory provider.
 var ErrNoMemory = errors.New("session: memory is unavailable; configure the backend memory provider")
 
@@ -2349,6 +2480,13 @@ func newID() string {
 	return hex.EncodeToString(raw)
 }
 
+// keepBranches has service keep its conversations' branch switches in tree, and finish the
+// ones a router left unfinished with the sessions' responses there.
+func keepBranches(service *persistent.Service, tree *store.Store) {
+	service.SetBranches(tree)
+	service.SetSwitchHooks(switchHooks(tree))
+}
+
 func (m *Manager) Conversations() (*persistent.Service, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -2361,10 +2499,28 @@ func (m *Manager) Conversations() (*persistent.Service, error) {
 		service := persistent.NewForChats(persistent.StreamApps(m.options.Stream))
 		if m.options.Store != nil {
 			service.SetPins(m.options.Store.ConversationPin)
+			keepBranches(service, m.options.Store)
 		}
 		m.conversations = service
 	}
 	return m.conversations, nil
+}
+
+// drawer queues the pictures a session is asked for into its conversation, as the agent's
+// messages. Nil, which offers no generate_image, without a deployment that draws, a
+// conversation kept in a channel to post into, or an image target.
+func (m *Manager) drawer(spec Spec, conv *persistent.Conversation) agent.Drawer {
+	if m.options.Drawings == nil || conv == nil || spec.ImageTarget == "" {
+		return nil
+	}
+	return func(ctx context.Context, request agent.DrawRequest) (bool, error) {
+		return m.options.Drawings.Queue(ctx, imagejobs.Request{
+			CustomerID: spec.CustomerID, StreamApp: conv.StreamApp(), CID: conv.CID(), AgentUser: conv.Agent(),
+			SessionID: request.SessionID, TurnID: request.TurnID, ToolCallID: request.ToolCallID, AgentID: request.AgentID, CallID: request.CallID, Region: request.Region,
+			Target: request.Target, Tags: request.Tags, Attribution: request.Attribution,
+			Prompt: request.Prompt, AspectRatio: request.AspectRatio,
+		})
+	}
 }
 
 // publisher is where files the subagent's code hands back are shown: the conversation's

@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/danielgtaylor/huma/v2"
@@ -53,7 +55,7 @@ func (s *Server) search(ctx context.Context, request *searchRequest) (*searchRes
 		Options:       held,
 	})
 	if err != nil {
-		return nil, refusedRequest(err)
+		return nil, searchFailed(ctx, err)
 	}
 	defer session.Close()
 
@@ -69,7 +71,7 @@ func (s *Server) search(ctx context.Context, request *searchRequest) (*searchRes
 		OutputSchema:   held.OutputSchema,
 	})
 	if err != nil {
-		return nil, refusedRequest(err)
+		return nil, searchFailed(ctx, err)
 	}
 
 	results := make([]SearchResult, 0, len(found.Documents))
@@ -87,6 +89,28 @@ func (s *Server) search(ctx context.Context, request *searchRequest) (*searchRes
 		Answer:  optional(found.Answer),
 		Results: results}}, nil
 }
+
+// searchFailed is the answer to a search that did not start or did not answer. A request the router
+// refused and a model the customer's policies do not allow are the caller's to change, and are
+// answered as refusedRequest does. Any other failure is a provider's, so it is returned as is: a
+// refusal about money is answered as such by answerFailure, and the rest is a 500 that says only
+// "something went wrong", which the API 5xx monitor counts and which does not repeat the provider's
+// response body to the caller. A search the caller hung up on is no provider's failure either, and is
+// answered with errSearchAbandoned: the caller's own context ending is what says so, not the error,
+// which a vendor's own timeout makes a context.DeadlineExceeded too.
+func searchFailed(ctx context.Context, err error) error {
+	if errors.Is(err, routing.ErrRequest) || errors.Is(err, routing.ErrModelNotAllowed) {
+		return refusedRequest(err)
+	}
+	if ctx.Err() != nil {
+		return errSearchAbandoned
+	}
+	return err
+}
+
+// errSearchAbandoned is a search whose caller went away before it was answered. Nobody reads the
+// answer; it is a 400 so that the API 5xx monitor does not count a caller's hang-up as an outage.
+var errSearchAbandoned = invalidRequest("the request ended before the search was answered")
 
 // registerSearch declares the operations served in search.go.
 func (s *Server) registerSearch(api huma.API) {

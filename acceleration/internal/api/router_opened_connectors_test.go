@@ -274,7 +274,7 @@ func (s *RouterOpenedConnectorsSuite) writer() string { return "1347" + digits(s
 // sessionsOf are the conversations of agent held as userID, empty for one held as nobody.
 func (s *RouterOpenedConnectorsSuite) sessionsOf(agent, userID string) []store.AgentSession {
 	found, err := s.store.QuerySessions(context.Background(), s.customerID(),
-		store.SessionFilter{AgentName: agent, UserID: userID})
+		store.SessionFilter{Where: new(store.SessionIs(store.SessionFieldAgent, agent)), UserID: userID})
 	s.Require().NoError(err)
 	return found
 }

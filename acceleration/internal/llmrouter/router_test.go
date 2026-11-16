@@ -203,9 +203,9 @@ func (s *LLMRouterSuite) TestLLMThinkingResolvesToAQualityModel() {
 	}
 }
 
-func (s *LLMRouterSuite) TestLLMModeratorPrefersGemmaAndFallsBackToSol() {
-	// The agent moderator reviews on our own Gemma deployment, and GPT-6.1 Sol catches it
-	// being down or unconfigured.
+func (s *LLMRouterSuite) TestLLMModeratorPrefersLunaThenGemmaThenSol() {
+	// The agent moderator reviews on GPT-5.6 Luna for now. Our own Gemma deployment stands
+	// behind it, and GPT-6.1 Sol catches both being down or Gemma being unconfigured.
 	router := s.newRouter()
 
 	candidates, err := router.Resolve(s.ctx, "llm-moderator", nil)
@@ -215,7 +215,7 @@ func (s *LLMRouterSuite) TestLLMModeratorPrefersGemmaAndFallsBackToSol() {
 	for _, candidate := range candidates {
 		names = append(names, candidate.Config.Name())
 	}
-	s.Equal([]string{"gemma/gemma-4-26B-A4B-it", "openai/gpt-6.1-sol"}, names)
+	s.Equal([]string{"openai/gpt-5.6-luna", "gemma/gemma-4-26B-A4B-it", "openai/gpt-6.1-sol"}, names)
 }
 
 func (s *LLMRouterSuite) TestAnUnknownTargetIsRejected() {

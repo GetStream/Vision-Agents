@@ -36,7 +36,7 @@ func served(t *testing.T, failure func() error) (http.Handler, *bytes.Buffer) {
 	api := humachi.New(router, huma.DefaultConfig("test", "0"))
 	huma.Register(api, huma.Operation{OperationID: "syncAgent", Method: http.MethodPost, Path: "/v1/agents/sync"},
 		func(context.Context, *syncInput) (*struct{}, error) { return nil, failure() })
-	return withRequestID(server.withRequestLog(router)), logged
+	return withRequestID(server.withRequestLog(router, router)), logged
 }
 
 func postSync(handler http.Handler, body string) *httptest.ResponseRecorder {

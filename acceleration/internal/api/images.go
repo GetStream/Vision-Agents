@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
@@ -16,11 +15,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
-
-// imageDeadline bounds one generation. A queued provider can hold a job for minutes, and
-// a caller waiting on one response is owed an answer rather than a connection held open
-// until something upstream gives up.
-const imageDeadline = 240 * time.Second
 
 // errNoImages is what the image path says on a deployment that does not generate images.
 var errNoImages = notConfigured("this deployment does not generate images")
@@ -61,8 +55,6 @@ func (s *Server) generateImage(ctx context.Context, request *generateImageReques
 	}
 
 	sent := value(request.Body.Options)
-	ctx, cancel := context.WithTimeout(ctx, imageDeadline)
-	defer cancel()
 	generation, err := s.streams.Image.Generate(ctx, imagerouter.Request{
 		CustomerID: customerID,
 		Tags:       tags,

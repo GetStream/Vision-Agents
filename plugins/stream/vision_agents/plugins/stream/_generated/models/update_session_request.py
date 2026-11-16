@@ -20,9 +20,9 @@ T = TypeVar("T", bound="UpdateSessionRequest")
 
 @_attrs_define
 class UpdateSessionRequest:
-    """What to change about one session. A field left out is left as it is. Title, description and custom can change on a
-    session that ended, and are all an end user's device may change; everything else needs the session running and a
-    server-side caller.
+    """What to change about one session. A field left out is left as it is. Title, description, custom and pinned can
+    change on a session that ended, and are all an end user's device may change; everything else needs the session
+    running and a server-side caller.
 
         Attributes:
             custom (UpdateSessionRequestCustom | Unset): Replaces the caller's labels whole. An empty object clears them.
@@ -41,6 +41,9 @@ class UpdateSessionRequest:
                 yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A
                 native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI. Empty returns to the
                 provider's default.
+            pinned (bool | Unset): true pins the session and false unpins it. Pinning one that is already pinned keeps the
+                time it was first pinned. A pin changes nothing else about the session, its place in a last_message_at sort
+                included.
     """
 
     custom: UpdateSessionRequestCustom | Unset = UNSET
@@ -55,6 +58,7 @@ class UpdateSessionRequest:
     tts: str | Unset = UNSET
     verbosity: UpdateSessionRequestVerbosity | Unset = UNSET
     voice: str | Unset = UNSET
+    pinned: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -88,6 +92,8 @@ class UpdateSessionRequest:
 
         voice = self.voice
 
+        pinned = self.pinned
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -115,6 +121,8 @@ class UpdateSessionRequest:
             field_dict["verbosity"] = verbosity
         if voice is not UNSET:
             field_dict["voice"] = voice
+        if pinned is not UNSET:
+            field_dict["pinned"] = pinned
 
         return field_dict
 
@@ -162,6 +170,8 @@ class UpdateSessionRequest:
 
         voice = d.pop("voice", UNSET)
 
+        pinned = d.pop("pinned", UNSET)
+
         update_session_request = cls(
             custom=custom,
             description=description,
@@ -175,6 +185,7 @@ class UpdateSessionRequest:
             tts=tts,
             verbosity=verbosity,
             voice=voice,
+            pinned=pinned,
         )
 
         update_session_request.additional_properties = d

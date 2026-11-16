@@ -35,6 +35,13 @@ func Source(shard, host string) string {
 	return "router/" + cmp.Or(shard, Unsharded) + "/" + cmp.Or(host, "unknown")
 }
 
+// JobSource names a job process, job/<shard>/<host>, in the events it ships. A job records rows
+// dated to the period it bills, so the usage service leaves its events out of the event lag it
+// measures for routers.
+func JobSource(shard, host string) string {
+	return "job/" + cmp.Or(shard, Unsharded) + "/" + cmp.Or(host, "unknown")
+}
+
 // Acked is a row the usage service has, accepted now or before. A row may be acked more than
 // once: the shipper and the sweeper can both send it, and a row whose shipment was not marked
 // in the shard is sent again.

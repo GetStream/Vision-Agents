@@ -130,7 +130,7 @@ final class Session
     }
 
     /**
-     * Changes this session only: its title, description, custom labels, models or voice. The config it started from is untouched, and a target that does not route is
+     * Changes this session only: its title, description, custom labels, pin, models or voice. The config it started from is untouched, and a target that does not route is
      * refused before anything changes. See `Sessions::update`.
      *
      * @param array<string, mixed>|null $custom
@@ -148,8 +148,25 @@ final class Session
         ?float $temperature = null,
         ?int $maxOutputTokens = null,
         ?string $verbosity = null,
+        ?bool $pinned = null,
     ): SessionRow {
-        return $this->sessions()->update($this->id(), $title, $description, $custom, $llm, $stt, $tts, $sts, $voice, $thinking, $temperature, $maxOutputTokens, $verbosity);
+        return $this->sessions()->update($this->id(), $title, $description, $custom, $llm, $stt, $tts, $sts, $voice, $thinking, $temperature, $maxOutputTokens, $verbosity, $pinned);
+    }
+
+    /**
+     * Pins this conversation, and returns it as it now is, `pinnedAt` set. See `Sessions::pin`.
+     */
+    public function pin(): SessionRow
+    {
+        return $this->sessions()->pin($this->id());
+    }
+
+    /**
+     * Unpins this conversation, and returns it as it now is. See `Sessions::unpin`.
+     */
+    public function unpin(): SessionRow
+    {
+        return $this->sessions()->unpin($this->id());
     }
 
     /**

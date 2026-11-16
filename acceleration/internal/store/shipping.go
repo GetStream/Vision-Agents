@@ -196,16 +196,25 @@ RETURNING r.id`, append(append([]any{last.Int64, since}, args...), reshipBatch).
 
 // ShipLock is the session advisory lock that makes one router of this shard the one that
 // sweeps its unshipped rows, held on a connection kept for it: a router that dies ends its
-// session, and the lock with it. One goroutine uses it.
+// session, and the lock with it. One goroutine uses it. CostAnomalyLock is the same lock under
+// another key, for other work one router at a time does.
 type ShipLock struct {
 	db   *bun.DB
+	key  string
 	conn *sql.Conn
 	held bool
 }
 
 // ShipLock is this shard's ship lock, not taken yet.
 func (s *Store) ShipLock() *ShipLock {
-	return &ShipLock{db: s.shard}
+	return &ShipLock{db: s.shard, key: "router.usage.ship"}
+}
+
+// CostAnomalyLock makes one router of the whole deployment the one that checks every
+// organization's spend for a jump. It is in the shared database, since the check reads every
+// shard: a lock per shard would have a router of each shard post the same notice.
+func (s *Store) CostAnomalyLock() *ShipLock {
+	return &ShipLock{db: s.db, key: "router.cost_anomaly"}
 }
 
 // shipLockKeepalives has Postgres probe the holder's connection, so a holder whose network
@@ -233,7 +242,7 @@ func (l *ShipLock) Hold(ctx context.Context) (bool, error) {
 		}
 		return true, nil
 	}
-	if err := l.conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock(hashtextextended('router.usage.ship', 0))").Scan(&l.held); err != nil {
+	if err := l.conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock(hashtextextended($1, 0))", l.key).Scan(&l.held); err != nil {
 		// The lock may have been granted with the answer lost; ending the session releases it.
 		l.drop()
 		return false, stack.Wrap(fmt.Errorf("store: ship lock: %w", err))
@@ -258,7 +267,7 @@ func (l *ShipLock) Release() {
 	if l.held {
 		ctx, cancel := context.WithTimeout(context.Background(), shipLockTimeout)
 		defer cancel()
-		if _, err := l.conn.ExecContext(ctx, "SELECT pg_advisory_unlock(hashtextextended('router.usage.ship', 0))"); err != nil {
+		if _, err := l.conn.ExecContext(ctx, "SELECT pg_advisory_unlock(hashtextextended($1, 0))", l.key); err != nil {
 			l.drop()
 			return
 		}

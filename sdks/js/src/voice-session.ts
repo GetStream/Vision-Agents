@@ -178,6 +178,9 @@ export class VoiceSession {
    * again.
    */
   join(options: { camera?: boolean } = {}): Promise<void> {
+    if (!this.session.live) {
+      return Promise.reject(new ConfigurationError("this session has ended; start or attach a voice session again"));
+    }
     this.joining ??= this.connect(options.camera ?? false).catch((cause: unknown) => {
       this.joining = undefined;
       this.failed(cause);

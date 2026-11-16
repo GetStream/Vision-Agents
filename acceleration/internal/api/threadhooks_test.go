@@ -26,7 +26,7 @@ func (s *SlackChannelSuite) TestAMessageTheThreadsSessionRefusesLetsGoOfTheTurnA
 	handOver()
 
 	s.Require().Eventually(func() bool {
-		return strings.Contains(s.logged.String(), "could not answer a message in a thread channel")
+		return strings.Contains(s.logged.String(), "could not answer a message in a channel the Router answers in")
 	}, settleFor, 10*time.Millisecond, "the turn kept trying a follow-up its session refuses")
 	s.Require().Eventually(func() bool {
 		thread, err := s.store.ChannelThread(context.Background(), channel)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 )
 
 // moneyError is the answer for a refusal about money, and false for any other error. A
@@ -26,6 +27,7 @@ func moneyError(err error) (APIError, bool) {
 			return APIError{Type: ErrorTypePermission, Code: codeAccountSuspended, Message: message}
 		}},
 		{policy.ErrNoCredits, func(message string) APIError { return paymentRequired(codeInsufficientCredits, message) }},
+		{policy.ErrTopUpRequired, func(message string) APIError { return paymentRequired(codeTopUpRequired, message) }},
 		{policy.ErrSystemLimit, func(message string) APIError { return paymentRequired(codeSystemLimitReached, message) }},
 		{policy.ErrBudgetSpent, func(message string) APIError { return paymentRequired(codeSpendLimitReached, message) }},
 		{policy.ErrUserLimit, func(message string) APIError {
@@ -73,8 +75,13 @@ type moneyAnswer struct {
 func (m moneyAnswer) GetHeaders() http.Header { return m.headers }
 
 // refusedRequest is a request routing refused, as the caller is told it: a refusal about money
-// as moneyError says, and anything else as the caller's to change.
+// as moneyError says, and anything else as the caller's to change. An app's settings that could
+// not be read are ours to answer for: the error goes on as is, so Huma logs it with its stack
+// and tells the caller only that something went wrong.
 func refusedRequest(err error) error {
+	if errors.Is(err, session.ErrAppSettingsUnreadable) {
+		return err
+	}
 	if answer, ok := moneyError(err); ok {
 		if headers := moneyHeaders(err); headers != nil {
 			return moneyAnswer{APIError: answer, headers: headers}

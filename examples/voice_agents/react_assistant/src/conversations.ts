@@ -1,4 +1,4 @@
-import type { Schemas } from "@stream-io/calypso";
+import type { Schemas } from "@stream-io/stream-agents";
 
 import { sessions } from "./assistant";
 import { messageOf } from "./errors";

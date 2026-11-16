@@ -199,7 +199,8 @@ func redactUnlessWord(rule *regexp.Regexp, text string) string {
 
 // RedactLogAttr is a slog ReplaceAttr that puts every logged string, the message included, and
 // every error or other value through RedactLogText, since a provider's error can echo the key
-// it was sent. A value is read as %+v, which is how slog's text handler prints an error (with
+// it was sent. Phone numbers and caller ids in them are masked with logMasks (logmask.go) too.
+// A value is read as %+v, which is how slog's text handler prints an error (with
 // its stack, see internal/stack) or a map of details, but for a []byte, which it prints as a
 // string. An attribute with nothing to redact is returned as is, so its line does not change.
 func RedactLogAttr(_ []string, attr slog.Attr) slog.Attr {
@@ -242,28 +243,43 @@ func RedactJSONLogAttr(_ []string, attr slog.Attr) slog.Attr {
 	return redactedAttr(attr, string(text))
 }
 
-// redactedAttr is attr with its value replaced by text redacted, if that took anything out.
+// redactedAttr is attr with its value replaced by text redacted and masked (logMasks), if that
+// changed anything.
 func redactedAttr(attr slog.Attr, text string) slog.Attr {
-	if redacted := RedactLogText(text); redacted != text {
+	if redacted := maskLogText(attr.Key, RedactLogText(text)); redacted != text {
 		return slog.String(attr.Key, redacted)
 	}
 	return attr
 }
 
+// redactOperatorText is text with credentials taken out and phone numbers masked, for what
+// operators read. RedactLogText alone stays for text customers see.
+func redactOperatorText(key, text string) string {
+	return maskLogText(key, RedactLogText(text))
+}
+
 // RedactSentryEvent is a sentry BeforeSend that puts an event's message, its exceptions'
-// values, its breadcrumbs' messages, its tags and every string in its contexts through
-// RedactLogText: they are an error's text, which can echo the key a provider was sent, as a
-// usage alert's context does (internal/alerts).
+// values, its breadcrumbs' messages, its tags, every string in its contexts, its request's URL
+// and query string and its transaction's name through RedactLogText: they are an error's text,
+// which can echo the key a provider was sent, as a usage alert's context does
+// (internal/alerts). Phone numbers and caller ids in them are masked with logMasks
+// (logmask.go) too.
 func RedactSentryEvent(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
-	event.Message = RedactLogText(event.Message)
+	event.Message = redactOperatorText("", event.Message)
 	for i := range event.Exception {
-		event.Exception[i].Value = RedactLogText(event.Exception[i].Value)
+		event.Exception[i].Value = redactOperatorText("", event.Exception[i].Value)
 	}
 	for _, breadcrumb := range event.Breadcrumbs {
-		breadcrumb.Message = RedactLogText(breadcrumb.Message)
+		breadcrumb.Message = redactOperatorText("", breadcrumb.Message)
 	}
 	for key, value := range event.Tags {
-		event.Tags[key] = RedactLogText(value)
+		event.Tags[key] = redactOperatorText(key, value)
+	}
+	event.Transaction = redactOperatorText("", event.Transaction)
+	if event.Request != nil {
+		event.Request.URL = redactOperatorText("", event.Request.URL)
+		// queryCredential needs the separator that precedes a parameter.
+		event.Request.QueryString = strings.TrimPrefix(redactOperatorText("", "?"+event.Request.QueryString), "?")
 	}
 	walk := &contextWalk{budget: maxContextNodes}
 	for name, context := range event.Contexts {
@@ -295,7 +311,7 @@ type contextWalk struct {
 func (w *contextWalk) context(context map[string]any) map[string]any {
 	out := make(map[string]any, len(context))
 	for key, value := range context {
-		out[key] = w.value(value)
+		out[key] = w.value(key, value)
 	}
 	return out
 }
@@ -303,10 +319,20 @@ func (w *contextWalk) context(context map[string]any) map[string]any {
 // value is value with every string in it redacted, in maps and slices at any depth. A value of
 // another type is read as the JSON Sentry sends of it and, when that JSON holds a credential,
 // replaced by it decoded and redacted. Decoded, it holds only maps, slices, strings and
-// numbers, booleans and nulls, whose JSON no rule matches, so none is read as JSON again.
-func (w *contextWalk) value(value any) any {
+// numbers, booleans and nulls. A number is a leaf like a string: under a phone key it is
+// masked as text, and it is never read as JSON again, as its JSON would match the same rule
+// each time. A typed value is decoded only if a rule would change its JSON as a whole under the
+// parent key, so a national number under a caller key inside a struct stays. None is sent today.
+func (w *contextWalk) value(key string, value any) any {
 	if text, ok := value.(string); ok {
-		return RedactLogText(text)
+		return redactOperatorText(key, text)
+	}
+	if number, ok := value.(json.Number); ok {
+		// A string, as a json.Number holding the mask fails json.Marshal.
+		if masked := redactOperatorText(key, string(number)); masked != string(number) {
+			return masked
+		}
+		return value
 	}
 	if w.budget <= 0 {
 		return value
@@ -321,12 +347,12 @@ func (w *contextWalk) value(value any) any {
 		}
 		out := make([]any, len(typed))
 		for i, inner := range typed {
-			out[i] = w.value(inner)
+			out[i] = w.value(key, inner)
 		}
 		return out
 	}
 	text, err := json.Marshal(value)
-	if err != nil || RedactLogText(string(text)) == string(text) {
+	if err != nil || redactOperatorText(key, string(text)) == string(text) {
 		return value
 	}
 	decoder := json.NewDecoder(bytes.NewReader(text))
@@ -335,7 +361,7 @@ func (w *contextWalk) value(value any) any {
 	if err := decoder.Decode(&decoded); err != nil {
 		return value
 	}
-	return w.value(decoded)
+	return w.value(key, decoded)
 }
 
 func safeLogDetails(details map[string]any) map[string]any {

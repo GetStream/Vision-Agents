@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -160,15 +161,62 @@ func routeLabel(routes *chi.Mux, r *http.Request) string {
 	if pattern := chi.RouteContext(r.Context()).RoutePattern(); pattern != "" {
 		return pattern
 	}
+	if pattern := findRoute(routes, r, r.Method); pattern != "" {
+		return pattern
+	}
+	return unmatchedRoute
+}
+
+// findRoute is the pattern routes has for method and the path r asks for, or "".
+func findRoute(routes *chi.Mux, r *http.Request, method string) string {
 	// The path the mux itself routes by (chi's Mux.routeHTTP).
 	path := r.URL.RawPath
 	if path == "" {
 		path = r.URL.Path
 	}
-	if pattern := routes.Find(chi.NewRouteContext(), r.Method, path); pattern != "" {
-		return pattern
+	return routes.Find(chi.NewRouteContext(), method, path)
+}
+
+// tokenSegment is what a route's secret path segment is called in a pattern, and what a log or
+// a trace shows in its place.
+const tokenSegment = "{token}"
+
+// loggedPath is the path of r with every segment a {token} in its route's pattern replaced by
+// "{token}", so a log line or a trace never holds a secret the URL carries. A method the route
+// does not serve still hides it, as the caller sent the token all the same. A path no pattern
+// matches, or one a wildcard matches, is as sent.
+func loggedPath(routes *chi.Mux, r *http.Request) string {
+	pattern := chi.RouteContext(r.Context()).RoutePattern()
+	if pattern == "" {
+		for _, method := range []string{r.Method, http.MethodGet, http.MethodPost, http.MethodPut,
+			http.MethodPatch, http.MethodDelete, http.MethodHead} {
+			found := findRoute(routes, r, method)
+			if pattern == "" {
+				pattern = found
+			}
+			if strings.Contains(found, tokenSegment) {
+				pattern = found
+				break
+			}
+		}
 	}
-	return unmatchedRoute
+	if !strings.Contains(pattern, tokenSegment) {
+		return r.URL.Path
+	}
+	raw := r.URL.RawPath
+	if raw == "" {
+		raw = r.URL.Path
+	}
+	segments, patterned := strings.Split(raw, "/"), strings.Split(pattern, "/")
+	if len(segments) != len(patterned) {
+		return r.URL.Path
+	}
+	for i, segment := range patterned {
+		if segment == tokenSegment {
+			segments[i] = tokenSegment
+		}
+	}
+	return strings.Join(segments, "/")
 }
 
 // methodLabel is method if it is one of RFC 9110 section 9.1's or PATCH, else "other": a caller

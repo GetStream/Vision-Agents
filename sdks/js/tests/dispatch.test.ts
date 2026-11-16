@@ -7,6 +7,7 @@ import {
   ConfigurationError,
   Dispatch,
   HostingRefusedError,
+  SocketClosedError,
   type InboundCall,
   type InboundMessage,
 } from "../src/index.js";
@@ -104,6 +105,102 @@ describe("Dispatch", () => {
 
     dispatch.stop();
     await running;
+  });
+
+  describe("a connection that drops", () => {
+    it("is dialled again, and the work arriving on the new one is answered", async () => {
+      const answered: InboundCall[] = [];
+      const dispatch = new Dispatch({ client: api }).onCall((call) => {
+        answered.push(call);
+      });
+
+      const running = dispatch.run();
+      const first = await router.socket();
+      first.send({ type: "ready", worker_id: "worker_1" });
+      await settle();
+      first.socket.terminate();
+
+      const second = await router.socket();
+      assert.equal(second.path, "/v1/dispatch");
+      second.send({ type: "call", work_id: "work_2", call_id: "call_2", call_type: "agent" });
+
+      assert.deepEqual(await second.next(), { type: "done", work_id: "work_2" });
+      assert.equal(answered[0]?.callId, "call_2");
+      dispatch.stop();
+      await running;
+    });
+
+    it("tells the router again what it hosts, on the new connection", async () => {
+      const agent = api.agent("stream-support");
+      agent.tools.register({ name: "lookup", description: "Look up", run: () => "" });
+      const dispatch = new Dispatch({ client: api }).host(agent);
+
+      const running = dispatch.run();
+      const first = await router.socket();
+      first.socket.terminate();
+      const second = await router.socket();
+      second.send({ type: "ready", worker_id: "worker_2" });
+
+      const offered = await second.next();
+      assert.equal(offered["type"], "host_tools");
+      assert.equal(offered["agent_id"], "stream-support");
+      dispatch.stop();
+      await running;
+    });
+
+    it("ends run with the error that dropped it once the reconnects run out", async () => {
+      const dispatch = new Dispatch({ client: api, maxReconnects: 1 }).onCall(() => undefined);
+
+      const running = dispatch.run();
+      const first = await router.socket();
+      router.refuseSockets(() => true);
+      first.socket.close(1011, "router restarting");
+
+      await assert.rejects(running, (raised: unknown) => {
+        assert.ok(raised instanceof SocketClosedError);
+        assert.match(raised.message, /refused the socket/, "the reconnect's own failure, the last one");
+        return true;
+      });
+    });
+
+    it("ends run with the drop itself when it may not reconnect", async () => {
+      const dispatch = new Dispatch({ client: api, maxReconnects: 0 }).onCall(() => undefined);
+
+      const running = dispatch.run();
+      const connection = await router.socket();
+      connection.socket.close(1011, "router restarting");
+
+      await assert.rejects(running, (raised: unknown) => {
+        assert.ok(raised instanceof SocketClosedError);
+        assert.match(raised.message, /1011: router restarting/);
+        return true;
+      });
+    });
+
+    it("stops waiting to dial again when it is stopped", async () => {
+      const dispatch = new Dispatch({ client: api }).onCall(() => undefined);
+
+      const running = dispatch.run();
+      const connection = await router.socket();
+      router.refuseSockets(() => true);
+      connection.socket.terminate();
+      await settle();
+      const started = Date.now();
+      dispatch.stop();
+      await running;
+
+      assert.ok(Date.now() - started < 200, "run waited out a reconnect after it was stopped");
+    });
+
+    it("ends run, rather than dialling again, when the router closed it on purpose", async () => {
+      const dispatch = new Dispatch({ client: api }).onCall(() => undefined);
+
+      const running = dispatch.run();
+      const connection = await router.socket();
+      connection.socket.close(1000);
+
+      await running;
+    });
   });
 
   it("reads a call that says as little as the router can send", async () => {
@@ -515,17 +612,11 @@ describe("Dispatch", () => {
 
   it("stops a hosted call the router cancels, and answers nothing for it", async () => {
     const agent = api.agent("support");
-    let stopped = false;
+    let release = (): void => undefined;
     agent.tools.register({
       name: "investigate",
       description: "Investigate for a long time",
-      run: (_input, signal) =>
-        new Promise((resolve) => {
-          signal.addEventListener("abort", () => {
-            stopped = true;
-            resolve("abandoned");
-          });
-        }),
+      run: () => new Promise((resolve) => (release = () => resolve("found it"))),
     });
     agent.tools.register({ name: "ping", description: "Answer at once", run: () => "pong" });
     const dispatch = new Dispatch({ client: api }).host(agent);
@@ -535,11 +626,13 @@ describe("Dispatch", () => {
     connection.send({ type: "tool_call", id: "call_1", session_id: "s1", name: "investigate" });
     connection.send({ type: "tool_cancel", id: "call_1", session_id: "s2" });
     await new Promise((resolve) => setTimeout(resolve, 20));
-    assert.equal(stopped, false, "another session's call of the same id");
+    release();
+    assert.equal((await connection.next())["output"], "found it", "another session's call of the same id");
+
+    connection.send({ type: "tool_call", id: "call_1", session_id: "s1", name: "investigate" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
     connection.send({ type: "tool_cancel", id: "call_1", session_id: "s1" });
     await new Promise((resolve) => setTimeout(resolve, 20));
-    assert.equal(stopped, true);
-
     connection.send({ type: "tool_call", id: "call_2", session_id: "s1", name: "ping" });
     assert.equal((await connection.next())["tool_call_id"], "call_2", "the cancelled call was not answered");
     dispatch.stop();
@@ -552,7 +645,7 @@ describe("Dispatch", () => {
     agent.tools.register({
       name: "investigate",
       description: "Investigate",
-      run: (_input, _signal, toolCallContext) => {
+      run: (_input, toolCallContext) => {
         seen = {
           id: toolCallContext.id,
           sessionId: toolCallContext.sessionId,
@@ -661,6 +754,54 @@ describe("Dispatch", () => {
 
     connection.socket.close();
     await session.wait();
+  });
+
+  it("opens one session for two messages arriving on a channel together", async () => {
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: { id: "sess_1", call_type: "agent", user_id: "john", agent_id: "john", state: "live", created_at: "2026-01-01T00:00:00Z" },
+    });
+    const dispatch = new Dispatch({ client: api });
+    let built = 0;
+    const create = () => {
+      built += 1;
+      return new Agent({ name: "John", client: api });
+    };
+
+    const first = dispatch.sessionFor(channelMessage("msg_1"), create);
+    const second = dispatch.sessionFor(channelMessage("msg_2"), create);
+    const connection = await router.socket();
+    const [one, two] = await Promise.all([first, second]);
+
+    assert.equal(built, 1, "a second session was opened for a conversation already being opened");
+    assert.equal(one, two);
+    assert.equal(router.requestsTo("POST", "/v1/agents/sessions").length, 1);
+    connection.socket.close();
+    await one.wait();
+  });
+
+  it("forgets a session once it has ended, and opens a new one for the next message", async () => {
+    router.serve("POST", "/v1/agents/sessions", (_, calls) => ({
+      status: 201,
+      body: { id: `sess_${calls + 1}`, call_type: "agent", user_id: "john", agent_id: "john", state: "live", created_at: "2026-01-01T00:00:00Z" },
+    }));
+    const dispatch = new Dispatch({ client: api });
+    const create = () => new Agent({ name: "John", client: api });
+
+    const opening = dispatch.sessionFor(channelMessage("msg_1"), create);
+    const first = await router.socket();
+    const ended = await opening;
+    first.socket.close();
+    await ended.wait();
+
+    const reopening = dispatch.sessionFor(channelMessage("msg_2"), create);
+    const second = await router.socket();
+    const next = await reopening;
+
+    assert.notEqual(next, ended);
+    assert.equal(next.id, "sess_2");
+    second.socket.close();
+    await next.wait();
   });
 
   describe("a message written to a running session", () => {
@@ -796,4 +937,20 @@ describe("Dispatch", () => {
 /** Lets the event loop deliver whatever is already on the socket. */
 function settle(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 25));
+}
+
+/** A message written on channel chan_1, which nothing is holding yet. */
+function channelMessage(messageId: string): InboundMessage {
+  return {
+    channelId: "chan_1",
+    channelType: "messaging",
+    agentId: "john",
+    configId: "cfg_1",
+    sessionId: "",
+    requestId: "",
+    text: "hello",
+    messageId,
+    userId: "ana",
+    userName: "Ana",
+  };
 }

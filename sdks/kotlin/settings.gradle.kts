@@ -18,6 +18,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "vision-agents-kotlin"
+rootProject.name = "stream-agents-kotlin"
 
 include(":core")

@@ -121,7 +121,8 @@ class TestLiveRouter < Minitest::Test
     session = open
     session.close
 
-    refute(agent.sessions.query(state: "live", limit: 50)["items"].any? { |each| each["id"] == session.id })
+    listed = agent.sessions.query(limit: 50)["items"].find { |each| each["id"] == session.id }
+    assert_equal "ended", listed["state"]
   end
 
   def test_a_guest_is_minted

@@ -62,7 +62,6 @@ func (s *OpenAISuite) TestAModelDeclaresTheReasoningEffortsItAccepts() {
 	s.Contains(model.ReasoningEfforts, "max", "the 5.6 family is the first to take it")
 	s.Equal("none", model.DefaultEffort,
 		"a conversation cannot afford to wait while the model thinks")
-	s.True(model.Store, "the responses endpoint keeps what it generates")
 }
 
 func (s *OpenAISuite) TestAnEffortTheModelDoesNotAcceptIsRefused() {
@@ -372,36 +371,9 @@ func (s *OpenAISuite) TestTheInstructionsOpenAConversationThatIsReplayed() {
 	s.Contains(string(raw), "You are Ashley.")
 }
 
-func (s *OpenAISuite) TestAContinuedResponseDoesNotSendItsInstructionsAgain() {
-	// The stored response already holds the developer message it was sent. Sending it
-	// again appended a copy to the chain every turn: a 5k-token prompt became 48k after
-	// ten turns of a voice call.
-	provider, err := New(Options{APIKey: "k"})
-	s.Require().NoError(err)
-
-	raw, err := json.Marshal(provider.params(llm.ResponseParams{
-		Instructions:       "You are Ashley.",
-		Input:              []llm.Message{{Role: llm.User, Content: "and tomorrow?"}},
-		PreviousResponseID: "resp_1",
-	}))
-	s.Require().NoError(err)
-	var sent struct {
-		PreviousResponseID string `json:"previous_response_id"`
-		Input              []struct {
-			Role string `json:"role"`
-		} `json:"input"`
-	}
-	s.Require().NoError(json.Unmarshal(raw, &sent))
-
-	s.Equal("resp_1", sent.PreviousResponseID)
-	s.Require().Len(sent.Input, 1)
-	s.Equal("user", sent.Input[0].Role)
-	s.NotContains(string(raw), "You are Ashley.")
-}
-
 func (s *OpenAISuite) TestANoteAfterTheCallerIsADeveloperMessageAfterThem() {
-	// A note goes at the end of what is sent, so a continued response is handed it with the
-	// caller's words and nothing before them changes.
+	// A note goes at the end of what is sent, after the caller's words, so nothing before
+	// them changes and the prefix every turn shares is still read from the cache.
 	provider, err := New(Options{APIKey: "k"})
 	s.Require().NoError(err)
 
@@ -411,35 +383,52 @@ func (s *OpenAISuite) TestANoteAfterTheCallerIsADeveloperMessageAfterThem() {
 			{Role: llm.User, Content: "and tomorrow?"},
 			{Role: llm.System, Content: "Your colleague has come back."},
 		},
-		PreviousResponseID: "resp_1",
 	}))
 	s.Require().NoError(err)
 	var sent struct {
 		Input []struct {
-			Role string `json:"role"`
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
 		} `json:"input"`
 	}
 	s.Require().NoError(json.Unmarshal(raw, &sent))
 
-	s.Require().Len(sent.Input, 2)
-	s.Equal("user", sent.Input[0].Role)
-	s.Equal("developer", sent.Input[1].Role)
+	s.Require().Len(sent.Input, 3)
+	s.Equal("developer", sent.Input[0].Role)
+	s.Equal("user", sent.Input[1].Role)
+	s.Equal("developer", sent.Input[2].Role)
+	s.Contains(string(sent.Input[2].Content), "Your colleague has come back.")
 }
 
-func (s *OpenAISuite) TestAContinuedResponseCarryingOnlyAToolResultSendsJustThatResult() {
-	provider, err := New(Options{APIKey: "k"})
+func (s *OpenAISuite) TestEveryResponseIsSentWithStoreFalse() {
+	// Nothing ever continues from a response, and with store left out OpenAI keeps it for at
+	// least 30 days, so even a caller asking for it to be kept does not get it kept.
+	sent := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		sent <- body
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\",\"status\":\"completed\"}}\n\n")
+	}))
+	defer server.Close()
+	provider, err := New(Options{APIKey: "k", BaseURL: server.URL})
 	s.Require().NoError(err)
+	defer provider.Close()
 
-	items := provider.input(llm.ResponseParams{
-		Instructions:       "You are Ashley.",
-		Input:              []llm.Message{{Role: llm.ToolResult, ToolCallID: "call-1", Content: "booked"}},
-		PreviousResponseID: "resp_1",
+	stream, err := provider.Create(s.T().Context(), llm.ResponseParams{
+		Input: []llm.Message{{Role: llm.User, Content: "hello"}},
+		Store: true,
 	})
-	s.Require().Len(items, 1)
-
-	raw, err := json.Marshal(items[0])
 	s.Require().NoError(err)
-	s.Contains(string(raw), `"type":"function_call_output"`)
+	_, err = llm.Collect(stream)
+	s.Require().NoError(err)
+
+	var request struct {
+		Store *bool `json:"store"`
+	}
+	s.Require().NoError(json.Unmarshal(<-sent, &request))
+	s.Require().NotNil(request.Store, "left out, OpenAI keeps the response")
+	s.False(*request.Store)
 }
 
 // sendMessage is Slack's MCP slack_send_message input schema as its server listed it on

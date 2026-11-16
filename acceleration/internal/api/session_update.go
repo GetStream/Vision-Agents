@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -15,6 +16,7 @@ type UpdateSessionRequest struct {
 	Title           *string         `json:"title,omitempty"`
 	Description     *string         `json:"description,omitempty"`
 	Custom          *map[string]any `json:"custom,omitempty" doc:"Replaces the caller's labels whole. An empty object clears them."`
+	Pinned          *bool           `json:"pinned,omitempty" doc:"true pins the session and false unpins it. Pinning one that is already pinned keeps the time it was first pinned. A pin changes nothing else about the session, its place in a last_message_at sort included."`
 	Llm             *string         `json:"llm,omitempty" doc:"The conversation model, a provider/model or a capability shortcut."`
 	Stt             *string         `json:"stt,omitempty"`
 	Tts             *string         `json:"tts,omitempty"`
@@ -28,7 +30,7 @@ type UpdateSessionRequest struct {
 
 func (*UpdateSessionRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "What to change about one session. A field left out is left as it is. " +
-		"Title, description and custom can change on a session that ended, and are all an end " +
+		"Title, description, custom and pinned can change on a session that ended, and are all an end " +
 		"user's device may change; everything else needs the session running and a server-side caller."
 	// Rendered as a plain integer, as it was always declared, so the clients keep the type they had.
 	schema.Properties["max_output_tokens"].Format = ""
@@ -55,8 +57,11 @@ func (s *Server) registerSessionUpdate(api huma.API) {
 			"The id, the call, incognito and the instructions are what the session is, so they cannot " +
 			"change: the instructions are the agent config's, and forking is how to get a session that " +
 			"differs in the rest.\n\n" +
-			"An end user's device may change a session's title, description and custom, so a person " +
-			"can tidy up their own conversations. Models and voice are the backend's " +
+			"An end user's device may change a session's title, description and custom, and pin or " +
+			"unpin it, so a person can tidy up their own conversations. `pinned` sets the session's " +
+			"`pinned_at`, which a query sorted by `pinned` lists first; it moves nothing else, and " +
+			"an incognito session, which nothing records, cannot be pinned: 400. " +
+			"Models and voice are the backend's " +
 			"to change, and a device asking for them is refused with a 403.\n\n" +
 			"A session that ended can still be renamed and relabelled. Models only " +
 			"mean something to a session that is running, so asking to change them on one that " +
@@ -90,7 +95,11 @@ func (s *Server) updateSession(ctx context.Context, request *updateSessionReques
 	settings, moving := settingsOf(body)
 	if moving && !ServerSideFrom(ctx) {
 		return nil, forbidden("a device may only change a session's title, " +
-			"description and custom; its models and voice are changed server-side")
+			"description, custom and pinned; its models and voice are changed server-side")
+	}
+	// Refused before anything is changed, so a request that cannot be pinned changes nothing.
+	if body.Pinned != nil && found.Live != nil && (s.store == nil || !found.Live.Recorded()) {
+		return nil, errUnrecordedPin
 	}
 	labels := session.Labels{Title: body.Title, Description: body.Description, Custom: body.Custom}
 
@@ -100,12 +109,23 @@ func (s *Server) updateSession(ctx context.Context, request *updateSessionReques
 				"the session has ended, so only its title, description and custom can change")
 		}
 		row := *found.Stored
-		row.Title = override(row.Title, body.Title)
-		row.Description = override(row.Description, body.Description)
-		row.Custom = override(row.Custom, body.Custom)
-		if err := s.store.DescribeSession(ctx, row.CustomerID, row.ID, row.Title, row.Description,
-			value(body.Custom)); err != nil {
-			return nil, err
+		// A pin alone is not a change to the conversation, so it leaves the row's
+		// updated_at where it was: only a label moves it.
+		if labels.Title != nil || labels.Description != nil || labels.Custom != nil {
+			row.Title = override(row.Title, body.Title)
+			row.Description = override(row.Description, body.Description)
+			row.Custom = override(row.Custom, body.Custom)
+			if err := s.store.DescribeSession(ctx, row.CustomerID, row.ID, row.Title, row.Description,
+				value(body.Custom)); err != nil {
+				return nil, err
+			}
+		}
+		if body.Pinned != nil {
+			pinnedAt, err := s.store.PinSession(ctx, row.CustomerID, row.ID, *body.Pinned, time.Now().UTC())
+			if err != nil {
+				return nil, err
+			}
+			row.PinnedAt = pinnedAt
 		}
 		return &sessionResponse{Body: storedSessionOf(row)}, nil
 	}
@@ -122,7 +142,38 @@ func (s *Server) updateSession(ctx context.Context, request *updateSessionReques
 	if labels.Title != nil || labels.Description != nil || labels.Custom != nil {
 		live.Describe(ctx, labels)
 	}
-	return &sessionResponse{Body: sessionOf(ctx, live)}, nil
+	rendered := sessionOf(ctx, live)
+	if body.Pinned != nil {
+		pinnedAt, err := s.sessions.Pin(ctx, live, *body.Pinned)
+		if errors.Is(err, session.ErrNotRecorded) {
+			return nil, errUnrecordedPin
+		}
+		if err != nil {
+			return nil, err
+		}
+		rendered.PinnedAt = pinnedAt
+	} else {
+		rendered.PinnedAt = s.livePinnedAt(ctx, live)
+	}
+	return &sessionResponse{Body: rendered}, nil
+}
+
+// errUnrecordedPin refuses to pin a session nothing records: a pin is kept on the session's
+// row, and an incognito session has none.
+var errUnrecordedPin = invalidRequest("an incognito session is not recorded, so it cannot be pinned")
+
+// livePinnedAt is when a running session was pinned, nil for one that is not. A pin is kept
+// on the session's row, which a running session does not carry, so it is read from there. A
+// row not written yet is a session nobody has pinned.
+func (s *Server) livePinnedAt(ctx context.Context, live *session.Session) *time.Time {
+	if s.store == nil || !live.Recorded() {
+		return nil
+	}
+	row, err := s.store.StoredSession(ctx, live.Spec().CustomerID, live.ID())
+	if err != nil {
+		return nil
+	}
+	return row.PinnedAt
 }
 
 // settingsOf reads the models and voice an update asks for, and reports whether it asks

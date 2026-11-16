@@ -3,7 +3,8 @@
 package store
 
 // A config keeps the floor control it was given, its max_wait_ms included, an update writes it
-// whole, and one that chose none is NULL, the default flow controller, and reads back as none.
+// whole, and one that chose none is NULL, no choice, and reads back as none. The opt-out is a
+// choice, stored and read back as one.
 func (s *StoreSuite) TestAConfigKeepsItsFloorControl() {
 	waiting := FloorControl{Model: FloorControlChorusASR, MaxWaitMs: 800}
 	config := &AgentConfig{CustomerID: "app", Name: "ruled", Mode: AgentModeVoice, FloorControl: waiting}
@@ -20,7 +21,16 @@ func (s *StoreSuite) TestAConfigKeepsItsFloorControl() {
 	var unset bool
 	s.Require().NoError(s.store.DB().NewSelect().Table("agent_configs").ColumnExpr("floor_control IS NULL").
 		Where("id = ?", config.ID).Scan(s.ctx, &unset))
-	s.True(unset, "the default flow controller is stored as NULL")
+	s.True(unset, "no choice is stored as NULL")
+
+	config.FloorControl = FloorControl{Model: FloorControlFlowController}
+	s.Require().NoError(s.store.UpdateAgentConfig(s.ctx, config))
+	stored, err = s.store.AgentConfig(s.ctx, "app", config.ID)
+	s.Require().NoError(err)
+	s.Equal(FloorControl{Model: FloorControlFlowController}, stored.FloorControl, "the opt-out reads back as stored")
+	s.Require().NoError(s.store.DB().NewSelect().Table("agent_configs").ColumnExpr("floor_control IS NULL").
+		Where("id = ?", config.ID).Scan(s.ctx, &unset))
+	s.False(unset, "and is not NULL, as distinct from no choice")
 
 	config.FloorControl = FloorControl{Model: FloorControlChorusASR}
 	s.Require().NoError(s.store.UpdateAgentConfig(s.ctx, config))

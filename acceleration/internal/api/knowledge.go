@@ -247,15 +247,31 @@ func (s *Server) knowledgePassages(
 //
 // With a database, each document is recorded with how many passages it became, and what
 // a shorter version no longer covers is removed, so an edit does not leave its old tail
-// behind to be found.
+// behind to be found. A document stored with the same text, cut into as many passages, is
+// already in the base and is not written again: writing is what knowledge costs, so a sync
+// that changed nothing in knowledge/ writes nothing and is not refused for money.
 func (s *Server) fillKnowledge(
 	ctx context.Context, customerID, region, namespace string, documents []KnowledgeDocument, chunkSize *int,
-) (int, int, error) {
+) (_ int, _ int, err error) {
 	size := ingest.DefaultChunk
 	if chunkSize != nil && *chunkSize > 0 {
 		size = *chunkSize
 	}
 
+	// With their text, because that is what tells an unchanged document from an edited one,
+	// and what the entry below reports as having moved.
+	before := map[string]store.KnowledgeDocument{}
+	if s.store != nil {
+		stored, err := s.store.CustomerKnowledgeDocumentsWithText(ctx, customerID, namespace)
+		if err != nil {
+			return 0, 0, err
+		}
+		for _, document := range stored {
+			before[document.Source] = document
+		}
+	}
+
+	read, cut := 0, 0
 	var passages []knowledge.Document
 	var written []store.KnowledgeDocument
 	for _, document := range documents {
@@ -268,51 +284,78 @@ func (s *Server) fillKnowledge(
 		if strings.TrimSpace(document.Text) == "" {
 			continue
 		}
-		cut := ingest.Split(source, document.Text, size, s.knowledgeLimits)
-		passages = append(passages, cut...)
+		split := ingest.Split(source, document.Text, size, s.knowledgeLimits)
+		read++
+		cut += len(split)
+		if was, had := before[source]; had && was.State == store.KnowledgeDocumentIndexed && was.Text == document.Text && was.Passages == len(split) {
+			continue
+		}
+		passages = append(passages, split...)
 		written = append(written, store.KnowledgeDocument{
 			CustomerID:  customerID,
 			Namespace:   namespace,
 			Source:      source,
-			Passages:    len(cut),
+			Passages:    len(split),
 			Text:        document.Text,
 			ContentType: "text/markdown",
 			Bytes:       int64(len(document.Text)),
 		})
 	}
 
-	if len(passages) == 0 {
+	if cut == 0 {
 		return 0, 0, invalidRequest("there is nothing to read in these documents")
 	}
+	if len(written) == 0 {
+		return read, cut, nil
+	}
 	writer := s.knowledgeFor(ctx, customerID, region)
-	if err := writer.Upsert(ctx, namespace, passages); err != nil {
+	if s.store == nil {
+		if err := writer.Upsert(ctx, namespace, passages); err != nil {
+			return 0, 0, err
+		}
+		return read, cut, nil
+	}
+	// Refused before any row is written, so a refused ingest leaves nothing listed.
+	if err := writer.Admit(ctx); err != nil {
 		return 0, 0, err
 	}
-	if s.store == nil {
-		return len(written), len(passages), nil
+	if err := writer.Keep(ctx, namespace); err != nil {
+		return 0, 0, err
 	}
 
-	// With their text, because that is what the entry below reports as having moved. Read
-	// without it, every document would look rewritten from nothing on every sync.
-	stored, err := s.store.CustomerKnowledgeDocumentsWithText(ctx, customerID, namespace)
-	if err != nil {
+	// Every row is saved before the passages, counting the old version's passages as well as
+	// the new one's, so a write that stops part way leaves a listed document whose delete
+	// removes every passage either version wrote.
+	indexed := 0
+	defer func() {
+		if err != nil {
+			s.failKnowledge(ctx, written[indexed:], before)
+		}
+	}()
+	for _, document := range written {
+		document.Passages = max(document.Passages, before[document.Source].Passages)
+		document.State = store.KnowledgeDocumentPending
+		if err = s.store.SaveKnowledgeDocument(ctx, &document); err != nil {
+			return 0, 0, err
+		}
+	}
+	if err = writer.Upsert(ctx, namespace, passages); err != nil {
 		return 0, 0, err
 	}
-	before := make(map[string]store.KnowledgeDocument, len(stored))
-	for _, document := range stored {
-		before[document.Source] = document
-	}
+
 	agentID := s.agentOfKnowledge(ctx, customerID, namespace)
 	for i := range written {
 		document := &written[i]
 		was, had := before[document.Source]
 		stale := ingest.IDs(document.Source, document.Passages, was.Passages)
-		if err := writer.Delete(ctx, namespace, stale); err != nil {
+		if err = writer.Delete(ctx, namespace, stale); err != nil {
 			return 0, 0, err
 		}
-		if err := s.store.SaveKnowledgeDocument(ctx, document); err != nil {
+		document.State = store.KnowledgeDocumentIndexed
+		if err = s.store.SaveKnowledgeDocument(ctx, document); err != nil {
 			return 0, 0, err
 		}
+		indexed++
 		action := store.AuditCreated
 		var previous any
 		if had {
@@ -325,7 +368,27 @@ func (s *Server) fillKnowledge(
 			Changes: auditDiff(previous, auditedKnowledgeOf(*document)),
 		})
 	}
-	return len(written), len(passages), nil
+	return read, cut, nil
+}
+
+// knowledgeWriteFailed is why a failed document failed, as its row tells the customer. The
+// provider's own error names the internal namespace, so it is logged with the request instead.
+const knowledgeWriteFailed = "the passages could not all be written: post the document again or delete it"
+
+// failKnowledge marks documents whose write stopped part way as failed, still counting every
+// passage either version may have written. It outlives the request, since a caller that hung
+// up is one way a write stops.
+func (s *Server) failKnowledge(ctx context.Context, documents []store.KnowledgeDocument, before map[string]store.KnowledgeDocument) {
+	ctx, cancel := detachedWrite(ctx)
+	defer cancel()
+	for _, document := range documents {
+		document.Passages = max(document.Passages, before[document.Source].Passages)
+		document.State, document.Error = store.KnowledgeDocumentFailed, knowledgeWriteFailed
+		if err := s.store.SaveKnowledgeDocument(ctx, &document); err != nil {
+			s.logger.Warn("could not mark a knowledge document failed", "source", document.Source, "error", err)
+			return
+		}
+	}
 }
 
 // auditedKnowledgeOf is a document as a change records it: the text, because that is what
@@ -574,11 +637,11 @@ type IndexedKnowledgeDocument struct {
 	Bytes       int64                  `json:"bytes" doc:"The size of the file uploaded, or of the text posted. 0 for a document written before sizes were kept."`
 	ContentType string                 `json:"content_type" doc:"The type the file was uploaded as, or text/markdown for text posted. Empty for a document written before types were kept." example:"application/pdf"`
 	CreatedAt   time.Time              `json:"created_at"`
-	Error       *string                `json:"error,omitempty" doc:"Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good."`
+	Error       *string                `json:"error,omitempty" doc:"Why the uploaded file could not be read, or why the passages of posted text could not all be written, written for whoever sent it. Set while a read that failed is tried again, and once it has failed for good."`
 	Id          string                 `json:"id"`
 	Namespace   string                 `json:"namespace"`
 	Pages       int                    `json:"pages" doc:"How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet."`
-	Passages    int                    `json:"passages" doc:"How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read."`
+	Passages    int                    `json:"passages" doc:"How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read. A document that is pending or failed can also count the passages of the version before, so that deleting it removes every passage either version wrote."`
 	Source      string                 `json:"source" doc:"What the document was posted as, and what its passages are keyed by." example:"pricing.md"`
 	State       KnowledgeDocumentState `json:"state"`
 	Text        *string                `json:"text,omitempty" doc:"The document as it was last posted, or as its file was read: Markdown, each page of a file opening with an <!-- page N --> comment. Only reading one document fills it in, and one written before its text was kept has none."`
@@ -591,7 +654,7 @@ func (*IndexedKnowledgeDocument) TransformSchema(_ huma.Registry, schema *huma.S
 	return schema
 }
 
-// KnowledgeDocumentState Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
+// KnowledgeDocumentState Where the document has got to. Pending is an uploaded file waiting to be read or being read, or posted text whose passages are being written; text that stays pending was cut off and is fixed by posting it again. Failed is a file that could not be read, or posted text whose write stopped part way, and error says why: the passages written before the failure can still be looked up, and posting the document again or deleting it fixes it.
 type KnowledgeDocumentState string
 
 // Defines values for KnowledgeDocumentState.
@@ -612,7 +675,7 @@ func (e KnowledgeDocumentState) Valid() bool {
 }
 
 func (KnowledgeDocumentState) Schema(registry huma.Registry) *huma.Schema {
-	return namedEnum(registry, "KnowledgeDocumentState", "Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.", "pending", "indexed", "failed")
+	return namedEnum(registry, "KnowledgeDocumentState", "Where the document has got to. Pending is an uploaded file waiting to be read or being read, or posted text whose passages are being written; text that stays pending was cut off and is fixed by posting it again. Failed is a file that could not be read, or posted text whose write stopped part way, and error says why: the passages written before the failure can still be looked up, and posting the document again or deleting it fixes it.", "pending", "indexed", "failed")
 }
 
 // IngestKnowledgeRequest is the IngestKnowledgeRequest schema.

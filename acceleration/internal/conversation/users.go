@@ -2,12 +2,15 @@ package conversation
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"slices"
 	"sync"
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // knownFor is how long a user Chat was seen to have is taken on trust. Every session asks
@@ -57,6 +60,24 @@ func CreateMissingUsers(ctx context.Context, client *getstream.Stream, users map
 	}
 	remember(app, ids)
 	return nil
+}
+
+// UserTeams is the teams Chat holds for a user, read from Stream each time: the backend
+// moves a person between teams, and a copy kept here would let them into the old one. A
+// user Chat does not have is in no team.
+func UserTeams(ctx context.Context, client *getstream.Stream, userID string) ([]string, error) {
+	limit := 1
+	found, err := client.QueryUsers(ctx, &getstream.QueryUsersRequest{Payload: &getstream.QueryUsersPayload{
+		FilterConditions: map[string]any{"id": map[string]any{"$in": []string{userID}}},
+		Limit:            &limit,
+	}})
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("conversation: user teams: %w", err))
+	}
+	if len(found.Data.Users) == 0 {
+		return nil, nil
+	}
+	return found.Data.Users[0].Teams, nil
 }
 
 // unknownUsers is the part of users not known to be in Chat already.

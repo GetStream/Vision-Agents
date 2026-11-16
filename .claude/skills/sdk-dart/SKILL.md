@@ -1,6 +1,6 @@
 ---
 name: sdk-dart
-description: How to build and extend the Dart and Flutter SDKs in sdks/dart. Read this before changing vision_agents_core, vision_agents_chat, vision_agents_ui or vision_agents_rtc, or before adding a Dart client for a new endpoint.
+description: How to build and extend the Flutter SDK in sdks/dart. Read this before changing stream_agents (its core, chat or rtc area), the Flutter demo's use of Stream's AI components, or before adding a Dart client for a new endpoint.
 ---
 
 # Dart SDK conventions
@@ -10,38 +10,51 @@ The per-language half of [sdk](../sdk/SKILL.md). It records the decisions the pa
 re-litigating them. It is a **client-side** SDK: what a phone, a browser or a desktop app does.
 Folder sync, dispatch and writing configs are backend work and stay out.
 
-Dart 3.10 is the floor for `core` and `rtc` (Stream Video 1.6's); `ui` is 3.12 / Flutter 3.44
-because Stream Chat 10.4 is.
+Dart 3.12 and Flutter 3.44 are the floors, because Stream Chat 10.4's are; Stream Video 1.6's
+are lower.
 
-## Packages
+## The package
+
+One Flutter package, `stream_agents` in `sdks/dart/stream_agents`. Inside it, three areas:
 
 ```
-core  vision_agents_core  pure Dart: generated client, socket, conversation state
-chat  vision_agents_chat  pure Dart: the conversation's Stream Chat channel   -> core
-ui    vision_agents_ui    Flutter widgets, Stream Chat transcript             -> core
-rtc   vision_agents_rtc   joining the call over Stream Video                  -> core
+lib/src/core  pure Dart: generated client, socket, conversation state
+lib/src/chat  pure Dart: the conversation's Stream Chat channel   -> core
+lib/src/rtc   joining the call over Stream Video                  -> core
 ```
 
-**Four standalone packages, not a pub workspace.** A workspace resolves every member as one
-graph, so once `ui` or `rtc` (Flutter) is a member, `core` cannot be resolved or tested with the
-plain Dart SDK — and a pure-Dart core testable in `dart:stable` is the point of having one. The
-price is four lockfiles and a local link: `chat`, `ui` and `rtc` declare
-`vision_agents_core: ^x.y.z` as a hosted dependency, and a committed `pubspec_overrides.yaml`
-points it at `../core`. Pub never publishes that file and consumers never see it. Before
-releasing, publish `core` first and check the others resolve against the hosted version with the
-override removed.
+Each area is self-contained: `lib/src/<area>` and `test/<area>` hold all of it, and the only way
+in from another area is one import. `test/area_boundaries_test.dart` enforces it:
+
+1. `core` imports only its own files, `dart:async`, `collection`, `convert`, `math`,
+   `typed_data`, `http`, `meta` and `web_socket`: an allowlist, so a dependency added for `rtc`
+   cannot slip in. `chat` adds `stream_chat` and `core`'s barrel to that list.
+2. `chat` and `rtc` reach `core` only, never each other.
+3. Across areas, only through the area's barrel (`package:stream_agents/src/core/core.dart`);
+   inside one, relative imports.
+4. `stream_chat` is `chat`'s alone; `stream_video_flutter` and `image` are `rtc`'s.
+5. A test under `test/<area>` imports its own area (barrel or internals), the barrels its area
+   reaches, or, in `rtc` only, `package:stream_agents/stream_agents.dart`. `test/core` and
+   `test/chat` import no Flutter. Every test but the boundary test is under an area.
+
+`lib/stream_agents.dart` is the only public library and exports the three barrels. A new public
+type goes in its area's barrel.
 
 - `core` has no Flutter import and no Stream dependency. `dart:io` stays out of `lib/` too, so
   it runs on the web: `package:http` and `package:web_socket` pick the platform themselves.
 - `rtc` keeps Stream Video's types out of `core`. `VoiceState.call` is the one Stream type it
   exposes, because rendering video needs it.
-- `ui` depends on `stream_chat_flutter_core`, not `stream_chat_flutter`: the transcript is drawn
-  with our own turns, and the full kit brings media pickers and their platform setup for nothing.
-- `chat` depends on `stream_chat`, which is pure Dart, so it is tested in `dart:stable` like
+- **No conversation views.** The views are Stream Chat's AI components,
+  `stream_chat_flutter_ai`, which the app adds itself, as the Swift SDK leaves them to
+  `StreamChatAI`; see [Views](#views). There was a `ui` package with widgets of its own; it went
+  the way Swift's did, so the two SDKs stay one shape.
+- `chat` depends on `stream_chat`, which is pure Dart, so the area stays pure Dart like
   `core`. Import it with a prefix (`as stream`): it exports a `TokenProvider` of its own.
-- Stream's packages are pinned to exact versions (`stream_video_flutter: 1.6.0`,
-  `stream_chat: 10.4.0`, `stream_chat_flutter_core: 10.4.0`). Bumping them is a deliberate change: read the changelog,
-  rerun the rtc/ui tests, and check the APIs used (listed below) in the new source.
+- Stream's packages take a caret range from a tested floor (`stream_video_flutter: ^1.6.0`,
+  `stream_chat: ^10.4.0`), as Swift's `from:` and JavaScript's `^` do: a published package
+  pinned to one version would refuse every app on another patch. Raising a floor is a
+  deliberate change: read the changelog, rerun the rtc tests, and check the APIs used (listed
+  below) in the new source. The examples pin exact versions, as apps may.
 - `pubspec.lock` is gitignored: a library leaves resolving to the app.
 
 Stream Video's singleton: use `StreamVideo.create`, never the `StreamVideo(...)` factory, which
@@ -50,15 +63,18 @@ installs a process-wide instance and collides with a host that has its own.
 ## Stream is set up once
 
 The key, `userId` and token are the one identity for the router, Stream Chat and Stream Video.
-`Backend.shared(kind, open:, disconnect:)` holds one client per `kind:apiKey:userId`: sessions
-asking at once share one opening, one that failed to open is opened again, and `withUser` keeps
-the registry so another user gets their own. `Backend.give` holds the app's own client, which
-`VisionAgents.disconnect()` never touches; it closes only what `shared` built. Beside a
-`customerId` the key is Stream's alone and the router is reached by customer id.
+`Backend` fetches the token single-flighted once and reuses it across router requests, socket
+handshakes and Stream clients, refreshing only on an HTTP 401 (with a single retry) or
+`streamCredentials(refresh: true)`. `Backend.shared(kind, open:, disconnect:)` holds one client
+per `kind:apiKey:userId`: sessions asking at once share one opening, one that failed to open is
+opened again, and `withUser` keeps the registry so another user gets their own. `Backend.give`
+holds the app's own client, which `StreamAgents.disconnect()` never touches; it closes only what
+`shared` built. Beside a `customerId` the key is Stream's alone and the router is reached by
+customer id.
 
-- `vision_agents_chat`: `agents.useChat(client)` and `session.chat()`, which answers the
+- `chat`: `agents.useChat(client)` and `session.chat()`, which answers the
   conversation's `Channel`, unwatched. A session with no conversation is a `StateError`.
-- `vision_agents_rtc`: `agents.useVideo(client)` and `VoiceSession.join()`, which joins the
+- `rtc`: `agents.useVideo(client)` and `VoiceSession.join()`, which joins the
   session's `callType:callId`. Leaving disposes nothing.
 - Dart has no overloading, hence `useChat` and `useVideo` rather than Kotlin's `use`. A
   client for another user, or a missing key, user or token, is an `ArgumentError`.
@@ -67,8 +83,8 @@ the registry so another user gets their own. `Backend.give` holds the app's own 
 
 `LiveValue<T>`: a `value` and a `stream` that emits the current value first, then each change.
 `LiveValueController` skips equal values and conflates while a listener is paused. No
-dependency on provider, riverpod, bloc or rxdart — a host adapts it in a line, and `ui` ships
-`LiveValueBuilder` (widgets) and `LiveValueNotifier` (`ValueListenable`).
+dependency on provider, riverpod, bloc or rxdart — a host adapts it in a line, such as a
+`StreamBuilder` over `stream` with `initialData: value`, without which its first frame has no data.
 
 The state machine is an **immutable value**, `Conversation`, with `apply(event)` returning the
 next value (or `this` when nothing changed, so equality skips a rebuild). That is what makes it
@@ -98,7 +114,7 @@ Frames in tests are quoted verbatim from `frameOf` in
 
 ## The generated client
 
-`core/tool/generate.dart` reads the spec and writes `lib/src/generated/api.dart`: one model
+`tool/generate.dart` reads the spec and writes `lib/src/core/generated/api.dart`: one model
 class per schema reached by an allowlisted operation, and an `Operations` class with a method
 per operation. Committed, formatted, never hand-edited, **never exported**. Every public type is
 hand-written in `models.dart` and mapped in `convert.dart`, so a spec field is invisible until
@@ -133,7 +149,7 @@ headers or body.
 ## Public API
 
 ```dart
-final agents = VisionAgents(url: url, customerId: 'acme');
+final agents = StreamAgents(url: url, customerId: 'acme');
 final chat = await agents.agent('support').chat();
 ```
 
@@ -150,18 +166,23 @@ keep it off the public `GuestUser`). A secret works once, so whatever comes back
 stored; one lost or spent gets a new guest. The store is the host's (shared preferences, secure storage);
 `MemoryGuestStore` is for tests and CLIs.
 
-## Flutter
+## Views
 
-- Builder slots (`bubble:`), not a theme object. Colours come from `Theme.of(context)`.
-- No widget pushes a route, creates a `Navigator` or a `Scaffold`. Navigation is the host's.
-- `ConversationView` starts the session but never closes it: the session outlives a screen.
-- `TranscriptView` is a reversed `ListView.builder` keyed by turn id. Reversed so the newest turn
-  sits at offset zero: a streaming reply stays in view without a scroll per delta, and a reader
-  who scrolled up is left alone.
-- `ChatTranscriptView` reads a persisted conversation from its Stream Chat channel. The router
-  writes each message with a `support_message` payload whose `role` says who spoke, and the
-  channel's `support_agent_id` names the agent; neither is in the spec, so `turnsOfMessages` is
-  where a change on the router side lands.
+`rtc` has the only widgets, `AgentVideoView` and `VoiceCallView`: no theme object, no route push
+and no `Scaffold`. A conversation is shown with Stream Chat's AI components, and
+[`flutter_demo`](../../../examples/voice_agents/flutter_demo) is where that composition lives and
+is kept working. What the router writes is what it renders:
+
+- A text session's reply is a message marked `ai_generated`, with `generating` true until done.
+- Its steps are `ai_reasoning` and `ai_tool_call` attachments, in order: `AIMessagePart.parseAll`
+  over `(type: attachment.rawType, payload: {'id': attachment.id, ...attachment.extraData})`.
+- A reasoning step stores only its opening. The whole of it comes a window at a time on the
+  `message.updated` events; `LiveReasoning` in `chat` puts it back together, and the demo's
+  `AIMessage.reasoningText` reads it.
+- A tool that asks first is answered by an `AIToolApprover` whose `decide` calls
+  `session.decide`; on a call, by an `AIToolApprovalCard` over `session.approvals`.
+- `AIConversationView` lays the channel out in turns, `ChatComposer` asks and stops, and
+  `AIVoiceGlowView` / `AIVoiceWaveView` show the agent on a call.
 
 ## rtc
 
@@ -179,8 +200,7 @@ Results are `Result<T>`; a `Failure` becomes `VoiceState.failure`.
 - The agent looks through the camera with the router's `get_video_frames` tool call, answered by
   `AgentSession` through `camera` and never offered to the app's tools. `camera` is a
   `CameraHandler`, `(at, limit)` to a list of `CameraPicture` records (both hidden from core's
-  exports), and is public only because `rtc` is a separate package (Kotlin and Swift keep all
-  of this internal, in one module). It is `@internal` (`package:meta`), so the analyzer warns an
+  exports), and is public only because `rtc` is a separate area. It is `@internal` (`package:meta`), so the analyzer warns an
   app that touches it and its signature is `rtc`'s to change; `rtc`'s uses carry an `ignore`. With `camera` null the call is
   left alone (a backend video worker may own it); with `run: false` it is left alone too, as JS
   does; a `tool_cancel` drops the answer, as for the app's tools. Core reads `at_ms` and `limit`
@@ -212,7 +232,7 @@ Results are `Result<T>`; a `Failure` becomes `VoiceState.failure`.
 
 ## Tests
 
-`package:test` in core, `flutter_test` in ui and rtc. Never mock; assert on state and outputs,
+`package:test` in core and chat, `flutter_test` in rtc, all run by `flutter test`. Never mock; assert on state and outputs,
 never on a call happening.
 
 1. **The state machine**, on real frames, with no network.
@@ -229,37 +249,45 @@ never on a call happening.
 Wait on a condition with a deadline (`_until`), never a fixed sleep.
 
 CI is [`client-sdks.yml`](../../../.github/workflows/client-sdks.yml), on any change under
-`sdks/dart` or to the spec: core's and chat's checks and tests, as below. `ui` and `rtc` are not
-in it, so run them yourself when you change them.
+`sdks/dart`, `flutter_demo`, `flutter_assistant` or the spec: one Flutter job with the checks and
+tests below, then `flutter analyze` and `flutter test` in both examples against the package as
+it is in the checkout.
+
+Flutter 3.50 deprecates `package:flutter/material.dart`. Each import of it carries
+`// ignore: deprecated_member_use` rather than a global ignore, so any other deprecation still
+fails the analyzer.
 
 Docker only, pub's cache in the named volume `va-dart-pub`:
 
 ```bash
-# core
 docker run --rm -v "$PWD":/repo -v va-dart-pub:/pub-cache -e PUB_CACHE=/pub-cache \
-  -w /repo/sdks/dart/core dart:stable \
-  sh -c 'dart pub get && dart format --set-exit-if-changed . && dart analyze && dart run tool/generate.dart --check && dart test'
-# chat: the same, from sdks/dart/chat, without the generator check
-# ui, rtc
-docker run --rm -v "$PWD":/repo -v va-dart-pub:/pub-cache -e PUB_CACHE=/pub-cache \
-  -w /repo/sdks/dart/ui ghcr.io/cirruslabs/flutter:3.44.0 \
-  sh -c 'flutter pub get && flutter analyze && flutter test'
+  -w /repo/sdks/dart/stream_agents ghcr.io/cirruslabs/flutter:3.44.0 \
+  sh -c 'flutter pub get && dart format --set-exit-if-changed . && flutter analyze && dart run tool/generate.dart --check && flutter test'
 # live, against a router on the host
 docker run --rm -v "$PWD":/repo -v va-dart-pub:/pub-cache -e PUB_CACHE=/pub-cache \
   -e VISION_AGENTS_URL=http://host.docker.internal:8080 -e VISION_AGENTS_CUSTOMER_ID=examples \
-  -e VISION_AGENTS_AGENT=simple_voice_ai -w /repo/sdks/dart/core dart:stable dart test -t live
+  -e VISION_AGENTS_AGENT=simple_voice_ai -w /repo/sdks/dart/stream_agents ghcr.io/cirruslabs/flutter:3.44.0 flutter test -t live
 ```
+
+## Releasing
+
+`flutter pub publish` from `sdks/dart/stream_agents`, after the CI dry run passes. The first
+release of `stream_agents` also discontinues `stream_agents_core`, `stream_agents_chat` and
+`stream_agents_rtc` on pub.dev, each with `stream_agents` as its replacement (the package's
+admin page, "Mark as discontinued"), so an app on 0.1.0 is pointed at the one package.
 
 ## Reviewing a change
 
 Reject it if it:
 
-- imports Flutter, `dart:io` or a Stream package into `core/lib`;
+- imports Flutter, `dart:io` or a Stream package into `lib/src/core`, or crosses areas other
+  than through `core`'s barrel;
 - exports generated code, or hand-edits it;
 - adds a method for an operation the spec does not mark `x-client-accessible`;
 - sends a default the caller did not choose;
 - reconnects the socket, or replays `respond`/`tool_result`;
 - treats an unknown frame as fatal;
 - uses the `StreamVideo` singleton factory;
-- adds a theme object, a route push or a `Scaffold` to `ui`;
+- adds conversation views to the SDK rather than to Stream Chat's AI components;
+- adds a theme object, a route push or a `Scaffold` to `rtc`;
 - mocks, or asserts that a method was called.

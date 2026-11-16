@@ -815,6 +815,74 @@ func (s *ChatLogSuite) TestATranscriptChannelIsStampedWithItsCustomer() {
 	s.Equal("customer-1", created["custom"].(map[string]any)[conversation.CustomerField])
 }
 
+// Every request about the channel names the type the log was given, else the agent type: a
+// channel id is unique only within its type, so a write under the wrong one lands in another
+// channel or none.
+func (s *ChatLogSuite) TestEveryWriteNamesTheChannelsType() {
+	for given, want := range map[string]string{"": "agent", "callouts": "callouts"} {
+		chat := chattest.NewServer(s.T())
+		creator := "vision-agent"
+		_, err := chat.Client.Chat().GetOrCreateChannel(context.Background(), want, "standup",
+			&getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: &creator}})
+		s.Require().NoError(err)
+		log, err := New(Options{
+			AgentID: "agent-1", Channel: "standup", ChannelType: given, VisibleTools: []string{"save_*"},
+			Agent: User{ID: "vision-agent"}, Client: chat.Client, Logger: slog.New(slog.DiscardHandler),
+		})
+		s.Require().NoError(err)
+
+		s.Require().NoError(log.Start(context.Background()))
+		log.Record(agent.Heard{Participant: stt.Participant{ID: "session-9", UserID: "anya"}, Text: "I'm sick"})
+		log.Record(agent.Responding{TurnID: "turn-1"})
+		log.Record(agent.ToolRan{ID: "tool-1", TurnID: "turn-1", Tool: "save_canvas", Result: `{"schema_version":1,"status":"stored",` +
+			`"publication":"pending","attachment":{"type":"canvas","artifact_id":"canvas-1","revision":1,"title":"Rota","sha256":"saved"}}`})
+		log.Close()
+
+		var named []string
+		for _, asked := range chat.Requests(chat.Key) {
+			if _, channel, ok := strings.Cut(asked.Path, "/chat/channels/"); ok {
+				named = append(named, channel)
+			}
+		}
+		s.Equal([]string{
+			want + "/standup/query", want + "/standup/query", want + "/standup/message",
+			want + "/standup/event", want + "/standup/message", want + "/standup/event",
+		}, named, given)
+		stored := chat.Stored(want + ":standup")
+		s.Require().Len(stored, 2, "what was said and the artifact's card: %s", given)
+		for _, message := range stored {
+			s.Equal(want+":standup", message["cid"], given)
+		}
+	}
+}
+
+func (s *ChatLogSuite) TestATranscriptChannelIsMadeInTheLogsTeam() {
+	created := s.madeIn("red")
+
+	s.Equal("red", created["team"])
+}
+
+func (s *ChatLogSuite) TestATranscriptChannelOfNoTeamIsMadeWithNone() {
+	created := s.madeIn("")
+
+	s.NotContains(created, "team", "Chat is sent no team field at all")
+}
+
+// madeIn is the channel a log in team creates as it starts.
+func (s *ChatLogSuite) madeIn(team string) map[string]any {
+	chat := chattest.NewServer(s.T())
+	log, err := New(Options{
+		AgentID: "agent-1", CustomerID: "customer-1", Team: team,
+		Agent: User{ID: "vision-agent"}, Client: chat.Client, Logger: slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(log.Start(context.Background()))
+	log.Close()
+	created, ok := chat.Channel("agent-1")
+	s.Require().True(ok)
+	return created
+}
+
 func (s *ChatLogSuite) TestACallDoesNotRestampAChannelAnotherCustomerOpenedFirst() {
 	// Agent ids are the customers' own words, so in a shared app another customer can open
 	// the channel first. The stamp it put there stays: a call naming the same agent id
@@ -1516,4 +1584,45 @@ func (s *ChatLogSuite) TestAReplySpokenInPiecesKeepsEveryPiece() {
 	s.play(writer, agent.Responded{TurnID: "turn-1", Text: "One. Two."}, agent.Spoke{TurnID: "turn-1"})
 
 	s.Equal([]string{"One. Two."}, chat.Messages(s.log.channel))
+}
+
+func (s *ChatLogSuite) TestAVoiceReplyWithUIDeltasStoresAndPatchesGeneratedUIInChat() {
+	s.useChat()
+	writer := newWriter(s.log)
+
+	s.play(
+		writer,
+		agent.Responding{TurnID: "turn-1"},
+		agent.ResponseDelta{TurnID: "turn-1", Text: "Kaneo has a table at seven fifteen."},
+		agent.UIDelta{TurnID: "turn-1", Format: "openui", Mode: "replace", Delta: "$party = 2\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"},
+		agent.UICompleted{TurnID: "turn-1", Format: "openui", Mode: "replace", Content: "$party = 2\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"},
+	)
+	writer.show()
+	s.play(
+		writer,
+		agent.Responded{TurnID: "turn-1", Text: "Kaneo has a table at seven fifteen."},
+		agent.Spoke{TurnID: "turn-1"},
+	)
+
+	s.play(
+		writer,
+		agent.Responding{TurnID: "turn-2"},
+		agent.ResponseDelta{TurnID: "turn-2", Text: "Changed to four guests."},
+		agent.UIDelta{TurnID: "turn-2", Format: "openui", Mode: "patch", Delta: "$party = 4"},
+		agent.UICompleted{TurnID: "turn-2", Format: "openui", Mode: "patch", Content: "$party = 4"},
+		agent.Responded{TurnID: "turn-2", Text: "Changed to four guests."},
+		agent.Spoke{TurnID: "turn-2"},
+	)
+
+	stored := s.channel()
+	s.Require().Len(stored, 2)
+	ui1, ok := stored[0].Custom["ai_ui"].(map[string]any)
+	s.Require().True(ok)
+	s.Equal("complete", ui1["status"])
+	s.Equal("$party = 2\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")", ui1["content"])
+
+	ui2, ok := stored[1].Custom["ai_ui"].(map[string]any)
+	s.Require().True(ok)
+	s.Equal("complete", ui2["status"])
+	s.Equal("$party = 4\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")", ui2["content"])
 }

@@ -16,7 +16,7 @@ fun setting(name: String, environment: String, default: String): String =
     local.getProperty(name) ?: providers.environmentVariable(environment).orNull ?: default
 
 android {
-    namespace = "io.getstream.visionagents.androidassistant"
+    namespace = "io.getstream.agents.androidassistant"
     compileSdk = 37
     defaultConfig {
         applicationId = "io.getstream.visionagents.androidassistant"
@@ -45,7 +45,7 @@ android {
 }
 
 dependencies {
-    implementation(libs.vision.agents.core)
+    implementation(libs.stream.agents.android.core)
     implementation(libs.stream.chat.ai.compose)
     implementation(libs.stream.chat.ai.openui)
     implementation(libs.stream.chat.ai.a2ui)

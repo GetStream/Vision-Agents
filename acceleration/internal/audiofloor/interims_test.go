@@ -56,28 +56,30 @@ func (s *InterimSuite) became(outcome string, before map[string]float64) {
 		"no interim became %s: %v, then %v", outcome, before, outcomes())
 }
 
-// With no languages declared, an interim's language is the utterance's own: the one the
-// server heard its first words in, at a pause, which the words so far are then asked for in.
-// Before that nothing is asked for, as a guess on a second of speech would be, and words
-// that come back in another language, the server's own refusal (noise: language) or words it
-// names otherwise, are dropped. A pause's words in another language are kept for the final
-// and not shown either.
+// With no languages declared, the words so far are asked for all the same, in no language:
+// languages are an add-on, and the server writes what it heard. Once the utterance's first
+// words at a pause have said which language it is in, the words so far are asked for in that
+// one, and words that come back in another language, the server's own refusal (noise:
+// language) or words it names otherwise, are dropped. A pause's words in another language
+// are kept for the final and not shown either.
 func (s *InterimSuite) TestInterimsAreAskedForInTheUtterancesOwnLanguage() {
 	s.languages = nil
 	s.reopen(time.Now)
 	s.ending(0.1)
-	s.say(2000, true)
-	s.none()
-	s.Zero(s.transcribed(), "no words asked for alone before the utterance's language is known")
+	s.say(1000, true)
+	first := next[stt.Transcript](&s.transcribing)
+	s.True(first.Interim, "the words so far, before the utterance's language is known")
+	s.Equal("Two tickets to Bilbao, please.", first.Text)
+	s.Equal([]string{""}, s.askedIn(), "asked for in no language")
 
 	s.say(220, false)
 	s.answered()
 	shown := next[stt.Transcript](&s.transcribing)
 	s.True(shown.Interim, "the pause's words, in the language the server heard")
 	s.say(1000, true)
-	first := next[stt.Transcript](&s.transcribing)
-	s.True(first.Interim)
-	s.Equal([]string{"English"}, s.askedIn(), "asked for in the language of the pause's words")
+	again := next[stt.Transcript](&s.transcribing)
+	s.True(again.Interim)
+	s.Equal([]string{"", "English"}, s.askedIn(), "then in the language of the pause's words")
 
 	for _, foreign := range []struct{ language, noise string }{{"Hindi", ""}, {"English", "language"}} {
 		before := outcomes()
@@ -357,9 +359,12 @@ func (s *InterimSuite) TestAPauseTheModelWaitsOnShowsItsWords() {
 // interim sends a second is bounded by what a decision hears: past 16 s of utterance one is
 // asked less often as it grows, so a caller who talks on costs a transcription lane at most
 // the words of 16 s a second, however long they go on.
+//
+// An interim is asked on a frame once the one before has answered, so the speech is held a frame
+// at a time: sent at once, the frames ran out with a few interims asked.
 func (s *InterimSuite) TestInterimsComeLessOftenAsTheUtteranceGrows() {
-	s.say(48000, true)
-	s.Eventually(func() bool { return !s.transcriber.interimOut.Load() }, 5*time.Second, time.Millisecond)
+	_, _, ended := s.holding(48000, true)
+	s.Require().False(ended, "not while the caller talks")
 	requests := s.requests()
 	s.GreaterOrEqual(len(requests), 20, "one a second of speech to 16 s, then fewer")
 	s.Less(len(requests), 40, "fewer than one a second past 16 s")

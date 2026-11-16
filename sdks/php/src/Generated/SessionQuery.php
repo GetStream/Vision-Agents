@@ -16,7 +16,7 @@ final readonly class SessionQuery
         public ?SessionFilter $filter = null,
         // Up to 200. Omitted is 25.
         public ?int $limit = null,
-        // Omitted is updated_at, or relevance for a text search.
+        // Omitted is last_message_at descending, or relevance for a text search. One of: last_message_at; pinned, the...
         /** @var list<SessionSort>|null */
         public ?array $sort = null,
     ) {

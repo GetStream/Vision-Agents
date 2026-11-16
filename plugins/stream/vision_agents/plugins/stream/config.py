@@ -374,6 +374,8 @@ async def _declare_settings(
             body.dispatch.text = DispatchSetting(settings.dispatch["text"])
     if settings.search:
         body.search = settings.search
+    if settings.image is not None:
+        body.image = settings.image
     if settings.greeting is not None:
         body.greeting = Greeting(text=settings.greeting.text)
         if settings.greeting.mode:
@@ -411,7 +413,8 @@ async def _declare_settings(
             scheduling.default_timezone = settings.scheduling.default_timezone
         body.scheduling = scheduling
     if settings.floor_control is not None:
-        # As written, each key only when named; empty is the default flow controller again.
+        # As written, each key only when named; empty is no choice again, which the router's
+        # default rules.
         floor_control = FloorControl()
         if settings.floor_control.model is not None:
             floor_control.model = settings.floor_control.model

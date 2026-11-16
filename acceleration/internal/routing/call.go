@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"time"
@@ -51,6 +52,10 @@ type Meter struct {
 	// row settles it at what the work cost; a refusal asks no vendor and records no row. Nil
 	// sets nothing aside.
 	Estimate pricing.Quantities
+	// ReserveFor is how long the estimate is set aside. Zero is ReserveTTL. Work that may run
+	// longer, such as a picture a queued provider takes minutes over, holds it for as long as
+	// it may run, or concurrent work could spend past a limit once the hold lapsed.
+	ReserveFor time.Duration
 }
 
 // ReserveTTL is how long what a unit of request-and-answer work may cost is set aside before
@@ -66,7 +71,7 @@ func (m Meter) reserve(stat *Stat) (uuid.UUID, error) {
 	if stat.UsageID == uuid.Nil {
 		stat.UsageID = uuid.Must(uuid.NewV7())
 	}
-	if err := m.Recorder.Reserve(m.Config, m.Owner, stat.UsageID, m.Estimate, ReserveTTL); err != nil {
+	if err := m.Recorder.Reserve(m.Config, m.Owner, stat.UsageID, m.Estimate, cmp.Or(m.ReserveFor, ReserveTTL)); err != nil {
 		return uuid.Nil, refusedReservation{err}
 	}
 	return stat.UsageID, nil

@@ -194,7 +194,8 @@ func unknownKnowledgeURL(id string) error {
 
 // SaveKnowledgeDocument records how many passages a document was cut into. A source the
 // knowledge base already has is updated in place and keeps its id, since posting it again
-// replaced the same passages rather than adding a second copy.
+// replaced the same passages rather than adding a second copy. The row takes the state and
+// error the caller sets.
 func (s *Store) SaveKnowledgeDocument(ctx context.Context, document *KnowledgeDocument) error {
 	if document.CustomerID == "" {
 		return stack.Wrap(errors.New("store: customer id is required"))
@@ -210,8 +211,6 @@ func (s *Store) SaveKnowledgeDocument(ctx context.Context, document *KnowledgeDo
 	now := time.Now().UTC()
 	document.CreatedAt = now
 	document.UpdatedAt = now
-	document.State = KnowledgeDocumentIndexed
-	document.Error = ""
 	document.ObjectKey = ""
 
 	// Text posted over a file still waiting to be read is the newer of the two, so the row
@@ -268,6 +267,22 @@ func (s *Store) PendKnowledgeFile(ctx context.Context, document *KnowledgeDocume
 		return stack.Wrap(fmt.Errorf("store: pend knowledge file: %w", err))
 	}
 	return nil
+}
+
+// CoverKnowledgeFile raises the document's passage count to cover passages about to be
+// written for its file, under the same condition as FinishKnowledgeFile, so a write that
+// stops part way leaves a row whose delete removes every passage either version wrote.
+func (s *Store) CoverKnowledgeFile(ctx context.Context, customerID, id, objectKey string, passages int) (bool, error) {
+	result, err := s.db.NewUpdate().Model((*KnowledgeDocument)(nil)).
+		Set("passages = GREATEST(passages, ?)", passages).
+		Where("id = ?", id).
+		Where("customer_id = ?", customerID).
+		Where("object_key = ?", objectKey).
+		Exec(ctx)
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: cover knowledge file: %w", err))
+	}
+	return updatedOne(result, "cover knowledge file")
 }
 
 // FinishKnowledgeFile records a file read into its passages, as long as the row still waits

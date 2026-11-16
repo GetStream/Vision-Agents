@@ -174,13 +174,13 @@ class TestSession:
         # TODO: tool_call_id is not available at the registry call site, so
         # parallel invocations of the same tool within one response cannot be
         # paired in the captured trace. Sequential tool calls pair by adjacency.
-        async def _observed(**kwargs: Any) -> Any:
+        async def _observed(*context: Any, **kwargs: Any) -> Any:
             start = time.perf_counter()
             self._captured_events.append(
                 FunctionCallEvent(name=name, arguments=kwargs, tool_call_id=None)
             )
             try:
-                result = await original(**kwargs)
+                result = await original(*context, **kwargs)
             except Exception as exc:
                 elapsed = (time.perf_counter() - start) * 1000
                 self._captured_events.append(

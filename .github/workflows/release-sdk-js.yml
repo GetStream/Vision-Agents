@@ -1,7 +1,7 @@
 name: Release JS SDK
 
 # Run by hand. semantic-release reads the `sdk-js` commits since the last `sdk-js-v*` tag,
-# publishes @stream-io/calypso to npm and tags the release. See sdks/js/release.config.mjs.
+# publishes @stream-io/stream-agents to npm and tags the release. See sdks/js/release.config.mjs.
 on:
   workflow_dispatch:
     inputs:
@@ -18,6 +18,9 @@ jobs:
   release:
     if: github.ref == 'refs/heads/accelerate'
     runs-on: ubuntu-latest
+    # The npm trusted publisher accepts only a token minted in this environment. A run enters
+    # it only from `accelerate`, and only after a reviewer approves it.
+    environment: registry-publish
     permissions:
       contents: write   # push the tag and the GitHub release
       issues: write     # open an issue when a release fails

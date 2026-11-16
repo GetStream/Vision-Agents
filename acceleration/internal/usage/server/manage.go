@@ -262,14 +262,14 @@ func (s *Server) registerManage(api huma.API) {
 		"(required, 1 to 255 characters): 201 with the entry written, or 200 with the one already written under the key, "+
 		"which changes nothing. A key that holds another organization's entry, one of another kind, amount or "+
 		"`reverses_id`, or a suspension, restore or settings change, is a 409 `idempotency_key_reused`. Only the sign "+
-		"is checked: `top_up`, `grant` and `dispute_reversal` are above 0, "+
+		"is checked: `top_up`, `grant`, `trial` and `dispute_reversal` are above 0, "+
 		"`refund` and `dispute` below, an `adjustment` either but not 0. Any account takes credit, a suspended one "+
 		"included: payment rules are the writer's.\n\n"+
 		"An entry with `reverses_id` reverses that entry. Revoking a grant is an `adjustment` of minus its amount "+
 		"with `reverses_id` the grant; unrevoking it is an `adjustment` of plus the amount with `reverses_id` the "+
-		"revocation, which can be revoked again the same way. A reversal is an `adjustment` of exactly minus the "+
+		"revocation, which can be revoked again the same way; a `trial` is revoked as a grant is. A reversal is an `adjustment` of exactly minus the "+
 		"amount of the entry it reverses (400 `invalid_request`); that entry is the organization's (404 "+
-		"`credit_not_found`), a `grant` or an entry that itself reverses one (400 `not_reversible`: a top-up, refund, "+
+		"`credit_not_found`), a `grant`, a `trial` or an entry that itself reverses one (400 `not_reversible`: a top-up, refund, "+
 		"dispute or plain adjustment is not), and reversed at most once (409 `already_reversed`). Revoking credit "+
 		"already spent takes the balance below 0."), s.addCredit)
 	huma.Register(api, register(huma.Operation{
@@ -547,8 +547,8 @@ func (s *Server) setAccountLimits(ctx context.Context, input *setAccountLimitsIn
 // CreditRequest is a credit entry to write.
 type CreditRequest struct {
 	_            struct{}         `additionalProperties:"false"`
-	Kind         usage.CreditKind `json:"kind" enum:"top_up,grant,refund,dispute,dispute_reversal,adjustment" doc:"What the entry is, which fixes its sign."`
-	AmountMicros int64            `json:"amount_micros" doc:"Signed, in micros: above 0 for top_up, grant and dispute_reversal, below 0 for refund and dispute, either for adjustment."`
+	Kind         usage.CreditKind `json:"kind" enum:"top_up,grant,trial,refund,dispute,dispute_reversal,adjustment" doc:"What the entry is, which fixes its sign."`
+	AmountMicros int64            `json:"amount_micros" doc:"Signed, in micros: above 0 for top_up, grant, trial and dispute_reversal, below 0 for refund and dispute, either for adjustment."`
 	Reference    string           `json:"reference,omitempty" maxLength:"255" doc:"The writer's own reference, such as a payment id."`
 	Note         string           `json:"note,omitempty" maxLength:"1000"`
 	ReversesID   int64            `json:"reverses_id,omitempty" minimum:"1" doc:"The id of the entry this adjustment reverses: a grant, to revoke it, or the entry that revoked it, to unrevoke it."`

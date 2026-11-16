@@ -191,6 +191,7 @@ func (s *Session) create(ctx context.Context, params llm.ResponseParams) (*llm.S
 func (s *Session) attempt(ctx context.Context, params llm.ResponseParams, hedge *hedgeAttempt) (*llm.Stream, error) {
 	startedAt := time.Now().UTC()
 
+	inference := startInference(ctx, s.config)
 	ctx, span := tracer.Start(ctx, "llm.provider.create",
 		trace.WithAttributes(
 			attribute.String("llm.provider", s.config.Provider),
@@ -233,6 +234,7 @@ func (s *Session) attempt(ctx context.Context, params llm.ResponseParams, hedge 
 		}
 		label(&stat, params, hedge)
 		s.recorder.Record(s.config, stat)
+		endInference(inference, nil, code)
 		slog.Info("model call timing", "call", s.owner.CallID, "operation", params.ID,
 			"purpose", params.Purpose, "turn", params.TurnID,
 			"provider", s.config.Provider, "model", s.config.Model,
@@ -258,7 +260,7 @@ func (s *Session) attempt(ctx context.Context, params llm.ResponseParams, hedge 
 			settled()
 			passed.observeStream(s.config, createdAt, completed.Response)
 		}
-		s.observe(startedAt, createdAt, params, hedge, event, owner, charged, reserved, failure)
+		s.observe(startedAt, createdAt, params, hedge, event, owner, charged, reserved, failure, inference)
 	}), nil
 }
 
@@ -336,12 +338,12 @@ func (s *Session) Close() error {
 	return stack.Wrap(errors.Join(append(failures, s.provider.Close())...))
 }
 
-// observe records statistics as a response settles.
+// observe records statistics as a response settles, and ends the model call's span then.
 //
 // One response is one unit of billable work, the way one synthesis is for text-to-speech,
 // and it is recorded once: a failure is carried on the response that failed rather than
 // written as a row of its own, so one turn stays one row.
-func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponseParams, hedge *hedgeAttempt, event llm.Event, owner routing.Owner, charged routing.Caller, reserved uuid.UUID, failure string) {
+func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponseParams, hedge *hedgeAttempt, event llm.Event, owner routing.Owner, charged routing.Caller, reserved uuid.UUID, failure string, inference trace.Span) {
 	completed, settled := event.(llm.ResponseCompleted)
 	if !settled {
 		return
@@ -354,6 +356,7 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 	ttftMs := measuredLatency(response, headersMs+response.TimeToFirstTokenMs)
 	durationMs := headersMs + response.DurationMs
 	code := outrun(errorCode(response), response.TimeToFirstTokenMs <= 0, hedge)
+	endInference(inference, &response, code)
 	stat := reported(response)
 	estimated := unreported(response)
 	if estimated {

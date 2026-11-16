@@ -1,7 +1,7 @@
 # Kotlin SDK
 
-One Android library for talking to an agent from an Android app: `io.getstream:vision-agents-core`,
-package `io.getstream.visionagents.android.core`. It holds sessions, responses, the event socket
+One Android library for talking to an agent from an Android app: `io.getstream:stream-agents-android-core`,
+package `io.getstream.agents.android.core`. It holds sessions, responses, the event socket
 and the conversation as `StateFlow`; the Stream Chat channel a text conversation is kept in; and
 joining the call, so the conversation can be spoken. It depends on Stream Chat (7.18.0) and
 Stream Video (1.34.0), and needs minSdk 24 and compileSdk 37, which is what Stream's SDKs require.
@@ -10,7 +10,8 @@ It ships no views. Show a conversation with Stream Chat's AI components,
 `io.getstream:stream-chat-android-ai-compose`, which the app adds itself;
 [`examples/voice_agents/android_demo`](../../examples/voice_agents/android_demo) does.
 
-Stream Chat 7.18.0 is published to Stream's Maven repository rather than Maven Central:
+The SDK and Stream Chat 7.18.0 are published to Stream's Maven repository rather than Maven
+Central:
 
 ```kotlin
 dependencyResolutionManagement {
@@ -20,12 +21,16 @@ dependencyResolutionManagement {
         maven("https://stream-io-repo.com")
     }
 }
+
+dependencies {
+    implementation("io.getstream:stream-agents-android-core:<version>")
+}
 ```
 
 ## Using them
 
 ```kotlin
-val agents = VisionAgents(apiKey = "your_api_key")
+val agents = StreamAgents(apiKey = "your_api_key")
 agents.setUser(User(id = "jlahey")) { yourBackend.agentToken() }
 
 // In writing. No call is joined, nothing is transcribed or spoken.
@@ -49,10 +54,10 @@ voice.join()
 agents.disconnect()
 ```
 
-`VisionAgents(apiKey = ...)` reaches Stream's hosted router in us-east4; pass `url` for another router. For another
+`StreamAgents(apiKey = ...)` reaches Stream's hosted router in us-east4; pass `url` for another router. For another
 region, pass `url = Backend.regionUrl("europe-west4")`. A router
 running locally with nothing in front of it is reached by customer id instead:
-`VisionAgents(url = "http://localhost:8080", customerId = "acme")`. Pass `apiKey` beside it and
+`StreamAgents(url = "http://localhost:8080", customerId = "acme")`. Pass `apiKey` beside it and
 the key is Stream's alone, so chat and video connect on a local router too.
 
 An app targeting SDK 37 reaches a router on the local network (the emulator's `10.0.2.2`, or a
@@ -170,32 +175,55 @@ moderation blur, keeps running underneath, so what the agent sees is what the ca
 
 ### Finding a conversation again
 
-Lists come a page at a time. Pass a page's `nextCursor` back as `cursor`, with the same filters,
-for the next one:
+Lists come a page at a time. `query` takes a `filter`, a `sort`, a `limit` (up to 200, 25 when
+left out) and a `cursor`. Pass a page's `nextCursor` back as `cursor`, with the same filter and
+sort, for the next one:
 
 ```kotlin
 val sessions = agents.agent("docs").sessions
-val live = SessionQuery(state = Session.State.Live, limit = 20)
-val first = sessions.query(live)
-val next = first.nextCursor?.let { sessions.query(live.copy(cursor = it)) }
-val found = sessions.search("billing")
 
-val lastWeek = sessions.query(
-    SessionQuery(
-        custom = mapOf("ticket" to "4721"),   // the labels SessionOptions.custom opened it with
-        createdSince = Clock.System.now() - 7.days,
-        sort = SessionQuery.Sort.UpdatedAt,
-    ),
+val first = sessions.query(limit = 20)
+val next = first.nextCursor?.let { sessions.query(limit = 20, cursor = it) }
+
+// one project, or either of two
+val health = sessions.query(filter = SessionFilter.ProjectId(eq = "health"))
+val either = sessions.query(
+    filter = SessionFilter.Or(SessionFilter.ProjectId("health"), SessionFilter.ProjectId("billing")),
 )
+
+// pinned conversations on top, then the most recent message first
+val pinnedFirst = sessions.query(
+    sort = listOf(SessionSort(SessionSortField.Pinned), SessionSort(SessionSortField.LastMessageAt)),
+)
+
+val found = sessions.search("billing", filter = SessionFilter.ProjectIdIn(listOf("health", "billing")))
 ```
 
-`createdSince` is inclusive and `createdBefore` is not. Every order is descending: most
-recently active first, or best match first for a search, which is also what leaving `sort` out
-means.
+A filter is one of `SessionFilter.ProjectId(eq)`, `SessionFilter.ProjectIdIn(values)` (1 to 50
+projects), `SessionFilter.Agent(eq)`, `SessionFilter.Text(q)`, or `SessionFilter.And(...)` and
+`SessionFilter.Or(...)` over 1 to 10 of them, nested up to 3 deep. `toJson()` is what goes on
+the wire: `{"$or": [{"project_id": {"$eq": "health"}}, {"project_id": {"$eq": "billing"}}]}`.
+From `agents.agent("docs").sessions` the list is always narrowed to that agent. Only ever the
+signed-in user's own conversations come back.
+
+A sort is a list of `SessionSort(field, direction)`, `direction` being -1 for descending (the
+default) or 1 for ascending. Leaving it out is the most recent message first. The orders the
+router takes are `LastMessageAt` either way, `Pinned` alone or followed by `LastMessageAt`, and
+`Relevance`, which only sorts a filter holding a `Text`. A cursor is only good with the sort it
+came from.
+
+`search` finds conversations by title, description, project and agent name, best match first.
+It takes the same `filter`, `limit` and `cursor` and no sort, and refuses a filter that already
+holds a `Text`.
 
 `update` renames a conversation or relabels it, `chat.update(title = "Billing")` on an open one
 and `sessions.update(id, title = "Billing")` on one that ended. A device may change `title`,
-`description` and `custom` and nothing else; models and voice are your backend's.
+`description`, `custom` and `pinned` and nothing else; models and voice are your backend's.
+
+`chat.pin()` and `chat.unpin()` pin an open conversation, `sessions.pin(id)` and
+`sessions.unpin(id)` any of the user's, and `update(pinned = true)` does the same alongside a
+rename. A pinned session carries `pinnedAt`, null otherwise. Pinning does not move a
+conversation in the most-recent-message order; sort by `Pinned` to put them on top.
 
 ### Looking something up
 
@@ -222,8 +250,8 @@ val branch = agents.attach(chat.fork(ForkOptions(responseId = turns[0].id)).id)
 ```
 
 A text session is kept in Stream Chat unless it is `incognito`, and a conversation kept there
-cannot be rewound, since its transcript would bring the turns back: the router answers 400, so
-fork it at the response instead. An open `AgentSession` keeps the transcript it already showed, so reload it from
+is rewound there too: the later turns are hidden in the channel and kept as a branch that can be
+brought back. An open `AgentSession` keeps the transcript it already showed, so reload it from
 `responses` after a rewind.
 
 ### Reminders
@@ -299,19 +327,19 @@ cd <repo>
 
 # unit tests against a real loopback router, no mocks, and the release build
 docker run --rm --platform linux/amd64 -u root -v "$PWD":/repo \
-  -v ~/.cache/vision-agents-kotlin/gradle-android:/gradle-home -e GRADLE_USER_HOME=/gradle-home \
+  -v ~/.cache/stream-agents-kotlin/gradle-android:/gradle-home -e GRADLE_USER_HOME=/gradle-home \
   -w /repo/sdks/kotlin cimg/android:2026.08.1 \
   ./gradlew :core:testDebugUnitTest :core:assembleRelease
 
 # the same, plus the live tests against a running router
 docker run --rm --platform linux/amd64 -u root -v "$PWD":/repo \
-  -v ~/.cache/vision-agents-kotlin/gradle-android:/gradle-home -e GRADLE_USER_HOME=/gradle-home \
+  -v ~/.cache/stream-agents-kotlin/gradle-android:/gradle-home -e GRADLE_USER_HOME=/gradle-home \
   -e VISION_AGENTS_URL=http://host.docker.internal:8091 -e VISION_AGENTS_CUSTOMER_ID=examples \
   -w /repo/sdks/kotlin cimg/android:2026.08.1 ./gradlew :core:testDebugUnitTest
 
 # the same, plus a device token's 403s against a router in api_key mode
 docker run --rm --platform linux/amd64 -u root -v "$PWD":/repo \
-  -v ~/.cache/vision-agents-kotlin/gradle-android:/gradle-home -e GRADLE_USER_HOME=/gradle-home \
+  -v ~/.cache/stream-agents-kotlin/gradle-android:/gradle-home -e GRADLE_USER_HOME=/gradle-home \
   -e INTEGRATION_ROUTER_URL=http://host.docker.internal:8099 \
   -e INTEGRATION_ROUTER_KEY=vak_live_… -e INTEGRATION_ROUTER_SECRET=vas_live_… \
   -w /repo/sdks/kotlin cimg/android:2026.08.1 ./gradlew :core:testDebugUnitTest
@@ -326,3 +354,20 @@ only with `INTEGRATION_ROUTER_KEY` set; the router it needs is set up as in the
 
 The unit tests are plain JVM tests, run by the Android Gradle plugin with no emulator.
 `cimg/android` publishes no arm64 image, hence `--platform linux/amd64`.
+
+## Releasing
+
+`.github/workflows/publish-sdk-kotlin.yml` publishes `io.getstream:stream-agents-android-core`
+to `https://stream-io-repo.com` from `release-kotlin-*` branches only. `version` in
+`gradle.properties` must match the branch:
+
+- **A snapshot:** push a branch named `release-kotlin-X.Y.Z-SNAPSHOT` that sets
+  `version=X.Y.Z-SNAPSHOT`. Each push publishes `X.Y.Z-<yyyyMMddHHmm>-SNAPSHOT`, which expires
+  after 7 days. `X.Y.Z` must be newer than the last release.
+- **A release:** open a pull request to `accelerate` from `release-kotlin-X.Y.Z` that sets
+  `version=X.Y.Z`. It fails unless `X.Y.Z` is newer than the last release and not already
+  published. Merging it publishes the release and tags the commit `sdk-kotlin-vX.Y.Z`.
+
+Other merges into `accelerate` publish nothing.
+
+There is no GitHub release: publishing one starts the Python release, `release.yml`.

@@ -3,6 +3,7 @@ package channelbridge
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
@@ -85,6 +86,10 @@ func (b *Bridge) gateRefusal(ctx context.Context, customerID, connectorID, to st
 	if errors.Is(err, dlc.ErrRefused) {
 		// The refusal names the number, which stays out of the logs.
 		b.logger.Info("the sandbox gate held a channel message back", "connector", connectorID, "customer", customerID)
+		if dlc.TierLimit(err) != "" {
+			// A tier limit's refusal names no number, so it goes along to say which limit held it.
+			return fmt.Errorf("%w: %w", ErrHeldBack, err), nil
+		}
 		return stack.Wrap(ErrHeldBack), nil
 	}
 	if errors.Is(err, dlc.ErrUnpaid) {

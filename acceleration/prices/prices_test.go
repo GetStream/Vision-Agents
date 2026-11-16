@@ -274,7 +274,7 @@ func (s *PricesSuite) TestEveryLLMKnowledgeAndSandboxVendorEntryHasABYOKTwin() {
 		s.Equal(pricing.Priced(pricing.Entry{Modality: entry.Modality, Provider: entry.Provider, Model: entry.Model,
 			Region: entry.Region, BYOK: true, When: entry.When, Free: entry.Free, Rates: entry.Rates, Tiers: entry.Tiers}), found, Name(twin))
 	}
-	s.Equal(78, twins, "73 llm, 3 knowledge and 2 sandbox entries")
+	s.Equal(79, twins, "74 llm, 3 knowledge and 2 sandbox entries")
 }
 
 func (s *PricesSuite) TestTheFirstFileWinsForAnItem() {

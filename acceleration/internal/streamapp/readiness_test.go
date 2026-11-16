@@ -209,3 +209,26 @@ func (s *ReadinessSuite) TestASourceWithoutADeploymentAppHasNothingToLearn() {
 
 	s.ErrorIs(err, ErrNoIdentity)
 }
+
+// A channel type an agent config answers in is checked as the agent channel type is, and kept
+// for the minute apart from it: an app whose agent type is safe and whose other type is not
+// answers each as it is, asked in either order.
+func (s *ReadinessSuite) TestAnotherChannelTypeIsCheckedAndKeptApartFromTheAgentType() {
+	s.stream.SetApp(chattest.App{ID: 4242, ChannelTypes: map[string]map[string][]string{
+		AgentChannelType: {"channel_member": {"read-channel", "create-message"}},
+		"callouts":       {"channel_member": {"read-channel", "create-message"}, "user": {"add-own-channel-membership"}},
+	}, CallTypes: []string{AgentCallType}})
+	bound, err := s.cache.For(s.ctx, "acme")
+	s.Require().NoError(err)
+
+	agent := s.read()
+	callouts, err := s.cache.ReadinessOf(s.ctx, bound, "callouts")
+	s.Require().NoError(err)
+	missing, err := s.cache.ReadinessOf(s.ctx, bound, "shifts")
+	s.Require().NoError(err)
+
+	s.Equal(TypePresent, agent.ChannelType)
+	s.Equal(TypeUnsafe, callouts.ChannelType)
+	s.Equal(TypeMissing, missing.ChannelType)
+	s.Equal(TypePresent, s.read().ChannelType, "the agent type's answer is not the other type's")
+}

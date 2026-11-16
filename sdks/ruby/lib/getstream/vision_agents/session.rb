@@ -150,11 +150,24 @@ module GetStream
       #
       # @param fields any UpdateSessionRequest field: title, description, custom,
       #   llm, stt, tts, sts, voice, thinking, temperature, max_output_tokens,
-      #   verbosity. A field left out is left as it is; an empty sts makes the session a
+      #   verbosity, pinned. A field left out is left as it is; an empty sts makes the session a
       #   cascade again, and an empty voice returns to the provider's default.
       # @return [Hash] the session as the router now has it.
       def update(**fields)
         @client.patch("/v1/agents/sessions/{id}", path: { id: id }, body: fields)
+      end
+
+      # Pins this conversation, so a query sorted by pinned lists it first. Its place in
+      # last_message_at order is unchanged.
+      #
+      # @return [Hash] the session as the router now has it, with pinned_at.
+      def pin
+        update(pinned: true)
+      end
+
+      # Unpins this conversation. The session answered has no pinned_at.
+      def unpin
+        update(pinned: false)
       end
 
       # Deletes this conversation: it is stopped, and its turns and what it remembered are
@@ -268,7 +281,7 @@ module GetStream
         answer[:request_id] = frame["request_id"] unless frame["request_id"].to_s.empty?
         answer[:turn_id] = frame["turn_id"] unless frame["turn_id"].to_s.empty?
 
-        tool_call_context = ToolCall.from(frame, session_id: id, send: ->(sent) { reply(sent) })
+        tool_call_context = ToolCallContext.from(frame, session_id: id, send: ->(sent) { reply(sent) })
         busy = @lock.synchronize do
           full = @running.size >= RUNNING_TOOLS
           # Held before the thread starts, so a tool quicker than this line still finds itself

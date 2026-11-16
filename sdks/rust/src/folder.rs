@@ -163,7 +163,8 @@ pub struct Settings {
     pub dispatch: Option<types::AgentDispatch>,
     /// The model that controls the agent's floor, and how long a caller may wait once they stop
     /// (`max_wait_ms`), sent as written. `None` leaves the stored choice; an empty mapping
-    /// (`{}`) is the default flow controller again. Which models there are, and whether a wait
+    /// (`{}`) is no choice again, which the router's default rules; `{model: flow-controller}`
+    /// keeps the flow controller whatever that default. Which models there are, and whether a wait
     /// names one, is the router's to say.
     pub floor_control: Option<types::FloorControl>,
 }
@@ -686,7 +687,7 @@ fn dispatch(value: &Yaml) -> std::result::Result<Option<types::AgentDispatch>, S
 }
 
 /// floor_control as written: the model and, optionally, `max_wait_ms`, a key whose value is
-/// null left out, and `{}` the default flow controller again. Only its shape is read here; the
+/// null left out, and `{}` no choice again, which the router's default rules. Only its shape is read here; the
 /// router refuses a model it does not have, or a wait without one.
 fn floor_control(value: &Yaml) -> std::result::Result<Option<types::FloorControl>, String> {
     let Yaml::Hash(fields) = value else {

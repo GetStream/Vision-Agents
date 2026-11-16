@@ -358,8 +358,8 @@ func (s *PriceFileSuite) TestEveryPieceOfWorkTheBuiltInDeploymentBillsIsPriced()
 			continue
 		}
 		deployment.PhoneVendors = append(deployment.PhoneVendors, vendor.Vendor)
-		// Only Telnyx's call minutes have a published rate in vendor.json so far.
-		if vendor.Vendor != "telnyx" {
+		// Only Telnyx's and Twilio's call minutes have a published rate in vendor.json so far.
+		if vendor.Vendor != "telnyx" && vendor.Vendor != "twilio" {
 			waiting = append(waiting, "phone/"+vendor.Vendor+"/"+phone.ModelCallMinutes)
 		}
 	}

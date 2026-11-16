@@ -2,7 +2,7 @@
 
 module GetStream
   module VisionAgents
-    # Raised by ToolCall#disallow_interruptions when the call had already been stopped, so the
+    # Raised by ToolCallContext#disallow_interruptions when the call had already been stopped, so the
     # write it guards never starts.
     class CallNotHeldError < Error; end
 
@@ -11,9 +11,9 @@ module GetStream
     # The Chat channel a call was made in, and the session's own labels.
     ToolConversation = Data.define(:cid, :custom)
 
-    # The call a tool's block is running for, handed to it as the second argument:
+    # The call a tool's block is running for, handed to it as the first argument:
     #
-    #   tools.register("book_flight", description: "Book a flight", ...) do |args, tool_call_context|
+    #   tools.register("book_flight", description: "Book a flight", ...) do |tool_call_context, args|
     #     tool_call_context.update("checking seats")
     #     tool_call_context.disallow_interruptions
     #     bookings.book(args["flight_id"], key: tool_call_context.id) unless tool_call_context.cancelled?
@@ -22,7 +22,7 @@ module GetStream
     # A Ruby thread cannot be stopped safely from outside, so a call the router cancels or
     # that runs past its timeout keeps running: cancelled? turns true and its answer is
     # dropped. Built without a socket, as in a unit test of the block, its methods do nothing.
-    class ToolCall
+    class ToolCallContext
       # id is the id the model gave the call. A call sent again keeps it, so it is the key to
       # make a side effect happen once.
       attr_reader :id, :session_id, :turn_id, :user, :conversation

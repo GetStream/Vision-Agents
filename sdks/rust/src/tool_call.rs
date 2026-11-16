@@ -28,7 +28,7 @@ pub struct ToolConversation {
 /// [`Tools::register_with_tool_call_context`](crate::Tools::register_with_tool_call_context)
 /// is handed one. A call made directly, as a test does, has no line, so its updates go nowhere.
 #[derive(Debug, Clone, Default)]
-pub struct ToolCall {
+pub struct ToolCallContext {
     pub id: String,
     pub session_id: String,
     pub turn_id: String,
@@ -39,13 +39,13 @@ pub struct ToolCall {
     line: Option<Line>,
 }
 
-impl ToolCall {
+impl ToolCallContext {
     /// The call a `tool_call` frame asks for. `session_id` stands in for a frame that does
     /// not name its session.
     pub(crate) fn of(frame: &Frame, session_id: &str, line: Line) -> Self {
         let user = frame.nested("user").unwrap_or_default();
         let conversation = frame.nested("conversation").unwrap_or_default();
-        ToolCall {
+        ToolCallContext {
             id: frame.text("id").into(),
             session_id: match frame.text("session_id") {
                 "" => session_id.into(),
@@ -72,7 +72,7 @@ impl ToolCall {
         self.send_update(text, false).await
     }
 
-    /// [`ToolCall::update`], said word for word.
+    /// [`ToolCallContext::update`], said word for word.
     pub async fn say(&self, text: &str) -> Result<()> {
         self.send_update(text, true).await
     }

@@ -48,7 +48,7 @@ func (s *Server) onOwningNode(next http.Handler) http.Handler {
 		defer cancel()
 		if err := s.forwarder.Forward(ctx, address, w, r); err != nil {
 			s.logger.Error("could not reach the node running a session",
-				"node", address, "path", r.URL.Path, "error", err)
+				"node", address, "path", loggedPath(s.mux, r), "error", err)
 			writeError(w, unavailable(unreachableNode))
 		}
 	})
@@ -109,7 +109,7 @@ func (s *Server) proxySocket(w http.ResponseWriter, r *http.Request, address str
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			s.logger.Error("could not reach the node running a session",
-				"node", address, "path", r.URL.Path, "error", err)
+				"node", address, "path", loggedPath(s.mux, r), "error", err)
 			writeError(w, unavailable(unreachableNode))
 		},
 	}

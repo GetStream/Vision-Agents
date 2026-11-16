@@ -23,6 +23,28 @@ func (s *SessionSuite) silences() map[string]float64 {
 	return counts
 }
 
+// judged is router_voice_sessions_judged_total by kind.
+func (s *SessionSuite) judged() map[string]float64 {
+	counts := map[string]float64{}
+	for _, kind := range []string{"phone", "web"} {
+		value, ok := s.series("router_voice_sessions_judged_total", map[string]string{"kind": kind})
+		s.Require().True(ok, "no series for %s", kind)
+		counts[kind] = value
+	}
+	return counts
+}
+
+// judgedOnce checks that, since before, the kind counted one more judged session and the other
+// kind none.
+func (s *SessionSuite) judgedOnce(before map[string]float64, kind string) {
+	want := map[string]float64{}
+	for key, count := range before {
+		want[key] = count
+	}
+	want[kind]++
+	s.Equal(want, s.judged())
+}
+
 // silentOnce checks that, since before, the one series counted one more and no other moved.
 func (s *SessionSuite) silentOnce(before map[string]float64, series string) {
 	after := s.silences()
@@ -59,19 +81,20 @@ func (s *SessionSuite) TestAWebSessionACallerJoinedWithoutAudioIsCountedOnceAsNo
 	// Catches the count missing, taken as a phone session, or counted again by a second close.
 	s.present = []stt.Participant{visitor}
 	s.manages()
-	before := s.silences()
+	before, judged := s.silences(), s.judged()
 	created := s.joins(Spec{})
 	s.settles(created)
 
 	s.closes(created)
 
 	s.silentOnce(before, "no_inbound_audio/web")
+	s.judgedOnce(judged, "web")
 }
 
 func (s *SessionSuite) TestAPhoneSessionWhoseCallerSentOnlySilenceIsCountedAsSilentInboundAudio() {
 	// Catches a phone session counted as a web one.
 	s.manages()
-	before := s.silences()
+	before, judged := s.silences(), s.judged()
 	created := s.rings(inbound(), caller)
 	s.settles(created)
 	s.sendsTo(created, caller, 0)
@@ -79,13 +102,14 @@ func (s *SessionSuite) TestAPhoneSessionWhoseCallerSentOnlySilenceIsCountedAsSil
 	s.closes(created)
 
 	s.silentOnce(before, "silent_inbound_audio/phone")
+	s.judgedOnce(judged, "phone")
 }
 
 func (s *SessionSuite) TestAWebSessionWithTheCallerHeardIsNotCountedSilent() {
 	// Catches a normal call counted as silent.
 	s.present = []stt.Participant{visitor}
 	s.manages()
-	before := s.silences()
+	before, judged := s.silences(), s.judged()
 	created := s.joins(Spec{})
 	s.settles(created)
 	s.sendsTo(created, visitor, audio.AudibleSample)
@@ -95,6 +119,7 @@ func (s *SessionSuite) TestAWebSessionWithTheCallerHeardIsNotCountedSilent() {
 	s.closes(created)
 
 	s.Equal(before, s.silences())
+	s.judgedOnce(judged, "web")
 }
 
 func (s *SessionSuite) TestEveryVoiceRunOfASessionIsJudgedTogether() {
@@ -102,7 +127,7 @@ func (s *SessionSuite) TestEveryVoiceRunOfASessionIsJudgedTogether() {
 	// the caller was heard.
 	s.present = []stt.Participant{visitor}
 	s.manages()
-	before := s.silences()
+	before, judged := s.silences(), s.judged()
 	created := s.writes(Spec{})
 	s.Require().NoError(created.StartVoice(s.ctx, Call{}))
 	s.settles(created)
@@ -116,4 +141,39 @@ func (s *SessionSuite) TestEveryVoiceRunOfASessionIsJudgedTogether() {
 	s.closes(created)
 
 	s.Equal(before, s.silences())
+	s.judgedOnce(judged, "web")
+}
+
+func (s *SessionSuite) TestASessionNobodyJoinedIsNotJudged() {
+	// Catches a session nobody joined counted as judged: a denominator that holds sessions that
+	// never started would read the silent share too low.
+	s.manages()
+	before, judged := s.silences(), s.judged()
+	created := s.joins(Spec{})
+	s.settles(created)
+
+	s.closes(created)
+
+	s.Equal(before, s.silences())
+	s.Equal(judged, s.judged())
+}
+
+func (s *SessionSuite) TestASessionInTwoCasesIsJudgedOnce() {
+	// Catches the judged count taken once per case: a call with no audio either way is in two,
+	// and counted twice the share of its cases would pass 1.
+	s.present = []stt.Participant{visitor}
+	s.manages()
+	before, judged := s.silences(), s.judged()
+	created := s.joins(Spec{})
+	s.settles(created)
+	created.carriedMu.Lock()
+	created.carried = agent.CallAudio{Published: true}
+	created.carriedMu.Unlock()
+
+	s.closes(created)
+
+	after := s.silences()
+	s.Equal(before["no_inbound_audio/web"]+1, after["no_inbound_audio/web"])
+	s.Equal(before["no_audible_outbound/web"]+1, after["no_audible_outbound/web"])
+	s.judgedOnce(judged, "web")
 }

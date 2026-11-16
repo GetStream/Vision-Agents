@@ -114,6 +114,11 @@ def sync_detailed(
     whose role is agent_moderator is then told the answer format the chat review worker parses, after
     both, so no edit to the agent can change it.
     The input is handed to the agent as JSON data, never as instructions.
+    The agents a text config names are tools of the run: each call runs that agent on its input as an
+    incognito run of its own, given its own timeout or what is left of this run, whichever is less, and
+    several called in one reply run at once, at most 8 at a time. A call that fails or runs out of time
+    is a failed tool call the agent answers around, not a failed run. What they spend is in usage, and
+    by tool in children. They take none of the app's run slots: this run's covers them.
     Images, at most 8, go with the input in the order sent, so the input can refer to them by their
     place in the list. The agent's vision skill looks at them, or its conversation model when that can
     see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request.
@@ -164,6 +169,11 @@ def sync(
     whose role is agent_moderator is then told the answer format the chat review worker parses, after
     both, so no edit to the agent can change it.
     The input is handed to the agent as JSON data, never as instructions.
+    The agents a text config names are tools of the run: each call runs that agent on its input as an
+    incognito run of its own, given its own timeout or what is left of this run, whichever is less, and
+    several called in one reply run at once, at most 8 at a time. A call that fails or runs out of time
+    is a failed tool call the agent answers around, not a failed run. What they spend is in usage, and
+    by tool in children. They take none of the app's run slots: this run's covers them.
     Images, at most 8, go with the input in the order sent, so the input can refer to them by their
     place in the list. The agent's vision skill looks at them, or its conversation model when that can
     see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request.
@@ -209,6 +219,11 @@ async def asyncio_detailed(
     whose role is agent_moderator is then told the answer format the chat review worker parses, after
     both, so no edit to the agent can change it.
     The input is handed to the agent as JSON data, never as instructions.
+    The agents a text config names are tools of the run: each call runs that agent on its input as an
+    incognito run of its own, given its own timeout or what is left of this run, whichever is less, and
+    several called in one reply run at once, at most 8 at a time. A call that fails or runs out of time
+    is a failed tool call the agent answers around, not a failed run. What they spend is in usage, and
+    by tool in children. They take none of the app's run slots: this run's covers them.
     Images, at most 8, go with the input in the order sent, so the input can refer to them by their
     place in the list. The agent's vision skill looks at them, or its conversation model when that can
     see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request.
@@ -257,6 +272,11 @@ async def asyncio(
     whose role is agent_moderator is then told the answer format the chat review worker parses, after
     both, so no edit to the agent can change it.
     The input is handed to the agent as JSON data, never as instructions.
+    The agents a text config names are tools of the run: each call runs that agent on its input as an
+    incognito run of its own, given its own timeout or what is left of this run, whichever is less, and
+    several called in one reply run at once, at most 8 at a time. A call that fails or runs out of time
+    is a failed tool call the agent answers around, not a failed run. What they spend is in usage, and
+    by tool in children. They take none of the app's run slots: this run's covers them.
     Images, at most 8, go with the input in the order sent, so the input can refer to them by their
     place in the list. The agent's vision skill looks at them, or its conversation model when that can
     see; an image that is no HTTP(S) URL or image data URI, or more than 8, is a 400 invalid_request.

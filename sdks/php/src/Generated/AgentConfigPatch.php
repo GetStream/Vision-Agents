@@ -22,7 +22,7 @@ final readonly class AgentConfigPatch
         public ?array $connectors = null,
         public ?AgentDispatch $dispatch = null,
         public EpisodeCardsMode|string|null $episodeCards = null,
-        // Replaces the choice whole. Left out or null, the stored choice stays; an empty object is the default flow c...
+        // Replaces the choice whole. Left out or null, the stored choice stays; an empty object is no choice again, w...
         public ?FloorControl $floorControl = null,
         // Replaces the greeting whole. An empty text removes it.
         public ?Greeting $greeting = null,
@@ -71,6 +71,17 @@ final readonly class AgentConfigPatch
         public ?array $visibleTools = null,
         // The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voic...
         public ?string $voice = null,
+        // Replaces the list whole. An empty list removes it.
+        /** @var list<string>|null */
+        public ?array $llmFallbacks = null,
+        // Replaces the list whole. An empty list removes it.
+        /** @var list<AgentChatChannel>|null */
+        public ?array $chatChannels = null,
+        // Replaces the list whole. An empty list removes it.
+        /** @var list<ChildAgent>|null */
+        public ?array $agents = null,
+        // An empty string removes it, and the agent stops being offered generate_image.
+        public ?string $image = null,
     ) {
     }
 
@@ -116,6 +127,10 @@ final readonly class AgentConfigPatch
             video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
             visibleTools: array_key_exists('visible_tools', $data) && $data['visible_tools'] !== null ? Json::strings($data, 'visible_tools') : null,
             voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
+            llmFallbacks: array_key_exists('llm_fallbacks', $data) && $data['llm_fallbacks'] !== null ? Json::strings($data, 'llm_fallbacks') : null,
+            chatChannels: array_key_exists('chat_channels', $data) && $data['chat_channels'] !== null ? array_map(AgentChatChannel::fromArray(...), Json::objects($data, 'chat_channels')) : null,
+            agents: array_key_exists('agents', $data) && $data['agents'] !== null ? array_map(ChildAgent::fromArray(...), Json::objects($data, 'agents')) : null,
+            image: array_key_exists('image', $data) && $data['image'] !== null ? Json::string($data, 'image') : null,
         );
     }
 
@@ -234,6 +249,18 @@ final readonly class AgentConfigPatch
         }
         if ($this->voice !== null) {
             $out['voice'] = $this->voice;
+        }
+        if ($this->llmFallbacks !== null) {
+            $out['llm_fallbacks'] = $this->llmFallbacks;
+        }
+        if ($this->chatChannels !== null) {
+            $out['chat_channels'] = array_map(static fn (AgentChatChannel $each): array => $each->toArray(), $this->chatChannels);
+        }
+        if ($this->agents !== null) {
+            $out['agents'] = array_map(static fn (ChildAgent $each): array => $each->toArray(), $this->agents);
+        }
+        if ($this->image !== null) {
+            $out['image'] = $this->image;
         }
         return $out;
     }

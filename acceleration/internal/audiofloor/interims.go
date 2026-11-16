@@ -213,10 +213,11 @@ func scripts(text string) (set uint) {
 // final, which a slow server may still be writing: an interim out first would show the next
 // utterance's words before the last one's. The words are asked for in the utterance's own
 // language once its first words at a pause have said which (sentWords.establish), and until
-// then in the languages the callers were declared to speak; with none declared they are not
-// asked for yet, as the server would guess the language of a second of speech, and a watcher
-// would see the words switch language and script from one interim to the next. It runs on
-// the session's goroutine, on a frame of speech.
+// then in the languages the callers were declared to speak; with none declared they are
+// asked for in none, and the server writes what it heard, in whatever language. Languages
+// are an add-on, never a condition: an agent that names none has its words so far all the
+// same, and an interim that switches script on the words shown is dropped as unstable
+// (send). It runs on the session's goroutine, on a frame of speech.
 func (t *Transcriber) interim(participant stt.Participant, heard int64) {
 	if !t.interims || t.interimOut.Load() {
 		return
@@ -226,11 +227,8 @@ func (t *Transcriber) interim(participant stt.Participant, heard int64) {
 		return
 	}
 	languages, spoken := t.languages, t.sent.spoken(utterance)
-	switch {
-	case spoken != "":
+	if spoken != "" {
 		languages = []string{spoken}
-	case len(languages) == 0:
-		return
 	}
 	length := time.Duration(heard-t.start) * frame
 	every := time.Duration(float64(interimEvery) * max(1, float64(length)/float64(Window)))

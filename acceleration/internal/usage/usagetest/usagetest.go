@@ -219,6 +219,14 @@ func (s *Service) Credit(t testing.TB, organization string, micros int64) {
 	require.Equal(t, http.StatusCreated, status)
 }
 
+// Trial gives the organization micros of trial credit, which it spends like any other but which
+// leaves it unfunded.
+func (s *Service) Trial(t testing.TB, organization string, micros int64) {
+	t.Helper()
+	status := s.Manage(t, http.MethodPost, "/accounts/"+organization+"/credits", map[string]any{"kind": usage.CreditTrial, "amount_micros": micros})
+	require.Equal(t, http.StatusCreated, status)
+}
+
 // SetLimits replaces the organization's own settings; empty limits give it its tier's.
 func (s *Service) SetLimits(t testing.TB, organization string, limits usage.Limits) {
 	t.Helper()

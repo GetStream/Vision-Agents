@@ -127,28 +127,13 @@ func (s *LedgerSuite) TestPlanTierSyncWritesNothing() {
 	s.Require().NoError(err)
 	s.setTier(usage.Tier{Name: "tier-a", FailMode: usage.FailClosed})
 
-	planned, migrated, err := s.ledger.PlanTierSync(s.ctx, file)
+	planned, err := s.ledger.PlanTierSync(s.ctx, file)
 
 	s.Require().NoError(err)
-	s.True(migrated)
 	s.Equal([]string{"default"}, planned)
 	tiers, err := s.ledger.Tiers(s.ctx)
 	s.Require().NoError(err)
 	s.Len(tiers, 1)
-}
-
-func (s *LedgerSuite) TestPlanTierSyncOnADatabaseNotMigratedYetPlansEveryTier() {
-	opened, err := ledger.Open(ledger.Options{DSN: usagetest.EmptyDatabase(s.T(), "usage_unmigrated")})
-	s.Require().NoError(err)
-	defer opened.Close() //nolint:errcheck // a pool the test is done with
-	file, err := ledger.ReadTierFile(devTiers)
-	s.Require().NoError(err)
-
-	planned, migrated, err := opened.PlanTierSync(s.ctx, file)
-
-	s.Require().NoError(err)
-	s.False(migrated)
-	s.Equal([]string{"default", "tier-a"}, planned)
 }
 
 func (s *LedgerSuite) TestABadTierFileStopsTheStart() {
@@ -498,6 +483,77 @@ func (s *LedgerSuite) TestAGrantIsRevokedUnrevokedAndRevokedAgain() {
 		unrevoke.ID: {revoke.ID, again.ID},
 		again.ID:    {unrevoke.ID, 0},
 	}, reverses)
+}
+
+// funded is whether the organization's standing says it is funded.
+func (s *LedgerSuite) funded(organization string) bool {
+	standings, err := s.ledger.Standings(s.ctx, []usage.StandingOrganization{{OrganizationID: organization}})
+	s.Require().NoError(err)
+	s.Require().Len(standings, 1)
+	return standings[0].Funded
+}
+
+func (s *LedgerSuite) TestATrialIsSpendableCreditThatLeavesTheOrganizationUnfunded() {
+	_, _, err := s.credit("o1", usage.CreditTrial, 5_000_000, "trial")
+	s.Require().NoError(err)
+
+	s.Equal(int64(5_000_000), s.balance("o1"))
+	s.Equal(int64(5_000_000), s.account("o1").TrialMicros)
+	s.False(s.funded("o1"))
+}
+
+func (s *LedgerSuite) TestATopUpOrAStaffGrantFundsAnOrganizationOnTrial() {
+	for _, kind := range []usage.CreditKind{usage.CreditTopUp, usage.CreditGrant} {
+		s.Run(string(kind), func() {
+			organization := "o-" + string(kind)
+			_, _, err := s.credit(organization, usage.CreditTrial, 5_000_000, newKey())
+			s.Require().NoError(err)
+			_, _, err = s.credit(organization, kind, 1, newKey())
+			s.Require().NoError(err)
+
+			s.True(s.funded(organization))
+		})
+	}
+}
+
+func (s *LedgerSuite) TestARefundedTopUpNoLongerFunds() {
+	_, _, err := s.credit("o1", usage.CreditTrial, 5_000_000, "trial")
+	s.Require().NoError(err)
+	_, _, err = s.credit("o1", usage.CreditTopUp, 10_000_000, "top-up")
+	s.Require().NoError(err)
+	_, _, err = s.credit("o1", usage.CreditRefund, -10_000_000, "refund")
+	s.Require().NoError(err)
+
+	s.False(s.funded("o1"))
+}
+
+func (s *LedgerSuite) TestARevokedTrialIsTakenOutOfTheTrialCreditAndRestoredWhenUnrevoked() {
+	trial, _, err := s.credit("o1", usage.CreditTrial, 5_000_000, "trial")
+	s.Require().NoError(err)
+	_, _, err = s.credit("o1", usage.CreditGrant, 1_000_000, "grant")
+	s.Require().NoError(err)
+
+	revoke, _, err := s.reverse("o1", trial.ID, -5_000_000, "revoke")
+	s.Require().NoError(err)
+	s.Equal(int64(0), s.account("o1").TrialMicros)
+	s.True(s.funded("o1"), "the staff grant still funds it")
+
+	_, _, err = s.reverse("o1", revoke.ID, 5_000_000, "unrevoke")
+	s.Require().NoError(err)
+	s.Equal(int64(5_000_000), s.account("o1").TrialMicros)
+}
+
+func (s *LedgerSuite) TestARevokedGrantLeavesTheTrialCreditAlone() {
+	_, _, err := s.credit("o1", usage.CreditTrial, 5_000_000, "trial")
+	s.Require().NoError(err)
+	grant, _, err := s.credit("o1", usage.CreditGrant, 1_000_000, "grant")
+	s.Require().NoError(err)
+
+	_, _, err = s.reverse("o1", grant.ID, -1_000_000, "revoke")
+	s.Require().NoError(err)
+
+	s.Equal(int64(5_000_000), s.account("o1").TrialMicros)
+	s.False(s.funded("o1"))
 }
 
 func (s *LedgerSuite) TestOnlyAGrantOrAReversalCanBeReversed() {

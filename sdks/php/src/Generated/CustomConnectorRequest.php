@@ -20,7 +20,7 @@ final readonly class CustomConnectorRequest
         // Starts with custom_, which no built-in does, so a custom definition never stands in for one. Creating an id...
         public string $id,
         public string $name,
-        // How a connection may authenticate. Each must be a scheme this deployment has.
+        // How a connection may authenticate. Each must be a scheme this deployment has, except oauth2_client_credenti...
         /** @var list<string> */
         public array $schemes,
         public ?string $category = null,

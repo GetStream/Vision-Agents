@@ -215,6 +215,8 @@ var usageIndexes = []struct{ name, create string }{
 	// The leg digits are pressed on (20261215120000_call_legs_vendor_call_id.sql).
 	{"call_legs_vendor_call_idx", "CREATE INDEX CONCURRENTLY IF NOT EXISTS call_legs_vendor_call_idx ON call_legs (vendor_call_id) " +
 		"WHERE vendor_call_id IS NOT NULL"},
+	// A response's alternatives, the responses sharing its parent (20261227100000_response_branches.sql).
+	{"agent_responses_parent_idx", "CREATE INDEX CONCURRENTLY IF NOT EXISTS agent_responses_parent_idx ON agent_responses (session_id, parent_response_id)"},
 }
 
 // ensureUsageIndexes builds each usage index that is missing, dropping one a failed build left
@@ -888,6 +890,29 @@ ORDER BY 1`, organizationID, organizationID, organizationID).Scan(ctx, &members)
 		if app != organizationID {
 			apps = append(apps, app)
 		}
+	}
+	return apps, nil
+}
+
+// OrganizationActivityApps is OrganizationApps for a read of what an organization did: the
+// app whose id is the organization's counts only when the organization is the one the latest
+// request named it for, or, when none did, the one it is registered under, so an app of
+// another organization with that id is not told as this one's.
+func (s *Store) OrganizationActivityApps(ctx context.Context, organizationID string) ([]string, error) {
+	apps, err := s.OrganizationApps(ctx, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	var own bool
+	err = s.db.NewRaw(`SELECT EXISTS (SELECT 1 FROM app_organizations WHERE app_id = ?0 AND organization_id = ?0)
+  OR (NOT EXISTS (SELECT 1 FROM app_organizations WHERE app_id = ?0)
+      AND NOT EXISTS (SELECT 1 FROM apps WHERE id = ?0 AND organization_id <> ?0))`, organizationID).Scan(ctx, &own)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: organization activity apps: %w", err))
+	}
+	if !own {
+		// OrganizationApps puts the organization's own id first.
+		return apps[1:], nil
 	}
 	return apps, nil
 }

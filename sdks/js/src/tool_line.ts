@@ -1,5 +1,5 @@
 import { type Frame, nested, text } from "./socket.js";
-import { ToolCall, type ToolLine } from "./tools.js";
+import { ToolCallContext, type ToolLine } from "./tools.js";
 
 /** The calls that asked to be held, waiting on the router's `tool_held` or `tool_cancel`. */
 export class Holds {
@@ -7,8 +7,13 @@ export class Holds {
   private readonly holding = new Set<string>();
 
   /** Sends the hold and waits for the router to say whether the call was. */
-  async ask(id: string, send: () => void): Promise<boolean> {
+  async ask(id: string, send: () => void, signal?: AbortSignal): Promise<boolean> {
+    if (signal?.aborted) {
+      return false;
+    }
     const answer = new Promise<boolean>((resolve) => this.waiting.set(id, resolve));
+    const aborted = () => this.answer(id, false);
+    signal?.addEventListener("abort", aborted, { once: true });
     try {
       send();
       const held = await answer;
@@ -17,6 +22,7 @@ export class Holds {
       }
       return held;
     } finally {
+      signal?.removeEventListener("abort", aborted);
       this.waiting.delete(id);
     }
   }
@@ -36,13 +42,22 @@ export class Holds {
     this.holding.delete(id);
     this.waiting.get(id)?.(false);
   }
+
+  /** Ends waits whose acknowledgement can no longer arrive on this connection. */
+  clear(): void {
+    for (const answer of this.waiting.values()) {
+      answer(false);
+    }
+    this.waiting.clear();
+    this.holding.clear();
+  }
 }
 
 /** A call's way back to its session, over the socket that delivered it. */
 export function socketLine(send: (frame: Record<string, unknown>) => void, holds: Holds): ToolLine {
   return {
     update: (id, said, verbatim) => send({ type: "tool_update", tool_call_id: id, text: said, verbatim }),
-    hold: (id) => holds.ask(id, () => send({ type: "tool_hold", tool_call_id: id })),
+    hold: (id, signal) => holds.ask(id, () => send({ type: "tool_hold", tool_call_id: id }), signal),
   };
 }
 
@@ -55,10 +70,10 @@ export function toolCallContextOf(
   sessionId: string,
   line: ToolLine,
   lasting: AbortSignal,
-): ToolCall {
+): ToolCallContext {
   const user = nested(frame, "user");
   const conversation = nested(frame, "conversation");
-  return new ToolCall(
+  return new ToolCallContext(
     {
       id: text(frame, "id"),
       sessionId: text(frame, "session_id") || sessionId,

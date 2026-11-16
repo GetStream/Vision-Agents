@@ -330,7 +330,7 @@ func (s *ConnectionProxySuite) TestAnErrorAnswerToACallWithOnlyPlainHeadersIsLog
 	s.Empty(s.echoed(answer).Header.Values(auth.ServerTokenHeader), "the provider did not get the router's server token")
 	line := s.logged.line(s.T(), "a direct call's provider answered with an error", id)
 	s.Contains(line, `provider_body="{\"method\":\"GET\",\"path\":\"[redacted]\",\"query\":\"\",`)
-	s.Contains(line, `\"Authorization\":[\"Bearer [redacted]\"]`)
+	s.Contains(line, `\"Accept-Language\":[\"en\"],\"[redacted],\"User-Agent\"`)
 	s.Contains(line, `\"User-Agent\":[\"probe/1 +https://docs.example\"]`)
 	for _, sent := range []string{token, serverToken} {
 		s.False(strings.Contains(s.logged.String(), sent), "neither the connection's token nor the server token is logged")

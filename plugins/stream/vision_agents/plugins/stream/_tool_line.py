@@ -5,10 +5,9 @@ from typing import Any, Awaitable, Callable, Optional
 
 from vision_agents.core.llm.function_registry import FunctionRegistry
 from vision_agents.core.llm.tool_call import (
-    ToolCall,
+    ToolCallContext,
     ToolConversation,
     ToolUser,
-    using_tool_call_context,
 )
 
 Send = Callable[[dict[str, Any]], Awaitable[None]]
@@ -80,15 +79,15 @@ def cancel(call_id: str, holds: Holds, task: Optional[asyncio.Task]) -> None:
 
 def tool_call_context_of(
     frame: dict[str, Any], session_id: str, line: SocketLine
-) -> ToolCall:
-    """The call a tool_call frame asks for, as `get_tool_call_context()` gives it to the function.
+) -> ToolCallContext:
+    """The call a tool_call frame asks for, as the function is handed it.
 
     `session_id` stands in for a frame that does not name its session, as one from a
     router from before it said does not.
     """
     user = frame.get("user") or {}
     conversation = frame.get("conversation") or {}
-    return ToolCall(
+    return ToolCallContext(
         id=str(frame.get("id", "")),
         session_id=str(frame.get("session_id") or session_id),
         turn_id=str(frame.get("turn_id", "")),
@@ -110,20 +109,19 @@ async def run_with_tool_call_context(
     functions: FunctionRegistry,
     name: str,
     arguments: dict[str, Any],
-    tool_call_context: ToolCall,
+    tool_call_context: ToolCallContext,
     holds: Holds,
 ) -> Any:
     """Run one function for `tool_call_context`, within its own timeout when it has one."""
     timeout = functions.policy(name).timeout
     try:
-        with using_tool_call_context(tool_call_context):
-            if not timeout:
-                return await functions.call_function(name, arguments)
-            try:
-                return await asyncio.wait_for(
-                    functions.call_function(name, arguments), timeout
-                )
-            except asyncio.TimeoutError:
-                raise TimeoutError(f"{name} took longer than {timeout:g}s") from None
+        if not timeout:
+            return await functions.call_function(name, arguments, tool_call_context)
+        try:
+            return await asyncio.wait_for(
+                functions.call_function(name, arguments, tool_call_context), timeout
+            )
+        except asyncio.TimeoutError:
+            raise TimeoutError(f"{name} took longer than {timeout:g}s") from None
     finally:
         holds.forget(tool_call_context.id)

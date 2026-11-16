@@ -85,7 +85,7 @@ func (s *ChatEpisodesSuite) TestAChatMessageWritesOneCardAndTheNextOneKeepsItsEp
 
 	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
 
-	s.True(s.reachesWorker(worker), "the message is answered")
+	s.True(s.handedOn(worker), "the message is answered")
 	omni := s.omniChannel()
 	card := s.cards(omni, 1)[0]
 	custom, _ := card["custom"].(map[string]any)
@@ -98,7 +98,7 @@ func (s *ChatEpisodesSuite) TestAChatMessageWritesOneCardAndTheNextOneKeepsItsEp
 
 	s.Require().Equal(http.StatusOK, s.writes(config.ID, "it was due on Monday"))
 
-	s.True(s.reachesWorker(worker), "the second message is answered")
+	s.True(s.handedOn(worker), "the second message is answered")
 	s.Require().Eventually(func() bool { return s.lastMessage().After(first) }, settleFor, 10*time.Millisecond,
 		"the second message keeps the episode open")
 	s.Never(func() bool { return len(s.chat.Stored(omni)) > 1 }, dropped, 20*time.Millisecond, "a second card")
@@ -114,7 +114,7 @@ func (s *ChatEpisodesSuite) TestAChatMessageTheWebhookBringsWritesACard() {
 
 	s.Require().Equal(http.StatusOK, s.hooked(&s.RouterSuite, "/v1/chat/hooks/stream", s.written(config.ID, "where is my order?"), suiteStreamSecret))
 
-	s.True(s.reachesWorker(worker), "the message is answered")
+	s.True(s.handedOn(worker), "the message is answered")
 	custom, _ := s.cards(s.omniChannel(), 1)[0]["custom"].(map[string]any)
 	s.Equal(store.EpisodeChat, custom["source"])
 }
@@ -130,7 +130,7 @@ func (s *ChatEpisodesSuite) TestAChatMessageUnderRecordWritesACard() {
 
 	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
 
-	s.True(s.reachesWorker(worker), "the message is answered")
+	s.True(s.handedOn(worker), "the message is answered")
 	custom, _ := s.cards(s.omniChannel(), 1)[0]["custom"].(map[string]any)
 	s.Equal(store.EpisodeChat, custom["source"])
 }
@@ -163,7 +163,7 @@ func (s *ChatEpisodesSuite) TestAMessageInAChannelThatIsNotThePersonsAloneOpensN
 
 			s.Require().Equal(http.StatusOK, s.delivers(&s.RouterSuite, s.writtenIn(config.ID, "where is my order?", channel, time.Now()), s.current))
 
-			s.True(s.reachesWorker(worker), "the message is answered")
+			s.True(s.handedOn(worker), "the message is answered")
 			s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond, "a contact or an episode")
 		})
 	}
@@ -178,7 +178,7 @@ func (s *ChatEpisodesSuite) TestAMessageInThePersonsChannelWithTheAgentWritesACa
 
 	s.Require().Equal(http.StatusOK, s.delivers(&s.RouterSuite, s.writtenIn(config.ID, "where is my order?", channel, time.Now()), s.current))
 
-	s.True(s.reachesWorker(worker), "the message is answered")
+	s.True(s.handedOn(worker), "the message is answered")
 	custom, _ := s.cards(s.omniChannel(), 1)[0]["custom"].(map[string]any)
 	s.Equal(store.EpisodeChat, custom["source"])
 }
@@ -217,7 +217,7 @@ func (s *ChatEpisodesSuite) TestAChatEpisodeStartsWhenItsMessageWasMade() {
 
 			s.Require().Equal(http.StatusOK, s.delivers(&s.RouterSuite, body, s.current))
 
-			s.True(s.reachesWorker(worker), "the message is answered")
+			s.True(s.handedOn(worker), "the message is answered")
 			s.cards(s.omniChannel(), 1)
 			var started time.Time
 			s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
@@ -251,7 +251,7 @@ func (s *ChatEpisodesSuite) TestAQueuedMessageTriedAgainOpensNoSecondEpisode() {
 	worker := s.worker()
 	config := s.config(true, "llm-flow")
 	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
-	s.True(s.reachesWorker(worker))
+	s.True(s.handedOn(worker))
 	omni := s.omniChannel()
 	s.cards(omni, 1)
 	var seq int64
@@ -282,7 +282,7 @@ func (s *ChatEpisodesSuite) TestAConfigWithoutCardsWritesAndReadsNothingNew() {
 
 	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
 
-	s.True(s.reachesWorker(worker), "the message is answered as before")
+	s.True(s.handedOn(worker), "the message is answered as before")
 	s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond, "a contact or an episode")
 	s.Equal(before, len(s.chat.Requests(suiteStreamKey)), "Stream was asked something")
 	s.Equal(int64(1), s.configReads.reads.Load(), "the config's row is read as many times as at base")
@@ -367,7 +367,7 @@ func (s *ChatEpisodesSuite) TestAChatASessionAnsweredGoesOnWritingCards() {
 	worker := s.worker()
 	config := s.config(true, "llm-flow")
 	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
-	s.True(s.reachesWorker(worker))
+	s.True(s.handedOn(worker))
 	omni := s.omniChannel()
 	s.cards(omni, 1)
 	first := s.lastMessage()
@@ -375,7 +375,7 @@ func (s *ChatEpisodesSuite) TestAChatASessionAnsweredGoesOnWritingCards() {
 
 	s.Require().Equal(http.StatusOK, s.writes(config.ID, "it was due on Monday"))
 
-	s.True(s.reachesWorker(worker), "the second message is answered")
+	s.True(s.handedOn(worker), "the second message is answered")
 	s.Require().Eventually(func() bool { return s.lastMessage().After(first) }, settleFor, 10*time.Millisecond,
 		"the second message keeps the episode open")
 	_, err := s.store.DB().ExecContext(ctx, "UPDATE episodes SET status = ?, ended_at = now() WHERE customer_id = ?",
@@ -384,7 +384,7 @@ func (s *ChatEpisodesSuite) TestAChatASessionAnsweredGoesOnWritingCards() {
 
 	s.Require().Equal(http.StatusOK, s.writes(config.ID, "and now it is late"))
 
-	s.True(s.reachesWorker(worker), "the third message is answered")
+	s.True(s.handedOn(worker), "the third message is answered")
 	s.cards(omni, 2)
 	s.Equal(2, s.episodeCount(), "the message after the close opens the next episode")
 }
@@ -485,7 +485,7 @@ func (s *ChatEpisodesSuite) TestAMessageInAnOmniChannelOpensNoChatEpisode() {
 
 	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
 
-	s.True(s.reachesWorker(worker), "answered as before")
+	s.True(s.handedOn(worker), "answered as before")
 	s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond)
 }
 
@@ -544,7 +544,7 @@ func (s *ChatEpisodesSuite) TestADrainWaitsForAChatCardInFlight() {
 
 	s.Require().Equal(http.StatusOK, s.hooked(&s.RouterSuite, "/v1/chat/hooks/stream", s.written(config.ID, "where is my order?"), suiteStreamSecret))
 
-	s.True(s.reachesWorker(worker), "the message is answered while its card is written")
+	s.True(s.handedOn(worker), "the message is answered while its card is written")
 	select {
 	case <-waiting:
 	case <-time.After(settleFor):
@@ -578,7 +578,7 @@ func (s *ChatEpisodesSuite) TestAMessageInAThreadChannelOpensNoChatEpisode() {
 
 	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
 
-	s.True(s.reachesWorker(worker), "answered as before")
+	s.True(s.handedOn(worker), "answered as before")
 	s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond)
 }
 
@@ -693,7 +693,7 @@ func (s *ChatEpisodesSuite) TestStreamRefusingTheCardStillAnswersTheMessage() {
 
 	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
 
-	s.True(s.reachesWorker(worker), "the message is answered")
+	s.True(s.handedOn(worker), "the message is answered")
 	omni := s.omniChannel()
 	s.Equal(1, s.episodeCount(), "the episode is open")
 	s.Never(func() bool { return len(s.chat.Stored(omni)) > 0 }, dropped, 20*time.Millisecond)

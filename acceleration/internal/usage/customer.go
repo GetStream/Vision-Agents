@@ -40,6 +40,8 @@ type Account struct {
 	OwnLimits        []string      `json:"own_limits" doc:"The settings limit_overrides sets, as dotted paths into limits such as channels.voice.concurrent or spend_hard_limit.daily_micros, sorted."`
 	Status           AccountStatus `json:"status" enum:"active,suspended"`
 	GrantedMicros    int64         `json:"granted_micros" doc:"Every credit entry summed."`
+	TrialMicros      int64         `json:"trial_micros" doc:"What of granted_micros is trial credit, net of its revocations."`
+	Funded           bool          `json:"funded" doc:"The organization has credit that is not trial credit: a top-up net of its refunds and disputes, or credit from Stream's staff. Buying numbers and registering for 10DLC take it."`
 	SpentMicros      int64         `json:"spent_micros" doc:"Every billable event's cost summed."`
 	BalanceMicros    int64         `json:"balance_micros" doc:"granted_micros less spent_micros."`
 	SpendWindows     SpendWindows  `json:"spend_windows" doc:"The organization's spend in the current UTC day and calendar month, for the spend hard limit."`
@@ -53,7 +55,7 @@ func CustomerAccount(standing Standing) Account {
 		OrganizationID: standing.OrganizationID, OrganizationTier: standing.OrganizationTier,
 		Tier: standing.Tier, FallbackTier: standing.FallbackTier, Limits: standing.Limits, Overrides: standing.Overrides,
 		OwnLimits: SetPaths(standing.Overrides), Status: standing.Status, GrantedMicros: standing.GrantedMicros,
-		SpentMicros: standing.SpentMicros, BalanceMicros: standing.BalanceMicros, SpendWindows: standing.SpendWindows,
+		TrialMicros: standing.TrialMicros, Funded: standing.Funded, SpentMicros: standing.SpentMicros, BalanceMicros: standing.BalanceMicros, SpendWindows: standing.SpendWindows,
 		LowBalanceMicros: standing.Limits.LowBalanceMicros,
 	}
 	switch {
@@ -101,7 +103,7 @@ func SetPaths(limits Limits) []string {
 // actor and note, and with a reference only on an entry the payment processor wrote.
 type CustomerCredit struct {
 	ID           int64      `json:"id"`
-	Kind         CreditKind `json:"kind" enum:"top_up,grant,refund,dispute,dispute_reversal,adjustment"`
+	Kind         CreditKind `json:"kind" enum:"top_up,grant,trial,refund,dispute,dispute_reversal,adjustment"`
 	AmountMicros int64      `json:"amount_micros" doc:"Signed: what the entry added to the organization's credit, in micros."`
 	Reference    string     `json:"reference,omitempty" doc:"The payment processor's id of what the entry was written for, such as a top-up's payment. Absent on every entry the operator's staff wrote."`
 	CreatedAt    time.Time  `json:"created_at"`

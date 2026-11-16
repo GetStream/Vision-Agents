@@ -120,7 +120,7 @@ the other commands that read them there.
 | `ROUTER_AUTH_KEK_VERSION` | Which keyring version seals new connector credentials, defaults to `1`. Every `ROUTER_AUTH_KEK_V<n>` that is set still opens its rows, so moving this back to an older version is safe |
 | `ROUTER_CONNECTORS_ENABLED` | `true` turns connectors on. The router then needs the keyring version `ROUTER_AUTH_KEK_VERSION` names, in every auth mode, and refuses to start without it. Off by default |
 | `ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE` | Direct calls one app may send to one connector through the connection proxy in a minute, counted in Redis across routers, defaults to `60`. A call over it is a 429 with `Retry-After`. `0` turns it off, and so does a router with no Redis |
-| `ROUTER_RUNS_CONCURRENT_PER_APP` | Headless runs (`POST /v1/agents/runs`) one app may have in flight, counted in Redis across routers, defaults to `20`. A run over it is a 429 `concurrency_limited` with `Retry-After`. `0` turns it off, and so does a router with no Redis |
+| `ROUTER_RUNS_CONCURRENT_PER_APP` | Headless runs (`POST /v1/agents/runs`) one app may have in flight, counted in Redis across routers, defaults to `20`. A run over it is a 429 `concurrency_limited` with `Retry-After`. `0` turns it off, and so does a router with no Redis. The child agents a run calls take no slot: at most 8 run at once inside their parent's |
 | `ROUTER_CODE_SANDBOX_BROKER` | What holds a connector's credential for code in a sandbox: `daytona` (Daytona Secrets), the default, or `proxy`, the egress proxy (`internal/sandbox/egress`), which needs Redis, `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL`, `ROUTER_CODE_SANDBOX_PROXY_CA_CERT`, and the proxy served by the same router (`ROUTER_CODE_SANDBOX_PROXY_ADDR`, `ROUTER_CODE_SANDBOX_PROXY_CA_KEY`). Behind the proxy a sandbox reaches the proxy alone, and the proxy reaches its grants' hosts and the config's `allowed_domains`; a config with `network: true` and no `allowed_domains`, or with a `network_allow_list`, is refused when a session with a sandbox binding starts |
 | `ROUTER_CODE_SANDBOX_SECRET_PREFIX` | Names this router's environment in every Daytona secret it makes, such as `stg` on staging (lowercase letters and digits only), since routers sharing a Daytona organization must never touch each other's. A session with a `sandbox: true` binding is refused without it. A prefix belongs to one deployment (one Redis): routers that share a prefix delete each other's secrets, so never use `stg` locally |
 | `ROUTER_CODE_SANDBOX_TARGETS` | `code_sandbox.targets`: each region sandboxes run in and the Daytona target they are made on, as `region=target` pairs, comma separated, such as `eu=eu`. `us` is always served: left out, on `DAYTONA_TARGET`, then the organization's default, as before. See [Regions](#regions) |
@@ -131,7 +131,7 @@ the other commands that read them there.
 | `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` | The proxy as a sandbox reaches it, `http://<public IPv4 address>:port`, for `ROUTER_CODE_SANDBOX_BROKER=proxy`. The router refuses to start with that broker and this, the CA certificate, the proxy address or the CA key missing, or with a host name or an IPv6 address here: the sandbox reaches that address alone and has no DNS. `https://` has the proxy serve TLS on `ROUTER_CODE_SANDBOX_PROXY_ADDR` with a certificate for that address the CA signs; the proxy broker refuses it until the sandbox has a local forwarder for TLS |
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
 | `ROUTER_LIMITS_MODE` | `enforce` (default), `shadow` or `off`: how much of credit, the spend hard limit and the customer's spend limits the router enforces. `shadow` works every refusal out, logs it as `would refuse` and admits the request; `off` refuses nothing for money, and work is still priced, recorded and shipped. Both log a warning at start. With limits on, the router refuses to start without `ROUTER_POSTGRES_DSN`, and in `proxy` mode without `ROUTER_USAGE_URL`. See [Admission](#admission) |
-| `ROUTER_LIMITS_SLACK_TOKEN`, `ROUTER_LIMITS_SLACK_CHANNEL` | A Slack bot token holding `chat:write`, and the id of a channel the bot is a member of, where the operator is told the first time each organization is refused at its credit, Stream's spend hard limit or one of its own spend limits, or would have been in `shadow`. Once per organization and kind of limit, across every router: the first to write its `limit_notices` row posts it, and a post that failed is retried by the next sweep. Either unset, or `ROUTER_LIMITS_MODE=off`: nobody is told |
+| `ROUTER_LIMITS_SLACK_TOKEN`, `ROUTER_LIMITS_SLACK_CHANNEL` | A Slack bot token holding `chat:write`, and the id of a channel the bot is a member of, where the operator is told the first time each organization is refused at its credit, Stream's spend hard limit or one of its own spend limits, or would have been in `shadow`. Once per organization and kind of limit, across every router: the first to write its `limit_notices` row posts it, and a post that failed is retried by the next sweep. Either unset, or `ROUTER_LIMITS_MODE=off`: nobody is told. The same channel is told, once per organization and UTC day, when an organization's billable spend today reaches 5x its median day of the 7 before and a minimum spend (`anomalyMinSpendMicros` in `internal/limitnotice/anomaly.go`): one router of the deployment checks every hour under a Postgres advisory lock, and `cost_anomaly_notices` keeps what was posted. An organization that spent on fewer than 4 of the 7 days has no baseline and is not checked. This check runs in every limits mode |
 | `ROUTER_LIMITS_APP_URL`, `ROUTER_LIMITS_STAFF_URL` | The pages each of those Slack notices links to: the app's own, and the operator's for the organization or app. `{organization}` and `{app}` in either stand for the notice's ids, such as `https://dashboard.example/{organization}/{app}`. A URL naming `{app}` is left out of a notice with no app. Unset: no link |
 | `ROUTER_USAGE_REDIS_URL` | The Redis the usage service mirrors every subject's spend to (its `USAGE_REDIS_URL`), which the customer's spend limits are read from every second. Needs `ROUTER_USAGE_URL`. Unset, they are read from the usage service itself every 5 s. See [Spend limits](#spend-limits) |
 | `ROUTER_USAGE_MANAGE_KEY` | The usage service's manage key (its `USAGE_MANAGE_KEY`), for `router usage forget-user` alone; the router never sends it. Unset, that command refuses to run. See [The usage service](#the-usage-service) |
@@ -141,7 +141,8 @@ the other commands that read them there.
 | `ROUTER_CHAT_TIMINGS` | For development: each voice reply in the session's chat channel gets a line after its text with how long its turn took, and the same figures as a `timings` field on the message. See [Transcripts](#transcripts-memory-and-phone). Anything that reads the conversation back leaves the line out. Off by default; `cmd/agent` takes it as `-chat-timings` |
 | `ROUTER_REPLY_HEDGE` | How long a reply may say nothing, neither text nor a tool call, before the same request is also asked of another candidate of its target, and whichever says something first is kept. The other candidate is on a different model when the target has one, and on a different provider when it has one, and is never one the router has found unavailable. The one that loses is cancelled the moment it does and still read out, so both calls are reported as model calls and recorded, the cancelled one as any cancelled call is. A reply is hedged once, and a hedge that fails leaves the first request going. Only replies and the flow controller's decisions (`ROUTER_FLOW_HEDGE`) are hedged, not the guardrails or background work, nor a reply that continues from a response the provider holds. A target with no other candidate is asked once. Defaults to `1200ms`; `0` turns it off. `cmd/agent` takes it as `-reply-hedge` |
 | `ROUTER_FLOW_HEDGE` | `ROUTER_REPLY_HEDGE` for the flow controller's decisions, which the caller waits on in silence before the reply is asked for. A decision is a few tokens, so one that has said nothing by then has stalled rather than thought, and the same request is asked of another candidate of `llm-flow` as well; whichever says something first rules on the turn. Without it a stalled decision waits out the controller's 3 s deadline and the turn is answered unruled. Defaults to `400ms`; `0` turns it off. `cmd/agent` takes it as `-flow-hedge` |
-| `ROUTER_CHORUS_ASR_URL` | A chorus-asr server, such as `http://floor:8080` ([deploy/chorus-asr](deploy/chorus-asr/README.md)). Makes chorus-asr available: the `stream/chorus-asr` transcriber, and floor control for an agent that opts in with `floor_control: {model: stream/chorus-asr}`, which is refused on a router without it. It rules no agent's floor of its own accord. `ROUTER_CHORUS_ASR_MODE`, which once did, is no longer read, and a router started with it warns once naming `floor_control` |
+| `ROUTER_CHORUS_ASR_URL` | A chorus-asr server, such as `http://floor:8080` ([deploy/chorus-asr](deploy/chorus-asr/README.md)). Makes chorus-asr available: the `stream/chorus-asr` transcriber, and floor control for an agent that opts in with `floor_control: {model: stream/chorus-asr}`, which is refused on a router without it. It rules the floor of no other agent unless `ROUTER_FLOOR_CONTROL_DEFAULT` says so. `ROUTER_CHORUS_ASR_MODE`, which once did, is no longer read, and a router started with it warns once naming `floor_control` |
+| `ROUTER_FLOOR_CONTROL_DEFAULT` | What controls the floor of an agent that chose no `floor_control` of its own: empty (default) or `flow-controller`, the flow controller; or `stream/chorus-asr`, chorus-asr at its server's default point, for every such agent on the router. An agent's own choice always wins, on its config or its session: `{model: stream/chorus-asr}` with its own `max_wait_ms`, or `{model: flow-controller}` to keep the flow controller whatever this says. `{}` is no choice. Without `ROUTER_CHORUS_ASR_URL` it warns once at start and the flow controller rules; no session is refused for it. Floor control only: which transcriber writes the words does not change |
 | `ROUTER_CHORUS_ASR_API_KEY` | Optional. Sent as a bearer token on every request to a chorus-asr server behind a gateway that asks for a key |
 | `ROUTER_CHORUS_ASR_AUDIO` | How the chorus-asr model's audio is sent: `opus` (default), encoded once as it arrives, or `pcm`, for debugging. `cmd/agent` reads the `ROUTER_CHORUS_ASR_*` variables too, and its agent opts in with `-floor-control stream/chorus-asr` |
 | `ROUTER_MOCK_PROVIDERS` | `true` adds `mock/mock-stt`, `mock/mock-tts` and `mock/mock-llm`, which answer from nothing, reach no vendor and bill nothing, for load testing the router itself (see `performance_benchmark/`). No capability alias routes to one, so a session only gets a mock by naming it. Off by default |
@@ -158,9 +159,10 @@ the other commands that read them there.
 | `TWILIO_ACCOUNT_SID`    | Twilio credentials, for buying and operating numbers       |
 | `TWILIO_AUTH_TOKEN`     | Twilio credentials. With `TWILIO_API_KEY_SID` set, that key's secret |
 | `TWILIO_API_KEY_SID`    | Optional Twilio API key (SK...). Requests are signed with it instead of the account SID |
+| `TWILIO_WEBHOOK_AUTH_TOKEN` | Auth Token of the Twilio account whose webhooks the router checks (`X-Twilio-Signature`). It only checks signatures: those of the Monitor alerts and usage-trigger callbacks sent to `/v1/phone/hooks/twilio/events`, signed over `ROUTER_PUBLIC_URL` and the path. Without it, or without `ROUTER_PUBLIC_URL`, that route answers 404. A token with whitespace in it stops the router at start |
 | `TELNYX_API_KEY`        | Telnyx credentials                                         |
 | `TELNYX_CONNECTION_ID`  | The Telnyx TeXML application numbers and calls are on. Calls to the webhook from any other application are hung up |
-| `TELNYX_PUBLIC_KEY`     | Telnyx's public key (base64), to check the calls it sends to `/v1/phone/hooks/telnyx`. Without it Telnyx numbers are not answered. Telnyx numbers also need `ROUTER_AUTH_KEK`: without a keyring they cannot be attached |
+| `TELNYX_PUBLIC_KEY`     | Telnyx's public key (base64), to check the calls it sends to `/v1/phone/hooks/telnyx` and the account events it sends to `/v1/phone/hooks/telnyx/events`. Without it Telnyx numbers are not answered and the events route answers 404. Telnyx numbers also need `ROUTER_AUTH_KEK`: without a keyring they cannot be attached |
 | `DEEPGRAM_API_KEY`      | Deepgram Flux credentials                                  |
 | `CARTESIA_API_KEY`      | Cartesia credentials, used by Sonic and the Ink 2 transcriber |
 | `CARTESIA_VOICE_ID`     | Optional default voice; a built-in one is used when unset  |
@@ -752,6 +754,8 @@ pick rather than a list of their own to keep:
 | `stt-accurate`       | Muse, Scribe v2 Realtime, Ink 2 and Nemotron, pinned to Muse                    |
 | `tts-fast`           | The low-latency tier, pinned to Cartesia Sonic 3.6                              |
 | `tts-quality`        | The top of the Artificial Analysis arena: ElevenLabs v4, Sonic 3.6, Inworld TTS-2 Flash, Breeze TTS 2 and ElevenLabs v3 Conversational |
+| `image-fast`         | The default for pictures: Qwen Image 3 on FAL. Takes a size, a shape, a seed and a negative prompt |
+| `image-quality`      | Gemini 3.1 Flash Image: follows a long prompt and writes legible text. Takes a shape only |
 
 ```yaml
 stt:
@@ -1144,6 +1148,66 @@ no keys.
 
 `router usage storage` and `router usage sandboxes` open the customers' keys with the same keyring
 as the router, so their CronJobs need its variables too.
+
+## Pictures
+
+`POST /v1/image/generations` draws pictures from a prompt and answers with them. It is server-side
+only, like every routed modality but search.
+
+```bash
+curl -s localhost:8080/v1/image/generations -H 'X-Customer-Id: acme' \
+  -d '{"prompt": "A yellow watering can beside a seedling, flat illustration, no text",
+       "options": {"target": "image-fast", "aspect_ratio": "16:9"}}'
+```
+
+```json
+{"id": "img_1b9d...", "status": "completed", "provider": "fal",
+ "model": "alibaba/qwen-image-3/text-to-image", "cost_micros": 0,
+ "images": [{"data": "iVBORw0...", "media_type": "image/png", "width": 0, "height": 0}]}
+```
+
+The zeros stand in for real values. The pictures come back as base64 bytes, never a link, and nothing is kept: `id` is for logs. A
+generation that reached a provider is a 200 whether it drew or not. A failed one has `status:
+failed`, an `error_code` (`content_filtered`, `unsupported_option`, `timeout` and the rest of
+`ImageErrorCode`) and `error`, and costs nothing. A request that cannot be routed is a 400.
+
+| Option | What it does |
+| --- | --- |
+| `target` | A shortcut or `provider/model`. Defaults to `image-fast` |
+| `providers` | A priority list, which wins over `target` |
+| `n` | How many pictures, 1 to 4 |
+| `size` | `1024x1024`, on a model that takes a size. FAL draws 512 to 2048 a side |
+| `aspect_ratio` | `16:9`, on a model that takes a shape |
+| `seed`, `negative_prompt`, `output_format` | On a model that declares them |
+
+An option narrows the candidates to the models that declared it, so it is honoured or refused,
+never dropped.
+
+**Routes.** `GET /v1/image/routes` lists `image-fast` and `image-quality` (see
+[The default groups](#the-default-groups)), default first, each with the model it resolves to
+now. The Go SDK has it as `client.Routes(ctx, acceleration.ModalityImage)` and the JavaScript
+SDK as `api.router().routes("image")`. The four shared shortcuts (`en-low-latency` and the
+rest) work here too.
+
+**Time.** A request is answered when its pictures are drawn, within 240 seconds; a caller that hangs up cancels the job at the provider. FAL is a queue: the router submits the job and asks every 3 seconds whether it is done, and one router process holds at most 2 FAL jobs at once, so a third waits for a slot before it is submitted. Gemini is one call per picture, drawn one after another. A FAL picture's usage row splits its time into `queued_ms`, submit to the first poll that saw it drawing, and `drawn_ms`, from then to done, each to within a poll; both are left out when no poll saw it drawing. `latency_ms` is the whole request, a wait for a slot included.
+
+**Limits.** At most 4 pictures a request, each at most 10 MiB and 4096 pixels a side, checked
+by decoding the picture before it is returned.
+
+**Billing.** Per picture, at the model's entry in the price list (see [Prices](#prices)). The
+vendor rates behind them, in `prices/vendor.json`, are $0.04 a picture for Qwen Image 3 on FAL
+and $0.0672 a picture for Gemini plus its prompt and thinking tokens. `cost_micros` is what the
+request cost the customer. The money is held before the job is submitted, so a
+spend limit that covers the caller refuses a draw it cannot pay for, and a failed draw costs
+nothing. A request is one row in `requests` counting its pictures.
+
+**From an agent.** `image: image-fast` on an agent config, or in agent.yaml, offers a text agent
+whose conversation has a Chat channel the built-in `generate_image(prompt, aspect_ratio?)`. It
+answers at once and the turn ends; the picture is drawn after it, on whichever router claims the
+job, and posted into the conversation as the agent's own message, or a short message saying why
+there is none. It is billed as this endpoint is, under the session's attribution. An empty
+`image` turns it off, and a target the deployment cannot draw with is refused when the config is
+saved.
 
 ## Run
 
@@ -1628,6 +1692,38 @@ resolved once when the session is created: the customer's own rows, or the built
 because a model offered a skill nobody implements is worse than one offered none. The
 runtime lookup is unchanged.
 
+**A text agent can hand work to the app's other text agents.** A config's `agents` names
+them, each with the tool its model calls it by:
+
+```yaml
+mode: text
+llm: anthropic/claude-sonnet-5-5
+agents:
+  - config: security-lens        # another text agent of the app, by name (an id is stored as its name)
+    tool: security
+    description: Reviews a diff for security bugs and lists each candidate finding.
+  - config: ranker
+    tool: rank
+    timeout_ms: 90000             # two minutes when left out
+```
+
+Each is offered as a tool taking one string, `input`. A call runs that agent as an incognito
+run of its own (`session.Manager.Run`, what `POST /v1/agents/runs` runs on) on its own llm,
+instructions, connectors and sandbox, and the tool result is what it said last. The calls in
+one reply already ran at once, a goroutine each; a parent runs at most 8 children at a time
+and the rest wait their turn within their deadline. A child gets its own timeout or what is
+left of the parent's run, whichever is less, and ends with the parent's tool call, so it never
+outlives the parent. A child that fails or runs out of time is a failed tool call the parent's
+model answers around, not a failed run. What the children spend is added to the run's `usage`
+and broken down by tool in its `children`.
+
+Children are one level deep: the parent and every child are text agents, and a child has no
+`agents` of its own and is not the parent. A save is refused that would break that from either
+side, including a child gaining agents or stopping being a text agent. A parent names a child
+by name, so a child cannot be renamed or deleted while a parent names it. The child is checked
+again when it runs, and a child tool whose name another tool of the session has is not offered. A child takes none of the app's run slots (`ROUTER_RUNS_CONCURRENT_PER_APP`): the parent's
+slot covers it.
+
 **Knowledge is what the business wrote down.** With `TURBOPUFFER_API_KEY` set, a config's
 `knowledge_namespace` gives the model a `lookup` tool over full-text search, so a caller's
 question about prices or opening hours is answered out of the handbook rather than guessed
@@ -1825,6 +1921,7 @@ offered custom voices and the router routes around it for calls that want one.
 | `stats_tags_hourly`, `stats_tags_daily`  | Bucket, modality, customer and one cost label       |
 | `turn_stats_hourly`                      | Hour, customer and agent: turns, interruptions, audio |
 | `turn_latency_hourly`                    | Hour, customer, agent, leg and latency bin           |
+| `customer_activity`                      | App, area of the API, client and UTC day: requests, refusals, first and last |
 | `phone_numbers`                          | Number held, kept after release because it was billed |
 | `call_legs`                              | Leg of a phone call, from when it connected to when the call ended |
 | `agent_configs`, `skills`                | Named agent, and a kind of work worth delegating    |
@@ -1984,15 +2081,68 @@ Everything above is what a request *did*. That it arrived at all is a log line, 
 request served, at info:
 
 ```
-level=INFO msg="served a request" method=POST path=/v1/agents/sessions status=201 duration=425ms customer=examples bytes=877
-level=INFO msg="served a request" method=GET path=/v1/agents/sessions/d84a…/events status=101 duration=94ms customer=examples
+level=INFO msg="served a request" method=POST path=/v1/agents/sessions status=201 duration=425ms customer=examples request_id=… bytes=877 app_id=examples api_key=noauth
+level=INFO msg="served a request" method=GET path=/v1/agents/sessions/d84a…/events status=101 duration=94ms customer=examples request_id=… app_id=examples api_key=noauth
 ```
+
+An authenticated request's line, and any line logged with its context, names its app as `app_id`
+and the public key it came with as `api_key`, as the Stream platform's logs do (`customer` is the
+same app as `app_id`). A hook, which is not authenticated, and a request nobody authenticated carry
+neither.
 
 A socket is logged once, when it closes, so its `duration` is how long the connection lived
 rather than a time to respond and its status is the `101` of the upgrade. A `5xx` is logged
 at error instead, because an access log at a busy deployment is the one stream nobody reads
 all of. A preflight is not logged, and the query string is never logged: a socket names its
 customer there and a telephony vendor names a token.
+
+### Stream staff's operations (`/v1/ops`)
+
+The routes under `/v1/ops` are Stream staff's: they take the ops key (`ROUTER_AUTH_OPS_KEY`) in
+`X-Ops-Key` and no app's credentials. An app's key, even its backend's, is answered 401, and so
+is every call on a deployment with no ops key. They are tagged `Staff` in the spec.
+
+| Route | What it is for |
+| ----- | -------------- |
+| `GET /v1/ops/orgs/{org_id}/activity` | Whether an organization tried Agents, how far it got and how much it used |
+| `GET`, `PUT`, `DELETE /v1/ops/customers/{customer_id}/telephony-suspension` | Stop an app using the phone, and lift it |
+| `GET /v1/ops/use-cases`, `GET /v1/ops/use-cases/{id}`, `POST /v1/ops/use-cases/{id}/review` | Review 10DLC use cases |
+| `PUT`, `DELETE /v1/ops/customers/{customer_id}/connectors/{id}/provider-app` | Make Stream's own app a customer's provider app, and stop it |
+| `POST /v1/ops/stats/rollup` | Aggregate request rows into a rollup table |
+
+An organization's activity reads `customer_activity` for every app of the organization and
+`requests` on every shard in `postgres.shards`, from `since` (RFC 3339, at most 90 days ago, 30 days ago when left
+out):
+
+```bash
+curl -H "X-Ops-Key: $ROUTER_AUTH_OPS_KEY" "localhost:8080/v1/ops/orgs/$ORG_ID/activity?since=2026-11-01T00:00:00Z"
+```
+
+`areas` is one item per area and client, `meters` one per modality (requests, tokens, audio,
+characters, time and cost), and `first_seen` and `last_seen` the first and last request of any
+area. `furthest_step` is the furthest of `dashboard_reads`, `agent_setup` and `conversations`
+with a request answered rather than refused, or `steady_use` once conversations or model calls
+were answered on three UTC days, else `none`. Areas, `first_seen`, `last_seen` and
+`furthest_step` come from `customer_activity`, which counts only since it was first deployed,
+and `meters` from every request in the window: for an organization whose use is older, up to 90
+days back, `furthest_step` can read `none` while `meters` show use. An organization with nothing recorded is a 200
+with empty lists. `shards` names the shards whose `requests` the meters sum, this one's
+first. A deployment that leaves `postgres.shards` unset reads its own shard's `requests` alone
+and lists only that shard, named by a digest of its DSN, so its meters are not the organization's
+whole use; areas are kept in the database every shard shares and are complete (see Shards).
+
+`sessions` reads `agent_sessions` on every shard in `shards`, from `since`: `opened` and
+`running` count the sessions the organization's apps opened, `ended` counts the others by end
+reason, and `latest` lists the 20 newest. `latency` reads `turn_latency_hourly` on every shard,
+from the hour `since` falls in, one item per leg with `turns` and the `p50_ms`, `p95_ms` and
+`p99_ms` read off bins 5% wide.
+
+The endpoint sums the rows of the organization's current apps, including rows the sweeper has
+not processed yet, while the cost-anomaly check sums `requests.organization_id` over swept
+billable rows, so the two can disagree for two reasons. One is an app that moved organization
+within the window. The other is rows the sweeper has not yet given an organization: `MeterUses`
+reads an org's apps with no organization filter, while the cost-anomaly check skips rows with an
+empty `organization_id`.
 
 ### The usage service
 

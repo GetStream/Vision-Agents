@@ -2,9 +2,10 @@ import type { BackendOptions } from "./backend.js";
 import { Client, type Schemas } from "./client.js";
 import { Dispatch } from "./dispatch.js";
 import { DEFAULT_CALL_TYPE, Edge } from "./edge.js";
-import { ConfigurationError, RouterError } from "./errors.js";
+import { ConfigurationError, RouterError, SocketClosedError } from "./errors.js";
 import { Session, type SessionOptions } from "./session.js";
 import { Tools } from "./tools.js";
+import type { UIDeclaration } from "./ui-catalog.js";
 import type { InboundCall, InboundMessage } from "./inbound.js";
 
 /** The memory filter key naming who the memories are about. Everything else narrows recall. */
@@ -85,6 +86,10 @@ export interface Pipeline {
   /** Murmur while a caller is still talking, the way a person does. */
   backchannel?: boolean;
   maxTokens?: number;
+  /**
+   * How long the model waits for one of your tools, in milliseconds. Left out, the router waits
+   * 30 seconds. A tool's own `timeoutMs` replaces it for that tool.
+   */
   toolTimeoutMs?: number;
   video?: Schemas["SessionVideo"];
 }
@@ -118,6 +123,11 @@ export interface Declaration {
   /** The model a voice agent hands its skills to. A text agent runs on its llm alone. */
   subagent?: string;
   search?: string;
+  /**
+   * What the agent draws pictures with, such as `image-fast`, which offers it `generate_image`.
+   * An empty string turns drawing off; left out, the stored one stays.
+   */
+  image?: string;
   greeting?: Schemas["Greeting"];
   sandbox?: Schemas["Sandbox"];
   /**
@@ -149,9 +159,12 @@ export interface Declaration {
   /**
    * The model that controls the agent's floor, and how long a caller may wait once they stop:
    * `model` and `max_wait_ms`, as written. Undefined leaves the stored choice; an empty object
-   * is the default flow controller again.
+   * is no choice again, which the router's default rules; `{model: "flow-controller"}` keeps
+   * the flow controller whatever that default.
    */
   floorControl?: Schemas["FloorControl"];
+  /** Declarative UI catalog, component allowlist, portable components, and layout blueprints. */
+  ui?: UIDeclaration;
 }
 
 /** One connector an agent binds, as agent.yaml names it. */
@@ -192,7 +205,7 @@ export interface SyncStamp {
   write(hash: string): Promise<void>;
 }
 
-/** An agent directory, as `loadFolder` from `@stream-io/calypso/node` reads one. */
+/** An agent directory, as `loadFolder` from `@stream-io/stream-agents/node` reads one. */
 export interface Folder {
   path: string;
   name: string;
@@ -307,7 +320,7 @@ export class Agent {
     // A directory's skills are folded in here, so everything downstream reads one harness.
     const declared = options.harness;
     const fromFolder = this.folder?.skills ?? [];
-    if (declared && (declared.skills?.length ?? 0) === 0 && fromFolder.length > 0) {
+    if (declared && declared.skills === undefined && fromFolder.length > 0) {
       this.harness = { ...declared, skills: fromFolder };
     } else if (!declared && fromFolder.length > 0) {
       this.harness = { skills: fromFolder };
@@ -487,7 +500,7 @@ export class Agent {
     });
     const running = dispatch.run();
     const stopped = running.then(() => {
-      throw new RouterError(0, "waitForCall", "stopped waiting before anybody rang");
+      throw new SocketClosedError("the router stopped handing over calls before anybody rang");
     });
     // Stopping after the call arrived ends `run` too, which is not a failure.
     stopped.catch(() => undefined);
@@ -506,7 +519,7 @@ export class Agent {
       }
     }
     await session.close();
-    throw new RouterError(0, "waitForCall", "the call ended before anybody rang");
+    throw new SocketClosedError("the call ended before the caller said anything");
   }
 
   /**
@@ -575,7 +588,7 @@ export class Agent {
         query: { name: this.name },
       });
       // A config deleted since the stamp was written is synced again rather than trusted.
-      if (stored?.name === this.name) {
+      if (stored?.name === this.name && stored.sync_hash === hash) {
         return { unchanged: true, config: stored };
       }
     }
@@ -691,7 +704,9 @@ export class Agent {
       ...(pipeline.maxTokens ? { max_tokens: pipeline.maxTokens } : {}),
       ...(pipeline.toolTimeoutMs ? { tool_timeout_ms: pipeline.toolTimeoutMs } : {}),
       ...(pipeline.video ? { video: pipeline.video } : {}),
-      ...(pipeline.config ? { config_id: await this.resolveConfig(pipeline.config) } : {}),
+      ...(pipeline.config
+        ? { config_id: await this.resolveConfig(pipeline.config) }
+        : { agent: this.name }),
     };
   }
 
@@ -763,6 +778,7 @@ function declaredRequest(declared: Declaration): Partial<Schemas["SyncAgentReque
     ...(declared.llm ? { llm: declared.llm } : {}),
     ...(declared.harness ? { harness: declared.harness } : {}),
     ...(declared.search ? { search: declared.search } : {}),
+    ...(declared.image === undefined ? {} : { image: declared.image }),
     ...(declared.greeting ? { greeting: declared.greeting } : {}),
     ...(declared.channels ? { channels: declared.channels } : {}),
     ...(declared.scheduling ? { scheduling: declared.scheduling } : {}),

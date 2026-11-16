@@ -5,15 +5,18 @@ import {
   CallNotHeldError,
   Client,
   ConfigurationError,
+  RouterError,
   Session,
   Socket,
   ToolOutput,
   Tools,
+  branchErrorOf,
   connectorScopeRequiredOf,
   type SessionEvent,
-  type ToolCall,
+  type ToolCallContext,
 } from "../src/index.js";
 import { TestRouter, type Connection } from "./router.js";
+import { QUERY_PATH, arrive, channelPage, chatClient, chatMessage, heldIds, rewind, until, watch } from "./stream-chat.js";
 
 describe("Socket", () => {
   let router: TestRouter;
@@ -292,18 +295,11 @@ describe("Session", () => {
     await session.close();
   });
 
-  it("aborts a running tool when the model cancels it", async () => {
-    let aborted = false;
+  it("stops waiting on a running tool when the model cancels it", async () => {
     const tools = new Tools().register({
       name: "slow",
       description: "Take a while",
-      run: (_input, signal) =>
-        new Promise((resolve) => {
-          signal.addEventListener("abort", () => {
-            aborted = true;
-            resolve("abandoned");
-          });
-        }),
+      run: () => new Promise(() => undefined),
     });
     const [session, connection] = await opened(tools);
 
@@ -311,8 +307,7 @@ describe("Session", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     connection.send({ type: "tool_cancel", id: "call_1" });
 
-    await connection.next();
-    assert.equal(aborted, true);
+    assert.deepEqual(await connection.next(), { type: "tool_result", tool_call_id: "call_1", error: "slow was cancelled" });
     await session.close();
   });
 
@@ -328,11 +323,11 @@ describe("Session", () => {
   });
 
   it("hands a function the call it runs for, and sends how it is going", async () => {
-    let seen: ToolCall | undefined;
+    let seen: ToolCallContext | undefined;
     const tools = new Tools().register({
       name: "search",
       description: "Search flights",
-      run: (_input, _signal, toolCallContext) => {
+      run: (_input, toolCallContext) => {
         seen = toolCallContext;
         toolCallContext.update("checking three airlines");
         toolCallContext.say("Still looking, one moment.");
@@ -376,12 +371,13 @@ describe("Session", () => {
 
   it("keeps a held call going when the caller talks over the agent", async () => {
     let release = () => {};
-    let writing: AbortSignal | undefined;
+    let writing = false;
     const tools = new Tools().register({
       name: "charge",
       description: "Charge the card",
-      run: async (_input, _signal, toolCallContext) => {
-        writing = await toolCallContext.disallowInterruptions();
+      run: async (_input, toolCallContext) => {
+        await toolCallContext.disallowInterruptions();
+        writing = true;
         await new Promise<void>((resolve) => (release = resolve));
         return "charged";
       },
@@ -399,18 +395,24 @@ describe("Session", () => {
     release();
 
     assert.deepEqual(await connection.next(), { type: "tool_result", tool_call_id: "call_1", output: "charged" });
-    assert.equal(writing.aborted, false);
     await session.close();
   });
 
-  it("hands a call stopped before it could be held a signal already aborted", async () => {
-    let writing: AbortSignal | undefined;
+  it("refuses to hold a call stopped before it could be held", async () => {
+    let refused: unknown;
+    let charged = false;
     const tools = new Tools().register({
       name: "charge",
       description: "Charge the card",
-      run: async (_input, _signal, toolCallContext) => {
-        writing = await toolCallContext.disallowInterruptions();
-        return writing.aborted ? "never charged" : "charged";
+      run: async (_input, toolCallContext) => {
+        try {
+          await toolCallContext.disallowInterruptions();
+        } catch (error) {
+          refused = error;
+          throw error;
+        }
+        charged = true;
+        return "charged";
       },
     });
     const [session, connection] = await opened(tools);
@@ -419,8 +421,10 @@ describe("Session", () => {
     assert.deepEqual(await connection.next(), { type: "tool_hold", tool_call_id: "call_1" });
     connection.send({ type: "tool_cancel", id: "call_1" });
 
-    assert.equal((await connection.next())["output"], "never charged");
-    assert.ok(writing?.reason instanceof CallNotHeldError);
+    assert.ok((await connection.next())["error"]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.ok(refused instanceof CallNotHeldError);
+    assert.equal(charged, false);
     await session.close();
   });
 
@@ -727,6 +731,122 @@ describe("Session", () => {
       assert.deepEqual(await connection.next(), { type: "say", text: "still there?" });
       assert.deepEqual(ran, []);
       await session.close();
+    });
+
+    describe("a call shown from the conversation that this socket was never asked", () => {
+      const shown = { name: "issue_refund", arguments: refundCall.arguments, requestId: "m1", turnId: "t1" };
+
+      it("allowed, answers it on its turn and runs it here", async () => {
+        const [session, connection] = await opened(refunds());
+
+        session.decide("call_1", { allowed: true, call: shown });
+
+        assert.deepEqual(await connection.next(), {
+          type: "tool_approval",
+          tool_call_id: "call_1",
+          allowed: true,
+          request_id: "m1",
+          turn_id: "t1",
+        });
+        assert.deepEqual(await connection.next(), {
+          type: "tool_result",
+          tool_call_id: "call_1",
+          request_id: "m1",
+          turn_id: "t1",
+          output: "Refunded A-1042",
+        });
+        assert.deepEqual(ran, ["A-1042"]);
+        await session.close();
+      });
+
+      it("declined, never runs and tells the model so", async () => {
+        const [session, connection] = await opened(refunds());
+
+        session.decide("call_1", { allowed: false, summary: "Kept the order", call: shown });
+
+        assert.deepEqual(await connection.next(), {
+          type: "tool_approval",
+          tool_call_id: "call_1",
+          allowed: false,
+          summary: "Kept the order",
+          request_id: "m1",
+          turn_id: "t1",
+        });
+        assert.deepEqual(await connection.next(), {
+          type: "tool_result",
+          tool_call_id: "call_1",
+          request_id: "m1",
+          turn_id: "t1",
+          error: "The person declined this call.",
+        });
+        assert.deepEqual(ran, []);
+        await session.close();
+      });
+
+      it("allowed, leaves running to whoever registered a function this session lacks", async () => {
+        const [session, connection] = await opened(refunds());
+
+        session.decide("call_2", { allowed: true, call: { ...shown, name: "get_location" } });
+        session.say("still there?");
+
+        assert.deepEqual(await connection.next(), {
+          type: "tool_approval",
+          tool_call_id: "call_2",
+          allowed: true,
+          request_id: "m1",
+          turn_id: "t1",
+        });
+        assert.deepEqual(await connection.next(), { type: "say", text: "still there?" });
+        await session.close();
+      });
+
+      it("allowed with its arguments too long for the conversation to show, tells the model it couldn't run", async () => {
+        const [session, connection] = await opened(refunds());
+
+        session.decide("call_1", { allowed: true, call: { name: "issue_refund", requestId: "m1", turnId: "t1" } });
+
+        assert.equal((await connection.next()).type, "tool_approval");
+        assert.deepEqual(await connection.next(), {
+          type: "tool_result",
+          tool_call_id: "call_1",
+          request_id: "m1",
+          turn_id: "t1",
+          error: "The call's arguments were too long for the conversation to keep, so it could not run.",
+        });
+        assert.deepEqual(ran, []);
+        await session.close();
+      });
+
+      it("answered twice, such as a double tap on Allow, sends one answer and runs once", async () => {
+        const [session, connection] = await opened(refunds());
+
+        session.decide("call_1", { allowed: true, call: shown });
+        session.decide("call_1", { allowed: true, call: shown });
+        session.decide("call_1", { allowed: false, call: shown });
+
+        assert.equal((await connection.next()).type, "tool_approval");
+        assert.equal((await connection.next()).type, "tool_result");
+        session.say("still there?");
+        assert.deepEqual(await connection.next(), { type: "say", text: "still there?" });
+        assert.deepEqual(ran, ["A-1042"]);
+        await session.close();
+      });
+
+      it("sends nothing for one it already answered from its own socket", async () => {
+        const [session, connection] = await opened(refunds());
+
+        connection.send(refundCall);
+        await waiting(session);
+        session.decide("call_1", { allowed: true });
+        assert.equal((await connection.next()).type, "tool_approval");
+        assert.equal((await connection.next()).type, "tool_result");
+
+        session.decide("call_1", { allowed: true, call: shown });
+        session.say("still there?");
+        assert.deepEqual(await connection.next(), { type: "say", text: "still there?" });
+        assert.deepEqual(ran, ["A-1042"]);
+        await session.close();
+      });
     });
 
     it("runs at once a call the caller already allowed out loud", async () => {
@@ -1106,9 +1226,131 @@ describe("Session", () => {
 
     await assert.rejects(session.chat(), (error: Error) => {
       assert.ok(error instanceof ConfigurationError);
-      assert.match(error.message, /import "@stream-io\/calypso\/chat"/);
+      assert.match(error.message, /import "@stream-io\/stream-agents\/chat"/);
       return true;
     });
+    await session.close();
+  });
+
+  it("tries chat again after it failed, rather than failing the same way for good", async () => {
+    const page = new Client({ url: router.url, customerId: "local", apiKey: "vak_live_x" });
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: {
+        id: "sess_1",
+        conversation_id: "agent:support-1",
+        user_id: "john",
+        agent_id: "john",
+        state: "live",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    });
+    const opening = Session.open(page, {});
+    await router.socket();
+    const session = await opening;
+
+    // Asked before the page knows who is looking at it.
+    await assert.rejects(session.chat(), ConfigurationError);
+    const client = {
+      channel: (type: string, id: string) => ({ type, id }),
+      connectUser: async () => undefined,
+      disconnectUser: async () => undefined,
+    };
+    page.use({ chat: client });
+    const chat = await session.chat();
+
+    assert.equal(chat.client, client);
+    await session.close();
+  });
+
+  it("tries the call again after opening it failed, so a failed join can be retried", async () => {
+    const page = new Client({ url: router.url, customerId: "local", apiKey: "vak_live_x" });
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: {
+        id: "sess_1",
+        call_id: "sess_1",
+        user_id: "john",
+        agent_id: "john",
+        state: "live",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    });
+    const opening = Session.open(page, { start_voice: true });
+    await router.socket();
+    const session = await opening;
+
+    await assert.rejects(session.video(), ConfigurationError);
+    const client = {
+      streamClient: {},
+      call: (type: string, id: string) => ({ type, id }),
+      disconnectUser: async () => undefined,
+    };
+    page.use({ video: client });
+    const video = await session.video();
+
+    assert.deepEqual(video.call, { type: "agent", id: "sess_1" });
+    await session.close();
+  });
+
+  it("takes a typed question back out of the transcript when it could not be asked", async () => {
+    const [session] = await opened();
+    router.serve("POST", "/v1/agents/sessions/sess_1/responses", {
+      status: 400,
+      body: { error: { message: "text is required", type: "invalid_request", code: "validation_failed" } },
+    });
+
+    await assert.rejects(session.responses.create("Plan a weekend in Lisbon"));
+
+    assert.deepEqual(session.conversation.get().turns, [], "a question that never reached the agent");
+    await session.close();
+  });
+
+  it("asks again under the same request id, so a retry is answered once", async () => {
+    const [session] = await opened();
+    router.serve("POST", "/v1/agents/sessions/sess_1/responses", (_, calls) =>
+      calls === 0
+        ? { status: 503 }
+        : {
+            status: 202,
+            body: { id: "response-1", session_id: "sess_1", status: "running", created_at: new Date().toISOString() },
+          },
+    );
+
+    const answered = await session.responses.create("Plan a weekend in Lisbon", { requestId: "req_7" });
+
+    assert.equal(answered.id, "response-1");
+    const sent = router.requestsTo("POST", "/v1/agents/sessions/sess_1/responses");
+    assert.deepEqual(
+      sent.map((one) => (one.body as Record<string, unknown>)["request_id"]),
+      ["req_7", "req_7"],
+    );
+    await session.close();
+  });
+
+  it("does not tell a page about a delta that changed nothing", async () => {
+    const [session, connection] = await opened();
+    connection.send({ type: "responding", turn_id: "t1" });
+    connection.send({ type: "response_delta", turn_id: "t1", text: "Hi" });
+    for await (const event of session.events()) {
+      if (event.kind === "response_delta") {
+        break;
+      }
+    }
+    let told = 0;
+    session.conversation.subscribe(() => told++);
+
+    connection.send({ type: "response_delta", turn_id: "t1", text: "" });
+    connection.send({ type: "responded", turn_id: "t1", text: "Hi" });
+    connection.send({ type: "response_delta", turn_id: "t1", text: "!" });
+    for await (const event of session.events()) {
+      if (event.kind === "response_delta" && event.text === "!") {
+        break;
+      }
+    }
+
+    assert.equal(told, 1, "only the delta that added something");
+    assert.equal(session.conversation.get().turns.at(-1)?.text, "Hi!");
     await session.close();
   });
 
@@ -1129,5 +1371,284 @@ describe("Session", () => {
 
     await session.wait();
     assert.equal(session.live, false);
+  });
+});
+
+describe("Regenerate, edit and branches", () => {
+  let router: TestRouter;
+  let api: Client;
+
+  beforeEach(async () => {
+    router = await TestRouter.start();
+    api = new Client({ url: router.url, customerId: "local" });
+    router.serve("POST", "/v1/agents/sessions", {
+      status: 201,
+      body: {
+        id: "sess_1",
+        conversation_id: "agent:support-1",
+        user_id: "john",
+        agent_id: "john",
+        state: "live",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    });
+  });
+
+  afterEach(async () => {
+    await router.stop();
+  });
+
+  async function opened(): Promise<Session> {
+    const opening = Session.open(api, {});
+    await router.socket();
+    return opening;
+  }
+
+  /** A top-level Chat message, written `second` seconds into 2026. */
+  const message = (id: string, second: number) => chatMessage(id, second);
+
+  /**
+   * The session with its channel open and holding `messages`, read by a real stream-chat client
+   * (9, or 10 in CI's js-stream-chat-10 job) from the test router: what is under test is what its
+   * channel state holds, and that 9's query merges rather than replaces.
+   */
+  async function loaded(messages: Record<string, unknown>[]) {
+    const chat = await chatClient(router.url);
+    api.use({ chat: chat as never });
+    const session = await opened();
+    const { channel } = await session.chat();
+    router.serve("POST", QUERY_PATH, channelPage(messages));
+    await watch(channel);
+    const ids = () => heldIds(channel);
+    return { chat, session, channel, ids };
+  }
+
+  it("regenerates and edits as a question that replaces an earlier response, under a request id", async () => {
+    const session = await opened();
+    router.serve("POST", "/v1/agents/sessions/sess_1/responses", {
+      status: 202,
+      body: {
+        id: "resp_2",
+        session_id: "sess_1",
+        status: "running",
+        created_at: "2026-01-01T00:00:00Z",
+        parent_response_id: "resp_0",
+        branch: { of: "reply", index: 2, count: 2 },
+      },
+    });
+
+    const regenerated = await session.responses.regenerate("resp_1", { maxOutputTokens: 300 });
+    await session.responses.edit({ response_id: "resp_1" } as never, "Rome instead", { requestId: "req_9" });
+
+    assert.deepEqual(regenerated.created.branch, { of: "reply", index: 2, count: 2 });
+    assert.equal(regenerated.created.parent_response_id, "resp_0");
+    const [regenerate, edit] = router
+      .requestsTo("POST", "/v1/agents/sessions/sess_1/responses")
+      .map((one) => one.body as Record<string, unknown>);
+    assert.equal(regenerate?.["text"], "", "no text is what makes it a regenerate");
+    assert.equal(regenerate?.["replaces"], "resp_1");
+    assert.equal(regenerate?.["max_output_tokens"], 300);
+    assert.match(String(regenerate?.["request_id"]), /^[0-9a-f-]{36}$/, "the router requires one");
+    assert.deepEqual(edit, { text: "Rome instead", replaces: "resp_1", request_id: "req_9" });
+    await session.close();
+  });
+
+  it("refuses an edit with no text and a response with no id before sending anything", async () => {
+    const session = await opened();
+
+    await assert.rejects(session.responses.edit("resp_1", ""), ConfigurationError);
+    await assert.rejects(session.responses.regenerate(""), ConfigurationError);
+    await assert.rejects(session.responses.siblings(""), ConfigurationError);
+
+    assert.deepEqual(router.requestsTo("POST", "/v1/agents/sessions/sess_1/responses"), []);
+    await session.close();
+  });
+
+  it("lists siblings, reads a branch and activates it on the response's own paths", async () => {
+    const session = await opened();
+    router.serve("GET", "/v1/agents/sessions/sess_1/responses/resp_1/siblings", (_, calls) => ({
+      body:
+        calls === 0
+          ? {
+              items: [{ id: "resp_1", created_at: "2026-01-01T00:00:00Z", active: false, index: 1, said: "Lisbon?" }],
+              has_more: true,
+              next_cursor: "c1",
+            }
+          : { items: [{ id: "resp_2", created_at: "2026-01-01T00:00:01Z", active: true, index: 2 }], has_more: false },
+    }));
+    router.serve("GET", "/v1/agents/sessions/sess_1/responses/resp_1/branch", {
+      body: {
+        active: false,
+        items: [
+          { id: "m3", text: "Lisbon?", attachments: [], custom: {}, created_at: "2026-01-01T00:00:00Z", user_id: "john", role: "user" },
+        ],
+        has_more: false,
+      },
+    });
+    router.serve("POST", "/v1/agents/sessions/sess_1/responses/resp_1/activate", {
+      body: { leaf_response_id: "resp_4", already_active: false, resent: 4, rewound_to: { message_id: "m1", inclusive: false } },
+    });
+
+    const siblings = [];
+    for await (const sibling of session.responses.unwindSiblings("resp_1", { of: "question", limit: 1 })) {
+      siblings.push(sibling.id);
+    }
+    const branch = await session.responses.branch("resp_1", { limit: 50 });
+    const activated = await session.responses.activate("resp_1");
+
+    assert.deepEqual(siblings, ["resp_1", "resp_2"]);
+    const asked = router.requestsTo("GET", "/v1/agents/sessions/sess_1/responses/resp_1/siblings");
+    assert.deepEqual(
+      asked.map((one) => Object.fromEntries(one.query)),
+      [
+        { of: "question", limit: "1" },
+        { of: "question", limit: "1", cursor: "c1" },
+      ],
+    );
+    assert.equal(branch.items[0]?.role, "user");
+    assert.equal(router.requestsTo("GET", "/v1/agents/sessions/sess_1/responses/resp_1/branch")[0]?.query.get("limit"), "50");
+    assert.deepEqual(activated, {
+      leaf_response_id: "resp_4",
+      already_active: false,
+      resent: 4,
+      rewound_to: { message_id: "m1", inclusive: false },
+    });
+    await session.close();
+  });
+
+  it("surfaces the branch refusals as router errors a page can tell apart", async () => {
+    const session = await opened();
+    const refusal = (status: number, code: string, type: string) => ({
+      status,
+      body: { error: { message: `refused: ${code}`, type, code } },
+    });
+    router.serve("POST", "/v1/agents/sessions/sess_1/responses", refusal(409, "branch_limit_reached", "conflict"));
+    router.serve("POST", "/v1/agents/sessions/sess_1/responses/resp_1/activate", refusal(409, "branch_too_long", "conflict"));
+    router.serve("GET", "/v1/agents/sessions/sess_1/responses/resp_1/branch", refusal(410, "branch_unavailable", "gone"));
+
+    const failures = await Promise.all([
+      session.responses.regenerate("resp_1").catch((error: unknown) => error),
+      session.responses.activate("resp_1").catch((error: unknown) => error),
+      session.responses.branch("resp_1").catch((error: unknown) => error),
+    ]);
+
+    assert.deepEqual(failures.map(branchErrorOf), ["branch_limit_reached", "branch_too_long", "branch_unavailable"]);
+    assert.deepEqual(
+      failures.map((error) => (error instanceof RouterError ? error.status : 0)),
+      [409, 409, 410],
+    );
+    assert.equal(branchErrorOf(new RouterError(409, "POST /x", "taken", { code: "conflict" })), undefined);
+    await session.close();
+  });
+
+  it("drops what a rewind hid from the channel at once, then reads the channel again", async () => {
+    const { chat, session, ids } = await loaded([message("m1", 1), message("m2", 2), message("m3", 3), message("m4", 4)]);
+    let heldWhenRead: string[] | undefined;
+    router.serve("POST", QUERY_PATH, () => {
+      heldWhenRead = ids();
+      // Read just after the rewind, Chat can still return what it hid, beside what came since.
+      return channelPage([message("m1", 1), message("m2", 2), message("m3", 3), message("m4", 4), message("m5", 6)]);
+    });
+
+    rewind(chat, "m1", false, 5);
+
+    assert.deepEqual(ids(), ["m1"], "dropped before anything was read");
+    await until(() => ids().includes("m5"));
+    assert.deepEqual(heldWhenRead, ["m1"]);
+    assert.deepEqual(ids(), ["m1", "m5"], "a stale read does not bring hidden messages back");
+    await session.close();
+  });
+
+  it("drops the rewound-to message too when the rewind was inclusive, as an edit's is", async () => {
+    const { chat, session, ids } = await loaded([message("m1", 1), message("m2", 2), message("m3", 3), message("m4", 4)]);
+    router.serve("POST", QUERY_PATH, channelPage([message("m1", 1), message("m2", 2)]));
+
+    chat.dispatchEvent({
+      type: "notification.channel_rewound",
+      cid: "agent:support-1",
+      rewind: { id: "rw_1", message_id: "m3", inclusive: true, created_at: new Date(Date.UTC(2026, 0, 1, 0, 0, 5)).toISOString() },
+    });
+
+    assert.deepEqual(ids(), ["m1", "m2"]);
+    await until(() => router.requestsTo("POST", QUERY_PATH).length === 2);
+    await session.close();
+  });
+
+  it("prunes what a regenerate hid as soon as it answers, keeping what arrived while it was asked", async () => {
+    const { chat, session, ids } = await loaded([message("m1", 1), message("m2", 2), message("m3", 3), message("m4", 4)]);
+    router.serve("POST", "/v1/agents/sessions/sess_1/responses", () => {
+      // The new answer's message.new can beat the HTTP answer.
+      arrive(chat, message("m5", 6));
+      return {
+        status: 202,
+        body: {
+          id: "resp_2",
+          session_id: "sess_1",
+          status: "running",
+          created_at: "2026-01-01T00:00:06Z",
+          rewound_to: { message_id: "m1", inclusive: false },
+        },
+      };
+    });
+
+    await session.responses.regenerate("resp_1");
+
+    assert.deepEqual(ids(), ["m1", "m5"], "never the old answer beside the new one");
+    assert.equal(router.requestsTo("POST", QUERY_PATH).length, 1, "the event reads it again, not this");
+    await session.close();
+  });
+
+  it("keeps what it holds when an edit's rewind arrives after the edit's answer already dropped the question", async () => {
+    const { chat, session, ids } = await loaded([message("m1", 1), message("m2", 2), message("m3", 3), message("m4", 4)]);
+    router.serve("POST", "/v1/agents/sessions/sess_1/responses", () => {
+      // The new question can arrive before the answer, and before the rewind event.
+      arrive(chat, message("q2", 6));
+      return {
+        status: 202,
+        body: {
+          id: "resp_2",
+          session_id: "sess_1",
+          status: "running",
+          created_at: "2026-01-01T00:00:06Z",
+          rewound_to: { message_id: "m3", inclusive: true },
+        },
+      };
+    });
+    await session.responses.edit("resp_1", "Rome instead");
+    assert.deepEqual(ids(), ["m1", "m2", "q2"], "the edited question went with the answer");
+    let heldWhenRead: string[] | undefined;
+    router.serve("POST", QUERY_PATH, () => {
+      heldWhenRead = ids();
+      return channelPage([message("m1", 1), message("m2", 2), message("m3", 3), message("q2", 6)]);
+    });
+
+    // The edit's own rewind, to the question this device no longer holds.
+    rewind(chat, "m3", true, 5);
+
+    assert.deepEqual(ids(), ["m1", "m2", "q2"], "nothing more dropped: where the rewind starts is known here");
+    await until(() => router.requestsTo("POST", QUERY_PATH).length === 2);
+    await until(() => heldWhenRead !== undefined && ids().length === 3);
+    assert.deepEqual(heldWhenRead, ["m1", "m2", "q2"]);
+    assert.deepEqual(ids(), ["m1", "m2", "q2"], "a stale read does not bring the edited question back");
+    await session.close();
+  });
+
+  it("stops following the channel's rewinds once the session is closed", async () => {
+    const { chat, session, ids } = await loaded([message("m1", 1), message("m2", 2)]);
+
+    await session.close();
+    rewind(chat, "m1", false, 5);
+
+    assert.deepEqual(ids(), ["m1", "m2"]);
+    assert.equal(router.requestsTo("POST", QUERY_PATH).length, 1);
+  });
+
+  it("leaves another channel's rewind alone", async () => {
+    const { chat, session, ids } = await loaded([message("m1", 1), message("m2", 2)]);
+
+    rewind(chat, "m1", false, 5, "agent:somebody-else");
+
+    assert.deepEqual(ids(), ["m1", "m2"]);
+    await session.close();
   });
 });

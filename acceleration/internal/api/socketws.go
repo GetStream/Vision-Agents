@@ -155,6 +155,11 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 		refuseWith(answer)
 		return
 	}
+	if errors.Is(err, session.ErrAppSettingsUnreadable) {
+		s.logger.Error("could not open a socket session", "error", err)
+		refuseWith(internalError())
+		return
+	}
 	if errors.Is(err, session.ErrSessionExists) || err != nil {
 		refuse(store.RedactLogText(err.Error()))
 		return

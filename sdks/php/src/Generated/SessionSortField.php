@@ -7,11 +7,16 @@ declare(strict_types=1);
 namespace GetStream\VisionAgents\Generated;
 
 /**
- * updated_at is the most recently active first. relevance is the best match first, and only
- * sorts a text search.
+ * last_message_at is when the agent last answered, or when the session began if it has not.
+ * pinned lists the pinned sessions first: it sorts descending only, comes first, and is
+ * followed by last_message_at, descending when left out. review_score is the review's score,
+ * sessions without one last either way, and is a server-side caller's only. relevance is the
+ * best match first, and is the one sort of a text search.
  */
 enum SessionSortField: string
 {
-    case UpdatedAt = 'updated_at';
+    case LastMessageAt = 'last_message_at';
+    case Pinned = 'pinned';
+    case ReviewScore = 'review_score';
     case Relevance = 'relevance';
 }

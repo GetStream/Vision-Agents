@@ -12,8 +12,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"runtime/pprof"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -21,6 +24,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
@@ -30,6 +34,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/twiliosig"
 )
 
 // RouterStartSuite starts the router as its serve command does, on a database of the suite's
@@ -404,6 +410,49 @@ func (s *RouterStartSuite) TestARouterHandedNoSocketFailsOnAProxyAddressAnotherP
 	}
 }
 
+// The router run builds from its settings hands TWILIO_WEBHOOK_AUTH_TOKEN and ROUTER_PUBLIC_URL to
+// the Twilio events route; an unwired token leaves the route answering 404 to every alert.
+func (s *RouterStartSuite) TestAStartingRouterAcceptsAnAlertSignedWithTheTwilioToken() {
+	settings := s.settings
+	settings.Addr = freeAddress(s.T())
+	settings.PublicURL = "https://router.example.test"
+	settings.Twilio.WebhookAuthToken = rand.Text()
+	s.start(settings)
+
+	form := url.Values{"Sid": {"NO" + rand.Text()}, "Payload": {`{"error_code":"10001"}`}}
+	signature := twiliosig.Sign(settings.Twilio.WebhookAuthToken, settings.PublicURL+"/v1/phone/hooks/twilio/events", form)
+
+	s.Equal(http.StatusNoContent, s.postTwilioAlert(settings.Addr, form, signature))
+	other := twiliosig.Sign(rand.Text(), settings.PublicURL+"/v1/phone/hooks/twilio/events", form)
+	s.Equal(http.StatusUnauthorized, s.postTwilioAlert(settings.Addr, form, other), "a signature of another token")
+}
+
+// A router given no token answers 404, so the test above fails on the wiring and not on a route that
+// always answers 204.
+func (s *RouterStartSuite) TestAStartingRouterWithNoTwilioTokenHasNoTwilioEventsRoute() {
+	settings := s.settings
+	settings.Addr = freeAddress(s.T())
+	settings.PublicURL = "https://router.example.test"
+	s.start(settings)
+
+	form := url.Values{"Sid": {"NO" + rand.Text()}, "Payload": {`{"error_code":"10001"}`}}
+	signature := twiliosig.Sign("any-token", settings.PublicURL+"/v1/phone/hooks/twilio/events", form)
+
+	s.Equal(http.StatusNotFound, s.postTwilioAlert(settings.Addr, form, signature))
+}
+
+func (s *RouterStartSuite) postTwilioAlert(address string, form url.Values, signature string) int {
+	request, err := http.NewRequest(http.MethodPost, "http://"+address+"/v1/phone/hooks/twilio/events",
+		strings.NewReader(form.Encode()))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set(twiliosig.SignatureHeader, signature)
+	response, err := http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	s.Require().NoError(response.Body.Close())
+	return response.StatusCode
+}
+
 // proxySettings is a router that serves the sandbox egress proxy: it needs redis, connectors
 // and so a keyring.
 func (s *RouterStartSuite) proxySettings() config.Config {
@@ -503,6 +552,82 @@ func (s *RouterStartSuite) start(settings config.Config) (stop func() error) {
 	return stop
 }
 
+// Defect: the router built without its activity record (the server counts nothing), or without
+// closing it (what the last minute counted is lost when it stops). The interval is a minute, so
+// the row can only be there because the stop wrote it.
+func (s *RouterStartSuite) TestARunningRouterCountsAnAppsRequestAndWritesItWhenItStops() {
+	settings := s.settings
+	settings.Addr = freeAddress(s.T())
+	customer := "customer-" + uuid.NewString()
+	stop := s.start(settings)
+
+	request, err := http.NewRequest(http.MethodGet, "http://"+settings.Addr+"/v1/agents/skills", nil)
+	s.Require().NoError(err)
+	request.Header.Set("X-Customer-Id", customer)
+	request.Header.Set("X-Stream-Client", store.AuditSourceCLI)
+	response, err := http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	s.Require().NoError(response.Body.Close())
+	s.Require().Less(response.StatusCode, http.StatusInternalServerError)
+	s.Require().NoError(stop())
+
+	var requests int64
+	s.Require().NoError(s.db.DB().QueryRowContext(s.ctx,
+		"SELECT COALESCE(sum(requests), 0) FROM customer_activity WHERE app_id = ? AND area = 'agent_setup' AND client = ?",
+		customer, store.AuditSourceCLI).Scan(&requests))
+	s.Equal(int64(1), requests)
+}
+
+// Defect: the router builds the trunk call provider but never starts it, so no node it stops
+// beside hands it calls, and a drain started with this one's claims unrenewed.
+func (s *RouterStartSuite) TestARunningRouterSaysItTakesTrunkCallsOverUntilItStops() {
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" {
+		s.T().Skip("ROUTER_REDIS_ADDR not set")
+	}
+	client, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	s.Require().NoError(err)
+	s.T().Cleanup(client.Close)
+	// Another router on this Redis may be one already.
+	before := s.takingTrunkCalls(client)
+	settings := s.settings
+	settings.Addr = freeAddress(s.T())
+	settings.Redis.Addr = address
+	settings.Auth.KEK = "trunk-key"
+
+	stop := s.start(settings)
+
+	var node string
+	s.Require().Eventually(func() bool {
+		node = joined(before, s.takingTrunkCalls(client))
+		return node != ""
+	}, 10*time.Second, 20*time.Millisecond, "the running router does not say it takes trunk calls over")
+	s.Require().NoError(stop())
+	s.NotContains(s.takingTrunkCalls(client), node, "the stopped router still says it takes trunk calls over")
+}
+
+// takingTrunkCalls is every node that says now that it takes trunk calls over.
+func (s *RouterStartSuite) takingTrunkCalls(client rueidis.Client) []string {
+	nodes, err := trunkCallTakers(s.ctx, client)
+	s.Require().NoError(err)
+	return nodes
+}
+
+func trunkCallTakers(ctx context.Context, client rueidis.Client) ([]string, error) {
+	return client.Do(ctx, client.B().Zrangebyscore().Key("{siptrunk}:nodes").
+		Min("("+strconv.FormatInt(time.Now().UnixMilli(), 10)).Max("+inf").Build()).AsStrSlice()
+}
+
+// joined is a node in now that is not in before, or "" when there is none.
+func joined(before, now []string) string {
+	for _, n := range now {
+		if !slices.Contains(before, n) {
+			return n
+		}
+	}
+	return ""
+}
+
 // goroutines is every goroutine's stack, as the pprof endpoint prints it.
 func goroutines() string {
 	var out strings.Builder
@@ -527,3 +652,24 @@ func (l *listenLog) Handle(_ context.Context, record slog.Record) error {
 
 func (l *listenLog) WithAttrs([]slog.Attr) slog.Handler { return l }
 func (l *listenLog) WithGroup(string) slog.Handler      { return l }
+
+// Defect: the router builds the cost anomaly check but never starts it, or builds it with no
+// store, or stops without giving its lock back. A started check holds the lock until it stops.
+func (s *RouterStartSuite) TestARouterWithASlackChannelChecksCostAnomaliesUntilItStops() {
+	settings := s.settings
+	settings.Addr = freeAddress(s.T())
+	settings.Limits.SlackToken, settings.Limits.SlackChannel = "xoxb-test", "C0TEST"
+	stop := s.start(settings)
+	other := s.db.CostAnomalyLock()
+	defer other.Release()
+	// The lock is taken by the check's first pass; 10 s is far above the under-a-second start.
+	s.Require().Eventually(func() bool {
+		held, err := other.Hold(s.ctx)
+		s.Require().NoError(err)
+		return !held
+	}, 10*time.Second, 20*time.Millisecond, "the router does not hold the cost anomaly lock")
+	s.Require().NoError(stop())
+	held, err := other.Hold(s.ctx)
+	s.Require().NoError(err)
+	s.True(held, "the router kept the lock after it stopped")
+}

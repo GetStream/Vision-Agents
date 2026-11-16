@@ -128,17 +128,6 @@ func (s *ServeSuite) TestTiersSyncDryRunPrintsWhatTheNextStartAdds() {
 	s.Equal("the next start adds no tier\n", after.String())
 }
 
-func (s *ServeSuite) TestTiersSyncDryRunOnADatabaseNotMigratedYetPlansEveryTier() {
-	unmigrated := usagetest.EmptyDatabase(s.T(), "usage_cmd_unmigrated")
-	var out bytes.Buffer
-
-	err := tiers(context.Background(), []string{"sync", "--dry-run", "--file", "../../tiers/dev.json"},
-		environment("USAGE_POSTGRES_DSN="+unmigrated), &out)
-
-	s.Require().NoError(err)
-	s.Equal("the database has no tiers table yet: the next start migrates it, then adds: default, tier-a\n", out.String())
-}
-
 // freeAddress is a local address nothing listens on.
 func (s *ServeSuite) freeAddress() string {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

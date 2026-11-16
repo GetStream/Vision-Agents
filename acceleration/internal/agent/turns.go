@@ -126,6 +126,9 @@ type openTurn struct {
 	modelAt      time.Time
 	firstTextAt  time.Time
 	ttsAt        time.Time
+	// voiced is set once a request of the reply was handed to the voice. ttsAt is earlier,
+	// and also marks text that was only held for a voice.
+	voiced       bool
 	firstAudioAt time.Time
 	// queuedAt is when the edge queued the first frame of the reply for its outgoing track, and
 	// pulledAt when the track took the first frame that was not silence. Only an edge that
@@ -397,12 +400,31 @@ func (t *turnTracker) ttsStarted(turnID string, at time.Time) {
 	}
 }
 
-// sentToVoice reports whether any of a turn's reply has been sent to the voice.
+// voiced records that a request of a turn's reply was handed to the voice.
+func (t *turnTracker) voiced(turnID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil {
+		current.voiced = true
+	}
+}
+
+// released moves the start of a turn's voice to when the reply held for a caller's greeting
+// first goes to it: the hold is the caller's time, not the voice's.
+func (t *turnTracker) released(turnID string, at time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil && !current.voiced {
+		current.ttsAt = at
+	}
+}
+
+// sentToVoice reports whether any of a turn's reply has been handed to the voice.
 func (t *turnTracker) sentToVoice(turnID string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	current, ok := t.open[turnID]
-	return ok && !current.ttsAt.IsZero()
+	return ok && current.voiced
 }
 
 // firstAudio records the moment the first audio of a reply reached the edge, which is

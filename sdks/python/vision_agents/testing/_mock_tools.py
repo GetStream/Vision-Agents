@@ -16,6 +16,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 from vision_agents.core.llm.llm import LLM
+from vision_agents.core.llm.tool_call import context_parameter
 
 
 @contextmanager
@@ -28,7 +29,9 @@ def mock_functions(
     Each mock callable is wrapped in an ``AsyncMock(side_effect=callable)``
     so that the original behaviour is preserved while call tracking
     (``assert_called_once``, ``assert_called_with``, etc.) becomes
-    available via the standard ``unittest.mock`` API.
+    available via the standard ``unittest.mock`` API. A mock whose first
+    parameter is annotated ``ToolCallContext`` is handed the call, whatever the tool
+    it stands in for takes.
 
     Args:
         llm: The LLM instance whose tools to mock.
@@ -46,18 +49,20 @@ def mock_functions(
         if registry.functions.get(tool_name) is None:
             raise KeyError(f"Tool '{tool_name}' is not registered on this LLM")
 
-    originals: dict[str, Callable[..., Any]] = {}
+    originals: dict[str, tuple[Callable[..., Any], bool]] = {}
     wrapped: dict[str, AsyncMock] = {}
 
     for tool_name, user_fn in mocks.items():
         func_def = registry.functions[tool_name]
-        originals[tool_name] = func_def.function
+        originals[tool_name] = (func_def.function, func_def.takes_context)
         async_mock = AsyncMock(side_effect=user_fn)
         wrapped[tool_name] = async_mock
         func_def.function = async_mock
+        func_def.takes_context = context_parameter(user_fn) is not None
 
     try:
         yield wrapped
     finally:
-        for tool_name, original_fn in originals.items():
+        for tool_name, (original_fn, takes_context) in originals.items():
             registry.functions[tool_name].function = original_fn
+            registry.functions[tool_name].takes_context = takes_context

@@ -107,9 +107,11 @@ def sync_detailed(
     and the instructions are what the session is, so they cannot change: the instructions are the agent
     config's, and forking is how to get a session that differs in the rest.
 
-    An end user's device may change a session's title, description and custom, so a person can tidy up
-    their own conversations. Models and voice are the backend's to change, and a device asking for them
-    is refused with a 403.
+    An end user's device may change a session's title, description and custom, and pin or unpin it, so a
+    person can tidy up their own conversations. `pinned` sets the session's `pinned_at`, which a query
+    sorted by `pinned` lists first; it moves nothing else, and an incognito session, which nothing
+    records, cannot be pinned: 400. Models and voice are the backend's to change, and a device asking
+    for them is refused with a 403.
 
     A session that ended can still be renamed and relabelled. Models only mean something to a session
     that is running, so asking to change them on one that ended is refused.
@@ -124,9 +126,9 @@ def sync_detailed(
     Args:
         id (str): The session, as returned when it was created.
         body (UpdateSessionRequest): What to change about one session. A field left out is left as
-            it is. Title, description and custom can change on a session that ended, and are all an
-            end user's device may change; everything else needs the session running and a server-side
-            caller.
+            it is. Title, description, custom and pinned can change on a session that ended, and are
+            all an end user's device may change; everything else needs the session running and a
+            server-side caller.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -161,9 +163,11 @@ def sync(
     and the instructions are what the session is, so they cannot change: the instructions are the agent
     config's, and forking is how to get a session that differs in the rest.
 
-    An end user's device may change a session's title, description and custom, so a person can tidy up
-    their own conversations. Models and voice are the backend's to change, and a device asking for them
-    is refused with a 403.
+    An end user's device may change a session's title, description and custom, and pin or unpin it, so a
+    person can tidy up their own conversations. `pinned` sets the session's `pinned_at`, which a query
+    sorted by `pinned` lists first; it moves nothing else, and an incognito session, which nothing
+    records, cannot be pinned: 400. Models and voice are the backend's to change, and a device asking
+    for them is refused with a 403.
 
     A session that ended can still be renamed and relabelled. Models only mean something to a session
     that is running, so asking to change them on one that ended is refused.
@@ -178,9 +182,9 @@ def sync(
     Args:
         id (str): The session, as returned when it was created.
         body (UpdateSessionRequest): What to change about one session. A field left out is left as
-            it is. Title, description and custom can change on a session that ended, and are all an
-            end user's device may change; everything else needs the session running and a server-side
-            caller.
+            it is. Title, description, custom and pinned can change on a session that ended, and are
+            all an end user's device may change; everything else needs the session running and a
+            server-side caller.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -210,9 +214,11 @@ async def asyncio_detailed(
     and the instructions are what the session is, so they cannot change: the instructions are the agent
     config's, and forking is how to get a session that differs in the rest.
 
-    An end user's device may change a session's title, description and custom, so a person can tidy up
-    their own conversations. Models and voice are the backend's to change, and a device asking for them
-    is refused with a 403.
+    An end user's device may change a session's title, description and custom, and pin or unpin it, so a
+    person can tidy up their own conversations. `pinned` sets the session's `pinned_at`, which a query
+    sorted by `pinned` lists first; it moves nothing else, and an incognito session, which nothing
+    records, cannot be pinned: 400. Models and voice are the backend's to change, and a device asking
+    for them is refused with a 403.
 
     A session that ended can still be renamed and relabelled. Models only mean something to a session
     that is running, so asking to change them on one that ended is refused.
@@ -227,9 +233,9 @@ async def asyncio_detailed(
     Args:
         id (str): The session, as returned when it was created.
         body (UpdateSessionRequest): What to change about one session. A field left out is left as
-            it is. Title, description and custom can change on a session that ended, and are all an
-            end user's device may change; everything else needs the session running and a server-side
-            caller.
+            it is. Title, description, custom and pinned can change on a session that ended, and are
+            all an end user's device may change; everything else needs the session running and a
+            server-side caller.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -262,9 +268,11 @@ async def asyncio(
     and the instructions are what the session is, so they cannot change: the instructions are the agent
     config's, and forking is how to get a session that differs in the rest.
 
-    An end user's device may change a session's title, description and custom, so a person can tidy up
-    their own conversations. Models and voice are the backend's to change, and a device asking for them
-    is refused with a 403.
+    An end user's device may change a session's title, description and custom, and pin or unpin it, so a
+    person can tidy up their own conversations. `pinned` sets the session's `pinned_at`, which a query
+    sorted by `pinned` lists first; it moves nothing else, and an incognito session, which nothing
+    records, cannot be pinned: 400. Models and voice are the backend's to change, and a device asking
+    for them is refused with a 403.
 
     A session that ended can still be renamed and relabelled. Models only mean something to a session
     that is running, so asking to change them on one that ended is refused.
@@ -279,9 +287,9 @@ async def asyncio(
     Args:
         id (str): The session, as returned when it was created.
         body (UpdateSessionRequest): What to change about one session. A field left out is left as
-            it is. Title, description and custom can change on a session that ended, and are all an
-            end user's device may change; everything else needs the session running and a server-side
-            caller.
+            it is. Title, description, custom and pinned can change on a session that ended, and are
+            all an end user's device may change; everything else needs the session running and a
+            server-side caller.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

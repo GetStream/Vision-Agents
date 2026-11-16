@@ -44,10 +44,14 @@ const (
 // compose asks the reply model for one line to say at a moment the agent chose rather
 // than the caller, such as telling someone kept waiting that their answer is on its way.
 // The model reads the conversation so far but is given no tools, and nothing of the
-// request is kept: the line joins the history only once it has been said.
+// request is kept: the line joins the history only once it has been said. aside is what
+// was heard on the caller's line that the floor ruled no turn of theirs (converse.peekAside),
+// which the line is written in view of, as a reply is (asideNote): a caller who gave their
+// zip over the agent and went quiet is not asked whether they are still there as if they
+// had said nothing.
 //
 // A native agent has no text model to ask, so it is never given a line.
-func (a *Agent) compose(ctx context.Context, purpose string) (string, error) {
+func (a *Agent) compose(ctx context.Context, purpose, aside string) (string, error) {
 	if a.native() {
 		return "", nil
 	}
@@ -58,7 +62,7 @@ func (a *Agent) compose(ctx context.Context, purpose string) (string, error) {
 		return "", errors.New("agent: not joined")
 	}
 	history := append(append(withOpenCallsAnswered(a.replayLocked()), a.lateResults...),
-		llm.Message{Role: llm.User, Content: fmt.Sprintf(composeNote, purpose)})
+		llm.Message{Role: llm.User, Content: joinNotes(fmt.Sprintf(composeNote, purpose), asideNote(aside))})
 	instructions := a.instructions()
 	model, overwrites := a.llm, a.options.Overwrites
 	a.mu.Unlock()

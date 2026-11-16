@@ -16,6 +16,9 @@ export const ANONYMOUS_GUEST_REFUSED =
 /** How long the cookie a guest is remembered in lasts, in days. */
 const COOKIE_DAYS = 30;
 
+const refreshing = new WeakMap<GuestStore, Map<string, Promise<Guest>>>();
+const browserStores = new WeakMap<object, GuestStore>();
+
 export interface GuestUserOptions {
   /** What to call them. Shown in chat and video, so "Guest" is the honest default. */
   name?: string;
@@ -77,15 +80,33 @@ export async function guestUser(
   // they are; their token no longer works, so they start again as a new guest.
   const comingBack = held?.refresh_secret ? held : undefined;
 
-  const minted = await client.post("/v1/agents/guests", {
-    body: {
-      ...(comingBack ? { id: comingBack.id, refresh_secret: comingBack.refresh_secret } : {}),
-      ...(options.name ? { name: options.name } : {}),
-      ...(options.custom ? { custom: options.custom } : {}),
-    },
-  });
-  store?.write(JSON.stringify(minted));
-  return minted;
+  const key = JSON.stringify([client.backend.url, client.backend.apiKey, client.backend.customerId, held?.id]);
+  let pending = store && !options.fresh ? refreshing.get(store) : undefined;
+  if (store && !options.fresh && !pending) {
+    pending = new Map();
+    refreshing.set(store, pending);
+  }
+  const heldRefresh = pending?.get(key);
+  if (heldRefresh) {
+    return heldRefresh;
+  }
+  const minting = (async () => {
+    const minted = await client.post("/v1/agents/guests", {
+      body: {
+        ...(comingBack ? { id: comingBack.id, refresh_secret: comingBack.refresh_secret } : {}),
+        ...(options.name ? { name: options.name } : {}),
+        ...(options.custom ? { custom: options.custom } : {}),
+      },
+    });
+    store?.write(JSON.stringify(minted));
+    return minted;
+  })();
+  pending?.set(key, minting);
+  try {
+    return await minting;
+  } finally {
+    pending?.delete(key);
+  }
 }
 
 /**
@@ -161,15 +182,25 @@ function expired(guest: Guest): boolean {
 export function browserStore(): GuestStore | undefined {
   const document = (globalThis as { document?: { cookie: string } }).document;
   if (document) {
-    return cookieStore(document);
+    let store = browserStores.get(document);
+    if (!store) {
+      store = cookieStore(document);
+      browserStores.set(document, store);
+    }
+    return store;
   }
   const storage = (globalThis as { localStorage?: Storage }).localStorage;
   if (storage) {
-    return {
-      read: () => storage.getItem(GUEST_STORAGE_KEY) ?? undefined,
-      write: (value) => storage.setItem(GUEST_STORAGE_KEY, value),
-      clear: () => storage.removeItem(GUEST_STORAGE_KEY),
-    };
+    let store = browserStores.get(storage);
+    if (!store) {
+      store = {
+        read: () => storage.getItem(GUEST_STORAGE_KEY) ?? undefined,
+        write: (value) => storage.setItem(GUEST_STORAGE_KEY, value),
+        clear: () => storage.removeItem(GUEST_STORAGE_KEY),
+      };
+      browserStores.set(storage, store);
+    }
+    return store;
   }
   return undefined;
 }

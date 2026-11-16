@@ -17,10 +17,13 @@ T = TypeVar("T", bound="SessionSort")
 class SessionSort:
     """
     Attributes:
-        field (SessionSortField): updated_at is the most recently active first. relevance is the best match first, and
-            only sorts a text search.
-        direction (SessionSortDirection | Unset): -1, descending. Ascending is not offered. Default:
-            SessionSortDirection.VALUE_NEGATIVE_1.
+        field (SessionSortField): last_message_at is when the agent last answered, or when the session began if it has
+            not. pinned lists the pinned sessions first: it sorts descending only, comes first, and is followed by
+            last_message_at, descending when left out. review_score is the review's score, sessions without one last either
+            way, and is a server-side caller's only. relevance is the best match first, and is the one sort of a text
+            search.
+        direction (SessionSortDirection | Unset): -1 is descending and 1 ascending. pinned and relevance only sort
+            descending. Default: SessionSortDirection.VALUE_NEGATIVE_1.
     """
 
     field: SessionSortField

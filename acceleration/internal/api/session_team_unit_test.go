@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -35,6 +36,21 @@ func TestABackendNamesATeamOrTheOneItsTokenWasSignedFor(t *testing.T) {
 	failure, refused = refuseSessionRequest(backendAsking(), CreateSessionRequest{Team: new("fin:ance")})
 	require.True(t, refused)
 	require.Equal(t, ErrorTypeInvalidRequest, failure.Type)
+}
+
+func TestASessionReportsTheTeamItsUsageIsCountedUnder(t *testing.T) {
+	var rendered Session
+	describe(&rendered, session.Spec{Team: "sales", Attribution: routing.Attribution{UsageCategories: []string{"team:finance"}}})
+	require.Equal(t, new("finance"), rendered.Team, "the token's team, which the session is counted under")
+
+	stored := Session{}
+	mergeStored(&stored, &store.AgentSession{Team: "finance"})
+	require.Equal(t, new("finance"), stored.Team)
+
+	none := Session{}
+	describe(&none, session.Spec{})
+	mergeStored(&none, &store.AgentSession{})
+	require.Nil(t, none.Team, "a session counted under no team reports none")
 }
 
 func TestASessionsTeamIsItsRequestsOverItsConfigsTag(t *testing.T) {

@@ -34,13 +34,17 @@ class Account:
                 says low, and its stream event destinations get account.balance_low. 0 when nothing sets one.
             balance_warning_source (AccountBalanceWarningSource): Whose threshold it is: the tier's, the one Stream set for
                 this organization, or the organization policy's balance_warning_micros, which wins over both.
-            granted_micros (int): Every credit entry summed: top-ups, grants, refunds and adjustments.
+            funded (bool): The organization has credit that is not trial credit: a top-up, net of its refunds and disputes,
+                or credit from Stream's staff. Until it has, buying numbers and registering for 10DLC are refused with
+                top_up_required.
+            granted_micros (int): Every credit entry summed: top-ups, grants, trial credit, refunds and adjustments.
             limits (Limits):
             organization_id (str):
             spent_micros (int): Every billable unit of work recorded, summed.
             status (AccountStatus): suspended: Stream refuses every request of the organization, free work included, until
                 it restores it.
             tier (str): The tier the organization is billed on.
+            trial_micros (int): What of granted_micros is the trial credit Stream gave the organization to try it with.
             own_limits (list[str] | None | Unset): The settings in limits Stream set for this organization rather than
                 leaving its tier's, as dotted paths such as channels.voice.concurrent.
             spend_hard_limit (SpendHardLimitUsage | Unset): The most this organization may spend in the UTC day and in the
@@ -52,12 +56,14 @@ class Account:
     balance_state: AccountBalanceState
     balance_warning_micros: int
     balance_warning_source: AccountBalanceWarningSource
+    funded: bool
     granted_micros: int
     limits: Limits
     organization_id: str
     spent_micros: int
     status: AccountStatus
     tier: str
+    trial_micros: int
     own_limits: list[str] | None | Unset = UNSET
     spend_hard_limit: SpendHardLimitUsage | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -71,6 +77,8 @@ class Account:
 
         balance_warning_source = self.balance_warning_source.value
 
+        funded = self.funded
+
         granted_micros = self.granted_micros
 
         limits = self.limits.to_dict()
@@ -82,6 +90,8 @@ class Account:
         status = self.status.value
 
         tier = self.tier
+
+        trial_micros = self.trial_micros
 
         own_limits: list[str] | None | Unset
         if isinstance(self.own_limits, Unset):
@@ -104,12 +114,14 @@ class Account:
                 "balance_state": balance_state,
                 "balance_warning_micros": balance_warning_micros,
                 "balance_warning_source": balance_warning_source,
+                "funded": funded,
                 "granted_micros": granted_micros,
                 "limits": limits,
                 "organization_id": organization_id,
                 "spent_micros": spent_micros,
                 "status": status,
                 "tier": tier,
+                "trial_micros": trial_micros,
             }
         )
         if own_limits is not UNSET:
@@ -135,6 +147,8 @@ class Account:
             d.pop("balance_warning_source")
         )
 
+        funded = d.pop("funded")
+
         granted_micros = d.pop("granted_micros")
 
         limits = Limits.from_dict(d.pop("limits"))
@@ -146,6 +160,8 @@ class Account:
         status = AccountStatus._decode(d.pop("status"))
 
         tier = d.pop("tier")
+
+        trial_micros = d.pop("trial_micros")
 
         def _parse_own_limits(data: object) -> list[str] | None | Unset:
             if data is None:
@@ -176,12 +192,14 @@ class Account:
             balance_state=balance_state,
             balance_warning_micros=balance_warning_micros,
             balance_warning_source=balance_warning_source,
+            funded=funded,
             granted_micros=granted_micros,
             limits=limits,
             organization_id=organization_id,
             spent_micros=spent_micros,
             status=status,
             tier=tier,
+            trial_micros=trial_micros,
             own_limits=own_limits,
             spend_hard_limit=spend_hard_limit,
         )

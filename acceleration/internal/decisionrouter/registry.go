@@ -2,6 +2,7 @@ package decisionrouter
 
 import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel/gemini"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel/openrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel/perplexity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel/systemone"
@@ -24,6 +25,9 @@ func DefaultRegistry() *Registry {
 	})
 	registry.Register(perplexity.ProviderName, func(spec routing.Spec) (decisionmodel.Provider, error) {
 		return perplexity.New(systemone.Options{Model: spec.Model, Logger: spec.Logger})
+	})
+	registry.Register(gemini.ProviderName, func(spec routing.Spec) (decisionmodel.Provider, error) {
+		return gemini.New(gemini.Options{Model: spec.Model})
 	})
 
 	return registry

@@ -97,6 +97,9 @@ def sync_detailed(
 ) -> Response[ErrorResponse | PhoneNumber]:
     """Buy a number, which starts its monthly charge
 
+     Numbers are sold only in the US and Canada. A number in any other country is refused, whatever
+    `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
+
     Args:
         body (BuyNumberRequest):
 
@@ -126,6 +129,9 @@ def sync(
 ) -> ErrorResponse | PhoneNumber | None:
     """Buy a number, which starts its monthly charge
 
+     Numbers are sold only in the US and Canada. A number in any other country is refused, whatever
+    `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
+
     Args:
         body (BuyNumberRequest):
 
@@ -149,6 +155,9 @@ async def asyncio_detailed(
     body: BuyNumberRequest,
 ) -> Response[ErrorResponse | PhoneNumber]:
     """Buy a number, which starts its monthly charge
+
+     Numbers are sold only in the US and Canada. A number in any other country is refused, whatever
+    `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
 
     Args:
         body (BuyNumberRequest):
@@ -176,6 +185,9 @@ async def asyncio(
     body: BuyNumberRequest,
 ) -> ErrorResponse | PhoneNumber | None:
     """Buy a number, which starts its monthly charge
+
+     Numbers are sold only in the US and Canada. A number in any other country is refused, whatever
+    `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
 
     Args:
         body (BuyNumberRequest):

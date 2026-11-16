@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -83,6 +84,25 @@ func (c *Conversation) PublishVoiceNote(ctx context.Context, note VoiceNote) (Ph
 	return published, nil
 }
 
+// PublishDocument uploads a file a person sent with a question to the conversation's channel,
+// as them, for their message to show.
+func (c *Conversation) PublishDocument(ctx context.Context, file sandbox.File) (Photo, error) {
+	uploaded, err := c.upload(ctx, file, c.userAuthor())
+	if err != nil {
+		return Photo{}, err
+	}
+	published := DocumentSent(file)
+	published.Uploaded = uploaded
+	return published, nil
+}
+
+// DocumentSent is a file sent with a question as a retry of it is matched on: by its digest,
+// so a retry holds no second copy of a file of megabytes.
+func DocumentSent(file sandbox.File) Photo {
+	digest := sha256.Sum256(file.Data)
+	return Photo{Sent: llm.ImagePart{MIME: file.MIME, Data: digest[:]}}
+}
+
 // upload stores a file on the conversation's channel as uploader.
 func (c *Conversation) upload(ctx context.Context, file sandbox.File, uploader string) (sandbox.Attachment, error) {
 	// The file goes where the conversation is kept.
@@ -90,12 +110,13 @@ func (c *Conversation) upload(ctx context.Context, file sandbox.File, uploader s
 	if err != nil {
 		return sandbox.Attachment{}, err
 	}
-	return Upload(ctx, client, strings.TrimPrefix(c.data.CID, "agent:"), file, uploader)
+	channelType, id := channelOf(c.data.CID)
+	return Upload(ctx, client, channelType, id, file, uploader)
 }
 
-// Upload stores a file on the agent channel channelID as uploader, as an image when its MIME
+// Upload stores a file on the channel channelType:channelID as uploader, as an image when its MIME
 // type is image/*, and returns where Chat's CDN serves it. The channel must exist.
-func Upload(ctx context.Context, client *getstream.Stream, channelID string, file sandbox.File, uploader string) (sandbox.Attachment, error) {
+func Upload(ctx context.Context, client *getstream.Stream, channelType, channelID string, file sandbox.File, uploader string) (sandbox.Attachment, error) {
 	name := filepath.Base(file.Name)
 	if name == "." || name == string(filepath.Separator) || len(file.Data) == 0 {
 		return sandbox.Attachment{}, errors.New("conversation: a file needs a name and something in it")
@@ -111,7 +132,7 @@ func Upload(ctx context.Context, client *getstream.Stream, channelID string, fil
 		return sandbox.Attachment{}, err
 	}
 
-	channel := client.Chat().Channel("agent", channelID)
+	channel := client.Chat().Channel(channelType, channelID)
 	by := &getstream.OnlyUserID{ID: uploader}
 	var url *string
 	if strings.HasPrefix(file.MIME, "image/") {
@@ -196,6 +217,22 @@ const voiceRecordingType = "voiceRecording"
 // carries what they sent. Audio the agent made is a file like any other.
 func voiceRecording(file sandbox.Attachment, person bool) bool {
 	return person && strings.HasPrefix(file.MIME, "audio/")
+}
+
+// Images are the photos a person sent with m as a model is handed them: each by the URL Chat
+// serves it from, which a read of the message gives afresh.
+func Images(m Message) []llm.ImagePart {
+	return imagesIn(m.Files)
+}
+
+func imagesIn(files []sandbox.Attachment) []llm.ImagePart {
+	var images []llm.ImagePart
+	for _, file := range files {
+		if strings.HasPrefix(file.MIME, "image/") && file.URL != "" {
+			images = append(images, llm.ImagePart{URL: file.URL, MIME: file.MIME})
+		}
+	}
+	return images
 }
 
 // filesFromAttachments reads back the files fileAttachments wrote.

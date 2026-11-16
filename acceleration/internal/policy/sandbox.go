@@ -201,7 +201,7 @@ func (f sandboxFound) beyond(ask SandboxAsk) error {
 	if l.Network != nil {
 		asked := SandboxNetwork(ask)
 		if networkRank(asked) > networkRank(*l.Network) {
-			return refusedWith(ErrSandboxLimit, "the sandbox may reach %s, and %s allows sandboxes %s: set sandbox_options.network "+
+			return refusedOver("sandbox_network", "the sandbox may reach %s, and %s allows sandboxes %s: set sandbox_options.network "+
 				"and its allow lists, and connector bindings with sandbox set, to no more than that", networkWords(asked),
 				f.whose(f.overridden(func(l usage.SandboxLimits) bool { return l.Network != nil })), networkWords(*l.Network))
 		}
@@ -217,7 +217,7 @@ func (f sandboxFound) beyond(ask SandboxAsk) error {
 		{"disk_gb", "GiB of disk", ask.Config.DiskGB, l.MaxDiskGB, func(l usage.SandboxLimits) bool { return l.MaxDiskGB != nil }},
 	} {
 		if size.most != nil && size.asked > *size.most {
-			return refusedWith(ErrSandboxLimit, "sandbox_options.%s is %d, and %s allows at most %d %s per sandbox",
+			return refusedOver("sandbox_"+size.field, "sandbox_options.%s is %d, and %s allows at most %d %s per sandbox",
 				size.field, size.asked, f.whose(f.overridden(size.set)), *size.most, size.unit)
 		}
 	}
@@ -349,4 +349,19 @@ func (s *sandboxSlots) renew(id string, stop <-chan struct{}, done chan<- struct
 			}
 		}
 	}
+}
+
+// refusedOver is an ErrSandboxLimit refusal over the sandbox limit it names (SandboxLimit).
+func refusedOver(limit, format string, args ...any) error {
+	return &refused{kind: ErrSandboxLimit, message: fmt.Sprintf(format, args...), limit: limit}
+}
+
+// SandboxLimit is which of the organization's sandbox limits refused err: sandbox_network,
+// sandbox_cpu, sandbox_memory_gb or sandbox_disk_gb. It is "" for any other error.
+func SandboxLimit(err error) string {
+	var refusal *refused
+	if errors.As(err, &refusal) {
+		return refusal.limit
+	}
+	return ""
 }

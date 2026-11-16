@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
@@ -215,6 +216,11 @@ func CodeOf(err error) Code {
 	return ProviderFailed
 }
 
+// ErrNotStarted is a draw that never left the router: it ran out of time waiting for a slot of
+// its provider's, so nothing was sent and nothing can have been billed. A draw that was sent and
+// then timed out is not one, whatever the provider says about having taken it.
+var ErrNotStarted = errors.New("imagegen: the draw was never sent")
+
 // Accepted reports whether a provider had taken the job before err.
 func Accepted(err error) bool {
 	var failure *Error
@@ -228,6 +234,11 @@ type Result struct {
 	// besides its pictures: the prompt, and any words or thinking it answered with.
 	InputTokens  int64
 	OutputTokens int64
+	// Queued is how long the job waited in the provider's queue before it was drawn, and Drawn
+	// how long the drawing took from then. Zero is unknown: a provider with no queue, or a job
+	// first seen finished.
+	Queued time.Duration
+	Drawn  time.Duration
 }
 
 // Used is the pictures counted as they came back, not as they were asked for, the pixels
@@ -253,16 +264,28 @@ func (r Result) Attributes() map[string]string {
 	if len(r.Images) == 0 {
 		return nil
 	}
-	return map[string]string{
+	attributes := map[string]string{
 		AttributeWidth:  strconv.Itoa(r.Images[0].Width),
 		AttributeHeight: strconv.Itoa(r.Images[0].Height),
 	}
+	if r.Queued > 0 {
+		attributes[AttributeQueuedMs] = strconv.FormatInt(r.Queued.Milliseconds(), 10)
+	}
+	if r.Drawn > 0 {
+		attributes[AttributeDrawnMs] = strconv.FormatInt(r.Drawn.Milliseconds(), 10)
+	}
+	return attributes
 }
 
 // AttributeWidth and AttributeHeight are an image row's picture size, in pixels.
+// AttributeQueuedMs and AttributeDrawnMs split its latency into the provider's queue and the
+// drawing, when the provider tells them apart: which one a slow picture spent its time in
+// decides whether a faster model would help.
 const (
-	AttributeWidth  = "width"
-	AttributeHeight = "height"
+	AttributeWidth    = "width"
+	AttributeHeight   = "height"
+	AttributeQueuedMs = "queued_ms"
+	AttributeDrawnMs  = "drawn_ms"
 )
 
 // Provider is an image generation provider.

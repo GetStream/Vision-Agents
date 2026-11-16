@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -62,7 +63,8 @@ type naming struct {
 	titles  *titler
 	service *persistent.Service
 	// earlier is the conversation this session resumed, so a resumed conversation is named
-	// for all of it rather than for what was said since.
+	// for all of it rather than for what was said since. A branch switch empties it, under the
+	// session's saidMu, once said holds the branch the conversation is on.
 	earlier []spoken
 	// answered counts this session's finished answers. Only the event loop touches it.
 	answered int
@@ -119,7 +121,11 @@ func (s *Session) name(event Event) {
 	if (n.answered-1)%titleEvery != 0 || !n.running.CompareAndSwap(false, true) {
 		return
 	}
-	said := append(append([]spoken(nil), n.earlier...), s.conversation()...)
+	// A branch switch resets earlier (carryOnFrom) under saidMu.
+	s.saidMu.Lock()
+	earlier := slices.Clone(n.earlier)
+	s.saidMu.Unlock()
+	said := append(earlier, s.conversation()...)
 
 	n.titles.running.Add(1)
 	go func() {

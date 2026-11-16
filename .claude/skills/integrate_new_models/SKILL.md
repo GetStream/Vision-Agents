@@ -83,7 +83,11 @@ these: the fake answers the way the author expected, which is the thing in doubt
 out to run on a media clock that only input audio advances, so every path that handed it text
 hung forever — invisible to a fake, obvious in two frames of the real thing.
 
-## 4. Report
+## 4. Usage tracking and pricing
+
+Register usage and include pricing information, see the `pricing` skill from this repo on how to do this.
+
+## 5. Report
 
 Per model: the name, the type, which of the two jobs it turned out to be, the PR link, and
 whether the integration test passed. Then the models that were dropped and why, so the next run

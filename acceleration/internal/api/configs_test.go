@@ -121,6 +121,105 @@ func (s *ConfigsSuite) TestPatchingAnEmptyGreetingRemovesIt() {
 	s.Nil(patched.Greeting)
 }
 
+func (s *ConfigsSuite) TestAnImageTargetIsStoredOnCreateAndOnEveryUpdate() {
+	// An update writes a named list of columns; a field missing from it is kept on create and
+	// silently dropped by every save after.
+	created := s.createConfig(map[string]any{"name": "illustrator", "mode": "text", "image": "image-fast"})
+	s.Equal("image-fast", value(created.Image))
+
+	var updated AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+created.Id,
+		map[string]any{"name": "illustrator", "mode": "text", "image": "image-quality"}, &updated))
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+	s.Equal("image-quality", value(read.Image))
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"instructions": "draw flat illustrations"}, &patched))
+	s.Equal("image-quality", value(patched.Image), "a patch that leaves it out keeps it")
+}
+
+func (s *ConfigsSuite) TestAnImageTargetNothingDrawsWithIsRefused() {
+	// The agent would be offered generate_image, and every picture would fail after its turn.
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "illustrator", "mode": "text", "image": "imagefast"})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "imagefast")
+}
+
+func (s *ConfigsSuite) TestAConfigWithoutAnImageTargetHasNone() {
+	created := s.createConfig(map[string]any{"name": "support", "mode": "text"})
+
+	s.Nil(created.Image, "unlike search there is no default: a picture costs money")
+}
+
+func (s *ConfigsSuite) TestPatchingAnEmptyImageTargetRemovesIt() {
+	created := s.createConfig(map[string]any{"name": "illustrator", "mode": "text", "image": "image-fast"})
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"image": ""}, &patched))
+
+	s.Nil(patched.Image)
+}
+
+func (s *ConfigsSuite) TestAConfigKeepsItsLLMFallbacksInOrder() {
+	created := s.createConfig(map[string]any{"name": "nora", "llm": "echo/echo-model",
+		"llm_fallbacks": []string{"recites/recites-model", "checking/checking-model"}})
+
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+	s.Equal([]string{"recites/recites-model", "checking/checking-model"}, value(read.LlmFallbacks))
+}
+
+func (s *ConfigsSuite) TestAnUpdateThatLeavesOutTheLLMFallbacksKeepsThemAndAnEmptyListRemovesThem() {
+	created := s.createConfig(map[string]any{"name": "nora", "llm": "echo/echo-model",
+		"llm_fallbacks": []string{"recites/recites-model"}})
+
+	var kept AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+created.Id,
+		map[string]any{"name": "nora", "llm": "checking/checking-model"}, &kept))
+	s.Equal([]string{"recites/recites-model"}, value(kept.LlmFallbacks), "a client that does not know the list keeps it")
+
+	var removed AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+created.Id,
+		map[string]any{"name": "nora", "llm": "checking/checking-model", "llm_fallbacks": []string{}}, &removed))
+	s.Nil(removed.LlmFallbacks)
+}
+
+func (s *ConfigsSuite) TestPatchingTheLLMFallbacksReplacesTheListWhole() {
+	created := s.createConfig(map[string]any{"name": "nora", "llm": "echo/echo-model",
+		"llm_fallbacks": []string{"recites/recites-model", "checking/checking-model"}})
+
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"llm_fallbacks": []string{"checking/checking-model"}}, &patched))
+
+	s.Equal([]string{"checking/checking-model"}, value(patched.LlmFallbacks))
+	s.Equal("echo/echo-model", value(patched.Llm), "llm stays the first choice")
+}
+
+func (s *ConfigsSuite) TestAnLLMFallbackThisDeploymentDoesNotRouteIsRefused() {
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+		map[string]any{"name": "nora", "llm": "echo/echo-model", "llm_fallbacks": []string{"xai/grok-typo"}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "llm_fallbacks")
+	s.Contains(failure, "xai/grok-typo")
+}
+
+func (s *ConfigsSuite) TestPatchingInAnLLMFallbackThisDeploymentDoesNotRouteIsRefused() {
+	created := s.createConfig(map[string]any{"name": "nora", "llm": "echo/echo-model"})
+
+	status, failure := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"llm_fallbacks": []string{"xai/grok-typo"}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "xai/grok-typo")
+}
+
 func (s *ConfigsSuite) TestAConfigRemembersWhichSearchItRoutesTo() {
 	created := s.createConfig(map[string]any{"name": "support", "search": "en-low-latency"})
 

@@ -3,6 +3,7 @@ package api
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -49,18 +50,28 @@ func (s *Server) regionComplaint(ctx context.Context, config store.AgentConfig, 
 	// billed is the work in the region the agent's save asks about, each named by its setting,
 	// which must have a price: work with none is recorded at nothing and reserves nothing.
 	var billed []settingItem
-	for _, model := range []struct {
+	type setting struct {
 		setting       string
 		modality      routing.Modality
 		target, stood string
-	}{
+	}
+	models := []setting{
 		{"llm", routing.LLM, config.LLM, was.LLM},
 		{"stt", routing.STT, config.STT, was.STT},
 		{"tts", routing.TTS, config.TTS, was.TTS},
 		{"sts", routing.STS, config.STS, was.STS},
 		{"subagent", routing.LLM, config.Subagent, was.Subagent},
 		{"search", routing.Search, config.Search, was.Search},
-	} {
+		{"image", routing.Image, config.Image, was.Image},
+	}
+	for _, target := range config.LLMFallbacks {
+		var stood string
+		if slices.Contains(was.LLMFallbacks, target) {
+			stood = target
+		}
+		models = append(models, setting{"llm_fallbacks", routing.LLM, target, stood})
+	}
+	for _, model := range models {
 		if model.target == "" || (!moved && model.target == model.stood) {
 			continue
 		}
@@ -69,8 +80,17 @@ func (s *Server) regionComplaint(ctx context.Context, config store.AgentConfig, 
 			continue
 		}
 		served, err := router.InRegion(ctx, model.target, region, nil)
-		if err != nil {
+		switch {
+		case err != nil && model.modality != routing.Image:
 			continue
+		case errors.Is(err, routing.ErrRequest):
+			// A session refuses a model it cannot route when it opens; nothing refuses a picture
+			// target until a draw after the turn fails, so one nothing answers to is refused here.
+			unmet = append(unmet, fmt.Sprintf("image: %s is not something this deployment draws with", model.target))
+			continue
+		case err != nil:
+			// Whether the target routes could not be told, which is no fault of the save's.
+			return "", false, err
 		}
 		if !served {
 			unmet = append(unmet, fmt.Sprintf("%s: no instance of %s in region %s", model.setting, model.target, region))

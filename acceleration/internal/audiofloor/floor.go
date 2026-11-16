@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -36,7 +37,8 @@ var floorWords = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name:      "chorus_asr_floor_words_total",
 	Help: "Utterances the chorus-asr floor ended on another transcriber's words, by how those words were settled: " +
 		"settled (the transcriber had written its final since the voice stopped), final (its final came within the wait), " +
-		"run (it began another run first), partial (no final within the wait: the words as they stood) or none (it wrote nothing).",
+		"run (it began another run first), partial (no final within the wait: the words as they stood), none (it wrote nothing) " +
+		"or handover (runs it had settled when the floor handed the participant's turns over or took them back, sent as a turn of their own).",
 }, []string{"settled"})
 
 var floorHandovers = promauto.NewCounterVec(prometheus.CounterOpts{
@@ -66,6 +68,14 @@ var floorHandovers = promauto.NewCounterVec(prometheus.CounterOpts{
 // which are then the listener's, as they would be with no floor. It asks the server again
 // meanwhile (probe), and once it answers takes the floor back at the caller's next quiet moment
 // (retake), saying so (stt.Connected).
+//
+// The floor rules on when a turn ends, never on whether the words count: every final the
+// other transcriber writes reaches the listener. Runs it had settled when it stepped aside,
+// or when it took the floor back, go out as a turn of their own (flushWords); what more a
+// run says after an utterance ended on its words as they stood is the next utterance's
+// (pastWords); and words settled with no voice heard since, a final that came after the
+// floor gave up waiting for it or speech too quiet for the gate, are a turn of their own
+// once no voice has begun runLead after them (stray).
 func NewFloor(client *Client, languages []string, finalize func() (bool, error), logger *slog.Logger) *Transcriber {
 	t := NewTranscriber(client, DefaultModel, languages, logger)
 	t.words, t.finalize, t.interims = &spoken{utterance: 1, logger: logger}, finalize, false
@@ -174,24 +184,51 @@ func (t *Transcriber) endOnWords(participant stt.Participant, heard int64) {
 		case <-t.ctx.Done():
 			return
 		}
-		text := strings.TrimSpace(words.Text)
-		if text == "" {
-			t.sent.ended(utterance)
-			return
-		}
-		provider, model := t.writer()
-		t.send(stt.Transcript{
-			Participant:      participant,
-			Mode:             stt.ModeFinal,
-			Utterance:        utterance,
-			Text:             text,
-			Language:         words.Language,
-			Provider:         provider,
-			Model:            model,
-			ProcessingTimeMs: milliseconds(time.Since(asked)),
-			AudioDurationMs:  milliseconds(length),
-		})
+		t.sendWords(participant, utterance, words, length, asked)
 	}()
+}
+
+// sendWords sends words as the final of utterance, with no check's ruling, the other
+// transcriber's words timed by the floor: an utterance that ended with none is over with
+// nothing sent.
+func (t *Transcriber) sendWords(participant stt.Participant, utterance int64, words Words, length time.Duration, asked time.Time) {
+	text := strings.TrimSpace(words.Text)
+	if text == "" {
+		t.sent.ended(utterance)
+		return
+	}
+	provider, model := t.writer()
+	t.send(stt.Transcript{
+		Participant:      participant,
+		Mode:             stt.ModeFinal,
+		Utterance:        utterance,
+		Text:             text,
+		Language:         words.Language,
+		Provider:         provider,
+		Model:            model,
+		ProcessingTimeMs: milliseconds(time.Since(asked)),
+		AudioDurationMs:  milliseconds(length),
+	})
+}
+
+// flushWords sends the runs the other transcriber had settled of the utterance being heard,
+// if any, as a final of their own with no check's ruling, for a floor handing the
+// participant's turns over (aside) or taking them back (retake): no check will rule on them
+// now, and no pause of the voice end an utterance on them, so they would otherwise be the
+// floor's alone, which is nobody's. It says whether it sent any, and begins the next
+// utterance when it did. It runs on the session's goroutine.
+func (t *Transcriber) flushWords(participant stt.Participant, heard int64, why string) bool {
+	utterance := t.utterance + 1
+	words, ok := t.words.take(utterance)
+	if !ok {
+		return false
+	}
+	floorWords.WithLabelValues("handover").Inc()
+	t.logger.Info("the chorus-asr floor sends the words the transcriber had settled of the caller's utterance as a turn of their own, as no check will rule on them",
+		"participant", participant.ID, "utterance", utterance, "why", why, "words", len(strings.Fields(words.Text)))
+	t.sendWords(participant, utterance, words, time.Duration(heard-t.start)*frame, time.Now())
+	t.nextUtterance(heard)
+	return true
 }
 
 // writer is the transcriber the session's words are written by: the server, or, for a floor
@@ -328,8 +365,12 @@ func (t *Transcriber) probeOnce(participant stt.Participant) error {
 // aside hears pcm for a floor that stepped aside: it asks about nothing, but keeps the audio and
 // the speech detector going, and takes the floor back (retake) once the server answered a probe
 // and the caller has been quiet for retakeQuiet with nothing open at the other transcriber,
-// which is asked to settle what it has open once. It runs on the session's goroutine.
+// which is asked to settle what it has open once. The runs that transcriber had settled when
+// the floor stepped aside, or wrote to it just as it did, go out first, as a turn of their
+// own (flushWords): the words it writes after are the listener's (Heard). It runs on the
+// session's goroutine.
 func (t *Transcriber) aside(pcm stt.PcmData, participant stt.Participant) error {
+	t.flushWords(participant, t.heard.Frames(), "aside")
 	for samples := pcm.Samples; len(samples) > 0; {
 		n := copy(t.frame[t.filled:], samples)
 		samples, t.filled = samples[n:], t.filled+n
@@ -367,9 +408,13 @@ func (t *Transcriber) aside(pcm stt.PcmData, participant stt.Participant) error 
 
 // retake gives the floor back to chorus-asr once its server rules again, at a quiet moment: the
 // utterance it left open is over, its words the listener's, and the next begins with no audio
-// and no words of its own yet, as a session's first does. It runs on the session's goroutine.
+// and no words of its own yet, as a session's first does. Runs the other transcriber settled
+// that are still the floor's, written to it as it stepped aside, go out first, as a turn of
+// their own (flushWords), rather than with the utterance left open. It runs on the session's
+// goroutine.
 func (t *Transcriber) retake(participant stt.Participant) {
 	heard := t.heard.Frames()
+	t.flushWords(participant, heard, "retake")
 	t.sent.ended(t.utterance + 1)
 	t.utterance++
 	t.start, t.ended, t.voiced, t.fresh, t.quiet, t.spoken, t.talked, t.toldAt = heard, heard, false, false, 0, 0, 0, 0
@@ -414,9 +459,11 @@ type spoken struct {
 	provider, model string
 	// cut is the utterance the floor ended, waiting for its words, if one is.
 	cut *cut
-	// spent is a run whose final the wait gave up on: the utterance ended on its words as they
-	// stood, and what more comes of it is that utterance's, which is over.
-	spent int64
+	// spent is a run whose final the wait gave up on, and spentText the words of it the
+	// utterance ended on: what more the transcriber writes of the run past them is the next
+	// utterance's (pastWords), and the words again are nothing new.
+	spent     int64
+	spentText string
 }
 
 // settledRun is the words of a run the transcriber settled, and the run's number, none when
@@ -450,12 +497,21 @@ func (w *spoken) heard(transcript stt.Transcript) (interim stt.Transcript, show,
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.spent != 0 {
-		if run == w.spent {
-			w.logger.Debug("words of a run the floor ended an utterance in, after it gave up waiting for its final, are dropped",
-				"provider", transcript.Provider, "run", run, "mode", transcript.Mode, "text", text)
-			return stt.Transcript{}, false, false
+		if run != w.spent {
+			w.spent, w.spentText = 0, ""
+		} else if transcript.Mode != stt.ModeDelta {
+			// The run restated, the words the utterance ended on and whatever came after
+			// them: those are the next utterance's, said after the cut, and the rest is
+			// nothing new. A delta is the words after them already.
+			text = pastWords(text, w.spentText)
+			if text == "" {
+				w.logger.Debug("words of a run the floor ended an utterance in, after it gave up waiting for its final, say nothing more than it ended on",
+					"provider", transcript.Provider, "run", run, "mode", transcript.Mode, "text", transcript.Text)
+				return stt.Transcript{}, false, false
+			}
+			w.logger.Debug("words of a run the floor ended an utterance in came after it gave up waiting for its final: the ones past those it ended on are the next utterance's",
+				"provider", transcript.Provider, "run", run, "mode", transcript.Mode, "ended_on", w.spentText, "kept", text)
 		}
-		w.spent = 0
 	}
 	if c := w.cut; c != nil && c.run != 0 && run != 0 && run != c.run {
 		// Another run began before the one the cut was in settled: that one is over, its
@@ -568,11 +624,69 @@ func (w *spoken) giveUp(c *cut) {
 	settled := "none"
 	switch {
 	case strings.TrimSpace(w.open) != "":
-		w.spent, settled = w.run, "partial"
+		w.spent, w.spentText, settled = w.run, strings.TrimSpace(w.open), "partial"
 	case len(w.settled) > 0:
 		settled = "settled"
 	}
 	w.deliverLocked(c, settled)
+}
+
+// pastWords is the words of text past the first len(said) of them, "" when it has no more
+// words than said: a run restated after the utterance ended on said, its words as they stood,
+// says those again first. Which words a transcriber revised can't be told, so the count is
+// what is compared, and a last word of said cut short by the revision ("wh" for "what") is
+// the next word.
+func pastWords(text, said string) string {
+	fields, ended := strings.Fields(text), strings.Fields(said)
+	if len(fields) <= len(ended) {
+		return ""
+	}
+	from := len(ended)
+	if from > 0 {
+		last, next := bareWord(ended[from-1]), bareWord(fields[from-1])
+		if last != next && strings.HasPrefix(next, last) {
+			from--
+		}
+	}
+	return strings.Join(fields[from:], " ")
+}
+
+// bareWord is word in lower case, its punctuation gone.
+func bareWord(word string) string {
+	return strings.ToLower(strings.TrimFunc(word, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }))
+}
+
+// take is the runs settled of the utterance being heard, taken out of it and numbered
+// utterance, for a floor handing its turns over or taking them back (flushWords): the run
+// still open, if one is, stays, as the transcriber will write its final again, to the
+// listener. Nothing is taken while an utterance the floor ended waits for its words: they
+// are its.
+func (w *spoken) take(utterance int64) (Words, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.cut != nil || len(w.settled) == 0 {
+		return Words{}, false
+	}
+	texts := make([]string, 0, len(w.settled))
+	for _, settled := range w.settled {
+		texts = append(texts, settled.text)
+	}
+	w.settled, w.utterance = nil, utterance+1
+	if strings.TrimSpace(w.open) == "" {
+		w.began = time.Time{}
+	}
+	return Words{Text: strings.TrimSpace(strings.Join(texts, " ")), Language: w.language}, true
+}
+
+// stray says the transcriber has settled words of the utterance being heard, has nothing
+// open and wrote its last final at least after ago, while no utterance the floor ended waits
+// for words: words written with no voice heard (step), of a run that came in after the floor
+// gave up waiting for it, or too quiet for the speech gate, which no pause of the voice will
+// end an utterance on.
+func (w *spoken) stray(after time.Duration) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.cut == nil && strings.TrimSpace(w.open) == "" && len(w.settled) > 0 && time.Since(w.finalAt) >= after
 }
 
 // deliverLocked hands c its words, the words gathered so far, and begins the next utterance's.
@@ -656,7 +770,7 @@ func (w *spoken) restart(utterance int64) {
 	if c := w.cut; c != nil {
 		w.deliverLocked(c, "none")
 	}
-	w.settled, w.open, w.run, w.spent, w.began = nil, "", 0, 0, time.Time{}
+	w.settled, w.open, w.run, w.spent, w.spentText, w.began = nil, "", 0, 0, "", time.Time{}
 	w.cut, w.utterance = nil, utterance
 }
 
@@ -666,7 +780,7 @@ func (w *spoken) failedOver() {
 	if open := strings.TrimSpace(w.open); open != "" {
 		w.settled = append(w.settled, settledRun{text: open})
 	}
-	w.open, w.run, w.spent = "", 0, 0
+	w.open, w.run, w.spent, w.spentText = "", 0, 0, ""
 	if c := w.cut; c != nil && c.run != 0 {
 		w.deliverLocked(c, "run")
 	}

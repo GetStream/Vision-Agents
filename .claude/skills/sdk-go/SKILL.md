@@ -28,18 +28,12 @@ the watcher rather than wrapping it twice.
 
 ## Go version
 
-The `go` directive is the floor, 1.25. `go.work` and `acceleration` are on newer Go, so the
-workspace compiles code 1.25 cannot: check the stdlib function you reach for exists in 1.25.
-CI's `go-sdk` job builds, vets and tests `sdks/go` on Go 1.25.0 with `GOWORK=off
-GOTOOLCHAIN=local`, and checks `go mod tidy -diff` and `go mod verify`. Run the same before a PR:
+Always keep the SDK to latest version of Golang
 
-```bash
-cd sdks/go
-GOWORK=off GOFLAGS= GOTOOLCHAIN=go1.25.0 go test -race ./...
-GOWORK=off go mod tidy -diff
-```
+## Dependencies
 
-No `replace` directive, ever: a consumer gets the module alone, from the proxy.
+- Always update dependencies to latest version
+- Changes to dependencies cannot break the public API
 
 ## The generated client
 

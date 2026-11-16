@@ -336,6 +336,8 @@ def account(**fields: Any) -> dict[str, Any]:
         "tier": "verified",
         "balance_micros": 9_000_000,
         "granted_micros": 10_000_000,
+        "trial_micros": 0,
+        "funded": True,
         "spent_micros": 1_000_000,
         "balance_state": "ok",
         "balance_warning_micros": 5_000_000,

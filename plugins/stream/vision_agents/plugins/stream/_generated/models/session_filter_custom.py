@@ -12,7 +12,10 @@ T = TypeVar("T", bound="SessionFilterCustom")
 
 @_attrs_define
 class SessionFilterCustom:
-    """The session's custom object holds every one of these pairs, which is how a caller finds again what it labelled."""
+    """Labels the session's custom object holds, every one of them: {"origin": "test"} matches a session whose custom has
+    origin set to the string "test".
+
+    """
 
     additional_properties: dict[str, str] = _attrs_field(init=False, factory=dict)
 

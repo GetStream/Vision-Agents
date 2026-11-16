@@ -23,11 +23,10 @@ final class Conversations {
     /// Reads the list again, narrowed to `searchText` when there is one.
     func reload() async {
         do {
-            let query = SessionQuery(limit: 50)
             let page =
                 searchText.isEmpty
-                ? try await Assistant.sessions.query(query)
-                : try await Assistant.sessions.search(searchText, query)
+                ? try await Assistant.sessions.query(limit: 50)
+                : try await Assistant.sessions.search(searchText, limit: 50)
             // Only the ones kept in writing can be opened again as a chat: a session that was
             // only ever a call, or incognito, has no channel to read back.
             items = page.items.filter { !$0.conversationID.isEmpty }

@@ -189,7 +189,7 @@ module GetStream
         return tell(type: "tool_result", tool_call_id: id, id: id, error: "this worker does not run #{name}") unless tools
 
         key = hosted_key(frame)
-        tool_call_context = ToolCall.from(frame, send: ->(sent) { tell(sent) })
+        tool_call_context = ToolCallContext.from(frame, send: ->(sent) { tell(sent) })
         # Held before the thread starts, so a tool quicker than this line is still found.
         @lock.synchronize { @hosted_calls[key] = tool_call_context }
         thread = Thread.new do

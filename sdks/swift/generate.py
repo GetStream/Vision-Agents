@@ -99,7 +99,9 @@ RENAMED = {
     "SearchAnswer": "SearchAnswerPayload",
     "SearchOptions": "SearchOptionsPayload",
     "Session": "SessionPayload",
+    "SessionFilter": "SessionFilterPayload",
     "SessionQuery": "SessionQueryPayload",
+    "SessionSort": "SessionSortPayload",
 }
 
 # What Stream Chat's SDK asks of the generator too: internal, immutable models, enums that

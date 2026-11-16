@@ -18,6 +18,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 	"github.com/danielgtaylor/huma/v2"
 )
 
@@ -43,9 +44,16 @@ func (s *Server) configFor(ctx context.Context, customerID string, configID, nam
 		return nil, errNoConfigs
 	}
 
+	teams, err := s.teamsGateFor(ctx, customerID)
+	if err != nil {
+		return nil, err
+	}
 	if id != "" {
 		found, err := s.configs.AgentConfig(ctx, customerID, id)
 		if err != nil {
+			return nil, errUnknownConfig
+		}
+		if teams.refuses(found) {
 			return nil, errUnknownConfig
 		}
 		return &found, nil
@@ -59,6 +67,9 @@ func (s *Server) configFor(ctx context.Context, customerID string, configID, nam
 		// Refused rather than started unconfigured. A typo in a name would otherwise get a
 		// working session with default instructions, which is far harder to notice than an
 		// error: the agent answers, just not as the agent that was asked for.
+		return nil, notFound("there is no agent called " + named)
+	}
+	if teams.refuses(found) {
 		return nil, notFound("there is no agent called " + named)
 	}
 	return &found, nil
@@ -97,20 +108,19 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	}
 	// A fork naming no config goes on with its parent's, as the config is now rather than as
 	// the parent was opened with. A config deleted since leaves the fork what its parent had;
-	// a config that cannot be read fails the fork rather than dropping what it decides.
+	// a config that cannot be read fails the fork rather than dropping what it decides. An end
+	// user is checked against its team as if they had named it, and a deleted one is refused.
 	var current *store.AgentConfig
 	currentConfig := func() error {
 		if config != nil || s.store == nil || parent.ConfigID() == "" {
 			return nil
 		}
-		read, err := s.store.AgentConfig(ctx, customerID, parent.ConfigID())
-		switch {
-		case err == nil:
-			current = &read
-		case !errors.Is(err, store.ErrNoAgentConfig):
+		teams, err := s.teamsGateFor(ctx, customerID)
+		if err != nil {
 			return err
 		}
-		return nil
+		current, err = s.configOpenedWith(ctx, customerID, parent.ConfigID(), teams)
+		return err
 	}
 	// An ended parent's fork is built from it, so it is read first. A live parent's fork, an
 	// incognito one or one on a thread is refused by forkSpec before any config is needed.
@@ -155,6 +165,9 @@ func (s *Server) forkSession(ctx context.Context, request *forkSessionRequest) (
 	ctx = s.threadConversation(ctx, customerID, &spec)
 	spec.Caller = CallerFrom(ctx)
 	spec.CallerKind = KindFrom(ctx)
+	if body.Messages == nil || *body.Messages {
+		spec.Documents = s.forkedDocuments(ctx, parent, value(body.ResponseId), spec.Caller.UserID)
+	}
 
 	created, err := s.sessions.Create(ctx, spec)
 	if errors.Is(err, session.ErrNoAgentCallType) {
@@ -183,6 +196,7 @@ func (s *Server) getSession(ctx context.Context, request *getSessionRequest) (*g
 	var rendered Session
 	if found.Live != nil {
 		rendered = sessionOf(ctx, found.Live)
+		rendered.PinnedAt = s.livePinnedAt(ctx, found.Live)
 	} else {
 		rendered = storedSessionOf(*found.Stored)
 	}
@@ -327,18 +341,26 @@ func (s *Server) interruptSession(ctx context.Context, request *interruptSession
 
 // rewindSession carries a conversation on from the end of one of its responses.
 func (s *Server) rewindSession(ctx context.Context, request *rewindSessionRequest) (*struct{}, error) {
-	found, failure := s.session(ctx, request.Id)
-	if failure != nil {
-		return nil, failure
-	}
 	if request.Body == nil || request.Body.ResponseId == "" {
 		return nil, invalidRequest("name the response to carry on from")
 	}
 	if s.store == nil {
 		return nil, errNoStore
 	}
+	// A conversation kept in Chat that ended is carried on, as a regenerate, an edit or an
+	// activation carries it on: its rewind needs the conversation open.
+	leaveUncosted(ctx)
+	found, sent, failure := s.sessionToAnswer(ctx, request.Id)
+	if failure != nil {
+		return nil, failure
+	}
+	defer sent()
 
 	err := found.Rewind(ctx, s.store, request.Body.ResponseId)
+	// A conversation kept in Chat is rewound the way an edit is, and refused the same ways.
+	if refused := branchRefused(err); refused != nil {
+		return nil, refused
+	}
 	switch {
 	case errors.Is(err, store.ErrUnknownResponse):
 		return nil, notFound(err.Error())
@@ -524,6 +546,13 @@ const reopenHoldMost = 10 * time.Minute
 // answered, so a message sent with no socket attached still gets its reply, and then ends
 // the way any conversation does once nobody is watching.
 func (s *Server) sessionToAnswer(ctx context.Context, id string) (*session.Session, func(), error) {
+	return s.carryOn(ctx, id, refusedRequest)
+}
+
+// carryOn is sessionToAnswer, with refuse turning the error of a session that could not be carried
+// on into the answer: refusedRequest for a request; a scheduled task's delivery keeps the refusal
+// itself, to tell money that may not be paid from money that could not be checked (unpaid).
+func (s *Server) carryOn(ctx context.Context, id string, refuse func(error) error) (*session.Session, func(), error) {
 	found, failure := s.session(ctx, id)
 	var spec session.Spec
 	switch {
@@ -533,6 +562,10 @@ func (s *Server) sessionToAnswer(ctx context.Context, id string) (*session.Sessi
 		// Ended here, so the spec it ran on is still at hand, tools and instructions included.
 		// It is carried on in writing, whether or not it ended on a call.
 		spec = found.Spec().Written()
+		// Only for an end user still in its config's team, as one carried on from its row is.
+		if failure = s.refuseOutsideTeam(ctx, spec.CustomerID, spec.ConfigID); failure != nil {
+			return nil, nil, failure
+		}
 		spec.Phone, spec.Edge = nil, nil
 		spec.Reopened = found.CreatedAt()
 	case errors.Is(failure, errUnknownSession):
@@ -556,7 +589,7 @@ func (s *Server) sessionToAnswer(ctx context.Context, id string) (*session.Sessi
 		return nil, nil, err
 	}
 	if err != nil {
-		return nil, nil, refusedRequest(err)
+		return nil, nil, refuse(err)
 	}
 	events, detach := reopened.Watch()
 	return reopened, func() { go holdUntilAnswered(reopened, events, detach) }, nil
@@ -885,6 +918,9 @@ func describe(rendered *Session, spec session.Spec) {
 	if spec.Project != "" {
 		rendered.ProjectId = &spec.Project
 	}
+	if team := usage.Team(spec.Attribution.UsageCategories); team != "" {
+		rendered.Team = &team
+	}
 	if len(spec.Custom) > 0 {
 		rendered.Custom = &spec.Custom
 	}
@@ -948,6 +984,9 @@ func mergeStored(rendered *Session, row *store.AgentSession) {
 	if row.Project != "" {
 		rendered.ProjectId = &row.Project
 	}
+	if row.Team != "" {
+		rendered.Team = &row.Team
+	}
 	if len(row.Custom) > 0 {
 		custom := row.Custom
 		rendered.Custom = &custom
@@ -959,15 +998,13 @@ func mergeStored(rendered *Session, row *store.AgentSession) {
 		rendered.ModelOverwrites = modelOverwritesFor(row.ModelOverwrites)
 	}
 	rendered.ClosedAt = row.ClosedAt
-	if row.EndReason != "" {
-		reason := SessionEndReason(row.EndReason)
-		rendered.EndReason = &reason
-	}
+	rendered.EndReason = endReasonOf(row.EndReason)
 	if info, known := session.EndReason(row.EndReason).Info(); known {
 		fault, stage := SessionEndFault(info.Fault), SessionEndStage(info.Stage)
 		rendered.EndFault, rendered.EndStage = &fault, &stage
 	}
 	rendered.LastResponseAt = row.LastResponseAt
+	rendered.PinnedAt = row.PinnedAt
 }
 
 // SessionEndReason is why a session ended: a session.EndReasons value a row can keep.
@@ -1121,6 +1158,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config, current 
 		fresh.Project, fresh.Custom = spec.Project, spec.Custom
 		fresh.ConnectorSelections = spec.ConnectorSelections
 		fresh.ReturnURL = spec.ReturnURL
+		fresh.ToolTimeoutMs = spec.ToolTimeoutMs
 		spec = fresh
 	}
 
@@ -1128,6 +1166,7 @@ func forkSpec(parent session.Found, request ForkSessionRequest, config, current 
 	spec.Title = override(spec.Title, request.Title)
 	spec.Description = override(spec.Description, request.Description)
 	spec.Project = override(spec.Project, request.ProjectId)
+	spec.ToolTimeoutMs = override(spec.ToolTimeoutMs, request.ToolTimeoutMs)
 	spec.Incognito = value(request.Incognito)
 	if request.Custom != nil {
 		spec.Custom = *request.Custom
@@ -1189,6 +1228,31 @@ func (s *Server) recordedHistory(ctx context.Context, parent session.Found, requ
 		return nil, nil
 	}
 	return session.HistoryOf(exchanges), nil
+}
+
+// forkedDocuments are the files a fork carries from its parent's conversation: those sent up to
+// the turn it stops at, and only when the person forking it is the one who sent them. Anybody
+// else's fork, a server's included, carries the words and not the files.
+//
+// Files that cannot be read leave the fork without them rather than unopened, as a session's
+// other records do, and say so in the log.
+func (s *Server) forkedDocuments(ctx context.Context, parent session.Found, until, owner string) []store.ConversationDocument {
+	if s.store == nil {
+		return nil
+	}
+	scope := store.DocumentScope{SessionID: parent.ID(), Owner: owner, UntilResponse: until}
+	switch {
+	case parent.Live != nil:
+		scope.ConversationID = parent.Live.Spec().ConversationID
+	case parent.Stored != nil:
+		scope.ConversationID = parent.Stored.ConversationID
+	}
+	documents, err := s.store.ConversationDocuments(ctx, OwnerFrom(ctx).CustomerID, scope)
+	if err != nil {
+		s.logger.Error("could not read the files a fork carries", "session", parent.ID(), "error", err)
+		return nil
+	}
+	return documents
 }
 
 // value reads an optional field, which the generated types carry as pointers.
@@ -1266,15 +1330,22 @@ func (s *Server) registerSessions(api huma.API) {
 			"The history is rebuilt from what the session recorded, the question and the answer of " +
 			"each turn, so a session that recorded nothing cannot be rewound: an incognito one, one " +
 			"on a deployment with no store, and a native speech-to-speech one, whose model keeps its " +
-			"own context. A persistent conversation is refused as well, because its transcript lives " +
-			"in Chat and would bring the rewound turns back the next time it opened; fork it at the " +
-			"response instead.",
+			"own context.\n" +
+			"A conversation kept in Stream Chat is rewound there too, the way an edit of the turn " +
+			"after the named response is: every later message is hidden from every read of the " +
+			"channel, so reopening the conversation does not bring the rewound turns back, and they " +
+			"are kept as a branch that listResponseSiblings, getResponseBranch and " +
+			"activateResponse read and bring back. It counts toward the conversation's 100 edit " +
+			"and regenerate points (409 branch_limit_reached), and is refused as an edit is: in a " +
+			"thread, dispatched or shared conversation, on a call, for a response whose messages carry no " +
+			"branch mark, such as a turn spoken on a call, and while an earlier switch is unfinished " +
+			"(409 switch_unfinished). Rewinding to the newest response changes nothing.",
 		Extensions:    map[string]any{clientAccessibleExtension: true},
 		DefaultStatus: http.StatusNoContent,
 		Responses: map[string]*huma.Response{
 			"204": {Description: "The conversation carries on from the end of that response"},
 		},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusConflict},
 	}, s.rewindSession)
 	huma.Register(api, huma.Operation{
 		OperationID: "saySession",
@@ -1447,6 +1518,7 @@ type ForkSessionRequest struct {
 	Custom          *map[string]interface{} `json:"custom,omitempty"`
 	Description     *string                 `json:"description,omitempty"`
 	Incognito       *bool                   `json:"incognito,omitempty" doc:"Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept."`
+	ToolTimeoutMs   *int                    `json:"tool_timeout_ms,omitempty" doc:"How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds, since its row does not keep one. Zero is 30 seconds, as on createSession."`
 	Messages        *bool                   `json:"messages,omitempty" doc:"Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants." default:"true"`
 	ModelOverwrites *ModelOverwrites        `json:"model_overwrites,omitempty"`
 	ProjectId       *string                 `json:"project_id,omitempty"`
@@ -1455,6 +1527,7 @@ type ForkSessionRequest struct {
 }
 
 func (*ForkSessionRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Properties["tool_timeout_ms"].Format = ""
 	schema.Description = "Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model."
 	return schema
 }

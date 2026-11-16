@@ -46,6 +46,7 @@ func newPipeline(parent context.Context, native bool) *pipeline {
 // native; an empty one makes it a cascade on the other targets.
 type Settings struct {
 	LLMTarget        string
+	LLMFallbacks     []string
 	ControllerTarget string
 	STTTarget        string
 	TTSTarget        string
@@ -135,6 +136,7 @@ func (a *Agent) SetSettings(ctx context.Context, next Settings) error {
 
 	a.mu.Lock()
 	a.options.LLMTarget = next.LLMTarget
+	a.options.LLMFallbacks = next.LLMFallbacks
 	a.options.ControllerTarget = next.ControllerTarget
 	a.options.STTTarget = next.STTTarget
 	a.options.TTSTarget = next.TTSTarget
@@ -232,8 +234,8 @@ func (a *Agent) prepare(current, next Settings, native, restart bool) (*prepared
 			}
 		}
 	} else {
-		if next.LLMTarget != current.LLMTarget {
-			if prep.llm, err = a.startLLM(next.LLMTarget); err != nil {
+		if next.LLMTarget != current.LLMTarget || !slices.Equal(next.LLMFallbacks, current.LLMFallbacks) {
+			if prep.llm, err = a.startLLM(next.LLMTarget, next.LLMFallbacks); err != nil {
 				return fail(fmt.Errorf("agent: start llm: %w", err))
 			}
 			if err = answers(a.ctx, prep.llm); err != nil {
@@ -241,7 +243,7 @@ func (a *Agent) prepare(current, next Settings, native, restart bool) (*prepared
 			}
 		}
 		if next.controller() != current.controller() {
-			if prep.controller, err = a.startLLM(next.controller()); err != nil {
+			if prep.controller, err = a.startLLM(next.controller(), nil); err != nil {
 				return fail(fmt.Errorf("agent: start flow controller: %w", err))
 			}
 		}
@@ -519,7 +521,7 @@ func (a *Agent) openCascade(s Settings) (*prepared, error) {
 	}
 	prep := &prepared{}
 	var err error
-	if prep.llm, err = a.startLLM(s.LLMTarget); err != nil {
+	if prep.llm, err = a.startLLM(s.LLMTarget, s.LLMFallbacks); err != nil {
 		return nil, stack.Wrap(fmt.Errorf("agent: start llm: %w", err))
 	}
 	// Flow decisions use their own fast-model session so deciding whether speech is
@@ -539,7 +541,7 @@ func (a *Agent) openCascade(s Settings) (*prepared, error) {
 			prep.close()
 			return nil, stack.Wrap(fmt.Errorf("agent: start flow judge: %w", err))
 		}
-	} else if prep.controller, err = a.startLLM(s.controller()); err != nil {
+	} else if prep.controller, err = a.startLLM(s.controller(), nil); err != nil {
 		prep.close()
 		return nil, stack.Wrap(fmt.Errorf("agent: start flow controller: %w", err))
 	}
@@ -640,7 +642,13 @@ func (a *Agent) openSpeech(ctx context.Context, s Settings, delegating bool) (*s
 	return session, nil
 }
 
-func (a *Agent) startLLM(target string) (*llmrouter.Session, error) {
+// startLLM opens a session on target, or on target and then each of fallbacks in order: a
+// priority list, so a response target fails, or is late to start, is asked of the next.
+func (a *Agent) startLLM(target string, fallbacks []string) (*llmrouter.Session, error) {
+	var providers []string
+	if len(fallbacks) > 0 {
+		providers = append([]string{target}, fallbacks...)
+	}
 	return a.options.LLM.Start(a.ctx, llmrouter.Request{
 		CustomerID:    a.options.CustomerID,
 		Caller:        a.options.Caller,
@@ -649,6 +657,7 @@ func (a *Agent) startLLM(target string) (*llmrouter.Session, error) {
 		Region:        a.options.Region,
 		Tags:          a.options.Tags,
 		Target:        target,
+		Providers:     providers,
 		LanguageHints: a.options.LanguageHints,
 	})
 }
@@ -713,6 +722,13 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) string {
 		cutShort = a.cutShortLocked(a.speakingTurn, time.Now())
 		unsaid = a.unsaidLocked(a.speakingTurn, lost.Streaming())
 	}
+	// A reply held for a lone greeting is dropped, as a greeting over one held for a lost
+	// voice drops it: the voice replacing this one would say it while the greeting may still
+	// grow into more.
+	greeted, greeter := "", ""
+	if a.heldLocked(a.speakingTurn) && a.held.greeting && a.unheard.turnID == a.speakingTurn {
+		greeted, greeter = a.speakingTurn, a.unheard.participant
+	}
 	// A voice that replaced a lost one and was lost too may not have been sent all of the
 	// reply yet: what it had still to be sent comes after what it was.
 	if a.heldLocked(a.speakingTurn) {
@@ -746,7 +762,7 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) string {
 	// with no greeting at all. What is written of a reply while that voice opens is held for
 	// it too: sent to the lost one, it would never be heard.
 	cut, again := "", ""
-	if lost == a.tts && a.speakingTurn != "" && !a.murmurLocked(a.speakingTurn) {
+	if lost == a.tts && a.speakingTurn != "" && !a.murmurLocked(a.speakingTurn) && greeted == "" {
 		resaid := replace && a.voiced != a.speakingTurn && len(unsaid) > 0
 		if resaid {
 			again = a.speakingTurn
@@ -765,6 +781,10 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) string {
 	}
 	held, current := a.held, a.harness
 	a.mu.Unlock()
+	if greeted != "" {
+		a.converse.wentOnUnheard(greeter)
+		a.dropUnheard(stt.Participant{ID: greeter}, greeted, interruption{cause: causeUnheard})
+	}
 	if cut != "" {
 		a.lostWith(cut, current, outstanding, cutShort)
 	}
@@ -890,8 +910,8 @@ func (a *Agent) owedLocked(turnID string) bool {
 // sayAgain has the voice that replaced a lost one say what the lost one was sent of a
 // reply none of which was heard, each utterance under its own synthesis as before, so the
 // turn is told it was spoken once each has finished. The utterances are already counted.
-// It stops once the caller has taken the floor, this voice is lost too or a settings swap
-// replaced it: what is sent after is billed and never heard.
+// It stops once the caller has taken the floor, this voice is lost too, a settings swap
+// replaced it or the call ended: what is sent after is billed and never heard.
 func (a *Agent) sayAgain(voice *ttsrouter.Session, held *heldReply) {
 	a.mu.Lock()
 	performs := a.performs
@@ -904,7 +924,7 @@ func (a *Agent) sayAgain(voice *ttsrouter.Session, held *heldReply) {
 			a.mu.Unlock()
 			return
 		}
-		if len(held.unsaid) == 0 || !a.owedLocked(held.turnID) || a.tts != voice {
+		if len(held.unsaid) == 0 || !a.owedLocked(held.turnID) || a.tts != voice || a.closed {
 			a.unsentLocked(held)
 			a.held = nil
 			a.mu.Unlock()
@@ -921,6 +941,10 @@ func (a *Agent) sayAgain(voice *ttsrouter.Session, held *heldReply) {
 		// request that only ends the utterance has nothing to keep.
 		if text != "" {
 			a.sendingLocked(held.turnID, heard.synthesisID, text, heard.message)
+			if held.greeting {
+				a.turns.released(held.turnID, time.Now())
+			}
+			a.turns.voiced(held.turnID)
 		}
 		a.mu.Unlock()
 		err := voice.Synthesize(tts.Request{ID: heard.synthesisID, Text: text, Final: heard.final})
@@ -1001,6 +1025,7 @@ func (a *Agent) startListener(target string) (*sttrouter.Session, error) {
 func (a *Agent) settingsLocked() Settings {
 	return Settings{
 		LLMTarget:        a.options.LLMTarget,
+		LLMFallbacks:     a.options.LLMFallbacks,
 		ControllerTarget: a.options.ControllerTarget,
 		STTTarget:        a.options.STTTarget,
 		TTSTarget:        a.options.TTSTarget,

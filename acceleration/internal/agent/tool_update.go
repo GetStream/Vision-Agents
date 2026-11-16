@@ -100,7 +100,7 @@ func (a *Agent) sayToolUpdate() {
 			a.composing = false
 			a.mu.Unlock()
 		}()
-		line, err := a.compose(ctx, fmt.Sprintf(statusPurpose, update.text))
+		line, err := a.compose(ctx, fmt.Sprintf(statusPurpose, update.text), "")
 		if err != nil {
 			a.logger.Warn("could not write a tool's status to say", append(a.replyModel(), "error", err)...)
 			return

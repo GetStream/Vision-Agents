@@ -34,7 +34,7 @@ for example `http://192.168.1.20:8080` and `http://192.168.1.20:8099`. From Andr
 one is the local network, which the app asks for when it opens.
 
 The app builds against `sdks/kotlin` through an included build, so a change to the SDK shows
-up in the app without publishing it. Stream Chat 7.18.0 is on `https://stream-io-repo.com`
+up in the app without publishing it. Stream Chat 7.19.0, which brings `AIConversationState`, is on `https://stream-io-repo.com`
 rather than Maven Central, which `settings.gradle.kts` adds.
 
 The Chat tab asks for `xai/grok-4.7`, a model that streams its reasoning, so the router needs

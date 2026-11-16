@@ -396,8 +396,8 @@ type hostedApproval struct {
 //
 // The offer is scoped to the worker's own customer, which is what makes it safe: a worker
 // is trusted with its customer's conversations already, and naming an agent is not a way
-// into anybody else's. The agent id need not be stored anywhere — the sessions this is for
-// are the ones a browser opens naming an agent and no config.
+// into anybody else's. The agent is named as its config is, since that is the name sessions
+// are opened by, and a name no config has is refused.
 func (s *Server) hostTools(worker *dispatch.Worker, agentID string, declared []hostedTool, timeoutMs int) frame {
 	refuse := func(reason string) frame {
 		s.logger.Warn("refused a worker's hosted tools", "worker", worker.ID, "agent", agentID, "reason", reason)
@@ -424,6 +424,9 @@ func (s *Server) hostTools(worker *dispatch.Worker, agentID string, declared []h
 		tools = append(tools, hosted)
 		names = append(names, tool.Name)
 	}
+	if reason := s.unknownHostedAgent(worker.CustomerID, agentID); reason != "" {
+		return refuse(reason)
+	}
 	if err := s.dispatch.Host(worker, agentID, tools, time.Duration(timeoutMs)*time.Millisecond); err != nil {
 		return refuse(err.Error())
 	}
@@ -433,6 +436,30 @@ func (s *Server) hostTools(worker *dispatch.Worker, agentID string, declared []h
 	s.logger.Info("a worker hosts tools", "worker", worker.ID, "agent", agentID, "tools", names)
 	return frame{"type": "hosting", "agent_id": agentID, "tools": names}
 }
+
+// unknownHostedAgent says why tools offered under a name the customer has no agent config
+// for are refused, or nothing when there is one. Sessions are only opened by an existing
+// config's name, so a misspelled name would host tools nothing ever calls while the worker
+// looks healthy. A router without configs, or one that cannot read them now, takes the offer.
+func (s *Server) unknownHostedAgent(customerID, agentID string) string {
+	if s.configs == nil || agentID == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), hostedAgentLookup)
+	defer cancel()
+	_, exists, err := s.configs.AgentConfigByName(ctx, customerID, agentID)
+	if err != nil {
+		s.logger.Warn("could not check the agent a worker hosts tools for", "agent", agentID, "error", err)
+		return ""
+	}
+	if exists {
+		return ""
+	}
+	return "there is no agent called " + agentID + "; check the name, or sync the agent before starting the worker"
+}
+
+// hostedAgentLookup bounds reading the config a worker's tools are offered for.
+const hostedAgentLookup = 5 * time.Second
 
 // toolCallFrame renders one hosted call, or the cancelling of one, for the wire.
 func toolCallFrame(call dispatch.ToolCall) frame {
