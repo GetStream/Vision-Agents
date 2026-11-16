@@ -59,7 +59,7 @@ The chat asks for `xai/grok-4.7`, a model that streams its reasoning, so the rou
 `XAI_API_KEY`. Web search needs one of `EXA_API_KEY`, `TAVILY_API_KEY` or `PERPLEXITY_API_KEY`.
 Stream Chat is on `https://stream-io-repo.com` rather than Maven Central, which
 `settings.gradle.kts` adds. The sign-in card and `AIConversation`'s `contentPadding` need 7.17.0
-or newer, and generated UI replies need 7.18.0: `stream-chat-android-ai-compose`,
+or newer, generated UI replies 7.18.0, and `AIConversationState` 7.19.0: `stream-chat-android-ai-compose`,
 `stream-chat-android-ai-a2ui` and `stream-chat-android-ai-openui` all take `streamChatAi` in
 `gradle/libs.versions.toml`.
 

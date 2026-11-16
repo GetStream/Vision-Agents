@@ -1,236 +1,272 @@
-import type { LocalMessage } from "stream-chat";
+import { StateStore } from "@stream-io/state-store";
+import type { Session } from "@stream-io/stream-agents";
+import type { VoiceSession } from "@stream-io/stream-agents/video";
 import { describe, expect, it } from "vitest";
 
-import type { AgentChat } from "../src/agentChat";
-import { ChatScreen, type ChatScreenDeps } from "../src/chatScreen";
-import { Store } from "../src/store";
+import { ChatScreen, THINK_HARDER_ID, type ChatScreenDeps } from "../src/chatScreen";
 
-/** A conversation's chat as the screen uses it: its messages, what was asked, and closing. */
-class FakeChat extends Store<{ messages: LocalMessage[]; failure: string | undefined }> {
-  readonly asked: string[] = [];
-  closed = false;
-  answering = false;
-  readonly session = { id: "session-1" };
+type Message = { id: string; text: string; custom: Record<string, unknown> };
 
-  constructor() {
-    super({ messages: [], failure: undefined });
+/** A `get`/`subscribe` store, as `session.state` and `session.conversation` are. */
+function store<T extends object>(initial: T) {
+  let value = initial;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => value,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    set(patch: Partial<T>) {
+      value = { ...value, ...patch };
+      for (const listener of [...listeners]) listener();
+    },
+  };
+}
+
+/** A stream-chat 10 channel: its messages are its paginator's. */
+class FakeChannel {
+  readonly messagePaginator = {
+    pageSize: 0,
+    state: new StateStore<{ items: Message[] | undefined; hasMoreTail: boolean }>({ items: undefined, hasMoreTail: false }),
+    get hasMoreTail() {
+      return this.state.getLatestValue().hasMoreTail;
+    },
+    toTail: async () => undefined,
+  };
+
+  constructor(private readonly latest: Message[] = []) {}
+
+  on() {
+    return { unsubscribe: () => undefined };
   }
-
-  async ask(text: string): Promise<void> {
-    this.asked.push(text);
+  activate() {
+    return () => undefined;
   }
-
-  isAnswering(): boolean {
-    return this.answering;
-  }
-
-  async close(): Promise<void> {
-    this.closed = true;
-  }
-
-  /** Stream's copy of the person's question arriving in the channel. */
-  arrives(text: string): void {
-    this.update({ messages: [...this.get().messages, { id: crypto.randomUUID(), text, custom: {} } as LocalMessage] });
+  async watch() {
+    this.messagePaginator.state.next({ items: [...this.latest], hasMoreTail: false });
+    return this;
   }
 }
 
-/** A message as Stream holds it: the person's, or the agent's reply. */
-function message(text: string, isReply = false): LocalMessage {
-  // stream-chat 10 keeps fields it does not define under `custom`, and every message has one.
-  return { id: crypto.randomUUID(), text, custom: isReply ? { ai_generated: true } : {} } as unknown as LocalMessage;
+/** A session on the router, recording what it was asked and how it was let go. */
+class FakeSession {
+  live = true;
+  closed = 0;
+  deleted = 0;
+  voiceStarted = false;
+  readonly asked: { text: string; options: Record<string, unknown> }[] = [];
+  readonly state = store<{ kind: string; skills: readonly string[] }>({ kind: "idle", skills: [] });
+  readonly conversation = store({ failure: "", failureContext: "", failureAt: 0, turns: [] });
+  readonly responses = {
+    create: async (text: string, options: Record<string, unknown> = {}) => {
+      this.asked.push({ text, options });
+      return {};
+    },
+  };
+  readonly voice = {
+    start: async () => void (this.voiceStarted = true),
+    stop: async () => void (this.voiceStarted = false),
+  };
+
+  constructor(
+    readonly id: string,
+    private readonly channel: FakeChannel,
+  ) {}
+
+  async chat() {
+    return { client: {}, channel: this.channel };
+  }
+  interrupt() {}
+  decide() {}
+  declineLogin() {}
+  async close() {
+    this.closed += 1;
+  }
+  async delete() {
+    this.deleted += 1;
+  }
 }
 
 /**
- * A router whose session opens when the test says, and that records what it deleted, beside a
- * Stream channel that hands back `history` at once.
+ * A router whose sessions open when the test says (`open()`), each on `channel`, beside Stream,
+ * which hands back the conversation's channel at once.
  */
-function router(history: LocalMessage[] = []) {
-  const chat = new FakeChat();
-  const removed: string[] = [];
-  let open: (() => void) | undefined;
-  const opened = new Promise<void>((resolve) => {
-    open = resolve;
-  });
+function router(channel = new FakeChannel()) {
+  const sessions: FakeSession[] = [];
+  const asked: (string | undefined)[] = [];
+  let release: () => void = () => undefined;
+  const opened = new Promise<void>((resolve) => (release = resolve));
   const deps: ChatScreenDeps = {
-    open: async () => {
+    open: async (sessionId) => {
+      asked.push(sessionId);
       await opened;
-      return chat as unknown as AgentChat;
+      const session = new FakeSession(sessionId ?? `new-${sessions.length + 1}`, channel);
+      sessions.push(session);
+      return session as unknown as Session;
     },
-    history: async () => history,
-    remove: async (id) => {
-      removed.push(id);
-    },
-    voiceOf: () => {
-      throw new Error("no call in these tests");
-    },
+    channel: async () => channel,
+    approver: () => ({ userId: "juno-owner", clientId: "test", decide: async () => undefined }),
+    voiceOf: () =>
+      ({ join: async () => undefined, leave: async () => undefined }) as unknown as VoiceSession,
   };
-  return { chat, removed, deps, open: () => open?.() };
+  return { deps, sessions, asked, open: () => release() };
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("ChatScreen", () => {
-  it("sends nothing more while a new conversation's session is still opening", async () => {
-    const { chat, deps, open } = router();
+  it("opens no session for a new conversation until the person writes", async () => {
+    const { deps, asked, open } = router();
     const screen = new ChatScreen(undefined, deps, () => undefined);
-
-    const first = screen.send("Write me a poem about Lisbon");
-    expect(await screen.send("and one about Porto")).toBe(false);
     open();
-    expect(await first).toBe(true);
+    await settle();
+    expect(asked).toEqual([]);
 
-    expect(chat.asked).toEqual(["Write me a poem about Lisbon"]);
+    screen.draftChanged("Remind me");
+    await settle();
+    expect(asked).toEqual([undefined]);
   });
 
-  it("says a conversation from the list is loading until its session is open", async () => {
-    const { deps, open } = router();
-    const screen = new ChatScreen("session-1", deps, () => undefined);
-    expect(screen.get().isLoading).toBe(true);
+  it("deletes a new conversation's session the person left without sending", async () => {
+    const { deps, sessions, open } = router();
+    const screen = new ChatScreen(undefined, deps, () => undefined);
+    screen.draftChanged("Remind me");
+    open();
+    await settle();
+
+    screen.leave();
+    await settle();
+
+    expect(sessions[0]?.deleted).toBe(1);
+    expect(sessions[0]?.closed).toBe(0);
+    expect(screen.chat.isClosed).toBe(true);
+  });
+
+  it("shows a question at once and asks it under the id it shows with", async () => {
+    const { deps, sessions, open } = router();
+    const screen = new ChatScreen(undefined, deps, () => undefined);
+
+    screen.conversation.send({ text: "What's on my calendar today?" });
+    const pending = screen.conversation.state.getLatestValue().pendingMessage;
+    expect(pending?.text).toBe("What's on my calendar today?");
 
     open();
     await settle();
-    expect(screen.get().isLoading).toBe(false);
-    expect(screen.get().chat).toBeDefined();
+    // The router stores the person's message under the request id, so Stream's copy replaces it.
+    expect(sessions[0]?.asked).toEqual([{ text: "What's on my calendar today?", options: { requestId: pending?.id } }]);
   });
 
-  it("stops saying it is loading when the conversation could not be opened", async () => {
+  it("asks with more time to reason when Think harder is picked", async () => {
+    const { deps, sessions, open } = router();
+    const screen = new ChatScreen(undefined, deps, () => undefined);
+    open();
+
+    screen.conversation.send({ text: "Plan a weekend in Lisbon", chatOption: { id: THINK_HARDER_ID, title: "Think harder" } });
+    await settle();
+
+    expect(sessions[0]?.asked[0]?.options.reasoningEffort).toBe("high");
+  });
+
+  it("sends what the person did in a reply's UI as the question's UI action", async () => {
+    const { deps, sessions, open } = router();
+    const screen = new ChatScreen(undefined, deps, () => undefined);
+    open();
+    const uiAction = { message_id: "r1", format: "a2ui", name: "pick", payload: { day: 2 } };
+
+    screen.conversation.send({ text: "Day 2", custom: { uiAction } });
+    await settle();
+
+    expect(sessions[0]?.asked[0]?.options.uiAction).toEqual(uiAction);
+  });
+
+  it("offers neither editing nor regenerating, which the router can't do", () => {
+    const { deps } = router();
+    const screen = new ChatScreen(undefined, deps, () => undefined);
+
+    expect(screen.conversation.actions).toMatchObject({ edit: false, regenerate: false, rate: true });
+  });
+
+  it("names a new conversation to the list once it is asked something, and keeps it on leaving", async () => {
+    const { deps, sessions, open } = router();
+    const started: string[] = [];
+    const screen = new ChatScreen(undefined, deps, (id) => started.push(id));
+    open();
+
+    screen.conversation.send({ text: "Plan a weekend in Lisbon" });
+    await settle();
+    screen.leave();
+    await settle();
+
+    expect(started).toEqual(["new-1"]);
+    expect(sessions[0]?.closed).toBe(1);
+    expect(sessions[0]?.deleted).toBe(0);
+  });
+
+  it("counts a new conversation talked to as used: it joins the list and is kept", async () => {
+    const { deps, sessions, open } = router();
+    const started: string[] = [];
+    const screen = new ChatScreen(undefined, deps, (id) => started.push(id));
+    open();
+
+    await screen.talk();
+    expect(sessions[0]?.voiceStarted).toBe(true);
+    expect(screen.get().isVoiceShown).toBe(true);
+
+    screen.leave();
+    await settle();
+    expect(started).toEqual(["new-1"]);
+    expect(sessions[0]?.deleted).toBe(0);
+    expect(sessions[0]?.voiceStarted).toBe(false);
+  });
+
+  it("shows a listed conversation's messages before its session is open", async () => {
+    const earlier: Message[] = [
+      { id: "q1", text: "Plan a weekend in Lisbon", custom: {} },
+      { id: "r1", text: "Here is a plan", custom: { ai_generated: true } },
+    ];
+    const { deps, sessions } = router(new FakeChannel(earlier));
+    const screen = new ChatScreen("session-1", deps, () => undefined, "agent:session-1");
+    expect(screen.chat.state.getLatestValue().isLoaded).toBe(false);
+
+    await settle();
+    expect(sessions).toEqual([]);
+    expect(screen.chat.state.getLatestValue().isLoaded).toBe(true);
+    expect(screen.conversation.state.getLatestValue().messages.map((message) => message.id)).toEqual(["q1", "r1"]);
+  });
+
+  it("carries a listed conversation on without naming it to the list again", async () => {
+    const { deps, asked, open } = router();
+    const started: string[] = [];
+    const screen = new ChatScreen("session-1", deps, (id) => started.push(id));
+    open();
+
+    screen.conversation.send({ text: "Make it three days" });
+    await settle();
+
+    expect(asked).toEqual(["session-1"]);
+    expect(started).toEqual([]);
+  });
+
+  it("says why a conversation could not be opened", async () => {
     const { deps } = router();
     const failing: ChatScreenDeps = { ...deps, open: async () => Promise.reject(new Error("the router is down")) };
     const screen = new ChatScreen("session-1", failing, () => undefined);
 
     await settle();
-    expect(screen.get().isLoading).toBe(false);
     expect(screen.get().failure).toContain("the router is down");
   });
 
-  it("shows a conversation's messages from Stream before its session is open", async () => {
-    const earlier = [message("Plan a weekend in Lisbon"), message("Here is a plan", true)];
-    const { deps } = router(earlier);
-    const screen = new ChatScreen("session-1", deps, () => undefined, "agent:session-1");
-
-    await settle();
-    expect(screen.get().history).toEqual(earlier);
-    expect(screen.get().isLoading).toBe(false);
-    expect(screen.get().chat).toBeUndefined();
-  });
-
-  it("reads the history of a conversation opened from a link, by its session id alone", async () => {
-    const earlier = [message("Plan a weekend in Lisbon")];
-    const asked: Array<[string, string | undefined]> = [];
-    const { deps } = router();
-    const linked: ChatScreenDeps = {
-      ...deps,
-      history: async (sessionId, conversationId) => {
-        asked.push([sessionId, conversationId]);
-        return earlier;
-      },
-    };
-    const screen = new ChatScreen("session-1", linked, () => undefined);
-
-    await settle();
-    expect(asked).toEqual([["session-1", undefined]]);
-    expect(screen.get().history).toEqual(earlier);
-  });
-
-  it("lets the chat's own messages take over once its session is open", async () => {
-    const { chat, deps, open } = router([message("Plan a weekend in Lisbon")]);
-    const screen = new ChatScreen("session-1", deps, () => undefined, "agent:session-1");
-    await settle();
-
-    open();
-    await settle();
-    expect(screen.get().chat).toBe(chat);
-    expect(screen.get().history).toBeUndefined();
-  });
-
-  it("keeps a question asked over the history until Stream's copy of it arrives", async () => {
-    const earlier = [message("Plan a weekend in Lisbon"), message("Here is a plan", true)];
-    const { chat, deps, open } = router(earlier);
-    const screen = new ChatScreen("session-1", deps, () => undefined, "agent:session-1");
-    await settle();
-
-    const sending = screen.send("Make it three days");
-    // The chat opens holding what the history held: the question has not arrived yet.
-    chat.update({ messages: [...earlier] });
-    open();
-    await sending;
-    // Anything the chat says meanwhile, such as the session starting to respond.
-    chat.update({});
-    expect(screen.get().pending?.text).toBe("Make it three days");
-
-    chat.arrives("Make it three days");
-    expect(screen.get().pending).toBeUndefined();
-  });
-
-  it("ignores history that arrives after the session opened", async () => {
-    const { chat, deps, open } = router();
-    let giveHistory: (messages: LocalMessage[]) => void = () => undefined;
-    const late: ChatScreenDeps = { ...deps, history: () => new Promise((resolve) => (giveHistory = resolve)) };
-    open();
-    const screen = new ChatScreen("session-1", late, () => undefined, "agent:session-1");
-    await settle();
-    expect(screen.get().chat).toBe(chat);
-
-    giveHistory([message("Stale")]);
-    await settle();
-    expect(screen.get().history).toBeUndefined();
-  });
-
-  it("does not say a new conversation is loading", () => {
-    const { deps } = router();
-    expect(new ChatScreen(undefined, deps, () => undefined).get().isLoading).toBe(false);
-  });
-
-  it("waits for a reply that is still being written before sending the next question", async () => {
-    const { chat, deps, open } = router();
-    open();
-    const screen = new ChatScreen("session-1", deps, () => undefined);
-    await settle();
-    chat.answering = true;
-
-    expect(await screen.send("one more thing")).toBe(false);
-    expect(chat.asked).toEqual([]);
-  });
-
-  it("shows a question at once, until Stream's copy of it arrives", async () => {
-    const { chat, deps, open } = router();
+  it("asks nothing more of the router once the screen is left", async () => {
+    const { deps, asked, open } = router();
     const screen = new ChatScreen(undefined, deps, () => undefined);
-
-    const sending = screen.send("What's on my calendar today?");
-    expect(screen.get().pending?.text).toBe("What's on my calendar today?");
     open();
-    await sending;
-    chat.arrives("What's on my calendar today?");
-
-    expect(screen.get().pending).toBeUndefined();
-  });
-
-  it("deletes a new conversation's session the person left without sending", async () => {
-    const { chat, removed, deps, open } = router();
-    const screen = new ChatScreen(undefined, deps, () => undefined);
-
-    screen.draftChanged("Remind me");
-    open();
-    await settle();
     screen.leave();
+
+    screen.conversation.send({ text: "Anyone there?" });
     await settle();
 
-    expect(chat.closed).toBe(true);
-    expect(removed).toEqual(["session-1"]);
-  });
-
-  it("names a new conversation to the list once it is used, and keeps it on leaving", async () => {
-    const { removed, deps, open } = router();
-    const started: string[] = [];
-    const screen = new ChatScreen(undefined, deps, (id) => started.push(id));
-
-    screen.draftChanged("Plan");
-    open();
-    await screen.send("Plan a weekend in Lisbon");
-    screen.leave();
-    await settle();
-
-    expect(started).toEqual(["session-1"]);
-    expect(removed).toEqual([]);
+    expect(screen.chat.isClosed).toBe(true);
+    expect(asked).toEqual([]);
   });
 });

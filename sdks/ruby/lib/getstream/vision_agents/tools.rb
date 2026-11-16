@@ -12,8 +12,12 @@ module GetStream
     #   end
     #
     # The model asks for one over the session socket and waits. What the block returns is
-    # sent back: a String as it is, anything else as JSON. A block that takes a second
-    # argument is handed the ToolCall it runs for.
+    # sent back: a String as it is, anything else as JSON. A block that takes two arguments
+    # is handed the ToolCallContext it runs for first, then the arguments:
+    #
+    #   agent.tools.register("book_flight", description: "Book a flight", ...) do |tool_call_context, args|
+    #     bookings.book(args["flight_id"], key: tool_call_context.id)
+    #   end
     class Tools
       Tool = Data.define(:name, :description, :parameters, :executor, :display_title, :interruptible, :timeout,
                          :approval, :run)
@@ -76,7 +80,7 @@ module GetStream
       #
       # @raise [ConfigurationError] for a tool nobody registered.
       # @raise [Error] for a call that took longer than the tool's timeout, which is stopped.
-      def call(name, arguments, tool_call_context = ToolCall.new)
+      def call(name, arguments, tool_call_context = ToolCallContext.new)
         tool = @lock.synchronize { @tools[name] }
         raise ConfigurationError, "no tool is called #{name}" unless tool
 
@@ -87,9 +91,15 @@ module GetStream
 
       private
 
-      # A lambda that takes only the arguments is not handed the call it would refuse.
+      # A block that takes two arguments, or any number, is handed the call first; one that
+      # takes one is handed only the arguments.
       def invoke(tool, parsed, tool_call_context)
-        tool.run.lambda? && tool.run.arity == 1 ? tool.run.call(parsed) : tool.run.call(parsed, tool_call_context)
+        takes_call?(tool.run) ? tool.run.call(tool_call_context, parsed) : tool.run.call(parsed)
+      end
+
+      def takes_call?(run)
+        kinds = run.parameters.map(&:first)
+        kinds.include?(:rest) || kinds.count { |kind| %i[req opt].include?(kind) } >= 2
       end
 
       # Runs the tool on a thread of its own, which is left to finish when it takes too long.

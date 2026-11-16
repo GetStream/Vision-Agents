@@ -182,7 +182,7 @@ func (s *SlackChannelSuite) TestAThreadMessageWithNeitherTextNorAPhotoIsNotAnswe
 	s.Equal("Noted.", s.posted(2)[1].Text)
 	s.Never(func() bool { return len(s.slack.Posts()) > 2 }, time.Second, 10*time.Millisecond,
 		"only the message with text was answered")
-	s.NotContains(s.logged.String()[before:], "could not answer a message in a thread channel", "blanks are no failure")
+	s.NotContains(s.logged.String()[before:], "could not answer a message in a channel the Router answers in", "blanks are no failure")
 }
 
 // AI-2095: a photo answered in a thread is in the next turn's history as a note that it was

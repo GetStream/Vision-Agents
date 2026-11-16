@@ -722,6 +722,13 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) string {
 		cutShort = a.cutShortLocked(a.speakingTurn, time.Now())
 		unsaid = a.unsaidLocked(a.speakingTurn, lost.Streaming())
 	}
+	// A reply held for a lone greeting is dropped, as a greeting over one held for a lost
+	// voice drops it: the voice replacing this one would say it while the greeting may still
+	// grow into more.
+	greeted, greeter := "", ""
+	if a.heldLocked(a.speakingTurn) && a.held.greeting && a.unheard.turnID == a.speakingTurn {
+		greeted, greeter = a.speakingTurn, a.unheard.participant
+	}
 	// A voice that replaced a lost one and was lost too may not have been sent all of the
 	// reply yet: what it had still to be sent comes after what it was.
 	if a.heldLocked(a.speakingTurn) {
@@ -755,7 +762,7 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) string {
 	// with no greeting at all. What is written of a reply while that voice opens is held for
 	// it too: sent to the lost one, it would never be heard.
 	cut, again := "", ""
-	if lost == a.tts && a.speakingTurn != "" && !a.murmurLocked(a.speakingTurn) {
+	if lost == a.tts && a.speakingTurn != "" && !a.murmurLocked(a.speakingTurn) && greeted == "" {
 		resaid := replace && a.voiced != a.speakingTurn && len(unsaid) > 0
 		if resaid {
 			again = a.speakingTurn
@@ -774,6 +781,10 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) string {
 	}
 	held, current := a.held, a.harness
 	a.mu.Unlock()
+	if greeted != "" {
+		a.converse.wentOnUnheard(greeter)
+		a.dropUnheard(stt.Participant{ID: greeter}, greeted, interruption{cause: causeUnheard})
+	}
 	if cut != "" {
 		a.lostWith(cut, current, outstanding, cutShort)
 	}
@@ -899,8 +910,8 @@ func (a *Agent) owedLocked(turnID string) bool {
 // sayAgain has the voice that replaced a lost one say what the lost one was sent of a
 // reply none of which was heard, each utterance under its own synthesis as before, so the
 // turn is told it was spoken once each has finished. The utterances are already counted.
-// It stops once the caller has taken the floor, this voice is lost too or a settings swap
-// replaced it: what is sent after is billed and never heard.
+// It stops once the caller has taken the floor, this voice is lost too, a settings swap
+// replaced it or the call ended: what is sent after is billed and never heard.
 func (a *Agent) sayAgain(voice *ttsrouter.Session, held *heldReply) {
 	a.mu.Lock()
 	performs := a.performs
@@ -913,7 +924,7 @@ func (a *Agent) sayAgain(voice *ttsrouter.Session, held *heldReply) {
 			a.mu.Unlock()
 			return
 		}
-		if len(held.unsaid) == 0 || !a.owedLocked(held.turnID) || a.tts != voice {
+		if len(held.unsaid) == 0 || !a.owedLocked(held.turnID) || a.tts != voice || a.closed {
 			a.unsentLocked(held)
 			a.held = nil
 			a.mu.Unlock()
@@ -930,6 +941,10 @@ func (a *Agent) sayAgain(voice *ttsrouter.Session, held *heldReply) {
 		// request that only ends the utterance has nothing to keep.
 		if text != "" {
 			a.sendingLocked(held.turnID, heard.synthesisID, text, heard.message)
+			if held.greeting {
+				a.turns.released(held.turnID, time.Now())
+			}
+			a.turns.voiced(held.turnID)
 		}
 		a.mu.Unlock()
 		err := voice.Synthesize(tts.Request{ID: heard.synthesisID, Text: text, Final: heard.final})

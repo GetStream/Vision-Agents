@@ -41,7 +41,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param cursor The next_cursor of the previous page, sent with the same filter and sort. Omitted is the first page.
  * @param filter 
  * @param limit Up to 200. Omitted is 25.
- * @param sort Omitted is updated_at, or relevance for a text search.
+ * @param sort Omitted is last_message_at descending, or relevance for a text search. One of: last_message_at; pinned, then last_message_at, which lists the pinned sessions first; review_score, for a server-side caller; relevance, for a text search and nothing else.
  */
 @Serializable
 
@@ -58,7 +58,7 @@ internal data class SessionQuery (
     @SerialName(value = "limit")
     val limit: kotlin.Long? = null,
 
-    /* Omitted is updated_at, or relevance for a text search. */
+    /* Omitted is last_message_at descending, or relevance for a text search. One of: last_message_at; pinned, then last_message_at, which lists the pinned sessions first; review_score, for a server-side caller; relevance, for a text search and nothing else. */
     @SerialName(value = "sort")
     val sort: kotlin.collections.List<SessionSort>? = null
 

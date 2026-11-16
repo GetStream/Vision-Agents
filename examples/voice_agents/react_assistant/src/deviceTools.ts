@@ -1,4 +1,4 @@
-import { Tools } from "@stream-io/calypso";
+import { Tools } from "@stream-io/stream-agents";
 import { z } from "zod";
 
 import { isoDay, parseDay } from "./dates";

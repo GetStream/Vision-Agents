@@ -1,6 +1,7 @@
+import { followRewinds, heldIds, pruneRewound } from "./branches.js";
 import type { Client, Schemas } from "./client.js";
 import { Conversation } from "./conversation.js";
-import { ConfigurationError } from "./errors.js";
+import { ConfigurationError, RouterError } from "./errors.js";
 import { CameraFrames } from "./frames.js";
 import { Responses } from "./responses.js";
 import { Socket, type Frame, flag, nested, text } from "./socket.js";
@@ -44,6 +45,23 @@ export interface ToolApprovalRequest {
    * or the empty string.
    */
   readonly reason: string;
+}
+
+/** A person's answer to a call that asks first, for `Session.decide`. */
+export interface ToolDecision {
+  readonly allowed: boolean;
+  /** What a declined call's step shows. */
+  readonly summary?: string;
+  /**
+   * The call as the conversation shows it, for one this session was not asked on its own
+   * socket: its function, its arguments as JSON, and the request and turn it is part of.
+   */
+  readonly call?: {
+    readonly name: string;
+    readonly arguments?: string;
+    readonly requestId?: string;
+    readonly turnId?: string;
+  };
 }
 
 /** Somebody on the call, as the backend reports them. */
@@ -181,6 +199,10 @@ export class Session {
   private readonly socket: Socket | undefined;
   /** The Stream Chat channel and the video call, each opened on first use. */
   private chatPeer: Promise<SessionChat> | undefined;
+  /** The channel once it has opened, which a regenerate, an edit or an activation prunes. */
+  private chatOpened: SessionChat | undefined;
+  /** Stops following the channel's rewinds. */
+  private unfollowRewinds: (() => void) | undefined;
   private videoPeer: Promise<SessionVideo> | undefined;
   private readonly client: Client;
   private readonly tools: Tools | undefined;
@@ -192,8 +214,11 @@ export class Session {
   /** Aborts when the socket ends, which stops even a call that asked to be held. */
   private readonly ending = new AbortController();
   private readonly asking = new Map<string, { request: ToolApprovalRequest; frame: Frame }>();
+  /** The calls answered here, so answering one shown from the conversation again sends nothing. */
+  private readonly answered = new Set<string>();
   private readonly finished: Promise<void>;
   private ended = false;
+  private stopped = false;
 
   private constructor(
     client: Client,
@@ -206,7 +231,12 @@ export class Session {
     this.socket = socket;
     this.tools = tools;
     this.conversation = new Conversation(socket !== undefined);
-    this.responses = new Responses(client, created.id, (asked) => this.conversation.said(asked));
+    this.responses = new Responses(
+      client,
+      created.id,
+      (asked) => this.conversation.said(asked),
+      () => this.branching(),
+    );
     this.voice = new Voice(client, created.id, Boolean(created.call_id), (on) =>
       this.speech.voiceChanged(on),
     );
@@ -229,7 +259,24 @@ export class Session {
     const created = await client.post("/v1/agents/sessions", {
       body: declared.length > 0 ? { ...request, tools: declared } : request,
     });
-    return Session.watching(client, created, options);
+    return Session.startWatching(client, created, options);
+  }
+
+  /** @internal Watches a newly created session, stopping it if watching fails. */
+  static async startWatching(
+    client: Client,
+    created: Schemas["Session"],
+    options: SessionOptions = {},
+  ): Promise<Session> {
+    try {
+      return await Session.watching(client, created, options);
+    } catch (cause) {
+      // The session is live in the backend even though nothing here can watch it, so it is
+      // stopped rather than left holding a call nobody is listening to.
+      await client.post("/v1/agents/sessions/{id}/stop", { path: { id: created.id } })
+        .catch(() => undefined);
+      throw cause;
+    }
   }
 
   /**
@@ -258,21 +305,12 @@ export class Session {
       query["decisions"] = "false";
     }
 
-    try {
-      const socket = await Socket.dial(
-        client.backend,
-        `/v1/agents/sessions/${encodeURIComponent(created.id)}/events`,
-        query,
-      );
-      return new Session(client, created, socket, options.tools);
-    } catch (cause) {
-      // The session is live in the backend even though nothing here can watch it, so it is
-      // stopped rather than left holding a call nobody is listening to.
-      await client
-        .post("/v1/agents/sessions/{id}/stop", { path: { id: created.id } })
-        .catch(() => undefined);
-      throw cause;
-    }
+    const socket = await Socket.dial(
+      client.backend,
+      `/v1/agents/sessions/${encodeURIComponent(created.id)}/events`,
+      query,
+    );
+    return new Session(client, created, socket, options.tools);
   }
 
   /** The backend's id for the session. */
@@ -307,16 +345,24 @@ export class Session {
   }
 
   /**
-   * Answers a call waiting in `approvals`.
+   * Answers a call waiting in `approvals`, or one the conversation shows waiting.
    *
    * Allowed, the function runs and its result goes back as it would have. Declined, it never
-   * runs: the model is told the person declined, and the call's step shows `summary`. A call
-   * that is not waiting is left alone, so answering twice does nothing. If the answer cannot
-   * be sent, the call goes on waiting.
+   * runs: the model is told the person declined, and the call's step shows `summary`.
+   *
+   * A call this session was not asked on its own socket, such as one shown from the channel
+   * after `sessions.resume` or a restart, is answered when `call` says what the conversation
+   * shows of it, which `AgentChat.decide` reads for you: an allowed call of one of this
+   * session's tools then runs here. Without `call`, such a call is left alone, so answering
+   * twice does nothing; the router ignores an answer that reaches no waiting call. If the answer
+   * cannot be sent, the call goes on waiting.
    */
-  decide(id: string, answer: { allowed: boolean; summary?: string }): void {
+  decide(id: string, answer: ToolDecision): void {
     const waiting = this.asking.get(id);
     if (!waiting) {
+      if (answer.call) {
+        this.decideShown(id, answer.call, answer);
+      }
       return;
     }
     const ids: Record<string, string> = {};
@@ -333,6 +379,7 @@ export class Session {
       ...ids,
     });
     this.asking.delete(id);
+    this.answered.add(id);
     this.approvalsChanged();
     if (answer.allowed) {
       void this.runTool(waiting.frame);
@@ -343,6 +390,38 @@ export class Session {
         ...ids,
         error: "The person declined this call.",
       });
+    }
+  }
+
+  /**
+   * Answers a call that never reached this socket, from what the conversation shows of it, once.
+   * The router settles a client call only with its result, so a declined one is answered with
+   * the same error a waiting one gets, and an allowed one of this session's tools is run here,
+   * or failed when the conversation left out its arguments, so the model isn't left waiting.
+   */
+  private decideShown(id: string, call: NonNullable<ToolDecision["call"]>, { allowed, summary }: ToolDecision): void {
+    if (this.answered.has(id)) {
+      return;
+    }
+    const ids = {
+      ...(call.requestId ? { request_id: call.requestId } : {}),
+      ...(call.turnId ? { turn_id: call.turnId } : {}),
+    };
+    this.held().send({ type: "tool_approval", tool_call_id: id, allowed, ...(summary ? { summary } : {}), ...ids });
+    this.answered.add(id);
+    if (!allowed) {
+      this.held().send({ type: "tool_result", tool_call_id: id, ...ids, error: "The person declined this call." });
+    } else if (this.tools?.has(call.name)) {
+      if (call.arguments === undefined) {
+        this.held().send({
+          type: "tool_result",
+          tool_call_id: id,
+          ...ids,
+          error: "The call's arguments were too long for the conversation to keep, so it could not run.",
+        });
+      } else {
+        void this.runTool({ type: "tool_call", id, name: call.name, arguments: call.arguments, ...ids });
+      }
     }
   }
 
@@ -407,18 +486,34 @@ export class Session {
   }
 
   /**
-   * Changes this session alone: its title, description, custom labels, models or voice.
+   * Changes this session alone: its title, description, custom labels, whether it is pinned,
+   * its models or its voice.
    *
-   * Server side only. The agent config it started from is untouched and a field left out is
-   * left as it is. A session that ended can still be renamed and relabelled; the rest needs
-   * it running and takes over from its next turn, so a reply being spoken finishes on what it
-   * started with. A target that does not route is refused and the conversation carries on.
+   * A person's device may change the title, description and custom labels and pin or unpin
+   * the session; the models and the voice are server side only. The agent config it started
+   * from is untouched and a field left out is left as it is. A session that ended can still be
+   * renamed, relabelled and pinned; the rest needs it running and takes over from its next
+   * turn, so a reply being spoken finishes on what it started with. A target that does not
+   * route is refused and the conversation carries on.
    */
   update(changes: Schemas["UpdateSessionRequest"]): Promise<Schemas["Session"]> {
     return this.client.patch("/v1/agents/sessions/{id}", {
       path: { id: this.id },
       body: changes,
     });
+  }
+
+  /**
+   * Pins this conversation, which a query sorted by `pinned` lists first, and answers it with
+   * its `pinned_at`. It moves nothing else. See `sessions.pin`.
+   */
+  pin(): Promise<Schemas["Session"]> {
+    return this.update({ pinned: true });
+  }
+
+  /** Unpins this conversation, and answers it without a `pinned_at`. */
+  unpin(): Promise<Schemas["Session"]> {
+    return this.update({ pinned: false });
   }
 
   /**
@@ -464,7 +559,7 @@ export class Session {
     // here in this process, and a conversation continued without them would offer the model
     // tools it cannot run.
     const inherited = tools ?? this.tools;
-    return Session.watching(this.client, forked, {
+    return Session.startWatching(this.client, forked, {
       ...(inherited ? { tools: inherited } : {}),
       ...(interim === undefined ? {} : { interim }),
       ...(decisions === undefined ? {} : { decisions }),
@@ -478,7 +573,7 @@ export class Session {
    * The Stream Chat channel this conversation is written into.
    *
    * `stream-chat` is an optional peer dependency, opted into by importing
-   * `@stream-io/calypso/chat` once, so a caller who never touches chat installs nothing
+   * `@stream-io/stream-agents/chat` once, so a caller who never touches chat installs nothing
    * and ships nothing. A caller who forgot the import is told which one.
    *
    * It opens on the `StreamChat` handed over with `client.use`, or else on one connected as
@@ -486,7 +581,17 @@ export class Session {
    * of this client shares.
    */
   chat(): Promise<SessionChat> {
-    this.chatPeer ??= this.openChat();
+    if (!this.chatPeer) {
+      const opening = this.openChat();
+      this.chatPeer = opening;
+      // A failure is not kept: the next call tries again, since what failed may have been the
+      // network, or a `setUser` that had not happened yet.
+      opening.catch(() => {
+        if (this.chatPeer === opening) {
+          this.chatPeer = undefined;
+        }
+      });
+    }
     return this.chatPeer;
   }
 
@@ -494,12 +599,21 @@ export class Session {
    * The Stream video call the agent is on, `agent:<session id>`.
    *
    * The same arrangement as chat: `@stream-io/video-client` is an optional peer dependency,
-   * opted into by importing `@stream-io/calypso/video` once, and the client handed over
+   * opted into by importing `@stream-io/stream-agents/video` once, and the client handed over
    * with `client.use` is used when there is one. A session held in writing has no call, and
    * asking for one says so.
    */
   video(): Promise<SessionVideo> {
-    this.videoPeer ??= this.openVideo();
+    if (!this.videoPeer) {
+      const opening = this.openVideo();
+      this.videoPeer = opening;
+      // Not kept when it fails, for the same reason as chat's, and so a failed join can be tried again.
+      opening.catch(() => {
+        if (this.videoPeer === opening) {
+          this.videoPeer = undefined;
+        }
+      });
+    }
     return this.videoPeer;
   }
 
@@ -540,15 +654,28 @@ export class Session {
    * and remembered is kept; `delete` is what takes those away.
    */
   async close(): Promise<void> {
+    if (this.stopped) {
+      return;
+    }
     if (this.socket?.open) {
       this.socket.send({ type: "close" });
-    } else if (!this.ended) {
-      await this.client
-        .post("/v1/agents/sessions/{id}/stop", { path: { id: this.id } })
-        .catch(() => undefined);
+    } else {
+      try {
+        await this.client.post("/v1/agents/sessions/{id}/stop", { path: { id: this.id } });
+      } catch (cause) {
+        if (!(cause instanceof RouterError) || cause.status !== 404 || cause.code !== "session_not_found") {
+          throw cause;
+        }
+      }
     }
+    this.stopped = true;
+    this.unfollowRewinds?.();
+    this.unfollowRewinds = undefined;
     this.socket?.close();
     await this.finished;
+    if (!this.socket) {
+      this.end();
+    }
   }
 
   /**
@@ -615,18 +742,22 @@ export class Session {
       stoppedBy = cause instanceof Error ? cause : new Error(String(cause));
       throw cause;
     } finally {
-      this.ended = true;
-      this.speech.close();
-      this.state.end();
-      this.asking.clear();
-      this.conversation.disconnected(stoppedBy ?? this.socket?.closedBy);
-      this.ending.abort();
-      for (const cancel of this.running.values()) {
-        cancel.abort();
-      }
-      for (const reader of this.readers) {
-        reader.wake?.();
-      }
+      this.end(stoppedBy ?? this.socket?.closedBy);
+    }
+  }
+
+  private end(cause?: Error): void {
+    this.ended = true;
+    this.speech.close();
+    this.state.end();
+    this.asking.clear();
+    this.conversation.disconnected(cause);
+    this.ending.abort();
+    for (const cancel of this.running.values()) {
+      cancel.abort();
+    }
+    for (const reader of this.readers) {
+      reader.wake?.();
     }
   }
 
@@ -750,7 +881,33 @@ export class Session {
     const [type, ...rest] = channel.split(":");
 
     const connected = await this.client.peers.chat();
-    return { client: connected, channel: connected.channel(type ?? "agent", rest.join(":")) };
+    const opened: SessionChat = { client: connected, channel: connected.channel(type ?? "agent", rest.join(":")) };
+    // A rewind another device made, or this one, hides messages this client already holds.
+    // Not followed for a session closed while the channel opened: nothing would stop it.
+    if (!this.stopped) {
+      this.unfollowRewinds?.();
+      this.unfollowRewinds = followRewinds(connected, opened.channel, channel);
+    }
+    this.chatOpened = opened;
+    return opened;
+  }
+
+  /**
+   * What a regenerate, an edit or an activation does to the open channel: notes what it holds
+   * before the request goes, and drops what the answer's `rewound_to` hid of that once it
+   * comes back. A channel not opened yet holds nothing, and is not opened for this.
+   */
+  private branching(): (rewoundTo: Schemas["RewoundTo"] | undefined) => void {
+    const chat = this.chatOpened;
+    if (!chat) {
+      return () => undefined;
+    }
+    const before = heldIds(chat.channel);
+    return (rewoundTo) => {
+      if (rewoundTo) {
+        pruneRewound(chat.channel, rewoundTo, before);
+      }
+    };
   }
 
   private async openVideo(): Promise<SessionVideo> {

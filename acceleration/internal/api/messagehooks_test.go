@@ -212,7 +212,7 @@ func (s *MessageHooksSuite) TestAnAppNotKnownYetEndsAHookAtInfoAndAQueuedDeliver
 	s.T().Cleanup(func() {
 		s.setApps(customer, func(apps *suiteApps) { apps.perApp = false; delete(apps.waiting, customer) })
 	})
-	event := messageEvent{ChannelID: s.channelID, ChannelCustom: map[string]any{ConfigField: deliveredConfig(&s.RouterSuite, customer)}}
+	event := messageEvent{ChannelType: chatlog.ChannelType, ChannelID: s.channelID, ChannelCustom: map[string]any{ConfigField: deliveredConfig(&s.RouterSuite, customer)}}
 	event.Message.Text = "is my order on its way?"
 	const line = `msg="not starting work for a customer whose app could not be read"`
 	const hookLine = `level=INFO msg="not starting work in the deployment's app for a customer no longer writing there"`

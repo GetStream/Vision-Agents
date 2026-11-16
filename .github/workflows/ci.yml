@@ -240,7 +240,7 @@ jobs:
       # breaks the SDK shows here before it ships. The log says which one ran.
       - name: Install stream-chat 10
         run: |
-          npm install --no-save stream-chat@^10.0.0-0
+          npm install --no-save stream-chat@^10.0.2
           node -p "'stream-chat ' + require('./node_modules/stream-chat/package.json').version"
 
       - name: Test

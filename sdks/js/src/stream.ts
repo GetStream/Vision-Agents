@@ -28,6 +28,11 @@ export interface StreamClients {
 /** `StreamChat`, typed as far as this package uses it. */
 export type ChatConstructor = new (apiKey: string) => ChatClient;
 
+/** The `version` stream-chat exports from 10.0.2 on, as far as this package reads it. */
+export interface ChatVersion {
+  readonly major: number;
+}
+
 /** `StreamVideoClient`, typed as far as this package uses it. */
 export type VideoConstructor = new (options: {
   apiKey: string;
@@ -36,20 +41,24 @@ export type VideoConstructor = new (options: {
 }) => VideoClient;
 
 /**
- * The Stream classes `@stream-io/calypso/chat` and `/video` registered on import.
+ * The Stream classes `@stream-io/stream-agents/chat` and `/video` registered on import.
  *
  * Those entry points are what import the optional peers, statically, so a bundler resolves
  * them for an app that asked and never sees them in one that did not. This package imports
  * neither: it has no dependencies, and two large ones would be paid for by everybody.
  */
-const registered: { chat?: ChatConstructor; video?: VideoConstructor } = {};
+const registered: { chat?: ChatConstructor; chatVersion?: ChatVersion | undefined; video?: VideoConstructor } = {};
 
-/** Called by `@stream-io/calypso/chat`. */
-export function registerChat(StreamChat: ChatConstructor): void {
+/**
+ * Called by `@stream-io/stream-agents/chat`, with the `version` the installed stream-chat
+ * exports, which 9 does not.
+ */
+export function registerChat(StreamChat: ChatConstructor, version?: ChatVersion): void {
   registered.chat = StreamChat;
+  registered.chatVersion = version;
 }
 
-/** Called by `@stream-io/calypso/video`. */
+/** Called by `@stream-io/stream-agents/video`. */
 export function registerVideo(StreamVideoClient: VideoConstructor): void {
   registered.video = StreamVideoClient;
 }
@@ -92,7 +101,10 @@ export class StreamPeers {
       const credentials = await this.credentials("chat");
       const StreamChat = installed(registered.chat, "chat", "stream-chat");
       const client = new StreamChat(credentials.apiKey);
-      await client.connectUser(chatUser(client, credentials.user), this.tokens("chat", credentials.token));
+      await client.connectUser(
+        chatUser(registered.chatVersion, credentials.user),
+        streamTokens(this.backend, credentials, "chat"),
+      );
       return client;
     });
   }
@@ -108,7 +120,7 @@ export class StreamPeers {
       return new StreamVideoClient({
         apiKey: credentials.apiKey,
         user: credentials.user,
-        tokenProvider: this.tokens("video", credentials.token),
+        tokenProvider: streamTokens(this.backend, credentials, "video"),
       });
     });
   }
@@ -144,16 +156,6 @@ export class StreamPeers {
     return credentials;
   }
 
-  /** The token already fetched first, then a fresh one each time Stream asks again. */
-  private tokens(what: string, first: string): () => Promise<string> {
-    let unused: string | undefined = first;
-    return async () => {
-      const token = unused ?? (await this.credentials(what, true)).token;
-      unused = undefined;
-      return token;
-    };
-  }
-
   /**
    * The client cached for the current key and user, or the one `open` builds. Keyed before any
    * token is asked for, so a session reusing a connection mints nothing. A failed one is not kept.
@@ -170,12 +172,34 @@ export class StreamPeers {
   }
 }
 
+/** @internal Refreshes a connection's token only while its original user is still signed in. */
+export function streamTokens(
+  backend: Backend,
+  credentials: StreamCredentials,
+  what: string,
+): () => Promise<string> {
+  let unused: string | undefined = credentials.token;
+  return async () => {
+    if (backend.userId !== credentials.user.id) {
+      throw new ConfigurationError(
+        `the ${what} connection belongs to ${credentials.user.id}; disconnect it after changing users`,
+      );
+    }
+    const token = unused ?? (await backend.streamCredentials(true))?.token;
+    if (!token) {
+      throw new ConfigurationError(`there is no token for the ${what} connection`);
+    }
+    unused = undefined;
+    return token;
+  };
+}
+
 /** The class an entry point registered, or the error saying which one to import. */
 function installed<T>(registered: T | undefined, what: string, peer: string): T {
   if (!registered) {
     throw new ConfigurationError(
       `${what} needs ${peer}: install it with npm install ${peer}, then import ` +
-        `"@stream-io/calypso/${what}" once, beside the import of this package`,
+        `"@stream-io/stream-agents/${what}" once, beside the import of this package`,
     );
   }
   return registered;
@@ -188,11 +212,10 @@ const CONNECT_FIELDS = new Set(["id", "name", "image", "language", "invisible", 
  * The user `setUser` named, as the installed stream-chat takes it.
  *
  * `StreamUser` keeps the app's own fields top level, which is how stream-chat 9 takes them.
- * 10 takes them only under `custom`, and a client with `userId` is 10's: 9 has only `userID`,
- * set once connected. What the app already put under `custom` is kept there.
+ * 10 takes them only under `custom`. What the app already put under `custom` is kept there.
  */
-function chatUser(client: ChatClient, user: StreamUser): StreamUser {
-  if (!("userId" in client)) {
+function chatUser(version: ChatVersion | undefined, user: StreamUser): StreamUser {
+  if (!takesCustom(version)) {
     return user;
   }
   const top: StreamUser = { id: user.id };
@@ -211,4 +234,13 @@ function chatUser(client: ChatClient, user: StreamUser): StreamUser {
     custom["custom"] = given;
   }
   return Object.keys(custom).length > 0 ? { ...top, custom } : top;
+}
+
+/**
+ * Whether the installed stream-chat is 10 or later, which takes a user's own fields only under
+ * `custom`. 9 exports no `version`. A `major` of 0 is a build with no version injected (a linked
+ * checkout), which stream-chat says to take as the newest.
+ */
+function takesCustom(version: ChatVersion | undefined): boolean {
+  return version !== undefined && (version.major === 0 || version.major >= 10);
 }

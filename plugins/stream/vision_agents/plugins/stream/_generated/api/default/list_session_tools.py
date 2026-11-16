@@ -88,9 +88,11 @@ def sync_detailed(
     """List the tools a session's model is offered
 
      The tools the conversation model is offered on every request, with the description and schema each
-    is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A
-    session the router no longer holds answers what it was offered when it last opened; one that ended
-    before that was kept, or kept nothing, is a 404.
+    is sent with: the agent's own, its connectors' and the built-in ones this session can carry out,
+    each with where it came from. A worker's tools are here only if a worker hosting them was connected
+    when the session opened, so a session missing them was opened while none was. A session the router
+    no longer holds answers what it was offered when it last opened; one that ended before that was
+    kept, or kept nothing, is a 404.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -122,9 +124,11 @@ def sync(
     """List the tools a session's model is offered
 
      The tools the conversation model is offered on every request, with the description and schema each
-    is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A
-    session the router no longer holds answers what it was offered when it last opened; one that ended
-    before that was kept, or kept nothing, is a 404.
+    is sent with: the agent's own, its connectors' and the built-in ones this session can carry out,
+    each with where it came from. A worker's tools are here only if a worker hosting them was connected
+    when the session opened, so a session missing them was opened while none was. A session the router
+    no longer holds answers what it was offered when it last opened; one that ended before that was
+    kept, or kept nothing, is a 404.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -151,9 +155,11 @@ async def asyncio_detailed(
     """List the tools a session's model is offered
 
      The tools the conversation model is offered on every request, with the description and schema each
-    is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A
-    session the router no longer holds answers what it was offered when it last opened; one that ended
-    before that was kept, or kept nothing, is a 404.
+    is sent with: the agent's own, its connectors' and the built-in ones this session can carry out,
+    each with where it came from. A worker's tools are here only if a worker hosting them was connected
+    when the session opened, so a session missing them was opened while none was. A session the router
+    no longer holds answers what it was offered when it last opened; one that ended before that was
+    kept, or kept nothing, is a 404.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -183,9 +189,11 @@ async def asyncio(
     """List the tools a session's model is offered
 
      The tools the conversation model is offered on every request, with the description and schema each
-    is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A
-    session the router no longer holds answers what it was offered when it last opened; one that ended
-    before that was kept, or kept nothing, is a 404.
+    is sent with: the agent's own, its connectors' and the built-in ones this session can carry out,
+    each with where it came from. A worker's tools are here only if a worker hosting them was connected
+    when the session opened, so a session missing them was opened while none was. A session the router
+    no longer holds answers what it was offered when it last opened; one that ended before that was
+    kept, or kept nothing, is a 404.
 
     Args:
         id (str): The resource, as returned when it was created.

@@ -10,8 +10,10 @@ use GetStream\VisionAgents\Json;
 
 /**
  * The model that controls an agent's floor, and how long a caller may wait once they stop.
- * Left out or null, the stored choice stays; an empty object is the default flow controller
- * again; anything else replaces the stored choice whole.
+ * Left out or null, the stored choice stays; an empty object is no choice again, which the
+ * router's default rules: the flow controller, or stream/chorus-asr at the server's default
+ * point where the router defaults every agent to it; {model: flow-controller} keeps the flow
+ * controller whatever the router's default; anything else replaces the stored choice whole.
  */
 final readonly class FloorControl
 {

@@ -646,6 +646,29 @@ func (s *LLMSuite) TestCapabilitiesRefuseAConversationAndAPreviousResponseTogeth
 	s.Contains(err.Error(), "not both")
 }
 
+func (s *LLMSuite) TestAPreviousResponseIsRefusedByAModelThatKeepsNone() {
+	// Answered anyway, the reply would be made from only the newest messages.
+	err := Capabilities{}.Validate(ResponseParams{
+		Input:              []Message{{Role: User, Content: "and tomorrow?"}},
+		PreviousResponseID: "resp_1",
+	})
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "keeps no response")
+	s.NoError(Capabilities{Store: true}.Validate(ResponseParams{PreviousResponseID: "resp_1"}))
+}
+
+func (s *LLMSuite) TestAConversationIsRefusedByAModelThatHoldsNone() {
+	err := Capabilities{}.Validate(ResponseParams{
+		Input:        []Message{{Role: User, Content: "and tomorrow?"}},
+		Conversation: "conv_1",
+	})
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "holds no conversation")
+	s.NoError(Capabilities{Conversations: true}.Validate(ResponseParams{Conversation: "conv_1"}))
+}
+
 func (s *LLMSuite) TestEffortFallsBackToTheModelsOwnDefault() {
 	model := Capabilities{ReasoningEfforts: []string{"none", "medium"}, DefaultEffort: "none"}
 

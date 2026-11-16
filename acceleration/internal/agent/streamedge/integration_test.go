@@ -170,6 +170,28 @@ func (s *StreamEdgeIntegrationSuite) TestAudioFlowsBothWaysInARealCall() {
 	fromSecond := s.hear(first)
 	s.Equal("go-edge-second", fromSecond.Participant.UserID)
 	s.Equal(stt.SampleRate, fromSecond.Audio.SampleRate)
+
+	// Catches the media quality of a real call not reaching the metrics: the round trip read
+	// from the publisher at Leave (an edge without a call has none), the SFU's receiver reports
+	// on the agent's own audio, and the inbound jitter taken with the track's clock rate.
+	for _, edge := range []*Edge{first, second} {
+		s.Eventually(func() bool { return edge.quality.summary(nil).outboundLoss != nil },
+			audioArrivesWithin, 100*time.Millisecond, "the SFU reported on the agent's audio")
+	}
+	before := mediaSeries()
+	s.Require().NoError(first.Leave())
+	s.Require().NoError(second.Leave())
+	after := mediaSeries()
+	for _, series := range []string{"router_agent_media_rtt_seconds/", "router_agent_media_packet_loss_ratio/outbound",
+		"router_agent_media_jitter_seconds/outbound", "router_agent_media_jitter_seconds/inbound",
+		"router_agent_media_packet_loss_ratio/inbound"} {
+		s.Equal(before[series].count+2, after[series].count, series+": one value per edge")
+	}
+	rtt := "router_agent_media_rtt_seconds/"
+	s.Positive(after[rtt].sum-before[rtt].sum, "a round trip took time")
+	jitter := "router_agent_media_jitter_seconds/inbound"
+	s.Less((after[jitter].sum-before[jitter].sum)/2, 0.02,
+		"jitter in seconds; the Opus clock taken as 16 kHz reads every 20 ms step as 40 ms of jitter")
 }
 
 func (s *StreamEdgeIntegrationSuite) TestSomeoneJoiningLaterIsHeard() {

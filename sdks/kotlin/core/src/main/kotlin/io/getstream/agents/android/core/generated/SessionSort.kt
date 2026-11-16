@@ -38,7 +38,7 @@ import kotlinx.serialization.encoding.Encoder
  * 
  *
  * @param `field` 
- * @param direction -1, descending. Ascending is not offered.
+ * @param direction -1 is descending and 1 ascending. pinned and relevance only sort descending.
  */
 @Serializable
 
@@ -47,20 +47,21 @@ internal data class SessionSort (
     @Contextual @SerialName(value = "field")
     val `field`: SessionSortField,
 
-    /* -1, descending. Ascending is not offered. */
+    /* -1 is descending and 1 ascending. pinned and relevance only sort descending. */
     @SerialName(value = "direction")
     val direction: SessionSort.Direction? = null
 
 ) {
 
     /**
-     * -1, descending. Ascending is not offered.
+     * -1 is descending and 1 ascending. pinned and relevance only sort descending.
      *
-     * Values: Minus1,unknown_default_open_api
+     * Values: Minus1,_1,unknown_default_open_api
      */
     @Serializable(with = DirectionSerializer::class)
     internal enum class Direction(val value: kotlin.Long) {
         @SerialName(value = "-1") Minus1(-1),
+        @SerialName(value = "1") _1(1),
         @SerialName(value = "11184809") unknown_default_open_api(11184809);
     }
 

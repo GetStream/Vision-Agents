@@ -22,6 +22,8 @@ struct ChatScreen: View {
     /// Why the conversation could not be opened, or nil.
     @State private var failure: String?
     @State private var isVoiceShown = false
+    /// The brand Settings chose, which the agent's UI wears.
+    @AppStorage(Brand.storageKey) private var brand = Brand.stream
 
     private static let starters = [
         "What's on my calendar today?",
@@ -60,6 +62,9 @@ struct ChatScreen: View {
             emptyContent: {
                 Welcome()
             })
+        .environment(\.brand, brand)
+        .onAppear { chat.wear(brand) }
+        .onChange(of: brand) { _, brand in chat.wear(brand) }
         .scrollDismissesKeyboard(.interactively)
         .modifier(ComposerBar(bar: composerBar))
         .fullScreenCover(isPresented: $isVoiceShown) {

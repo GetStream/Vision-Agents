@@ -80,3 +80,20 @@ func (s *ShadowAdmissionSuite) TestAConfigBeyondItsSandboxLimitsIsSavedAndLogged
 		s.Equal(http.StatusCreated, status, "the config is saved all the same")
 	}
 }
+
+func (s *AdmissionSuite) TestAConfigOverItsSandboxLimitsIsATierLimitReachedNamingTheLimit() {
+	s.limitSandboxes()
+
+	for limit, options := range map[string]SandboxOptions{
+		"sandbox_network": {Network: pointerTo(true)},
+		"sandbox_cpu":     {Cpu: pointerTo(2)},
+	} {
+		status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/configs", s.sandboxed(options))
+		s.Require().Equal(http.StatusBadRequest, status, limit)
+		var answered ErrorResponse
+		s.Require().NoError(json.Unmarshal(payload, &answered))
+		s.Equal(ErrorTypeInvalidRequest, answered.Error.Type, limit)
+		s.Equal("tier_limit_reached", answered.Error.Code, limit)
+		s.Equal(limit, answered.Error.Limit)
+	}
+}

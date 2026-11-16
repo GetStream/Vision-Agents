@@ -107,7 +107,7 @@ fun AssistantApp(chat: ChatViewModel = viewModel(), conversations: Conversations
     }
 
     val voiceShown by chat.isVoiceShown.collectAsStateWithLifecycle()
-    val open by chat.chat.collectAsStateWithLifecycle()
+    val open by chat.session.collectAsStateWithLifecycle()
     val replyFormat by chat.replyFormat.collectAsStateWithLifecycle()
     var isSettingsShown by rememberSaveable { mutableStateOf(false) }
 

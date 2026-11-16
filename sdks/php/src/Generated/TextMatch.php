@@ -8,6 +8,9 @@ namespace GetStream\VisionAgents\Generated;
 
 use GetStream\VisionAgents\Json;
 
+/**
+ * A full-text match, Stream's $q.
+ */
 final readonly class TextMatch
 {
     public function __construct(

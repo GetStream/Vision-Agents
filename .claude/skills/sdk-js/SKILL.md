@@ -335,3 +335,14 @@ Only a commit scoped `sdk-js` releases this package: `feat(sdk-js):` a minor, `f
 scope (`feat(router):`, `AI-1234: …`) is in the next release but never causes one, so scope it
 `sdk-js` if it should ship. The rules are in `sdks/js/release.config.mjs`; the workflow is
 `.github/workflows/release-sdk-js.yml`, dispatched by hand. See "Releasing" in the README.
+
+## Production hardening follow-up
+
+JS selects an Agent's synced config by name unless `pipeline.config` is explicit. Watcher
+attachment failures preserve existing sessions; only a newly created session is stopped on a
+failed watch. HTTP shutdown reports errors, and a lost socket does not prove the remote
+session stopped. Pending socket upgrades and tool holds can be cancelled; unread socket
+queues are bounded. Stream token refresh stays with the original user, guest refresh is
+shared per store, and a local sync stamp is trusted only with the same remote `sync_hash`.
+Other SDKs also need to audit these behaviours, empty skill overrides, non-JSON responses,
+truncated-body failures and folder parsing; update them separately.

@@ -42,6 +42,7 @@ import (
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/driver/pgdriver"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
@@ -106,6 +107,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
 	"github.com/GetStream/Vision-Agents/acceleration/prices"
 )
+
+// suiteActivityInterval is how often a suite's activity record is written: a router writes it
+// once a minute, which no test waits for.
+const suiteActivityInterval = 50 * time.Millisecond
 
 // suiteConnections caps each suite's pool, so ten suites at once stay well inside the
 // hundred connections Postgres allows.
@@ -206,6 +211,8 @@ type RouterSuite struct {
 	configs *appconfig.Store
 	live    *live.Client
 	sealer  *auth.Sealer
+	// activity is the activity record every node of the suite counts in.
+	activity *activity.Recorder
 	// manager runs the suite's sessions, for a test about what ends them from inside.
 	manager *session.Manager
 
@@ -399,6 +406,9 @@ type RouterSuite struct {
 	// telnyxPublicKey, set by a suite about Telnyx's call webhook before it starts the
 	// harness, is the key Telnyx's requests are checked against. Nil leaves it unconfigured.
 	telnyxPublicKey ed25519.PublicKey
+	// twilioAuthToken, set by a suite about Twilio's webhooks before it starts the harness, is
+	// the Auth Token Twilio's requests are checked against. Empty leaves it unconfigured.
+	twilioAuthToken string
 	// chatInboundKeys, set by a suite about Stream Chat's delivery endpoint before it starts
 	// the harness, are what its deliveries are checked against, on every node. Nil leaves it
 	// unconfigured.
@@ -553,7 +563,7 @@ func (s *RouterSuite) SetupSuite() {
 	ctx := context.Background()
 	logger := slog.New(slog.DiscardHandler)
 	if s.logs != nil {
-		logger = slog.New(slog.NewTextHandler(s.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		logger = slog.New(NewLogHandler(slog.NewTextHandler(s.logs, &slog.HandlerOptions{Level: slog.LevelDebug, ReplaceAttr: store.RedactLogAttr})))
 	}
 
 	// A shard database and Redis run the suite as a hosted shard runs: the shared rows in one
@@ -720,6 +730,12 @@ func (s *RouterSuite) SetupSuite() {
 	if s.manageOff {
 		manageKey = ""
 	}
+	// Every suite keeps an activity record, as cmd/router does, written often enough for a test
+	// to wait for. Closed before the store and after the server, so it writes what it held.
+	s.activity, err = activity.New(activity.Options{Store: pgStore, Interval: suiteActivityInterval, Logger: logger})
+	s.Require().NoError(err)
+	s.activity.Start()
+	s.T().Cleanup(s.activity.Close)
 	knowledgeBase := s.knowledgeWriter(policies)
 	server := s.newNode(s.shard, logger, Options{
 		Routers:   s.modalities,
@@ -730,6 +746,7 @@ func (s *RouterSuite) SetupSuite() {
 		Sessions:  sessions,
 		Store:     pgStore,
 		Configs:   s.configs,
+		Activity:  s.activity,
 		Live:      liveClient,
 		Auth:      s.authenticator(),
 		AuthMode:  s.authMode(),
@@ -751,6 +768,7 @@ func (s *RouterSuite) SetupSuite() {
 		VoiceLibrary:      voices.NewCatalogue(),
 		Dispatch:          s.dispatch,
 		Policies:          policies,
+		Documents:         s.documentReader(),
 		Connectors:        s.connectors,
 		// Connector consents and credentials seal under the suite's key.
 		ConnectorSecrets:   connectorSecrets,
@@ -761,6 +779,7 @@ func (s *RouterSuite) SetupSuite() {
 		Stream:             s.stream,
 		HookSecret:         suiteStreamSecret,
 		TelnyxPublicKey:    s.telnyxPublicKey,
+		TwilioAuthToken:    s.twilioAuthToken,
 		ChatInboundKeys:    s.chatInboundKeys,
 		TelnyxConnectionID: s.telnyxConnectionID,
 		AudioFloor:         s.audioFloor,
@@ -1801,6 +1820,7 @@ func (s *RouterSuite) otherNodeHolding(workers *dispatch.Pool, keyring *auth.Sea
 		Workers:           everyWorker,
 		Store:             s.store,
 		Configs:           s.configs,
+		Activity:          s.activity,
 		Live:              s.live,
 		Auth:              s.authenticator(),
 		AuthMode:          s.authMode(),
@@ -2459,8 +2479,7 @@ func textSession(id *string) CreateSessionRequest {
 // inProject lists the sessions in one project, which is how a test sharing a fixture's app
 // finds its own.
 func inProject(project string) SessionQuery {
-	equals := Equals(project)
-	return SessionQuery{Filter: &SessionFilter{ProjectID: &equals}}
+	return SessionQuery{Filter: sessionFilter(map[string]any{"project_id": project})}
 }
 
 // ids is the ids of a list of sessions, in order.
@@ -2584,4 +2603,11 @@ func (s *RouterSuite) giveApp(customer string, app int64, key string) *chattest.
 	s.apps.mu.Unlock()
 	s.stream.Invalidate(customer)
 	return own
+}
+
+// documentReader reads the files sent with a question, closed with the suite.
+func (s *RouterSuite) documentReader() *extract.Extractor {
+	reader := NewDocumentReader(extract.Options{})
+	s.T().Cleanup(func() { _ = reader.Close() })
+	return reader
 }

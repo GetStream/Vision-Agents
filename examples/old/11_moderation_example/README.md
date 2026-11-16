@@ -9,7 +9,9 @@ Real-time content moderation for video calls. A custom Roboflow model running **
 3. Processes video frames at 15 FPS using local inference
 4. Censors detected gestures with a heavy Gaussian blur
 5. Issues verbal warnings via an LLM (Gemini Flash Lite) + TTS (Deepgram)
-6. Escalates: gentle warning → stern warning with removal threat → kicks the user via the Stream API
+6. Escalates per user: gentle warning → stern warning with removal threat → kicks the user via the Stream API
+
+Offences are counted for each user separately, and a detection counts against the participant whose video it was found in. A kicked user is removed from the call but not blocked: a detection model can be wrong, so banning someone is left to a human moderator.
 
 ## Setup
 
@@ -80,4 +82,5 @@ The `LocalModerationProcessor` extends the Roboflow cloud detection processor bu
 - No cloud round-trip per frame — lower latency
 - Detected regions are covered with a heavy Gaussian blur
 - Detection events trigger LLM responses via `agent.responses.create()`
+- Each detection event carries the participant whose video track produced it, so warnings and the kick apply to that user
 - A warning lock prevents overlapping warnings; a `_wait_for_tts_playback` helper ensures the full warning is heard before any kick

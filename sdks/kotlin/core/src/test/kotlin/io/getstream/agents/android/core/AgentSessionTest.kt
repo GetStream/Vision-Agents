@@ -11,6 +11,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
+import kotlin.time.Instant
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
@@ -501,6 +502,30 @@ class AgentSessionTest {
         assertEquals("""{"title":"Hours"}""", request.body)
         assertEquals("Hours", updated.title)
         assertEquals("Hours", chat.session.title)
+        chat.close()
+    }
+
+    @Test
+    fun `pinning and unpinning go through the handle, which holds the session as it now is`() = runBlocking {
+        val pinned = SESSION.replace("\"text\":true", "\"text\":true,\"pinned_at\":\"2026-11-10T09:00:00Z\"")
+        router.answer = {
+            when {
+                it.method != "PATCH" -> Reply(201, SESSION)
+                it.body.contains("true") -> Reply(200, pinned)
+                else -> Reply(200, SESSION)
+            }
+        }
+        val chat = agents.chat()
+
+        val held = chat.pin()
+        assertEquals("""{"pinned":true}""", router.requests.last().body)
+        assertEquals(Instant.parse("2026-11-10T09:00:00Z"), held.pinnedAt)
+        assertEquals(held.pinnedAt, chat.session.pinnedAt)
+
+        chat.unpin()
+        assertEquals("PATCH /v1/agents/sessions/s1", router.requests.last().let { "${it.method} ${it.path}" })
+        assertEquals("""{"pinned":false}""", router.requests.last().body)
+        assertNull(chat.session.pinnedAt)
         chat.close()
     }
 

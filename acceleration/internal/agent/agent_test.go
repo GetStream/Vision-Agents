@@ -943,6 +943,11 @@ type AgentSuite struct {
 	// finds is what the agent may find out about now, when a test gives it a search
 	// provider.
 	finds *stubSearch
+	// drawings is where the agent queues the pictures it is asked for, when a test gives it
+	// an image target.
+	drawings *drawQueue
+	// attribution is who the conversation's work is for.
+	attribution routing.Attribution
 	// guards screens what the agent may be asked, when a test gives it a policy.
 	guards *stubGuardrail
 	// performing is what a voice that acts stage directions asks to have said about it.
@@ -1007,6 +1012,8 @@ func (s *AgentSuite) SetupTest() {
 	s.knows = nil
 	s.namespace = ""
 	s.finds = nil
+	s.drawings = nil
+	s.attribution = routing.Attribution{}
 	s.guards = nil
 	s.subagent = nil
 	s.sees = false
@@ -1115,9 +1122,17 @@ func (s *AgentSuite) joinText() {
 	if s.shelf != nil {
 		publish = s.shelf.publish
 	}
+	var draws Drawer
+	imageTarget := ""
+	if s.drawings != nil {
+		draws = s.drawings.queue
+		imageTarget = "image-fast"
+	}
 
 	agent, err := New(Options{
 		Text:               true,
+		Draws:              draws,
+		ImageTarget:        imageTarget,
 		Sandbox:            box,
 		Publish:            publish,
 		Instructions:       "be brief",
@@ -1125,6 +1140,7 @@ func (s *AgentSuite) joinText() {
 		MaxToolRounds:      s.toolRoundLimit,
 		CustomerID:         "acme",
 		AgentID:            s.agentID,
+		Attribution:        s.attribution,
 		SubagentTarget:     subagentTarget,
 		Skills:             s.skills,
 		Tools:              s.tools,
@@ -1609,6 +1625,24 @@ func (s *AgentSuite) TestThoseAlreadyInTheCallAreReportedBeforeJoined() {
 		}
 	}
 	s.Equal([]string{"participant", "joined"}, order)
+}
+
+func (s *AgentSuite) TestNoLogLineOfACallerHoldsTheirNumber() {
+	s.logs = &logLines{}
+	s.join(true)
+	participant := stt.Participant{ID: "session-1", UserID: "sip-+15550001111"}
+	s.edge.attending <- Attendance{Participant: participant, Joined: true}
+	s.edge.attending <- Attendance{Participant: participant, Joined: false}
+
+	s.eventually(func() bool { return len(s.logs.records("a participant left")) == 1 },
+		"the caller hanging up was never logged")
+
+	s.Equal("phone_caller", s.logs.records("a participant left")[0]["participant"])
+	s.logs.mu.Lock()
+	logged := s.logs.buf.String()
+	s.logs.mu.Unlock()
+	s.NotContains(logged, "5550001111")
+	s.NotContains(logged, "sip-")
 }
 
 func (s *AgentSuite) TestSomebodyLeavingIsReportedSeparately() {

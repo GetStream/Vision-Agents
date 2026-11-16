@@ -371,5 +371,5 @@ func (s *LedgerSuite) TestMigratingAgainChangesNothing() {
 	s.Require().NoError(s.ledger.Migrate(s.ctx))
 	var version int64
 	s.Require().NoError(s.ledger.DB().QueryRowContext(s.ctx, "SELECT max(version_id) FROM goose_db_version").Scan(&version))
-	s.Equal(int64(6), version)
+	s.Equal(int64(7), version)
 }

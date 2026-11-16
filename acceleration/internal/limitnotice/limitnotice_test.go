@@ -187,3 +187,17 @@ func TestSlackSaysWhyItRefused(t *testing.T) {
 
 	require.ErrorContains(t, slack.Post(context.Background(), "hello"), "not_in_channel")
 }
+
+func TestTheAnomalyMessageIsTaggedAndLinksOnlyTheStaffPage(t *testing.T) {
+	links := Links{App: "https://dash.example/organization/{organization}/{app}/agents/",
+		Staff: "https://dash.example/internal/organizations/{organization}"}
+	anomaly := store.CostAnomaly{
+		OrganizationID: "org-1", Day: time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC), SpentMicros: 12_345_678, BaselineMicros: 2_000_000,
+	}
+
+	require.Equal(t, "[STAGING] :chart_with_upwards_trend: Organization `org-1` spent $12.35 on 2026-03-10 (UTC), "+
+		"6.2x its median day of the 7 before ($2.00).\n<https://dash.example/internal/organizations/org-1|Staff page>",
+		AnomalyMessage("staging", links, anomaly))
+	require.NotContains(t, AnomalyMessage("staging", Links{Staff: "https://dash.example/{organization}/{app}"}, anomaly), "<",
+		"a staff page naming an app links nothing: an anomaly has none")
+}

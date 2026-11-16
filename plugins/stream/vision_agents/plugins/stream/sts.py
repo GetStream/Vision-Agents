@@ -10,7 +10,6 @@ from vision_agents.core.edge.types import Participant
 from vision_agents.core.instructions import Instructions
 from vision_agents.core.llm import realtime
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
-from vision_agents.core.llm.tool_call import using_tool_call_context
 from vision_agents.core.utils.utils import cancel_and_wait
 
 from ._backend import Backend
@@ -347,10 +346,9 @@ class STS(realtime.Realtime):
             frame, "", SocketLine(self._send, self._holds)
         )
         try:
-            with using_tool_call_context(tool_call_context):
-                _, result, error = await self._run_one_tool(
-                    tool_call, timeout_s=TOOL_TIMEOUT
-                )
+            _, result, error = await self._run_one_tool(
+                tool_call, timeout_s=TOOL_TIMEOUT, tool_call_context=tool_call_context
+            )
         finally:
             self._holds.forget(call_id)
         if self._socket is None or not self._socket.open:

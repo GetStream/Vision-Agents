@@ -207,6 +207,10 @@ type Spec struct {
 	// first response, where a resumed conversation's history goes, and it is recorded
 	// nowhere: not as turns, not in a transcript, not in Chat.
 	History []persistent.HistoryLine
+	// Documents are files carried into this session from the conversation it forks, read
+	// as text, the caller's own (store.DocumentScope). They are pinned ahead of every reply
+	// and kept under this session as well, so a fork of it carries them on.
+	Documents []store.ConversationDocument `json:"-"`
 
 	Instructions string
 	// Greeting is said on joining without going through the model. Empty means the agent
@@ -227,8 +231,14 @@ type Spec struct {
 	// LLMFallbacks are tried in order when LLMTarget fails a turn, from the config's
 	// llm_fallbacks.
 	LLMFallbacks []string
-	STTTarget    string
-	TTSTarget    string
+	// Agents are the app's other text agents a text session may hand work to as tools,
+	// from the config's agents.
+	Agents []store.ChildAgent
+	// RunDeadline is when the run this session answers is given up, and zero for a session
+	// that is no run. Nothing it hands work to is given longer.
+	RunDeadline time.Time
+	STTTarget   string
+	TTSTarget   string
 	// STSTarget routes one native audio model that hears and speaks for itself. Naming
 	// one makes this a native session: the agent opens that model and no transcriber,
 	// conversation model or voice, so the three targets above are left as they are.
@@ -241,7 +251,11 @@ type Spec struct {
 	// SearchTarget routes what the agent finds out about today. Unlike the three above it
 	// is not needed for a conversation to happen, so a deployment that routes no search
 	// simply leaves the tool unoffered.
-	SearchTarget  string
+	SearchTarget string
+	// ImageTarget routes the pictures the agent draws. Unlike SearchTarget it has no
+	// default and no per-session override: a picture costs enough that only the agent's
+	// config turns drawing on, and a device opening a session cannot.
+	ImageTarget   string
 	Voice         string
 	LanguageHints []string
 	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
@@ -278,8 +292,8 @@ type Spec struct {
 	// model: the session request's, else the agent config's. Zero is the router's default.
 	ResumeHistory store.ResumeHistory
 	// FloorControl is the model that controls the floor, and how long a caller may wait once
-	// they stop: the session request's, else the agent config's. Zero is the default flow
-	// controller.
+	// they stop: the session request's, else the agent config's. Zero is no choice, which the
+	// router's default rules (FloorControlOf).
 	FloorControl store.FloorControl
 	// Scheduling is the agent config's scheduled-task settings: whether the
 	// scheduling tools are offered, and the defaults a task takes.
@@ -322,7 +336,8 @@ type Spec struct {
 	// functions: the session carries the request out to whoever asked for the session
 	// and waits for them to answer it.
 	Tools []harness.Tool
-	// ToolTimeoutMs bounds how long the model waits on one of them. Zero is the default.
+	// ToolTimeoutMs bounds how long the model waits on one of them. Zero is the default,
+	// defaultToolTimeout.
 	ToolTimeoutMs int
 	// MaxToolRounds is the reply to a tool result, since the caller last spoke, made to
 	// answer rather than reach for another tool. Zero is the agent's default; negative is
@@ -410,9 +425,11 @@ func FromConfig(config store.AgentConfig) Spec {
 		Voice:          config.Voice,
 		LLMTarget:      config.LLM,
 		LLMFallbacks:   config.LLMFallbacks,
+		Agents:         config.Agents,
 		SubagentTarget: config.Subagent,
 		VideoSource:    config.VideoSource, VideoMaxFrames: config.VideoMaxFrames,
 		SearchTarget:       config.Search,
+		ImageTarget:        config.Image,
 		Instructions:       config.Instructions,
 		Greeting:           config.Greeting,
 		VaryGreeting:       config.GreetingMode == store.GreetingVariation,
@@ -753,15 +770,17 @@ func joinedCallID(id string) string {
 	return strings.TrimSpace(id)
 }
 
-// ConversationChannel is the id, without its type, of the agent channel ConversationID names:
-// the channel a call's transcript is written into (chatlog.Options.Channel). Empty for a
-// ConversationID that names no agent channel, whose transcript goes into the agent id's.
-func (s Spec) ConversationChannel() string {
-	channel := strings.TrimPrefix(s.ConversationID, streamapp.AgentChannelType+":")
-	if channel == s.ConversationID {
-		return ""
+// ConversationChannel is the type and id of the channel ConversationID names: the channel a
+// call's transcript is written into (chatlog.Options.ChannelType and Channel). That is an agent
+// channel, or for a Dispatched session, which only the Router opens, a channel of whichever type
+// it opened, such as one an agent config answers in (store.AgentConfig.ChatChannels). Both are
+// empty for a ConversationID that names neither, whose transcript goes into the agent id's.
+func (s Spec) ConversationChannel() (channelType, channel string) {
+	channelType, channel, _ = strings.Cut(s.ConversationID, ":")
+	if channel == "" || channelType != streamapp.AgentChannelType && !s.Dispatched {
+		return "", ""
 	}
-	return channel
+	return channelType, channel
 }
 
 // TranscriptChannel is the cid of the channel a call's transcript is written into: the
@@ -769,11 +788,11 @@ func (s Spec) ConversationChannel() string {
 // ConversationChannel. Example: conversation_id "messaging:X" under agent id "front-desk" is
 // written into agent:front-desk.
 func (s Spec) TranscriptChannel() string {
-	channel := s.ConversationChannel()
-	if channel == "" {
-		channel = s.AgentID
+	channelType, channel := s.ConversationChannel()
+	if channelType == "" {
+		channelType, channel = streamapp.AgentChannelType, s.AgentID
 	}
-	return streamapp.AgentChannelType + ":" + channel
+	return channelType + ":" + channel
 }
 
 // Shared reports whether more than one verified person writes in the conversation: a thread

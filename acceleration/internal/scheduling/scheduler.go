@@ -125,6 +125,8 @@ const (
 	ReasonThreadGone = "thread_gone"
 	// ReasonConnectionRemoved is a task's thread whose connection, its line, was removed.
 	ReasonConnectionRemoved = "connection_removed"
+	// ReasonTierLimit is a call or a text its organization's tier limits refuse.
+	ReasonTierLimit = "tier_limit_reached"
 	// ReasonPaused is not a failure: it is on the missed run of a one-shot
 	// whose time came while the task was paused, and of an occurrence the
 	// cut-over of a move skipped whose run the source had started.

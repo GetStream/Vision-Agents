@@ -17,7 +17,10 @@ from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_queue import VideoLatestNQueue
 from vision_agents.core.warmup import Warmable
-from vision_agents.plugins.moondream.moondream_utils import handle_device
+from vision_agents.plugins.moondream.moondream_utils import (
+    handle_device,
+    resolve_revision,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +45,9 @@ class LocalVLM(llm.VideoLLM, Warmable):
         model_name: Hugging Face model identifier (default: "moondream/moondream3-preview")
         options: AgentOptions for model directory configuration.
                 If not provided, uses default_agent_options()
+        revision: Commit hash of the model repo to load. The default model is pinned
+                to a known commit. Required with a custom model_name, because
+                Moondream runs code from the model repo.
     """
 
     provider_name = "moondream_local"
@@ -52,11 +58,13 @@ class LocalVLM(llm.VideoLLM, Warmable):
         force_cpu: bool = False,
         model_name: str = "moondream/moondream3-preview",
         options: Optional[AgentOptions] = None,
+        revision: Optional[str] = None,
     ):
         super().__init__()
 
         self.mode = mode
         self.model_name = model_name
+        self.revision = resolve_revision(model_name, revision)
         self.force_cpu = force_cpu
 
         if options is None:
@@ -118,6 +126,7 @@ class LocalVLM(llm.VideoLLM, Warmable):
 
             load_kwargs = {
                 "trust_remote_code": True,
+                "revision": self.revision,
                 "cache_dir": self.options.model_dir,
             }
 

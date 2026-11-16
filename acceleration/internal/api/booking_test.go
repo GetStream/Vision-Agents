@@ -58,6 +58,16 @@ func (s *BookingSuite) TestANumberIsNotBoughtWithNoCreditEvenWithLimitsOff() {
 	s.Contains(string(payload), "add credit first")
 }
 
+func (s *BookingSuite) TestANumberIsNotBoughtOnTrialCredit() {
+	s.usage.Trial(s.T(), s.app.organization.ID, 5_000_000)
+
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/phone/numbers",
+		BuyNumberRequest{Vendor: "telnyx", E164: "+15125551234"})
+
+	s.Require().Equal(http.StatusPaymentRequired, status, string(payload))
+	s.Contains(string(payload), codeTopUpRequired)
+}
+
 func (s *BookingSuite) TestANumberWithCreditIsAskedOfTheVendor() {
 	s.usage.Credit(s.T(), s.app.organization.ID, 5_000_000)
 
@@ -91,6 +101,18 @@ func (s *DLCBookingSuite) TestAUseCaseWhoseFeesTheCreditDoesNotCoverIsNotSubmitt
 
 	s.Require().Equal(http.StatusPaymentRequired, status, string(payload))
 	s.Contains(string(payload), codeInsufficientCredits)
+}
+
+func (s *DLCBookingSuite) TestAUseCaseIsNotSubmittedOnTrialCredit() {
+	s.usage.Trial(s.T(), s.app.organization.ID, 100_000_000)
+	s.completeProfile()
+	var created UseCase
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/phone/use-cases", completeUseCase("support"), &created))
+
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/phone/use-cases/"+created.Id+"/submit", nil)
+
+	s.Require().Equal(http.StatusPaymentRequired, status, string(payload))
+	s.Contains(string(payload), codeTopUpRequired)
 }
 
 func (s *DLCBookingSuite) TestAUseCaseWhoseFeesAreCoveredIsRegisteredAndBilled() {

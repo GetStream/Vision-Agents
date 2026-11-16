@@ -719,6 +719,47 @@ func documentHandWritten(api huma.API) {
 		},
 	})
 	document.AddOperation(&huma.Operation{
+		OperationID: "receiveTelnyxEvent",
+		Method:      http.MethodPost,
+		Path:        telnyxEventsHookPath,
+		Summary:     "Receive a Telnyx account event",
+		Description: "Where the Telnyx account's notification channel sends account events, such as a " +
+			"port-out or a number order. Unauthenticated because Telnyx is not a customer: each " +
+			"event is checked against the account's Ed25519 signature, then logged and counted in " +
+			"vendor_account_events_total by its type and level. A deployment with no Telnyx key " +
+			"answers 404, so nobody else can raise the count.",
+		Security: []map[string][]string{},
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The event is counted"},
+			"400": {Description: "The signed body is not a Telnyx event"},
+			"401": {Description: "The event is not signed by Telnyx"},
+			"404": {Description: "Telnyx events are not configured"},
+			"413": {Description: "The event is over 64 KiB"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
+		OperationID: "receiveTwilioEvent",
+		Method:      http.MethodPost,
+		Path:        twilioEventsHookPath,
+		Summary:     "Receive a Twilio account event",
+		Description: "Where the Twilio account sends its Monitor alerts (the Debugger webhook) and its " +
+			"usage triggers' callbacks, as form posts. Unauthenticated because Twilio is not a " +
+			"customer: each event is checked against X-Twilio-Signature, made with the account's " +
+			"Auth Token over ROUTER_PUBLIC_URL and this path, then logged and counted in " +
+			"vendor_account_events_total by its error code or usage category and its level. An " +
+			"alert whose Sid was counted in the last hour is answered 204 and not counted again. A " +
+			"deployment with no Twilio webhook token or no public URL answers 404, so nobody else " +
+			"can raise the count.",
+		Security: []map[string][]string{},
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The event is counted, or is an alert already counted in the last hour"},
+			"400": {Description: "The signed form is not a Monitor alert or a usage trigger"},
+			"401": {Description: "The event is not signed by Twilio"},
+			"404": {Description: "Twilio events are not configured"},
+			"413": {Description: "The event is over 1 MiB"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
 		OperationID: "receiveChatDelivery",
 		Method:      http.MethodPost,
 		Path:        chatInboundPath,

@@ -42,7 +42,7 @@ var (
 	bookingsRefused = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
 		Name:      "bookings_refused_total",
-		Help:      "Purchases refused before their vendor was asked, by why: no_credit, spend_hard_limit, suspended, unchecked",
+		Help:      "Purchases refused before their vendor was asked, by why: no_credit, unfunded, spend_hard_limit, suspended, unchecked",
 	}, []string{"reason"})
 	bookingsExpired = promauto.NewCounter(prometheus.CounterOpts{
 		Namespace: "router",
@@ -55,10 +55,16 @@ var (
 var errBookingUnchecked = uncheckedWith(ErrSpendCheckUnavailable,
 	"the organization's credit could not be checked, so the purchase was not made; try again shortly")
 
+// errUnfunded is a booking refused because the organization's only credit is trial credit.
+var errUnfunded = refusedWith(ErrTopUpRequired,
+	"buying numbers and registering for 10DLC take a top-up first: trial credit does not cover them")
+
 // Book sets micros of the owner's organization's credit aside for a purchase, before its vendor
 // is asked, for at most BookingTTL. It reads the organization's standing from the usage service
 // in the call, in every limits mode, and refuses a suspended organization (ErrSuspended), one
-// whose credit less its holds and other bookings does not cover the amount (ErrNoCredits), or
+// whose only credit is trial credit (ErrTopUpRequired), since every purchase is paid to a
+// vendor on its behalf, one whose credit less its holds and other bookings does not cover the
+// amount (ErrNoCredits), or
 // at least a micro of it for a purchase with no known price, and one the amount would take past
 // Stream's spend hard limit (ErrSystemLimit). A standing or a Redis that cannot be read refuses
 // it as unchecked (ErrSpendCheckUnavailable): a purchase can wait. With limits on, the booking
@@ -89,6 +95,10 @@ func (e *Enforcer) Book(ctx context.Context, owner routing.Owner, micros int64) 
 	standing := standings[0]
 	if standing.Status == usage.AccountSuspended {
 		return e.bookingRefused(organization, "suspended", ErrSuspended, nil)
+	}
+	// One with no credit at all is refused below, as having none.
+	if !standing.Funded && standing.TrialMicros > 0 {
+		return e.bookingRefused(organization, "unfunded", errUnfunded, nil)
 	}
 
 	held := e.money.heldFor(organization)

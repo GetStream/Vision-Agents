@@ -6,8 +6,7 @@ import 'package:flutter_demo/agent_chat.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stream_chat/stream_chat.dart' as stream;
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
-import 'package:vision_agents_chat/vision_agents_chat.dart';
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents/stream_agents.dart';
 
 void main() {
   test('describeWork names each skill in words', () {
@@ -21,139 +20,49 @@ void main() {
     expect(describeWork(const []), isNull);
   });
 
-  test(
-    'isThinkingAbout is false when nothing was asked and the session is idle',
-    () {
+  group('AgentChat.activityOf', () {
+    test('is thinking while responding or working with no named skill', () {
+      const thinking = AIAgentActivity(state: AIAgentActivityState.thinking);
+      expect(AgentChat.activityOf(ConversationState.responding), thinking);
+      expect(AgentChat.activityOf(const Working([])), thinking);
+    });
+
+    test('names the skills being worked on', () {
       expect(
-        isThinkingAbout(
-          state: ConversationState.idle,
-          messages: [
-            _question('q1'),
-            _reply('a1', text: 'It is on its way.'),
-          ],
-          askedAfter: null,
+        AgentChat.activityOf(const Working(['refund_decision'])),
+        const AIAgentActivity(
+          state: AIAgentActivityState.checkingExternalSources,
+          text: 'Working on refund decision',
         ),
-        isFalse,
       );
-    },
-  );
+    });
 
-  test('isThinkingAbout is true as soon as the first question is asked', () {
-    expect(
-      isThinkingAbout(
-        state: ConversationState.idle,
-        messages: const [],
-        askedAfter: '',
-      ),
-      isTrue,
-    );
-  });
-
-  test('isThinkingAbout is true before the question reaches the channel', () {
-    expect(
-      isThinkingAbout(
-        state: ConversationState.idle,
-        messages: [_reply('a1', text: 'Hello.')],
-        askedAfter: 'a1',
-      ),
-      isTrue,
-    );
+    test('is null when idle or ended', () {
+      expect(AgentChat.activityOf(ConversationState.idle), isNull);
+      expect(AgentChat.activityOf(ConversationState.ended), isNull);
+    });
   });
 
   test(
-    'isThinkingAbout is true while the reply is generating with nothing to show',
+    'AgentChat.listed leaves out deleted messages and unwritten replies',
     () {
-      expect(
-        isThinkingAbout(
-          state: ConversationState.idle,
-          messages: [_question('q1'), _reply('a1', generating: true)],
-          askedAfter: '',
+      final messages = [
+        _question('q1'),
+        stream.Message(
+          id: 'gone',
+          text: 'Deleted',
+          deletedAt: DateTime.utc(2026),
         ),
-        isTrue,
-      );
+        _reply('empty', generating: false),
+        _reply('starting', generating: true),
+        _reply('done', text: 'It ships on Friday.'),
+      ];
+
+      final listed = AgentChat.listed(messages, LiveReasoning());
+
+      expect([for (final m in listed) m.id], ['q1', 'starting', 'done']);
     },
   );
-
-  test('isThinkingAbout is false once the reply shows text', () {
-    expect(
-      isThinkingAbout(
-        state: ConversationState.responding,
-        messages: [
-          _question('q1'),
-          _reply('a1', text: 'Your order', generating: true),
-        ],
-        askedAfter: '',
-      ),
-      isFalse,
-    );
-  });
-
-  test('isThinkingAbout is false once the reply has finished', () {
-    expect(
-      isThinkingAbout(
-        state: ConversationState.idle,
-        messages: [
-          _question('q1'),
-          _reply('a1', text: 'It ships on Friday.'),
-        ],
-        askedAfter: '',
-      ),
-      isFalse,
-    );
-  });
-
-  test('isThinkingAbout is false once the reply shows a step', () {
-    expect(
-      isThinkingAbout(
-        state: ConversationState.responding,
-        messages: [
-          _question('q1'),
-          _reply('a1', generating: true, attachments: [_toolCall('call_1')]),
-        ],
-        askedAfter: '',
-      ),
-      isFalse,
-    );
-  });
-
-  test(
-    'isThinkingAbout is false while skills say what they are working on',
-    () {
-      expect(
-        isThinkingAbout(
-          state: const Working(['refund_decision']),
-          messages: [_question('q1')],
-          askedAfter: '',
-        ),
-        isFalse,
-      );
-    },
-  );
-
-  test(
-    'isThinkingAbout is true while the model responds to a question asked elsewhere',
-    () {
-      expect(
-        isThinkingAbout(
-          state: ConversationState.responding,
-          messages: [_question('q1')],
-          askedAfter: null,
-        ),
-        isTrue,
-      );
-    },
-  );
-
-  test(
-    'AgentReply.isEmptyReply is true for a reply with no text and no steps',
-    () {
-      expect(_reply('a1', generating: true).isEmptyReply, isTrue);
-    },
-  );
-
-  test("AgentReply.isEmptyReply is false for the person's own message", () {
-    expect(_question('q1').isEmptyReply, isFalse);
-  });
 
   test('AgentReply.steps reads the ai_ attachments in order, by their ids', () {
     final reply = _reply(
@@ -223,90 +132,198 @@ void main() {
       expect(AgentMessage(_question('q1'), reasoning).role, AIMessageRole.user);
     },
   );
+
   group('AgentChat', () {
     late _Router router;
-    late VisionAgents agents;
+    late StreamAgents agents;
+    late stream.StreamChatClient client;
     late AgentSession session;
 
     setUp(() async {
       router = await _Router.start();
-      agents = VisionAgents(url: router.url, customerId: 'acme', userId: 'ada');
+      agents = StreamAgents(url: router.url, customerId: 'acme', userId: 'ada');
+      client = stream.StreamChatClient('stream-key');
       session = await agents.attach('s1');
     });
 
     tearDown(() async {
       await session.close();
+      await client.dispose();
       agents.close();
       await router.close();
     });
 
-    test('ask keeps why the question could not be sent', () async {
-      router.responsesStatus = 500;
-      final chat = AgentChat.following(session, _channel([_question('q1')]));
+    stream.Channel channelOf([List<stream.Message> messages = const []]) {
+      final channel = client.channel('messaging', id: 'agent-s1');
+      channel.state = stream.ChannelClientState(
+        channel,
+        stream.ChannelState(
+          channel: stream.ChannelModel(type: 'messaging', id: 'agent-s1'),
+          messages: messages,
+        ),
+      );
+      return channel;
+    }
 
-      await chat.ask('Where is my order?');
+    void receive(stream.Channel channel, stream.Message message) =>
+        client.handleEvent(
+          stream.Event(
+            type: stream.EventType.messageNew,
+            cid: channel.cid,
+            message: message,
+          ),
+        );
 
-      expect(chat.failure, isNotNull);
-      expect(chat.isThinking, isFalse);
-    });
+    void update(stream.Channel channel, stream.Message message) =>
+        client.handleEvent(
+          stream.Event(
+            type: stream.EventType.messageUpdated,
+            cid: channel.cid,
+            message: message,
+          ),
+        );
+
+    AgentChat closing(AgentChat chat) {
+      addTearDown(() async {
+        await chat.close();
+        chat.dispose();
+      });
+      return chat;
+    }
+
+    AIConversation<AgentMessage> conversationOf(AgentChat chat) {
+      final conversation = AIConversation(transport: chat);
+      addTearDown(conversation.dispose);
+      return conversation;
+    }
 
     test(
-      'ask clears the last failure and thinks until the reply begins',
+      'publishes messages, skills activity, and llm failure with retry',
       () async {
-        router.responsesStatus = 500;
-        final chat = AgentChat.following(session, _channel([_question('q1')]));
-        await chat.ask('Where is my order?');
-        router.responsesStatus = 202;
+        final channel = channelOf([_question('q0'), _reply('r0', text: 'Hi.')]);
+        final chat = closing(
+          AgentChat.following(session, channel, hasOlderMessages: true),
+        );
+        final conversation = conversationOf(chat);
+        final socket = await router.socket;
 
-        await chat.ask('Where is my order?');
+        expect([for (final m in conversation.messages) m.id], ['q0', 'r0']);
+        expect(conversation.hasOlderMessages, isTrue);
 
-        expect(chat.failure, isNull);
-        expect(chat.isThinking, isTrue);
+        conversation.send('Where is order A-1042?');
+        await _until(() => router.asked == 1);
+        receive(channel, _question('q1'));
+        receive(channel, _reply('r1', generating: true));
+
+        socket.send('{"type":"responding","turn_id":"t1"}');
+        await _until(() => conversation.activity != null);
+        expect(
+          conversation.activity,
+          const AIAgentActivity(state: AIAgentActivityState.thinking),
+        );
+
+        socket.send('{"type":"delegated","skill":"refund_decision"}');
+        await _until(() => conversation.activity?.text != null);
+        expect(conversation.activity?.text, 'Working on refund decision');
+
+        socket.send('{"type":"error","context":"llm","error":"provider 500"}');
+        await _until(() => conversation.error != null);
+        update(channel, _reply('r1', generating: false));
+        await pumpEventQueue();
+
+        expect(
+          conversation.error,
+          isA<AIAgentError>().having(
+            (e) => e.message,
+            'message',
+            AgentChat.unanswered,
+          ),
+        );
+        expect(
+          [for (final m in conversation.messages) m.id],
+          ['q0', 'r0', 'q1'],
+        );
+
+        conversation.retry();
+        await _until(() => router.asked == 2);
+        expect(conversation.error, isNull);
       },
     );
 
-    test('stop stops thinking about the question asked', () async {
-      final chat = AgentChat.following(session, _channel([_question('q1')]));
-      await chat.ask('Where is my order?');
+    test('send failure surfaces on the conversation and retries', () async {
+      router.responsesStatus = 500;
+      final chat = closing(AgentChat.following(session, channelOf()));
+      final conversation = conversationOf(chat);
 
-      chat.stop();
+      conversation.send('Where is my order?');
+      await _until(() => conversation.error != null);
+      expect(conversation.status, AIConversationStatus.error);
 
-      expect(chat.isThinking, isFalse);
+      router.responsesStatus = 202;
+      conversation.retry();
+      await _until(() => router.asked == 2);
+      expect(conversation.error, isNull);
+    });
+
+    test('stop sends interrupt over the socket', () async {
+      final chat = closing(AgentChat.following(session, channelOf()));
+      final conversation = conversationOf(chat);
+
+      conversation.send('Where is my order?');
+      await _until(() => router.asked == 1);
+      await chat.stop();
+
       expect((await (await router.socket).next())['type'], 'interrupt');
     });
 
-    test('isAnswering while the last reply is still being written', () {
-      final chat = AgentChat.following(
-        session,
-        _channel([
-          _question('q1'),
-          _reply('a1', text: 'It ships', generating: true),
-        ]),
-      );
+    test('reuses unchanged AgentMessage instances across updates', () async {
+      final channel = channelOf([
+        _question('q0'),
+        _reply('r0', text: 'Earlier.'),
+      ]);
+      final chat = closing(AgentChat.following(session, channel));
+      final before = chat.listMessages;
 
-      expect(chat.isAnswering, isTrue);
+      receive(channel, _question('q1'));
+      await _until(() => chat.listMessages.length == 3);
+
+      expect(chat.listMessages[0], same(before[0]));
+      expect(chat.listMessages[1], same(before[1]));
     });
 
-    test('isAnswering is false once the last reply is written', () {
-      final chat = AgentChat.following(
-        session,
-        _channel([_question('q1'), _reply('a1', text: 'It ships on Friday.')]),
-      );
+    test("reassembles a reply's live reasoning updates", () async {
+      final channel = channelOf();
+      final chat = closing(AgentChat.following(session, channel));
+      receive(channel, _reply('r1', generating: true));
 
-      expect(chat.isAnswering, isFalse);
+      for (final (offset, text) in [(0, 'Checking '), (9, 'policy.')]) {
+        update(
+          channel,
+          stream.Message(
+            id: 'r1',
+            extraData: {
+              'ai_generated': true,
+              'generating': true,
+              'reasoning': {'id': 'r1', 'offset': offset, 'text': text},
+            },
+          ),
+        );
+      }
+
+      await _until(
+        () => chat.reasoning[(message: 'r1', step: 'r1')] == 'Checking policy.',
+      );
     });
 
-    test(
-      'isAnswering while the session is responding, before any reply',
-      () async {
-        final chat = AgentChat.following(session, _channel([_question('q1')]));
+    test('close disposes the watched channel', () async {
+      final channel = channelOf([_question('q0')]);
+      final chat = AgentChat.following(session, channel);
 
-        (await router.socket).send('{"type":"responding","turn_id":"t1"}');
-        await _until(() => chat.session.state is Responding);
+      await chat.close();
+      chat.dispose();
 
-        expect(chat.isAnswering, isTrue);
-      },
-    );
+      expect(channel.state, isNull);
+    });
   });
 }
 
@@ -337,16 +354,6 @@ stream.Attachment _toolCall(String id) => stream.Attachment(
   extraData: const {'v': 1, 'status': 'running', 'name': 'lookup_order'},
 );
 
-/// The channel [messages] are in, as watching it would have opened it.
-stream.Channel _channel(List<stream.Message> messages) =>
-    stream.Channel.fromState(
-      stream.StreamChatClient('stream-key'),
-      stream.ChannelState(
-        channel: stream.ChannelModel(type: 'messaging', id: 'agent-s1'),
-        messages: messages,
-      ),
-    );
-
 /// A router on loopback that answers what a chat session does: reading the session, its
 /// events socket, and asking, with [responsesStatus].
 class _Router {
@@ -358,6 +365,7 @@ class _Router {
       }
       await utf8.decodeStream(request);
       final asking = request.uri.path.endsWith('/responses');
+      if (asking) asked += 1;
       request.response
         ..statusCode = asking ? responsesStatus : 200
         ..headers.contentType = ContentType.json
@@ -377,6 +385,9 @@ class _Router {
 
   /// The status asking is answered with.
   int responsesStatus = 202;
+
+  /// How many times `/responses` was called.
+  int asked = 0;
 
   Uri get url => Uri.parse('http://127.0.0.1:${_server.port}');
 
@@ -422,9 +433,14 @@ class _Router {
 /// The session's events socket, from the router's end.
 class _Socket {
   _Socket(this._socket) {
-    _socket.listen(
-      (frame) => _frames.add(jsonDecode('$frame') as Map<String, Object?>),
-    );
+    _socket.listen((frame) {
+      final decoded = jsonDecode('$frame') as Map<String, Object?>;
+      _frames.add(decoded);
+      // As the router does once a session is told to close, which the app waits for.
+      if (decoded['type'] == 'close') {
+        unawaited(_socket.close(1000, 'the session ended'));
+      }
+    });
   }
 
   final WebSocket _socket;

@@ -8,7 +8,7 @@
  * Needs a router to talk to — `go run ./cmd/router` in `acceleration/` — and
  * `STREAM_API_KEY` and `STREAM_API_SECRET` for the call itself.
  */
-import { Agent } from "@stream-io/calypso";
+import { Agent } from "@stream-io/stream-agents";
 
 const agent = new Agent({
   name: "John",
@@ -32,6 +32,7 @@ agent.tools.register<{ city: string }>({
   run: ({ city }) => ({ city, sky: "clear", celsius: 21 }),
 });
 
+await agent.sync();
 const session = await agent.join();
 console.log(`open this to talk to the agent:\n${await agent.monitorURL(session)}\n`);
 

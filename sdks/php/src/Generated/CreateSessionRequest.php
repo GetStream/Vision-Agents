@@ -83,7 +83,7 @@ final readonly class CreateSessionRequest
         public ?string $timezone = null,
         // What to call the conversation, for a list a person reads, until the router names a persistent one for what...
         public ?string $title = null,
-        // How long the model waits for a tool result. Zero is the default.
+        // How long the model waits for the result of a tool the caller or a worker runs, in milliseconds. Zero or omi...
         public ?int $toolTimeoutMs = null,
         /** @var list<SessionTool>|null */
         public ?array $tools = null,

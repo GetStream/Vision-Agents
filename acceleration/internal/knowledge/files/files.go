@@ -22,7 +22,6 @@ import (
 	"path"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,7 +31,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/extract"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/ocr"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ocrrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -57,9 +55,9 @@ const MaxScannedPages = 500
 // read with the rest of its figures left out, rather than refused.
 const MaxPictureReads = 500
 
-// figuresTarget is the shortcut a file's pictures are read through: models that can say
+// FiguresTarget is the shortcut a file's pictures are read through: models that can say
 // what a chart or a diagram shows, and Mistral OCR for a scan's text when none answers.
-const figuresTarget = "ocr-figures"
+const FiguresTarget = "ocr-figures"
 
 const (
 	// defaultQueue is a queue of its own: an asynq worker given a task it has no handler for
@@ -73,8 +71,6 @@ const (
 	// concurrency is how many files are read at once. A PDF is read in an engine of its own
 	// with up to 512 MiB, so few.
 	concurrency = 2
-	// picturesAtOnce is how many pictures of one file are read at once.
-	picturesAtOnce = 4
 )
 
 // Reader reads a page from its picture. *ocrrouter.Router is one.
@@ -457,9 +453,14 @@ func (s *Service) read(ctx context.Context, owned metered.OwnedKnowledge, payloa
 
 	// A read takes long enough for the document to be removed or replaced meanwhile, and
 	// passages written for it then would bring it back. It is looked for again once
-	// written, since it can go between the look and the write.
-	if _, err := s.waiting(ctx, payload); err != nil {
+	// written, since it can go between the look and the write. The look also counts the
+	// passages about to be written, so a write that stops part way is still deleted whole.
+	covered, err := s.store.CoverKnowledgeFile(ctx, payload.CustomerID, payload.ID, payload.ObjectKey, len(passages))
+	if err != nil {
 		return err
+	}
+	if !covered {
+		return errOvertaken
 	}
 	if err := owned.Upsert(ctx, document.Namespace, passages); err != nil {
 		return err
@@ -495,24 +496,15 @@ func (s *Service) read(ctx context.Context, owned metered.OwnedKnowledge, payloa
 	return nil
 }
 
-// look is one picture a model is asked to read: a scanned page, a page with figures on it,
-// or a picture an office file holds.
-type look struct {
-	// page is the page's place in the document's pages, and picture the picture's place
-	// in its pictures, whichever the look is of; the other is -1.
-	page, picture int
-	mode          ocr.Mode
-}
-
 // readPictures has every scanned page read for its text and figures, every page with
 // figures on it read for them, and every picture in the file read for what it shows, a
-// few at a time, through figuresTarget. A file with scans and nothing to read them is
-// refused only when the scans are all it has: the pages with text are still worth
-// looking up.
+// few at a time, through FiguresTarget (ReadPictures). A file with scans and nothing to
+// read them is refused only when the scans are all it has: the pages with text are still
+// worth looking up.
 //
 // A scan that cannot be read fails the read, to be tried again, since the page's text is
 // missing without it. A figure that cannot be read is left out: every model in
-// figuresTarget failed it, which is more likely the picture than an outage, and reading
+// FiguresTarget failed it, which is more likely the picture than an outage, and reading
 // the file again would only pay for its scans twice.
 func (s *Service) readPictures(ctx context.Context, payload readPayload, read *extract.Document) error {
 	scanned := read.Scanned()
@@ -523,80 +515,21 @@ func (s *Service) readPictures(ctx context.Context, payload readPayload, read *e
 		}
 		return nil
 	}
-	if len(scanned) > MaxScannedPages {
+	refusedSpend := func(err error) bool {
+		return slices.ContainsFunc(spendRefusals, func(refusal error) bool { return errors.Is(err, refusal) })
+	}
+	err := ReadPictures(ctx, s.ocr, ocrrouter.Request{CustomerID: payload.CustomerID, Target: FiguresTarget}, read,
+		PictureLimits{Scanned: MaxScannedPages, Reads: MaxPictureReads}, refusedSpend,
+		s.logger.With("customer_id", payload.CustomerID))
+	var tooMany *TooManyScansError
+	switch {
+	case errors.As(err, &tooMany):
 		return &unreadable{reason: fmt.Sprintf("The file has %d scanned pages, more than the %d read from their "+
-			"pictures. Split it, or upload a copy with a text layer.", len(scanned), MaxScannedPages)}
+			"pictures. Split it, or upload a copy with a text layer.", tooMany.Scanned, tooMany.Limit)}
+	case refusedSpend(err):
+		return &unpaid{err: spentOf(err)}
 	}
-
-	at := make(map[int]int, len(read.Pages))
-	for i, page := range read.Pages {
-		at[page.Number] = i
-	}
-	var looks []look
-	for _, number := range scanned {
-		looks = append(looks, look{page: at[number], picture: -1, mode: ocr.TextAndFigures})
-	}
-	for _, number := range read.Figured() {
-		looks = append(looks, look{page: at[number], picture: -1, mode: ocr.Figures})
-	}
-	for i := range read.Pictures {
-		looks = append(looks, look{page: -1, picture: i, mode: ocr.Figures})
-	}
-	if len(looks) > MaxPictureReads {
-		s.logger.Info("a file has more figures than are read, the rest left unsummarised",
-			"figures", len(looks), "read", MaxPictureReads)
-		looks = looks[:MaxPictureReads]
-	}
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	var (
-		mu    sync.Mutex
-		first error
-		wg    sync.WaitGroup
-		slots = make(chan struct{}, picturesAtOnce)
-	)
-	for _, wanted := range looks {
-		if ctx.Err() != nil {
-			break
-		}
-		wg.Add(1)
-		slots <- struct{}{}
-		go func() {
-			defer wg.Done()
-			defer func() { <-slots }()
-			text, err := s.readPicture(ctx, payload, read, wanted)
-			mu.Lock()
-			defer mu.Unlock()
-			if err != nil {
-				refusedSpend := slices.ContainsFunc(spendRefusals, func(refusal error) bool { return errors.Is(err, refusal) })
-				if refusedSpend {
-					err = &unpaid{err: spentOf(err)}
-				}
-				if wanted.mode != ocr.Figures || refusedSpend || ctx.Err() != nil {
-					if first == nil {
-						first = err
-						cancel()
-					}
-					return
-				}
-				s.logger.Warn("a figure in a file could not be read, and is left out",
-					"customer_id", payload.CustomerID, "page", wanted.page, "picture", wanted.picture, "error", err)
-				return
-			}
-			switch {
-			case wanted.picture >= 0:
-				read.Pictures[wanted.picture].Text = text
-			case wanted.mode == ocr.Figures:
-				read.Pages[wanted.page].Figures = unread(text, read.Pages[wanted.page].Text)
-			default:
-				read.Pages[wanted.page].Text = text
-				read.Pages[wanted.page].Scanned = false
-			}
-		}()
-	}
-	wg.Wait()
-	return first
+	return err
 }
 
 // spentOf is the spend refusal err holds, which is what its customer is told.
@@ -607,32 +540,6 @@ func spentOf(err error) error {
 		}
 	}
 	return err
-}
-
-func (s *Service) readPicture(ctx context.Context, payload readPayload, read *extract.Document, wanted look) (string, error) {
-	var picture extract.Image
-	what := ""
-	if wanted.picture >= 0 {
-		picture = extract.Image{MIME: read.Pictures[wanted.picture].MIME, Data: read.Pictures[wanted.picture].Data}
-		what = fmt.Sprintf("picture %d", wanted.picture+1)
-	} else {
-		number := read.Pages[wanted.page].Number
-		drawn, err := read.Render(ctx, number)
-		if err != nil {
-			return "", err
-		}
-		picture = drawn
-		what = fmt.Sprintf("page %d", number)
-	}
-	page := ocr.Request{Image: picture.Data, MediaType: picture.MIME, Mode: wanted.mode}
-	if err := page.Validate(); err != nil {
-		return "", fmt.Errorf("files: %s cannot be read: %w", what, err)
-	}
-	reading, err := s.ocr.Read(ctx, ocrrouter.Request{CustomerID: payload.CustomerID, Target: figuresTarget, Page: page})
-	if err != nil {
-		return "", fmt.Errorf("files: read %s from its picture: %w", what, err)
-	}
-	return reading.Markdown, nil
 }
 
 // pagesOf is how many pages the file had, 0 for one without pages.

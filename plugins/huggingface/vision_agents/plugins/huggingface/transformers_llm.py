@@ -203,6 +203,8 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         trust_remote_code: Allow custom model code (needed for Qwen, Phi, etc.).
         max_new_tokens: Default maximum tokens to generate per response.
         max_tool_rounds: Maximum tool-call rounds per response (default 3).
+        revision: Commit hash, tag or branch of the model repo to load.
+            Pin a commit hash when ``trust_remote_code`` is on.
     """
 
     provider_name = PLUGIN_NAME
@@ -216,6 +218,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         trust_remote_code: bool = False,
         max_new_tokens: int = 512,
         max_tool_rounds: int = 3,
+        revision: Optional[str] = None,
     ):
         super().__init__()
 
@@ -224,6 +227,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         self._quantization = quantization
         self._torch_dtype_config = torch_dtype
         self._trust_remote_code = trust_remote_code
+        self._revision = revision
         self._max_new_tokens = max_new_tokens
         self._max_tool_rounds = max_tool_rounds
 
@@ -251,6 +255,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
 
         load_kwargs: dict[str, Any] = {
             "trust_remote_code": self._trust_remote_code,
+            "revision": self._revision,
             "torch_dtype": torch_dtype,
         }
 
@@ -273,6 +278,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         tokenizer = AutoTokenizer.from_pretrained(
             self.model_id,
             trust_remote_code=self._trust_remote_code,
+            revision=self._revision,
             padding_side="left",
         )
         if tokenizer.pad_token is None:

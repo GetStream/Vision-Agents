@@ -248,19 +248,20 @@ func (s *ClassifierRouterSuite) TestTheGuardrailRouteStaysOnJevWhileJevIsUp() {
 }
 
 func (s *ClassifierRouterSuite) TestEachVendorIsAskedAtItsOwnEndpointWithItsOwnKey() {
-	// The vendors share a protocol, so the one thing that tells them apart on the wire is
-	// where the questions go and which key opens it.
-	vendors := map[string]struct{ keyEnv, baseEnv, path, model string }{
-		"typesafe":   {"TYPESAFE_API_KEY", "TYPESAFE_BASE_URL", "/v1/systemone", "jev-latest"},
-		"openrouter": {"OPENROUTER_API_KEY", "OPENROUTER_BASE_URL", "/api/alpha/decisions", "cloudflare/clef-flash"},
-		"perplexity": {"PERPLEXITY_API_KEY", "PERPLEXITY_BASE_URL", "/v1/decisions", "pplx-decider-v1-27b"},
+	// Most vendors share a protocol, so what tells them apart on the wire is where the
+	// questions go and which key opens it.
+	vendors := map[string]struct{ keyEnv, baseEnv, path, model, authHeader, authPrefix string }{
+		"typesafe":   {"TYPESAFE_API_KEY", "TYPESAFE_BASE_URL", "/v1/systemone", "jev-latest", "Authorization", "Bearer "},
+		"openrouter": {"OPENROUTER_API_KEY", "OPENROUTER_BASE_URL", "/api/alpha/decisions", "cloudflare/clef-flash", "Authorization", "Bearer "},
+		"perplexity": {"PERPLEXITY_API_KEY", "PERPLEXITY_BASE_URL", "/v1/decisions", "pplx-decider-v1-27b", "Authorization", "Bearer "},
+		"gemini":     {"GOOGLE_API_KEY", "GEMINI_BASE_URL", "/v1beta/decisions", "gemini-decision-1", "x-goog-api-key", ""},
 	}
 	for provider, vendor := range vendors {
 		s.Run(provider, func() {
 			var path, auth string
 			var body map[string]any
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				path, auth = r.URL.Path, r.Header.Get("Authorization")
+				path, auth = r.URL.Path, r.Header.Get(vendor.authHeader)
 				_ = json.NewDecoder(r.Body).Decode(&body)
 				_, _ = w.Write([]byte(`{"model":"m","answers":{"heard":{"type":"noul","noul":0.9}},"usage":{}}`))
 			}))
@@ -278,7 +279,7 @@ func (s *ClassifierRouterSuite) TestEachVendorIsAskedAtItsOwnEndpointWithItsOwnK
 
 			s.Equal(provider, built.Provider())
 			s.Equal(vendor.path, path)
-			s.Equal("Bearer "+provider+"-key", auth)
+			s.Equal(vendor.authPrefix+provider+"-key", auth)
 			s.Equal(vendor.model, body["model"])
 			s.InDelta(0.9, answered.Answers["heard"].Yes, 0.001)
 		})

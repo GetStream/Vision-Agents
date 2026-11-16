@@ -24,7 +24,7 @@ final readonly class Account
         public int $balanceWarningMicros,
         // Whose threshold it is: the tier's, the one Stream set for this organization, or the organization policy's b...
         public string $balanceWarningSource,
-        // Every credit entry summed: top-ups, grants, refunds and adjustments.
+        // Every credit entry summed: top-ups, grants, trial credit, refunds and adjustments.
         public int $grantedMicros,
         // What Stream allows the organization: its tier's settings, with those Stream set for this organization laid...
         public Limits $limits,
@@ -35,6 +35,10 @@ final readonly class Account
         public string $status,
         // The tier the organization is billed on.
         public string $tier,
+        // The organization has credit that is not trial credit: a top-up, net of its refunds and disputes, or credit...
+        public bool $funded,
+        // What of granted_micros is the trial credit Stream gave the organization to try it with.
+        public int $trialMicros,
         // The settings in limits Stream set for this organization rather than leaving its tier's, as dotted paths suc...
         /** @var list<string>|null */
         public ?array $ownLimits = null,
@@ -59,6 +63,8 @@ final readonly class Account
             spentMicros: Json::int($data, 'spent_micros'),
             status: Json::string($data, 'status'),
             tier: Json::string($data, 'tier'),
+            funded: Json::bool($data, 'funded'),
+            trialMicros: Json::int($data, 'trial_micros'),
             ownLimits: array_key_exists('own_limits', $data) && $data['own_limits'] !== null ? Json::strings($data, 'own_limits') : null,
             spendHardLimit: array_key_exists('spend_hard_limit', $data) && $data['spend_hard_limit'] !== null ? SpendHardLimitUsage::fromArray(Json::object($data, 'spend_hard_limit')) : null,
         );
@@ -82,6 +88,8 @@ final readonly class Account
         $out['spent_micros'] = $this->spentMicros;
         $out['status'] = $this->status;
         $out['tier'] = $this->tier;
+        $out['funded'] = $this->funded;
+        $out['trial_micros'] = $this->trialMicros;
         if ($this->ownLimits !== null) {
             $out['own_limits'] = $this->ownLimits;
         }

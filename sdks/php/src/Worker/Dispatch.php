@@ -24,7 +24,7 @@ use GetStream\VisionAgents\Inbound\InboundMessage;
 use GetStream\VisionAgents\Json;
 use GetStream\VisionAgents\Responses;
 use GetStream\VisionAgents\Session;
-use GetStream\VisionAgents\ToolCall;
+use GetStream\VisionAgents\ToolCallContext;
 use GetStream\VisionAgents\Tools;
 use Revolt\EventLoop;
 use Throwable;
@@ -61,7 +61,7 @@ final class Dispatch
     private array $hosted = [];
     /** @var array<int, Future<mixed>> */
     private array $running = [];
-    /** @var array<string, ToolCall> hosted calls running, by what `tool_cancel` names them by */
+    /** @var array<string, ToolCallContext> hosted calls running, by what `tool_cancel` names them by */
     private array $hostedCalls = [];
     private Holds $holds;
     private int $nextJob = 0;
@@ -331,7 +331,7 @@ final class Dispatch
         }
         $arguments = $frame['arguments'] ?? '';
         $key = self::hostedKey($frame);
-        $toolCallContext = ToolCall::fromFrame($frame, '', $this->tell(...), $this->holds, $key);
+        $toolCallContext = ToolCallContext::fromFrame($frame, '', $this->tell(...), $this->holds, $key);
         $this->hostedCalls[$key] = $toolCallContext;
         $this->track(function () use ($tools, $id, $name, $arguments, $key, $toolCallContext): void {
             $result = ['type' => 'tool_result', 'tool_call_id' => $id, 'id' => $id];

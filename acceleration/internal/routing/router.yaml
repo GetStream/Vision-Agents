@@ -2428,11 +2428,11 @@ llm:
     # the first thing that arrives.
     #
     # OpenAI do not train on API traffic unless the organisation opts in, so that half is a
-    # no. Retention is the gap. Abuse-monitoring logs are kept for up to 30 days, but a
-    # response sent without store: false - which is how this provider sends one unless asked
-    # to store it - is kept as application state for "at least 30 days", a floor with no
-    # ceiling, so it is unspecified. Zero Data Retention would bring it to none, and it is an
-    # approval OpenAI grant per organisation rather than a flag sent with a request.
+    # no. The provider sends every response with store: false, so none is kept as application
+    # state, which OpenAI would otherwise do for "at least 30 days", a floor with no ceiling.
+    # What is left is abuse-monitoring logs, kept for up to 30 days. Zero Data Retention would
+    # bring it to none, and it is an approval OpenAI grant per organisation rather than a flag
+    # sent with a request.
     - provider: openai
       model: gpt-6-luna
       description: "OpenAI's most efficient model, and what Vision prefers. Reads images, and the cheapest OpenAI model here."
@@ -2444,7 +2444,7 @@ llm:
       input_modalities: [image]
       data_policy:
         trains_on_data: "no"
-        retention: unspecified
+        retention: 30d
 
     # What llm-fast prefers, so this is the model a conversation gets unless it is down. It
     # is the dearest of this tier by some way and its thinking is billed as output, which is
@@ -2534,7 +2534,7 @@ llm:
       input_modalities: [image]
       data_policy:
         trains_on_data: "no"
-        retention: unspecified
+        retention: 30d
 
     # GPT-5.6 Sol, which GPT-6 Sol below replaces as what llm-thinking prefers. It stays
     # declared because callers name it outright as their subagent, and a name that is no
@@ -2681,7 +2681,7 @@ llm:
       input_modalities: [image]
       data_policy:
         trains_on_data: "no"
-        retention: unspecified
+        retention: 30d
 
     # GPT-6.1 Sol is GPT-6 Sol's direct upgrade at the same input and output price, and what
     # llm-thinking prefers, so this is the model the skills run on unless it is down.
@@ -2701,7 +2701,7 @@ llm:
       input_modalities: [image]
       data_policy:
         trains_on_data: "no"
-        retention: unspecified
+        retention: 30d
 
     # GPT-6 Astra is OpenAI's most capable model, for the hardest end-to-end work, and 53 on
     # the Artificial Analysis Intelligence Index, the top of the non-Anthropic field. It
@@ -2719,7 +2719,7 @@ llm:
       input_modalities: [image]
       data_policy:
         trains_on_data: "no"
-        retention: unspecified
+        retention: 30d
 
     # Meta's Muse Spark 1.3 on their hosted Model API, 48 on the Artificial Analysis
     # Intelligence Index at max effort and 45 at xhigh, and at around 230-250 output tokens
@@ -3025,6 +3025,28 @@ llm:
         trains_on_data: "no"
         retention: unspecified
 
+    # Gemini 4 Hydrogen, Google's cheaper Gemini 4 for coding and agent work. It takes low,
+    # medium, high and xhigh, where Argon stops at high, and defaults to high as Google do.
+    # Artificial Analysis score it 27, 41, 51 and 54 across those, so high is one above
+    # Argon, and on our own runs it started answering in a sixth of Argon's time. xhigh
+    # spent two and a half times the output of high for 3 points. The same unified
+    # 1M-token context as Argon. $1.50 in, $0.075 cached and $7.50 out per
+    # 1M tokens, flat across the context, thinking billed as output, implicit caching only
+    # (ai.google.dev/gemini-api/docs/pricing, read 2026-11-13). The data terms are the paid
+    # Developer API's, as for Argon above.
+    - provider: gemini
+      model: gemini-4-hydrogen
+      description: "Google's cheaper Gemini 4, quick at agent and tool work. Reads images, and can be asked to think from low to xhigh."
+      benchmark: { intelligence_index: 51 }
+      context_window: 1048576
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+
     # The load benchmark's stand-in, built only where mock_providers is on. Everything
     # about this entry is chosen to keep it out of the way of real traffic: zxx is the ISO
     # code for "no linguistic content", so no shortcut asking for a language reaches it,
@@ -3133,15 +3155,17 @@ llm:
       tier: high-quality
       prefer: openai/gpt-6.1-sol
 
-    # What the agent moderator (Nora) reviews flagged content on. Gemma on our own GPUs is
-    # preferred: a review is a short ruling against labels, and the app's moderation volume
-    # is billed by the GPU minute there rather than by the token. GPT-6.1 Sol, what
-    # llm-thinking prefers, catches it being down or GEMMA_BASE_URL being unset. Named
-    # outright with only because the two share no tier. It has no title: the moderator
-    # page offers no model picker, so it is the template's default rather than a choice.
+    # What the agent moderator (Nora) reviews flagged content on. GPT-5.6 Luna is preferred
+    # for now. Gemma on our own GPUs, which was preferred before, stands behind it: a review
+    # is a short ruling against labels, and the app's moderation volume is billed by the GPU
+    # minute there rather than by the token. GPT-6.1 Sol, what llm-thinking prefers, catches
+    # both being down, or OpenAI failing Luna while GEMMA_BASE_URL is unset. Named outright
+    # with only because the three share no tier. It has no title: the moderator page offers
+    # no model picker, so it is the template's default rather than a choice.
     llm-moderator:
-      prefer: gemma/gemma-4-26B-A4B-it
+      prefer: openai/gpt-5.6-luna
       only:
+        - openai/gpt-5.6-luna
         - gemma/gemma-4-26B-A4B-it
         - openai/gpt-6.1-sol
 
@@ -3409,6 +3433,25 @@ decision_model:
       realtime: true
       tier: low-latency
 
+    # Gemini Decision 1 on Google's own Decisions API (GOOGLE_API_KEY), at $0.10/1M input
+    # tokens of any modality and no output (ai.google.dev/gemini-api/docs/pricing, read
+    # 2026-11-12). It is the only model that endpoint serves, and it reads images, audio,
+    # video and PDFs as well as text, though only text reaches it from here. On 2026-11-12
+    # it answered a 128-case guardrail, injection, routing and severity set as well as Jev
+    # and the Deciders, at Jev's latency, for the highest rate here: about $0.18 per 1,000
+    # twelve-question guardrail calls, against $0.08 for Jev and $0.03 for the Deciders.
+    # Google do not use paid-tier traffic to improve their products and log it for an
+    # unstated period, with no zero-retention path on the Developer API.
+    - provider: gemini
+      model: gemini-decision-1
+      description: "Google's multimodal decision model. As quick as Jev and as accurate, at the highest rate of any decision model here."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+
   aliases:
     en-low-latency:
       languages: [en]
@@ -3627,7 +3670,7 @@ ocr:
       input_modalities: [image]
       data_policy:
         trains_on_data: "no"
-        retention: unspecified
+        retention: 30d
 
     # Claude Haiku 5.5 at Luna's rates, a fallback that sees for the pages and pictures read
     # with their figures summarised. It thinks before it answers, so a page takes more

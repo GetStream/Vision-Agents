@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io' show Platform;
 
 import 'package:http/http.dart' as http;
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents/stream_agents.dart';
 
 /// Where the router is, where this app's own backend is, and the tools it answers itself.
 ///
@@ -50,7 +50,7 @@ abstract final class Demo {
   /// The user this device talks as, to whom a call waiting for approval is addressed.
   static const userId = 'demo-caller';
 
-  static final agents = VisionAgents(
+  static final agents = StreamAgents(
     url: routerUrl,
     customerId: customerId,
     apiKey: streamApiKey,

@@ -387,7 +387,7 @@ public sealed class Dispatch
                         ("timeout_ms", (long)timeout.TotalMilliseconds))).ConfigureAwait(false);
                 }
                 break;
-            case "tool_call" when ToolCall.ToRun(frame):
+            case "tool_call" when ToolCallContext.ToRun(frame):
                 await RunHostedAsync(frame, cancellationToken).ConfigureAwait(false);
                 break;
             case "tool_held":
@@ -454,7 +454,7 @@ public sealed class Dispatch
         var cancel = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         // Tracked before the call starts, so a tool_cancel read next finds it.
         _hostedCalls[key] = cancel;
-        var toolCallContext = ToolCall.Of(frame, "", new ToolLine((sent, _) => TellAsync(sent), _holds, key));
+        var toolCallContext = ToolCallContext.Of(frame, "", new ToolLine((sent, _) => TellAsync(sent), _holds, key));
         Track(async () =>
         {
             JsonObject result;

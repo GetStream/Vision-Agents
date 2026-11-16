@@ -22,9 +22,14 @@ class SessionQuery:
     Attributes:
         cursor (str | Unset): The next_cursor of the previous page, sent with the same filter and sort. Omitted is the
             first page.
-        filter_ (SessionFilter | Unset): Which sessions to list. A field not listed here is refused rather than ignored.
+        filter_ (SessionFilter | Unset): Which sessions to list. The keys of one object are ANDed. $and and $or each
+            take 1 to 10 filters and nest up to 3 deep; a whole filter holds at most 30 field conditions. An empty filter
+            lists every session the caller may see. Any other key, and any other operator, is refused with a 400 that names
+            it and lists the fields that can be filtered.
         limit (int | Unset): Up to 200. Omitted is 25.
-        sort (list[SessionSort] | None | Unset): Omitted is updated_at, or relevance for a text search.
+        sort (list[SessionSort] | None | Unset): Omitted is last_message_at descending, or relevance for a text search.
+            One of: last_message_at; pinned, then last_message_at, which lists the pinned sessions first; review_score, for
+            a server-side caller; relevance, for a text search and nothing else.
     """
 
     cursor: str | Unset = UNSET

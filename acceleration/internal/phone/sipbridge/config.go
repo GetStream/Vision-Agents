@@ -23,6 +23,9 @@ type Config struct {
 	// connection stays open through NAT and the other side's BYE can still reach us.
 	KeepaliveInterval time.Duration
 	Logger            *slog.Logger
+	// OnChange is called, on any goroutine, after a re-INVITE passed from one side to the
+	// other changed what either leg last sent. Nil calls nothing.
+	OnChange func()
 	// guard checks where the customer leg's requests go. Its zero value allows only public
 	// addresses; tests on loopback set their own.
 	guard guard

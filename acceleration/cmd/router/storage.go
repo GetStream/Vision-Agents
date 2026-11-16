@@ -98,8 +98,10 @@ func storageHourOf(text string, now time.Time) (time.Time, error) {
 
 // jobRecorder is the recorder a job's rows of modality are written through, by a writer of the
 // job's own that ships to the usage service when one is set, priced by the list in force, with
-// the policies saying whose app each row's organization is and its tier. stop drains the
-// writer; what it has not shipped by then, the routers' sweeper ships.
+// the policies saying whose app each row's organization is and its tier. The writer ships under
+// a job source, job/<shard>/<host>: the rows are dated to the period they bill, so they are not
+// a router's event lag. stop drains the writer; what it has not shipped by then, the routers'
+// sweeper ships, under its own router/<shard>/<host> source, so those rows do count in the lag.
 func jobRecorder(ctx context.Context, settings config.Config, pgStore *store.Store, modality routing.Modality,
 	logger *slog.Logger) (*routing.Recorder, func(), error) {
 	usageClient, err := newUsageClient(settings, pgStore, logger)
@@ -131,7 +133,7 @@ func jobRecorder(ctx context.Context, settings config.Config, pgStore *store.Sto
 	})
 	host, _ := os.Hostname()
 	shard := cmp.Or(settings.Shard, routing.Unsharded)
-	source := routing.Source(shard, host)
+	source := routing.JobSource(shard, host)
 	writer := routing.NewWriter(routing.WriterOptions{
 		Store: pgStore, Logger: logger, Gate: policies, Usage: usageClient, Source: source,
 	})

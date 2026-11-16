@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/internal/redact"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
@@ -159,7 +160,8 @@ func (a *Agent) StartCall(ctx context.Context, from, to string) (*Session, error
 		return nil, errors.New("agents: the router placed the call for no session")
 	}
 
-	a.logger.Info("ringing", "to", to, "from", from, "session", *placed.SessionId)
+	a.logger.Info("ringing",
+		"to", redact.Number(to), "from", redact.Number(from), "session", *placed.SessionId)
 	return a.join(ctx, stream.Call{
 		SessionID: *placed.SessionId,
 		Voice:     true,

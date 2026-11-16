@@ -34,6 +34,8 @@ public data class Session(
     val title: String,
     val description: String,
     val projectId: String,
+    /** The team the session's usage is counted under, or empty. */
+    val team: String,
     val custom: JsonObject,
     val instructions: String,
     val llm: String,
@@ -45,6 +47,8 @@ public data class Session(
     val createdAt: Instant,
     val closedAt: Instant?,
     val lastResponseAt: Instant?,
+    /** When this was pinned, or null for one that is not. */
+    val pinnedAt: Instant? = null,
 ) {
     public enum class State {
         Live,
@@ -81,6 +85,7 @@ public data class Session(
             title = schema.title.orEmpty(),
             description = schema.description.orEmpty(),
             projectId = schema.projectId.orEmpty(),
+            team = schema.team.orEmpty(),
             custom = JsonObject(schema.custom.orEmpty()),
             instructions = schema.instructions.orEmpty(),
             llm = schema.llm.orEmpty(),
@@ -90,6 +95,7 @@ public data class Session(
             createdAt = instant(schema.createdAt),
             closedAt = instantOrNull(schema.closedAt),
             lastResponseAt = instantOrNull(schema.lastResponseAt),
+            pinnedAt = instantOrNull(schema.pinnedAt),
         )
     }
 }

@@ -18,6 +18,8 @@ final readonly class ErrorDetail
         // What went wrong, for a person to read. Its wording may change; branch on code.
         public string $message,
         public ErrorType|string $type,
+        // Which limit refused the work, present with tier_limit_reached only: country, per_day, recipients_per_day or...
+        public ?string $limit = null,
     ) {
     }
 
@@ -31,6 +33,7 @@ final readonly class ErrorDetail
             docUrl: Json::string($data, 'doc_url'),
             message: Json::string($data, 'message'),
             type: Json::enum($data, 'type', ErrorType::class),
+            limit: array_key_exists('limit', $data) && $data['limit'] !== null ? Json::string($data, 'limit') : null,
         );
     }
 
@@ -46,6 +49,9 @@ final readonly class ErrorDetail
         $out['doc_url'] = $this->docUrl;
         $out['message'] = $this->message;
         $out['type'] = Json::enumValue($this->type);
+        if ($this->limit !== null) {
+            $out['limit'] = $this->limit;
+        }
         return $out;
     }
 }

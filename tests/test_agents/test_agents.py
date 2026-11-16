@@ -1084,6 +1084,29 @@ class TestAgent:
 
         assert edge.created_calls == ["phone-+15125551234"]
 
+    async def test_answering_does_not_log_full_phone_numbers(self, caplog):
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+        arriving = InboundCall(
+            call_id="phone-1",
+            call_type="default",
+            called_number="+15125551234",
+            caller_number="+15550001111",
+        )
+
+        with caplog.at_level("INFO"):
+            async with agent.answer(arriving, wait_for_end=False):
+                pass
+
+        assert "+15125551234" not in caplog.text
+        assert "+15550001111" not in caplog.text
+        assert "1234" in caplog.text
+        assert "1111" in caplog.text
+
     async def test_answering_uses_the_call_type_the_call_arrived_on(self):
         edge = DummyEdge()
         agent = Agent(

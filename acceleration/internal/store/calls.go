@@ -133,6 +133,20 @@ func (s *Store) ReviewCall(ctx context.Context, customerID, id, summary string, 
 	if affected == 0 {
 		return unknownCall(id)
 	}
+
+	// The session recorded under the call carries the score too, so a session list filters
+	// and sorts on it without a join. A call with no session row, an incognito one or a
+	// call from before sessions were kept, has nothing to write to, which is not a failure.
+	_, err = onEveryShard(ctx, s, func(ctx context.Context, db bun.IDB) (sql.Result, error) {
+		return db.NewUpdate().Model((*AgentSession)(nil)).
+			Set("review_score = ?", score).
+			Where("id = ?", id).
+			Where("customer_id = ?", customerID).
+			Exec(ctx)
+	})
+	if err != nil {
+		return fmt.Errorf("store: review call: session score: %w", err)
+	}
 	return nil
 }
 
@@ -313,11 +327,24 @@ const requestCount = "COUNT(*) FILTER (WHERE modality NOT IN ('" + RuntimeModali
 // a call's runtime and sandbox are its own session's (session_id = ?).
 const ownSlicesOnly = "(modality NOT IN ('" + RuntimeModality + "', '" + SandboxModality + "') OR session_id = ?)"
 
-// CallUsage totals the work one call paid for. Like the models it used, it is keyed by
-// agent and window rather than by call, because a request row carries the Stream call
-// rather than the session that recorded it. Runtime and sandbox time are the exception: they
-// are the session's (sessionID), so another session of the same agent at the same time is
-// not counted.
+// ownWorkOnly keeps out of a call's totals everything other sessions of its agent did, not
+// only their sliced time: a row that names a session is counted only when it names this one.
+// A row naming none (written before requests carried the session, or outside any session)
+// can only be matched by agent and window, so those still count.
+const ownWorkOnly = "(session_id = ? OR (session_id = '' AND modality NOT IN ('" + RuntimeModality + "', '" + SandboxModality + "')))"
+
+// sessionFilter is the clause that keeps a call's totals to its own session. Without a
+// session id only the sliced time can be told apart.
+func sessionFilter(sessionID string) string {
+	if sessionID == "" {
+		return ownSlicesOnly
+	}
+	return ownWorkOnly
+}
+
+// CallUsage totals the work one call paid for: its agent's rows in its window that are its own
+// session's (sessionID), so another session of the same agent at the same time is not
+// counted. A row that names no session is matched by agent and window alone.
 //
 // Failed requests are counted: a model that read the prompt and then fell over is still
 // billed for having read it. The call's runtime and sandbox time are in its cost and not
@@ -337,7 +364,7 @@ func (s *Store) CallUsage(ctx context.Context, customerID, agentID, sessionID st
 			ColumnExpr(requestCount+" AS requests").
 			Where("customer_id = ?", customerID).
 			Where("agent_id = ?", agentID).
-			Where(ownSlicesOnly, sessionID).
+			Where(sessionFilter(sessionID), sessionID).
 			Where("started_at >= ?", from)
 		if to != nil {
 			query = query.Where("started_at <= ?", *to)
@@ -375,8 +402,8 @@ type ModelTokens struct {
 }
 
 // CallTokens is what each model a call used read, wrote and cost, the busiest first. Models
-// that bill by audio or characters rather than tokens read zero tokens. Keyed by agent and
-// window like CallUsage, its runtime the session's, and read while the call is still going
+// that bill by audio or characters rather than tokens read zero tokens. Matched like
+// CallUsage, and read while the call is still going
 // as well as after: to is nil for one that has not ended. Runtime is no model's requests.
 func (s *Store) CallTokens(ctx context.Context, customerID, agentID, sessionID string, from time.Time, to *time.Time) ([]ModelTokens, error) {
 	if customerID == "" || agentID == "" {
@@ -401,7 +428,7 @@ func (s *Store) CallTokens(ctx context.Context, customerID, agentID, sessionID s
 			ColumnExpr("COALESCE(SUM(input_video_tokens), 0) AS input_video_tokens").
 			Where("customer_id = ?", customerID).
 			Where("agent_id = ?", agentID).
-			Where(ownSlicesOnly, sessionID).
+			Where(sessionFilter(sessionID), sessionID).
 			Where("started_at >= ?", from).
 			Group("modality", "provider", "model").
 			OrderExpr("SUM(input_tokens + output_tokens) DESC, provider, model")

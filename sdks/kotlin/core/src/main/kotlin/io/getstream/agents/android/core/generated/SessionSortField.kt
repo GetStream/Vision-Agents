@@ -34,15 +34,21 @@ import kotlinx.serialization.encoding.Encoder
 
 
 /**
- * updated_at is the most recently active first. relevance is the best match first, and only sorts a text search.
+ * last_message_at is when the agent last answered, or when the session began if it has not. pinned lists the pinned sessions first: it sorts descending only, comes first, and is followed by last_message_at, descending when left out. review_score is the review's score, sessions without one last either way, and is a server-side caller's only. relevance is the best match first, and is the one sort of a text search.
  *
- * Values: updated_at,relevance,unknown_default_open_api
+ * Values: last_message_at,pinned,review_score,relevance,unknown_default_open_api
  */
 @Serializable(with = SessionSortFieldSerializer::class)
 internal enum class SessionSortField(val value: kotlin.String) {
 
-    @SerialName(value = "updated_at")
-    updated_at("updated_at"),
+    @SerialName(value = "last_message_at")
+    last_message_at("last_message_at"),
+
+    @SerialName(value = "pinned")
+    pinned("pinned"),
+
+    @SerialName(value = "review_score")
+    review_score("review_score"),
 
     @SerialName(value = "relevance")
     relevance("relevance"),

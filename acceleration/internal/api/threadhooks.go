@@ -155,25 +155,43 @@ func (s *Server) answerClaimed(ctx context.Context, origin hookOrigin, thread st
 			s.logger.Error("could not let go of a thread's turn; it runs out instead", "channel", thread.ChannelID, "error", err)
 		}
 	}()
-	// The author is told to the agent by their Stream user alone: the bridge names that user
-	// after the provider's id for them (channelbridge openThread), a phone number on a texting
-	// line, which no model is told. So each person goes under "Speaker N".
-	turn, cancelTurn := context.WithTimeout(agent.WithAuthor(routing.WithAttribution(context.Background(), chatHookAttribution(thread.CustomerID, event)), event.Message.User.ID), askTimeout)
+	s.answerHosted(origin, chatlog.ChannelType+":"+thread.ChannelID, thread.CustomerID, event,
+		func(turn context.Context) (*session.Session, error) {
+			return s.threadSession(turn, origin, thread, event)
+		})
+}
+
+// answerHosted has the Router's own session on the channel cid, the customer's, answer a
+// person's message there: a thread channel's (answerClaimed), or a channel of a type an agent
+// config answers in (answerChatChannel). open opens the session when none runs on the channel.
+func (s *Server) answerHosted(origin hookOrigin, cid, customer string, event messageEvent,
+	open func(context.Context) (*session.Session, error)) {
+	// A thread's author is told to the agent by their Stream user alone: the bridge names that
+	// user after the provider's id for them (channelbridge openThread), a phone number on a
+	// texting line, which no model is told. So each person goes under "Speaker N". The people in
+	// a channel of a type an agent config answers in are the customer's own Stream users, whom a
+	// tool may need to name: each goes under their name and user id (agent.WithWriter).
+	attributed := routing.WithAttribution(context.Background(), chatHookAttribution(customer, event))
+	written := agent.WithAuthor(attributed, event.Message.User.ID)
+	if event.ChannelType != chatlog.ChannelType {
+		written = agent.WithWriter(attributed, event.Message.User.ID, conversation.AuthorName(event.Message.User.Name))
+	}
+	turn, cancelTurn := context.WithTimeout(written, askTimeout)
 	defer cancelTurn()
 
 	// A session a caller opened on the channel through the API answers there; otherwise this
 	// router opens one for the turn. It is found by its conversation, not by its agent id,
 	// which any caller may name (threadConversation).
-	found, running := s.sessions.ByConversationWhere(chatlog.ChannelType+":"+thread.ChannelID, origin.owns)
+	found, running := s.sessions.ByConversationWhere(cid, origin.owns)
 	opened := false
 	var err error
 	if !running || !found.Spec().PersistConversation {
-		if found, err = s.threadSession(turn, origin, thread, event); err != nil {
+		if found, err = open(turn); err != nil {
 			if errors.Is(err, errNoConfigBindsLine) {
-				s.logger.Warn("could not open the conversation of a thread channel: no agent config binds its line", "channel", thread.ChannelID, "error", err)
+				s.logger.Warn("could not open the conversation of a thread channel: no agent config binds its line", "channel", cid, "error", err)
 				return
 			}
-			s.logger.Error("could not open the conversation of a thread channel", "channel", thread.ChannelID, "error", err)
+			s.logger.Error("could not open the conversation of a channel the Router answers in", "channel", cid, "error", err)
 			return
 		}
 		opened = true
@@ -181,7 +199,7 @@ func (s *Server) answerClaimed(ctx context.Context, origin hookOrigin, thread st
 	if opened {
 		defer func() {
 			if _, err := s.sessions.Close(found.ID(), session.OwnerOf(found.Spec())); err != nil {
-				s.logger.Error("could not close a thread channel's session", "channel", thread.ChannelID, "session", found.ID(), "error", err)
+				s.logger.Error("could not close the session of a channel the Router answers in", "channel", cid, "session", found.ID(), "error", err)
 			}
 		}()
 	}
@@ -201,7 +219,7 @@ func (s *Server) answerClaimed(ctx context.Context, origin hookOrigin, thread st
 		time.Sleep(threadTurnPoll)
 	}
 	if err != nil {
-		s.logger.Error("could not answer a message in a thread channel", "channel", thread.ChannelID, "session", found.ID(), "error", err)
+		s.logger.Error("could not answer a message in a channel the Router answers in", "channel", cid, "session", found.ID(), "error", err)
 		return
 	}
 	for found.Busy() && turn.Err() == nil {
@@ -277,8 +295,17 @@ const (
 
 // takeThreadTurn waits for a thread channel's turn and leases it to holder for threadTurnLease.
 func (s *Server) takeThreadTurn(ctx context.Context, channelID, holder string) error {
+	return takeTurn(ctx, func(ctx context.Context, until time.Time) (bool, error) {
+		return s.store.TakeChannelThreadTurn(ctx, channelID, holder, until)
+	})
+}
+
+// takeTurn waits for a channel's turn, asking take for a lease until threadTurnLease from now
+// every threadTurnWait: a thread channel's (takeThreadTurn) or a chat channel's
+// (answerChatChannel).
+func takeTurn(ctx context.Context, take func(context.Context, time.Time) (bool, error)) error {
 	for {
-		taken, err := s.store.TakeChannelThreadTurn(ctx, channelID, holder, time.Now().Add(threadTurnLease))
+		taken, err := take(ctx, time.Now().Add(threadTurnLease))
 		if err != nil || taken {
 			return err
 		}

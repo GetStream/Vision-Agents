@@ -25,7 +25,9 @@ class CustomConnectorRequest:
         id (str): Starts with custom_, which no built-in does, so a custom definition never stands in for one. Creating
             an id that exists stores the next revision, unless the newest already says the same.
         name (str):
-        schemes (list[str] | None): How a connection may authenticate. Each must be a scheme this deployment has.
+        schemes (list[str] | None): How a connection may authenticate. Each must be a scheme this deployment has, except
+            oauth2_client_credentials, which a custom connector cannot use: it needs a token endpoint a custom connector
+            cannot set.
         category (str | Unset):
         client (ConnectorClient | Unset): How the OAuth client a connection uses is registered, and how the client
             authenticates at the token endpoint.

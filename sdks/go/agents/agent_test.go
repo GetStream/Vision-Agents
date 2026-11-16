@@ -586,6 +586,48 @@ func TestSyncSendsTheChannelsTheAgentAnswersOn(t *testing.T) {
 	}
 }
 
+// chat_channels go as the file lists them: nil when it names none, which leaves the stored
+// list, and an empty list when it lists none, which removes it.
+func TestSyncSendsTheChatChannelsTheAgentAnswersIn(t *testing.T) {
+	for _, c := range []struct {
+		declared string
+		want     *[]acceleration.AgentChatChannel
+	}{
+		{"chat_channels:\n  - type: callouts\n  - type: shifts\n", &[]acceleration.AgentChatChannel{{Type: "callouts"}, {Type: "shifts"}}},
+		{"chat_channels:\n  - type: callouts\n    answer: mentioned\n  - type: shifts\n    answer: always\n",
+			&[]acceleration.AgentChatChannel{{Type: "callouts", Answer: pointer(acceleration.Mentioned)}, {Type: "shifts", Answer: pointer(acceleration.Always)}}},
+		{"chat_channels: []\n", &[]acceleration.AgentChatChannel{}},
+		{"chat_channels: ~\n", nil},
+		{"llm: llm-fast\n", nil},
+	} {
+		root := filepath.Join(t.TempDir(), "rota")
+		write(t, root, "agent.yaml", c.declared)
+		router := newBackend(t)
+		agent := agentOn(t, router, Options{Dir: root})
+
+		if _, err := agent.Sync(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+
+		router.mu.Lock()
+		sent := router.syncs[0].ChatChannels
+		router.mu.Unlock()
+		if !reflect.DeepEqual(sent, c.want) {
+			t.Errorf("%q: chat_channels went as %+v, not %+v", c.declared, sent, c.want)
+		}
+	}
+}
+
+// A chat channel entry with a key nobody knows is refused, as any declaration key is.
+func TestAChatChannelKeyNobodyKnowsIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "rota")
+	write(t, root, "agent.yaml", "chat_channels:\n  - type: callouts\n    mention: true\n")
+
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "mention") {
+		t.Errorf("loaded with an unknown chat channel key: %v", err)
+	}
+}
+
 func TestSyncSendsTheSchedulingTheAgentDeclared(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
 	write(t, root, "agent.yaml", `scheduling:
@@ -640,6 +682,72 @@ func TestSyncSendsTheFloorControlTheAgentDeclared(t *testing.T) {
 		router.mu.Unlock()
 		if !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%q: floor_control went as %s, not %s", c.declared, describe(got), describe(c.want))
+		}
+	}
+}
+
+// agent.yaml's agents go as written, and an empty list goes as one so it removes the stored
+// list, while a file that names none, or null, sends none, so the stored list stays.
+func TestSyncSendsTheAgentsTheAgentDeclared(t *testing.T) {
+	for _, c := range []struct {
+		declared string
+		want     *[]acceleration.ChildAgent
+	}{
+		{"mode: text\nagents:\n  - config: security-lens\n    tool: security\n    description: Reviews for security bugs.\n    timeout_ms: 90000\n    max_tool_rounds: -1\n  - {config: ranker, tool: rank}\n",
+			&[]acceleration.ChildAgent{
+				{Config: "security-lens", Tool: "security", Description: pointer("Reviews for security bugs."), TimeoutMs: pointer(int64(90000)), MaxToolRounds: pointer(int64(-1))},
+				{Config: "ranker", Tool: "rank"},
+			}},
+		{"agents: []\n", &[]acceleration.ChildAgent{}},
+		{"agents:\n", nil},
+		{"llm: openai/gpt-5.6\n", nil},
+	} {
+		root := filepath.Join(t.TempDir(), "lead")
+		write(t, root, "agent.yaml", c.declared)
+		router := newBackend(t)
+		agent := agentOn(t, router, Options{Dir: root})
+
+		if _, err := agent.Sync(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+
+		router.mu.Lock()
+		got := router.syncs[0].Agents
+		router.mu.Unlock()
+		if !reflect.DeepEqual(got, c.want) {
+			sent, _ := json.Marshal(got)
+			wanted, _ := json.Marshal(c.want)
+			t.Errorf("%q: agents went as %s, not %s", c.declared, sent, wanted)
+		}
+	}
+}
+
+// agent.yaml's image goes as written, and a file that names none sends none, so the stored one
+// stays and an agent that never asked for drawing is not offered it.
+func TestSyncSendsTheImageTargetTheAgentDeclared(t *testing.T) {
+	for _, c := range []struct {
+		declared string
+		want     *string
+	}{
+		{"mode: text\nimage: image-fast\n", pointer("image-fast")},
+		{"mode: text\nimage: \"\"\n", pointer("")},
+		{"mode: text\nimage:\n", nil},
+		{"mode: text\nllm: openai/gpt-5.6\n", nil},
+	} {
+		root := filepath.Join(t.TempDir(), "illustrator")
+		write(t, root, "agent.yaml", c.declared)
+		router := newBackend(t)
+		agent := agentOn(t, router, Options{Dir: root})
+
+		if _, err := agent.Sync(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+
+		router.mu.Lock()
+		got := router.syncs[0].Image
+		router.mu.Unlock()
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%q: image went as %v, not %v", c.declared, got, c.want)
 		}
 	}
 }

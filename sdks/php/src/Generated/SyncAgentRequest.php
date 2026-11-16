@@ -89,6 +89,14 @@ final readonly class SyncAgentRequest
         public ?SessionVideo $video = null,
         // The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voic...
         public ?string $voice = null,
+        // agent.yaml's chat_channels: the Stream Chat channel types of the app's own Stream app this agent answers in...
+        /** @var list<AgentChatChannel>|null */
+        public ?array $chatChannels = null,
+        // agent.yaml's agents: the app's other text agents this one may hand work to, each as a tool, by name. Sent,...
+        /** @var list<ChildAgent>|null */
+        public ?array $agents = null,
+        // agent.yaml's image: what the agent draws pictures with. Left out, the stored one stays; an empty string rem...
+        public ?string $image = null,
     ) {
     }
 
@@ -137,6 +145,9 @@ final readonly class SyncAgentRequest
             tts: array_key_exists('tts', $data) && $data['tts'] !== null ? Json::string($data, 'tts') : null,
             video: array_key_exists('video', $data) && $data['video'] !== null ? SessionVideo::fromArray(Json::object($data, 'video')) : null,
             voice: array_key_exists('voice', $data) && $data['voice'] !== null ? Json::string($data, 'voice') : null,
+            chatChannels: array_key_exists('chat_channels', $data) && $data['chat_channels'] !== null ? array_map(AgentChatChannel::fromArray(...), Json::objects($data, 'chat_channels')) : null,
+            agents: array_key_exists('agents', $data) && $data['agents'] !== null ? array_map(ChildAgent::fromArray(...), Json::objects($data, 'agents')) : null,
+            image: array_key_exists('image', $data) && $data['image'] !== null ? Json::string($data, 'image') : null,
         );
     }
 
@@ -260,6 +271,15 @@ final readonly class SyncAgentRequest
         }
         if ($this->voice !== null) {
             $out['voice'] = $this->voice;
+        }
+        if ($this->chatChannels !== null) {
+            $out['chat_channels'] = array_map(static fn (AgentChatChannel $each): array => $each->toArray(), $this->chatChannels);
+        }
+        if ($this->agents !== null) {
+            $out['agents'] = array_map(static fn (ChildAgent $each): array => $each->toArray(), $this->agents);
+        }
+        if ($this->image !== null) {
+            $out['image'] = $this->image;
         }
         return $out;
     }

@@ -4,7 +4,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.getstream.agents.android.core.AgentsException
 import io.getstream.agents.android.core.Session
-import io.getstream.agents.android.core.SessionQuery
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -41,9 +40,8 @@ class Conversations : ViewModel() {
     /** Reads the list again, narrowed to [searchText] when there is one. */
     suspend fun reload() {
         try {
-            val query = SessionQuery(limit = 50)
             val text = search.value
-            val page = if (text.isEmpty()) Assistant.sessions.query(query) else Assistant.sessions.search(text, query)
+            val page = if (text.isEmpty()) Assistant.sessions.query(limit = 50) else Assistant.sessions.search(text, limit = 50)
             // Only the ones kept in writing can be opened again as a chat: a session that was
             // only ever a call, or incognito, has no channel to read back.
             found.value = page.items.filter { it.conversationId.isNotEmpty() }

@@ -4,6 +4,7 @@ Function registry for managing available functions that can be called by LLMs.
 
 from __future__ import annotations
 
+import functools
 import inspect
 import re
 from typing import Any, Callable, Dict, List, Optional, Type, get_type_hints
@@ -11,6 +12,7 @@ from dataclasses import dataclass, field
 
 from .llm_types import ToolSchema
 from .tool_arguments import Arguments
+from .tool_call import ToolCallContext, context_parameter
 
 
 @dataclass
@@ -58,6 +60,8 @@ class FunctionDefinition:
     # What the model is told the function takes, and what each call's arguments are parsed
     # by before it runs.
     arguments: Arguments = field(kw_only=True)
+    # takes_context hands the function its ToolCallContext as the first argument.
+    takes_context: bool = field(default=False, kw_only=True)
 
 
 @dataclass
@@ -69,6 +73,7 @@ class _ExplicitSchemaFunction:
     parameters_schema: Dict[str, Any]
     function: Callable
     policy: ToolPolicy = ToolPolicy()
+    takes_context: bool = field(default=False, kw_only=True)
 
 
 class FunctionRegistry:
@@ -88,6 +93,9 @@ class FunctionRegistry:
     ) -> Callable:
         """
         Decorator to register a function with the registry.
+
+        A function whose first parameter is annotated `ToolCallContext` is handed the call it
+        runs for there, and the model is not told about that parameter.
 
         Args:
             name: Optional custom name for the function. If not provided, uses the function name.
@@ -129,6 +137,7 @@ class FunctionRegistry:
 
             func_name = name or func.__name__
             func_description = description or func.__doc__ or ""
+            context = context_parameter(func)
 
             # If explicit schema provided, use it directly
             if parameters_schema is not None:
@@ -141,17 +150,18 @@ class FunctionRegistry:
                     parameters_schema=parameters_schema,
                     function=func,
                     policy=policy,
+                    takes_context=context is not None,
                 )
                 return func
 
             # Otherwise, extract from type hints
             type_hints = get_type_hints(func, include_extras=True)
             sig = inspect.signature(func)
-            arguments = Arguments(func_name, func, type_hints)
+            arguments = Arguments(func_name, func, type_hints, context)
 
             parameters = []
             for param_name, param in sig.parameters.items():
-                if param_name == "self":
+                if param_name in ("self", context):
                     continue
 
                 param_type = type_hints.get(param_name, type(None))
@@ -181,6 +191,7 @@ class FunctionRegistry:
                 returns=return_type,
                 policy=policy,
                 arguments=arguments,
+                takes_context=context is not None,
             )
 
             self.functions[func_name] = function_def
@@ -221,13 +232,20 @@ class FunctionRegistry:
                 schemas.append(schema)
         return schemas
 
-    async def call_function(self, name: str, arguments: Dict[str, Any]) -> Any:
+    async def call_function(
+        self,
+        name: str,
+        arguments: Dict[str, Any],
+        tool_call_context: Optional[ToolCallContext] = None,
+    ) -> Any:
         """
         Call a registered function with the given arguments.
 
         Args:
             name: Name of the function to call.
             arguments: Dictionary of arguments to pass to the function.
+            tool_call_context: The call it runs for, handed to a function that takes one.
+                Without it, such a function is handed an empty one.
 
         Returns:
             Result of the function call.
@@ -240,19 +258,24 @@ class FunctionRegistry:
             raise KeyError(f"Function '{name}' is not registered")
 
         func_def = self.functions[name]
+        function = self.get_callable(name, tool_call_context)
 
         # For explicit schema functions, just call directly (validation is external)
         if isinstance(func_def, _ExplicitSchemaFunction):
-            return await func_def.function(**arguments)
+            return await function(**arguments)
 
-        return await func_def.function(**func_def.arguments.parse(arguments))
+        return await function(**func_def.arguments.parse(arguments))
 
-    def get_callable(self, name: str) -> Callable:
+    def get_callable(
+        self, name: str, tool_call_context: Optional[ToolCallContext] = None
+    ) -> Callable:
         """
         Get the callable function by name.
 
         Args:
             name: Name of the function
+            tool_call_context: The call it runs for, already handed to a function that
+                takes one, so what is returned takes only the model's arguments.
 
         Returns:
             The callable function
@@ -263,7 +286,12 @@ class FunctionRegistry:
         if name not in self.functions:
             raise KeyError(f"Function '{name}' is not registered")
 
-        return self.functions[name].function
+        func_def = self.functions[name]
+        if func_def.takes_context:
+            return functools.partial(
+                func_def.function, tool_call_context or ToolCallContext()
+            )
+        return func_def.function
 
     def _function_to_tool_schema(self, func_def: FunctionDefinition) -> ToolSchema:
         """Convert a function definition to a tool schema."""

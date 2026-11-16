@@ -287,10 +287,9 @@ describe("the local router", { skip: await unreachable(url) }, () => {
 
     await session.close();
 
-    const running = await agent.sessions.query({ state: "live", limit: 50 });
-    assert.ok(
-      !running.items.some((each) => each.id === session.id),
-      "a closed session is still listed as running",
-    );
+    const listed = await agent.sessions.query({ limit: 50 });
+    const row = listed.items.find((each) => each.id === session.id);
+    assert.ok(row, "a conversation that ended is not being listed");
+    assert.equal(row.state, "ended", "a closed session is still listed as running");
   });
 });

@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
@@ -168,6 +169,37 @@ func (s *KnowledgeFilesSuite) TestADocumentRemovedBeforeItsFileIsReadLeavesNothi
 	s.Empty(s.listed())
 }
 
+func (s *KnowledgeFilesSuite) TestAFileWhoseWriteFailedPartWayIsDeletedWithEveryPassageItWrote() {
+	s.knowledge.refuseWritesAfter(1)
+	s.T().Cleanup(func() { s.knowledge.failWrites(false) })
+	_, sent, _ := s.upload("long.md", []byte(sections(knowledge.WriteBatch+10)), "")
+
+	read := s.settled(sent.Id)
+	s.knowledge.failWrites(false)
+	s.Require().Equal(KnowledgeDocumentStateFailed, read.State)
+	s.Require().NotZero(s.passagesOf("long.md"), "the first batch was written")
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/knowledge/documents/"+sent.Id, nil, nil))
+
+	s.Zero(s.passagesOf("long.md"))
+}
+
+func (s *KnowledgeFilesSuite) TestAFileThatGrewAndFailedPartWayLeavesNoPassageBehindOnceDeleted() {
+	_, first, _ := s.upload("grown.md", []byte(sections(5)), "grown")
+	s.Require().Equal(KnowledgeDocumentStateIndexed, s.settled(first.Id).State)
+
+	s.knowledge.refuseWritesAfter(1)
+	s.T().Cleanup(func() { s.knowledge.failWrites(false) })
+	_, second, _ := s.upload("grown.md", []byte(sections(knowledge.WriteBatch+10)), "grown")
+	read := s.settled(second.Id)
+	s.knowledge.failWrites(false)
+	s.Require().Equal(KnowledgeDocumentStateFailed, read.State)
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/agents/knowledge/documents/"+second.Id, nil, nil))
+
+	s.Zero(s.passagesOf("grown"))
+}
+
 func (s *KnowledgeFilesSuite) TestTextPostedIsIndexedAtOnce() {
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/knowledge", map[string]any{
 		"namespace": s.namespace,
@@ -256,6 +288,18 @@ func (s *KnowledgeFilesSuite) listed() []IndexedKnowledgeDocument {
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
 		"/v1/agents/knowledge/documents?namespace="+s.namespace, nil, &listed))
 	return listed
+}
+
+// passagesOf is how many stored passages belong to source.
+func (s *KnowledgeFilesSuite) passagesOf(source string) int {
+	_, passages := s.knowledge.stored()
+	count := 0
+	for _, passage := range passages {
+		if passage.Source == source || strings.HasPrefix(passage.Source, source+" > ") {
+			count++
+		}
+	}
+	return count
 }
 
 // passageContaining is the source of the stored passage that holds text.

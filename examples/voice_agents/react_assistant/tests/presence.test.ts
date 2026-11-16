@@ -1,4 +1,4 @@
-import type { Turn } from "@stream-io/calypso";
+import type { Turn } from "@stream-io/stream-agents";
 import { describe, expect, it } from "vitest";
 
 import { Presence, phaseLabel, workingLabel } from "../src/voicePresence";

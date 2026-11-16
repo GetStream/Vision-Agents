@@ -28,12 +28,16 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/getsentry/sentry-go"
 	sentryhttp "github.com/getsentry/sentry-go/http"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
+	"github.com/redis/rueidis"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/activity"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
@@ -47,6 +51,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/extract"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/files"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
@@ -136,7 +141,10 @@ type Options struct {
 	// Users writes down the end users each app is seen acting for. Built over Store when
 	// it is not given, in which case it caches in this process alone.
 	Users *users.Recorder
-	Live  *live.Client
+	// Activity counts every request an app makes, by area and client. A deployment without
+	// one keeps no activity record.
+	Activity *activity.Recorder
+	Live     *live.Client
 	// Phone serves the telephony paths. Absent when the deployment has no vendors, in
 	// which case those paths say so rather than pretending numbers can be bought.
 	Phone *phone.Service
@@ -189,6 +197,9 @@ type Options struct {
 	// ManageKey is what Stream staff's billing paths, under /v1/manage, are reached with.
 	// Empty turns them off: they answer 404 not_configured.
 	ManageKey string
+	// Documents reads the files a person sends with a question (createResponse files). Nil
+	// refuses them as a feature this deployment does not offer.
+	Documents *extract.Extractor
 	// Knowledge fills the bases a config's knowledge_namespace has an agent read from, each
 	// call recorded for the customer and key that asked. Absent when the deployment has no
 	// knowledge provider, in which case there is nothing to fill and the path says so.
@@ -226,6 +237,9 @@ type Options struct {
 	// ChatInboundKeys check that a message delivered to the Stream Chat delivery endpoint
 	// came from Stream (ROUTER_CHAT_INBOUND_KEYS). Without one that endpoint answers 404.
 	ChatInboundKeys []ed25519.PublicKey
+	// TwilioAuthToken checks that a webhook came from Twilio (TWILIO_WEBHOOK_AUTH_TOKEN).
+	// Without it no Twilio webhook is believed.
+	TwilioAuthToken string
 	// TelnyxConnectionID is the TeXML application this router's Telnyx numbers are on
 	// (TELNYX_CONNECTION_ID). A call webhook for any other is hung up.
 	TelnyxConnectionID string
@@ -332,6 +346,8 @@ type Options struct {
 
 // Server serves the router's HTTP API.
 type Server struct {
+	// mux is what Handler built, which a middleware asks for the pattern of a path.
+	mux                *chi.Mux
 	routers            map[routing.Modality]routing.Inspector
 	pricer             pricing.Pricer
 	prices             *pricing.Active
@@ -339,6 +355,7 @@ type Server struct {
 	store              *store.Store
 	configs            *appconfig.Store
 	users              *users.Recorder
+	activity           *activity.Recorder
 	live               *live.Client
 	phone              *phone.Service
 	sessions           *session.Manager
@@ -354,6 +371,8 @@ type Server struct {
 	hookSecret         string
 	telnyxPublicKey    ed25519.PublicKey
 	chatInboundKeys    []ed25519.PublicKey
+	twilioAuthToken    string
+	twilioAlertSids    rueidis.Client // nil without Redis: every copy of an alert is counted
 	telnyxConnectionID string
 	simulations        *simulation.Runner
 	knowledge          *metered.Knowledge
@@ -427,12 +446,17 @@ type Server struct {
 	runsPerApp int64
 	// imageHTTP fetches the images a run is handed by URL.
 	imageHTTP *http.Client
+	// documents reads the files sent with a question.
+	documents *extract.Extractor
 	// callbackHTTP posts a finished recording to its callback.
 	callbackHTTP *http.Client
 	// scheduledPoll is how often a delivery waiting on the holding session looks again: a call
 	// ending, a peer's directory entry lapsing (a Redis round trip). A reply finishing, or a
 	// person's reply a follow-up waits out, is looked for every replyPoll.
 	scheduledPoll time.Duration
+	// scheduledPeerWait is how long a delivery keeps looking at the directory for a node that did
+	// not take it to let go of the session, before it fails as the node unreachable.
+	scheduledPeerWait time.Duration
 	// replyPoll is how often a delivery reading back a follow-up's reply looks at it again. A
 	// look reads the conversation held in memory (conversation.Conversation.FollowUpReply,
 	// Session.FollowUp: a lock and a map), so it costs next to nothing; at scheduledPoll a reply
@@ -545,6 +569,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		store:              options.Store,
 		configs:            configs,
 		users:              recorder,
+		activity:           options.Activity,
 		live:               options.Live,
 		phone:              options.Phone,
 		sessions:           options.Sessions,
@@ -557,6 +582,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		hookSecret:         options.HookSecret,
 		telnyxPublicKey:    options.TelnyxPublicKey,
 		chatInboundKeys:    options.ChatInboundKeys,
+		twilioAuthToken:    options.TwilioAuthToken,
 		telnyxConnectionID: options.TelnyxConnectionID,
 		simulations:        options.Simulations,
 		knowledge:          options.Knowledge,
@@ -576,6 +602,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		dataRetention:      retention,
 		exportWritesWait:   exportWritesWait,
 		scheduledPoll:      2 * time.Second,
+		scheduledPeerWait:  30 * time.Second,
 		replyPoll:          100 * time.Millisecond,
 		quota:              options.Quota,
 		policies:           options.Policies,
@@ -613,8 +640,10 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	server.proxyCallsPerMinute = options.ProxyCallsPerMinute
 	if options.Live != nil {
 		server.runSlots, server.runsPerApp = concurrency.New(options.Live.Redis(), nil), options.RunsPerApp
+		server.twilioAlertSids = options.Live.Redis()
 	}
 	server.imageHTTP = options.ImageHTTP
+	server.documents = options.Documents
 	if server.imageHTTP == nil {
 		// No proxy, which would dial on the client's behalf where the check cannot see.
 		server.imageHTTP = &http.Client{Transport: &http.Transport{Proxy: nil, DialContext: egress.DialPublic}}
@@ -737,6 +766,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
 	mux.HandleFunc("POST "+phone.CallHookPath+"/{app}", s.receiveCallEvent)
 	mux.HandleFunc("POST "+telnyxCallHookPath, s.receiveTelnyxCall)
+	mux.HandleFunc("POST "+telnyxEventsHookPath, s.receiveTelnyxEvent)
+	mux.HandleFunc("POST "+twilioEventsHookPath, s.receiveTwilioEvent)
 	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
 	mux.HandleFunc("POST "+chat.MessageHookPath+"/{app}", s.receiveMessageEvent)
 	mux.HandleFunc("POST "+chatInboundPath, s.receiveChatInbound)
@@ -758,6 +789,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+channels.HookPath+"{token}", s.receiveChannelMessage)
 	mux.HandleFunc("POST "+dlc.HookPath, s.receiveDLCReport)
 	s.newAPI(mux)
+	s.mux = mux
 	var handler http.Handler = mux
 	// Sentry is outermost so it sees panics from every middleware below it, not
 	// only from the route handlers.
@@ -774,8 +806,8 @@ func (s *Server) Handler() http.Handler {
 	// WaitForDelivery is false because most of what is served here is a long-
 	// lived socket; blocking the handler's return on event delivery would hold
 	// the connection open past its use. The flush in cmd/router covers shutdown.
-	served := withSentry(withRequestID(withTrace(withMetrics(mux, withTiming(withCORS(s.authMode,
-		s.onOwningNode(s.withCustomer(s.withCost(s.withRequestLog(s.withQuota(s.withServerSide(handler))))))))))))
+	served := withSentry(mux, withRequestID(withTrace(mux, withMetrics(mux, withTiming(withCORS(s.authMode,
+		s.onOwningNode(s.withCustomer(s.withCost(s.withRequestLog(mux, s.withQuota(s.withServerSide(handler))))))))))))
 	if s.directory == nil {
 		return served
 	}
@@ -785,11 +817,24 @@ func (s *Server) Handler() http.Handler {
 }
 
 // withSentry reports what goes wrong serving a request to Sentry.
-func withSentry(handler http.Handler) http.Handler {
+func withSentry(routes *chi.Mux, handler http.Handler) http.Handler {
 	return sentryhttp.New(sentryhttp.Options{
 		Repanic:         false,
 		WaitForDelivery: false,
-	}).Handle(handler)
+	}).Handle(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// sentryhttp has already put the raw URL on the scope and named the transaction with
+		// its path, and a token route's path is its secret.
+		if path := loggedPath(routes, r); path != r.URL.Path {
+			ctx := r.Context()
+			redacted := r.Clone(ctx)
+			redacted.URL.Path, redacted.URL.RawPath = path, ""
+			sentry.GetHubFromContext(ctx).Scope().SetRequest(redacted)
+			if transaction := sentry.TransactionFromContext(ctx); transaction != nil {
+				transaction.Name, transaction.Source = r.Method+" "+path, sentry.SourceRoute
+			}
+		}
+		handler.ServeHTTP(w, r)
+	}))
 }
 
 // withTiming reports how long the server itself spent, so a caller timing a call can tell
@@ -913,14 +958,20 @@ func (t *timedResponse) opening(body []byte) ([]byte, bool) {
 // one, and a span per session id is a trace nobody can group by. A route context is seeded
 // here so that the mux fills in the one this can read back; chi only makes its own when
 // there is none.
-func withTrace(next http.Handler) http.Handler {
+func withTrace(mux *chi.Mux, next http.Handler) http.Handler {
 	traced := otelhttp.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		routes := chi.NewRouteContext()
 		r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, routes))
+		// Deferred: a panic skips what follows next, and otelhttp ends the span as it unwinds.
+		defer func() {
+			span := trace.SpanFromContext(r.Context())
+			if pattern := routes.RoutePattern(); pattern != "" {
+				span.SetName(r.Method + " " + pattern)
+			}
+			// otelhttp records the path as sent, which for a token route is the secret.
+			span.SetAttributes(attribute.String("url.path", loggedPath(mux, r)))
+		}()
 		next.ServeHTTP(w, r)
-		if pattern := routes.RoutePattern(); pattern != "" {
-			trace.SpanFromContext(r.Context()).SetName(r.Method + " " + pattern)
-		}
 	}), "router", otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
 		return r.Method
 	}))
@@ -947,7 +998,11 @@ func withTrace(next http.Handler) http.Handler {
 // A panic is logged with its stack and answered with a 500 here, then panicked again so
 // Sentry still reports it. Sentry recovers without writing a status, which net/http sends
 // as an empty 200, and a request that panicked would otherwise leave no line at all.
-func (s *Server) withRequestLog(next http.Handler) http.Handler {
+//
+// A request an app made is counted in the activity record here too (recordActivity), for the
+// same reasons: it has a customer, a refusal is one, and a request handed to the node
+// running its session is counted once, by that node. routes is what finds its area.
+func (s *Server) withRequestLog(routes *chi.Mux, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		recorder := &loggedResponse{ResponseWriter: w}
@@ -961,8 +1016,8 @@ func (s *Server) withRequestLog(next http.Handler) http.Handler {
 			// ErrAbortHandler is net/http's own way of dropping a connection, not a bug.
 			if recovered != http.ErrAbortHandler {
 				customer, _ := CustomerFrom(r.Context())
-				s.logger.Error("a request panicked",
-					"method", r.Method, "path", r.URL.Path, "customer", customer,
+				s.logger.ErrorContext(r.Context(), "a request panicked",
+					"method", r.Method, "path", loggedPath(routes, r), "customer", customer,
 					"request_id", RequestIDFrom(r.Context()),
 					"panic", fmt.Sprint(recovered), "stack", string(debug.Stack()))
 				if recorder.code == 0 && recorder.written == 0 && !recorder.hijacked {
@@ -972,13 +1027,14 @@ func (s *Server) withRequestLog(next http.Handler) http.Handler {
 			panic(recovered)
 		}()
 		next.ServeHTTP(recorder, r)
+		s.recordActivity(routes, r, recorder, started)
 
 		customer, _ := CustomerFrom(r.Context())
 		// A socket reports the life of the connection rather than a time to respond,
 		// since it is logged once it has closed.
 		fields := []any{
 			"method", r.Method,
-			"path", r.URL.Path,
+			"path", loggedPath(routes, r),
 			"status", recorder.status(),
 			"duration", time.Since(started).Round(time.Millisecond),
 			"customer", customer,
@@ -994,10 +1050,10 @@ func (s *Server) withRequestLog(next http.Handler) http.Handler {
 			fields = append(fields, "stack", failure.trace)
 		}
 		if recorder.status() >= http.StatusInternalServerError {
-			s.logger.Error("served a request", fields...)
+			s.logger.ErrorContext(r.Context(), "served a request", fields...)
 			return
 		}
-		s.logger.Info("served a request", fields...)
+		s.logger.InfoContext(r.Context(), "served a request", fields...)
 	})
 }
 
@@ -1007,6 +1063,8 @@ type loggedResponse struct {
 	code     int
 	written  int64
 	hijacked bool
+	// refusal is the error code the request was answered with (noteRefusal).
+	refusal string
 }
 
 // status reports what the caller was told, filling in the two codes a handler can answer
@@ -1108,7 +1166,7 @@ func (s *Server) refuseClientSide(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	s.logger.Debug("refused a client-side caller a server-side operation",
-		"method", r.Method, "path", r.URL.Path)
+		"method", r.Method, "path", loggedPath(s.mux, r))
 	writeError(w, errServerSideOnly)
 	return true
 }
@@ -1154,7 +1212,7 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 		span.End()
 		if errors.Is(err, auth.ErrLevelRefused) {
 			s.logger.Debug("refused a level of user this app turns away",
-				"method", r.Method, "path", r.URL.Path, "kind", principal.Kind)
+				"method", r.Method, "path", loggedPath(s.mux, r), "kind", principal.Kind)
 			writeError(w, forbidden("this app does not accept "+
 				"requests from this level of user"))
 			return
@@ -1172,6 +1230,7 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 			ctx = context.WithValue(ctx, serverSideContextKey{}, principal.ServerSide)
 			ctx = context.WithValue(ctx, kindContextKey{}, principal.Kind)
 			ctx = context.WithValue(ctx, requestKeyContextKey{}, s.vouchedKey(r, principal))
+			ctx = WithLoggedApp(ctx, principal.AppID, principal.APIKey)
 			ctx = routing.WithCaller(ctx, routing.Caller{
 				UserID:     principal.UserID,
 				IP:         s.callerIP(r, principal.UserID),

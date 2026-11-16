@@ -100,6 +100,18 @@ func (h *Harness) MaybeCompact(history []llm.Message, inputTokens, cachedTokens 
 	return true, nil
 }
 
+// ContextWindow is the window of the model holding the conversation, in tokens: 0 when the
+// model does not declare one.
+func (h *Harness) ContextWindow() int64 {
+	h.mu.Lock()
+	model := h.options.Model
+	h.mu.Unlock()
+	if model == nil {
+		return 0
+	}
+	return model.ContextWindow()
+}
+
 // nearingContextWindow reports whether a prompt of inputTokens has used most of the window
 // of the model holding the conversation. A model whose window is not declared never is.
 func (h *Harness) nearingContextWindow(inputTokens int64) bool {

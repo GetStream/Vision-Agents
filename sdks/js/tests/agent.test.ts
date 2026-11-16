@@ -652,6 +652,18 @@ describe("Agent", () => {
         return router.requestsTo("POST", "/v1/agents/sync").at(-1)?.body as Record<string, unknown>;
       }
 
+      it("sends agent.yaml's image as written, an empty one that turns drawing off included", async () => {
+        const drawing = await syncedFrom("name: jean\nmode: text\nimage: image-fast\n");
+        const off = await syncedFrom('name: jean\nmode: text\nimage: ""\n');
+        const unsaid = await syncedFrom("name: jean\nmode: text\n");
+        const bare = await syncedFrom("name: jean\nmode: text\nimage:\n");
+
+        assert.equal(drawing["image"], "image-fast");
+        assert.equal(off["image"], "", "an empty image is how a file turns drawing off");
+        assert.equal("image" in unsaid, false, "a file that names none leaves the stored one");
+        assert.equal("image" in bare, false, "a bare image: says nothing, as in Go and Python");
+      });
+
       it("sends sandbox and require_approval from agent.yaml on each binding that sets them", async () => {
         router.serve("GET", "/v1/agents/connections", { body: { items: [connection("conn-1", "company")], has_more: false } });
 
@@ -827,7 +839,7 @@ describe("Agent", () => {
           ["floor_control: {model: stream/chorus-asr}\n", { model: "stream/chorus-asr" }],
           // Sent rather than dropped: the router refuses what it does not know, naming why.
           ["floor_control: {model: other, max_wait_ms: 0}\n", { model: "other", max_wait_ms: 0 }],
-          // An empty one is the default flow controller again.
+          // An empty one is no choice again, which the router's default rules.
           ["floor_control: {}\n", {}],
           ["llm: llm-fast\n", undefined],
           ["floor_control:\n", undefined],
@@ -896,8 +908,11 @@ describe("Agent", () => {
     });
 
     it("only reads back a directory nothing has touched since .agent_sync was written", async () => {
-      const stored = { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z" };
-      router.serve("POST", "/v1/agents/sync", { body: { unchanged: false, config: stored } });
+      const stored = { id: "cfg_1", name: "jean", created_at: "2026-01-01T00:00:00Z", sync_hash: "" };
+      router.serve("POST", "/v1/agents/sync", (request) => {
+        stored.sync_hash = (request.body as Schemas["SyncAgentRequest"]).hash;
+        return { body: { unchanged: false, config: stored } };
+      });
       router.serve("GET", "/v1/agents/configs", { body: [stored] });
       const root = join(await mkdtemp(join(tmpdir(), "vision-agents-")), "jean");
       await mkdir(root);

@@ -290,7 +290,7 @@ func (s *WhatsAppChannelSuite) TestAPhotoWithACaptionReachesTheModelWithItsCapti
 	s.writtenByTheInboundWorker(channel)
 	uploads := s.chat.Uploads()[uploaded:]
 	s.Require().Len(uploads, 1)
-	s.Equal(chattest.Upload{Channel: channel, Endpoint: "image", Name: "photo-1.jpeg", User: `{"id":"` + channelbridge.AuthorUserID(s.customerID(), "whatsapp", s.unit, person) + `"}`,
+	s.Equal(chattest.Upload{Type: "agent", Channel: channel, Endpoint: "image", Name: "photo-1.jpeg", User: `{"id":"` + channelbridge.AuthorUserID(s.customerID(), "whatsapp", s.unit, person) + `"}`,
 		Data: s.photoBytes(photo)}, uploads[0])
 	s.Equal([]string{"https://cdn.fake/image/photo-1.jpeg"}, photoURLs(stored[0]))
 	sent := s.took(1)[0]

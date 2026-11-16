@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import contextlib
-import contextvars
+import inspect
 from dataclasses import dataclass, field
-from typing import Any, Iterator, Optional, Protocol
+from typing import Any, Callable, Optional, Protocol, get_type_hints
 
 
 class CallNotHeld(RuntimeError):
@@ -16,7 +15,7 @@ class ToolLine(Protocol):
     """How a running call reaches the session it runs for.
 
     The socket that delivered the call provides one. Without one, as outside a call,
-    `ToolCall.update`, `say` and `disallow_interruptions` do nothing.
+    `ToolCallContext.update`, `say` and `disallow_interruptions` do nothing.
     """
 
     async def update(self, call_id: str, text: str, verbatim: bool) -> None:
@@ -47,10 +46,18 @@ class ToolConversation:
 
 
 @dataclass
-class ToolCall:
+class ToolCallContext:
     """The call a function is running for.
 
-    Read it inside a function with `get_tool_call_context()`.
+    A function whose first parameter is annotated `ToolCallContext` is handed it there:
+
+        @llm.register_function(description="Book a flight")
+        async def book_flight(tool_call_context: ToolCallContext, flight_id: str) -> str:
+            await tool_call_context.update("checking seats")
+            return await bookings.book(flight_id, key=tool_call_context.id)
+
+    Outside a call, as under a model that does not say, it is an empty one whose methods
+    do nothing.
     """
 
     # id is the id the model gave the call. A call sent again keeps it, so it is the key to
@@ -100,28 +107,29 @@ class ToolCall:
             raise CallNotHeld(f"the call {self.id} was stopped before it could be held")
 
 
-_current: contextvars.ContextVar[Optional[ToolCall]] = contextvars.ContextVar(
-    "tool_call", default=None
-)
+def context_parameter(func: Callable[..., Any]) -> Optional[str]:
+    """The name of `func`'s first parameter when it is annotated `ToolCallContext`, else None.
 
-
-def get_tool_call_context() -> ToolCall:
-    """The call the running function is answering.
-
-    Outside a call, as in a unit test of the function itself or under a model that does
-    not say, it is an empty one whose methods do nothing.
+    That parameter is handed the call rather than filled in by the model.
     """
-    return _current.get() or ToolCall()
-
-
-@contextlib.contextmanager
-def using_tool_call_context(tool_call_context: ToolCall) -> Iterator[ToolCall]:
-    """Make `tool_call_context` what `get_tool_call_context()` returns until the block ends.
-
-    The socket that runs a function sets it, and a test of a function can too.
-    """
-    token = _current.set(tool_call_context)
     try:
-        yield tool_call_context
-    finally:
-        _current.reset(token)
+        parameters = list(inspect.signature(func).parameters.values())
+    except (TypeError, ValueError):
+        return None
+    if parameters and parameters[0].name == "self":
+        parameters = parameters[1:]
+    if not parameters or parameters[0].kind not in (
+        inspect.Parameter.POSITIONAL_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    ):
+        return None
+    first = parameters[0]
+    annotation = first.annotation
+    if isinstance(annotation, str):
+        try:
+            annotation = get_type_hints(func).get(first.name)
+        except Exception:
+            return None
+    if inspect.isclass(annotation) and issubclass(annotation, ToolCallContext):
+        return first.name
+    return None

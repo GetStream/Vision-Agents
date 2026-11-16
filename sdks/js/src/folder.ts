@@ -1,9 +1,15 @@
-import { readFile, readdir, stat, writeFile } from "node:fs/promises";
-import { basename, extname, join, posix, relative, sep } from "node:path";
+import { readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
+import { basename, extname, isAbsolute, join, posix, relative, sep } from "node:path";
 
 import type { ConnectorDeclaration, Declaration, Folder, Skill, SyncStamp } from "./agent.js";
 import type { Schemas } from "./client.js";
 import { ConfigurationError } from "./errors.js";
+import {
+  compileUIPrompt,
+  type UIBlueprint,
+  type UIDeclaration,
+  type UIPortableComponent,
+} from "./ui-catalog.js";
 
 /** What makes a directory an agent: it names it and says what it runs on. */
 export const AGENT_FILE = "agent.yaml";
@@ -72,23 +78,30 @@ const SIMULATION_COUNTS = new Set(["variations", "max_turns"]);
  * sees; the body is the prompt only the subagent sees.
  */
 export async function loadFolder(path: string): Promise<Folder> {
-  const info = await stat(path).catch(() => undefined);
+  const info = await stat(path).catch(missing);
   if (!info?.isDirectory()) {
     throw new ConfigurationError(`${path} is not an agent directory`);
   }
-  const declaration = await readFile(join(path, AGENT_FILE), "utf8").catch(() => undefined);
+  const declaration = await readFile(join(path, AGENT_FILE), "utf8").catch(missing);
   if (declaration === undefined) {
     throw new ConfigurationError(`${path} has no ${AGENT_FILE}, so it is not an agent directory`);
   }
   const settings = parseDeclaration(declaration, join(path, AGENT_FILE));
   const simulations = await loadSimulations(join(path, SIMULATIONS_DIR));
+  const baseInstructions = (await maybeRead(join(path, INSTRUCTIONS_FILE))).trim();
+  const uiPrompt = settings.ui ? await loadUIPrompt(path, settings.ui) : "";
+  const instructions = uiPrompt
+    ? baseInstructions
+      ? `${baseInstructions}\n\n${uiPrompt}`
+      : uiPrompt
+    : baseInstructions;
 
   return {
     path,
     name: settings.name || basename(path.replace(/[/\\]+$/, "")),
     settings,
     stamp: stampAt(join(path, AGENT_STAMP)),
-    instructions: (await maybeRead(join(path, INSTRUCTIONS_FILE))).trim(),
+    instructions,
     guardrail: (await maybeRead(join(path, GUARDRAIL_FILE))).trim(),
     skills: await loadSkills(join(path, SKILLS_DIR)),
     knowledge: await loadKnowledge(join(path, KNOWLEDGE_DIR)),
@@ -110,7 +123,7 @@ export async function loadFolder(path: string): Promise<Folder> {
 async function loadSimulations(
   path: string,
 ): Promise<Schemas["SimulationDeclaration"][] | undefined> {
-  const info = await stat(path).catch(() => undefined);
+  const info = await stat(path).catch(missing);
   if (!info) {
     return undefined;
   }
@@ -146,7 +159,7 @@ async function loadSimulations(
  * whatever files it comes with, nested as deep as they are.
  */
 async function loadSkills(path: string): Promise<Skill[]> {
-  const entries = await readdir(path, { withFileTypes: true }).catch(() => []);
+  const entries = (await readdir(path, { withFileTypes: true }).catch(missing)) ?? [];
   const skills: Skill[] = [];
   const declared = new Map<string, string>();
 
@@ -161,7 +174,7 @@ async function loadSkills(path: string): Promise<Skill[]> {
       continue;
     }
 
-    const content = await readFile(file, "utf8").catch(() => undefined);
+    const content = await readFile(file, "utf8").catch(missing);
     if (content === undefined) {
       throw new ConfigurationError(
         `${join(path, entry.name)} has no ${SKILL_FILE}, so it is not a skill`,
@@ -289,16 +302,14 @@ function parseDeadline(value: string, where: string): number {
     return Math.round(Number(value) * 1000);
   }
 
+  if (!/^(?:\d+(?:\.\d+)?(?:ms|s|m|h))+$/.test(value)) {
+    throw new ConfigurationError(`${where}: ${JSON.stringify(value)} is not a deadline`);
+  }
   const parts = value.matchAll(/(\d+(?:\.\d+)?)(ms|s|m|h)/g);
   const units: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_600_000 };
   let total = 0;
-  let matched = false;
   for (const [, amount, unit] of parts) {
-    matched = true;
     total += Number(amount) * (units[unit as string] ?? 0);
-  }
-  if (!matched) {
-    throw new ConfigurationError(`${where}: ${JSON.stringify(value)} is not a deadline`);
   }
   return Math.round(total);
 }
@@ -319,7 +330,7 @@ function cutFrontmatter(content: string): [frontmatter: string, body: string] {
 }
 
 async function loadKnowledge(path: string): Promise<{ source: string; text: string }[]> {
-  const info = await stat(path).catch(() => undefined);
+  const info = await stat(path).catch(missing);
   if (!info) {
     return [];
   }
@@ -520,7 +531,7 @@ export function parseSimulations(
       } else if (written.length > 0) {
         throw new ConfigurationError(`${where}: ${key} is one value, not a list`);
       } else {
-        current[key] = scalar(inline.replace(/\s+#.*$/, "")) ?? "";
+        current[key] = scalar(uncomment(inline)) ?? "";
       }
     } else if (SIMULATION_COUNTS.has(key)) {
       current[key] = count(scalar(inline) ?? "", key, where);
@@ -566,6 +577,7 @@ const SCALARS = new Set([
   "harness",
   "subagent",
   "search",
+  "image",
   "sandbox",
 ]);
 const LISTS = new Set(["keyterms"]);
@@ -625,7 +637,7 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
       throw new ConfigurationError(`${where}: ${JSON.stringify(line)} is not a key and a value`);
     }
     const key = entry[1] as string;
-    const inline = (entry[2] ?? "").replace(/\s+#.*$/, "").trim();
+    const inline = uncomment(entry[2] ?? "").trim();
 
     // What is indented under a key with nothing after it is its list or its mapping.
     const indented: string[] = [];
@@ -639,7 +651,8 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
         throw new ConfigurationError(`${where}: ${key} is one value, not a list`);
       }
       const value = scalar(inline);
-      if (value !== undefined && (value || key === "sts")) {
+      // An empty sts or image is sent, since that is how a file turns either off.
+      if (value !== undefined && (value || key === "sts" || key === "image")) {
         assign(declared, key, value, where);
       }
     } else if (LISTS.has(key)) {
@@ -677,6 +690,11 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
       const chosen = floorControl(indented, inline, where);
       if (chosen) {
         declared.floorControl = chosen;
+      }
+    } else if (key === "ui") {
+      const ui = parseUIDeclaration(indented, inline, where);
+      if (ui) {
+        declared.ui = ui;
       }
     } else {
       throw new ConfigurationError(
@@ -740,7 +758,7 @@ function listed(
   let keyColumn = -1;
   let value: { inline: string; nested: string[] } | undefined;
   for (const line of lines) {
-    const trimmed = line.replace(/\s+#.*$/, "").trim();
+    const trimmed = uncomment(line).trim();
     if (!trimmed || trimmed.startsWith("#")) {
       continue;
     }
@@ -817,7 +835,7 @@ function channels(
   let keyColumn = -1;
   let value: Written | undefined;
   for (const line of lines) {
-    const trimmed = line.replace(/\s+#.*$/, "").trim();
+    const trimmed = uncomment(line).trim();
     if (!trimmed || trimmed.startsWith("#")) {
       continue;
     }
@@ -936,7 +954,7 @@ function sandboxOptions(lines: string[], inline: string, where: string): Schemas
   let keyColumn = -1;
   let value: Written | undefined;
   for (const line of lines) {
-    const trimmed = line.replace(/\s+#.*$/, "").trim();
+    const trimmed = uncomment(line).trim();
     if (!trimmed || trimmed.startsWith("#")) {
       continue;
     }
@@ -1063,7 +1081,7 @@ function floorControlBlock(lines: string[], where: string): Map<string, Tree> | 
   let keyColumn = -1;
   let last: string | undefined;
   for (const line of lines) {
-    const trimmed = line.replace(/\s+#.*$/, "").trim();
+    const trimmed = uncomment(line).trim();
     if (!trimmed || trimmed.startsWith("#")) {
       continue;
     }
@@ -1319,18 +1337,19 @@ function block(lines: string[], style: string): string {
 }
 
 function flowList(value: string, key: string, where: string): string[] {
-  const listed = /^\[(.*)\]$/.exec(value);
-  if (!listed) {
+  // flow reads a comma inside a quoted item as part of it.
+  const listed = /^\[.*\]$/.test(value) ? flow(value, key, where) : undefined;
+  if (!Array.isArray(listed) || listed.some((item) => item !== undefined && typeof item !== "string")) {
     throw new ConfigurationError(`${where}: ${key} should be a list`);
   }
-  return (listed[1] as string).split(",").map((item) => scalar(item.trim()) ?? "");
+  return listed.map((item) => (typeof item === "string" ? item : ""));
 }
 
 function listItem(line: string, key: string, where: string): string {
   if (!line.startsWith("-")) {
     throw new ConfigurationError(`${where}: ${key} should be a list`);
   }
-  return scalar(line.slice(1).trim()) ?? "";
+  return scalar(uncomment(line.slice(1)).trim()) ?? "";
 }
 
 function mapping(nested: string[], inline: string, key: string, where: string): Record<string, string> {
@@ -1387,13 +1406,291 @@ function greeting(declared: Record<string, string>, where: string): Schemas["Gre
   return { text: declared["text"], ...(mode ? { mode } : {}) };
 }
 
+const DEFAULT_UI_COMPONENTS = "ui/components.json";
+const DEFAULT_UI_BLUEPRINTS = "ui/blueprints.yaml";
+const MAX_UI_FILE_BYTES = 512 << 10;
+const UI_KEYS = new Set([
+  "format",
+  "keep",
+  "components",
+  "blueprints",
+  "patch_mode",
+  "voice_ui",
+  "rules",
+]);
+
+/** What ui/components.json may say, as Go reads it; anything else is refused there too. */
+const UI_COMPONENT_KEYS = new Set(["name", "description", "parameters", "events", "slots"]);
+const UI_PARAMETERS_KEYS = new Set(["type", "properties", "required", "x-order"]);
+const UI_PROPERTY_KEYS = new Set(["type", "format", "description", "enum", "items"]);
+const UI_EVENT_KEYS = new Set(["name", "description"]);
+
+function parseUIDeclaration(indented: string[], inline: string, where: string): UIDeclaration | undefined {
+  // `ui:` with nothing under it is null, which turns no catalog on; `ui: {}` turns on all of it.
+  if (!indented.some((line) => line.trim() && !line.trim().startsWith("#"))) {
+    if (scalar(inline) === undefined) {
+      return undefined;
+    }
+    if (/^\{\s*\}$/.test(inline)) {
+      return {};
+    }
+  }
+  if (inline) {
+    throw new ConfigurationError(`${where}: ui should be a mapping`);
+  }
+  const out: UIDeclaration = {};
+  const lines = indented.map((line) => line.replace(/\r$/, ""));
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i]!;
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+    const column = raw.length - raw.trimStart().length;
+    const entry = /^([A-Za-z_][\w-]*):(?:\s+(.*))?$/.exec(trimmed);
+    if (!entry) {
+      throw new ConfigurationError(`${where}: ${JSON.stringify(trimmed)} is not a ui setting`);
+    }
+    const key = entry[1]!;
+    const val = uncomment(entry[2] ?? "").trim();
+    if (!UI_KEYS.has(key)) {
+      throw new ConfigurationError(
+        `${where}: ${JSON.stringify(key)} is not something ui says; ${[...UI_KEYS].join(", ")} are`,
+      );
+    }
+    const children: string[] = [];
+    while (i + 1 < lines.length) {
+      const next = lines[i + 1]!;
+      if (next.trim() && !ownsLine(next, column, val)) {
+        break;
+      }
+      children.push(next.trim());
+      i++;
+    }
+    const items = children.filter((c) => c && !c.startsWith("#"));
+
+    switch (key) {
+      case "format": {
+        const fmt = scalar(val);
+        if (fmt) {
+          if (fmt !== "openui") {
+            throw new ConfigurationError(`${where}: ui.format must be openui, not ${JSON.stringify(fmt)}`);
+          }
+          out.format = fmt;
+        }
+        break;
+      }
+      case "components": {
+        const comp = scalar(val);
+        if (comp !== undefined) {
+          out.components = comp;
+        }
+        break;
+      }
+      case "blueprints": {
+        const bp = scalar(val);
+        if (bp !== undefined) {
+          out.blueprints = bp;
+        }
+        break;
+      }
+      case "patch_mode":
+        out.patchMode = uiBool(val, "ui.patch_mode", where);
+        break;
+      case "voice_ui":
+        out.voiceUI = uiBool(val, "ui.voice_ui", where);
+        break;
+      case "keep": {
+        const list = val ? flowList(val, "ui.keep", where) : items.map((c) => listItem(c, "ui.keep", where));
+        out.keep = list.filter(Boolean);
+        break;
+      }
+      case "rules": {
+        const list = val ? flowList(val, "ui.rules", where) : items.map((c) => listItem(c, "ui.rules", where));
+        out.rules = list.filter(Boolean);
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+function uiBool(raw: string, key: string, where: string): boolean {
+  const val = scalar(raw);
+  if (val !== "true" && val !== "false") {
+    throw new ConfigurationError(`${where}: ${key} must be true or false`);
+  }
+  return val === "true";
+}
+
+/** Whether a line is under the key at `column`: deeper, or a list at the key's own column, as YAML allows. */
+function ownsLine(line: string, column: number, inline: string): boolean {
+  const indent = line.length - line.trimStart().length;
+  return indent > column || (indent === column && !inline && /^-(\s|$)/.test(line.trim()));
+}
+
+async function loadUIPrompt(root: string, ui: UIDeclaration): Promise<string> {
+  let components: UIPortableComponent[] = [];
+  const compRel = ui.components || ((await existsInside(root, DEFAULT_UI_COMPONENTS)) ? DEFAULT_UI_COMPONENTS : "");
+  if (compRel) {
+    const { text, full } = await readInsideFolder(root, compRel);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch (cause) {
+      throw new ConfigurationError(`${full}: invalid JSON: ${cause instanceof Error ? cause.message : String(cause)}`);
+    }
+    if (!Array.isArray(parsed)) {
+      throw new ConfigurationError(`${full}: expected an array of portable UI components`);
+    }
+    components = parsed as UIPortableComponent[];
+    for (const comp of components) {
+      const named = `component ${JSON.stringify(comp?.name)}`;
+      refuseUnknown(Object.keys(comp ?? {}), UI_COMPONENT_KEYS, named, full);
+      refuseUnknown(Object.keys(comp?.parameters ?? {}), UI_PARAMETERS_KEYS, `${named} parameters`, full);
+      for (const [key, prop] of Object.entries(comp?.parameters?.properties ?? {})) {
+        refuseUnknown(Object.keys(prop ?? {}), UI_PROPERTY_KEYS, `${named} property ${JSON.stringify(key)}`, full);
+      }
+      for (const event of comp?.events ?? []) {
+        refuseUnknown(Object.keys(event ?? {}), UI_EVENT_KEYS, `${named} event`, full);
+      }
+    }
+  }
+
+  let blueprints: UIBlueprint[] = [];
+  const bpRel = ui.blueprints || ((await existsInside(root, DEFAULT_UI_BLUEPRINTS)) ? DEFAULT_UI_BLUEPRINTS : "");
+  if (bpRel) {
+    const { text, full } = await readInsideFolder(root, bpRel);
+    blueprints = parseBlueprints(text, full);
+  }
+
+  return compileUIPrompt(ui, components, blueprints, join(root, AGENT_FILE));
+}
+
+async function readInsideFolder(root: string, rel: string): Promise<{ text: string; full: string }> {
+  if (isAbsolute(rel)) {
+    throw new ConfigurationError(`ui path ${JSON.stringify(rel)} must be relative to the agent directory`);
+  }
+  const rootReal = await realpath(root);
+  const full = join(root, ...rel.split("/"));
+  const targetReal = await realpath(full).catch(missing);
+  if (!targetReal) {
+    throw new ConfigurationError(`${full} does not exist`);
+  }
+  const relCheck = relative(rootReal, targetReal);
+  if (relCheck === ".." || relCheck.startsWith(`..${sep}`) || isAbsolute(relCheck)) {
+    throw new ConfigurationError(`ui path ${JSON.stringify(rel)} leaves the agent directory`);
+  }
+  const info = await stat(targetReal);
+  if (info.size > MAX_UI_FILE_BYTES) {
+    throw new ConfigurationError(`${full} exceeds ${MAX_UI_FILE_BYTES} bytes`);
+  }
+  return { text: await readFile(targetReal, "utf8"), full };
+}
+
+async function existsInside(root: string, rel: string): Promise<boolean> {
+  try {
+    await readInsideFolder(root, rel);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function parseBlueprints(content: string, where = DEFAULT_UI_BLUEPRINTS): UIBlueprint[] {
+  const lines = content.split("\n").map((l) => l.replace(/\r$/, ""));
+  const out: UIBlueprint[] = [];
+  const seen = new Set<string>();
+  let current: Partial<UIBlueprint> | undefined;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+    let body = trimmed;
+    let column = line.length - line.trimStart().length;
+    if (trimmed === "-" || trimmed.startsWith("- ")) {
+      current = {};
+      out.push(current as UIBlueprint);
+      body = trimmed.slice(1).trim();
+      column += trimmed.length - body.length;
+      if (!body) {
+        continue;
+      }
+    }
+    if (!current) {
+      throw new ConfigurationError(`${where}: blueprints must be a YAML list starting with "- "`);
+    }
+    const entry = /^([A-Za-z_][\w-]*):(?:\s+(.*))?$/.exec(body);
+    if (!entry) {
+      throw new ConfigurationError(`${where}: ${JSON.stringify(trimmed)} is not a key and value`);
+    }
+    const key = entry[1]!;
+    const inline = uncomment(entry[2] ?? "").trim();
+    const nested: string[] = [];
+    while (i + 1 < lines.length) {
+      const next = lines[i + 1]!;
+      if (next.trim() && !ownsLine(next, column, inline)) {
+        break;
+      }
+      nested.push(next);
+      i++;
+    }
+    const written = nested.map((n) => n.trim()).filter((n) => n && !n.startsWith("#"));
+
+    switch (key) {
+      case "name":
+        current.name = scalar(inline) ?? "";
+        break;
+      case "when":
+        current.when = /^[|>]-?$/.test(inline) ? block(nested, inline).trim() : (scalar(inline) ?? "");
+        break;
+      case "example":
+        current.example = /^[|>]-?$/.test(inline) ? block(nested, inline).trim() : (scalar(inline) ?? "");
+        break;
+      case "order":
+        current.order = inline ? flowList(inline, "order", where) : written.map((w) => listItem(w, "order", where));
+        break;
+      case "rules":
+        current.rules = inline ? flowList(inline, "rules", where) : written.map((w) => listItem(w, "rules", where));
+        break;
+      default:
+        throw new ConfigurationError(`${where}: unknown blueprint key ${JSON.stringify(key)}`);
+    }
+  }
+
+  return out.map((bp) => {
+    if (!bp.name) {
+      throw new ConfigurationError(`${where}: a blueprint needs a name`);
+    }
+    if (seen.has(bp.name)) {
+      throw new ConfigurationError(`${where}: duplicate blueprint ${JSON.stringify(bp.name)}`);
+    }
+    seen.add(bp.name);
+    if (!bp.when) {
+      throw new ConfigurationError(`${where}: blueprint ${JSON.stringify(bp.name)} needs a when condition`);
+    }
+    if (!bp.order || bp.order.length === 0) {
+      throw new ConfigurationError(`${where}: blueprint ${JSON.stringify(bp.name)} needs an order list`);
+    }
+    return bp as UIBlueprint;
+  });
+}
+
 /** `.agent_sync`: the fingerprint a directory was last synced under, and when. */
 function stampAt(path: string): SyncStamp {
   return {
     async read() {
-      const recorded: unknown = await readFile(path, "utf8")
-        .then((text) => JSON.parse(text) as unknown)
-        .catch(() => undefined);
+      const content = await readFile(path, "utf8").catch(missing);
+      let recorded: unknown;
+      try {
+        recorded = content === undefined ? undefined : JSON.parse(content);
+      } catch {
+        return "";
+      }
       const hash = recorded && typeof recorded === "object" ? (recorded as { hash?: unknown }).hash : "";
       return typeof hash === "string" ? hash : "";
     },
@@ -1405,5 +1702,37 @@ function stampAt(path: string): SyncStamp {
 }
 
 async function maybeRead(path: string): Promise<string> {
-  return readFile(path, "utf8").catch(() => "");
+  return (await readFile(path, "utf8").catch(missing)) ?? "";
+}
+
+function missing(cause: unknown): undefined {
+  if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") {
+    return undefined;
+  }
+  throw cause;
+}
+
+/** A hash in a quoted scalar is text, not the start of a YAML comment. */
+function uncomment(line: string): string {
+  let quote = "";
+  for (let index = 0; index < line.length; index++) {
+    const char = line[index];
+    if (quote) {
+      if (char === "\\" && quote === '"') {
+        index++;
+      } else if (char === quote) {
+        if (quote === "'" && line[index + 1] === "'") {
+          index++;
+        } else {
+          quote = "";
+        }
+      }
+    } else if ((char === '"' || char === "'") &&
+      (index === 0 || /\s/.test(line[index - 1]!) || "[{,:".includes(line[index - 1]!))) {
+      quote = char;
+    } else if (char === "#" && (index === 0 || /\s/.test(line[index - 1]!))) {
+      return line.slice(0, index);
+    }
+  }
+  return line;
 }

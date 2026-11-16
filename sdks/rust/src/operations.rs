@@ -1937,6 +1937,71 @@ impl Client {
         )
         .await
     }
+    /// Make a hidden branch the conversation again
+    ///
+    /// `POST /v1/agents/sessions/{id}/responses/{response_id}/activate` (`activateResponse`).
+    pub async fn activate_response(
+        &self,
+        id: &str,
+        response_id: &str,
+    ) -> Result<types::ActivatedBranch> {
+        self.send(
+            Method::POST,
+            &format!(
+                "/v1/agents/sessions/{id}/responses/{response_id}/activate",
+                id = segment(id),
+                response_id = segment(response_id)
+            ),
+            None::<&()>,
+            None::<&()>,
+            "activateResponse",
+        )
+        .await
+    }
+    /// The messages of a hidden branch, to show in place of the conversation's
+    ///
+    /// `GET /v1/agents/sessions/{id}/responses/{response_id}/branch` (`getResponseBranch`).
+    pub async fn get_response_branch(
+        &self,
+        id: &str,
+        response_id: &str,
+        query: &GetResponseBranchQuery,
+    ) -> Result<types::BranchMessagePage> {
+        self.send(
+            Method::GET,
+            &format!(
+                "/v1/agents/sessions/{id}/responses/{response_id}/branch",
+                id = segment(id),
+                response_id = segment(response_id)
+            ),
+            Some(query),
+            None::<&()>,
+            "getResponseBranch",
+        )
+        .await
+    }
+    /// The alternatives to one response: its regenerations, or the edits of its question
+    ///
+    /// `GET /v1/agents/sessions/{id}/responses/{response_id}/siblings` (`listResponseSiblings`).
+    pub async fn list_response_siblings(
+        &self,
+        id: &str,
+        response_id: &str,
+        query: &ListResponseSiblingsQuery,
+    ) -> Result<types::ResponseSiblingPage> {
+        self.send(
+            Method::GET,
+            &format!(
+                "/v1/agents/sessions/{id}/responses/{response_id}/siblings",
+                id = segment(id),
+                response_id = segment(response_id)
+            ),
+            Some(query),
+            None::<&()>,
+            "listResponseSiblings",
+        )
+        .await
+    }
     /// Go back to a response and carry on from there
     ///
     /// `POST /v1/agents/sessions/{id}/rewind` (`rewindSession`).
@@ -3050,6 +3115,23 @@ impl Client {
         )
         .await
     }
+    /// Get an organization's Agents activity
+    ///
+    /// `GET /v1/ops/orgs/{org_id}/activity` (`getOrganizationActivity`).
+    pub async fn get_organization_activity(
+        &self,
+        org_id: &str,
+        query: &GetOrganizationActivityQuery,
+    ) -> Result<types::OrganizationActivity> {
+        self.send(
+            Method::GET,
+            &format!("/v1/ops/orgs/{org_id}/activity", org_id = segment(org_id)),
+            Some(query),
+            None::<&()>,
+            "getOrganizationActivity",
+        )
+        .await
+    }
     /// Aggregate request rows into a rollup table
     ///
     /// `POST /v1/ops/stats/rollup` (`runRollup`).
@@ -3200,6 +3282,32 @@ impl Client {
             None::<&()>,
             None::<&()>,
             "receiveDLCReport",
+        )
+        .await
+    }
+    /// Receive a Telnyx account event
+    ///
+    /// `POST /v1/phone/hooks/telnyx/events` (`receiveTelnyxEvent`).
+    pub async fn receive_telnyx_event(&self) -> Result<()> {
+        self.send(
+            Method::POST,
+            "/v1/phone/hooks/telnyx/events",
+            None::<&()>,
+            None::<&()>,
+            "receiveTelnyxEvent",
+        )
+        .await
+    }
+    /// Receive a Twilio account event
+    ///
+    /// `POST /v1/phone/hooks/twilio/events` (`receiveTwilioEvent`).
+    pub async fn receive_twilio_event(&self) -> Result<()> {
+        self.send(
+            Method::POST,
+            "/v1/phone/hooks/twilio/events",
+            None::<&()>,
+            None::<&()>,
+            "receiveTwilioEvent",
         )
         .await
     }
@@ -4576,6 +4684,29 @@ pub struct ListResponseItemsQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
 }
+/// The query string `getResponseBranch` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct GetResponseBranchQuery {
+    /// Up to 200. Omitted is 100.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The `next_cursor` of the previous page. Omitted is the first page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+/// The query string `listResponseSiblings` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ListResponseSiblingsQuery {
+    /// reply lists the answers to the response's question; question lists the questions asked in its place. Omitted is reply.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub of: Option<String>,
+    /// Up to 100. Omitted is 25.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
 /// The query string `listSimulationRuns` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct ListSimulationRunsQuery {
@@ -4726,6 +4857,13 @@ pub struct ManageListTeamsQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub organization_id: Option<String>,
 }
+/// The query string `getOrganizationActivity` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct GetOrganizationActivityQuery {
+    /// Read from this on, at most 90 days ago. Omitted is 30 days ago.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub since: Option<String>,
+}
 /// The query string `listUseCasesForReview` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct ListUseCasesForReviewQuery {
@@ -4754,7 +4892,7 @@ pub struct SearchPhoneNumbersQuery {
     /// One vendor to search. Absent searches every usable vendor.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vendor: Option<String>,
-    /// ISO 3166-1 alpha-2 country code.
+    /// ISO 3166-1 alpha-2 country code. Numbers are sold only in the US (US) and Canada (CA); any other country is refused.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub country: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

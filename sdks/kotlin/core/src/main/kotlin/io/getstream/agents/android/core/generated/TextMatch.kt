@@ -34,7 +34,7 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
 /**
- * 
+ * A full-text match, Stream's $q.
  *
  * @param dollarQ Quoted phrases and bare words both work, and punctuation is taken rather than refused.
  */

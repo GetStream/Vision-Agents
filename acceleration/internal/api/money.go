@@ -27,6 +27,7 @@ func moneyError(err error) (APIError, bool) {
 			return APIError{Type: ErrorTypePermission, Code: codeAccountSuspended, Message: message}
 		}},
 		{policy.ErrNoCredits, func(message string) APIError { return paymentRequired(codeInsufficientCredits, message) }},
+		{policy.ErrTopUpRequired, func(message string) APIError { return paymentRequired(codeTopUpRequired, message) }},
 		{policy.ErrSystemLimit, func(message string) APIError { return paymentRequired(codeSystemLimitReached, message) }},
 		{policy.ErrBudgetSpent, func(message string) APIError { return paymentRequired(codeSpendLimitReached, message) }},
 		{policy.ErrUserLimit, func(message string) APIError {

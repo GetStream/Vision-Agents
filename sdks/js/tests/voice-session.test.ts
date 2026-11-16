@@ -229,6 +229,27 @@ describe("VoiceSession", () => {
     assert.equal(voice.get().status, "idle", "a call that is over is not still connecting");
   });
 
+  it("refuses to rejoin an owned session after leaving stopped its agent", async () => {
+    const [voice] = await started();
+    await voice.leave();
+    await assert.rejects(() => voice.join(), ConfigurationError);
+    assert.equal(voice.call, undefined);
+    assert.equal(voice.get().status, "idle");
+  });
+
+  it("refuses to rejoin an attached session after leaving closed its watcher", async () => {
+    router.serve("GET", "/v1/agents/sessions/sess_1", { body: {
+      id: "sess_1", call_id: "sess_1", call_type: "agent", user_id: "john", agent_id: "john",
+      state: "live", modality: "voice", created_at: "2026-01-01T00:00:00Z",
+    } });
+    const voice = await VoiceSession.attach(api, "sess_1");
+    await router.socket();
+    await voice.leave();
+    await assert.rejects(() => voice.join(), ConfigurationError);
+    assert.equal(voice.call, undefined);
+    assert.equal(voice.get().status, "idle");
+  });
+
   it("connects again when it joins after leaving", async () => {
     const opening = Session.open(api, { agent: "john", start_voice: true });
     await router.socket();

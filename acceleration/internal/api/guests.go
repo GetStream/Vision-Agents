@@ -399,9 +399,15 @@ func transcriptChannel(one store.AgentSession) string {
 	return one.AgentID
 }
 
-// conversationChannel is the id of the Stream Chat channel a conversation id names.
+// conversationChannel is the id of the agent channel a conversation id names. A conversation
+// on a channel of another type, one an agent config answers in, names none: that channel is the
+// customer's own, whose members the router does not choose, and it holds no call's transcript.
 func conversationChannel(cid string) string {
-	return strings.TrimPrefix(cid, chatlog.ChannelType+":")
+	id, agent := strings.CutPrefix(cid, chatlog.ChannelType+":")
+	if !agent {
+		return ""
+	}
+	return id
 }
 
 // registerGuests declares the operations served in guests.go.

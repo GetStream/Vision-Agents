@@ -321,8 +321,36 @@ func (s *Service) openSIPTrunk(ctx context.Context, customerID, id string) (*SIP
 	}, nil
 }
 
-// Close hangs up the calls this node holds through customers' own trunks. Calls placed
-// at a vendor are the vendor's to hold and are not touched.
+// ResumedTrunkCall is what a node continuing a call through a customer's own SIP trunk needs
+// of the service.
+type ResumedTrunkCall struct {
+	Trunk  *SIPTrunk
+	Bridge Bridge
+	// Ended reports how the call ended, as the node that placed it would have.
+	Ended func(CallStatus)
+}
+
+// ResumeTrunkCall opens the credentials of both sides of a call another node placed on a
+// shared line, read fresh since none are kept with the call.
+func (s *Service) ResumeTrunkCall(ctx context.Context, ref TrunkCallRef) (ResumedTrunkCall, error) {
+	trunk, err := s.openSIPTrunk(ctx, ref.CustomerID, ref.SIPTrunkID)
+	if err != nil {
+		return ResumedTrunkCall{}, err
+	}
+	shared, err := s.store.StreamTrunk(ctx, ref.CustomerID, ref.StreamTrunkID)
+	if err != nil {
+		return ResumedTrunkCall{}, err
+	}
+	line, err := s.lineOn(shared, ref.From, "")
+	if err != nil {
+		return ResumedTrunkCall{}, err
+	}
+	return ResumedTrunkCall{Trunk: trunk, Bridge: line.Bridge, Ended: s.trunkCallEnded(ctx, ref.Token, ref.CallID)}, nil
+}
+
+// Close hands the calls this node holds through customers' own trunks to another node, or
+// hangs them up when no other node takes them or there is no Redis. Calls placed at a vendor
+// are the vendor's to hold and are not touched.
 func (s *Service) Close(ctx context.Context) error {
 	if closer, ok := s.sipTrunks.(interface{ Close(context.Context) error }); ok {
 		return closer.Close(ctx)

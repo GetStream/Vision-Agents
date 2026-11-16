@@ -205,7 +205,7 @@ class TestAgent < LocalRouterTest
       3.times { frames << peer.receive(timeout: 5) }
       peer.receive_type("close", timeout: 10)
     end
-    tools = VA::Tools.new.register("search", description: "Search flights") do |_args, tool_call_context|
+    tools = VA::Tools.new.register("search", description: "Search flights") do |tool_call_context, _args|
       seen << tool_call_context
       tool_call_context.update("checking three airlines")
       tool_call_context.say("Still looking, one moment.")
@@ -240,7 +240,7 @@ class TestAgent < LocalRouterTest
       results << peer.receive_type("tool_result")
       peer.receive_type("close", timeout: 10)
     end
-    tools = VA::Tools.new.register("charge", description: "Charge the card") do |_args, tool_call_context|
+    tools = VA::Tools.new.register("charge", description: "Charge the card") do |tool_call_context, _args|
       tool_call_context.disallow_interruptions
       release.pop(timeout: 5)
       tool_call_context.cancelled? ? "stopped" : "charged"
@@ -261,7 +261,7 @@ class TestAgent < LocalRouterTest
       wrote << (peer.receive_type("tool_result", timeout: 0.5) || :nothing)
       peer.receive_type("close", timeout: 10)
     end
-    tools = VA::Tools.new.register("charge", description: "Charge the card") do |_args, tool_call_context|
+    tools = VA::Tools.new.register("charge", description: "Charge the card") do |tool_call_context, _args|
       tool_call_context.disallow_interruptions
       wrote << :charged
     end
@@ -856,24 +856,187 @@ class TestAgent < LocalRouterTest
 end
 
 class TestSessions < LocalRouterTest
-  def test_sessions_are_queried_by_agent_a_page_at_a_time
+  def session_queries
     queries = []
     @router.on(:post, "/v1/agents/sessions/query") do |request|
       queries << request.json
       { "items" => [{ "id" => "s#{queries.size}" }], "has_more" => queries.size == 1, "next_cursor" => "c1" }
     end
+    queries
+  end
+
+  def test_a_query_with_no_filter_asks_for_the_agents_sessions
+    queries = session_queries
     sessions = client.agent("docs").sessions
 
-    first = sessions.query(user_id: "u1", state: "live", agent_id: "docs-1", limit: 10)
-    sessions.query(user_id: "u1", state: "live", agent_id: "docs-1", limit: 10, cursor: first["next_cursor"])
-    found = sessions.search("billing", modality: "text")
+    sessions.query
+    sessions.query(filter: nil)
+    sessions.query(filter: { agent: "other" })
+
+    assert_equal [{ "filter" => { "agent" => "docs" } }] * 3, queries
+  end
+
+  def test_a_query_filters_by_project
+    queries = session_queries
+    sessions = client.agent("docs").sessions
+
+    sessions.query(filter: { project_id: "docs" })
+    sessions.query(filter: { "project_id" => { "$eq" => "docs" } })
+    sessions.query(filter: { project_id: { "$in": %w[docs billing] } })
+    sessions.query(filter: { "$or" => [{ project_id: "docs" }, { project_id: "billing" }] })
+
+    assert_equal [{ "filter" => { "project_id" => "docs", "agent" => "docs" } },
+                  { "filter" => { "project_id" => { "$eq" => "docs" }, "agent" => "docs" } },
+                  { "filter" => { "project_id" => { "$in" => %w[docs billing] }, "agent" => "docs" } },
+                  { "filter" => { "$or" => [{ "project_id" => "docs" }, { "project_id" => "billing" }],
+                                  "agent" => "docs" } }],
+                 queries
+  end
+
+  def test_a_nested_filter_is_sent_as_written_with_the_agent_beside_it
+    queries = session_queries
+    filter = { "$and": [{ user_id: "u1" },
+                        { "$or": [{ project_id: "docs" },
+                                  { "$and": [{ project_id: { "$in": %w[billing sales] } },
+                                             { review_score: { "$gte": 4 } }] }] }] }
+
+    client.agent("docs").sessions.query(filter: filter)
+
+    assert_equal [{ "filter" => {
+                   "$and" => [{ "user_id" => "u1" },
+                              { "$or" => [{ "project_id" => "docs" },
+                                          { "$and" => [{ "project_id" => { "$in" => %w[billing sales] } },
+                                                       { "review_score" => { "$gte" => 4 } }] }] }],
+                   "agent" => "docs"
+                 } }],
+                 queries
+    assert_equal [:$and], filter.keys
+    assert_raises(VA::ConfigurationError) { client.agent("docs").sessions.query(filter: "docs") }
+  end
+
+  def test_a_query_filters_by_review_score_and_user
+    queries = session_queries
+    sessions = client.agent("docs").sessions
+
+    sessions.query(filter: { review_score: 5, user_id: "u1" })
+    sessions.query(filter: { review_score: { "$gte" => 2, "$lt" => 4 }, user_id: { "$eq" => "u1" } })
+
+    assert_equal [{ "filter" => { "review_score" => 5, "user_id" => "u1", "agent" => "docs" } },
+                  { "filter" => { "review_score" => { "$gte" => 2, "$lt" => 4 }, "user_id" => { "$eq" => "u1" },
+                                  "agent" => "docs" } }],
+                 queries
+  end
+
+  def test_a_search_sets_the_text_beside_the_callers_filter
+    queries = session_queries
+    sessions = client.agent("docs").sessions
+
+    found = sessions.search("billing")
+    sessions.search("billing", filter: { project_id: "docs" }, limit: 5, cursor: "c1")
+
+    assert_equal [{ "id" => "s1" }], found["items"]
+    assert_equal [{ "filter" => { "agent" => "docs", "text" => { "$q" => "billing" } } },
+                  { "filter" => { "project_id" => "docs", "agent" => "docs", "text" => { "$q" => "billing" } },
+                    "limit" => 5, "cursor" => "c1" }],
+                 queries
+    assert_raises(VA::ConfigurationError) { sessions.search("billing", filter: { text: { "$q" => "refund" } }) }
+    assert_raises(VA::ConfigurationError) { sessions.search("billing", filter: { "text" => { "$q" => "refund" } }) }
+    assert_raises(ArgumentError) { sessions.search("billing", sort: [{ field: "relevance" }]) }
+    assert_equal 2, queries.size
+  end
+
+  def test_a_query_is_sorted_as_asked
+    queries = session_queries
+    sessions = client.agent("docs").sessions
+
+    sessions.query(sort: [{ field: "last_message_at", direction: 1 }])
+    sessions.query(sort: [{ field: "last_message_at", direction: -1 }])
+    sessions.query(sort: [{ field: "pinned" }])
+    sessions.query(sort: [{ field: :pinned, direction: -1 }, { "field" => "last_message_at", "direction" => 1 }])
+    sessions.query(sort: [{ field: "review_score", direction: -1 }])
+    sessions.query(sort: [{ field: "review_score", direction: 1 }])
+    sessions.query(filter: { text: { "$q" => "billing" } }, sort: [{ field: "relevance", direction: -1 }])
+
+    assert_equal [[{ "field" => "last_message_at", "direction" => 1 }],
+                  [{ "field" => "last_message_at", "direction" => -1 }],
+                  [{ "field" => "pinned" }],
+                  [{ "field" => "pinned", "direction" => -1 }, { "field" => "last_message_at", "direction" => 1 }],
+                  [{ "field" => "review_score", "direction" => -1 }],
+                  [{ "field" => "review_score", "direction" => 1 }],
+                  [{ "field" => "relevance", "direction" => -1 }]],
+                 queries.map { |query| query["sort"] }
+    assert_equal({ "filter" => { "text" => { "$q" => "billing" }, "agent" => "docs" },
+                   "sort" => [{ "field" => "relevance", "direction" => -1 }] }, queries.last)
+  end
+
+  def test_a_query_is_paged_by_cursor
+    queries = session_queries
+    sessions = client.agent("docs").sessions
+    asked = { filter: { project_id: "docs" }, sort: [{ field: "pinned" }], limit: 10 }
+
+    first = sessions.query(**asked)
+    second = sessions.query(**asked, cursor: first["next_cursor"])
 
     assert_equal [{ "id" => "s1" }], first["items"]
-    assert_equal [{ "id" => "s3" }], found["items"]
-    filter = { "agent" => "docs", "user_id" => "u1", "state" => "live", "agent_id" => "docs-1" }
-    assert_equal [{ "filter" => filter, "limit" => 10 }, { "filter" => filter, "limit" => 10, "cursor" => "c1" },
-                  { "filter" => { "agent" => "docs", "modality" => "text", "text" => { "$q" => "billing" } } }],
-                 queries
+    assert first["has_more"]
+    refute second["has_more"]
+    sent = { "filter" => { "project_id" => "docs", "agent" => "docs" }, "sort" => [{ "field" => "pinned" }],
+             "limit" => 10 }
+    assert_equal [sent, sent.merge("cursor" => "c1")], queries
+  end
+
+  def test_the_old_flat_filters_are_gone
+    sessions = client.agent("docs").sessions
+
+    assert_raises(ArgumentError) { sessions.query(project_id: "docs") }
+    assert_raises(ArgumentError) { sessions.query(state: "live") }
+    assert_raises(ArgumentError) { sessions.search("billing", modality: "text") }
+    assert_empty @router.seen(:post, "/v1/agents/sessions/query")
+  end
+
+  def test_pinned_at_is_read_from_a_session
+    @router.on(:post, "/v1/agents/sessions/query",
+               body: { "items" => [{ "id" => "s1", "pinned_at" => "2026-11-10T09:30:00Z" }, { "id" => "s2" }],
+                       "has_more" => false })
+    @router.on(:get, "/v1/agents/sessions/s1", body: { "id" => "s1", "pinned_at" => "2026-11-10T09:30:00Z" })
+    sessions = client.agent("docs").sessions
+
+    items = sessions.query(sort: [{ field: "pinned" }])["items"]
+
+    assert_equal "2026-11-10T09:30:00Z", items.first["pinned_at"]
+    refute items.last.key?("pinned_at")
+    assert_equal "2026-11-10T09:30:00Z", sessions.get("s1")["pinned_at"]
+  end
+
+  def test_a_session_is_pinned_and_unpinned_by_id
+    @router.on(:patch, "/v1/agents/sessions/s1") do |request|
+      request.json["pinned"] ? { "id" => "s1", "pinned_at" => "2026-11-10T09:30:00Z" } : { "id" => "s1" }
+    end
+    sessions = client.agent("docs").sessions
+
+    assert_equal "2026-11-10T09:30:00Z", sessions.pin("s1")["pinned_at"]
+    refute sessions.unpin("s1").key?("pinned_at")
+    assert_equal "2026-11-10T09:30:00Z", sessions.update("s1", pinned: true, title: "Pricing")["pinned_at"]
+
+    assert_equal [{ "pinned" => true }, { "pinned" => false }, { "pinned" => true, "title" => "Pricing" }],
+                 @router.seen(:patch, "/v1/agents/sessions/s1").map(&:json)
+  end
+
+  def test_a_held_session_is_pinned_and_unpinned
+    serve_session
+    @router.on(:patch, "/v1/agents/sessions/sess_1") do |request|
+      request.json["pinned"] ? { "id" => "sess_1", "pinned_at" => "2026-11-10T09:30:00Z" } : { "id" => "sess_1" }
+    end
+    session = client.agent("docs").sessions.create
+
+    pinned = session.pin
+    unpinned = session.unpin
+    session.close
+
+    assert_equal "2026-11-10T09:30:00Z", pinned["pinned_at"]
+    refute unpinned.key?("pinned_at")
+    assert_equal [{ "pinned" => true }, { "pinned" => false }],
+                 @router.seen(:patch, "/v1/agents/sessions/sess_1").map(&:json)
   end
 
   def test_create_opens_a_written_conversation

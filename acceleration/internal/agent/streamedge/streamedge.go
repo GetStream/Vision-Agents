@@ -28,6 +28,7 @@ import (
 	sfu_models "github.com/GetStream/protocol/protobuf/video/sfu/models"
 	"github.com/GetStream/protocol/protobuf/video/sfu/signal_rpc"
 	"github.com/google/uuid"
+	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -96,6 +97,8 @@ type Edge struct {
 	// call knows somebody is there to talk to.
 	attending *emit.Emitter[agent.Attendance]
 	speaker   *speaker
+	// quality counts the session's media on the agent's leg, observed once when it leaves.
+	quality *mediaQuality
 
 	client *rtc.Client
 	call   *rtc.Call
@@ -144,6 +147,7 @@ func New(options Options) (*Edge, error) {
 		inbound:   emit.New[agent.InboundAudio](audioBuffer),
 		attending: emit.New[agent.Attendance](attendanceBuffer),
 		speaker:   newSpeaker(options.Logger),
+		quality:   newMediaQuality(),
 		listening: map[string]chan struct{}{},
 		present:   map[string]string{},
 		leftDone:  make(chan struct{}),
@@ -323,6 +327,13 @@ func (e *Edge) leave() error {
 	e.inbound.Close()
 	e.attending.Close()
 
+	// Read before the call is left, while the outgoing connection still holds its ICE totals.
+	var publisher *webrtc.PeerConnection
+	if e.call != nil {
+		publisher = e.call.PublisherPC()
+	}
+	e.quality.summary(iceRoundTrip(publisher)).observe(e.logger)
+
 	var failures []error
 	if err := e.speaker.Close(); err != nil {
 		failures = append(failures, err)
@@ -427,18 +438,34 @@ func (e *Edge) publish() error {
 		TrackId:   uuid.NewString(),
 		TrackType: sfu_models.TrackType_TRACK_TYPE_AUDIO,
 	}
-	voice, err := track.NewAudioTrack(info, e.speaker, webrtc.RTPCodecCapability{
-		MimeType:  webrtc.MimeTypeOpus,
-		ClockRate: opusSampleRate,
-		Channels:  opusNegotiatedChannels,
-	})
+	voice, err := e.voiceTrack(info)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("streamedge: build audio track: %w", err))
+		return err
 	}
 	if _, err := e.call.AddTrack(info, voice); err != nil {
 		return stack.Wrap(fmt.Errorf("streamedge: publish audio track: %w", err))
 	}
 	return nil
+}
+
+// voiceTrack is the agent's Opus track, with the SFU's reports on it counted.
+func (e *Edge) voiceTrack(info *sfu_models.TrackInfo) (*track.Local, error) {
+	var voice *track.Local
+	// Replaces the SDK's default handler, which asks a video provider for key frames: the
+	// speaker publishes audio, which has none.
+	reports := track.WithRTCPHandler(func(_ track.SampleProvider, packet rtcp.Packet) error {
+		e.quality.reported(packet, uint32(voice.SSRC()))
+		return nil
+	})
+	voice, err := track.NewAudioTrack(info, e.speaker, webrtc.RTPCodecCapability{
+		MimeType:  webrtc.MimeTypeOpus,
+		ClockRate: opusSampleRate,
+		Channels:  opusNegotiatedChannels,
+	}, reports)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("streamedge: build audio track: %w", err))
+	}
+	return voice, nil
 }
 
 // listen decodes one participant's track into the audio the agent listens to. Reading the
@@ -465,7 +492,9 @@ func (e *Edge) listen(remote rtc.OnTrackReceived) {
 		participant.Name = remote.Participant.Name
 	}
 
-	reader, err := audiortc.NewTrackReader(remote.Track,
+	codec := remote.Track.Codec().RTPCodecCapability
+	stream := e.quality.inbound(remote.Track, codec.ClockRate)
+	reader, err := audiortc.NewRTPReader(stream, codec,
 		audiortc.ReaderConfig{Opus: opus.Config{SampleRate: stt.SampleRate}})
 	if err != nil {
 		e.logger.Error("could not decode a participant's audio",
@@ -484,20 +513,24 @@ func (e *Edge) listen(remote rtc.OnTrackReceived) {
 	}
 	e.listening[remote.Track.ID()] = stop
 	e.mu.Unlock()
+	e.quality.listening(stream)
 
 	e.logger.Debug("listening to a participant", "participant", participant.UserID)
-	go e.hear(reader, participant, stop)
+	go e.hear(reader, stream, participant, stop)
 }
 
 // hear hands one participant's decoded audio to the agent until the track ends or stop is
 // closed.
-func (e *Edge) hear(reader *audiortc.TrackReader, participant stt.Participant, stop <-chan struct{}) {
+func (e *Edge) hear(reader *audiortc.TrackReader, stream *inboundStream, participant stt.Participant,
+	stop <-chan struct{}) {
 	defer reader.Close()
+	defer e.quality.stopped(stream)
 	for pcm, err := range reader.Frames() {
 		if err != nil {
 			e.logger.Debug("stopped hearing a participant", "participant", participant.UserID, "error", err)
 			return
 		}
+		stream.decoded()
 		select {
 		case <-stop:
 			return

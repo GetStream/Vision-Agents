@@ -3,6 +3,10 @@ package io.getstream.agents.android.demo
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import io.getstream.chat.android.ai.compose.conversation.AIConversationState
+import io.getstream.chat.android.ai.compose.parts.AIClientIdentity
+import io.getstream.chat.android.ai.compose.ui.component.AIToolApprover
+import io.getstream.agents.android.core.AgentSession
 import io.getstream.agents.android.core.AgentsException
 import io.getstream.agents.android.core.SessionOptions
 import kotlinx.coroutines.CoroutineScope
@@ -26,7 +30,7 @@ import kotlinx.coroutines.withContext
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
     sealed interface State {
         data object Opening : State
-        data class Open(val chat: AgentChat) : State
+        data class Open(val transport: AgentTransport, val conversation: AIConversationState<AgentMessage>) : State
         data class Failed(val reason: String) : State
     }
 
@@ -40,18 +44,31 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 // panel. A call keeps the agent's own model, which answers sooner.
                 val options = SessionOptions(agent = Demo.AGENT_NAME, llm = "xai/grok-4.7", tools = Demo.tools)
                 val session = Demo.agents.chat(options)
-                State.Open(AgentChat.open(getApplication(), session, viewModelScope))
+                val transport = AgentTransport.open(getApplication(), session, viewModelScope)
+                State.Open(transport, AIConversationState(transport, viewModelScope, approver(session)))
             } catch (e: AgentsException) {
                 State.Failed(e.message.orEmpty())
             }
         }
     }
 
+    /**
+     * Answers the questions of the tools that ask first, as the person signed in here.
+     *
+     * The router addresses a question to the person whose message the call answers, and Stream's
+     * components show it only to them. The answer goes back over the session's socket, which is
+     * also what runs the tool once it is allowed.
+     */
+    private fun approver(session: AgentSession): AIToolApprover =
+        AIToolApprover(Demo.user.id, AIClientIdentity.installId(getApplication()), viewModelScope) { call, allowed ->
+            session.decide(call.id, allowed)
+        }
+
     override fun onCleared() {
         val open = state.value as? State.Open ?: return
         // The screen's scope is gone by now, and closing tells the router the conversation is over.
         CoroutineScope(Dispatchers.IO).launch {
-            withContext(NonCancellable) { open.chat.close() }
+            withContext(NonCancellable) { open.transport.close() }
         }
     }
 }

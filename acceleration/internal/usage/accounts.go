@@ -302,14 +302,17 @@ const (
 	CreditDispute         CreditKind = "dispute"
 	CreditDisputeReversal CreditKind = "dispute_reversal"
 	CreditAdjustment      CreditKind = "adjustment"
+	// CreditTrial is the credit a new organization is given to try the product with. It is
+	// spent like any other, but never counts towards being funded (Standing.Funded).
+	CreditTrial CreditKind = "trial"
 )
 
 // AmountProblem says what is wrong with amount for an entry of this kind, or nothing: a top
-// up, a grant and a dispute reversal add credit, a refund and a dispute take it away, and an
-// adjustment does either. No entry is 0.
+// up, a grant, a trial and a dispute reversal add credit, a refund and a dispute take it
+// away, and an adjustment does either. No entry is 0.
 func (k CreditKind) AmountProblem(amount int64) string {
 	switch k {
-	case CreditTopUp, CreditGrant, CreditDisputeReversal:
+	case CreditTopUp, CreditGrant, CreditTrial, CreditDisputeReversal:
 		if amount <= 0 {
 			return fmt.Sprintf("a %s adds credit: amount_micros must be above 0, not %d", k, amount)
 		}
@@ -322,7 +325,7 @@ func (k CreditKind) AmountProblem(amount int64) string {
 			return "an adjustment cannot be 0"
 		}
 	default:
-		return fmt.Sprintf("kind %q is not one of top_up, grant, refund, dispute, dispute_reversal, adjustment", k)
+		return fmt.Sprintf("kind %q is not one of top_up, grant, trial, refund, dispute, dispute_reversal, adjustment", k)
 	}
 	return ""
 }
@@ -332,7 +335,7 @@ func (k CreditKind) AmountProblem(amount int64) string {
 type CreditEntry struct {
 	ID             int64      `json:"id"`
 	OrganizationID string     `json:"organization_id"`
-	Kind           CreditKind `json:"kind" enum:"top_up,grant,refund,dispute,dispute_reversal,adjustment"`
+	Kind           CreditKind `json:"kind" enum:"top_up,grant,trial,refund,dispute,dispute_reversal,adjustment"`
 	AmountMicros   int64      `json:"amount_micros" doc:"Signed: what the entry added to the organization's credit, in micros."`
 	Reference      string     `json:"reference,omitempty" doc:"The writer's own reference, such as a payment id. Never read by the service."`
 	IdempotencyKey string     `json:"idempotency_key" doc:"The key it was written under: writing again under it changes nothing."`
