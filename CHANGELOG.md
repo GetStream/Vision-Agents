@@ -1496,6 +1496,10 @@ A dispatch worker's `answering a call` line and an agent's `ringing` line carry 
 
 In an `agent` channel that people other than the session's caller can write in (a channel the router answers in on a dispatch, or a conversation shared with its members), a message carrying the custom data of the agent's reply was read as the agent's turn: the model saw it as its own words, an action on it was answered from it, a command was looked up in it, and an unfinished one was rewritten as interrupted. Now a reply counts as the agent's only when the agent wrote it; anybody else's message is read as their own. A person's turn the router wrote keeps its fields. In an app chat, a card line marked as the agent's counts as the agent's only when the agent wrote it (AI-3186).
 
+### A member's line in a call's transcript is no longer read as the agent's
+
+A call's transcript, its timeline and a campaign's outcome read every line marked `source: agent` as the agent's, whoever wrote it, so a member of the channel the transcript is in could put words in the agent's mouth. A call now records the user the agent wrote as, and only that user's lines, or the agent id's, are the agent's; a person's typed turn reads as theirs too. A call from before this change reads as it did (AI-3265).
+
 ## Breaking Changes
 
 ### The Dart SDK has no views of its own
