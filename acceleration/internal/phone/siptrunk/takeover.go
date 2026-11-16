@@ -41,10 +41,12 @@ const handoffPoll = 100 * time.Millisecond
 // redisTimeout bounds a write about one call.
 const redisTimeout = 5 * time.Second
 
-// lockedRedisTimeout bounds the Redis calls Close waits on behind a lock (withdraw, a renewal or
-// record rewrite holding its call's lock, advertise, the owner check), so a Redis that answers
-// nothing leaves time of Close's grace to hang the calls up. A renewal it cuts short counts as
-// failed, and the lease leaves more tries.
+// lockedRedisTimeout bounds the Redis calls Close waits on (withdraw, advertise ahead of it on
+// their lock, the owner check) and each write of a call's record, which hold waits on to delete
+// it, so a Redis that answers nothing leaves time of Close's grace to hang the calls up. Close
+// also stops waiting on withdraw after it, since a call that joins a reconnect another call began
+// waits for that reconnect whatever its own context. A renewal it cuts short counts as failed,
+// and the lease leaves more tries.
 const lockedRedisTimeout = time.Second
 
 // Resumer opens what continuing a call another node placed needs: both sides' credentials,
@@ -282,14 +284,19 @@ func (p *Provider) renew(ctx context.Context) {
 	}
 }
 
+// renewOne holds the call's writing lock across the script, so a call that ends meanwhile is not
+// written back after hold deleted its keys, and its mu only around reading and applying, so the
+// BYE at stop never waits on Redis.
 func (p *Provider) renewOne(ctx context.Context, id string, h *heldCall) {
-	// Held across the script, so a call that ends meanwhile is not written back after hold
-	// deleted its keys.
+	h.writing.Lock()
+	defer h.writing.Unlock()
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	// A call being handed over may look lost once a failed take moved its score off the given-up
 	// 0, and claiming it back would undo the offer.
-	if h.ended || h.handingOver {
+	skip := h.ended || h.handingOver
+	lapse := h.lapse
+	h.mu.Unlock()
+	if skip {
 		return
 	}
 	record, err := json.Marshal(callRecord{ID: id, Ref: *h.ref, State: h.call.State(), PostDialDelay: h.postDialDelay})
@@ -298,15 +305,15 @@ func (p *Provider) renewOne(ctx context.Context, id string, h *heldCall) {
 			"vendor_call_id", id, "error", err)
 		return
 	}
-	// Bounded: hold waits on the lock to report the call's end.
+	// Bounded: hold waits on the writing lock to delete the call's keys.
 	scriptCtx, cancel := context.WithTimeout(ctx, lockedRedisTimeout)
 	defer cancel()
 	now := time.Now()
 	leased := "0"
-	if now.Before(h.lapse) {
+	if now.Before(lapse) {
 		leased = "1"
 	}
-	lapse := now.Add(p.holdFor)
+	lapse = now.Add(p.holdFor)
 	kept, err := renewScript.Exec(scriptCtx, p.redis, []string{p.keys.record(id), p.keys.owner(id), p.keys.calls()},
 		[]string{p.node, string(record), ms(recordFor), ms(p.holdFor), strconv.FormatInt(lapse.UnixMilli(), 10), id, leased}).AsInt64()
 	if err != nil {
@@ -314,6 +321,12 @@ func (p *Provider) renewOne(ctx context.Context, id string, h *heldCall) {
 			p.logger.Warn("could not renew the claim on a call through a customer's sip trunk",
 				"vendor_call_id", id, "error", err)
 		}
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	// Ended or offered while the script ran: hold or handOver decides the call's way out.
+	if h.ended || h.handingOver {
 		return
 	}
 	switch kept {
@@ -389,6 +402,24 @@ func (p *Provider) advertise(ctx context.Context) {
 			return
 		}
 	}
+}
+
+// withdrawn is withdraw, false when it has not answered within lockedRedisTimeout: a call that
+// joins a reconnect another call began waits for that reconnect whatever its own context.
+func (p *Provider) withdrawn(ctx context.Context) bool {
+	answer := make(chan bool, 1)
+	// Not on loops or running: what Close says is still up at shutdown means calls, not this.
+	go func() { answer <- p.withdraw(ctx) }()
+	timer := time.NewTimer(lockedRedisTimeout)
+	defer timer.Stop()
+	select {
+	case others := <-answer:
+		return others
+	case <-timer.C:
+	case <-ctx.Done():
+	}
+	p.logger.Warn("could not find a node to take calls through customers' sip trunks over in time; hanging them up")
+	return false
 }
 
 // withdraw stops this node saying it takes calls over, and says whether another node still
@@ -589,9 +620,16 @@ func (p *Provider) claim(id string, held *heldCall) (bool, error) {
 
 // rewrite writes a held call's record again after its dialogs changed.
 func (p *Provider) rewrite(id string, held *heldCall, log *slog.Logger) {
-	// So a renewal that read the call's state later is not overwritten by this older one.
+	// So a renewal that read the call's state later is not overwritten by this older one, and
+	// hold deletes the call's keys only after.
+	held.writing.Lock()
+	defer held.writing.Unlock()
 	held.mu.Lock()
-	defer held.mu.Unlock()
+	ended := held.ended
+	held.mu.Unlock()
+	if ended {
+		return
+	}
 	record, err := json.Marshal(callRecord{ID: id, Ref: *held.ref, State: held.call.State(), PostDialDelay: held.postDialDelay})
 	if err != nil {
 		log.Warn("could not record a call's changed dialogs", "error", err)
@@ -624,9 +662,13 @@ func (p *Provider) forget(id string, log *slog.Logger) {
 // once the call ended.
 func (p *Provider) handOver(ctx context.Context, id string, held *heldCall) {
 	log := p.logger.With("vendor", phone.SIPTrunkVendor, "vendor_call_id", id)
+	// Under writing too, so a renewal that read the call before this lands before the offer and
+	// cannot claim the call back after it.
+	held.writing.Lock()
 	held.mu.Lock()
 	held.handingOver = true
 	held.mu.Unlock()
+	held.writing.Unlock()
 	record, err := json.Marshal(callRecord{ID: id, Ref: *held.ref, State: held.call.State(), PostDialDelay: held.postDialDelay})
 	if err != nil {
 		log.Warn("could not record a call to hand it to another node", "error", err)

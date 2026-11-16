@@ -109,9 +109,13 @@ type heldCall struct {
 	// measured it.
 	postDialDelay time.Duration
 
-	// mu orders the writes of the call's record against each other and against the call
-	// ending: ended is set once the call is over or let go, and no record is written for it
-	// from then on.
+	// writing is held across each write of the call's record, by renewal and rewrite, and by hold
+	// around deleting the call's keys, so the delete lands after any write in flight and no write
+	// follows it. Taken before mu.
+	writing sync.Mutex
+	// mu guards ended, handingOver and lapse, and is never held across a Redis call: hold takes
+	// it before the BYE. ended is set once the call is over or let go, and no record is written
+	// for it from then on.
 	mu    sync.Mutex
 	ended bool
 	// handingOver is set once Close offers the call to other nodes, so renewal no longer claims
@@ -298,6 +302,19 @@ func (p *Provider) hold(id string, held *heldCall, changed <-chan struct{}, log 
 		delete(p.calls, id)
 		p.mu.Unlock()
 	}()
+	if held.movable {
+		// Off this goroutine, so a rewrite stuck on Redis cannot keep the stop from being seen.
+		p.running.Go(func() {
+			for {
+				select {
+				case <-changed:
+					p.rewrite(id, held, log)
+				case <-bridged.Done():
+					return
+				}
+			}
+		})
+	}
 
 	// A movable call is offered to another node by Close instead, while one takes calls.
 	stopping := p.ctx.Done()
@@ -306,10 +323,6 @@ func (p *Provider) hold(id string, held *heldCall, changed <-chan struct{}, log 
 	}
 	for {
 		select {
-		case <-changed:
-			if held.movable {
-				p.rewrite(id, held, log)
-			}
 		case <-bridged.Done():
 			held.mu.Lock()
 			held.ended = true
@@ -326,7 +339,9 @@ func (p *Provider) hold(id string, held *heldCall, changed <-chan struct{}, log 
 			}
 			report()
 			if held.movable {
+				held.writing.Lock()
 				p.forget(id, log)
+				held.writing.Unlock()
 			}
 			return
 		case <-stopping:
@@ -362,7 +377,9 @@ func (p *Provider) hold(id string, held *heldCall, changed <-chan struct{}, log 
 			}
 			report()
 			if held.movable {
+				held.writing.Lock()
 				p.forget(id, log)
+				held.writing.Unlock()
 			}
 			return
 		}
@@ -419,7 +436,7 @@ func (p *Provider) Close(ctx context.Context) error {
 	p.mu.Unlock()
 	if !again {
 		// After stopping, so two nodes stopping at once never count on each other.
-		handing := p.redis != nil && p.withdraw(ctx)
+		handing := p.redis != nil && p.withdrawn(ctx)
 		p.mu.Lock()
 		if handing {
 			p.closing = ctx

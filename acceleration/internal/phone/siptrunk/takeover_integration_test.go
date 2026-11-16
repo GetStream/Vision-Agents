@@ -1322,9 +1322,22 @@ func (s *TakeoverSuite) TestACallForgottenAfterItWasGivenUpIsNotWonBack() {
 // redisThatHangs is a client of the suite's Redis through a proxy that, while hang is set,
 // passes nothing on in either direction: a Redis that is up and answers nothing.
 func (s *TakeoverSuite) redisThatHangs(hang *atomic.Bool) rueidis.Client {
+	client, _ := s.redisThatHangsAndBreaks(hang)
+	return client
+}
+
+// redisThatHangsAndBreaks is redisThatHangs, with reconnect to close every connection the proxy
+// passes and send calls with no deadline, as scan and listen do, until the client dials the
+// proxy again, which accepts and then passes nothing. Every later call joins that reconnect,
+// whatever its own deadline. It sends more after, as the client spreads calls over a few
+// connections at random.
+func (s *TakeoverSuite) redisThatHangsAndBreaks(hang *atomic.Bool) (rueidis.Client, func()) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { listener.Close() })
+	var mu sync.Mutex
+	var open []net.Conn
+	accepted := 0
 	pass := func(to, from net.Conn) {
 		defer to.Close()
 		defer from.Close()
@@ -1355,6 +1368,10 @@ func (s *TakeoverSuite) redisThatHangs(hang *atomic.Bool) rueidis.Client {
 				conn.Close()
 				continue
 			}
+			mu.Lock()
+			open = append(open, conn, upstream)
+			accepted++
+			mu.Unlock()
 			go pass(upstream, conn)
 			go pass(conn, upstream)
 		}
@@ -1362,7 +1379,31 @@ func (s *TakeoverSuite) redisThatHangs(hang *atomic.Bool) rueidis.Client {
 	client, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{listener.Addr().String()}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(client.Close)
-	return client
+	call := func() {
+		go func() {
+			_ = client.Do(context.Background(), client.B().Get().Key(s.prefix+":reconnect").Build()).Error()
+		}()
+	}
+	reconnect := func() {
+		mu.Lock()
+		for _, conn := range open {
+			conn.Close()
+		}
+		open = nil
+		before := accepted
+		mu.Unlock()
+		// A call sent before the client sees its connections closed fails on them and dials nothing.
+		s.Require().Eventually(func() bool {
+			call()
+			mu.Lock()
+			defer mu.Unlock()
+			return accepted > before
+		}, time.Second, 10*time.Millisecond, "the client never dialled the proxy again")
+		for range 64 {
+			call()
+		}
+	}
+	return client, reconnect
 }
 
 // Defect: Close waits out its whole grace on a Redis that answers nothing, and the BYEs that
@@ -1406,4 +1447,53 @@ func (s *TakeoverSuite) TestARecordRewriteOnAStalledRedisLeavesTimeToHangTheCall
 	go func() { _ = a.provider.Close(ctx) }()
 
 	s.Eventually(a.dialer.call.wasHungUp, 2*time.Second, 10*time.Millisecond, "a record rewrite on a stalled Redis held up the BYE")
+}
+
+// Defect: Close waits on withdraw, which joins a reconnect a call with no deadline began, and
+// the BYEs get none of the grace.
+func (s *TakeoverSuite) TestAStopBehindARedisReconnectStillHangsTheCallUp() {
+	s.holdFor = time.Minute
+	hang := &atomic.Bool{}
+	client, reconnect := s.redisThatHangsAndBreaks(hang)
+	s.nodeRedis = client
+	a := s.node("a")
+	s.dial(a)
+	hang.Store(true)
+	defer hang.Store(false)
+	reconnect()
+	// Gives a renewal and a scan time to join the reconnect.
+	time.Sleep(3 * testRenewEvery)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	go func() { _ = a.provider.Close(ctx) }()
+
+	s.Eventually(a.dialer.call.wasHungUp, 2500*time.Millisecond, 10*time.Millisecond, "a Redis reconnect held up the BYE")
+}
+
+// Defect: a record rewrite that joined a Redis reconnect keeps hold from seeing the stop, and
+// the BYE waits for the reconnect.
+func (s *TakeoverSuite) TestARecordRewriteBehindARedisReconnectLeavesTimeToHangTheCallUp() {
+	s.holdFor = time.Minute
+	s.renewEvery = time.Minute
+	hang := &atomic.Bool{}
+	client, reconnect := s.redisThatHangsAndBreaks(hang)
+	s.nodeRedis = client
+	a := s.node("a")
+	s.dial(a)
+	hang.Store(true)
+	defer hang.Store(false)
+	reconnect()
+	a.dialer.mu.Lock()
+	onChange := a.dialer.config.OnChange
+	a.dialer.mu.Unlock()
+	onChange()
+	// The rewrite shows nowhere until it is stuck, so this only gives it time to start.
+	time.Sleep(50 * time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	go func() { _ = a.provider.Close(ctx) }()
+
+	s.Eventually(a.dialer.call.wasHungUp, 2500*time.Millisecond, 10*time.Millisecond, "a record rewrite behind a Redis reconnect held up the BYE")
 }
