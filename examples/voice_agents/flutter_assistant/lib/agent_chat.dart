@@ -7,6 +7,7 @@ import 'package:stream_chat_flutter_ai_a2ui/stream_chat_flutter_ai_a2ui.dart';
 import 'package:stream_agents/stream_agents.dart';
 
 import 'assistant.dart';
+import 'openui_renderer.dart';
 import 'photos.dart';
 import 'trip_components.dart';
 
@@ -96,6 +97,9 @@ class AgentChat with AIConversationTransport<AgentMessage> {
   /// A stored step only keeps its opening.
   final reasoning = LiveReasoning();
 
+  /// Fast-lane 0ms WebSocket UI updates overlaid ahead of Stream Chat's 150ms ephemeral tick.
+  final liveUI = LiveUI();
+
   /// The composer option that asks for more reasoning.
   static const thinkHarder = 'think_harder';
 
@@ -106,7 +110,10 @@ class AgentChat with AIConversationTransport<AgentMessage> {
   /// phone's own components, and sends what the person does in it back.
   late final ui = AIUIHost(
     components: TripComponents.all,
-    renderers: [A2UIRenderer(onError: (error, _) => debugPrint('A2UI: $error'))],
+    renderers: [
+      OpenUIRenderer(onError: (error, _) => debugPrint('OpenUI: $error')),
+      A2UIRenderer(onError: (error, _) => debugPrint('A2UI: $error')),
+    ],
     send: _answer,
   );
 
@@ -148,7 +155,7 @@ class AgentChat with AIConversationTransport<AgentMessage> {
 
   /// The messages as Stream's AI components show them.
   List<AgentMessage> get listMessages =>
-      listed(_channel?.state?.messages ?? const [], reasoning, shown: _shown);
+      listed(liveUI.overlay(_channel?.state?.messages ?? const []), reasoning, shown: _shown);
 
   /// Each message as it was last shown. A changed message is a new one, so one that did not
   /// change is not parsed again as every streamed word arrives.
@@ -285,6 +292,10 @@ class AgentChat with AIConversationTransport<AgentMessage> {
   void _sessionChanged(AgentSession session) {
     _sessionFailure.value = session.failure?.toString();
     if (!_unanswered) _tell(activityOf(session.state));
+    if (liveUI.observe(session.conversation.value)) {
+      _publish();
+      return;
+    }
     _checkIdle();
   }
 

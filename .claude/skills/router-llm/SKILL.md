@@ -31,7 +31,7 @@ is no `recording()` — what the socket buys is the answer arriving as it is wri
 | `format` | `text.format` | `output_config.format` | `responseMimeType`, `responseSchema` | `text.format` | `text.format` | `response_format`, JSON but not a schema |
 | `verbosity` | `text.verbosity` | — | — | — | 400 | accepted, then ignored |
 | `tools`, `tool_choice` | auto, none, required | auto, any, tool, none | `functionDeclarations`, `functionCallingConfig.mode` | auto, none, required | `auto` and nothing else | auto, none, required, named |
-| `store`, `previous_response_id` | both, kept 30 days | — | the Interactions API only | both, kept 30 days | both | — |
+| `store`, `previous_response_id` | both, kept 30 days; a Zero Data Retention org refuses `previous_response_id`, so we send `store: false` | — | the Interactions API only | both, kept 30 days | both | — |
 | `prompt_cache_key` | `prompt_cache_key` | `cache_control` breakpoints, four of them | implicit over 4k tokens, or a `cachedContents` resource | `prompt_cache_key`, which is `x-grok-conv-id` | `prompt_cache_key` | automatic, by prefix |
 | cache TTL | `prompt_cache_options.ttl`, which is 30m | 5m or 1h | whatever the explicit cache was made with | — | `prompt_cache_retention`, as a hint | — |
 | `metadata` | `metadata`, `safety_identifier` | `metadata.user_id` | `labels`, Interactions only | accepted, then ignored | `metadata` | `user_id` |
@@ -55,13 +55,14 @@ What the table is saying:
   provider accepts rather than a number.
 - **Render earlier messages the same way every time.** Don't reorder or rewrite them, and
   don't put a cache breakpoint on a mid-conversation system message: every request has to open
-  with the one before it, or the cache and `previous_response_id` are lost (see
-  `internal/harness/AGENTS.md`).
+  with the one before it, or the cache is lost (see `internal/harness/AGENTS.md`).
 - **The conversation still lives in the caller, though it no longer has to.** OpenAI, Grok,
   Muse and Gemini's Interactions API will all hold it now; Anthropic and DeepSeek will not.
   Sending it whole every time is what makes a failover to one of those two work, and what lets
-  consecutive turns be answered by different providers. `previous_response_id` is an
-  optimisation on top.
+  consecutive turns be answered by different providers. No provider here continues from
+  `previous_response_id` either: an OpenAI organisation with Zero Data Retention refuses it,
+  a customer's own key can belong to one, and a continued response is billed for the whole
+  chain anyway.
 - **Thinking does not survive the crossing.** Every provider that reasons wants its own
   reasoning handed back on the next turn: Anthropic's signed blocks, Gemini's thought signatures
   (a missing one is a 400 on a function call), Grok's encrypted content (omitting it is their
@@ -81,8 +82,9 @@ request goes out:
   through either, because a provider's own answer to an unknown effort is a 400 halfway through
   a phone call.
 - A verbosity the model does not accept is an error, where the model accepts any.
-- `store` and `previous_response_id` mean nothing to a provider that does not report `Store`,
-  and asking for both a conversation and a previous response is refused as a contradiction.
+- `store` means nothing to a provider that does not report `Store`. A `previous_response_id`
+  or `conversation` the model cannot hold is refused, because the answer would be made from
+  only the newest messages, and asking for both is refused as a contradiction.
 - A cache TTL a provider does not offer is dropped, since the request still works and only
   costs more.
 

@@ -4,14 +4,18 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
+import 'package:stream_chat_flutter_ai_a2ui/stream_chat_flutter_ai_a2ui.dart';
 import 'package:stream_core_flutter/core.dart';
 import 'package:stream_video_flutter/stream_video_flutter.dart' as video;
 import 'package:stream_agents/stream_agents.dart';
 
 import 'agent_chat.dart';
 import 'assistant.dart';
+import 'brand_theme.dart';
 import 'captions.dart';
+import 'openui_renderer.dart';
 import 'permissions.dart';
+import 'trip_components.dart';
 
 /// Talking to Juno, full screen, in the conversation that was open.
 ///
@@ -81,6 +85,15 @@ class _VoiceScreenState extends State<VoiceScreen> with WidgetsBindingObserver {
   /// hears, answers or speaks.
   String? _trouble;
 
+  late final AIUIHost _voiceUI = AIUIHost(
+    components: TripComponents.all,
+    renderers: [
+      OpenUIRenderer(onError: (error, _) => debugPrint('Voice OpenUI: $error')),
+      A2UIRenderer(onError: (error, _) => debugPrint('Voice A2UI: $error')),
+    ],
+    send: (action) => widget.session.responses.create(action.label, uiAction: action.toJson()),
+  );
+
   /// Starting voice, which leaving waits for: the agent is only taken off the call once it has
   /// been put on it. Started again once a microphone that was denied is given.
   late Future<void> _starting;
@@ -134,6 +147,7 @@ class _VoiceScreenState extends State<VoiceScreen> with WidgetsBindingObserver {
     }
     unawaited(_participants?.cancel());
     _meter?.cancel();
+    _voiceUI.dispose();
     _heard.dispose();
     _caption.dispose();
     final session = widget.session;
@@ -431,6 +445,16 @@ class _VoiceScreenState extends State<VoiceScreen> with WidgetsBindingObserver {
                     builder: (context, shown, _) =>
                         CaptionView(caption: shown.caption, isVisible: shown.isVisible),
                   ),
+                  if (_latestVoiceTurnWithUI(voice) case final Turn turn)
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 280),
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: BrandThemeScope(
+                          child: _VoiceLiveUI(host: _voiceUI, turn: turn),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -607,5 +631,66 @@ class _ApprovalCardState extends State<_ApprovalCard> {
       state: _state,
       onAnswer: _answer,
     );
+  }
+}
+
+extension on _VoiceScreenState {
+  Turn? _latestVoiceTurnWithUI(VoiceSession? voice) {
+    if (voice == null) return null;
+    final turns = voice.session.turns;
+    for (var i = turns.length - 1; i >= 0; i--) {
+      final turn = turns[i];
+      if (!_before.contains(turn.id) && turn.speaker.isAgent && turn.ui != null) {
+        return turn;
+      }
+    }
+    return null;
+  }
+}
+
+class _VoiceAIMessage with AIMessage {
+  _VoiceAIMessage(this.turn, this.uiDocument);
+
+  final Turn turn;
+
+  @override
+  final AIUIDocument uiDocument;
+
+  @override
+  String get id => turn.id;
+
+  @override
+  AIMessageRole get role => AIMessageRole.assistant;
+
+  @override
+  String get text => turn.text;
+
+  @override
+  bool get isGenerating => turn.ui?.isStreaming ?? false;
+
+  @override
+  List<AIMessagePart> get parts => const [];
+
+  @override
+  List<AIMessageAttachment> get attachments => const [];
+
+  @override
+  String? reasoningText(AIReasoningPart step) => null;
+}
+
+class _VoiceLiveUI extends StatelessWidget {
+  const _VoiceLiveUI({required this.host, required this.turn});
+
+  final AIUIHost host;
+  final Turn turn;
+
+  @override
+  Widget build(BuildContext context) {
+    final ui = turn.ui;
+    if (ui == null) return const SizedBox.shrink();
+    final document = AIUIDocument.fromCustomData({'ai_ui': ui.toWireJson()});
+    if (document == null) return const SizedBox.shrink();
+    host.receive([_VoiceAIMessage(turn, document)]);
+    return AIUIView(host: host, document: document, messageId: turn.id);
   }
 }

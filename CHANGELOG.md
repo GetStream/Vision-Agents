@@ -673,6 +673,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### OpenAI agents answer every turn on an account with Zero Data Retention
+
+An OpenAI organisation with Zero Data Retention answers `previous_response_id` with a 400, and an agent on an OpenAI model sent one on every turn after a stored reply, so about every other turn failed with "Previous response cannot be used for this organization due to Zero Data Retention". The OpenAI provider now sends the whole conversation every turn, as every other provider does, with `store: false`, so OpenAI keeps no response as application state; it is billed the same, since a continued response was billed for the whole chain. OpenAI's text models declare a 30-day retention, the abuse-monitoring logs that are left, instead of unspecified, so a data policy floor that accepts 30 days can now route to them. On the LLM socket, a `previous_response_id` or `conversation` sent to a model that keeps neither is refused, rather than answered from only the newest messages. Earlier turns' OpenAI reasoning items are no longer carried into the next turn (#2021).
+
 ### `rewindSession` works on a conversation kept in Stream Chat
 
 Every session that is not incognito keeps its conversation in Stream Chat, and `rewindSession` (`POST /v1/agents/sessions/{id}/rewind`, `responses.rewind` in the SDKs) refused all of them with a 400. Such a conversation is now rewound in Chat as well, the way an edit of the turn after the named response is: the later messages are hidden from every read of the channel, so a reopen does not bring them back, and they are kept as a branch that `listResponseSiblings`, `getResponseBranch` and `activateResponse` read and bring back. It counts toward the conversation's 100 edit and regenerate points, needs the Chat app's agent rewind, and is refused as an edit is, including for a response whose messages carry no branch mark, such as a turn spoken on a call. An unknown response is now a 404, and the call can answer 409. The SDKs' doc comments no longer say to fork instead (AI-3209).

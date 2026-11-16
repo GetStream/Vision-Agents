@@ -233,6 +233,8 @@ type Service struct {
 	// finished is told of every reply finished in a thread channel (OnFinishedReply). It is
 	// apart from mu so a finished reply in one conversation never waits on another opening.
 	finished atomic.Pointer[func(FinishedReply)]
+	// overflow stores generated UI payloads too large for a message's 50 KB custom limit.
+	overflow atomic.Pointer[UIOverflowStore]
 	// retireAfter is how long a released conversation is held before it is let go.
 	retireAfter time.Duration
 	// flushing counts the conversations writing to Stream right now (flush), finished replies
@@ -282,6 +284,13 @@ type Conversation struct {
 	// reasoning is the model's thinking for the current reply. It is shown to watchers
 	// through ephemeral updates only and is never persisted.
 	reasoning liveReasoning
+	// lastPublished throttles intermediate conversation_updated snapshots during token streaming.
+	lastPublished time.Time
+	// lastUIFormat and lastUIContent keep the latest completed UI for openui-patch turns,
+	// and turnUIRaw accumulates raw UIDelta fragments for the active turn.
+	lastUIFormat  string
+	lastUIContent string
+	turnUIRaw     string
 	// resumed is when the model last began working towards what it says next: a response
 	// starting, its latest words, or a tool's result. A round of thinking that opens after it
 	// began then, which matters for a model that sends its thinking only once it is done.
@@ -487,6 +496,24 @@ func (s *Service) OnFinishedReply(fn func(FinishedReply)) {
 		return
 	}
 	s.finished.Store(&fn)
+}
+
+// SetUIOverflow configures where generated UI payloads that exceed Stream Chat's 50 KB
+// message custom limit are stored as artifacts. A nil store clears it.
+func (s *Service) SetUIOverflow(store UIOverflowStore) {
+	if store == nil {
+		s.overflow.Store(nil)
+		return
+	}
+	s.overflow.Store(&store)
+}
+
+func (s *Service) overflowStore() UIOverflowStore {
+	held := s.overflow.Load()
+	if held == nil {
+		return nil
+	}
+	return *held
 }
 
 // SessionCommandChannel reserves the persistent conversation namespace for the
@@ -706,6 +733,7 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 		c.shared, c.thread, c.dispatched, c.sessionCommand = page.shared, page.thread, page.dispatched, page.sessionCommand
 		c.session, c.voiceAgent = sessionOf(ctx), voiceAgent
 		c.active = true
+		c.seedLastUI(page.Messages)
 		h, tr := restored(ctx, cid, page)
 		return c, h, tr, nil
 	}
@@ -784,6 +812,7 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 			c.finish("interrupted")
 		}
 	}
+	c.seedLastUI(page.Messages)
 	c.mu.Unlock()
 	h, tr := restored(ctx, cid, page)
 	return c, h, tr, nil
@@ -1757,11 +1786,14 @@ func (c *Conversation) Observe(event agent.Event) {
 	// A tool's progress reaches watchers through live updates; Stream stores it once the
 	// reply settles.
 	unsaved := false
+	wasState := m.State
+	coalesce := false
 	switch e := event.(type) {
 	case agent.Responding:
 		if !c.acceptTurn(e.TurnID, true) {
 			return
 		}
+		c.turnUIRaw = ""
 		c.resumed = time.Now()
 		c.state("thinking")
 		c.settleThinking(m, time.Now())
@@ -1778,6 +1810,41 @@ func (c *Conversation) Observe(event agent.Event) {
 		c.settleThinking(m, time.Now())
 		c.resumed = time.Now()
 		m.Text += e.Text
+		m.Saved = false
+		coalesce = wasState == "writing"
+	case agent.UIDelta:
+		if !c.acceptTurn(e.TurnID, false) {
+			return
+		}
+		c.state("writing")
+		c.settleThinking(m, time.Now())
+		c.resumed = time.Now()
+		c.turnUIRaw += e.Delta
+		body := c.turnUIRaw
+		if e.Mode == "patch" && e.Format == "openui" && c.lastUIFormat == "openui" && c.lastUIContent != "" {
+			body = MergeOpenUIStatements(c.lastUIContent, body)
+		}
+		ui := map[string]any{"v": uiVersion, "format": e.Format, "status": "streaming", "content": body}
+		if e.Version != "" {
+			ui["version"] = e.Version
+		}
+		m.UI = ui
+		m.Saved = false
+		coalesce = wasState == "writing"
+	case agent.UICompleted:
+		if !c.acceptTurn(e.TurnID, false) {
+			return
+		}
+		c.turnUIRaw = e.Content
+		body := e.Content
+		if e.Mode == "patch" && e.Format == "openui" && c.lastUIFormat == "openui" && c.lastUIContent != "" {
+			body = MergeOpenUIStatements(c.lastUIContent, body)
+		}
+		ui := map[string]any{"v": uiVersion, "format": e.Format, "status": "complete", "content": body}
+		if e.Version != "" {
+			ui["version"] = e.Version
+		}
+		m.UI = ui
 		m.Saved = false
 	case agent.ReasoningDelta:
 		if !c.acceptTurn(e.TurnID, false) {
@@ -1962,7 +2029,11 @@ func (c *Conversation) Observe(event agent.Event) {
 	if unsaved {
 		m.Saved = false
 	}
-	c.publish(*m)
+	now := time.Now()
+	if !coalesce || now.Sub(c.lastPublished) >= answerEvery {
+		c.lastPublished = now
+		c.publish(*m)
+	}
 }
 
 // refuse marks a reply the prompt injection screen refused. What streamed of the refused
@@ -1971,6 +2042,7 @@ func refuse(m *Message) {
 	runes := []rune(m.Text)
 	m.Text = strings.TrimSuffix(string(runes[:min(m.AnswerStart, len(runes))]), "\n\n")
 	m.AnswerStart = min(m.AnswerStart, utf8.RuneCountInString(m.Text))
+	m.UI = nil
 	m.Refused = true
 }
 
@@ -2089,6 +2161,21 @@ func (c *Conversation) finish(state string) {
 	c.stopParts(m, now)
 	m.FinishedAt = &now
 	m.DurationMS = now.Sub(m.StartedAt).Milliseconds()
+	if state == "completed" {
+		cleanText, settledUI := wireUIWithBase(*m, c.lastUIFormat, c.lastUIContent)
+		if settledUI != nil {
+			m.Text = cleanText
+			m.UI = settledUI
+			if format, _ := settledUI["format"].(string); format != "" {
+				if content, _ := settledUI["content"].(string); content != "" {
+					c.lastUIFormat = format
+					c.lastUIContent = content
+				}
+			}
+		}
+	}
+	c.turnUIRaw = ""
+	c.lastPublished = time.Time{}
 	for i := range m.Tools {
 		t := &m.Tools[i]
 		if t.FinishedAt == nil {
@@ -2104,6 +2191,23 @@ func (c *Conversation) finish(state string) {
 	c.publish(*m)
 	c.rememberAsked(*m)
 }
+
+func (c *Conversation) seedLastUI(messages []Message) {
+	for i := len(messages) - 1; i >= 0; i-- {
+		m := messages[i]
+		if m.Role != "assistant" || m.UI == nil {
+			continue
+		}
+		format, _ := m.UI["format"].(string)
+		content, _ := m.UI["content"].(string)
+		if format != "" && content != "" {
+			c.lastUIFormat = format
+			c.lastUIContent = content
+			return
+		}
+	}
+}
+
 func (c *Conversation) publish(m Message) {
 	if c.emit != nil {
 		m.Tools = append([]Tool{}, m.Tools...)
@@ -2111,6 +2215,7 @@ func (c *Conversation) publish(m Message) {
 		m.Sources = append([]Source{}, m.Sources...)
 		m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 		m.Files = append([]sandbox.Attachment{}, m.Files...)
+		m.UI = maps.Clone(m.UI)
 		m.ConnectorAuthorizations = append([]ConnectorAuthorization{}, m.ConnectorAuthorizations...)
 		c.emit(Updated{CID: c.data.CID, Message: m})
 	}
@@ -2128,6 +2233,7 @@ func (c *Conversation) enqueue(m Message, create bool) {
 	m.Sources = append([]Source{}, m.Sources...)
 	m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 	m.Files = append([]sandbox.Attachment{}, m.Files...)
+	m.UI = maps.Clone(m.UI)
 	m.ConnectorAuthorizations = append([]ConnectorAuthorization{}, m.ConnectorAuthorizations...)
 	// A write of a message a branch switch hid would be refused by Chat, and hold every write
 	// after it.
@@ -2184,7 +2290,11 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 	}
 	m.Saved = !ephemeral
 	m.Error = ""
-	text, ui := wireUI(m)
+	c.mu.Lock()
+	baseFormat, baseContent := c.lastUIFormat, c.lastUIContent
+	customer, cid := c.data.Customer, c.data.CID
+	c.mu.Unlock()
+	text, ui := wireUIWithBase(m, baseFormat, baseContent)
 	wire := m
 	wire.Text = text
 	wire.AnswerStart = min(wire.AnswerStart, utf8.RuneCountInString(text))
@@ -2194,6 +2304,13 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 	}
 	runtime := runtimeOf(wire)
 	fields := map[string]any{"text": text, "generating": m.FinishedAt == nil, "source": "agent", "support_message": metadata, "support_runtime": runtime}
+	if !ephemeral && ui != nil {
+		var spilled *ArtifactAttachment
+		ui, spilled = spillOversizedUI(ctx, c.service.overflowStore(), customer, cid, m.ID, ui, maps.Clone(fields), "text", "attachments")
+		if spilled != nil {
+			m.Artifacts = mergeArtifacts(m.Artifacts, []ArtifactAttachment{*spilled})
+		}
+	}
 	if ui != nil {
 		fields["ai_ui"] = ui
 	}
@@ -2235,7 +2352,7 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 		fitUI(custom)
 		channelType, id := channelOf(c.data.CID)
 		_, err := client.Chat().SendMessage(ctx, channelType, id, &getstream.SendMessageRequest{Message: getstream.MessageRequest{
-			ID: &m.ID, UserID: &user, Text: &text, Custom: custom, Attachments: chatFileAttachments(m.Files, m.Role == "user"),
+			ID: &m.ID, UserID: &user, Text: &text, Custom: custom, Attachments: append(ChatAttachments(m.Artifacts), chatFileAttachments(m.Files, m.Role == "user")...),
 		}})
 		if err != nil && ctx.Err() == nil {
 			existing, readErr := client.Chat().GetMessage(ctx, m.ID, &getstream.GetMessageRequest{})
@@ -2627,6 +2744,7 @@ func liveCopy(m *Message) Message {
 	copy.Sources = append([]Source{}, m.Sources...)
 	copy.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 	copy.Files = append([]sandbox.Attachment{}, m.Files...)
+	copy.UI = maps.Clone(m.UI)
 	copy.ConnectorAuthorizations = append([]ConnectorAuthorization{}, m.ConnectorAuthorizations...)
 	return copy
 }
