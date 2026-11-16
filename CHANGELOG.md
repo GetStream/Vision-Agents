@@ -2,6 +2,10 @@
 
 ## Features
 
+### The JavaScript SDK draws a streaming card a statement at a time
+
+While a reply's OpenUI streams, `TurnUI.content` now holds only its finished statements: the one no newline has ended yet is held back, so a card no longer reflows with every delta or shows a gauge reading 8 before 86. `ui_completed` still shows the whole program. A turn has no `Turn.ui` until a statement is finished, so `LiveUI` leaves a reply its text rather than showing an empty card. A reply interrupted before its UI completed settles when the turn ends, keeping its last statement if it closed.
+
 ### The Swift SDK shows a reply's interactive UI as the socket streams it
 
 `AgentEvent` reads `ui_delta` and `ui_completed`, and `Conversation` folds them onto the agent's turn as `Turn.ui` (`TurnUI`), merging an `openui-patch` onto the card before it. While OpenUI streams, `TurnUI.content` holds only finished statements, so a card grows a part at a time. `LiveUI` lays that UI over the Stream Chat reply being written until Chat's own `ai_ui` is complete, by the same rules as JavaScript and Dart, so a new reply never shows the card of the one before it. On a call, where there is no channel, an app shows the newest `Turn.ui` itself. `swift_assistant` shows it in chat and on calls, with restaurant cards, an availability gauge, a seat selector and brands switched live in Settings (#2026).

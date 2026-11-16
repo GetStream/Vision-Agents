@@ -6,6 +6,11 @@ export interface TurnUI {
   readonly format: string;
   readonly version?: string;
   readonly status: "streaming" | "complete";
+  /**
+   * The UI to show. While OpenUI streams, that is its finished statements only: the one no
+   * newline has ended yet is held back, so a card grows a statement at a time rather than
+   * reflowing with every delta (a gauge reading 8 before 86). Empty until one is finished.
+   */
   readonly content: string;
 }
 
@@ -70,7 +75,8 @@ export interface ConversationRecord {
 export class Conversation {
   private snapshot: ConversationRecord;
   private readonly listeners = new Set<() => void>();
-  private readonly uiRawByTurn = new Map<string, string>();
+  /** What each turn's UI block has written so far, unmerged, until the turn's UI is settled. */
+  private readonly uiRawByTurn = new Map<string, PendingUI>();
 
   constructor(connected: boolean) {
     this.snapshot = Object.freeze({
@@ -155,24 +161,18 @@ export class Conversation {
         if (!format) {
           return;
         }
-        const version = text(frame, "version");
-        const mode = text(frame, "mode") || "replace";
-        const raw = (this.uiRawByTurn.get(turnId) ?? "") + delta;
-        this.uiRawByTurn.set(turnId, raw);
-        const content = this.resolveUIContent(turnId, format, mode, raw);
-        if (content === undefined) {
+        const pending: PendingUI = {
+          format,
+          version: text(frame, "version"),
+          mode: text(frame, "mode") || "replace",
+          raw: (this.uiRawByTurn.get(turnId)?.raw ?? "") + delta,
+        };
+        this.uiRawByTurn.set(turnId, pending);
+        if (format === "openui" && !delta.includes("\n")) {
+          // Only the line still being written grew, so no statement finished: nothing shown changes.
           return;
         }
-        this.writeUI(
-          turnId,
-          Object.freeze({
-            format,
-            ...(version ? { version } : {}),
-            status: "streaming",
-            content,
-          }),
-          now,
-        );
+        this.showUI(turnId, pending, "finished", now);
         return;
       }
       case "ui_completed": {
@@ -181,37 +181,30 @@ export class Conversation {
         if (!format) {
           return;
         }
-        const version = text(frame, "version");
-        const mode = text(frame, "mode") || "replace";
-        const raw = text(frame, "content") || (this.uiRawByTurn.get(turnId) ?? "");
+        const pending: PendingUI = {
+          format,
+          version: text(frame, "version"),
+          mode: text(frame, "mode") || "replace",
+          raw: text(frame, "content") || (this.uiRawByTurn.get(turnId)?.raw ?? ""),
+        };
         this.uiRawByTurn.delete(turnId);
-        const content = this.resolveUIContent(turnId, format, mode, raw);
-        if (content === undefined) {
-          return;
-        }
-        this.writeUI(
-          turnId,
-          Object.freeze({
-            format,
-            ...(version ? { version } : {}),
-            status: "complete",
-            content,
-          }),
-          now,
-        );
+        this.showUI(turnId, pending, "all", now);
         return;
       }
       case "responded": {
         // The final text is authoritative: the deltas are what was being written, this is
         // what was said. An empty one adds nothing, which is what a spoken-only turn is.
         const turnId = text(frame, "turn_id");
-        this.uiRawByTurn.delete(turnId);
+        this.settleUI(turnId, now);
         const said = text(frame, "text");
         if (said) {
           this.write(turnId, said, now, () => said);
         }
         return;
       }
+      case "interrupted":
+        this.settleUI(text(frame, "turn_id"), now);
+        return;
       case "error":
         this.change({ failure: text(frame, "error"), failureContext: text(frame, "context"), failureAt: now });
         return;
@@ -257,6 +250,40 @@ export class Conversation {
     this.turns(next);
   }
 
+  /**
+   * The turn ended with no `ui_completed`, as an interrupted reply does: the router dropped its
+   * UI block with the turn. What was written shows, but for a statement it ended in the middle
+   * of, and the UI is complete, since nothing more of it will come.
+   */
+  private settleUI(turnId: string, now: number): void {
+    const pending = this.uiRawByTurn.get(turnId);
+    this.uiRawByTurn.delete(turnId);
+    if (pending) {
+      this.showUI(turnId, pending, "closed", now);
+    }
+  }
+
+  /**
+   * Shows `pending` as the UI of the turn `turnId`: streaming while only its `finished`
+   * statements count, complete otherwise. A UI with nothing to show yet sets none.
+   */
+  private showUI(turnId: string, pending: PendingUI, keep: OpenUIKeep, now: number): void {
+    const content = this.resolveUIContent(turnId, pending, keep);
+    if (content === undefined) {
+      return;
+    }
+    this.writeUI(
+      turnId,
+      Object.freeze({
+        format: pending.format,
+        ...(pending.version ? { version: pending.version } : {}),
+        status: keep === "finished" ? "streaming" : "complete",
+        content,
+      }),
+      now,
+    );
+  }
+
   private writeUI(turnId: string, ui: TurnUI, now: number): void {
     const turns = this.snapshot.turns;
     const index = this.agentTurnIndex(turnId);
@@ -279,19 +306,27 @@ export class Conversation {
   }
 
   /**
-   * A turn's UI as it shows: `raw` itself, or a patch merged onto the UI before it. Undefined for
-   * a patch with no UI before it here, such as after a reload: Stream Chat's copy, which the
-   * router merged, is the one that shows.
+   * A turn's UI as it shows: what was written, or a patch merged onto the UI before it. Of OpenUI,
+   * only the statements `keep` says count. Undefined when there is nothing to show yet, and for a
+   * patch with no UI before it here, such as after a reload: Stream Chat's copy, which the router
+   * merged, is the one that shows.
    */
-  private resolveUIContent(turnId: string, format: string, mode: string, raw: string): string | undefined {
-    if (mode !== "patch" || format !== "openui") {
+  private resolveUIContent(turnId: string, { format, mode, raw }: PendingUI, keep: OpenUIKeep): string | undefined {
+    if (format !== "openui") {
       return raw;
+    }
+    const written = keep === "all" ? raw : splitOpenUIStatements(raw, keep).join("\n");
+    if (keep !== "all" && !written) {
+      return undefined;
+    }
+    if (mode !== "patch") {
+      return written;
     }
     const turns = this.snapshot.turns;
     for (let index = turns.length - 1; index >= 0; index--) {
       const earlier = turns[index];
       if (earlier?.speaker === "agent" && earlier.id !== turnId && earlier.ui?.format === "openui" && earlier.ui.content) {
-        return mergeOpenUIStatements(earlier.ui.content, raw);
+        return mergeOpenUIStatements(earlier.ui.content, written);
       }
     }
     return undefined;
@@ -390,14 +425,38 @@ export function mergeOpenUIStatements(base: string, patch: string): string {
   }).join("\n");
 }
 
-function splitOpenUIStatements(program: string): string[] {
+/** What a turn's UI was written to. */
+interface PendingUI {
+  readonly format: string;
+  readonly version: string;
+  readonly mode: string;
+  readonly raw: string;
+}
+
+/**
+ * Which statements of an OpenUI program count: `all` of them; those `closed`, leaving out one a
+ * bracket or a string left open; or those `finished`, also leaving out the line no newline has
+ * ended, which is still being written.
+ */
+type OpenUIKeep = "all" | "closed" | "finished";
+
+/**
+ * A program's statements: each line, or the lines a bracket or a string left open joined to the
+ * one that closes it. Blank and comment lines are left out, and so is what `keep` leaves out.
+ */
+function splitOpenUIStatements(program: string, keep: OpenUIKeep = "all"): string[] {
   const stmts: string[] = [];
   let current = "";
   let quote = "";
   let escaped = false;
   let depth = 0;
 
-  for (const line of program.split("\n")) {
+  const lines = program.split("\n");
+  if (keep === "finished") {
+    // What follows the last newline is still being written.
+    lines.pop();
+  }
+  for (const line of lines) {
     if (!quote && depth === 0) {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith("//") || trimmed.startsWith("#")) {
@@ -439,7 +498,7 @@ function splitOpenUIStatements(program: string): string[] {
     }
   }
   const tail = current.trim();
-  if (tail) {
+  if (tail && keep === "all") {
     stmts.push(tail);
   }
   return stmts;
