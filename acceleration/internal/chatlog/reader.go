@@ -66,8 +66,14 @@ type Read struct {
 	// Customer is who is reading. A channel stamped for another customer reads as empty.
 	Customer string
 	// Agent is the agent's id, which is who the conversation service writes its replies
-	// as. Those lines carry no source, so this is how they are told apart.
+	// as. A line with no source written as it is the agent's.
 	Agent string
+	// Writer is the user the agent wrote its spoken lines as (Options.Agent). A line marked as
+	// the agent's (SourceAgent) is only the agent's when this user or Agent wrote it: a member
+	// of the channel can mark a message of their own the same way, and the conversation service
+	// marks a person's typed turn too, written as that person. Empty reads every marked line as
+	// the agent's, as a call from before the router kept the writer is read.
+	Writer string
 	// From and To bound the lines to the call's own, since a conversation's channel also
 	// holds what was typed before and after it. A zero To means the call is still going.
 	From, To time.Time
@@ -134,7 +140,9 @@ func (r *Reader) Transcript(ctx context.Context, read Read) ([]Spoken, error) {
 			continue
 		}
 		source, sourced := stored.Custom[SourceField]
-		line.Agent = source == SourceAgent || (!sourced && read.Agent != "" && stored.User.ID == read.Agent)
+		marked := source == SourceAgent &&
+			(read.Writer == "" || stored.User.ID == read.Writer || stored.User.ID == read.Agent)
+		line.Agent = marked || (!sourced && read.Agent != "" && stored.User.ID == read.Agent)
 		// A user nobody named is named after their own id, which is not a name and is no
 		// use to whoever is reading the conversation back.
 		if stored.User.Name != nil && *stored.User.Name != stored.User.ID {

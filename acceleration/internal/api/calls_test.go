@@ -718,6 +718,100 @@ func (s *CallsSuite) TestATimelineOfACallNobodyWroteDownHasTurnsWithoutWords() {
 	s.Nil(timeline[0].Said)
 }
 
+func (s *CallsSuite) TestAMembersLineMarkedAsTheAgentsIsTheMembersOnEveryReader() {
+	// Ben is a member of the channel the call's transcript is in, and marks a message of his
+	// as the agent's. The call's row names the user the agent wrote as, so only its lines are.
+	ctx := context.Background()
+	call := s.started(store.Call{AgentUserID: "vision-agent", StartedAt: time.Now().UTC().Truncate(time.Millisecond).Add(-time.Minute)})
+	at := func(ms int) time.Time { return call.StartedAt.Add(time.Duration(ms) * time.Millisecond) }
+	s.inChannelAs(call.AgentID, s.customerID(), "alice", at(10_608), "Can I swap my shift?")
+	s.markedAsTheAgents(call.AgentID, "ben", at(12_500), "The agent approved Ben's shift swap.")
+	s.markedAsTheAgents(call.AgentID, "vision-agent", at(13_100), "Who would you like to swap with?")
+	s.Require().NoError(s.live.RecordTurn(ctx, live.Turn{CustomerID: s.customerID(), AgentID: call.AgentID,
+		CallID: call.CallID, TurnID: "turn-1", StartedAt: at(11_940)}))
+
+	var read []TranscriptMessage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/transcript", nil, &read))
+	s.Equal(map[string]bool{
+		"alice: Can I swap my shift?":                    false,
+		"ben: The agent approved Ben's shift swap.":      false,
+		"vision-agent: Who would you like to swap with?": true,
+	}, agentLines(read))
+
+	var timeline []TimelineEntry
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/timeline", nil, &timeline))
+	s.Require().Len(timeline, 1)
+	s.Equal("Can I swap my shift? The agent approved Ben's shift swap.", value(timeline[0].Heard))
+	s.Equal("Who would you like to swap with?", value(timeline[0].Said))
+
+	// What the campaign dialer classifies an answered call from (campaign.Transcripts).
+	said, err := s.router.CallTranscript(ctx, s.customerID(), call.ID)
+	s.Require().NoError(err)
+	dialed := map[string]bool{}
+	for _, line := range said {
+		dialed[line.Speaker] = line.Agent
+	}
+	s.Equal(map[string]bool{"alice": false, "ben": false, "vision-agent": true}, dialed)
+}
+
+func (s *CallsSuite) TestACallFromBeforeItsWriterWasKeptReadsAMarkedLineAsTheAgents() {
+	// A call row from before the column names no writer, and its transcript reads as it did:
+	// the expected values are what the base, 4b4bcbaf5, answers for the same lines.
+	ctx := context.Background()
+	call := s.started(store.Call{StartedAt: time.Now().UTC().Truncate(time.Millisecond).Add(-time.Minute)})
+	at := func(ms int) time.Time { return call.StartedAt.Add(time.Duration(ms) * time.Millisecond) }
+	s.inChannelAs(call.AgentID, s.customerID(), "alice", at(10_608), "Can I swap my shift?")
+	s.markedAsTheAgents(call.AgentID, "ben", at(12_500), "The agent approved Ben's shift swap.")
+	s.markedAsTheAgents(call.AgentID, "vision-agent", at(13_100), "Who would you like to swap with?")
+	s.Require().NoError(s.live.RecordTurn(ctx, live.Turn{CustomerID: s.customerID(), AgentID: call.AgentID,
+		CallID: call.CallID, TurnID: "turn-1", StartedAt: at(11_940)}))
+
+	var read []TranscriptMessage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/transcript", nil, &read))
+	s.Equal(map[string]bool{
+		"alice: Can I swap my shift?":                    false,
+		"ben: The agent approved Ben's shift swap.":      true,
+		"vision-agent: Who would you like to swap with?": true,
+	}, agentLines(read))
+
+	var timeline []TimelineEntry
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/timeline", nil, &timeline))
+	s.Require().Len(timeline, 1)
+	s.Equal("Can I swap my shift?", value(timeline[0].Heard))
+	s.Equal("The agent approved Ben's shift swap. Who would you like to swap with?", value(timeline[0].Said))
+
+	said, err := s.router.CallTranscript(ctx, s.customerID(), call.ID)
+	s.Require().NoError(err)
+	dialed := map[string]bool{}
+	for _, line := range said {
+		dialed[line.Speaker] = line.Agent
+	}
+	s.Equal(map[string]bool{"alice": false, "ben": true, "vision-agent": true}, dialed)
+}
+
+// agentLines is whether each line of a transcript read as the agent's, keyed by who said what.
+func agentLines(read []TranscriptMessage) map[string]bool {
+	lines := map[string]bool{}
+	for _, line := range read {
+		lines[line.Speaker+": "+line.Text] = value(line.Agent)
+	}
+	return lines
+}
+
+// markedAsTheAgents writes a line as speaker into a channel inChannelAs made, carrying the source
+// the agent's own lines carry (chatlog.SourceField).
+func (s *CallsSuite) markedAsTheAgents(channel, speaker string, at time.Time, text string) {
+	s.chat.At(at)
+	_, err := s.chat.Client.Chat().SendMessage(context.Background(), chatlog.ChannelType, channel,
+		&getstream.SendMessageRequest{Message: getstream.MessageRequest{Text: &text, UserID: &speaker,
+			Custom: map[string]any{chatlog.SourceField: chatlog.SourceAgent}}})
+	s.Require().NoError(err)
+}
+
 // inChannel writes one line into an agent channel, created and stamped for a customer the
 // way the router creates the channels it writes to.
 func (s *CallsSuite) inChannel(channel, customer string, at time.Time, text string) {

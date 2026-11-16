@@ -1302,6 +1302,10 @@ type Call struct {
 	// find its transcript. Empty for a call from before the column, and for one that kept
 	// no conversation.
 	ConversationID string `bun:"conversation_id,nullzero"`
+	// AgentUserID is the Stream user the agent spoke the call's lines as. A line marked as the
+	// agent's is the agent's only when this user or AgentID wrote it (chatlog.Read.Writer).
+	// Empty for a call from before the column, whose lines are read as they were then.
+	AgentUserID string `bun:"agent_user_id,nullzero"`
 	// ConfigID names the agent config the call ran under. Empty when the caller spelled
 	// the whole spec out.
 	ConfigID   string `bun:"config_id,nullzero"`
