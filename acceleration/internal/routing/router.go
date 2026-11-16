@@ -22,7 +22,6 @@ import (
 	"maps"
 	"math"
 	"net/http"
-	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -32,6 +31,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
@@ -535,7 +535,9 @@ func instanceKeys[P Provider](modality Modality, config ModalityConfig, registry
 		if !registry.Honors(provider.Provider, OverrideAPIKey) {
 			return nil, fmt.Errorf("routing: %s: %s sets api_key_env, which the %s factory does not take", modality, named, provider.Provider)
 		}
-		key := os.Getenv(provider.APIKeyEnv)
+		// Read as every key variable is, so the keys are known as the router's own: their
+		// refusals raise key_refused and their rate limits are kept (keypool.Env).
+		key := keypool.Getenv(provider.APIKeyEnv)
 		if key == "" {
 			return nil, fmt.Errorf("routing: %s: %s names its key in %s, which is not set", modality, named, provider.APIKeyEnv)
 		}

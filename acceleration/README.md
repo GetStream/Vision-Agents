@@ -1041,7 +1041,8 @@ llm:
   default host.
 - `api_key_env` names the environment variable holding that instance's key, in place of the
   vendor's own variable. It is read once at start, never logged, and a variable that is unset
-  or empty stops the router from starting.
+  or empty stops the router from starting. It is read as the vendor's own variable is: keys
+  comma separated, then `NAME_1`, `NAME_2` and on, all in one pool.
 - A factory says which of them it takes (`routing.OverrideBaseURL`, `OverrideAPIKey`), and the
   router refuses to start with an instance that sets one its factory would drop. The LLM
   factories of OpenAI, Anthropic, Gemini, xAI and DeepSeek take both; nothing else takes either
