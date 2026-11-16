@@ -15,14 +15,24 @@ import StreamAgents
 ///
 /// The camera button shows Juno what the phone is pointing at: the call's session answers its
 /// vision skill's requests to look with what the camera showed, and the preview is that view.
+///
+/// What Juno shows while it talks, such as a restaurant's tables, appears under the glow as the
+/// call's session streams it: the router keeps the UI out of what is spoken, and tapping it asks
+/// Juno in the conversation, as in the chat.
 struct VoiceMode: View {
     let chat: AgentChat
     /// The chat's session, which voice is started on.
     let session: AgentSession
 
     @Environment(\.dismiss) private var dismiss
+    @AppStorage(Brand.storageKey) private var brand = Brand.stream
     @StateObject private var current = CurrentVoice()
     @State private var failure: String?
+    /// Shows the UI of what is said on the call, apart from the chat's, whose replies it would
+    /// otherwise take for the whole conversation.
+    @State private var ui: AgentChat.UI?
+    /// The turns there were before the call, whose UI the chat already showed.
+    @State private var before: Set<String> = []
 
     private var voice: VoiceSession? { current.session }
 
@@ -48,6 +58,12 @@ struct VoiceMode: View {
 
             AgentPresence(current: current, isStarting: voice == nil && failure == nil)
 
+            if let ui, let turn = latestTurnWithUI {
+                VoiceUI(host: ui, turn: turn)
+                    .environment(\.brand, brand)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
             if let request = chat.approvals.first {
                 ApprovalCard(request: request, session: session)
                     .id(request.id)
@@ -67,17 +83,28 @@ struct VoiceMode: View {
                 .padding(.bottom)
             }
         }
+        // The card grows as Juno writes it, which moves the glow above it: both ease into place.
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: latestTurnWithUI?.ui?.customData)
         .task { await start() }
         .onChange(of: voice?.session.state) { _, state in
             if state == .ended { dismiss() }
         }
     }
 
+    /// The newest of Juno's turns on the call that wrote UI, once a statement of it is finished.
+    private var latestTurnWithUI: Turn? {
+        voice?.session.turns.last {
+            $0.speaker.isAgent && $0.ui?.content.isEmpty == false && !before.contains($0.id)
+        }
+    }
+
     private func start() async {
+        ui = chat.makeUI()
         do {
             try await session.startVoice()
             let voice = try await VoiceSession.attach(
                 agents: Assistant.agents, sessionID: session.id)
+            before = Set(voice.session.turns.map(\.id))
             current.session = voice
             await voice.session.start()
             await voice.join()
@@ -109,6 +136,39 @@ private final class CurrentVoice: ObservableObject {
     }
 
     private var following: AnyCancellable?
+}
+
+/// The UI of one of Juno's turns on the call, as it streams, in a card that scrolls when it is
+/// taller than the room under the glow.
+private struct VoiceUI: View {
+    let host: AgentChat.UI
+    let turn: Turn
+
+    var body: some View {
+        if let ui = turn.ui, let document = AIUIDocument(customData: [AIUIDocument.customDataKey: ui.customData]) {
+            // The engines take the turn's UI before its view is asked for, as a conversation's do.
+            let _ = host.receive([CallTurn(turn: turn, uiDocument: document)])
+            let view = AIUIView(host: host, document: document, messageID: turn.id)
+            if view.canShow {
+                ScrollView {
+                    view.padding(.horizontal)
+                }
+                .frame(maxHeight: 300)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+/// One of Juno's turns on the call, as the renderers read a reply.
+private struct CallTurn: AIMessage {
+    let turn: Turn
+    let uiDocument: AIUIDocument?
+
+    var id: String { turn.id }
+    var role: AIMessageRole { .assistant }
+    var text: String { turn.text }
+    var isGenerating: Bool { turn.ui?.isStreaming == true }
 }
 
 /// What the camera shows, which is what Juno sees when it looks.

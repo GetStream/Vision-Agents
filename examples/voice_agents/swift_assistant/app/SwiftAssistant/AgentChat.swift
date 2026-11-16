@@ -6,6 +6,7 @@ import StreamChatA2UI
 import StreamChatAI
 import StreamChatOpenUI
 import StreamAgents
+import SwiftUI
 
 /// How Stream's `AIConversation` reaches Juno: the session that answers the conversation, and
 /// the channel the router keeps it in.
@@ -42,8 +43,12 @@ final class AgentChat: AIConversationTransport {
     typealias UI = AIUIHost<AIUIRendererPair<A2UIRenderer, OpenUIRenderer>>
 
     /// Shows the UI the agent writes for some replies, such as an interactive trip plan, with the
-    /// phone's own components, and sends what the person does in it back.
-    @ObservationIgnored private(set) var ui: UI?
+    /// phone's own components, and sends what the person does in it back. It is made again when
+    /// the brand changes, so the conversation shows the new one at once.
+    private(set) var ui: UI?
+
+    /// The brand the conversation's UI wears.
+    private(set) var brand = Brand.chosen
 
     /// The composer option that asks with a higher reasoning effort.
     static let thinkHarder = "think_harder"
@@ -56,6 +61,9 @@ final class AgentChat: AIConversationTransport {
     /// Each reply's thinking in full, from its live updates. A stored step only keeps its
     /// opening.
     @ObservationIgnored private var reasoning = LiveReasoning()
+    /// Each reply's UI as the session's socket streams it, which shows before the reply's
+    /// message in the channel catches up.
+    @ObservationIgnored private var liveUI = LiveUI()
     /// What the conversation was last told the agent is doing.
     @ObservationIgnored private var activity: AIAgentActivity?
     @ObservationIgnored private var following: Set<AnyCancellable> = []
@@ -65,12 +73,25 @@ final class AgentChat: AIConversationTransport {
 
     init(sessionID: String?) {
         self.sessionID = sessionID
-        ui = AIUIHost(components: TripComponents.all) {
-            A2UIRenderer()
-            OpenUIRenderer()
+        ui = makeUI()
+    }
+
+    /// A host for the agent's UI in the conversation's brand, whose actions ask the agent in
+    /// this conversation. Voice mode shows the UI of what is said on the call with one of its own.
+    func makeUI() -> UI {
+        AIUIHost(components: TripComponents.all) {
+            A2UIRenderer(theme: brand.a2uiTheme)
+            OpenUIRenderer(theme: brand.openUITheme)
         } send: { [weak self] action in
             try await self?.answer(action)
         }
+    }
+
+    /// Has the conversation's UI wear `brand`.
+    func wear(_ brand: Brand) {
+        guard brand != self.brand else { return }
+        self.brand = brand
+        ui = makeUI()
     }
 
     /// Answers the questions of the tools that ask first, and the sign-ins the agent's
@@ -195,10 +216,13 @@ final class AgentChat: AIConversationTransport {
     }
 
     /// Tells the conversation what the channel holds: its messages, each reply with the whole
-    /// of its thinking, and whether there are older ones.
+    /// of its thinking and, while it is written, the UI the socket streamed for it, and whether
+    /// there are older ones.
     private func publish() {
         guard let channel else { return }
-        feed?.update(messages: channel.messages.reversed().map { AgentMessage($0, reasoning: reasoning) })
+        let messages = Array(channel.messages.reversed())
+        let live = liveUI.overlay(messages)
+        feed?.update(messages: messages.map { AgentMessage($0, reasoning: reasoning, customData: live[$0.id]) })
         feed?.update(hasOlderMessages: channel.state == .remoteDataFetched && !channel.hasLoadedAllPreviousMessages)
     }
 
@@ -206,6 +230,13 @@ final class AgentChat: AIConversationTransport {
     /// takes long, such as one that runs a skill.
     private func sessionChanged(_ conversation: Conversation) {
         sessionFailure = conversation.failure
+        if liveUI.observe(conversation) {
+            // A reply's UI grows a statement at a time: the reply makes room for each, and its
+            // text gives way to the UI, rather than jumping.
+            withAnimation(UIAccessibility.isReduceMotionEnabled ? nil : .smooth(duration: 0.35)) {
+                publish()
+            }
+        }
         let activity: AIAgentActivity? = switch conversation.state {
         case .responding:
             AIAgentActivity(state: .thinking)
@@ -280,10 +311,13 @@ struct AgentMessage: AIMessage {
     let message: ChatMessage
     let parts: [AIMessagePart]
     private let reasoning: LiveReasoning
+    /// The message's custom data, with the UI the socket streamed for it while it is written.
+    private let customData: [String: RawJSON]
 
-    init(_ message: ChatMessage, reasoning: LiveReasoning) {
+    init(_ message: ChatMessage, reasoning: LiveReasoning, customData: [String: RawJSON]? = nil) {
         self.message = message
         self.reasoning = reasoning
+        self.customData = customData ?? message.extraData
         parts = message.parts
     }
 
@@ -292,7 +326,7 @@ struct AgentMessage: AIMessage {
     var text: String { message.text }
     var isGenerating: Bool { message.isGenerating }
     /// The UI the agent wrote for the reply, which shows in place of its text.
-    var uiDocument: AIUIDocument? { AIUIDocument(customData: message.extraData) }
+    var uiDocument: AIUIDocument? { AIUIDocument(customData: customData) }
     var attachments: [AIMessageAttachment] {
         message.imageAttachments.map { .image($0.imageURL, name: $0.title) }
             + message.fileAttachments.map {
