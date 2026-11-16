@@ -216,7 +216,9 @@ func ref() *phone.TrunkCallRef {
 	}
 }
 
-// dial places a call on n that another node could continue, and waits until it is recorded.
+// dial places a call on n that another node could continue, and waits until it is recorded
+// and n holds it: the record shows before n has the claim's reply, and a test that stalls Redis
+// meanwhile would leave the call unclaimed.
 func (s *TakeoverSuite) dial(n *testNode) string {
 	placing := outbound()
 	placing.Resume = ref()
@@ -225,6 +227,11 @@ func (s *TakeoverSuite) dial(n *testNode) string {
 	s.Require().NoError(err)
 	s.Eventually(func() bool { return s.get("call:"+dialed.VendorCallID) != "" }, time.Second, 10*time.Millisecond,
 		"the connected call was never recorded")
+	s.Eventually(func() bool {
+		n.provider.mu.Lock()
+		defer n.provider.mu.Unlock()
+		return n.provider.calls[dialed.VendorCallID] != nil
+	}, time.Second, 10*time.Millisecond, "the node never held the connected call")
 	return dialed.VendorCallID
 }
 
