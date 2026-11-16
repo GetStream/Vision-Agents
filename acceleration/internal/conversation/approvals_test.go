@@ -284,6 +284,8 @@ func (s *DisplaySuite) TestAnExpiredApprovalIsSaidInTheReply() {
 	c, receipt := s.heldReply("Let me check.")
 
 	c.ExpireApprovals()
+	s.True(c.AwaitsApproval("call-1"), "the call waits until the reply ends")
+	s.Equal("Let me check.", current(c).Text)
 	c.Release()
 	saved(s.T(), c)
 
@@ -302,12 +304,14 @@ func (s *DisplaySuite) TestAnExpiredApprovalIsSaidInTheReply() {
 func (s *DisplaySuite) TestAnExpiredApprovalsLineFollowsWhatTheReplySaid() {
 	silent, _ := s.heldReply("")
 	silent.ExpireApprovals()
+	silent.Release()
 	s.Equal(expiredLine, current(silent).Text)
 
 	begun, _ := s.heldReply("Let me check.")
 	begun.Observe(agent.Responding{TurnID: "turn-a"})
 	s.Require().Equal("Let me check.\n\n", current(begun).Text)
 	begun.ExpireApprovals()
+	begun.Release()
 	s.Equal("Let me check.\n\n"+expiredLine, current(begun).Text)
 }
 
@@ -319,54 +323,81 @@ func (s *DisplaySuite) TestEveryWaitingCallExpiresAndTheReplySaysItOnce() {
 	s.Require().True(asked)
 
 	c.ExpireApprovals()
-	c.ExpireApprovals()
+	c.Release()
 
-	s.False(c.AwaitsApproval("call-1"))
-	s.False(c.AwaitsApproval("call-2"))
+	s.Equal("Not allowed in time", current(c).Parts[0].Summary)
+	s.Equal("Not allowed in time", current(c).Parts[1].Summary)
 	s.Equal("Let me check.\n\n"+expiredLine, current(c).Text)
 }
 
-// A call Anya allowed, or the backend declined, waits no more: the reply ending says nothing of
-// an approval, and the steps keep their answers.
-func (s *DisplaySuite) TestAnAnsweredApprovalDoesNotExpire() {
+// A call waiting before one that runs expires all the same: the line does not hang on the last
+// step, and the running step is stopped as any is when its reply ends.
+func (s *DisplaySuite) TestAWaitingCallBeforeARunningOneExpires() {
+	c, _ := s.heldReply("Let me check.")
+	c.ShowTools([]string{"crm__lookup"})
+	c.Observe(agent.ToolStarted{ID: "call-2", Tool: "crm__lookup", StartedAt: time.Now().UTC()})
+	s.Require().Len(current(c).Parts, 2)
+
+	c.ExpireApprovals()
+	c.Release()
+
+	s.Equal("Not allowed in time", current(c).Parts[0].Summary)
+	s.Empty(current(c).Parts[1].Summary)
+	s.Equal("Let me check.\n\n"+expiredLine, current(c).Text)
+}
+
+// A call Anya allows, or the backend declines, before the reply ends waits no more: the reply
+// says nothing of an approval, and the steps keep their answers.
+func (s *DisplaySuite) TestAnApprovalAnsweredBeforeTheReplyEndsDoesNotExpire() {
 	allowed, _ := s.heldReply("Let me check.")
-	s.Require().True(allowed.DecideApproval(agent.ToolApprovalDecided{ID: "call-1", Allowed: true}))
 	allowed.ExpireApprovals()
+	s.Require().True(allowed.DecideApproval(agent.ToolApprovalDecided{ID: "call-1", Allowed: true}))
+	allowed.Release()
 	s.Equal("Let me check.", current(allowed).Text)
-	s.Equal("running", current(allowed).Parts[0].Status)
+	s.Equal("allowed", current(allowed).Parts[0].Approval.Decision)
 
 	declined, _ := s.heldReply("Let me check.")
-	s.Require().True(declined.DecideApproval(agent.ToolApprovalDecided{ID: "call-1", Summary: "Not now"}))
 	declined.ExpireApprovals()
+	s.Require().True(declined.DecideApproval(agent.ToolApprovalDecided{ID: "call-1", Summary: "Not now"}))
+	declined.Release()
 	s.Equal("Let me check.", current(declined).Text)
 	s.Equal("Not now", current(declined).Parts[0].Summary)
 }
 
-// A reply whose call waits for no approval, or no reply at all, is left as it is.
-func (s *DisplaySuite) TestNothingExpiresWithoutAWaitingCall() {
-	c := s.open("on_call")
-	c.ShowTools([]string{"crm__echo"})
-	c.ExpireApprovals()
+// Only the reply being written when the session was told expires: a reply cancelled without
+// it, or one written after it, says nothing of an approval, and a conversation with no reply
+// yet is left as it is.
+func (s *DisplaySuite) TestOnlyTheReplyBeingWrittenExpires() {
+	s.open("on_call").ExpireApprovals()
 
-	_, err := c.BeginCommand("command-a", "check the crm for my shift", "")
+	c, _ := s.heldReply("Let me check.")
+	c.Cancel()
+	s.Equal("Let me check.", current(c).Text, "a reply nobody said would expire")
+	c.ExpireApprovals()
+	_, err := c.BeginCommand("command-b", "and for Ben?", "")
 	s.Require().NoError(err)
-	c.Observe(agent.Responding{TurnID: "turn-a"})
-	c.Observe(agent.ResponseDelta{TurnID: "turn-a", Text: "Let me check."})
-	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "crm__echo", StartedAt: time.Now().UTC()})
-	c.ExpireApprovals()
-
-	s.Equal("Let me check.", current(c).Text)
-	s.Require().Len(current(c).Parts, 1)
-	s.Equal("running", current(c).Parts[0].Status)
+	c.Observe(agent.ToolStarted{ID: "call-2", Tool: "crm__echo", StartedAt: time.Now().UTC()})
+	_, _, asked := c.AwaitApproval("employee", "call-2", "", allowEcho)
+	s.Require().True(asked)
+	c.Cancel()
+	s.Empty(current(c).Text, "a reply begun after it")
+	s.Empty(current(c).Parts[0].Summary)
 }
 
-// A router shutting down writes nothing more to a conversation (finish): no line either.
-func (s *DisplaySuite) TestNoApprovalExpiresOnceTheServiceStops() {
-	c, _ := s.heldReply("Let me check.")
-	s.service.Close()
+// A follow-up whose reply is read back, as a scheduled delivery's, reads the line too.
+func (s *DisplaySuite) TestAnExpiredFollowUpIsReadBackWithTheLine() {
+	c := s.open("on_call")
+	_, err := c.BeginFollowUp(ReadBackPrefix+"run-a", "Remind me to check the crm", "")
+	s.Require().NoError(err)
+	c.Observe(agent.ToolStarted{ID: "call-1", Tool: "crm__echo", StartedAt: time.Now().UTC()})
+	_, _, asked := c.AwaitApproval("employee", "call-1", "", allowEcho)
+	s.Require().True(asked)
 
 	c.ExpireApprovals()
+	c.Release()
 
-	s.Equal("Let me check.", current(c).Text)
-	s.True(c.AwaitsApproval("call-1"))
+	state, text, known := c.FollowUpReply(ReadBackPrefix + "run-a")
+	s.Require().True(known)
+	s.Equal("cancelled", state)
+	s.Equal(expiredLine, text)
 }

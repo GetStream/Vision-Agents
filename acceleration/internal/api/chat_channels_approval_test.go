@@ -38,9 +38,12 @@ func (s *AppHooksSuite) TestAnApprovalInAChannelTypeGoesToTheWriterOfTheMessage(
 	s.Equal(http.StatusNotFound, s.approves(s.data.signedInAs(anya), cid, step, "thread_another", true), "another request")
 	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP), "nothing reached the provider before her answer")
 	s.Equal(http.StatusNoContent, s.approves(s.data.signedInAs(anya), cid, step, request, true))
-	s.Require().NotNil(s.replyIn(cid), "the reply never finished")
+	reply := s.replyIn(cid)
+	s.Require().NotNil(reply, "the reply never finished")
 	s.Greater(s.provider.Hits(fakeprovider.PathMCP), before, "allowed, the call ran")
 	s.Equal("completed", s.stepIn(cid)["status"])
+	// The model's words alone, as on 4b4bcbaf5 (probe): no line says an approval expired.
+	s.Equal("Let me ask.\n\nLet me ask.", reply["text"])
 	s.Equal(http.StatusNotFound, s.approves(s.data.signedInAs(anya), cid, step, request, true), "answered already")
 }
 
@@ -57,8 +60,11 @@ func (s *AppHooksSuite) TestTheAppsBackendMayAnswerAWritersApproval() {
 
 	s.Equal(http.StatusNoContent, s.approves(s.serverClient, cid, step, request, false))
 
-	s.Require().NotNil(s.replyIn(cid), "the reply never finished")
+	reply := s.replyIn(cid)
+	s.Require().NotNil(reply, "the reply never finished")
 	s.Equal("cancelled", s.stepIn(cid)["status"])
+	// The model's words alone, as on 4b4bcbaf5 (probe): a decline is no expiry.
+	s.Equal("Let me ask.\n\nLet me ask.", reply["text"])
 	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP), "declined, nothing reached the provider")
 }
 
@@ -128,6 +134,36 @@ func (s *ChannelTypeTurnSuite) TestAWritersApprovalAfterTheTurnEndsIsTooLate() {
 	s.GreaterOrEqual(time.Since(start), twoMinutes, "the call was stopped before the two minutes the docs give")
 	s.Equal(http.StatusNotFound, s.approves(s.data.signedInAs(anya), cid, step, request, true))
 	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP), "nothing reached the provider")
+	// AI-3302: the model gets no round after the turn, so the reply says the approval expired;
+	// on 4b4bcbaf5 it kept the model's words alone, which on staging were none.
+	ended := s.agentReplyIn(cid, "cancelled")
+	s.Require().NotNil(ended, "the reply never ended")
+	s.Equal("Let me ask.\n\n"+expiredApproval, ended["text"])
+	s.Equal("Not allowed in time", s.stepIn(cid)["summary"])
+	s.Equal(map[string]any{"decision": "declined", "title": "Allow crm to run echo?"}, s.stepIn(cid)["approval"])
+}
+
+// expiredApproval is the line a reply ends with when its turn ended while a call still waited
+// for a person to allow it.
+const expiredApproval = "The approval expired before anyone answered, so nothing ran. Ask again if you still need it."
+
+// A call nobody allows within its own wait, ten seconds in this suite and shorter than the turn,
+// is declined while the turn runs, and the model is told to say so (session.holdForApproval), as
+// in an agent channel whose session outlives the wait: the reply is the model's alone, as on
+// 4b4bcbaf5 (probe), and the router adds no line.
+func (s *AppHooksSuite) TestACallNobodyAllowsWithinTheTurnIsSaidByTheModel() {
+	s.holdsType("callouts", memberWrites)
+	s.approvingIn("callouts")
+	anya := s.person("Anya")
+	channel := s.teamChannel("callouts", anya)
+	cid := "callouts:" + channel
+	s.says("callouts", channel, anya, "can you check the crm for my shift?", "")
+	s.awaitingIn(cid)
+
+	reply := s.agentReplyIn(cid, "completed")
+	s.Require().NotNil(reply, "the reply never finished")
+	s.Equal("Let me ask.\n\nLet me ask.", reply["text"])
+	s.Equal("Not allowed in time", s.stepIn(cid)["summary"])
 }
 
 // Anya's and Ben's calls wait at once, each in a channel of the type: each asks its own writer,
@@ -240,6 +276,24 @@ func (s *AppHooksSuite) awaitingIn(cid string) (map[string]any, string) {
 		return false
 	}, settleFor, 20*time.Millisecond, "no reply in %s asks for crm's echo to be allowed", cid)
 	return step, request
+}
+
+// agentReplyIn waits for the agent's reply in the channel cid to be stored in the state given,
+// nil when it is not before the suite's approval wait and settleFor have passed.
+func (s *AppHooksSuite) agentReplyIn(cid, state string) map[string]any {
+	var reply map[string]any
+	s.Eventually(func() bool {
+		for _, stored := range s.chat.Stored(cid) {
+			custom, _ := stored["custom"].(map[string]any)
+			written, _ := custom["support_message"].(map[string]any)
+			if written["role"] == "assistant" && written["state"] == state {
+				reply = stored
+				return true
+			}
+		}
+		return false
+	}, s.approvalWait+settleFor, 20*time.Millisecond)
+	return reply
 }
 
 // stepIn is the latest step of crm's echo in the channel cid.

@@ -1496,6 +1496,10 @@ A dispatch worker's `answering a call` line and an agent's `ringing` line carry 
 
 In an `agent` channel that people other than the session's caller can write in (a channel the router answers in on a dispatch, or a conversation shared with its members), a message carrying the custom data of the agent's reply was read as the agent's turn: the model saw it as its own words, an action on it was answered from it, a command was looked up in it, and an unfinished one was rewritten as interrupted. Now a reply counts as the agent's only when the agent wrote it; anybody else's message is read as their own. A person's turn the router wrote keeps its fields. In an app chat, a card line marked as the agent's counts as the agent's only when the agent wrote it (AI-3186).
 
+### An approval nobody answers in a group channel says so in the reply
+
+In a channel of a type an agent config answers in (`chat_channels`), a tool call waiting for its writer's approval when the router's two-minute turn ends no longer leaves an empty agent message: the reply ends with "The approval expired before anyone answered, so nothing ran. Ask again if you still need it." and the step shows "Not allowed in time" (AI-3302).
+
 ## Breaking Changes
 
 ### The Dart SDK has no views of its own

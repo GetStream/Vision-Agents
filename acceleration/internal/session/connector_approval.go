@@ -160,9 +160,9 @@ func (d *dispatcher) answerApproval(callID, commandID string, may func(asked str
 	return nil
 }
 
-// ExpireApprovals declines, as expired, each call of the reply being written that still waits
-// for a person, and says so in the reply (persistent.Conversation.ExpireApprovals). For a
-// session closed with its turn; a session with no conversation asks nobody.
+// ExpireApprovals has the reply being written, if it ends with a call still waiting for a
+// person, decline that call as expired and say so (persistent.Conversation.ExpireApprovals).
+// For a session about to close with its turn; a session with no conversation asks nobody.
 func (s *Session) ExpireApprovals() {
 	if s.persisted != nil {
 		s.persisted.ExpireApprovals()

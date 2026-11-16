@@ -283,6 +283,9 @@ type Conversation struct {
 	tools map[string]ToolDisplay
 	// asked are the finished replies that asked the end user for a login (authorizations.go).
 	asked []Message
+	// expiring is the reply whose calls still waiting for a person expire when it ends
+	// (ExpireApprovals).
+	expiring string
 	// reasoning is the model's thinking for the current reply. It is shown to watchers
 	// through ephemeral updates only and is never persisted.
 	reasoning liveReasoning
@@ -2176,6 +2179,9 @@ func (c *Conversation) finish(state string) {
 	}
 	now := time.Now().UTC()
 	c.state(state)
+	if c.expiring == m.ID {
+		expire(m, now)
+	}
 	// Only a follow-up, which has no message of a person's, is read back this way, and only
 	// one under ReadBackPrefix ever is.
 	if record, ok := c.data.Commands[m.CommandID]; ok && record.UserMessageID == "" && readBack(m.CommandID) {
