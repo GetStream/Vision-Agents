@@ -2428,11 +2428,11 @@ llm:
     # the first thing that arrives.
     #
     # OpenAI do not train on API traffic unless the organisation opts in, so that half is a
-    # no. Retention is the gap. Abuse-monitoring logs are kept for up to 30 days, but a
-    # response sent without store: false - which is how this provider sends one unless asked
-    # to store it - is kept as application state for "at least 30 days", a floor with no
-    # ceiling, so it is unspecified. Zero Data Retention would bring it to none, and it is an
-    # approval OpenAI grant per organisation rather than a flag sent with a request.
+    # no. The provider sends every response with store: false, so none is kept as application
+    # state, which OpenAI would otherwise do for "at least 30 days", a floor with no ceiling.
+    # What is left is abuse-monitoring logs, kept for up to 30 days. Zero Data Retention would
+    # bring it to none, and it is an approval OpenAI grant per organisation rather than a flag
+    # sent with a request.
     - provider: openai
       model: gpt-6-luna
       description: "OpenAI's most efficient model, and what Vision prefers. Reads images, and the cheapest OpenAI model here."
@@ -2444,7 +2444,7 @@ llm:
       input_modalities: [image]
       data_policy:
         trains_on_data: "no"
-        retention: unspecified
+        retention: 30d
 
     # What llm-fast prefers, so this is the model a conversation gets unless it is down. It
     # is the dearest of this tier by some way and its thinking is billed as output, which is
@@ -2534,7 +2534,7 @@ llm:
       input_modalities: [image]
       data_policy:
         trains_on_data: "no"
-        retention: unspecified
+        retention: 30d
 
     # GPT-5.6 Sol, which GPT-6 Sol below replaces as what llm-thinking prefers. It stays
     # declared because callers name it outright as their subagent, and a name that is no
@@ -2681,7 +2681,7 @@ llm:
       input_modalities: [image]
       data_policy:
         trains_on_data: "no"
-        retention: unspecified
+        retention: 30d
 
     # GPT-6.1 Sol is GPT-6 Sol's direct upgrade at the same input and output price, and what
     # llm-thinking prefers, so this is the model the skills run on unless it is down.
@@ -2701,7 +2701,7 @@ llm:
       input_modalities: [image]
       data_policy:
         trains_on_data: "no"
-        retention: unspecified
+        retention: 30d
 
     # GPT-6 Astra is OpenAI's most capable model, for the hardest end-to-end work, and 53 on
     # the Artificial Analysis Intelligence Index, the top of the non-Anthropic field. It
@@ -2719,7 +2719,7 @@ llm:
       input_modalities: [image]
       data_policy:
         trains_on_data: "no"
-        retention: unspecified
+        retention: 30d
 
     # Meta's Muse Spark 1.3 on their hosted Model API, 48 on the Artificial Analysis
     # Intelligence Index at max effort and 45 at xhigh, and at around 230-250 output tokens
@@ -3670,7 +3670,7 @@ ocr:
       input_modalities: [image]
       data_policy:
         trains_on_data: "no"
-        retention: unspecified
+        retention: 30d
 
     # Claude Haiku 5.5 at Luna's rates, a fallback that sees for the pages and pictures read
     # with their figures summarised. It thinks before it answers, so a page takes more

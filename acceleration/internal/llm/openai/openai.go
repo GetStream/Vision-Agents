@@ -58,13 +58,16 @@ const cacheTTL = 30 * time.Minute
 // asked for is low. GPT-6.1 Sol also stops at xhigh and answers max with a 400. Every
 // family here takes a strict JSON Schema (Structured Outputs, which OpenAI documents from
 // GPT-4o on: https://platform.openai.com/docs/guides/structured-outputs).
+//
+// None of them reports Store or Conversations, so every turn sends the whole conversation, as
+// it does to every other provider. An organisation with Zero Data Retention answers
+// previous_response_id with a 400, a customer's own key can belong to one, and a continued
+// response is billed for the whole chain anyway.
 var modelCapabilities = map[string]llm.Capabilities{
 	"gpt-6": {
 		ReasoningEfforts: []string{"none", "low", "medium", "high", "xhigh", "max"},
 		DefaultEffort:    "none",
 		Verbosities:      []string{"low", "medium", "high"},
-		Store:            true,
-		Conversations:    true,
 		PromptCacheKey:   true,
 		JSONSchema:       true,
 		CacheTTLs:        []time.Duration{cacheTTL},
@@ -73,8 +76,6 @@ var modelCapabilities = map[string]llm.Capabilities{
 		ReasoningEfforts: []string{"low", "medium", "high", "xhigh", "max"},
 		DefaultEffort:    "low",
 		Verbosities:      []string{"low", "medium", "high"},
-		Store:            true,
-		Conversations:    true,
 		PromptCacheKey:   true,
 		JSONSchema:       true,
 		CacheTTLs:        []time.Duration{cacheTTL},
@@ -83,8 +84,6 @@ var modelCapabilities = map[string]llm.Capabilities{
 		ReasoningEfforts: []string{"low", "medium", "high", "xhigh"},
 		DefaultEffort:    "low",
 		Verbosities:      []string{"low", "medium", "high"},
-		Store:            true,
-		Conversations:    true,
 		PromptCacheKey:   true,
 		JSONSchema:       true,
 		CacheTTLs:        []time.Duration{cacheTTL},
@@ -94,8 +93,6 @@ var modelCapabilities = map[string]llm.Capabilities{
 		DefaultEffort:    "none",
 		StreamsReasoning: false,
 		Verbosities:      []string{"low", "medium", "high"},
-		Store:            true,
-		Conversations:    true,
 		PromptCacheKey:   true,
 		JSONSchema:       true,
 		CacheTTLs:        []time.Duration{cacheTTL},
@@ -104,8 +101,6 @@ var modelCapabilities = map[string]llm.Capabilities{
 		ReasoningEfforts: []string{"none", "minimal", "low", "medium", "high", "xhigh"},
 		DefaultEffort:    "none",
 		Verbosities:      []string{"low", "medium", "high"},
-		Store:            true,
-		Conversations:    true,
 		PromptCacheKey:   true,
 		JSONSchema:       true,
 		CacheTTLs:        []time.Duration{cacheTTL},
@@ -114,8 +109,6 @@ var modelCapabilities = map[string]llm.Capabilities{
 		ReasoningEfforts: []string{"minimal", "low", "medium", "high"},
 		DefaultEffort:    "minimal",
 		Verbosities:      []string{"low", "medium", "high"},
-		Store:            true,
-		Conversations:    true,
 		PromptCacheKey:   true,
 		JSONSchema:       true,
 		InputModalities:  []string{llm.ModalityImage},
@@ -123,9 +116,7 @@ var modelCapabilities = map[string]llm.Capabilities{
 }
 
 // fallbackCapabilities does not assume image support for unknown model families.
-var fallbackCapabilities = llm.Capabilities{
-	Store: true, Conversations: true, PromptCacheKey: true,
-}
+var fallbackCapabilities = llm.Capabilities{PromptCacheKey: true}
 
 // Options configures the provider.
 type Options struct {
@@ -160,8 +151,8 @@ type LLM struct {
 
 // New builds the provider, reading the API key from the environment when it is not given.
 func New(options Options) (*LLM, error) {
-	// Pinned, because a turn continues the stored response before it, which only the
-	// project whose key stored it can find.
+	// Pinned, because a cached prompt prefix is only read back within the organisation that
+	// wrote it, and a pool can hold keys from more than one.
 	keys := keypool.FromEnv(options.APIKey, apiKeyEnvVar).Pin()
 	if keys.Len() == 0 {
 		return nil, stack.Wrap(errors.New("openai: " + apiKeyEnvVar + " is required"))
@@ -211,8 +202,8 @@ func (l *LLM) Client() *openai.Client { return &l.client }
 
 // Create asks for one response and returns the stream it arrives on.
 func (l *LLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
-	if len(params.Input) == 0 && params.PreviousResponseID == "" && params.Conversation == "" {
-		return nil, stack.Wrap(errors.New("openai: a request needs input, a previous response or a conversation"))
+	if len(params.Input) == 0 {
+		return nil, stack.Wrap(errors.New("openai: a request needs input"))
 	}
 	if err := l.capabilities.Validate(params); err != nil {
 		return nil, stack.Wrap(fmt.Errorf("openai: %w", err))
@@ -501,17 +492,9 @@ func (l *LLM) params(request llm.ResponseParams) responses.ResponseNewParams {
 			OfToolChoiceMode: param.NewOpt(responses.ToolChoiceOptions(request.ToolChoice)),
 		}
 	}
-	if request.Store {
-		params.Store = param.NewOpt(true)
-	}
-	if request.PreviousResponseID != "" {
-		params.PreviousResponseID = param.NewOpt(request.PreviousResponseID)
-	}
-	if request.Conversation != "" {
-		params.Conversation = responses.ResponseNewParamsConversationUnion{
-			OfString: param.NewOpt(request.Conversation),
-		}
-	}
+	// Nothing continues from a response, and with store left out OpenAI keeps it as
+	// application state for at least 30 days.
+	params.Store = param.NewOpt(false)
 	if request.PromptCacheKey != "" {
 		params.PromptCacheKey = param.NewOpt(request.PromptCacheKey)
 	}
@@ -530,14 +513,9 @@ func (l *LLM) params(request llm.ResponseParams) responses.ResponseNewParams {
 // field, because that is the only place a cache breakpoint can be put: the boundary the
 // whole agent shares is the end of what it was told to be, and a breakpoint attaches to a
 // content part.
-//
-// A response that continues a stored one sends no instructions: the developer message is an
-// input item like any other, so the stored response already holds it, and sending it again
-// appends another copy to the chain on every turn. A voice call with a 5k-token prompt grew
-// by 5k tokens a turn, to 48k after ten, with the model reading ten copies of the prompt.
 func (l *LLM) input(request llm.ResponseParams) responses.ResponseInputParam {
 	items := make(responses.ResponseInputParam, 0, len(request.Input)+1)
-	if request.Instructions != "" && request.PreviousResponseID == "" {
+	if request.Instructions != "" {
 		items = append(items, l.instructions(request))
 	}
 

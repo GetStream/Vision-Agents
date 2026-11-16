@@ -145,6 +145,9 @@ const (
 	// toolStarted is a tool starting, and toolRan it coming back.
 	toolStarted
 	toolRan
+	// uiPiece and uiDone carry streaming and completed interactive UI for a voice reply.
+	uiPiece
+	uiDone
 )
 
 // Options configures a Log. Its credentials are given, never read from the environment.
@@ -245,7 +248,10 @@ type message struct {
 	continues string
 	artifacts []conversation.ArtifactAttachment
 	// timings is what a timed message carries.
-	timings *timings
+	timings   *timings
+	uiFormat  string
+	uiVersion string
+	uiMode    string
 }
 
 // New validates the options and returns a Log. It writes nothing; Start does that.
@@ -367,6 +373,14 @@ func (l *Log) Record(event agent.Event) {
 		}
 	case agent.ResponseDelta:
 		l.enqueue(message{author: l.agent, text: typed.Text, turnID: typed.TurnID, kind: piece, source: SourceAgent})
+	case agent.UIDelta:
+		if typed.TurnID != "" && typed.Delta != "" {
+			l.enqueue(message{author: l.agent, text: typed.Delta, turnID: typed.TurnID, kind: uiPiece, source: SourceAgent, uiFormat: typed.Format, uiVersion: typed.Version, uiMode: typed.Mode})
+		}
+	case agent.UICompleted:
+		if typed.TurnID != "" && typed.Content != "" {
+			l.enqueue(message{author: l.agent, text: typed.Content, turnID: typed.TurnID, kind: uiDone, source: SourceAgent, uiFormat: typed.Format, uiVersion: typed.Version, uiMode: typed.Mode})
+		}
 	case agent.Responded:
 		if typed.Text == "" {
 			// Nothing will be said or spoken, so nothing else ends the reply.
@@ -500,16 +514,25 @@ type reply struct {
 	// spoke says the voice finished some of it before the model finished writing it, which
 	// a voice taking a sentence at a time does. It is settled once the model has, so the
 	// rest of the reply stays in the same message rather than starting another.
-	spoke bool
+	spoke      bool
+	uiFormat   string
+	uiVersion  string
+	uiMode     string
+	uiRaw      string
+	uiContent  string
+	shownUI    string
+	uiComplete bool
 }
 
 // writer is the state behind the queue. The writer goroutine is the only one that touches
 // it, so it needs no lock of its own.
 type writer struct {
-	log         *Log
-	known       map[string]struct{}
-	writing     map[string]*reply
-	interrupted map[string]struct{}
+	log           *Log
+	known         map[string]struct{}
+	writing       map[string]*reply
+	interrupted   map[string]struct{}
+	lastUIFormat  string
+	lastUIContent string
 	// listening is each line still being said, by listenKey, until it settles.
 	listening map[string]*reply
 	// heardLines is what each recently heard line was stored as, by line id. A line the
@@ -578,6 +601,21 @@ func (w *writer) handle(queued message) {
 			w.writing[queued.turnID] = writing
 		}
 		writing.text += queued.text
+	case uiPiece:
+		writing := w.ensure(queued)
+		writing.uiFormat = queued.uiFormat
+		writing.uiVersion = queued.uiVersion
+		writing.uiMode = queued.uiMode
+		writing.uiRaw += queued.text
+		writing.uiContent = w.mergedVoiceUI(writing)
+	case uiDone:
+		writing := w.ensure(queued)
+		writing.uiFormat = queued.uiFormat
+		writing.uiVersion = queued.uiVersion
+		writing.uiMode = queued.uiMode
+		writing.uiRaw = queued.text
+		writing.uiContent = w.mergedVoiceUI(writing)
+		writing.uiComplete = true
 	case prepared:
 		writing := w.ensure(queued)
 		writing.generated = queued.text
@@ -643,8 +681,8 @@ func (w *writer) handle(queued message) {
 			w.owed = queued.pending
 		}
 		// The model finished with nothing it stands by, so a reply some of which was already
-		// spoken is kept as far as it was written.
-		if writing, started := w.writing[queued.turnID]; started && writing.spoke {
+		// spoken, or one that produced interactive UI without spoken words, is kept.
+		if writing, started := w.writing[queued.turnID]; started && (writing.spoke || writing.uiContent != "") {
 			w.settle(queued.turnID, "")
 		}
 		w.done(queued.turnID)
@@ -732,22 +770,31 @@ func (w *writer) show() {
 }
 
 func (w *writer) showOne(writing *reply, source string, key, id string) {
-	if writing.text == writing.shown || w.now().Before(w.quietUntil) {
+	if (writing.text == writing.shown && writing.uiContent == writing.shownUI) || w.now().Before(w.quietUntil) {
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
 	defer cancel()
+	ui := writing.uiMap(false)
 	var err error
 	if writing.messageID == "" {
-		writing.messageID, err = w.send(ctx, writing.author, writing.text, true, false, source, writing.named)
+		named := writing.named
+		named.ui = ui
+		writing.messageID, err = w.send(ctx, writing.author, writing.text, true, false, source, named)
 	} else {
+		set := map[string]any{
+			"text": writing.text, generatingField: true, SourceField: source,
+		}
+		if ui != nil {
+			set["ai_ui"] = ui
+		}
+		unset := conversation.FitVoiceUI(set, "text")
 		_, err = w.log.client.Chat().EphemeralMessageUpdate(ctx, writing.messageID,
 			&getstream.EphemeralMessageUpdateRequest{
 				UserID: &writing.author.ID,
-				Set: map[string]any{
-					"text": writing.text, generatingField: true, SourceField: source,
-				},
+				Set:    set,
+				Unset:  unset,
 			})
 	}
 	if err != nil {
@@ -756,6 +803,7 @@ func (w *writer) showOne(writing *reply, source string, key, id string) {
 		return
 	}
 	writing.shown = writing.text
+	writing.shownUI = writing.uiContent
 }
 
 // quietFor is how long to stop showing what is being written after Stream refused to: until
@@ -819,9 +867,16 @@ func (w *writer) settle(turnID, text string) {
 	if text == "" {
 		text = writing.text
 	}
+	ui := writing.uiMap(true)
+	if ui != nil {
+		w.lastUIFormat = writing.uiFormat
+		w.lastUIContent = writing.uiContent
+	}
 	if writing.messageID == "" {
 		// It finished before the first tick, so there is nothing to correct.
-		id := w.store(writing.author, text, SourceAgent, false, writing.named)
+		named := writing.named
+		named.ui = ui
+		id := w.store(writing.author, text, SourceAgent, false, named)
 		w.keep(turnID, posted{id: id, author: writing.author, text: text})
 		return
 	}
@@ -836,12 +891,34 @@ func (w *writer) settle(turnID, text string) {
 	if writing.named.purpose != "" {
 		finished[purposeField] = writing.named.purpose
 	}
+	if ui != nil {
+		finished["ai_ui"] = ui
+	}
+	unset := conversation.FitVoiceUI(finished, "text")
 	_, err := w.log.client.Chat().UpdateMessagePartial(ctx, writing.messageID,
-		&getstream.UpdateMessagePartialRequest{UserID: &writing.author.ID, Set: finished})
+		&getstream.UpdateMessagePartialRequest{UserID: &writing.author.ID, Set: finished, Unset: unset})
 	if err != nil {
 		w.log.logger.Error("could not store a finished reply", "turn", turnID, "error", err)
 	}
 	w.keep(turnID, posted{id: writing.messageID, author: writing.author, text: text})
+}
+
+func (r *reply) uiMap(settled bool) map[string]any {
+	if r.uiFormat == "" || r.uiContent == "" {
+		return nil
+	}
+	status := "streaming"
+	if settled || r.uiComplete {
+		status = "complete"
+	}
+	return conversation.VoiceUIMap(r.uiFormat, r.uiVersion, status, r.uiContent)
+}
+
+func (w *writer) mergedVoiceUI(r *reply) string {
+	if r.uiMode == "patch" && r.uiFormat == "openui" && w.lastUIFormat == "openui" && w.lastUIContent != "" {
+		return conversation.MergeOpenUIStatements(w.lastUIContent, r.uiRaw)
+	}
+	return r.uiRaw
 }
 
 // closeOut finishes whatever was still being written. The queue closes when the call is
@@ -1112,7 +1189,7 @@ func (w *writer) annotate(turnID string, held *turnRecord) {
 // store writes one whole line of the conversation and returns its id, empty if it was not
 // written.
 func (w *writer) store(author User, text, source string, interrupted bool, named identity) string {
-	if author.ID == "" || text == "" {
+	if author.ID == "" || (text == "" && named.ui == nil) {
 		return ""
 	}
 
@@ -1135,6 +1212,7 @@ type identity struct {
 	turn string
 	// purpose is why the agent said it unasked, kept so a reader can say so too.
 	purpose string
+	ui      map[string]any
 }
 
 // send stores one message and returns its id, creating its author first if the app has
@@ -1158,6 +1236,10 @@ func (w *writer) send(ctx context.Context, author User, text string, generating,
 	}
 	if named.purpose != "" {
 		custom[purposeField] = named.purpose
+	}
+	if named.ui != nil {
+		custom["ai_ui"] = named.ui
+		conversation.FitVoiceUI(custom)
 	}
 	request := getstream.MessageRequest{Text: &text, UserID: &author.ID, Custom: custom}
 	id, given := named.id, false
