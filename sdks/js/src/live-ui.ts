@@ -8,7 +8,7 @@ import { messageField } from "./message-field.js";
  */
 export class LiveUI {
   private readonly byTurn = new Map<string, TurnUI>();
-  private latestTurnId: string | undefined;
+  private latestUI: TurnUI | undefined;
   private cache = new WeakMap<object, { readonly ui: TurnUI; readonly value: unknown }>();
 
   /** The live UI recorded for `turnId`, or undefined. */
@@ -16,14 +16,19 @@ export class LiveUI {
     return this.byTurn.get(turnId);
   }
 
-  /** The latest agent turn's live UI, for a voice screen or an in-flight reply before its turn id lands in Chat. */
+  /**
+   * The UI of the turn the agent is on, for an in-flight reply before its turn id lands in
+   * Chat: the newest turn's, when that turn is the agent's. Undefined once the person asks
+   * again, and while the agent's new turn has no UI yet, so a new reply never shows the card
+   * of the one before it.
+   */
   latest(): TurnUI | undefined {
-    return this.latestTurnId !== undefined ? this.byTurn.get(this.latestTurnId) : undefined;
+    return this.latestUI;
   }
 
   /**
-   * @internal Folds the current `session.conversation` turns in and reports whether any
-   * turn's UI changed.
+   * @internal Folds the current `session.conversation` turns in and reports whether what it
+   * overlays changed.
    */
   observeTurns(turns: readonly Turn[] | undefined): boolean {
     if (!turns || turns.length === 0) {
@@ -37,17 +42,24 @@ export class LiveUI {
       const previous = this.byTurn.get(turn.id);
       if (previous !== turn.ui) {
         this.byTurn.set(turn.id, turn.ui);
-        this.latestTurnId = turn.id;
         changed = true;
       }
+    }
+    const newest = turns[turns.length - 1]!;
+    const latest = newest.speaker === "agent" ? newest.ui : undefined;
+    if (latest !== this.latestUI) {
+      this.latestUI = latest;
+      changed = true;
     }
     return changed;
   }
 
   /**
-   * Returns `messages` with live socket UI overlaid onto any assistant reply whose durable
-   * Stream Chat `ai_ui` has not yet reached `status: "complete"`. Preserves array and item
-   * references whenever nothing changed.
+   * Returns `messages` with live socket UI overlaid onto any assistant reply Stream Chat is
+   * still writing whose durable `ai_ui` has not yet reached `status: "complete"`. A reply
+   * shows its own turn's UI, or, before its turn id lands in Chat, the UI of the turn the
+   * agent is on (`latest`). Once Chat says it is written, what Chat stored shows, such as no
+   * UI for a refused reply. Preserves array and item references whenever nothing changed.
    */
   overlay<M extends { readonly id: string }>(messages: readonly M[]): readonly M[] {
     if (this.byTurn.size === 0 || messages.length === 0) {
@@ -58,17 +70,11 @@ export class LiveUI {
 
     for (let i = 0; i < messages.length; i++) {
       const message = messages[i]!;
-      if (!isAssistantMessage(message)) {
-        continue;
-      }
-      const settled = existingUIStatus(message);
-      if (settled === "complete") {
+      if (!isAssistantMessage(message) || !showsLiveUI(message)) {
         continue;
       }
       const turnId = turnIdOfMessage(message);
-      const ui =
-        (turnId ? this.byTurn.get(turnId) : undefined) ??
-        (i === latestAssistantIndex ? this.latest() : undefined);
+      const ui = turnId ? this.byTurn.get(turnId) : i === latestAssistantIndex ? this.latest() : undefined;
       if (!ui) {
         continue;
       }
@@ -120,17 +126,18 @@ function isAssistantMessage(message: object): boolean {
   return false;
 }
 
-function existingUIStatus(message: object): string | undefined {
+/**
+ * Whether a reply shows the socket's UI rather than what Chat stored: while Chat says it is
+ * being written and its UI isn't complete there. UI too big for a message is kept as an
+ * artifact Chat only points to, so the socket's copy shows for as long as there is one.
+ */
+function showsLiveUI(message: object): boolean {
   const ui = messageField(message, "ai_ui");
-  if (typeof ui !== "object" || ui === null) {
-    return undefined;
+  const stored = typeof ui === "object" && ui !== null ? (ui as Record<string, unknown>) : undefined;
+  if (stored?.["overflow"] === true) {
+    return true;
   }
-  const record = ui as Record<string, unknown>;
-  if (record["overflow"] === true) {
-    return undefined;
-  }
-  const status = record["status"];
-  return typeof status === "string" ? status : undefined;
+  return messageField(message, "generating") === true && stored?.["status"] !== "complete";
 }
 
 function turnIdOfMessage(message: object): string | undefined {

@@ -160,6 +160,9 @@ export class Conversation {
         const raw = (this.uiRawByTurn.get(turnId) ?? "") + delta;
         this.uiRawByTurn.set(turnId, raw);
         const content = this.resolveUIContent(turnId, format, mode, raw);
+        if (content === undefined) {
+          return;
+        }
         this.writeUI(
           turnId,
           Object.freeze({
@@ -183,6 +186,9 @@ export class Conversation {
         const raw = text(frame, "content") || (this.uiRawByTurn.get(turnId) ?? "");
         this.uiRawByTurn.delete(turnId);
         const content = this.resolveUIContent(turnId, format, mode, raw);
+        if (content === undefined) {
+          return;
+        }
         this.writeUI(
           turnId,
           Object.freeze({
@@ -272,7 +278,12 @@ export class Conversation {
     this.turns(next);
   }
 
-  private resolveUIContent(turnId: string, format: string, mode: string, raw: string): string {
+  /**
+   * A turn's UI as it shows: `raw` itself, or a patch merged onto the UI before it. Undefined for
+   * a patch with no UI before it here, such as after a reload: Stream Chat's copy, which the
+   * router merged, is the one that shows.
+   */
+  private resolveUIContent(turnId: string, format: string, mode: string, raw: string): string | undefined {
     if (mode !== "patch" || format !== "openui") {
       return raw;
     }
@@ -283,7 +294,7 @@ export class Conversation {
         return mergeOpenUIStatements(earlier.ui.content, raw);
       }
     }
-    return raw;
+    return undefined;
   }
 
   /**

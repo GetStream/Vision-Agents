@@ -255,6 +255,7 @@ final class Conversation {
         final updated = _writeUI(event.turnId, now, (previous) {
           final raw = '${previous?.raw ?? ''}$delta';
           final content = _resolveUIContent(event.turnId, format, mode, raw);
+          if (content == null) return null;
           return TurnUI(
             format: format,
             version: version,
@@ -279,6 +280,7 @@ final class Conversation {
         return _writeUI(event.turnId, now, (previous) {
           final raw = explicit.isNotEmpty ? explicit : (previous?.raw ?? '');
           final content = _resolveUIContent(event.turnId, format, mode, raw);
+          if (content == null) return null;
           return TurnUI(format: format, version: version, status: 'complete', content: content);
         });
 
@@ -341,17 +343,22 @@ final class Conversation {
     return _with(turns: changed);
   }
 
-  Conversation _writeUI(String turnId, DateTime now, TurnUI Function(TurnUI?) change) {
+  /// Applies [change] to the agent turn [turnId]'s UI, starting the turn if this never saw it
+  /// begin. A [change] that gives null leaves the transcript as it is.
+  Conversation _writeUI(String turnId, DateTime now, TurnUI? Function(TurnUI?) change) {
     final index = turns.lastIndexWhere((turn) => turn.id == turnId && turn.speaker.isAgent);
     if (index == -1) {
+      final ui = change(null);
+      if (ui == null) return this;
       return _with(
         turns: [
           ...turns,
-          Turn(id: turnId, speaker: Speaker.agent, text: '', at: now, ui: change(null)),
+          Turn(id: turnId, speaker: Speaker.agent, text: '', at: now, ui: ui),
         ],
       );
     }
     final nextUI = change(turns[index].ui);
+    if (nextUI == null) return this;
     if (turns[index].ui == nextUI && turns[index].ui?.raw == nextUI.raw) {
       return this;
     }
@@ -360,7 +367,10 @@ final class Conversation {
     return _with(turns: changed);
   }
 
-  String _resolveUIContent(String turnId, String format, String mode, String raw) {
+  /// A turn's UI as it shows: [raw] itself, or a patch merged onto the UI before it. Null for
+  /// a patch with no UI before it here, such as after a reload: Stream Chat's copy, which the
+  /// router merged, is the one that shows.
+  String? _resolveUIContent(String turnId, String format, String mode, String raw) {
     if (mode != 'patch' || format != 'openui') {
       return raw;
     }
@@ -373,7 +383,7 @@ final class Conversation {
         return mergeOpenUIStatements(turn.ui!.content, raw);
       }
     }
-    return raw;
+    return null;
   }
 
   Conversation _with({List<Turn>? turns, ConversationState? state, Object? failure = _keep}) =>

@@ -170,6 +170,27 @@ void main() {
       );
     });
 
+    test('a patch with no UI before it in this transcript is left to Chat\'s merged copy', () {
+      // After a reload the socket's transcript starts empty, while the router merged the patch
+      // onto the card it remembers: the bare patch has no root and would blank the card.
+      final conversation = const Conversation()
+          .apply(frame('{"type":"responding","turn_id":"t9"}'))
+          .apply(
+            frame(
+              '{"type":"ui_delta","turn_id":"t9","format":"openui","mode":"patch",'
+              r'"delta":"$party = 4"}',
+            ),
+          )
+          .apply(
+            frame(
+              '{"type":"ui_completed","turn_id":"t9","format":"openui","mode":"patch",'
+              r'"content":"$party = 4"}',
+            ),
+          );
+
+      expect(conversation.turns.single.ui, isNull);
+    });
+
     test('a task settling after the agent left keeps the conversation over', () {
       final conversation = const Conversation()
           .apply(frame('{"type":"left","at":"2026-09-02T17:05:00Z"}'))

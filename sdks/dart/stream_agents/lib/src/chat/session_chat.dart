@@ -104,17 +104,19 @@ final class LiveReasoning {
 /// durable `extraData['ai_ui']` settles (`status == 'complete'`).
 final class LiveUI {
   final _byTurn = <String, TurnUI>{};
-  String? _latestTurnId;
+  TurnUI? _latest;
   final _cache = Expando<({TurnUI ui, stream.Message overlaid})>();
 
   /// The live UI recorded for [turnId], or null.
   TurnUI? operator [](String turnId) => _byTurn[turnId];
 
-  /// The latest agent turn's live UI, for voice screens or an in-flight reply before its
-  /// `turn_id` lands in Stream Chat.
-  TurnUI? get latest => _latestTurnId == null ? null : _byTurn[_latestTurnId!];
+  /// The UI of the turn the agent is on, for an in-flight reply before its `turn_id` lands in
+  /// Stream Chat: the newest turn's, when that turn is the agent's. Null once the person asks
+  /// again, and while the agent's new turn has no UI yet, so a new reply never shows the card
+  /// of the one before it.
+  TurnUI? get latest => _latest;
 
-  /// Folds [conversation]'s turns in and reports whether any turn's UI changed.
+  /// Folds [conversation]'s turns in and reports whether what it overlays changed.
   bool observe(Conversation conversation) {
     var changed = false;
     for (final turn in conversation.turns) {
@@ -122,15 +124,23 @@ final class LiveUI {
       final next = turn.ui!;
       if (_byTurn[turn.id] != next) {
         _byTurn[turn.id] = next;
-        _latestTurnId = turn.id;
         changed = true;
       }
+    }
+    final newest = conversation.turns.lastOrNull;
+    final latest = newest != null && newest.speaker.isAgent ? newest.ui : null;
+    if (latest != _latest) {
+      _latest = latest;
+      changed = true;
     }
     return changed;
   }
 
-  /// Returns [messages] with live socket UI overlaid onto any assistant reply whose durable
-  /// Stream Chat `ai_ui` has not yet reached `status == 'complete'`.
+  /// Returns [messages] with live socket UI overlaid onto any assistant reply Stream Chat is
+  /// still writing whose durable `ai_ui` has not yet reached `status == 'complete'`. A reply
+  /// shows its own turn's UI, or, before its `turn_id` lands in Chat, the UI of the turn the
+  /// agent is on ([latest]). Once Chat says it is written, what Chat stored shows, such as no
+  /// UI for a refused reply.
   List<stream.Message> overlay(List<stream.Message> messages) {
     if (_byTurn.isEmpty || messages.isEmpty) return messages;
     final latestGenerating = _findLatestGenerating(messages);
@@ -138,11 +148,9 @@ final class LiveUI {
 
     for (var i = 0; i < messages.length; i++) {
       final message = messages[i];
-      if (!_isAssistant(message)) continue;
-      if (_existingStatus(message) == 'complete') continue;
+      if (!_isAssistant(message) || !_showsLiveUI(message)) continue;
       final turnId = _turnIdOf(message);
-      final ui =
-          (turnId != null ? _byTurn[turnId] : null) ?? (i == latestGenerating ? latest : null);
+      final ui = turnId != null ? _byTurn[turnId] : (i == latestGenerating ? latest : null);
       if (ui == null) continue;
       final next = _withUI(message, ui);
       if (!identical(next, message)) {
@@ -175,12 +183,14 @@ final class LiveUI {
     return false;
   }
 
-  static String? _existingStatus(stream.Message message) {
-    if (message.extraData['ai_ui'] case final Map<Object?, Object?> ui) {
-      if (ui['overflow'] == true) return null;
-      if (ui['status'] case final String status) return status;
-    }
-    return null;
+  /// Whether a reply shows the socket's UI rather than what Chat stored: while Chat says it is
+  /// being written and its UI isn't complete there. UI too big for a message is kept as an
+  /// artifact Chat only points to, so the socket's copy shows for as long as there is one.
+  static bool _showsLiveUI(stream.Message message) {
+    final stored = message.extraData['ai_ui'];
+    if (stored is Map<Object?, Object?> && stored['overflow'] == true) return true;
+    return message.extraData['generating'] == true &&
+        !(stored is Map<Object?, Object?> && stored['status'] == 'complete');
   }
 
   static String? _turnIdOf(stream.Message message) {

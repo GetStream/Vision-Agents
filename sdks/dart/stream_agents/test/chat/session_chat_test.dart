@@ -211,5 +211,76 @@ void main() {
       );
       expect(identical(liveUI.overlay([settled]).single, settled), isTrue);
     });
+
+    const card = r'root = Card([hdr])\nhdr = CardHeader(\"Kaneo\")';
+    AgentEvent event(String json) => AgentEvent.tryParse(json)!;
+    stream.Message reply(String id, Map<String, Object?> extra) =>
+        stream.Message(id: id, text: '', extraData: {'ai_generated': true, ...extra});
+
+    test('never shows the card of the reply before on the reply to a follow-up or a tap', () {
+      final liveUI = LiveUI();
+      var conversation = const Conversation()
+          .said('Find me dinner near the lake')
+          .apply(event('{"type":"responding","turn_id":"t1"}'))
+          .apply(
+            event('{"type":"ui_completed","turn_id":"t1","format":"openui","content":"$card"}'),
+          );
+      liveUI.observe(conversation);
+      final first = reply('r1', {
+        'generating': false,
+        'ai_ui': {'v': 1, 'format': 'openui', 'status': 'complete', 'content': 'x'},
+        'support_runtime': {'role': 'assistant', 'turn_id': 't1'},
+      });
+
+      // Asked again: the new reply is in Chat before the agent starts, with no turn id yet.
+      conversation = conversation.said('Reserve table T2 (Window for 2)');
+      liveUI.observe(conversation);
+      final waiting = reply('r2', {'generating': true});
+      expect(identical(liveUI.overlay([first, waiting])[1], waiting), isTrue);
+
+      // The agent starts, and its reply names its turn, which has no UI yet.
+      conversation = conversation.apply(event('{"type":"responding","turn_id":"t2"}'));
+      liveUI.observe(conversation);
+      expect(identical(liveUI.overlay([first, waiting])[1], waiting), isTrue);
+      final writing = reply('r2', {
+        'generating': true,
+        'support_runtime': {'role': 'assistant', 'turn_id': 't2'},
+      });
+      expect(identical(liveUI.overlay([first, writing])[1], writing), isTrue);
+
+      // Its own UI streams in, with or without its turn id in Chat yet.
+      conversation = conversation.apply(
+        event(
+          '{"type":"ui_delta","turn_id":"t2","format":"openui",'
+          r'"delta":"root = Card([hdr])\nhdr = CardHeader(\"Booked\")"}',
+        ),
+      );
+      liveUI.observe(conversation);
+      for (final message in [waiting, writing]) {
+        final shown =
+            liveUI.overlay([first, message])[1].extraData['ai_ui'] as Map<Object?, Object?>;
+        expect(shown['content'], contains('Booked'));
+      }
+    });
+
+    test('shows what Chat stored once Chat says the reply is written', () {
+      final liveUI = LiveUI();
+      final conversation = const Conversation()
+          .said('Book Kaneo for two')
+          .apply(event('{"type":"responding","turn_id":"t1"}'))
+          .apply(event('{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"$card"}'));
+      liveUI.observe(conversation);
+      const turn = {'role': 'assistant', 'turn_id': 't1'};
+      final writing = reply('r1', {'generating': true, 'support_runtime': turn});
+      expect(
+        (liveUI.overlay([writing]).single.extraData['ai_ui'] as Map<Object?, Object?>)['status'],
+        'streaming',
+      );
+
+      // Refused, or interrupted: the socket never completes the UI, and Chat keeps the reply
+      // without it.
+      final refused = reply('r1', {'generating': false, 'support_runtime': turn});
+      expect(identical(liveUI.overlay([refused]).single, refused), isTrue);
+    });
   });
 }

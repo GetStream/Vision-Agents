@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
-import { AgentChat, agentChatTransport, type AgentTransportFeed } from "../src/chat.js";
+import { AgentChat, agentChatTransport, LiveUI, type AgentTransportFeed } from "../src/chat.js";
 import {
   Client,
   ConfigurationError,
@@ -65,12 +65,85 @@ describe("Conversation dynamic UI streaming", () => {
     assert.equal(conversation.get().turns[1]?.ui?.status, "complete");
   });
 
+  it("leaves a patch with no UI before it in this transcript to Chat's merged copy", () => {
+    // After a reload the socket's transcript starts empty, while the router merged the patch
+    // onto the card it remembers: the bare patch has no root and would blank the card.
+    const conversation = new Conversation(true);
+    conversation.observe({ type: "responding", turn_id: "t9" }, 100);
+    conversation.observe({ type: "ui_delta", turn_id: "t9", format: "openui", mode: "patch", delta: "$party = 4" }, 110);
+    assert.equal(conversation.get().turns[0]?.ui, undefined);
+    conversation.observe({ type: "ui_completed", turn_id: "t9", format: "openui", mode: "patch", content: "$party = 4" }, 120);
+    assert.equal(conversation.get().turns[0]?.ui, undefined);
+  });
+
   it("removes component statements assigned null while keeping reactive $variables", () => {
     const merged = mergeOpenUIStatements(
       '$note = "Window"\nroot = Card([hdr, banner])\nhdr = CardHeader("Kaneo")\nbanner = Callout("info", "Busy", "12m")',
       "$note = null\nbanner = null\nroot = Card([hdr])",
     );
     assert.equal(merged, '$note = null\nroot = Card([hdr])\nhdr = CardHeader("Kaneo")');
+  });
+});
+
+describe("LiveUI", () => {
+  type Reply = { id: string; text: string; custom: Record<string, unknown> };
+  const card = 'root = Card([hdr])\nhdr = CardHeader("Kaneo")';
+  const reply = (id: string, custom: Record<string, unknown>): Reply => ({
+    id,
+    text: "",
+    custom: { ai_generated: true, ...custom },
+  });
+  const uiOf = (message: Reply | undefined) => message?.custom["ai_ui"] as { status?: string; content?: string } | undefined;
+
+  it("never shows the card of the reply before on the reply to a follow-up or a tap", () => {
+    const conversation = new Conversation(true);
+    const live = new LiveUI();
+    conversation.said("Find me dinner near the lake", 1);
+    conversation.observe({ type: "responding", turn_id: "t1" }, 2);
+    conversation.observe({ type: "ui_completed", turn_id: "t1", format: "openui", content: card }, 3);
+    live.observeTurns(conversation.get().turns);
+    const first = reply("r1", {
+      generating: false,
+      ai_ui: { v: 1, format: "openui", status: "complete", content: card },
+      support_runtime: { role: "assistant", turn_id: "t1" },
+    });
+
+    // Asked again: the new reply is in Chat before the agent starts, with no turn id yet.
+    conversation.said("Reserve table T2 (Window for 2)", 4);
+    live.observeTurns(conversation.get().turns);
+    const waiting = reply("r2", { generating: true });
+    assert.equal(live.overlay([first, waiting])[1], waiting);
+
+    // The agent starts, and its reply names its turn, which has no UI yet.
+    conversation.observe({ type: "responding", turn_id: "t2" }, 5);
+    live.observeTurns(conversation.get().turns);
+    assert.equal(live.overlay([first, waiting])[1], waiting);
+    const writing = reply("r2", { generating: true, support_runtime: { role: "assistant", turn_id: "t2" } });
+    assert.equal(live.overlay([first, writing])[1], writing);
+
+    // Its own UI streams in, with or without its turn id in Chat yet.
+    conversation.observe(
+      { type: "ui_delta", turn_id: "t2", format: "openui", delta: 'root = Card([hdr])\nhdr = CardHeader("Booked")' },
+      6,
+    );
+    live.observeTurns(conversation.get().turns);
+    assert.match(uiOf(live.overlay([first, waiting])[1])?.content ?? "", /Booked/);
+    assert.match(uiOf(live.overlay([first, writing])[1])?.content ?? "", /Booked/);
+  });
+
+  it("shows what Chat stored once Chat says the reply is written", () => {
+    const conversation = new Conversation(true);
+    const live = new LiveUI();
+    conversation.said("Book Kaneo for two", 1);
+    conversation.observe({ type: "responding", turn_id: "t1" }, 2);
+    conversation.observe({ type: "ui_delta", turn_id: "t1", format: "openui", delta: card }, 3);
+    live.observeTurns(conversation.get().turns);
+    const turn = { role: "assistant", turn_id: "t1" };
+    assert.equal(uiOf(live.overlay([reply("r1", { generating: true, support_runtime: turn })])[0])?.status, "streaming");
+
+    // Refused, or interrupted: the socket never completes the UI, and Chat keeps the reply without it.
+    const refused = reply("r1", { generating: false, support_runtime: turn });
+    assert.equal(live.overlay([refused])[0], refused);
   });
 });
 
