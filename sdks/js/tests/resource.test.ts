@@ -14,6 +14,7 @@ import {
   type SessionSearch,
   type SessionSort,
   type Sessions,
+  Tools,
 } from "../src/index.js";
 import { inPage, offPage } from "./device.js";
 import { TestRouter, type Connection } from "./router.js";
@@ -165,6 +166,43 @@ describe("sessions", () => {
       false,
       "carrying a conversation on creates no session",
     );
+    assert.equal(
+      router.requestsTo("POST", "/v1/agents/sessions/session-4/resume").length,
+      0,
+      "with nothing to say over what it ran with, it is read as it is",
+    );
+    await held.close();
+  });
+
+  it("resumes with a tool timeout and its tools by asking the router to carry it on", async () => {
+    router.serve("POST", "/v1/agents/sessions/session-4/resume", {
+      body: session({ id: "session-4", conversation_id: "agent:support-4", state: "live" }),
+    });
+    const tools = new Tools().register({ name: "lookup_order", description: "Finds an order", run: () => "found" });
+    const resuming = api.agent("docs").sessions.resume("session-4", { tools, tool_timeout_ms: 180_000 });
+    const connection = await router.socket();
+    const held = await resuming;
+
+    assert.deepEqual(router.requestsTo("POST", "/v1/agents/sessions/session-4/resume")[0]?.body, {
+      tool_timeout_ms: 180_000,
+      tools: [{ name: "lookup_order", description: "Finds an order" }],
+    });
+    assert.equal(router.requestsTo("GET", "/v1/agents/sessions/session-4").length, 0);
+    assert.equal(connection.path, "/v1/agents/sessions/session-4/events");
+    await held.close();
+  });
+
+  it("resumes with only a tool timeout, leaving the tools the conversation has", async () => {
+    router.serve("POST", "/v1/agents/sessions/session-4/resume", {
+      body: session({ id: "session-4", conversation_id: "agent:support-4", state: "live" }),
+    });
+    const resuming = api.agent("docs").sessions.resume("session-4", { tool_timeout_ms: 0 });
+    await router.socket();
+    const held = await resuming;
+
+    assert.deepEqual(router.requestsTo("POST", "/v1/agents/sessions/session-4/resume")[0]?.body, {
+      tool_timeout_ms: 0,
+    });
     await held.close();
   });
 

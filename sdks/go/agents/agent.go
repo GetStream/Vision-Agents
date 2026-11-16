@@ -208,8 +208,11 @@ func (s *Sessions) Create(ctx context.Context, options SessionOptions) (*Session
 }
 
 // Resume carries on a conversation held in writing, by the id of the session it was held
-// in. One that ended is reopened with what was said in it.
-func (s *Sessions) Resume(ctx context.Context, id string) (*Session, error) {
+// in. One that ended is reopened with what was said in it, the tools its caller declared and
+// the tool timeout it ran with; the agent's functions, when it has any, and the options'
+// ToolTimeout are written over those, as client.Sessions.Resume says. At most one
+// ResumeOptions is read.
+func (s *Sessions) Resume(ctx context.Context, id string, options ...client.ResumeOptions) (*Session, error) {
 	a := s.agent
 	backend, err := a.options.LLM.Backend()
 	if err != nil {
@@ -219,7 +222,11 @@ func (s *Sessions) Resume(ctx context.Context, id string) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	got, err := resources.Agent(a.options.Name).Sessions.Get(ctx, id)
+	var chosen client.ResumeOptions
+	if len(options) > 0 {
+		chosen = options[0]
+	}
+	got, err := a.options.LLM.Resume(ctx, id, chosen.ToolTimeout)
 	if err != nil {
 		return nil, err
 	}
