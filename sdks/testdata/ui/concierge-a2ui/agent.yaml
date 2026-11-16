@@ -1,0 +1,12 @@
+# Compiled by the Go SDK into ../concierge-a2ui.instructions.txt, which every SDK that compiles
+# `ui:` in A2UI must write the same.
+name: concierge
+llm: llm-fast
+ui:
+  format: a2ui
+  # The basic catalog's components and functions to offer; the app's own are always offered.
+  keep: [Text, Column, Row, Card, Button, ChoicePicker, formatString, required]
+  voice_ui: true
+  rules:
+    - Write times as 24h, like 19:15, never 7:15 PM.
+    - Book only a time the venue offered.

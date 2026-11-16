@@ -1,8 +1,10 @@
 package agents
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -196,13 +198,111 @@ func (s *FolderUISuite) TestABareUIKeyAppendsNothing() {
 	s.Equal("You are Juno.", loaded.Instructions)
 }
 
-func (s *FolderUISuite) TestA2UIFormatIsRefusedSinceThePromptTeachesOnlyOpenUI() {
-	dir := s.T().TempDir()
-	s.Require().NoError(os.WriteFile(filepath.Join(dir, "agent.yaml"), []byte("name: concierge\nui:\n  format: a2ui\n"), 0o644))
+func (s *FolderUISuite) TestTheSharedA2UIFixtureCompilesToItsInstructions() {
+	// An SDK that compiles ui: in A2UI is held to the same file.
+	fixture := filepath.Join("..", "..", "testdata", "ui")
+	golden, err := os.ReadFile(filepath.Join(fixture, "concierge-a2ui.instructions.txt"))
+	s.Require().NoError(err)
+
+	loaded, err := Load(filepath.Join(fixture, "concierge-a2ui"))
+	s.Require().NoError(err)
+	s.Equal(string(golden), loaded.Instructions+"\n")
+}
+
+func (s *FolderUISuite) TestTheA2UICatalogIsTheOneTheSwiftRendererWritesForTheSameComponents() {
+	// swift_assistant's a2ui/instructions.md is written by stream-chat-swift's A2UI renderer
+	// from its UIComponents.json and keep list, so this holds the catalog an agent is told
+	// about to the one the apps draw, and fails when a2ui/basic_catalog.json is older than the
+	// renderer that wrote it (regenerate both).
+	app := filepath.Join("..", "..", "..", "examples", "voice_agents", "swift_assistant")
+	raw, err := os.ReadFile(filepath.Join(app, "a2ui", "prompt.json"))
+	s.Require().NoError(err)
+	var prompt struct {
+		Keep []string `json:"keep"`
+	}
+	s.Require().NoError(json.Unmarshal(raw, &prompt))
+	components, err := os.ReadFile(filepath.Join(app, "app", "SwiftAssistant", "UIComponents.json"))
+	s.Require().NoError(err)
+	written, err := os.ReadFile(filepath.Join(app, "a2ui", "instructions.md"))
+	s.Require().NoError(err)
+
+	dir := s.agent("ui:\n  format: a2ui\n  keep: [" + strings.Join(prompt.Keep, ", ") + "]\n")
+	s.Require().NoError(os.WriteFile(filepath.Join(dir, "ui", "components.json"), components, 0o644))
+	loaded, err := Load(dir)
+	s.Require().NoError(err)
+
+	s.Equal(a2uiCatalogLine(string(written)), a2uiCatalogLine(loaded.Instructions))
+}
+
+func (s *FolderUISuite) TestPatchModeIsRefusedForA2UISinceOnlyOpenUIPatchesAreMerged() {
+	dir := s.agent("ui:\n  format: a2ui\n  patch_mode: true\n")
 
 	_, err := Load(dir)
 	s.Require().Error(err)
-	s.Contains(err.Error(), `line 3: ui.format must be openui, not "a2ui"`)
+	s.Contains(err.Error(), "line 4: ui.patch_mode is for openui")
+}
+
+func (s *FolderUISuite) TestAnA2UIExampleHoldingAComponentItNeverDefinesIsRefused() {
+	dir := s.agent("ui:\n  format: a2ui\n")
+	s.Require().NoError(os.WriteFile(filepath.Join(dir, "ui", "blueprints.yaml"), []byte(`- name: booking
+  when: booking a table
+  order: [Text]
+  example: |
+    {"version":"1.0","createSurface":{"surfaceId":"booking","catalogId":"getstream.io:app-catalog","components":[{"id":"root","component":"Column","children":["title","later"]},{"id":"title","component":"Text","text":"## Tonight"}]}}
+`), 0o644))
+
+	_, err := Load(dir)
+	s.Require().Error(err)
+	s.Contains(err.Error(), `blueprint "booking" example is invalid: root holds later, which is not defined`)
+}
+
+func (s *FolderUISuite) TestAnA2UIExampleUsingAComponentKeepLeftOutIsRefused() {
+	dir := s.agent("ui:\n  format: a2ui\n  keep: [Text, Column]\n")
+	s.Require().NoError(os.WriteFile(filepath.Join(dir, "ui", "blueprints.yaml"), []byte(`- name: booking
+  when: booking a table
+  order: [Text, Button]
+  example: |
+    {"version":"1.0","createSurface":{"surfaceId":"booking","catalogId":"getstream.io:app-catalog","components":[{"id":"root","component":"Column","children":["book"]},{"id":"book","component":"Button","child":"label","action":{"event":{"name":"book"}}},{"id":"label","component":"Text","text":"Book"}]}}
+`), 0o644))
+
+	_, err := Load(dir)
+	s.Require().Error(err)
+	s.Contains(err.Error(), "book is a Button, which the catalog doesn't have")
+}
+
+func (s *FolderUISuite) TestKeepNamingAComponentA2UIDoesNotHaveIsRefused() {
+	dir := s.agent("ui:\n  format: a2ui\n  keep: [Text, CardHeader]\n")
+
+	_, err := Load(dir)
+	s.Require().Error(err)
+	s.Contains(err.Error(), `ui.keep names "CardHeader", which is neither a component nor a function of the A2UI basic catalog`)
+}
+
+func (s *FolderUISuite) TestAnAppComponentNamedLikeAnA2UIComponentIsRefused() {
+	// Column is A2UI's own, which OpenUI does not have.
+	dir := s.agent("ui:\n  format: a2ui\n")
+	s.Require().NoError(os.WriteFile(filepath.Join(dir, "ui", "components.json"), []byte(`[
+  {"name": "column", "description": "A brand column.", "parameters": {"type": "object", "properties": {}, "x-order": []}}
+]`), 0o644))
+
+	_, err := Load(dir)
+	s.Require().Error(err)
+	s.Contains(err.Error(), `component "column" (Column) collides with a built-in component`)
+}
+
+// agent writes an agent directory with ui settings and an empty ui/ folder, and returns it.
+func (s *FolderUISuite) agent(ui string) string {
+	dir := s.T().TempDir()
+	s.Require().NoError(os.WriteFile(filepath.Join(dir, "agent.yaml"), []byte("name: concierge\n"+ui), 0o644))
+	s.Require().NoError(os.MkdirAll(filepath.Join(dir, "ui"), 0o755))
+	return dir
+}
+
+// a2uiCatalogLine is the catalog document in instructions, as one line of JSON.
+func a2uiCatalogLine(instructions string) string {
+	_, after, _ := strings.Cut(instructions, "The catalog `"+a2uiCatalogID+"`\n\n```json\n")
+	line, _, _ := strings.Cut(after, "\n")
+	return line
 }
 
 func (s *FolderUISuite) TestAComponentFieldNobodyReadsIsRefused() {
