@@ -1472,6 +1472,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: true
         }.freeze,
+        "resumeSession" => {
+          method: :post, path: "/v1/agents/sessions/{id}/resume",
+          path_params: %w[id].freeze, query: [].freeze,
+          body: "ResumeSessionRequest", body_required: false,
+          socket: false, client_accessible: true
+        }.freeze,
         "reviewUseCase" => {
           method: :post, path: "/v1/ops/use-cases/{id}/review",
           path_params: %w[id].freeze, query: [].freeze,
@@ -2851,6 +2857,10 @@ module GetStream
         }.freeze,
         "ResumeHistory" => {
           properties: %w[include_tools max_characters max_messages].freeze,
+          required: [].freeze, open: false
+        }.freeze,
+        "ResumeSessionRequest" => {
+          properties: %w[tool_timeout_ms tools].freeze,
           required: [].freeze, open: false
         }.freeze,
         "ReviewAnalysis" => {

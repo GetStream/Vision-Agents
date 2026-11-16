@@ -2022,6 +2022,23 @@ impl Client {
         )
         .await
     }
+    /// Carry a conversation on, with the caller's tool settings
+    ///
+    /// `POST /v1/agents/sessions/{id}/resume` (`resumeSession`).
+    pub async fn resume_session(
+        &self,
+        id: &str,
+        body: Option<&types::ResumeSessionRequest>,
+    ) -> Result<types::Session> {
+        self.send(
+            Method::POST,
+            &format!("/v1/agents/sessions/{id}/resume", id = segment(id)),
+            None::<&()>,
+            body,
+            "resumeSession",
+        )
+        .await
+    }
     /// Go back to a response and carry on from there
     ///
     /// `POST /v1/agents/sessions/{id}/rewind` (`rewindSession`).

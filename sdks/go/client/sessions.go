@@ -182,14 +182,30 @@ func (s *Sessions) Create(ctx context.Context, options SessionOptions) (*Session
 	return newSession(s.client, s.agent, pipeline, created), nil
 }
 
+// ResumeOptions is what to carry a conversation on with, over what it ran with.
+type ResumeOptions struct {
+	// ToolTimeout is how long the model waits for one of your functions, to the millisecond,
+	// in place of what the conversation ran with. Zero, or less than a millisecond, keeps
+	// that, which a conversation that ended keeps too. A conversation still running takes it
+	// for the calls that start after it.
+	ToolTimeout time.Duration
+}
+
 // Resume carries on a conversation held in writing, by the id of the session it was held
-// in, and starts watching it. One that ended is reopened with what was said in it.
-func (s *Sessions) Resume(ctx context.Context, id string) (*Session, error) {
-	got, err := s.Get(ctx, id)
+// in, and starts watching it. One that ended is reopened with what was said in it, the tools
+// its caller declared and the tool timeout it ran with. The agent's functions, when it has
+// any, are declared in place of those tools; a conversation still running keeps its tools
+// until it ends. At most one ResumeOptions is read.
+func (s *Sessions) Resume(ctx context.Context, id string, options ...ResumeOptions) (*Session, error) {
+	var chosen ResumeOptions
+	if len(options) > 0 {
+		chosen = options[0]
+	}
+	pipeline := stream.Accelerated(stream.Config{Backend: s.client.backend, Functions: s.agent.tools})
+	got, err := pipeline.Resume(ctx, id, chosen.ToolTimeout)
 	if err != nil {
 		return nil, err
 	}
-	pipeline := stream.Accelerated(stream.Config{Backend: s.client.backend, Functions: s.agent.tools})
 	if err := pipeline.Watch(ctx, got); err != nil {
 		return nil, err
 	}

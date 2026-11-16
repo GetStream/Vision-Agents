@@ -5124,7 +5124,7 @@ components:
         title:
           type: string
         tool_timeout_ms:
-          description: How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds, since its row does not keep one. Zero is 30 seconds, as on createSession.
+          description: How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds. Zero is 30 seconds, as on createSession.
           type: integer
       type: object
     GeneratedImage:
@@ -8159,6 +8159,19 @@ components:
           maximum: 100
           minimum: 1
           type: integer
+      type: object
+    ResumeSessionRequest:
+      description: What a caller carrying a conversation on says about its tools, over what it ran with.
+      properties:
+        tool_timeout_ms:
+          description: How long the model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession, in place of what the conversation ran with. Omitted keeps that, which a conversation that ended keeps too. Zero is 30 seconds.
+          minimum: 0
+          type: integer
+        tools:
+          description: The caller's own tools, in place of the ones the conversation was opened with, which it keeps when this is omitted. An empty list offers none. A conversation still running keeps its tools until it ends and is carried on.
+          items:
+            $ref: '#/components/schemas/SessionTool'
+          type: array
       type: object
     ReviewActor:
       description: 'Who moved a use case: the app, Stream staff or the vendor.'
@@ -19369,6 +19382,55 @@ paths:
         "503":
           $ref: '#/components/responses/Unavailable'
       summary: What the agent did, turn by turn, in the order it happened
+      x-client-accessible: true
+  /v1/agents/sessions/{id}/resume:
+    post:
+      description: Carries on a conversation held in writing under its own id, as a message to it does, and answers it as getSession does. A conversation that ended is carried on with the tools its caller declared and the tool_timeout_ms it ran with, wherever it ended; anything named here is written over those. A conversation still running takes tool_timeout_ms for the tool calls that start after it, and keeps its tools until it ends and is carried on. One that cannot be carried on, such as a call that kept no conversation, is answered as it is.
+      operationId: resumeSession
+      parameters:
+        - description: The session, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The session, as returned when it was created.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResumeSessionRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+          description: OK
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Carry a conversation on, with the caller's tool settings
       x-client-accessible: true
   /v1/agents/sessions/{id}/rewind:
     post:
