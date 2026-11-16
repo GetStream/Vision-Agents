@@ -289,8 +289,8 @@ type ProviderConfig struct {
 	// itself (OverrideRegion). Only a factory that honors OverrideBaseURL takes one.
 	Endpoint string `yaml:"endpoint"`
 	// APIKeyEnv names the environment variable holding this instance's key, in place of the
-	// vendor's own variable. It is read once, when the router starts, which fails when it is
-	// unset or empty. Only a factory that honors OverrideAPIKey takes one.
+	// vendor's own variable. It is read once, when the router starts, which fails when neither
+	// it nor NAME_1, NAME_2 and on holds a key. Only a factory that honors OverrideAPIKey takes one.
 	APIKeyEnv string `yaml:"api_key_env"`
 	// BYOK is an instance built with the customer's own key, whose vendor bills the customer:
 	// its work is priced by the BYOK entries. It is never read from a file.
