@@ -233,8 +233,6 @@ type Service struct {
 	// finished is told of every reply finished in a thread channel (OnFinishedReply). It is
 	// apart from mu so a finished reply in one conversation never waits on another opening.
 	finished atomic.Pointer[func(FinishedReply)]
-	// overflow stores generated UI payloads too large for a message's 50 KB custom limit.
-	overflow atomic.Pointer[UIOverflowStore]
 	// retireAfter is how long a released conversation is held before it is let go.
 	retireAfter time.Duration
 	// flushing counts the conversations writing to Stream right now (flush), finished replies
@@ -284,8 +282,10 @@ type Conversation struct {
 	// reasoning is the model's thinking for the current reply. It is shown to watchers
 	// through ephemeral updates only and is never persisted.
 	reasoning liveReasoning
-	// lastPublished throttles intermediate conversation_updated snapshots during token streaming.
+	// lastPublished throttles intermediate conversation_updated snapshots during token streaming,
+	// and unpublished says one was held back, which the live loop then sends.
 	lastPublished time.Time
+	unpublished   bool
 	// lastUIFormat and lastUIContent keep the latest completed UI for openui-patch turns,
 	// and turnUIRaw accumulates raw UIDelta fragments for the active turn.
 	lastUIFormat  string
@@ -496,24 +496,6 @@ func (s *Service) OnFinishedReply(fn func(FinishedReply)) {
 		return
 	}
 	s.finished.Store(&fn)
-}
-
-// SetUIOverflow configures where generated UI payloads that exceed Stream Chat's 50 KB
-// message custom limit are stored as artifacts. A nil store clears it.
-func (s *Service) SetUIOverflow(store UIOverflowStore) {
-	if store == nil {
-		s.overflow.Store(nil)
-		return
-	}
-	s.overflow.Store(&store)
-}
-
-func (s *Service) overflowStore() UIOverflowStore {
-	held := s.overflow.Load()
-	if held == nil {
-		return nil
-	}
-	return *held
 }
 
 // SessionCommandChannel reserves the persistent conversation namespace for the
@@ -2030,10 +2012,27 @@ func (c *Conversation) Observe(event agent.Event) {
 		m.Saved = false
 	}
 	now := time.Now()
-	if !coalesce || now.Sub(c.lastPublished) >= answerEvery {
+	c.unpublished = coalesce && now.Sub(c.lastPublished) < answerEvery
+	if !c.unpublished {
 		c.lastPublished = now
 		c.publish(*m)
 	}
+}
+
+// publishHeld sends watchers the snapshot Observe held back while the reply streamed, so the
+// last words before a pause, such as ahead of a tool call, reach them without waiting for the
+// next event.
+func (c *Conversation) publishHeld() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	m := c.data.Current
+	// A tick runs a little early or late, so the pace allows half a tick either way.
+	if !c.unpublished || m == nil || time.Since(c.lastPublished) < answerEvery-liveTick/2 {
+		return
+	}
+	c.unpublished = false
+	c.lastPublished = time.Now()
+	c.publish(*m)
 }
 
 // refuse marks a reply the prompt injection screen refused. What streamed of the refused
@@ -2176,6 +2175,7 @@ func (c *Conversation) finish(state string) {
 	}
 	c.turnUIRaw = ""
 	c.lastPublished = time.Time{}
+	c.unpublished = false
 	for i := range m.Tools {
 		t := &m.Tools[i]
 		if t.FinishedAt == nil {
@@ -2292,7 +2292,6 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 	m.Error = ""
 	c.mu.Lock()
 	baseFormat, baseContent := c.lastUIFormat, c.lastUIContent
-	customer, cid := c.data.Customer, c.data.CID
 	c.mu.Unlock()
 	text, ui := wireUIWithBase(m, baseFormat, baseContent)
 	wire := m
@@ -2304,13 +2303,6 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 	}
 	runtime := runtimeOf(wire)
 	fields := map[string]any{"text": text, "generating": m.FinishedAt == nil, "source": "agent", "support_message": metadata, "support_runtime": runtime}
-	if !ephemeral && ui != nil {
-		var spilled *ArtifactAttachment
-		ui, spilled = spillOversizedUI(ctx, c.service.overflowStore(), customer, cid, m.ID, ui, maps.Clone(fields), "text", "attachments")
-		if spilled != nil {
-			m.Artifacts = mergeArtifacts(m.Artifacts, []ArtifactAttachment{*spilled})
-		}
-	}
 	if ui != nil {
 		fields["ai_ui"] = ui
 	}
@@ -2352,7 +2344,7 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 		fitUI(custom)
 		channelType, id := channelOf(c.data.CID)
 		_, err := client.Chat().SendMessage(ctx, channelType, id, &getstream.SendMessageRequest{Message: getstream.MessageRequest{
-			ID: &m.ID, UserID: &user, Text: &text, Custom: custom, Attachments: append(ChatAttachments(m.Artifacts), chatFileAttachments(m.Files, m.Role == "user")...),
+			ID: &m.ID, UserID: &user, Text: &text, Custom: custom, Attachments: chatFileAttachments(m.Files, m.Role == "user"),
 		}})
 		if err != nil && ctx.Err() == nil {
 			existing, readErr := client.Chat().GetMessage(ctx, m.ID, &getstream.GetMessageRequest{})
@@ -2537,6 +2529,8 @@ func (c *Conversation) run() {
 			}
 			return
 		case <-tick.C:
+			// Watchers are sent what was held back even while Stream is refusing writes.
+			c.publishHeld()
 			if time.Now().Before(retry) {
 				continue
 			}

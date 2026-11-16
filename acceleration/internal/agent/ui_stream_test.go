@@ -121,21 +121,37 @@ func (s *UIStreamSuite) TestOrdinaryCodeBlocksStayInProseAndLaterUIBlocksAreDrop
 	s.Equal("root = Card([a])", completed.Content)
 }
 
-func (s *UIStreamSuite) TestAUITagPreservesComparisonOperatorsAndPatchMode() {
+func (s *UIStreamSuite) TestAPatchFencePreservesComparisonOperatorsAndPatchMode() {
 	prose, events, history := streamUI(
 		"turn-1",
-		`Updated to four guests. <ui format="openui" mode="patch">`+"\n",
-		"$party = 4\n",
-		`note = $party < 6 ? "Terrace" : "Courtyard"`+"\n</ui>",
+		"Updated to four guests.\n```openui-",
+		"patch\n$party = 4\n",
+		`note = $party < 6 ? "Terrace" : "Courtyard"`+"\n```",
 	)
 
-	s.Equal("Updated to four guests. ", prose)
+	s.Equal("Updated to four guests.\n", prose)
 	completed, ok := firstOf[UICompleted](events)
 	s.Require().True(ok)
 	s.Equal("openui", completed.Format)
 	s.Equal("patch", completed.Mode)
 	s.Equal("$party = 4\nnote = $party < 6 ? \"Terrace\" : \"Courtyard\"", completed.Content)
 	s.Equal("```openui-patch\n$party = 4\nnote = $party < 6 ? \"Terrace\" : \"Courtyard\"\n```", history)
+}
+
+func (s *UIStreamSuite) TestProseThatMentionsAUITagStaysProse() {
+	written := "In HTML you'd wrap the list in a <ui> element, then style it. Anything else?"
+	prose, events, history := streamUI("turn-1", written)
+
+	s.Equal(written, prose)
+	s.Empty(events)
+	s.Empty(history)
+}
+
+func (s *UIStreamSuite) TestATagSplitAcrossTokensMidLineStaysProse() {
+	prose, events, _ := streamUI("turn-1", "Use ", "<u", "i format=\"openui\">", " for that.\n", "More text here.")
+
+	s.Equal(`Use <ui format="openui"> for that.`+"\nMore text here.", prose)
+	s.Empty(events)
 }
 
 func (s *AgentSuite) TestAVoiceReplyWithOpenUIDoesNotSpeakOrStripBracketedArrays() {

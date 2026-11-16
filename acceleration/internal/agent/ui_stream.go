@@ -17,7 +17,6 @@ const (
 	uiOutside uiScanState = iota
 	uiInOtherFence
 	uiInFence
-	uiInTag
 )
 
 var (
@@ -25,15 +24,14 @@ var (
 	uiVersionPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
 )
 
-// uiStream separates interactive UI blocks from the spoken or fallback prose of a reply
-// as tokens arrive, releasing both sides immediately except at line or tag boundaries that
-// may open or close a block.
+// uiStream separates fenced UI blocks from the spoken or fallback prose of a reply as tokens
+// arrive, releasing both sides immediately except at the start of a line, where a fence may
+// open or close a block. A block opens only on a fence at the start of a line: this runs on
+// every agent's reply, and prose that only mentions UI must stay prose.
 type uiStream struct {
 	state       uiScanState
 	midLine     bool
 	firstUILine bool
-	tagTrimLead bool
-	tagHeldNL   string
 	captured    bool
 	capturing   bool
 	format      string
@@ -78,10 +76,6 @@ func (u *uiStream) Add(turnID, text string) (string, []Event) {
 			if !u.stepUIFence(turnID, buf, &events) {
 				return prose.String(), events
 			}
-		case uiInTag:
-			if !u.stepUITag(turnID, buf, &events) {
-				return prose.String(), events
-			}
 		}
 	}
 
@@ -112,28 +106,6 @@ func (u *uiStream) Flush(turnID string) (string, []Event) {
 					prefix = "\n"
 				}
 				u.emitUI(&events, turnID, prefix+buf)
-			}
-			u.closeUI(&events, turnID)
-		}
-		u.state = uiOutside
-		u.midLine = false
-
-	case uiInTag:
-		if strings.TrimSpace(buf) == "</ui>" {
-			u.tagHeldNL = ""
-			u.closeUI(&events, turnID)
-		} else {
-			tail := ""
-			if buf != "" {
-				tail = u.tagHeldNL + buf
-			}
-			u.tagHeldNL = ""
-			if u.tagTrimLead {
-				tail = trimSingleNewline(tail)
-				u.tagTrimLead = false
-			}
-			if tail != "" {
-				u.emitUI(&events, turnID, tail)
 			}
 			u.closeUI(&events, turnID)
 		}
@@ -222,42 +194,15 @@ func (u *uiStream) stepOutside(turnID, buf string, prose *strings.Builder, event
 	}
 
 	nl := strings.IndexByte(buf, '\n')
-	lt := strings.IndexByte(buf, '<')
-
-	if nl < 0 && lt < 0 {
+	if nl < 0 {
 		prose.WriteString(buf)
 		u.pending.Reset()
 		return false
 	}
-
-	if nl >= 0 && (lt < 0 || nl < lt) {
-		prose.WriteString(buf[:nl+1])
-		u.midLine = false
-		u.setPending(buf[nl+1:])
-		return true
-	}
-
-	if lt > 0 {
-		prose.WriteString(buf[:lt])
-	}
-	tag := buf[lt:]
-	format, version, mode, rest, status := parseOpeningUITag(tag)
-	switch status {
-	case tagNeedMore:
-		u.setPending(tag)
-		return false
-	case tagNotUI:
-		prose.WriteByte('<')
-		u.setPending(tag[1:])
-		return true
-	default:
-		u.openUI(format, version, mode)
-		u.state = uiInTag
-		u.tagTrimLead = true
-		u.tagHeldNL = ""
-		u.setPending(rest)
-		return true
-	}
+	prose.WriteString(buf[:nl+1])
+	u.midLine = false
+	u.setPending(buf[nl+1:])
+	return true
 }
 
 func (u *uiStream) stepOtherFence(buf string, prose *strings.Builder) bool {
@@ -343,59 +288,6 @@ func (u *uiStream) stepUIFence(turnID, buf string, events *[]Event) bool {
 	u.midLine = false
 	u.setPending(buf[nl+1:])
 	return true
-}
-
-func (u *uiStream) stepUITag(turnID, buf string, events *[]Event) bool {
-	if u.tagTrimLead {
-		if buf == "\r" {
-			return false
-		}
-		buf = trimSingleNewline(buf)
-		u.tagTrimLead = false
-		u.setPending(buf)
-		if buf == "" {
-			return false
-		}
-	}
-
-	lt := strings.IndexByte(buf, '<')
-	if lt >= 0 {
-		if lt > 0 {
-			before := u.tagHeldNL + buf[:lt]
-			u.tagHeldNL = ""
-			body, held := splitTrailingNewline(before)
-			if body != "" {
-				u.emitUI(events, turnID, body)
-			}
-			u.tagHeldNL = held
-		}
-		tag := buf[lt:]
-		if strings.HasPrefix(tag, "</ui>") {
-			u.tagHeldNL = ""
-			u.closeUI(events, turnID)
-			u.state = uiOutside
-			u.midLine = true
-			u.setPending(tag[len("</ui>"):])
-			return true
-		}
-		if len(tag) < len("</ui>") && strings.HasPrefix("</ui>", tag) {
-			u.setPending(tag)
-			return false
-		}
-		u.emitUI(events, turnID, u.tagHeldNL+"<")
-		u.tagHeldNL = ""
-		u.setPending(tag[1:])
-		return true
-	}
-
-	combined := u.tagHeldNL + buf
-	body, held := splitTrailingNewline(combined)
-	if body != "" {
-		u.emitUI(events, turnID, body)
-	}
-	u.tagHeldNL = held
-	u.pending.Reset()
-	return false
 }
 
 func (u *uiStream) openUI(format, version, mode string) {
@@ -484,113 +376,4 @@ func parseUIFenceInfo(info string) (format, version, mode string, ok bool) {
 		return "", "", "", false
 	}
 	return format, version, mode, true
-}
-
-type uiTagStatus uint8
-
-const (
-	tagNotUI uiTagStatus = iota
-	tagNeedMore
-	tagMatched
-)
-
-func parseOpeningUITag(tag string) (format, version, mode, rest string, status uiTagStatus) {
-	if len(tag) < 3 {
-		if strings.HasPrefix("<ui", tag) {
-			return "", "", "", "", tagNeedMore
-		}
-		return "", "", "", "", tagNotUI
-	}
-	if !strings.HasPrefix(tag, "<ui") {
-		return "", "", "", "", tagNotUI
-	}
-	if len(tag) == 3 {
-		return "", "", "", "", tagNeedMore
-	}
-	next := tag[3]
-	if next != '>' && next != ' ' && next != '\t' && next != '\r' && next != '\n' {
-		return "", "", "", "", tagNotUI
-	}
-	gt := strings.IndexByte(tag, '>')
-	if gt < 0 {
-		if len(tag) <= uiHeaderLimit {
-			return "", "", "", "", tagNeedMore
-		}
-		return "", "", "", "", tagNotUI
-	}
-	if tag[gt-1] == '/' {
-		return "", "", "", "", tagNotUI
-	}
-	attrs, ok := parseUITagAttrs(tag[3:gt])
-	if !ok {
-		return "", "", "", "", tagNotUI
-	}
-	format = attrs["format"]
-	if format == "" {
-		format = "openui"
-	}
-	if !uiFormatPattern.MatchString(format) {
-		return "", "", "", "", tagNotUI
-	}
-	version = attrs["version"]
-	if version != "" && !uiVersionPattern.MatchString(version) {
-		return "", "", "", "", tagNotUI
-	}
-	mode = attrs["mode"]
-	if mode == "" {
-		mode = uiModeReplace
-	}
-	if mode != uiModeReplace && mode != uiModePatch {
-		return "", "", "", "", tagNotUI
-	}
-	return format, version, mode, tag[gt+1:], tagMatched
-}
-
-func parseUITagAttrs(raw string) (map[string]string, bool) {
-	attrs := map[string]string{}
-	s := strings.TrimSpace(raw)
-	for s != "" {
-		eq := strings.IndexByte(s, '=')
-		if eq <= 0 {
-			return nil, false
-		}
-		key := strings.TrimSpace(s[:eq])
-		switch key {
-		case "format", "version", "mode", "surface":
-		default:
-			return nil, false
-		}
-		s = strings.TrimLeft(s[eq+1:], " \t\r\n")
-		if s == "" || (s[0] != '"' && s[0] != '\'') {
-			return nil, false
-		}
-		quote := s[0]
-		end := strings.IndexByte(s[1:], quote)
-		if end < 0 {
-			return nil, false
-		}
-		attrs[key] = s[1 : 1+end]
-		s = strings.TrimSpace(s[2+end:])
-	}
-	return attrs, true
-}
-
-func trimSingleNewline(s string) string {
-	if rest, ok := strings.CutPrefix(s, "\r\n"); ok {
-		return rest
-	}
-	return strings.TrimPrefix(s, "\n")
-}
-
-func splitTrailingNewline(s string) (body, newline string) {
-	if strings.HasSuffix(s, "\r\n") {
-		return s[:len(s)-2], "\r\n"
-	}
-	if strings.HasSuffix(s, "\n") {
-		return s[:len(s)-1], "\n"
-	}
-	if strings.HasSuffix(s, "\r") {
-		return s[:len(s)-1], "\r"
-	}
-	return s, ""
 }

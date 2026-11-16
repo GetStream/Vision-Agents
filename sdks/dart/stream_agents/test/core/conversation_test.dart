@@ -191,6 +191,30 @@ void main() {
       expect(conversation.turns.single.ui, isNull);
     });
 
+    test('a patch delta that leaves the card as it was is still kept, so the next one lands', () {
+      // Folded the way AgentSession folds the socket: a controller that skips equal values. The
+      // router can send an identifier before its `=`, which merges to the same card.
+      final live = LiveValueController(const Conversation());
+      for (final json in [
+        '{"type":"responding","turn_id":"t1"}',
+        '{"type":"ui_completed","turn_id":"t1","format":"openui",'
+            r'"content":"$party = 2\nslot = TextContent(\"19:00\")\nroot = Card([slot])"}',
+        '{"type":"responded","turn_id":"t1","text":""}',
+        '{"type":"responding","turn_id":"t2"}',
+        r'{"type":"ui_delta","turn_id":"t2","format":"openui","mode":"patch","delta":"$party = 4"}',
+        r'{"type":"ui_delta","turn_id":"t2","format":"openui","mode":"patch","delta":"\nslot"}',
+        '{"type":"ui_delta","turn_id":"t2","format":"openui","mode":"patch",'
+            r'"delta":" = TextContent(\"19:30\")"}',
+      ]) {
+        live.value = live.value.apply(frame(json));
+      }
+
+      expect(
+        live.value.turns.last.ui?.content,
+        '\$party = 4\nslot = TextContent("19:30")\nroot = Card([slot])',
+      );
+    });
+
     test('a task settling after the agent left keeps the conversation over', () {
       final conversation = const Conversation()
           .apply(frame('{"type":"left","at":"2026-09-02T17:05:00Z"}'))

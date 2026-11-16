@@ -128,15 +128,11 @@ function isAssistantMessage(message: object): boolean {
 
 /**
  * Whether a reply shows the socket's UI rather than what Chat stored: while Chat says it is
- * being written and its UI isn't complete there. UI too big for a message is kept as an
- * artifact Chat only points to, so the socket's copy shows for as long as there is one.
+ * being written and its UI isn't complete there.
  */
 function showsLiveUI(message: object): boolean {
   const ui = messageField(message, "ai_ui");
   const stored = typeof ui === "object" && ui !== null ? (ui as Record<string, unknown>) : undefined;
-  if (stored?.["overflow"] === true) {
-    return true;
-  }
   return messageField(message, "generating") === true && stored?.["status"] !== "complete";
 }
 

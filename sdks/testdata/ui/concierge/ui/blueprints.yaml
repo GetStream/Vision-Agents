@@ -1,0 +1,25 @@
+# Layouts the concierge repeats.
+- name: restaurant_booking
+  when: >
+    recommending or booking
+    a restaurant for tonight
+  order:
+  - "RestaurantCard" # the venue comes first
+  - AvailabilityGauge
+  - Form
+  - FollowUpBlock
+  rules: ["Show the gauge only when the wait is known, never a guess", 'Offer at most three times, nearest first']
+  example: |
+    $slot = "19:15"
+    root = Card([venue, gauge, reserve, next])
+    venue = RestaurantCard("Kaneo Cliffside", "Macedonian Grill", 4.9, "$$$")
+    gauge = AvailabilityGauge(86, "12m wait")
+    reserve = Form("book", btns, [slotField])
+    slotField = FormControl("Time", Chips("slot", "single", [ChipItem("19:15", "19:15")]))
+    btns = Buttons([Button("Confirm", @ToAssistant("Confirm", {slot: $slot}), "primary")])
+    next = FollowUpBlock([FollowUpItem("See tasting menu")])
+- name: guest_status
+  when: "a returning guest asks where they stand, or what they have earned"
+  order: [CardHeader, LoyaltyBadge] # a comment after a flow list
+  rules:
+    - Lead with the tier
