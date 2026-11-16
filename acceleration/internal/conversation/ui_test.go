@@ -272,24 +272,6 @@ func TestAnActionTellsTheModelWhichReplyItWasIn(t *testing.T) {
 	require.Contains(t, history[2].Content, `your earlier reply "A weekend in Ohrid, by the lake."`)
 }
 
-type memoryUIOverflow struct {
-	stored map[string]string
-}
-
-func (m *memoryUIOverflow) StoreUI(_ context.Context, _, _, messageID, format, content string) (ArtifactAttachment, error) {
-	if m.stored == nil {
-		m.stored = map[string]string{}
-	}
-	id := "ui-" + messageID
-	m.stored[id] = content
-	return ArtifactAttachment{
-		Type:       "ui_program",
-		ArtifactID: id,
-		Revision:   1,
-		Title:      format + " UI",
-	}, nil
-}
-
 func TestOpenUIStatementPatchMergesUpdatesDeletesAndAppendsInOrder(t *testing.T) {
 	base := strings.Join([]string{
 		`$slot = "19:15"`,
@@ -360,34 +342,4 @@ func TestUIDeltaPatchTurnMergesIntoEarlierReplyUIAndCoalescesSnapshots(t *testin
 		reply1["custom"].(map[string]any)["ai_ui"].(map[string]any)["content"])
 	require.Equal(t, "$party = 4\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")",
 		reply2["custom"].(map[string]any)["ai_ui"].(map[string]any)["content"])
-}
-
-func TestAnOversizedUISpillsIntoAnArtifactWhenOverflowStorageIsConfigured(t *testing.T) {
-	db, client := newChat(t)
-	s := NewForChat(client)
-	defer s.Close()
-	overflow := &memoryUIOverflow{}
-	s.SetUIOverflow(overflow)
-
-	c, _, _, err := s.Open(context.Background(), "customer", "juno", "")
-	require.NoError(t, err)
-	receipt, err := c.BeginCommand("cmd-big", "Show full dashboard", "")
-	require.NoError(t, err)
-
-	c.Observe(agent.Responding{TurnID: "t-big"})
-	c.Observe(agent.ResponseDelta{TurnID: "t-big", Text: "Full dashboard ready."})
-	c.Observe(agent.UICompleted{TurnID: "t-big", Format: "a2ui", Mode: "replace", Content: escapedProgram})
-	c.Observe(agent.Responded{TurnID: "t-big"})
-	saved(t, c)
-
-	db.mu.Lock()
-	reply := db.messages[receipt.AssistantMessageID]
-	db.mu.Unlock()
-
-	ui, ok := reply["custom"].(map[string]any)["ai_ui"].(map[string]any)
-	require.True(t, ok, "compact overflow pointer stays on custom.ai_ui instead of wiping UI")
-	require.Equal(t, true, ui["overflow"])
-	artifactID, _ := ui["artifact_id"].(string)
-	require.NotEmpty(t, artifactID)
-	require.Equal(t, escapedProgram, overflow.stored[artifactID])
 }

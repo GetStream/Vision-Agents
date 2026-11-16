@@ -184,11 +184,9 @@ final class LiveUI {
   }
 
   /// Whether a reply shows the socket's UI rather than what Chat stored: while Chat says it is
-  /// being written and its UI isn't complete there. UI too big for a message is kept as an
-  /// artifact Chat only points to, so the socket's copy shows for as long as there is one.
+  /// being written and its UI isn't complete there.
   static bool _showsLiveUI(stream.Message message) {
     final stored = message.extraData['ai_ui'];
-    if (stored is Map<Object?, Object?> && stored['overflow'] == true) return true;
     return message.extraData['generating'] == true &&
         !(stored is Map<Object?, Object?> && stored['status'] == 'complete');
   }
