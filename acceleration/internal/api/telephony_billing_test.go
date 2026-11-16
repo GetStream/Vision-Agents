@@ -134,6 +134,67 @@ func (s *TelephonyBillingSuite) TestATextDeliveredTwiceIsBilledOnce() {
 	s.Len(s.rows("sms"), 2, "one received, one reply")
 }
 
+// spendLimitReached is the event Telnyx sends down the messaging profile's webhook, the
+// line's hook, once the profile reached its spend limit, as in
+// https://developers.telnyx.com/docs/messaging/messages/configurable-spend-limits.md with the
+// amounts left out.
+func (s *TelephonyBillingSuite) spendLimitReached() []byte {
+	return []byte(`{"data":{"event_type":"messaging-profile.spend-limit-reached","id":"` + s.utils.uuid() +
+		`","record_type":"event","payload":{"profile_id":"` + s.utils.uuid() + `"}}}`)
+}
+
+// deliveries is how many messages a line claimed.
+func (s *TelephonyBillingSuite) deliveries(line string) int {
+	account, err := s.store.ChannelAccount(context.Background(), s.customerID(), "sms", line)
+	s.Require().NoError(err)
+	var count int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM channel_deliveries WHERE account_id = ?", account.ID).Scan(&count))
+	return count
+}
+
+// The spend limit stops every text of the line, so the hook counts it for a monitor, and it
+// is no text: nothing is claimed, billed or answered. Only this suite sends the event, and its
+// tests run one at a time, so the series moves only here. Catches the hook dropping the event
+// uncounted, or taking it for a message.
+func (s *TelephonyBillingSuite) TestASpendLimitOnALinesHookIsCountedAndStartsNoTurn() {
+	line := s.smsLine()
+	s.agentOnSMS(line)
+	before := accountEvents("telnyx", "messaging-profile.spend-limit-reached", "page")
+
+	s.Equal(http.StatusAccepted, s.telnyxIn(line, s.spendLimitReached(), time.Now()))
+
+	s.Equal(1.0, accountEvents("telnyx", "messaging-profile.spend-limit-reached", "page")-before)
+	s.Zero(s.deliveries(line))
+	s.Never(func() bool { return len(s.rows("sms")) > 0 }, time.Second, 50*time.Millisecond,
+		"a spend limit is no text to bill or answer")
+}
+
+// Only a delivery the line's key signed counts: an old one is refused before it is read.
+// Catches the count moved ahead of the signature check.
+func (s *TelephonyBillingSuite) TestASpendLimitSignedTooLongAgoIsRefusedUncounted() {
+	line := s.smsLine()
+	before := accountEvents("telnyx", "messaging-profile.spend-limit-reached", "page")
+
+	s.Equal(http.StatusUnauthorized, s.telnyxIn(line, s.spendLimitReached(), time.Now().Add(-6*time.Minute)))
+
+	s.Equal(0.0, accountEvents("telnyx", "messaging-profile.spend-limit-reached", "page")-before)
+}
+
+// Control: a text on the same hook is still claimed and answered, and counts as no account
+// event.
+func (s *TelephonyBillingSuite) TestATextOnALinesHookIsAnsweredAndNotCountedAsAnAccountEvent() {
+	line, person := s.smsLine(), "+1555"+digits(s.utils.uuid())
+	s.agentOnSMS(line)
+	before := accountEvents("telnyx", "messaging-profile.spend-limit-reached", "page")
+
+	s.Equal(http.StatusAccepted, s.textIn(line, person, "sms-"+s.utils.uuid(), "Is my order ready?"))
+
+	s.Require().Eventually(func() bool { return len(s.carriers.to(person)) > 0 }, settleFor, 50*time.Millisecond)
+	s.Equal(1, s.deliveries(line))
+	s.Equal(0.0, accountEvents("telnyx", "messaging-profile.spend-limit-reached", "page")-before)
+}
+
 func (s *TelephonyBillingSuite) TestAWhatsAppReplyIsRecordedAsAServiceMessage() {
 	number := "+1555" + digits(s.utils.uuid())
 	line := s.whatsApp(number)
@@ -496,15 +557,20 @@ func (s *telephonyBilling) agentOnSMS(number string) {
 
 // textIn delivers one text to a line, signed as Telnyx signs it.
 func (s *telephonyBilling) textIn(line, from, id, text string) int {
-	account, err := s.store.ChannelAccount(context.Background(), s.customerID(), "sms", line)
-	s.Require().NoError(err)
 	body, err := json.Marshal(map[string]any{"data": map[string]any{
 		"event_type": "message.received",
 		"payload": map[string]any{"id": id, "text": text, "from": map[string]any{"phone_number": from},
 			"to": []any{map[string]any{"phone_number": line}}},
 	}})
 	s.Require().NoError(err)
-	seconds := strconv.FormatInt(time.Now().Unix(), 10)
+	return s.telnyxIn(line, body, time.Now())
+}
+
+// telnyxIn delivers body to a line as Telnyx signs it at at.
+func (s *telephonyBilling) telnyxIn(line string, body []byte, at time.Time) int {
+	account, err := s.store.ChannelAccount(context.Background(), s.customerID(), "sms", line)
+	s.Require().NoError(err)
+	seconds := strconv.FormatInt(at.Unix(), 10)
 	header := http.Header{}
 	header.Set("Telnyx-Timestamp", seconds)
 	header.Set("Telnyx-Signature-Ed25519", base64.StdEncoding.EncodeToString(

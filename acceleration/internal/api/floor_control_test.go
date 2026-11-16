@@ -100,9 +100,9 @@ func (s *FloorControlSuite) TestASyncIsToldOfAPointThatFailsTheDictationGuard() 
 		"and 16.0% of real pauses inside a dictated number, ID or spelled name; an agent whose callers read those out wants a point that passes"}, synced.Warnings)
 }
 
-// Left out, an agent has the default flow controller, on a router with a chorus-asr server:
-// none is stored or served, and its sessions ask chorus-asr nothing. Once chosen, a sync that
-// leaves it out or sends null keeps it, and an empty one is the default flow controller again.
+// Left out, an agent has chosen nothing, on a router with a chorus-asr server: none is stored
+// or served, and its sessions ask chorus-asr nothing of its own. Once chosen, a sync that
+// leaves it out or sends null keeps it, and an empty one is no choice again.
 func (s *FloorControlSuite) TestAnUnsetFloorControlIsTheDefaultFlowController() {
 	unset := s.syncFloor("unset", "v1", nil)
 	s.Nil(unset.Config.FloorControl)
@@ -115,7 +115,48 @@ func (s *FloorControlSuite) TestAnUnsetFloorControlIsTheDefaultFlowController() 
 	s.Equal(chorusASRFloor(1400), s.syncFloor("support", "v1", map[string]any{"floor_control": chosen}).Config.FloorControl)
 	s.Equal(chorusASRFloor(1400), s.syncFloor("support", "v2", nil).Config.FloorControl, "left out, the stored choice stays")
 	s.Equal(chorusASRFloor(1400), s.syncFloor("support", "v3", map[string]any{"floor_control": nil}).Config.FloorControl, "null, the stored choice stays")
-	s.Nil(s.syncFloor("support", "v4", map[string]any{"floor_control": map[string]any{}}).Config.FloorControl, "empty is the default flow controller again")
+	s.Nil(s.syncFloor("support", "v4", map[string]any{"floor_control": map[string]any{}}).Config.FloorControl, "empty is no choice again")
+}
+
+// An agent that opts out, flow-controller, stores and serves the opt-out as sent on every
+// write, as distinct from no choice: it reads back what it stored, a sync that leaves it out
+// keeps it, and an empty one is no choice again. A wait with it is refused, as the schema
+// says, and nothing is written.
+func (s *FloorControlSuite) TestAnOptOutIsStoredAndReadBackAsSent() {
+	optedOut := &FloorControl{Model: new("flow-controller")}
+	synced := s.syncFloor("opted-out", "v1", map[string]any{"floor_control": map[string]any{"model": "flow-controller"}})
+	s.Empty(synced.Warnings)
+	s.Equal(optedOut, synced.Config.FloorControl)
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+synced.Config.Id, nil, &read))
+	s.Equal(optedOut, read.FloorControl, "the agent reads back the opt-out it stored")
+	stored, err := s.store.AgentConfig(context.Background(), s.customerID(), synced.Config.Id)
+	s.Require().NoError(err)
+	s.Equal(store.FloorControl{Model: store.FloorControlFlowController}, stored.FloorControl)
+	s.Equal(store.FloorControl{}, session.FloorControlOf(stored.FloorControl, store.FloorControlChorusASR, true), "and keeps the flow controller whatever the router's default")
+	s.Equal(optedOut, s.syncFloor("opted-out", "v2", nil).Config.FloorControl, "left out, the opt-out stays")
+	s.Nil(s.syncFloor("opted-out", "v3", map[string]any{"floor_control": map[string]any{}}).Config.FloorControl, "empty is no choice again")
+
+	var created AgentConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs",
+		AgentConfigRequest{Name: "created-opted-out", FloorControl: chorusASRFloor(1400)}, &created))
+	var patched AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		AgentConfigPatch{FloorControl: optedOut}, &patched))
+	s.Equal(optedOut, patched.FloorControl, "a patch replaces chorus-asr and its wait with the opt-out")
+	status, _ := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"floor_control": map[string]any{"model": "flow-controller", "max_wait_ms": 1100}})
+	s.Equal(http.StatusBadRequest, status, "the flow controller has no wait to choose")
+	stored, err = s.store.AgentConfig(context.Background(), s.customerID(), created.Id)
+	s.Require().NoError(err)
+	s.Equal(store.FloorControl{Model: store.FloorControlFlowController}, stored.FloorControl, "nothing refused is written")
+
+	opened := s.serverClient.createSession(CreateSessionRequest{ConfigId: &synced.Config.Id, FloorControl: chorusASRFloor(1100)})
+	s.Require().Eventually(func() bool {
+		row, err := s.store.StoredSession(context.Background(), s.customerID(), opened.Id)
+		return err == nil && row.FloorControl.MaxWaitMs == 1100
+	}, settleFor, 20*time.Millisecond, "a session chooses chorus-asr over its config's opt-out")
+	s.serverClient.stopSession(opened.Id)
 }
 
 // A floor control the schema doesn't take is refused before anything is written: the string
@@ -190,7 +231,7 @@ func (s *FloorControlSuite) TestEveryWriteOfAConfigTakesTheFloorControl() {
 	var cleared AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
 		AgentConfigPatch{FloorControl: &FloorControl{}}, &cleared))
-	s.Nil(cleared.FloorControl, "an empty one is the default flow controller again")
+	s.Nil(cleared.FloorControl, "an empty one is no choice again")
 	stored, err := s.store.AgentConfig(context.Background(), s.customerID(), created.Id)
 	s.Require().NoError(err)
 	s.True(stored.FloorControl.IsZero())
@@ -287,13 +328,16 @@ func (s *FloorControlWithoutChorusASRSuite) SetupTest() {
 
 // stream/chorus-asr asks a router with no chorus-asr server for what it cannot do: every write
 // that names it is refused, as a feature the deployment lacks, saying what the router needs,
-// and nothing is written. An empty floor control asks nothing of it.
+// and nothing is written. An empty floor control asks nothing of it, and neither does the
+// opt-out, which is stored as sent.
 func (s *FloorControlWithoutChorusASRSuite) TestAFloorControlThatOptsInIsRefusedWithoutAServer() {
 	var created AgentConfig
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs",
 		AgentConfigRequest{Name: "default", FloorControl: &FloorControl{}}, &created))
 	s.Nil(created.FloorControl)
 	s.Nil(s.syncFloor("unset", "v1", nil).Config.FloorControl)
+	optedOut := &FloorControl{Model: new("flow-controller")}
+	s.Equal(optedOut, s.syncFloor("opted-out", "v1", map[string]any{"floor_control": map[string]any{"model": "flow-controller"}}).Config.FloorControl)
 
 	chorusASR := chorusASRFloor(1100)
 	for _, write := range []struct {
@@ -313,7 +357,7 @@ func (s *FloorControlWithoutChorusASRSuite) TestAFloorControlThatOptsInIsRefused
 	}
 	configs, err := s.store.CustomerAgentConfigs(context.Background(), s.customerID())
 	s.Require().NoError(err)
-	s.Len(configs, 2, "nothing more is written")
+	s.Len(configs, 3, "nothing more is written")
 	stored, err := s.store.AgentConfig(context.Background(), s.customerID(), created.Id)
 	s.Require().NoError(err)
 	s.True(stored.FloorControl.IsZero(), "and nothing is changed")

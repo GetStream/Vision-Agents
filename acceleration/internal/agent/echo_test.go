@@ -93,6 +93,101 @@ func TestTheCallersWordsOverTheEchoAreTheirs(t *testing.T) {
 	}
 }
 
+// Lines of τ³-Voice (2026-11-12) the agent was saying when the caller spoke over it, each
+// written in full before its voice began, so the agent weighed what it heard against the reply
+// twice: as it streamed, and as the history's last line.
+const (
+	// retail task 110. The caller cut it off 9.6 s in, before its third sentence.
+	tabletReply = "I can update your account’s default address and the pending luggage order, but I can’t " +
+		"update the tablet order now that its item has been changed. I still need the new address—I only " +
+		"have the address currently on the tablet order. Is that the address you want for your account and " +
+		"luggage order?"
+	// telecom bad_vpn. The line before asked "Could you tell me whether Data Saver is on or a VPN
+	// is connected?", and the caller answered it as this one asked again.
+	dataSaverReply = "I understand. The speed test still shows no connection, so I can’t confirm a speed yet. " +
+		"Could you check whether Data Saver is on or a VPN is connected? Those are the next settings we can check."
+	// retail, another task.
+	itemsReply = "I found two delivered orders. One has a water bottle, mechanical keyboard, action camera, and " +
+		"backpack; the other has a gaming mouse. Which of those items would you like to return?"
+)
+
+// A caller says the agent's words too, while it speaks: they answer it with them, and say back
+// what it said. Their words are theirs when the agent's in them are a short run with a word
+// misheard, or when they go on with their own sentence around them. Each of these lost the
+// caller's words: in the τ³-Voice bench, whose callers are voices of their own on a line with
+// no echo, AssemblyAI writing the words of utterances chorus-asr's floor ended, and in the
+// regression gate's replay, chorus-asr writing them over the agent's echo.
+func TestACallerWhoSaysTheAgentsWordsOverItKeepsThem(t *testing.T) {
+	for _, c := range []struct {
+		name, provider, reply, heard string
+	}{
+		// "…for everything", over the reply's "the address currently on the tablet order",
+		// which the caller had not heard, and its "update the tablet order", which they had.
+		// Taken for the echo, it left "Just use for every—".
+		{"an address they read back", "assemblyai", tabletReply, "Just use the address from the tablet order for every—"},
+		// The reply's "Data Saver is on" with a word misheard: only "is on" of it is heard
+		// right in a row. Taken for the echo, nothing was heard.
+		{"an answer in the question's words", "assemblyai", dataSaverReply, "Data saving is on."},
+		// retail: the reply's "a water bottle, mechanical keyboard, action camera, and
+		// backpack", "mechanical keyboard" and "and" left out. Taken for the echo, it left
+		// "Return water bottle,".
+		{"a list they choose from", "assemblyai", itemsReply, "Return water bottle, action camera, backpack."},
+		// The end of the caller's "Will it be raining?" not yet written, over "…it will be
+		// sunny…".
+		{"a question not yet written whole", audiofloor.ProviderName, replayReply, "Will it be?"},
+		// A monologue over the reply's "…evening by the river".
+		{"a monologue", audiofloor.ProviderName, replayReply, "On Saturday, I meet some friends by the river, and on Sunday, I would like the beach."},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a := &Agent{saying: c.reply, history: []llm.Message{{Role: llm.Assistant, Content: c.reply}}}
+			a.voiceOut.from, a.voiceOut.to = time.Now().Add(-8*time.Second), time.Now().Add(4*time.Second)
+			heard := stt.Transcript{Provider: c.provider, Floor: true, Mode: stt.ModeFinal, Text: c.heard,
+				AudioDurationMs: 3000, ProcessingTimeMs: 200}
+			left, echo := a.withoutEcho(heard)
+			require.Equal(t, c.heard, left)
+			require.Zero(t, echo)
+		})
+	}
+}
+
+// The agent's echo is its own around a caller's murmur, which is no sentence of theirs, and
+// up to the stop or the question they say after it, and so is an echo whose first or last
+// word the model wrote wrong, a word on its own next to the agent's: the gate's echo lines
+// wrote "signed" for "sunny" and "wind" for "in the afternoon". A run with a word misheard
+// among its first three is the echo once three of its words are heard right in a row: the
+// replay's echo written so far is the caller's, and the next words make it the agent's.
+func TestTheEchoAroundACallersMurmurIsTheAgents(t *testing.T) {
+	for _, c := range []struct {
+		heard, left string
+		echo        int
+	}{
+		{"Okay. With a high of 24 degrees. Uh huh.", "Okay. Uh huh.", 7},
+		{"Tomorrow in Lisbon it will be sunny and warm. Uh huh. With a high of twenty four degrees. And in Porto?", "Uh huh. And in Porto?", 16},
+		{"Wait. Sunny and warm. Okay.", "Wait. Okay.", 3},
+		{"Signed and warm, with a high of twenty four degrees, a light breeze from the north wind.", "Signed wind.", 15},
+		{"And listen, it will be sunny and warm, with a high of twenty four degrees, a light breeze from the north wind.", "And listen, wind.", 19},
+		// The gate's: "and a clear and" heard right, "mild" misheard at the end.
+		{"And a clear and mighty.", "mighty.", 4},
+		{"Tomorrow and Lisbon", "Tomorrow and Lisbon", 0},
+		{"Tomorrow and Lisbon it will", "", 5},
+	} {
+		left, echo := echoed(c.heard, replayReply)
+		require.Equal(t, c.left, left, "%q", c.heard)
+		require.Equal(t, c.echo, echo, "%q", c.heard)
+	}
+}
+
+// A limit: an echo whose ends the model wrote wrong two words or more at a time, both of
+// them, reads as the caller's own sentence around the agent's words, and is theirs whole.
+// The words alone can't tell it from a caller reading the reply back; the replay's echo
+// lines never wrote one.
+func TestAnEchoMisheardAtBothEndsIsTakenForTheCallers(t *testing.T) {
+	heard := "Tomorrow, and listen, it will be sunny and warm, with a high of twenty four degrees, a light breeze from the north in the after noon."
+	left, echo := echoed(heard, replayReply)
+	require.Equal(t, heard, left)
+	require.Zero(t, echo)
+}
+
 // Only chorus-asr's words are weighed, and only those heard while the agent spoke or just
 // after: a caller who says the agent's words long after it stopped said them.
 func TestOnlyWordsHeardOverTheAgentAreItsEcho(t *testing.T) {

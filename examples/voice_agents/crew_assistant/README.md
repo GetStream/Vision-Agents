@@ -2,7 +2,7 @@
 
 Crew, the assistant a restaurant's team members talk to from their phone, before, during and
 after a shift. It is forked from [swift_assistant](../swift_assistant) and talked to from the
-React Native app `examples/ExpoCrewAssistant` in stream-chat-react-native.
+React Native app in [app/](app).
 
 ```
 agent.yaml           what runs the agent
@@ -17,6 +17,7 @@ backend/hosted.go    the restaurant's tools, hosted on the router
 backend/http.go      what the phone calls: its token, events, the asked-first tools, the inbox
 backend/roles.go     each person's crew role, kept in their Stream user's custom data
 backend/handbook.go  the handbook's passages, read from the router's knowledge base
+app/                 the React Native app the team member talks to it from
 ```
 
 It runs on Stream's hosted Agents, and is synced and tested with the beta Stream CLI

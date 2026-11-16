@@ -85,6 +85,10 @@ export interface Pipeline {
   /** Murmur while a caller is still talking, the way a person does. */
   backchannel?: boolean;
   maxTokens?: number;
+  /**
+   * How long the model waits for one of your tools, in milliseconds. Left out, the router waits
+   * 30 seconds. A tool's own `timeoutMs` replaces it for that tool.
+   */
   toolTimeoutMs?: number;
   video?: Schemas["SessionVideo"];
 }
@@ -118,6 +122,11 @@ export interface Declaration {
   /** The model a voice agent hands its skills to. A text agent runs on its llm alone. */
   subagent?: string;
   search?: string;
+  /**
+   * What the agent draws pictures with, such as `image-fast`, which offers it `generate_image`.
+   * An empty string turns drawing off; left out, the stored one stays.
+   */
+  image?: string;
   greeting?: Schemas["Greeting"];
   sandbox?: Schemas["Sandbox"];
   /**
@@ -149,7 +158,8 @@ export interface Declaration {
   /**
    * The model that controls the agent's floor, and how long a caller may wait once they stop:
    * `model` and `max_wait_ms`, as written. Undefined leaves the stored choice; an empty object
-   * is the default flow controller again.
+   * is no choice again, which the router's default rules; `{model: "flow-controller"}` keeps
+   * the flow controller whatever that default.
    */
   floorControl?: Schemas["FloorControl"];
 }
@@ -765,6 +775,7 @@ function declaredRequest(declared: Declaration): Partial<Schemas["SyncAgentReque
     ...(declared.llm ? { llm: declared.llm } : {}),
     ...(declared.harness ? { harness: declared.harness } : {}),
     ...(declared.search ? { search: declared.search } : {}),
+    ...(declared.image === undefined ? {} : { image: declared.image }),
     ...(declared.greeting ? { greeting: declared.greeting } : {}),
     ...(declared.channels ? { channels: declared.channels } : {}),
     ...(declared.scheduling ? { scheduling: declared.scheduling } : {}),

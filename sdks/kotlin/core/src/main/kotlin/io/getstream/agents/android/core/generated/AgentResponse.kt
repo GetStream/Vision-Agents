@@ -23,6 +23,8 @@
 
 package io.getstream.agents.android.core.generated
 
+import io.getstream.agents.android.core.generated.ResponseBranch
+import io.getstream.agents.android.core.generated.RewoundTo
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
@@ -40,8 +42,11 @@ import kotlinx.serialization.encoding.Encoder
  * @param id 
  * @param sessionId 
  * @param status cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. refused is a turn the prompt injection screen refused: a rewind or a fork carries what it asked forward as withheld.
+ * @param branch 
  * @param error 
  * @param finishedAt 
+ * @param parentResponseId The response this one was answered after, absent for a session's first.
+ * @param rewoundTo 
  * @param said What the person asked, which is the first item of every response.
  */
 @Serializable
@@ -61,11 +66,21 @@ internal data class AgentResponse (
     @SerialName(value = "status")
     val status: AgentResponse.Status,
 
+    @SerialName(value = "branch")
+    val branch: ResponseBranch? = null,
+
     @SerialName(value = "error")
     val error: kotlin.String? = null,
 
     @SerialName(value = "finished_at")
     val finishedAt: kotlin.String? = null,
+
+    /* The response this one was answered after, absent for a session's first. */
+    @SerialName(value = "parent_response_id")
+    val parentResponseId: kotlin.String? = null,
+
+    @SerialName(value = "rewound_to")
+    val rewoundTo: RewoundTo? = null,
 
     /* What the person asked, which is the first item of every response. */
     @SerialName(value = "said")

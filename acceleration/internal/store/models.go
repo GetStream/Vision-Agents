@@ -554,8 +554,10 @@ type AgentConfig struct {
 	VideoSource    string `bun:"video_source,notnull"`
 	VideoMaxFrames int    `bun:"video_max_frames,notnull"`
 	Search         string `bun:"search,notnull"`
-	Instructions   string `bun:"instructions,notnull"`
-	Greeting       string `bun:"greeting,notnull"`
+	// Image is what the agent draws pictures with. Empty offers no drawing tool.
+	Image        string `bun:"image,notnull"`
+	Instructions string `bun:"instructions,notnull"`
+	Greeting     string `bun:"greeting,notnull"`
 
 	// LLMFallbacks are the targets a turn falls back to, in order, when LLM fails it. LLM
 	// is still the first choice; nil falls back only among LLM's own candidates.
@@ -645,8 +647,8 @@ type AgentConfig struct {
 	ResumeHistory ResumeHistory `bun:"resume_history,type:jsonb,notnull"`
 	// FloorControl is the model that controls the floor in the config's sessions, and how
 	// long a caller may wait once they stop, as the config chose
-	// (20261221090000_floor_control_max_wait.sql). The zero value, NULL, is the default flow
-	// controller.
+	// (20261221090000_floor_control_max_wait.sql). The zero value, NULL, is no choice: the
+	// router's default rules (session.FloorControlOf).
 	FloorControl FloorControl `bun:"floor_control,type:jsonb,nullzero"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
 	// if it was never synced from a directory.
@@ -975,6 +977,26 @@ type AgentChannels struct {
 type ChatChannel struct {
 	// Type is the channel type's name, as Stream Chat names it in a cid (type:id).
 	Type string `json:"type"`
+	// Answer is which messages in a channel of the type are answered: ChatChannelAnswerAlways,
+	// as empty is, or ChatChannelAnswerMentioned.
+	Answer string `json:"answer,omitempty"`
+}
+
+// The messages a ChatChannel answers: every one, or only one that mentions the agent.
+const (
+	ChatChannelAnswerAlways    = "always"
+	ChatChannelAnswerMentioned = "mentioned"
+)
+
+// AnswersOnlyMentionsIn is whether the config answers a message in a channel of the type given
+// only when the message mentions the agent.
+func (c AgentConfig) AnswersOnlyMentionsIn(channelType string) bool {
+	for _, channel := range c.ChatChannels {
+		if channel.Type == channelType {
+			return channel.Answer == ChatChannelAnswerMentioned
+		}
+	}
+	return false
 }
 
 // AgentScheduling is an agent config's scheduled-task settings, stored in
@@ -1147,12 +1169,14 @@ type KnowledgeDocument struct {
 	CustomerID string `bun:"customer_id,notnull"`
 	Namespace  string `bun:"namespace,notnull"`
 	// Source is what the passages are keyed by, and what a reader would call the document.
-	Source   string `bun:"source,notnull"`
-	Passages int    `bun:"passages,notnull"`
+	Source string `bun:"source,notnull"`
+	// Passages covers every passage that may be stored for the document: while its passages
+	// are written, and after that write failed, both the old version's and the new one's.
+	Passages int `bun:"passages,notnull"`
 	// Text is the document as it was posted, or as its file was read. Listings leave it out.
 	Text string `bun:"text,notnull"`
-	// State is pending while an uploaded file waits to be read, failed when it could not
-	// be, and indexed otherwise. Error says why it failed.
+	// State is pending while an uploaded file waits to be read or posted text is written,
+	// failed when that could not be done, and indexed otherwise. Error says why it failed.
 	State string `bun:"state,notnull"`
 	Error string `bun:"error,notnull"`
 	// Pages is how many pages the uploaded file had, 0 for text and for a file without pages.
@@ -1171,11 +1195,14 @@ type KnowledgeDocument struct {
 
 // Where a knowledge document has got to.
 const (
-	// KnowledgeDocumentPending is an uploaded file not read yet.
+	// KnowledgeDocumentPending is an uploaded file not read yet, or posted text whose
+	// passages are being written.
 	KnowledgeDocumentPending = "pending"
 	// KnowledgeDocumentIndexed is a document whose passages can be looked up.
 	KnowledgeDocumentIndexed = "indexed"
-	// KnowledgeDocumentFailed is an uploaded file that could not be read, and Error says why.
+	// KnowledgeDocumentFailed is an uploaded file that could not be read, or posted text
+	// whose write stopped part way, and Error says why. The passages written before the
+	// failure can still be looked up.
 	KnowledgeDocumentFailed = "failed"
 )
 
@@ -1835,11 +1862,14 @@ func (m ModelOverwrites) Empty() bool {
 }
 
 // FloorControl is the model that controls an agent's floor, hearing the audio: when a
-// caller's turn has ended, and what is done about speech over the agent. The zero value is the
-// default flow controller, which every agent has until it opts in. MaxWaitMs is the most a
-// caller who has finished may wait for the answer: the point of the server's measured
-// trade-off with the fewest cut-ins whose p90 wait is within it (audiofloor.Policy.Resolve).
-// Zero is the server's default point.
+// caller's turn has ended, and what is done about speech over the agent. The zero value is no
+// choice: the agent gets the router's default, the flow controller unless the router defaults
+// every agent to chorus-asr (config.Agent.FloorControlDefault). An agent that chose decides for
+// itself whatever the router's default is: FloorControlChorusASR, or FloorControlFlowController
+// to keep the flow controller. MaxWaitMs is the most a caller who has finished may wait for the
+// answer: the point of the server's measured trade-off with the fewest cut-ins whose p90 wait
+// is within it (audiofloor.Policy.Resolve). Zero is the server's default point. It is
+// chorus-asr's alone.
 type FloorControl struct {
 	Model     string `json:"model,omitempty"`
 	MaxWaitMs int    `json:"max_wait_ms,omitempty"`
@@ -1849,8 +1879,14 @@ type FloorControl struct {
 // the stream/chorus-asr transcriber is.
 const FloorControlChorusASR = "stream/chorus-asr"
 
-// IsZero reports whether no model was chosen, which is the default flow controller. It is
-// also what the nullzero columns read.
+// FloorControlFlowController keeps the flow controller, which rules the floor where no model
+// does, whatever the router's default: the explicit opt-out, as distinct from no choice. It is
+// named for what rules the floor, as FloorControlChorusASR is, and not "default", which would
+// now mean two things.
+const FloorControlFlowController = "flow-controller"
+
+// IsZero reports whether no model was chosen, which leaves the choice to the router's default.
+// It is also what the nullzero columns read: an opt-out is stored, and is not zero.
 func (f FloorControl) IsZero() bool {
 	return f == FloorControl{}
 }
@@ -1953,7 +1989,7 @@ type AgentSession struct {
 	// takes the config's.
 	ResumeHistory ResumeHistory `bun:"resume_history,type:jsonb,nullzero"`
 	// FloorControl is what the session was opened with over its config's, which reopening
-	// it keeps. Zero takes the config's.
+	// it keeps. Zero takes the config's, and the router's default after it.
 	FloorControl FloorControl `bun:"floor_control,type:jsonb,nullzero"`
 	State        string       `bun:"state,notnull"`
 	// Modality is ModalityText, ModalityVoice or ModalityVideo.
@@ -2015,27 +2051,12 @@ type ItemPosition struct {
 // anybody who is not the app's own backend, because a filter a user could widen is not a
 // filter at all.
 type SessionFilter struct {
-	UserID    string
-	ConfigID  string
-	AgentName string
-	AgentID   string
-	Project   string
-	Modality  string
+	UserID  string
+	AgentID string
 	// CallerKinds, when set, admits only the sessions opened by one of these kinds of
 	// caller. A user id is only worth what proved it, so an end user is narrowed by both
 	// halves of who they are, the same as a session they reach by id.
 	CallerKinds []string
-	// State is SessionRunning or SessionClosed.
-	State string
-	// Team is the team the session's usage is counted under.
-	Team string
-	// Custom matches sessions whose custom object contains every one of these pairs, which
-	// is what makes custom worth writing: a caller that labelled a session can find it
-	// again by the label.
-	Custom map[string]string
-	// After and Before bound when the session started, After inclusive and Before not.
-	After  time.Time
-	Before time.Time
 	// Where is the filter the request spelled out, with its $and and $or. Nil admits every
 	// session. It is ANDed with every field above, so nothing in it reaches past them: an
 	// end user's UserID and CallerKinds hold whatever the expression says.
@@ -2081,6 +2102,76 @@ type AgentResponse struct {
 	// RewoundAt is when a rewind went back past this turn, which takes it out of the
 	// conversation without pretending it was never said.
 	RewoundAt *time.Time `bun:"rewound_at"`
+	// ParentResponseID is the response before this one on the path it was answered on, empty
+	// for a session's first. Responses sharing a parent are alternatives to one another.
+	ParentResponseID string `bun:"parent_response_id,nullzero"`
+	// QuestionResponseID is the response whose question this one answers: its own id for a
+	// new question or an edit, the replaced one's for a regenerate. Empty only on a row from
+	// before branches were kept.
+	QuestionResponseID string `bun:"question_response_id,nullzero"`
+}
+
+// The kinds of branch switch.
+const (
+	// SwitchRegenerate answers a question again.
+	SwitchRegenerate = "regenerate"
+	// SwitchEdit asks a question again in other words.
+	SwitchEdit = "edit"
+	// SwitchActivate brings back a branch a switch hid.
+	SwitchActivate = "activate"
+)
+
+// How far a branch switch got, in the order it gets there.
+const (
+	// SwitchSnapshotted has copied the messages the rewind will hide.
+	SwitchSnapshotted = "snapshotted"
+	// SwitchRewound has rewound the channel.
+	SwitchRewound = "rewound"
+	// SwitchResending is sending the chosen branch's messages again.
+	SwitchResending = "resending"
+	// SwitchDone has nothing left to do.
+	SwitchDone = "done"
+)
+
+// AgentBranchSwitch is one move of a conversation to another branch, kept until it is done
+// so a router that stopped partway finishes it.
+type AgentBranchSwitch struct {
+	bun.BaseModel `bun:"table:agent_branch_switches,alias:abs"`
+
+	ID               string `bun:"id,pk"`
+	SessionID        string `bun:"session_id,notnull"`
+	CustomerID       string `bun:"customer_id,notnull"`
+	Kind             string `bun:"kind,notnull"`
+	TargetResponseID string `bun:"target_response_id,notnull"`
+	// ForkMessageID is the Stream Chat message the channel is rewound to, and Inclusive says
+	// whether it is hidden too.
+	ForkMessageID string `bun:"fork_message_id,notnull"`
+	Inclusive     bool   `bun:"inclusive,notnull"`
+	// HiddenFrom is when ForkMessageID was created: with CreatedAt, the range of messages the
+	// rewind hid.
+	HiddenFrom time.Time `bun:"hidden_from,notnull"`
+	State      string    `bun:"state,notnull"`
+	// Resent is how many messages of the chosen branch were sent again.
+	Resent    int       `bun:"resent,notnull"`
+	CreatedAt time.Time `bun:"created_at,notnull"`
+	UpdatedAt time.Time `bun:"updated_at,notnull"`
+}
+
+// AgentBranchMessage is a copy of a Stream Chat message a rewind hid, so the branch it was on
+// can be shown and sent again.
+type AgentBranchMessage struct {
+	bun.BaseModel `bun:"table:agent_branch_messages,alias:abm"`
+
+	SessionID         string `bun:"session_id,pk"`
+	OriginalMessageID string `bun:"original_message_id,pk"`
+	CustomerID        string `bun:"customer_id,notnull"`
+	// ResponseID is the response the message belongs to, empty for one that belongs to none.
+	ResponseID    string    `bun:"response_id,notnull"`
+	SwitchID      string    `bun:"switch_id,notnull"`
+	ChatCreatedAt time.Time `bun:"chat_created_at,notnull"`
+	AuthorID      string    `bun:"author_id,notnull"`
+	// Message is what the message said: its text, attachments and custom data.
+	Message map[string]any `bun:"message,type:jsonb,notnull"`
 }
 
 // Exchange is one turn as a model is given it again: what was asked and what was answered.

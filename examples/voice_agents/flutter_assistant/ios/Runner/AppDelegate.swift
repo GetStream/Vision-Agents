@@ -114,9 +114,13 @@ final class CalendarChannel {
     guard allowed else {
       throw ToolFailure("They have not let Juno add reminders. It is in Settings.")
     }
+    // Saving a reminder with no list raises an Objective-C exception Swift cannot catch.
+    guard let list = store.defaultCalendarForNewReminders() else {
+      throw ToolFailure("They have no Reminders list to add to. One can be made in Reminders.")
+    }
     let reminder = EKReminder(eventStore: store)
     reminder.title = title
-    reminder.calendar = store.defaultCalendarForNewReminders()
+    reminder.calendar = list
     if let due {
       reminder.dueDateComponents = Calendar.current.dateComponents(
         [.year, .month, .day, .hour, .minute], from: due)

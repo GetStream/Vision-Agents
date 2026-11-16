@@ -2,9 +2,56 @@
 
 ## Features
 
+### List a modality's routes from the Go and JavaScript SDKs, and image generation is documented
+
+`client.Routes(ctx, acceleration.ModalityImage)` in Go and `api.router().routes("image")` in JavaScript list a modality's shortcuts, default first, with the models each resolves to: `image-fast` and `image-quality` for pictures. JavaScript callers no longer write `client.get("/v1/{modality}/routes", ...)` by hand. The router README documents `POST /v1/image/generations` (its options, routes, time, limits and billing) and lists `image-fast` and `image-quality` among the default groups (AI-3199).
+### A fork takes tool_timeout_ms, and the default tool timeout is documented as 30 seconds
+
+`POST /v1/agents/sessions/{id}/fork` takes `tool_timeout_ms`, as `createSession` does: how long the fork's model waits for a tool the caller or a worker runs. Left out, a fork keeps a running parent's, now also when the fork names another config, and a fork of a conversation that ended has the default. The default is documented: 30 seconds, and a tool's own `timeout_ms` replaces it for that tool, which is how a slow tool such as one that draws a picture gets longer alone. Go has `ForkOptions.ToolTimeout`; JavaScript sends `tool_timeout_ms` from `fork()` (AI-3201).
+### An agent draws pictures without a backend route of its own
+
+`image` on an agent config (`POST`, `PUT` and `PATCH /v1/agents/configs`, and `image:` in agent.yaml through a sync) names what the agent draws with, as a provider/model or a shortcut such as `image-fast`. A text agent whose conversation has a Chat channel is then offered `generate_image(prompt, aspect_ratio?)`. The tool answers at once and the turn ends: the picture is drawn in the background and posted into the conversation as the agent's own message, with the picture attached, a minute or two later. A picture that cannot be drawn posts a short message saying why (the safety filter, a spending limit, a shape it cannot draw, or a failure), never nothing. The job is kept in Postgres (`image_jobs`) and drawn by whichever router claims it, at most two at a time per router (FAL's own limit), so four pictures in one reply are all drawn. A router stopping with a drain (`shutdown.drain`) finishes the pictures it is drawing; one stopped without a drain gives them back at once, and one that crashed leaves them to the next router once their 5-minute lease runs out, each picture drawn at most twice. A picture is kept the moment it is drawn and never drawn or billed again: a failed upload or post is tried again over about two and a half hours, and an upload Stream Chat refuses for good posts that the picture could not be posted. A message already written is not posted twice. `aspect_ratio` is one of `1:1`, `4:3`, `3:4`, `16:9` and `9:16`, and an `image` target the deployment cannot draw with is refused when the config is saved. A draw is billed as `POST /v1/image/generations` is, when it is drawn, under the session's attribution, so app, user, team and session spend limits all hold it; the money it may cost is held for the whole draw, which has 240 seconds, the endpoint's own limit, now in the image router. `tool_timeout_ms` never bounds it. Each FAL picture's usage row records `queued_ms` and `drawn_ms`, the time in FAL's queue and the drawing. One reply draws at most four pictures. There is no default and no per-session override, since a session can be opened from a device: an agent draws only when its config says so. With `image` set, the built-in replaces a caller tool named `generate_image`, the workaround that drew through a backend route of its own; without it, that tool runs as before (AI-3200, AI-3201).
+
+### Regenerate and edit in a conversation kept in Stream Chat, with branches
+
+`createResponse` takes `replaces`, an earlier response's id: with empty text its question is answered again, and with text the text is asked in its place. Chat hides the conversation from there on, and the router keeps what it hid as a branch. A `request_id` is required, and images, audio, videos and `ui_action` cannot go with `replaces`. The answer gains `parent_response_id`, `branch` (`{of, index, count}`, absent for 1 of 1) and `rewound_to` (`{message_id, inclusive}`), so the acting device drops the hidden messages at once.
+
+Three new operations, open to devices and to the session's owner alone: `listResponseSiblings` (`GET /v1/agents/sessions/{id}/responses/{response_id}/siblings?of=reply|question`, paged by cursor) lists a response's regenerations or the edits of its question, with each one's index and whether it is active; `getResponseBranch` (`GET .../branch`, paged) reads a hidden branch's messages as Chat showed them, and answers `active: true` with no items for the branch on the conversation; `activateResponse` (`POST .../activate`) brings a branch back, re-sending its messages with `skip_push` and `custom.resent_from`, and answers `already_active` when nothing changed. New error codes: `branch_limit_reached` (409: the conversation has used its 100 edit and regenerate points), `branch_too_long` (409: more than 100 messages to send again) and `branch_unavailable` (410: the branch's copies were deleted, as a memory truncate deletes them).
+
+Go has `Responses.Regenerate`, `Edit`, `Siblings`, `Branch` and `Activate` (`sdks/go/client/responses.go`) (AI-3198).
+### The router counts a resent Twilio alert once
+
+A Monitor alert whose `Sid` was counted in the last hour is answered 204 and adds nothing to `vendor_account_events_total`. The mark is kept in the router's Redis, so a resend to another replica is caught too. When Redis fails, or a deployment has none, the alert is counted again with a warning rather than dropped. Usage triggers are counted on every callback. (#2000)
+
+### The router counts Twilio Monitor alerts and usage triggers
+
+`POST /v1/phone/hooks/twilio/events` takes the Monitor alerts (the Debugger webhook) and usage-trigger callbacks Twilio signs with `X-Twilio-Signature`, and counts each in `vendor_account_events_total{vendor="twilio",event,level}`, with one log line. Alerts 10001 and 30002 (the account is not active or suspended) are `page`, 20003 and 32017 are `warn`, and any other code is `error.other` at `info`; a `totalprice` trigger is `page`, a `calls` trigger `warn`, and any other is `usage_trigger.other` at `warn`. The route answers 404 while `TWILIO_WEBHOOK_AUTH_TOKEN` or `ROUTER_PUBLIC_URL` is unset, and 401 to an event Twilio did not sign over `ROUTER_PUBLIC_URL` and the path. (#1998)
+
+### The router counts Telnyx account events
+
+`POST /v1/phone/hooks/telnyx/events` takes the account events Telnyx signs, such as a port-out or a number order, and counts each in `vendor_account_events_total{vendor,event,level}`, with one log line. A port-out or a reached messaging spend limit is `page`, a number order that did not succeed is `warn`, and the rest is `info`; a type the router does not name is counted as `other`. The route answers 404 while `TELNYX_PUBLIC_KEY` is unset, and 401 to an event Telnyx did not sign. (#1985)
+
+### The router counts a Telnyx SMS spend limit and a failed 10DLC campaign
+
+A signed `messaging-profile.spend-limit-reached` on an SMS line's hook adds 1 to `vendor_account_events_total{vendor="telnyx",event="messaging-profile.spend-limit-reached",level="page"}` with one log line, and still starts no turn; a campaign still waiting on Telnyx that Telnyx fails, suspends or rejects adds 1 to `{event="10dlc.campaign_failed",level="warn"}` once, when its use case moves to `vendor_rejected` (#1997).
+
+### The router reads a Twilio webhook Auth Token
+
+`TWILIO_WEBHOOK_AUTH_TOKEN` holds the Auth Token the router checks Twilio's `X-Twilio-Signature` with on `/v1/phone/hooks/twilio/events`, and a token with whitespace in it stops the router at start (#1982).
+
 ### A child agent takes a budget of tool rounds
 
 `ChildAgent` (an agent config's `agents`, and agent.yaml's `agents:`) gains `max_tool_rounds`: the reply to a tool result, counted since the child was handed its input, at which it is offered no more tools and made to answer. Zero or left out is the default of 8, as before, and a negative number never withdraws them, as `max_tool_rounds` on `createSession` does. A child that chains many lookups, such as a reviewer reading through a diff, no longer has to answer after 8.
+
+### Python: local model plugins take a `revision`, and Vogent's model is pinned
+
+`huggingface.TransformersLLM`, `TransformersVLM` and `TransformersDetectionProcessor` take a `revision` argument (a commit hash, tag or branch) and pass it to every `from_pretrained` call. `moondream.LocalVLM` and `LocalDetectionProcessor` take `revision` too. `vogent.TurnDetection` loads `vogent/Vogent-Turn-80M` at a pinned commit; before, it followed the `main` branch.
+
+### The router reaches Gemini 4 Hydrogen
+
+`gemini/gemini-4-hydrogen` is Google's cheaper Gemini 4, in the high-quality tier beside Gemini 4 Argon, read with `GOOGLE_API_KEY`. It reads images, has a 1M-token context, thinks at `high` unless asked for `low`, `medium` or `xhigh`, and costs $1.50 per million input tokens, $0.075 cached and $7.50 output, thinking included. No shortcut prefers it: it is a member of `llm-smart`, `llm-thinking` and the other high-quality groups, ordered by health.
+
+JavaScript has `responses.regenerate`, `edit`, `siblings`, `branch` and `activate`, with `branchErrorOf` and `supportBranchOf`; a session drops what a rewind hid from its channel, and `agentChatTransport` regenerates, edits and pages ‹ i/n › (`switchBranch`) for `AIConversationController` (AI-3198). Because the transport now always has `switchBranch`, the controller offers regenerate and edit on every message that has a `support_branch` mark, and a message without one is refused with `AgentBranchError` `not_branchable` rather than asked again. An app that hid those actions with `actions: { edit: false, regenerate: false }` keeps hiding them.
 
 ### The router reaches Gemini Decision 1
 
@@ -19,6 +66,10 @@
 - `agentChatTransport` is the transport of an `AIConversationController` from `stream-chat-react-native`. It sends the controller's message id as the question's `requestId`, carries a generated-UI action as `custom.uiAction`, and asks a `regenerate` again as a new question.
 - `chat.state` has `StateStore`'s shape, for `useStateStore`. The package still has no runtime dependencies.
 
+### React Native apps for swift_assistant and crew_assistant
+
+`examples/voice_agents/react_native_assistant` is Juno in an Expo app on iOS and Android, with swift_assistant's agent, `configure` and backend. `examples/voice_agents/crew_assistant/app` is the crew assistant's app, which lived in stream-chat-react-native until now. Both hold their conversations in `AgentChat` and show them with the AI components of `stream-chat-expo`, and both have Jest tests of their agent code.
+
 ### JavaScript: a tool caps how many of its calls run at once
 
 A tool takes `concurrency`, as Go's `tools.Concurrency(n)` does: at most that many calls to it run at once, and a call over the cap waits its turn, its timeout counting while it waits. A call waiting on its tool's cap holds none of the places other tools need. A call cancelled or timed out keeps its place until its function returns. The cap is kept in this process and is not sent to the router. A concurrency that is not a whole number of calls is refused when the tool is registered.
@@ -27,7 +78,7 @@ A tool takes `concurrency`, as Go's `tools.Concurrency(n)` does: at most that ma
 
 ### Session queries take `$and` / `$or` filters and a sort, and sessions can be pinned
 
-**Breaking.** `querySessions` (`POST /v1/agents/sessions/query`) filters on `project_id` (`$eq`, `$in`), `text` (`$q`), `review_score` (`$eq`, `$gt`, `$gte`, `$lt`, `$lte`; server side only), `agent` and `user_id` (server side only), combined with `$and` and `$or`: 1 to 10 filters each, nested at most 3 deep, 30 conditions in a filter. Any other key is a 400 that names it, which includes the filters taken before: `agent_id`, `config_id`, `modality`, `state`, `team`, `created_at` and `custom`. `text` and `user_id` go at the top level or directly in the top-level `$and`, never inside `$or`, and `text` may now be combined with `project_id`.
+**Breaking.** `querySessions` (`POST /v1/agents/sessions/query`) filters on `project_id` (`$eq`, `$in`), `text` (`$q`), `review_score` (`$eq`, `$gt`, `$gte`, `$lt`, `$lte`; server side only), `agent`, `user_id` (server side only), `config_id`, `state` (`live` or `ended`), `created_at` (`$gte`, `$lt`) and `custom` (string labels the session holds, every one of them), combined with `$and` and `$or`: 1 to 10 filters each, nested at most 3 deep, 30 conditions in a filter. Any other key is a 400 that names it, which includes the filters taken before: `agent_id`, `modality` and `team`. `text` and `user_id` go at the top level or directly in the top-level `$and`, never inside `$or`, and `text` may now be combined with `project_id`.
 
 `sort` is `last_message_at` in either direction (the default, descending: when the agent last answered, else when the session began), `pinned` first and then `last_message_at`, `review_score` in either direction for a server-side caller, or `relevance` for a text search. `updated_at` is no longer a sort. A cursor holds for the sort it came from.
 
@@ -51,6 +102,10 @@ Credit has a `trial` kind, written once per organization by the gateway's `/v1/b
 ### An agent answers in the channel types its config names
 
 An agent config's `chat_channels` names Stream Chat channel types of the app's own Stream app, such as `[{"type": "callouts"}]` for a team's group channels. A message in a channel of a named type is answered there by the router's own session under that config, written as the Stream user whose id is the config's id. Who answers comes from the config alone, never from the channel's custom data, and the router's shared app answers no named type. A type is answered only when its grants pass the check an `agent` channel type is held to: members may write, and no user, guest or member may make, change or join a channel of it. An agent directory declares it in `agent.yaml` as `chat_channels`, which the Go SDK's sync sends. Left unset, an agent answers in `agent` channels alone, as before.
+
+Each entry may say `answer: mentioned` (`always` when left out, as before): a message in a channel of that type is then answered only when it mentions the agent, by `mentioned_users` holding the config's id or by `@` and the config's id or name in its text. Any other message gets no reply and starts no model; the next message the agent answers reads it as what was said before. `agent.yaml` takes it too, as `answer` on a `chat_channels` entry (AI-3152).
+
+The model answering in a channel of a named type sees each person's message as a JSON envelope of their Stream user id, name and words, `{"author":{"user_id":"anya-1","display_name":"Anya"},"text":"..."}`, as a shared conversation's history is, from the first message, both live and read back from the channel, and is told that only the envelope's author says who wrote a message and that the id grants no access. A line inside a message that looks like another person's message stays in the text of its writer's envelope. A name is cut at 256 characters. `agent` channels and thread channels are labelled as before (AI-3153, AI-3281).
 
 ### The router counts the voice sessions judged for silence
 
@@ -510,6 +565,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### Dart: stream_agents_core, _chat and _rtc are one package, stream_agents
+
+`stream_agents` (`sdks/dart/stream_agents`) replaces `stream_agents_core`, `stream_agents_chat` and `stream_agents_rtc`: an app depends on `stream_agents` and imports `package:stream_agents/stream_agents.dart` where it depended on and imported the three. Nothing else in the API changed. Its floors are Stream Chat 10.4's, Dart 3.12 and Flutter 3.44. Core, chat and rtc stay apart inside it, and `area_boundaries_test.dart` keeps core pure Dart.
+
 ### A tool is handed its ToolCallContext as an argument
 
 A tool function that needs the call it runs for (who asked, its id, `update`, `say`, `disallow_interruptions`) now takes it as an argument, a `ToolCallContext` (formerly `ToolCall`). A tool that does not need it takes only its arguments. Go is unchanged.
@@ -520,6 +579,12 @@ A tool function that needs the call it runs for (who asked, its id, `update`, `s
 - PHP: a callable that takes two arguments, or a `ToolCallContext` first, gets `(ToolCallContext $toolCallContext, array $args)`; one that takes one gets `(array $args)`.
 - Rust: `register_with_tool_call_context` hands its function `(tool_call_context: ToolCallContext, arguments)`.
 - C#: the overloads that take the context are `(ToolCallContext toolCallContext, arguments, cancellationToken)`.
+
+### Python: remote code is off by default in `huggingface`, and Moondream needs a pinned revision
+
+`huggingface.TransformersVLM` now defaults to `trust_remote_code=False` (was `True`), the same as `TransformersLLM`. Models that `transformers` supports natively, such as LLaVA, Qwen2-VL and SmolVLM2, load as before. A VLM whose repo ships its own model code no longer loads with the defaults; opt in and pin the repo to a commit with the new `revision` argument: `TransformersVLM(model="org/model", trust_remote_code=True, revision="<commit hash>")`.
+
+`moondream.LocalVLM` and `moondream.LocalDetectionProcessor` always run code from the model repo. The default model, `moondream/moondream3-preview`, is now loaded at a pinned commit. A custom `model_name` with no `revision` raises `ValueError`: pass `revision="<commit hash>"`.
 
 ### A worker cannot host tools for an agent the app does not have
 
@@ -604,9 +669,31 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### `rewindSession` works on a conversation kept in Stream Chat
+
+Every session that is not incognito keeps its conversation in Stream Chat, and `rewindSession` (`POST /v1/agents/sessions/{id}/rewind`, `responses.rewind` in the SDKs) refused all of them with a 400. Such a conversation is now rewound in Chat as well, the way an edit of the turn after the named response is: the later messages are hidden from every read of the channel, so a reopen does not bring them back, and they are kept as a branch that `listResponseSiblings`, `getResponseBranch` and `activateResponse` read and bring back. It counts toward the conversation's 100 edit and regenerate points, needs the Chat app's agent rewind, and is refused as an edit is, including for a response whose messages carry no branch mark, such as a turn spoken on a call. An unknown response is now a 404, and the call can answer 409. The SDKs' doc comments no longer say to fork instead (AI-3209).
+
+### A tool call's approval is no longer changed while its reply is being written to Chat
+
+Answering a held tool call's approval changed it in place on the reply, which the router could at the same moment be writing to the Chat channel or sending to the conversation's socket. The queued write and the update now each keep their own copy of the approval, so neither is encoded while it changes (AI-3198).
+### JavaScript: an approval shown from a conversation's history can be answered
+
+`session.decide` answered only a call its own socket was asked, and did nothing for one an approval card showed from the channel, after `sessions.resume` or a restart, so the card waited forever. `AgentChat.decide(toolCallId, { allowed, summary })` answers such a call from what the reply shows: its `ai_tool_call` step, and the request and turn in `support_runtime`. Allowed, a call of one of the session's tools runs on this device, once however often it is answered; declined, the model is told so. A call whose arguments were too long for the reply to keep is failed rather than left waiting, and `AgentChat.decide` rejects when no loaded message shows the call waiting, so the card can offer to try again. `session.decide` takes the same as an optional `call`, and without it still leaves a call it wasn't asked alone.
+
+### Demo link token and phone numbers kept out of logs
+
+The demo join link was logged with its API key and a one-hour user token in the query string; it is now logged without the query string, and printed to the terminal in full only when the browser fails to open. `Agent.answer` and `twilio.TwilioCallRegistry` log the caller and called numbers masked down to their last four digits.
+
+### A call placed for a session that ends while it rings is hung up
+
+Ending a session while the outbound call it placed still rings now hangs that call up at Twilio and Telnyx, and the call's outcome is `canceled`. A session ends when it is closed or deleted, when its start timeout passes, or when the router shuts down. At Twilio the call is canceled, or completed if it was just answered. Before, the phone kept ringing, and a person who picked up joined a call with no agent and was billed until they hung up. A call already answered is left as it is. So is a call the session hands to the agent's next session in the same call. Other vendors cannot hang up a placed call yet: the router logs that, and the call rings until the vendor gives up (#1987).
 ### Call minutes are priced for Twilio in the US and Canada, and for Telnyx calls to Canada
 
 Twilio is priced at $0.018 a minute outbound and $0.0125 inbound in both countries: its local rate plus the SIP leg to the Stream trunk. A Telnyx call placed to Canada is priced at $0.022 a minute. A database gets these with the next release's start, which adds the items it has never priced. Telnyx calls arriving on a Canadian number, other countries and toll-free numbers are not priced yet (#1965).
+
+### A knowledge write that fails part way leaves a document you can see and delete
+
+Posted text is listed as `pending` while its passages are written, then `indexed`, or `failed` with an `error` when the write stops part way. Before, the row was saved only after every passage was written, so a failed write left passages that lookups still found and no document to delete them by. A failed document is fixed by posting it again or deleting it, and deleting removes every passage either version wrote. An uploaded file whose last read fails is now deleted whole too; before, the passages its failed write left behind stayed (AI-2198, #1986).
 
 ### Kotlin: the reply model failing ends the agent's turn, and a failure lasts until the agent works again
 
@@ -1382,6 +1469,14 @@ When the provider lists a granted tool with another schema than the one approved
 ### An app chat card's summary keeps the person's first message, and a group channel writes no card
 
 A chat episode now starts when Stream made the message that opened it. Before, it started when the router opened it, a moment later, so the summary left out that message: a one-message chat was summed up as "the user wrote nothing". A message in a channel with a member other than the person and the agent now opens no episode and writes no card, the rule a session already reads cards by. Without members in what Stream sends, the message opens none. A config with `episode_cards` off writes and reads nothing new (AI-2632).
+
+### Go SDK: phone numbers and end-user ids stay out of Info logs
+
+A dispatch worker's `answering a call` line and an agent's `ringing` line carry the last four characters of each number (`***0111`) where they carried the whole number. `answering a message` no longer says who wrote it; the user id is logged at Debug. The doc of `edge.MonitorURL` and `Session.MonitorURL` says the link carries a token and should be kept out of logs, and the voice example says it prints the caller's speech.
+
+### A member's message is no longer read as the agent's reply
+
+In an `agent` channel that people other than the session's caller can write in (a channel the router answers in on a dispatch, or a conversation shared with its members), a message carrying the custom data of the agent's reply was read as the agent's turn: the model saw it as its own words, an action on it was answered from it, a command was looked up in it, and an unfinished one was rewritten as interrupted. Now a reply counts as the agent's only when the agent wrote it; anybody else's message is read as their own. A person's turn the router wrote keeps its fields. In an app chat, a card line marked as the agent's counts as the agent's only when the agent wrote it (AI-3186).
 
 ## Breaking Changes
 

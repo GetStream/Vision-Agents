@@ -79,10 +79,20 @@ export {
   AgentResponse,
   Items,
   Responses,
+  type BranchResponseOptions,
   type CreateResponseOptions,
   type ImageSource,
+  type ResponseRef,
   type UIAction,
 } from "./responses.js";
+
+export {
+  branchErrorOf,
+  supportBranchOf,
+  type BranchErrorCode,
+  type RewoundTo,
+  type SupportBranch,
+} from "./branches.js";
 
 export {
   GUEST_STORAGE_KEY,
@@ -155,6 +165,7 @@ export {
   type SessionOptions,
   type SessionVideo,
   type ToolApprovalRequest,
+  type ToolDecision,
 } from "./session.js";
 
 export {

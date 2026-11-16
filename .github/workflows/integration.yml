@@ -6,8 +6,8 @@ name: Integration (router)
 # internal/searchrouter and internal/simulation are Postgres suites left out of the matrix too
 # (simulation also needs an OpenAI key). imagerouter and dlc are left out of the matrix: AI-2040.
 # mem0 is the exception: whose memories a session reads is decided by mem0's own filters, so
-# the jobs marked `mem0` run its live suites with the MEM0_API_KEY secret, and skip them on a
-# fork's pull request, which is given no secrets.
+# the jobs marked `mem0` run its live suites with the MEM0_API_KEY secret on a push, and skip them
+# on a pull request, which is given no secrets.
 on:
   push:
     branches: [ "main", "accelerate" ]
@@ -37,6 +37,8 @@ jobs:
   integration:
     name: integration (${{ matrix.package }})
     runs-on: ubuntu-latest
+    # MEM0_API_KEY lives in this environment, which a pull request's code never enters.
+    environment: ${{ github.event_name == 'push' && matrix.mem0 && 'integration' || '' }}
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -157,6 +159,6 @@ jobs:
         env:
           GOEXPERIMENT: simd
           SKIP: ${{ matrix.skip }}
-          MEM0_API_KEY: ${{ matrix.mem0 && secrets.MEM0_API_KEY || '' }}
-          RUN_MEM0_SUITE: ${{ matrix.mem0 && secrets.MEM0_API_KEY != '' && '1' || '' }}
+          MEM0_API_KEY: ${{ github.event_name == 'push' && matrix.mem0 && secrets.MEM0_API_KEY || '' }}
+          RUN_MEM0_SUITE: ${{ github.event_name == 'push' && matrix.mem0 && secrets.MEM0_API_KEY != '' && '1' || '' }}
         working-directory: acceleration

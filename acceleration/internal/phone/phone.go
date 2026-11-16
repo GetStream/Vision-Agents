@@ -467,6 +467,11 @@ type InboundStopper interface {
 	StopInbound(ctx context.Context, e164 string) error
 }
 
+// Hanger is a vendor that can hang up a call it placed, ringing or answered.
+type Hanger interface {
+	HangUp(ctx context.Context, vendorCallID string) error
+}
+
 // StreamLeg is how a vendor's leg to Stream is set up.
 type StreamLeg int
 

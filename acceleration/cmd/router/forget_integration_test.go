@@ -326,6 +326,37 @@ func (s *ForgetUserSuite) userRows(app, user string) userRows {
 	return rows
 }
 
+// snapshotted writes, on a shard, a session of app's user and a hidden message copied from it,
+// and answers the session id.
+func (s *ForgetUserSuite) snapshotted(shard int, app, user string) string {
+	id := "session-" + uuid.NewString()
+	now := time.Now().UTC()
+	s.Require().NoError(s.shards[shard].SaveSession(s.ctx, &store.AgentSession{
+		ID: id, CustomerID: app, AgentName: "docs", UserID: user, CallerKind: "user", CreatedAt: now,
+	}))
+	s.Require().NoError(s.shards[shard].SaveBranchMessages(s.ctx, []store.AgentBranchMessage{{
+		SessionID: id, OriginalMessageID: "m-" + uuid.NewString(), CustomerID: app, ResponseID: "second",
+		SwitchID: "switch", ChatCreatedAt: now, AuthorID: user, Message: map[string]any{"text": "hello from " + user},
+	}}))
+	return id
+}
+
+// snapshots is how many hidden messages app's sessions hold on every shard, by the user of the
+// session they were copied from.
+func (s *ForgetUserSuite) snapshots(app string) map[string]int {
+	found := map[string]int{}
+	for _, shard := range s.shards {
+		var users []string
+		s.Require().NoError(shard.ShardDB().NewRaw(
+			`SELECT s.user_id FROM agent_branch_messages AS m JOIN agent_sessions AS s ON s.id = m.session_id WHERE m.customer_id = ? AND s.customer_id = ?`,
+			app, app).Scan(s.ctx, &users))
+		for _, user := range users {
+			found[user]++
+		}
+	}
+	return found
+}
+
 // forgottenAs is the one replacement every row of the user now carries.
 func (s *ForgetUserSuite) forgottenAs(out string) string {
 	_, rest, found := strings.Cut(out, "replacing the user's id with ")
@@ -356,6 +387,30 @@ func (s *ForgetUserSuite) TestForgettingAUserRewritesEveryShardAndTheUsageServic
 	s.Equal(len(usageservice.Intervals), s.windows(s.app, replacement))
 	s.Equal(before, s.spendOf(s.app), "count and cost per app are unchanged")
 	s.Equal([4]int64{4, 1070, 4, 1070}, before)
+}
+
+func (s *ForgetUserSuite) TestForgettingAUserDeletesTheirBranchSnapshotsOnEveryShardAlone() {
+	other := "other-" + s.app
+	s.snapshotted(0, s.app, person)
+	s.snapshotted(1, s.app, person)
+	s.snapshotted(1, s.app, "grace")
+	s.snapshotted(0, other, person)
+
+	out := s.forget(s.app, person)
+
+	s.Contains(out, "branch snapshots: 2 messages deleted")
+	s.Equal(map[string]int{"grace": 1}, s.snapshots(s.app))
+	s.Equal(map[string]int{person: 1}, s.snapshots(other), "another app's user of the same id keeps theirs")
+}
+
+func (s *ForgetUserSuite) TestADryRunCountsBranchSnapshotsAndKeepsThem() {
+	s.snapshotted(0, s.app, person)
+	s.snapshotted(1, s.app, person)
+
+	out := s.forget(s.app, person, "--dry-run")
+
+	s.Contains(out, "branch snapshots: 2 messages to delete\n")
+	s.Equal(map[string]int{person: 2}, s.snapshots(s.app))
 }
 
 func (s *ForgetUserSuite) TestForgettingAUserLeavesOtherAppsAlone() {
@@ -398,6 +453,7 @@ func (s *ForgetUserSuite) TestForgettingAUserClearsTheirCountersPolicyAndLimits(
 func (s *ForgetUserSuite) TestTheAuditRowNeverNamesTheUser() {
 	s.recorded(0, s.app, person, 100)
 	s.settingsOf(s.app, person)
+	s.snapshotted(0, s.app, person)
 
 	out := s.forget(s.app, person)
 
@@ -417,7 +473,7 @@ func (s *ForgetUserSuite) TestTheAuditRowNeverNamesTheUser() {
 		counts[change.Field] = change.After.(float64)
 	}
 	s.Equal(map[string]float64{
-		"requests": 1, "events": 1, "windows": 4, "redis_keys": 1,
+		"requests": 1, "branch_messages": 1, "events": 1, "windows": 4, "redis_keys": 1,
 		"policies_deleted": 1, "limits_deleted": 1, "resets": 1, "grants": 1, "campaigns": 1,
 	}, counts)
 	var audits []ledger.ManageAudit
@@ -435,7 +491,7 @@ func (s *ForgetUserSuite) TestADryRunChangesNothing() {
 
 	out := s.forget(s.app, person, "--dry-run")
 
-	s.Equal("dry run, nothing is changed\nrequests: 2 rows\nusage service: 2 events, 4 windows\nredis: 8 keys\n"+
+	s.Equal("dry run, nothing is changed\nrequests: 2 rows\nbranch snapshots: 0 messages to delete\nusage service: 2 events, 4 windows\nredis: 8 keys\n"+
 		"shared database: 1 policies and 1 limits to delete; 1 resets, 1 grants and 1 campaigns to rewrite\n", out)
 	s.Equal(person, s.requests()[id].UserID)
 	s.Equal(person, s.events()[id].UserID)

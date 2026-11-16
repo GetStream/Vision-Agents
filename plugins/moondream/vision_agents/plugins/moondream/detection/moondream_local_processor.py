@@ -22,6 +22,7 @@ from vision_agents.plugins.moondream.moondream_utils import (
     annotate_detections,
     handle_device,
     parse_detection_bbox,
+    resolve_revision,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,9 @@ class LocalDetectionProcessor(VideoProcessorPublisher, Warmable):
         model_name: Hugging Face model identifier (default: "moondream/moondream3-preview")
         options: AgentOptions for model directory configuration. If not provided,
                  uses default_agent_options() which defaults to tempfile.gettempdir()
+        revision: Commit hash of the model repo to load. The default model is pinned
+                 to a known commit. Required with a custom model_name, because
+                 Moondream runs code from the model repo.
     """
 
     name = "moondream_local"
@@ -64,8 +68,10 @@ class LocalDetectionProcessor(VideoProcessorPublisher, Warmable):
         force_cpu: bool = False,
         model_name: str = "moondream/moondream3-preview",
         options: Optional[AgentOptions] = None,
+        revision: Optional[str] = None,
     ):
         super().__init__()
+        self.revision = resolve_revision(model_name, revision)
         if options is None:
             self.options = default_agent_options()
         else:
@@ -160,6 +166,7 @@ class LocalDetectionProcessor(VideoProcessorPublisher, Warmable):
                 device_map={"": self._device},
                 dtype=self._dtype,
                 trust_remote_code=True,
+                revision=self.revision,
                 cache_dir=self.options.model_dir,
                 **load_kwargs,
             ).to(self._device)  # type: ignore[arg-type]

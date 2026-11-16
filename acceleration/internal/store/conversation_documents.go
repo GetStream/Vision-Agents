@@ -50,6 +50,46 @@ func (s *Store) AddConversationDocument(ctx context.Context, document *Conversat
 	return nil
 }
 
+// CopyResponseDocuments keeps the documents sent with one of a session's turns again under
+// another, as a regenerate answers the same question as a new turn: the old turn keeps its own,
+// so bringing its branch back finds them. Each copy has an id of its own, and its original's
+// owner, conversation and attachment time.
+//
+// The copies are written on this shard, beside the turn this router records as toResponseID,
+// wherever the originals are: a document is read beside its turn's row, which is how it drops
+// out once that turn is rewound.
+func (s *Store) CopyResponseDocuments(ctx context.Context, customerID, sessionID, fromResponseID, toResponseID string) error {
+	if customerID == "" || sessionID == "" || fromResponseID == "" || toResponseID == "" {
+		return stack.Wrap(errors.New("store: a customer, a session and two response ids are required"))
+	}
+	lists, err := everyShard(ctx, s, func(ctx context.Context, db bun.IDB) ([]ConversationDocument, error) {
+		var documents []ConversationDocument
+		err := db.NewSelect().Model((*ConversationDocument)(nil)).
+			Where("cd.customer_id = ?", customerID).
+			Where("cd.session_id = ?", sessionID).
+			Where("cd.response_id = ?", fromResponseID).
+			Scan(ctx, &documents)
+		return documents, err
+	})
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: copy response documents: %w", err))
+	}
+	var copies []ConversationDocument
+	for _, list := range lists {
+		for _, document := range list {
+			document.ID, document.ResponseID = NewID(), toResponseID
+			copies = append(copies, document)
+		}
+	}
+	if len(copies) == 0 {
+		return nil
+	}
+	if _, err := s.shard.NewInsert().Model(&copies).Exec(ctx); err != nil {
+		return stack.Wrap(fmt.Errorf("store: copy response documents: %w", err))
+	}
+	return nil
+}
+
 // DocumentScope is the conversation whose documents are read, and whose they must be.
 type DocumentScope struct {
 	// ConversationID reads a conversation kept in Chat, across every session that held it.

@@ -219,6 +219,22 @@ func voiceRecording(file sandbox.Attachment, person bool) bool {
 	return person && strings.HasPrefix(file.MIME, "audio/")
 }
 
+// Images are the photos a person sent with m as a model is handed them: each by the URL Chat
+// serves it from, which a read of the message gives afresh.
+func Images(m Message) []llm.ImagePart {
+	return imagesIn(m.Files)
+}
+
+func imagesIn(files []sandbox.Attachment) []llm.ImagePart {
+	var images []llm.ImagePart
+	for _, file := range files {
+		if strings.HasPrefix(file.MIME, "image/") && file.URL != "" {
+			images = append(images, llm.ImagePart{URL: file.URL, MIME: file.MIME})
+		}
+	}
+	return images
+}
+
 // filesFromAttachments reads back the files fileAttachments wrote.
 func filesFromAttachments(attachments []getstream.Attachment) []sandbox.Attachment {
 	var files []sandbox.Attachment

@@ -406,6 +406,9 @@ type RouterSuite struct {
 	// telnyxPublicKey, set by a suite about Telnyx's call webhook before it starts the
 	// harness, is the key Telnyx's requests are checked against. Nil leaves it unconfigured.
 	telnyxPublicKey ed25519.PublicKey
+	// twilioAuthToken, set by a suite about Twilio's webhooks before it starts the harness, is
+	// the Auth Token Twilio's requests are checked against. Empty leaves it unconfigured.
+	twilioAuthToken string
 	// chatInboundKeys, set by a suite about Stream Chat's delivery endpoint before it starts
 	// the harness, are what its deliveries are checked against, on every node. Nil leaves it
 	// unconfigured.
@@ -776,6 +779,7 @@ func (s *RouterSuite) SetupSuite() {
 		Stream:             s.stream,
 		HookSecret:         suiteStreamSecret,
 		TelnyxPublicKey:    s.telnyxPublicKey,
+		TwilioAuthToken:    s.twilioAuthToken,
 		ChatInboundKeys:    s.chatInboundKeys,
 		TelnyxConnectionID: s.telnyxConnectionID,
 		AudioFloor:         s.audioFloor,

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -114,12 +115,8 @@ func TestAFilterIsRefusedForWhatItMayNotHold(t *testing.T) {
 		says   string
 	}{
 		{`{"agent_id": "a"}`, `"agent_id" cannot be filtered on`},
-		{`{"config_id": "a"}`, `"config_id" cannot be filtered on`},
 		{`{"modality": "text"}`, `"modality" cannot be filtered on`},
-		{`{"state": "live"}`, `"state" cannot be filtered on`},
 		{`{"team": "finance"}`, `"team" cannot be filtered on`},
-		{`{"created_at": {"$gte": "2026-10-05T00:00:00Z"}}`, `"created_at" cannot be filtered on`},
-		{`{"custom": {"origin": "test"}}`, `"custom" cannot be filtered on`},
 		{`{"call_id": "abc"}`, `"call_id" cannot be filtered on`},
 		{`{"$nor": [{"project_id": "a"}]}`, `"$nor" cannot be filtered on`},
 		{`{"$or": [{"project_id": "a"}, {"$not": {"agent": "b"}}]}`, `"$not" cannot be filtered on`},
@@ -162,7 +159,8 @@ func TestAFilterIsRefusedForWhatItMayNotHold(t *testing.T) {
 		_, err := sessionQueryOf(aBackend(), queryAsking(t, `{"filter": `+refusal.filter+`}`))
 		require.ErrorContains(t, err, refusal.says, refusal.filter)
 		if strings.Contains(refusal.says, "cannot be filtered on") {
-			require.ErrorContains(t, err, "the fields that can be filtered are project_id, review_score, text, agent and user_id")
+			require.ErrorContains(t, err, "the fields that can be filtered are project_id, review_score, text, agent, "+
+				"user_id, config_id, state, created_at and custom")
 		}
 	}
 
@@ -177,6 +175,67 @@ func TestAFilterIsRefusedForWhatItMayNotHold(t *testing.T) {
 		_, err := sessionQueryOf(aBackend(), queryAsking(t, `{"filter": `+taken+`}`))
 		require.NoError(t, err, taken)
 	}
+}
+
+func TestAConfigStateStartAndLabelsAreReadAsTheExpressionTheStoreTakes(t *testing.T) {
+	config, state := store.SessionFieldConfig, store.SessionFieldState
+	from := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
+
+	// The filter the dashboard sends for one agent's running tests in a window.
+	query, err := sessionQueryOf(aDevice(), queryAsking(t, `{"filter": {
+		"config_id": "cfg-1",
+		"created_at": {"$gte": "2026-10-05T00:00:00Z", "$lt": "2026-10-06T02:00:00+02:00"},
+		"custom": {"origin": "test"},
+		"state": "live"
+	}}`))
+	require.NoError(t, err)
+	require.Equal(t, store.AllOf(
+		store.SessionIs(config, "cfg-1"),
+		store.CreatedAtIs(store.SessionGte, from),
+		store.CreatedAtIs(store.SessionLt, from.Add(24*time.Hour)),
+		store.CustomHolds(map[string]string{"origin": "test"}),
+		store.SessionIs(state, store.SessionRunning),
+	), *query.filter.Where)
+
+	query, err = sessionQueryOf(aDevice(), queryAsking(t, `{"filter": {"state": {"$eq": "ended"}}}`))
+	require.NoError(t, err)
+	require.Equal(t, store.AllOf(store.SessionIs(state, store.SessionClosed)), *query.filter.Where,
+		"the API's ended is the store's closed")
+
+	// Each one is a condition like any other, so an $or chooses between them.
+	query, err = sessionQueryOf(aDevice(), queryAsking(t, `{"filter": {"$or": [
+		{"custom": {"origin": "test"}}, {"config_id": {"$eq": "cfg-2"}}
+	]}}`))
+	require.NoError(t, err)
+	require.Equal(t, store.AllOf(store.AnyOf(
+		store.AllOf(store.CustomHolds(map[string]string{"origin": "test"})),
+		store.AllOf(store.SessionIs(config, "cfg-2")),
+	)), *query.filter.Where)
+}
+
+func TestAConfigStateStartOrLabelInAShapeItDoesNotTakeIsRefused(t *testing.T) {
+	refused := func(filter string) error {
+		_, err := sessionQueryOf(aBackend(), queryAsking(t, `{"filter": `+filter+`}`))
+		return err
+	}
+
+	require.ErrorContains(t, refused(`{"config_id": {"$in": ["a", "b"]}}`), `config_id does not take "$in"`)
+	require.ErrorContains(t, refused(`{"config_id": ""}`), `config_id cannot be empty`)
+
+	require.ErrorContains(t, refused(`{"state": "running"}`), `state is live or ended`)
+	require.ErrorContains(t, refused(`{"state": {"$eq": "closed"}}`), `state is live or ended`)
+	require.ErrorContains(t, refused(`{"state": {"$in": ["live"]}}`), `state does not take "$in"`)
+
+	require.ErrorContains(t, refused(`{"created_at": "2026-10-05T00:00:00Z"}`), `created_at takes an object of $gte, $lt`)
+	require.ErrorContains(t, refused(`{"created_at": {}}`), `created_at takes an object of $gte, $lt`)
+	require.ErrorContains(t, refused(`{"created_at": {"$gt": "2026-10-05T00:00:00Z"}}`), `created_at does not take "$gt"`)
+	require.ErrorContains(t, refused(`{"created_at": {"$gte": "yesterday"}}`), `created_at $gte takes an RFC 3339 time`)
+	require.ErrorContains(t, refused(`{"created_at": {"$gte": "2026-10-05T00:00:00Z", "$lt": "2026-10-05T00:00:00Z"}}`),
+		`created_at $gte must be before $lt`)
+
+	require.ErrorContains(t, refused(`{"custom": {}}`), `custom takes an object of at least one label, each a string`)
+	require.ErrorContains(t, refused(`{"custom": "test"}`), `custom takes an object of at least one label, each a string`)
+	require.ErrorContains(t, refused(`{"custom": {"attempt": 2}}`), `custom takes an object of at least one label, each a string`)
 }
 
 func TestOnlyABackendFiltersOrSortsOnWhatOnlyABackendReads(t *testing.T) {

@@ -20,7 +20,7 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
     let custom: [String: RawJSON]?
     /// A longer note about the conversation, searched alongside the title.
     let description: String?
-    /// The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole.
+    /// The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default; anything else replaces the stored choice whole.
     let floorControl: FloorControl?
     /// What the agent says as it joins, before anyone speaks.
     let greeting: GreetingPayload?
@@ -74,7 +74,7 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
     let timezone: String?
     /// What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.
     let title: String?
-    /// How long the model waits for a tool result. Zero is the default.
+    /// How long the model waits for the result of a tool the caller or a worker runs, in milliseconds. Zero or omitted is 30 seconds. A tool's own timeout_ms replaces it for that tool, which is how one slow tool, such as one that draws a picture, gets longer without every tool waiting as long.
     let toolTimeoutMs: Int?
     let tools: [SessionTool]?
     /// Omit it and the config decides, or en-low-latency when there is no config.

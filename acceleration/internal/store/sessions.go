@@ -528,38 +528,8 @@ func narrowSessions(query *bun.SelectQuery, filter SessionFilter) *bun.SelectQue
 	if len(filter.CallerKinds) > 0 {
 		query = query.Where("caller_kind IN (?)", bun.In(filter.CallerKinds))
 	}
-	if filter.ConfigID != "" {
-		query = query.Where("config_id = ?", filter.ConfigID)
-	}
-	if filter.AgentName != "" {
-		query = query.Where("agent_name = ?", filter.AgentName)
-	}
-	if filter.Project != "" {
-		query = query.Where("project = ?", filter.Project)
-	}
-	if filter.Modality != "" {
-		query = query.Where("modality = ?", filter.Modality)
-	}
 	if filter.AgentID != "" {
 		query = query.Where("agent_id = ?", filter.AgentID)
-	}
-	if filter.State != "" {
-		query = query.Where("state = ?", filter.State)
-	}
-	if filter.Team != "" {
-		query = query.Where("team = ?", filter.Team)
-	}
-	if len(filter.Custom) > 0 {
-		// Containment rather than a key at a time, so the GIN index on custom is usable
-		// and a caller asking for two labels gets the sessions carrying both. The index is
-		// jsonb_path_ops, which serves @> and nothing else: no key-exists (?, ?|, ?&) filter.
-		query = query.Where("custom @> ?::jsonb", jsonbOf(filter.Custom))
-	}
-	if !filter.After.IsZero() {
-		query = query.Where("created_at >= ?", filter.After)
-	}
-	if !filter.Before.IsZero() {
-		query = query.Where("created_at < ?", filter.Before)
 	}
 	// What the request asked for goes in last and as one parenthesised condition, ANDed with
 	// everything above: an $or in it chooses among the sessions the caller may see, and
@@ -619,7 +589,8 @@ func (s *Store) PinSession(ctx context.Context, customerID, id string, pinned bo
 	return first, nil
 }
 
-// StartResponse records that the agent began a turn.
+// StartResponse records that the agent began a turn, with the response before it on its path
+// and the question it answers.
 func (s *Store) StartResponse(ctx context.Context, response *AgentResponse) error {
 	if response.ID == "" || response.SessionID == "" {
 		return errors.New("store: a response and a session id are required")
@@ -632,6 +603,11 @@ func (s *Store) StartResponse(ctx context.Context, response *AgentResponse) erro
 	}
 	if response.Status == "" {
 		response.Status = ResponseRunning
+	}
+	// A response that answers no earlier question asks its own, which is also what tells it
+	// apart from a row written before branches were kept.
+	if response.QuestionResponseID == "" {
+		response.QuestionResponseID = response.ID
 	}
 	response.Said = SafeLogText(response.Said)
 

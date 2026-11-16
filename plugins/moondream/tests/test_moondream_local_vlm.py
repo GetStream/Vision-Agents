@@ -8,8 +8,9 @@ Integration tests require HF_TOKEN environment variable (for gated model access)
 """
 
 import os
+import re
 from pathlib import Path
-from typing import Iterator
+from typing import AsyncIterator, Iterator
 
 import av
 import pytest
@@ -60,6 +61,27 @@ async def local_vlm_caption() -> LocalVLM:
         yield vlm
     finally:
         vlm.close()
+
+
+@pytest.fixture
+async def local_vlm_default() -> AsyncIterator[LocalVLM]:
+    """Create LocalVLM with default arguments, without loading the model."""
+    vlm = LocalVLM()
+    try:
+        yield vlm
+    finally:
+        vlm.close()
+
+
+class TestMoondreamLocalVLM:
+    async def test_default_model_is_pinned_to_a_commit(
+        self, local_vlm_default: LocalVLM
+    ):
+        assert re.fullmatch(r"[0-9a-f]{40}", local_vlm_default.revision)
+
+    async def test_custom_model_without_revision_raises(self):
+        with pytest.raises(ValueError, match="revision"):
+            LocalVLM(model_name="example/moondream-finetune")
 
 
 @pytest.mark.integration

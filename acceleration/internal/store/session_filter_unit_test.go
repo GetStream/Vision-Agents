@@ -31,7 +31,9 @@ func TestASessionFilterBindsEveryValueItWasSent(t *testing.T) {
 
 	// What the store does not know how to compare holds for nothing, never for everything.
 	for _, unknown := range []SessionExpr{
-		{Field: "custom", Op: SessionEq, Strings: []string{"x"}},
+		{Field: "call_id", Op: SessionEq, Strings: []string{"x"}},
+		{Field: SessionFieldCustom, Op: SessionEq, Strings: []string{"x"}},
+		{Field: SessionFieldCreatedAt, Op: SessionIn},
 		{Field: SessionFieldProject, Op: "$ne", Strings: []string{"x"}},
 		{Field: SessionFieldProject, Op: SessionIn},
 		{Field: SessionFieldReviewScore, Op: SessionIn, Number: 3},
@@ -81,6 +83,49 @@ func TestASessionFilterMatchesInGoAsItDoesInTheStatement(t *testing.T) {
 			require.False(t, condition.Matches(unreviewed), "a session with no review matches no score")
 		}
 	}
+}
+
+func TestAConfigStateStartAndLabelFilterBindsWhatItWasSent(t *testing.T) {
+	hostile := `x' OR '1'='1`
+	at := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	expr := AnyOf(
+		SessionIs(SessionFieldConfig, hostile),
+		SessionIs(SessionFieldState, hostile),
+		CreatedAtIs(SessionGte, at),
+		CustomHolds(map[string]string{hostile: hostile}),
+	)
+
+	condition, args := expr.where()
+
+	require.Equal(t, "((config_id = ?) OR (state = ?) OR (created_at >= ?) OR (custom @> ?::jsonb))", condition)
+	require.Equal(t, []any{hostile, hostile, at}, args[:3])
+	require.JSONEq(t, `{"x' OR '1'='1": "x' OR '1'='1"}`, args[3].(string))
+}
+
+func TestAConfigStateStartAndLabelFilterMatchesInGoAsInTheStatement(t *testing.T) {
+	began := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	session := SessionValues{
+		ConfigID: "cfg-docs", State: SessionRunning, CreatedAt: began,
+		Custom: map[string]any{"origin": "test", "attempt": 2},
+	}
+
+	require.True(t, new(SessionIs(SessionFieldConfig, "cfg-docs")).Matches(session))
+	require.False(t, new(SessionIs(SessionFieldConfig, "cfg-sales")).Matches(session))
+	require.True(t, new(SessionIs(SessionFieldState, SessionRunning)).Matches(session))
+	require.False(t, new(SessionIs(SessionFieldState, SessionClosed)).Matches(session))
+
+	require.True(t, new(CreatedAtIs(SessionGte, began)).Matches(session), "$gte holds at the instant itself")
+	require.False(t, new(CreatedAtIs(SessionGte, began.Add(time.Microsecond))).Matches(session))
+	require.False(t, new(CreatedAtIs(SessionLt, began)).Matches(session), "$lt does not hold at the instant itself")
+	require.True(t, new(CreatedAtIs(SessionLt, began.Add(time.Microsecond))).Matches(session))
+
+	require.True(t, new(CustomHolds(map[string]string{"origin": "test"})).Matches(session))
+	require.False(t, new(CustomHolds(map[string]string{"origin": "test", "case": "a"})).Matches(session),
+		"every pair has to be held")
+	require.False(t, new(CustomHolds(map[string]string{"origin": "production"})).Matches(session))
+	require.False(t, new(CustomHolds(map[string]string{"attempt": "2"})).Matches(session),
+		"a number is not the string it prints as, as JSON containment has it")
+	require.False(t, new(CustomHolds(nil)).Matches(session), "no pairs holds for nothing, as the statement has it")
 }
 
 func TestEveryOrderIsTotalAndItsCursorConditionNamesEveryKey(t *testing.T) {

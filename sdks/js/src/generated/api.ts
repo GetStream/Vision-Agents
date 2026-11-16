@@ -2197,8 +2197,73 @@ export type paths = {
          * @description The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
          *     It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
          *     A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
+         *     With replaces, in a conversation kept in Stream Chat, it regenerates or edits an earlier response instead of asking something new. No text answers the replaced response's question again, beside its reply; text asks it in place of that question. Chat hides the conversation from there on, which is kept as a branch (listResponseSiblings, getResponseBranch, activateResponse), and the answer says where the channel was rewound to (rewound_to), so the acting device prunes its view at once. A request_id is required, and images, audio, videos and ui_action cannot go with replaces. A conversation has at most 100 edit and regenerate points; past them it is a 409 branch_limit_reached.
          */
         readonly post: operations["createResponse"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/sessions/{id}/responses/{response_id}/activate": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Make a hidden branch the conversation again
+         * @description The conversation from where the branch leaves it is hidden in Stream Chat and kept as a branch of its own, and the branch ending at the newest response under the one named is sent again: new messages, with new ids, sent with skip_push and carrying custom.resent_from, the id of the message each copies. The model answers from that branch from then on. Call it before asking anything while a hidden branch is shown.
+         *     A branch already on the conversation changes nothing and answers already_active, so a retry is safe. rewound_to says where the channel was rewound to, which the acting device prunes its own view from: the message itself is gone too when inclusive.
+         *     At most 100 messages are sent again; a longer branch is a 409 branch_too_long, and a conversation with no room left for another hidden range a 409 branch_limit_reached.
+         */
+        readonly post: operations["activateResponse"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/sessions/{id}/responses/{response_id}/branch": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The messages of a hidden branch, to show in place of the conversation's
+         * @description A regenerate or an edit hides the conversation from that point on in Stream Chat and keeps what it hid as a branch. This reads a branch back: its messages from where it leaves the conversation down to the newest response under the one named, oldest first, shaped as Chat messages so a client renders them the same way. Nothing is written to Chat and the model is not told.
+         *     A response on the conversation is shown by the channel itself, so it answers active: true and no items. A branch whose copies were deleted, as a memory truncate deletes them, is a 410 branch_unavailable.
+         */
+        readonly get: operations["getResponseBranch"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/sessions/{id}/responses/{response_id}/siblings": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The alternatives to one response: its regenerations, or the edits of its question
+         * @description What a ‹ i/n › control pages through. of=reply lists every answer to the response's question, the response's own included; of=question lists the questions asked at the same point of the conversation, the original and its edits, each as the first response that answered it. Oldest first, which is the order of their index.
+         *     active marks the one the conversation goes through now. Reading a sibling's messages is getResponseBranch, and making it the conversation is activateResponse. A response whose messages carry no branch mark, such as a turn spoken on a call, has no siblings but itself.
+         */
+        readonly get: operations["listResponseSiblings"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2239,7 +2304,8 @@ export type paths = {
         /**
          * Go back to a response and carry on from there
          * @description The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
-         *     The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
+         *     The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context.
+         *     A conversation kept in Stream Chat is rewound there too, the way an edit of the turn after the named response is: every later message is hidden from every read of the channel, so reopening the conversation does not bring the rewound turns back, and they are kept as a branch that listResponseSiblings, getResponseBranch and activateResponse read and bring back. It counts toward the conversation's 100 edit and regenerate points (409 branch_limit_reached), and is refused as an edit is: in a thread, dispatched or shared conversation, on a call, for a response whose messages carry no branch mark, such as a turn spoken on a call, and while an earlier switch is unfinished (409 switch_unfinished). Rewinding to the newest response changes nothing.
          */
         readonly post: operations["rewindSession"];
         readonly delete?: never;
@@ -2377,6 +2443,10 @@ export type paths = {
          *     - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
          *     - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
          *     - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+         *     - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename leaves alone
+         *     - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+         *     - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+         *     - `custom`: an object of string labels the session's `custom` holds, every one of them
          *
          *     Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
          *
@@ -3279,6 +3349,46 @@ export type paths = {
          * @description Where Telnyx asks what to do with a call to a number on this router's TeXML application. Unauthenticated because Telnyx is not a customer: each call is checked against the account's Ed25519 signature, and the answer dials that number's own trunk and no other. A deployment with no Telnyx key answers 404, so the path never hands out trunk credentials unsigned.
          */
         readonly post: operations["receiveTelnyxCall"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/phone/hooks/telnyx/events": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Receive a Telnyx account event
+         * @description Where the Telnyx account's notification channel sends account events, such as a port-out or a number order. Unauthenticated because Telnyx is not a customer: each event is checked against the account's Ed25519 signature, then logged and counted in vendor_account_events_total by its type and level. A deployment with no Telnyx key answers 404, so nobody else can raise the count.
+         */
+        readonly post: operations["receiveTelnyxEvent"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/phone/hooks/twilio/events": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Receive a Twilio account event
+         * @description Where the Twilio account sends its Monitor alerts (the Debugger webhook) and its usage triggers' callbacks, as form posts. Unauthenticated because Twilio is not a customer: each event is checked against X-Twilio-Signature, made with the account's Auth Token over ROUTER_PUBLIC_URL and this path, then logged and counted in vendor_account_events_total by its error code or usage category and its level. An alert whose Sid was counted in the last hour is answered 204 and not counted again. A deployment with no Twilio webhook token or no public URL answers 404, so nobody else can raise the count.
+         */
+        readonly post: operations["receiveTwilioEvent"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4399,6 +4509,16 @@ export type components = {
              */
             readonly trial_micros: number;
         };
+        readonly ActivatedBranch: {
+            /** @description The branch was already the conversation, and nothing changed. */
+            readonly already_active: boolean;
+            /** @description The newest response of the branch, which the next question is answered after. */
+            readonly leaf_response_id: string;
+            /** @description How many messages were sent again. */
+            readonly resent: number;
+            /** @description Where the channel was rewound to. Absent when nothing changed. */
+            readonly rewound_to?: components["schemas"]["RewoundTo"];
+        };
         readonly ActivityArea: {
             /** @description The area of the API, such as agent_setup or conversations. */
             readonly area: string;
@@ -4627,6 +4747,7 @@ export type components = {
             readonly whatsapp?: components["schemas"]["ChannelLineRequest"];
         };
         readonly AgentChatChannel: {
+            readonly answer?: components["schemas"]["ChatChannelAnswer"];
             /**
              * @description The channel type's name, as it comes before the colon in a channel's cid.
              * @example callouts
@@ -4647,12 +4768,13 @@ export type components = {
             readonly dispatch?: components["schemas"]["AgentDispatch"];
             /** @description What this agent does with episode cards. record and on write a card into the person's omni-channel for each phone call, app chat conversation and SMS, WhatsApp, iMessage or Slack thread under this agent. Only on has each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in start with the person's other cards. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any. */
             readonly episode_cards?: components["schemas"]["EpisodeCardsMode"];
-            /** @description The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. Absent for the default flow controller. */
+            /** @description The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop, as the agent chose it: stream/chorus-asr, or flow-controller for the flow controller whatever the router's default. Absent when it chose none, which the router's default rules. */
             readonly floor_control?: components["schemas"]["FloorControl"];
             readonly greeting?: components["schemas"]["Greeting"];
             readonly guardrail?: string;
             readonly harness?: components["schemas"]["Harness"];
             readonly id: string;
+            readonly image?: string;
             readonly instructions?: string;
             readonly keyterms?: readonly string[];
             readonly knowledge_namespace?: string;
@@ -4707,13 +4829,15 @@ export type components = {
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
             readonly episode_cards?: components["schemas"]["EpisodeCardsMode"];
-            /** @description Replaces the choice whole. Left out or null, the stored choice stays; an empty object is the default flow controller again. */
+            /** @description Replaces the choice whole. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules; {model: flow-controller} keeps the flow controller whatever that default. */
             readonly floor_control?: components["schemas"]["FloorControl"];
             /** @description Replaces the greeting whole. An empty text removes it. */
             readonly greeting?: components["schemas"]["Greeting"];
             /** @description A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail. */
             readonly guardrail?: string;
             readonly harness?: components["schemas"]["Harness"];
+            /** @description An empty string removes it, and the agent stops being offered generate_image. */
+            readonly image?: string;
             readonly instructions?: string;
             readonly keyterms?: readonly string[];
             readonly knowledge_namespace?: string;
@@ -4784,12 +4908,14 @@ export type components = {
             readonly dispatch?: components["schemas"]["AgentDispatch"];
             /** @description What this agent does with episode cards, for each phone call under it, each run of messages a Stream user writes to it in an agent channel of the app chat, and each thread of its SMS, WhatsApp, iMessage and Slack channel connections. record and on write the conversation's card, and its summary once it ends, into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number, the app chat's Stream user id or the Slack user. Only on reads them: a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any. off by default, and then a conversation writes no card and a session runs as it always did. Left out on an update, the stored setting stays. */
             readonly episode_cards?: components["schemas"]["EpisodeCardsMode"];
-            /** @description The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. A session request's wins over this. Left out or null on a create, the default flow controller; left out or null on an update, the stored choice stays; an empty object is the default flow controller again. */
+            /** @description The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. A session request's wins over this. Left out or null on a create, no choice: the router's default rules, the flow controller or stream/chorus-asr where the router defaults every agent to it; left out or null on an update, the stored choice stays; an empty object is no choice again; {model: flow-controller} keeps the flow controller whatever the router's default. */
             readonly floor_control?: components["schemas"]["FloorControl"];
             readonly greeting?: components["schemas"]["Greeting"];
             /** @description A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered. */
             readonly guardrail?: string;
             readonly harness?: components["schemas"]["Harness"];
+            /** @description What the agent draws pictures with, as a provider/model or a capability shortcut such as image-fast. Naming one offers a text agent with a Chat channel the generate_image tool, whose pictures are drawn after the turn and posted into the conversation when ready, billed like POST /v1/image/generations. Empty offers no such tool: unlike search there is no default. */
+            readonly image?: string;
             readonly instructions?: string;
             /** @description Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them. */
             readonly keyterms?: readonly string[];
@@ -4943,12 +5069,18 @@ export type components = {
          */
         readonly AgentMode: "voice" | "text";
         readonly AgentResponse: {
+            /** @description Where a regenerate or an edit stands among its alternatives, on the answer to one. Absent when it is the only one. */
+            readonly branch?: components["schemas"]["ResponseBranch"];
             /** Format: date-time */
             readonly created_at: string;
             readonly error?: string;
             /** Format: date-time */
             readonly finished_at?: string;
             readonly id: string;
+            /** @description The response this one was answered after, absent for a session's first. */
+            readonly parent_response_id?: string;
+            /** @description Where a regenerate or an edit rewound the conversation's channel to, on the answer to one that hid something: the acting device drops that message, when inclusive, and every message after it. */
+            readonly rewound_to?: components["schemas"]["RewoundTo"];
             /** @description What the person asked, which is the first item of every response. */
             readonly said?: string;
             readonly session_id: string;
@@ -5226,6 +5358,32 @@ export type components = {
              * @example telnyx
              */
             readonly vendor: string;
+        };
+        readonly BranchMessage: {
+            readonly attachments: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /** Format: date-time */
+            readonly created_at: string;
+            /** @description The message's custom data, as Stream Chat held it, with support_branch saying where it stands among its alternatives now. */
+            readonly custom: {
+                readonly [key: string]: unknown;
+            };
+            /** @description The id the message had in Stream Chat. */
+            readonly id: string;
+            /** @description user or assistant, for a message the router wrote. Absent for one somebody else wrote in the channel. */
+            readonly role?: string;
+            readonly text: string;
+            /** @description Who wrote it: the person, or the agent's Stream user. */
+            readonly user_id: string;
+        };
+        readonly BranchMessagePage: {
+            /** @description The response is on the conversation, which the channel shows: there are no items. */
+            readonly active: boolean;
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["BranchMessage"][];
+            /** @description Pass as `cursor` for the next page. Absent on the last one. */
+            readonly next_cursor?: string;
         };
         /** @description Who the app is, and the brand a vendor registered it as. */
         readonly BusinessProfile: {
@@ -5783,6 +5941,11 @@ export type components = {
              */
             readonly expires_at: string;
         };
+        /**
+         * @description Which messages in a channel of the type are answered. always answers every message. mentioned answers only a message that mentions the agent: its mentioned_users holds the Stream user whose id is the config's id, or its text has @ and that user's id or the config's name, as Stream's clients write a mention. A message that does not mention the agent gets no reply and starts no model; it stays in the channel, and the next answered message reads it as what was said before. Omitted is always.
+         * @enum {string}
+         */
+        readonly ChatChannelAnswer: "always" | "mentioned";
         readonly ChatToken: {
             /** @description The Stream app the channel is in, which the browser SDK connects to. */
             readonly api_key: string;
@@ -6628,6 +6791,8 @@ export type components = {
             readonly max_output_tokens?: number;
             /** @description How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's. */
             readonly reasoning_effort?: string;
+            /** @description An earlier response of a conversation kept in Stream Chat to regenerate or edit. With no text its question is answered again; with text, the text is asked in its place. Requires request_id, and takes no images, audio, videos, files or ui_action. */
+            readonly replaces?: string;
             /** @description Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and the frames of videos are shown to the model alone. A retry with the same id, text, images and voice note starts no second turn, returns no id and does not fetch its videos again: videos are not part of what a retry is matched on. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images. */
             readonly request_id?: string;
             /** @description What to answer, as though it had been said. May be empty when images or audio carry the question. Images with no text are shown on the person's message in a session kept in Stream Chat, so they are then data URIs, at most 8, with or without a request_id. */
@@ -6712,7 +6877,7 @@ export type components = {
             };
             /** @description A longer note about the conversation, searched alongside the title. */
             readonly description?: string;
-            /** @description The model that controls the floor in this session, and how long a caller may wait once they stop, over the agent config's. Left out or null, the config's; an empty object is the default flow controller. The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide. */
+            /** @description The model that controls the floor in this session, and how long a caller may wait once they stop, over the agent config's. Left out or null, the config's; an empty object is no choice, which the router's default rules; {model: flow-controller} keeps the flow controller whatever that default. A model the session was opened with, named here or the config's then, is its for its life, reopened included; no choice is stored as none, so a reopened session takes its config's choice as it is then, and the router's default after it. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide. */
             readonly floor_control?: components["schemas"]["FloorControl"];
             /** @description What the agent opens the call with, over what the config says. */
             readonly greeting?: components["schemas"]["Greeting"];
@@ -6776,7 +6941,7 @@ export type components = {
             readonly timezone?: string;
             /** @description What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it. */
             readonly title?: string;
-            /** @description How long the model waits for a tool result. Zero is the default. */
+            /** @description How long the model waits for the result of a tool the caller or a worker runs, in milliseconds. Zero or omitted is 30 seconds. A tool's own timeout_ms replaces it for that tool, which is how one slow tool, such as one that draws a picture, gets longer without every tool waiting as long. */
             readonly tool_timeout_ms?: number;
             readonly tools?: readonly components["schemas"]["SessionTool"][];
             /** @description Omit it and the config decides, or en-low-latency when there is no config. */
@@ -7142,7 +7307,7 @@ export type components = {
             readonly $in?: readonly string[];
         };
         readonly ErrorDetail: {
-            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), tier_limit_reached (the organization's tier limits refuse the work, and limit says which: a 403 for a call or a transfer, to a country the tier does not reach, past its minutes or recipients of the day, or past its calls at once; a 400 for an agent config whose sandbox is bigger or more open than the organization's sandbox limits allow. The message names the tier and the limit), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), document_too_large (a 413: a file sent with a response has more pages or text than one may, alone or with the files the conversation already holds, and the message names the limit), document_unreadable (a 400: a file sent with a response could not be read, such as one with a password, one that is damaged or one with no text in it, which retrying the same file does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
+            /** @description What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), tier_limit_reached (the organization's tier limits refuse the work, and limit says which: a 403 for a call or a transfer, to a country the tier does not reach, past its minutes or recipients of the day, or past its calls at once; a 400 for an agent config whose sandbox is bigger or more open than the organization's sandbox limits allow. The message names the tier and the limit), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), document_too_large (a 413: a file sent with a response has more pages or text than one may, alone or with the files the conversation already holds, and the message names the limit), document_unreadable (a 400: a file sent with a response could not be read, such as one with a password, one that is damaged or one with no text in it, which retrying the same file does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), branch_limit_reached (a 409: the conversation has as many edit and regenerate points as Stream Chat keeps for it, 100, so a regenerate or an edit is refused and the conversation is continued in a new chat; asking and reading are unaffected), branch_too_long (a 409: the branch an activation would bring back is more than 100 messages to send again, so it is continued in a new chat), branch_unavailable (a 410: the copies of a hidden branch were deleted, as a memory truncate deletes them, so it can be neither read nor brought back), switch_unfinished (a 409: a regenerate, an edit or an activation of the session failed after Stream Chat may have rewound, and finishing it still fails because Stream Chat does not answer, so the session's questions, regenerates, edits and activations are refused meanwhile; try again: each one tries to finish it first, so it clears once Stream Chat answers), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know. */
             readonly code: string;
             /**
              * Format: uri
@@ -7171,16 +7336,16 @@ export type components = {
             /** @description Public HTTP(S) URL or base64 data URI, such as data:application/pdf;base64,.... A PDF or a Word document (DOCX or DOC), told apart by its bytes. At most 20 MiB fetched, or 8 MiB as a data URI. The router fetches a URL itself, and refuses one that resolves to a private or loopback address. */
             readonly url: string;
         };
-        /** @description The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole. */
+        /** @description The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default; anything else replaces the stored choice whole. */
         readonly FloorControl: {
             /**
              * Format: int64
-             * @description The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point.
+             * @description The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point. It is stream/chorus-asr's: with flow-controller it is refused (400).
              * @example 800
              */
             readonly max_wait_ms?: number;
             /**
-             * @description The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one there is. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured).
+             * @description The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one model there is; flow-controller keeps the flow controller, which rules the floor where no model does, whatever the router defaults an agent that chose none to. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured).
              * @example stream/chorus-asr
              */
             readonly model?: string;
@@ -7205,6 +7370,8 @@ export type components = {
             /** @description Carry the parent's history only up to the end of this response, so the fork continues from that point rather than from where the parent is now. The history is read from what the parent recorded, which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with messages false. */
             readonly response_id?: string;
             readonly title?: string;
+            /** @description How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds, since its row does not keep one. Zero is 30 seconds, as on createSession. */
+            readonly tool_timeout_ms?: number;
         };
         readonly GeneratedImage: {
             /**
@@ -7419,13 +7586,13 @@ export type components = {
             readonly content_type: string;
             /** Format: date-time */
             readonly created_at: string;
-            /** @description Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good. */
+            /** @description Why the uploaded file could not be read, or why the passages of posted text could not all be written, written for whoever sent it. Set while a read that failed is tried again, and once it has failed for good. */
             readonly error?: string;
             readonly id: string;
             readonly namespace: string;
             /** @description How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet. */
             readonly pages: number;
-            /** @description How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read. */
+            /** @description How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read. A document that is pending or failed can also count the passages of the version before, so that deleting it removes every passage either version wrote. */
             readonly passages: number;
             /**
              * @description What the document was posted as, and what its passages are keyed by.
@@ -7521,7 +7688,7 @@ export type components = {
             readonly text: string;
         };
         /**
-         * @description Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
+         * @description Where the document has got to. Pending is an uploaded file waiting to be read or being read, or posted text whose passages are being written; text that stays pending was cut off and is fixed by posting it again. Failed is a file that could not be read, or posted text whose write stopped part way, and error says why: the passages written before the failure can still be looked up, and posting the document again or deleting it fixes it.
          * @enum {string}
          */
         readonly KnowledgeDocumentState: "pending" | "indexed" | "failed";
@@ -8954,6 +9121,35 @@ export type components = {
             /** @description What to answer, as though it had been said. May be empty when photos or audio carry the question. */
             readonly text: string;
         };
+        readonly ResponseBranch: {
+            /** @description How many there are. */
+            readonly count: number;
+            /** @description Its place, from 1, oldest first. */
+            readonly index: number;
+            /**
+             * @description reply counts the answers to one question, a regenerate's; question the questions asked at one point, an edit's.
+             * @enum {string}
+             */
+            readonly of: "reply" | "question";
+        };
+        readonly ResponseSibling: {
+            /** @description Whether the conversation goes through this sibling now: for a question, through any answer to it. */
+            readonly active: boolean;
+            /** Format: date-time */
+            readonly created_at: string;
+            /** @description The response, which getResponseBranch reads and activateResponse brings back. */
+            readonly id: string;
+            /** @description Its place among the siblings, from 1, oldest first: the i of ‹ i/n ›. */
+            readonly index: number;
+            /** @description The question the response answers. */
+            readonly said?: string;
+        };
+        readonly ResponseSiblingPage: {
+            readonly has_more: boolean;
+            readonly items: readonly components["schemas"]["ResponseSibling"][];
+            /** @description Pass as `cursor` for the next page. Absent on the last one. */
+            readonly next_cursor?: string;
+        };
         /** @description How a conversation is handed back to the model when a session carries it on. */
         readonly ResumeHistory: {
             /** @description Hand each reply back with the tool calls it made and what they returned, as they were recorded, so a resumed agent knows what it already looked up and does not run its tools again. Over max_characters the oldest results are replaced with [result trimmed] before any turn is left out, and the conversation's first message is kept. A reply whose calls were not recorded, have been removed with their session or redacted under a retention setting is handed back as text. Results are replayed as recorded: credentials redacted and any result over 8 KB cut to its first 2048 characters. False turns off what a broader level turned on. Off by default. */
@@ -9028,6 +9224,12 @@ export type components = {
         readonly RewindSessionRequest: {
             /** @description The response to carry on from. It is kept; everything after it is not. */
             readonly response_id: string;
+        };
+        readonly RewoundTo: {
+            /** @description The message itself is hidden too. */
+            readonly inclusive: boolean;
+            /** @description The message the channel was rewound to. Every message after it is hidden. */
+            readonly message_id: string;
         };
         readonly RollupRequest: {
             /** Format: date-time */
@@ -9488,10 +9690,20 @@ export type components = {
             readonly $or?: readonly components["schemas"]["SessionFilter"][];
             /** @description The agent name the session was opened against. */
             readonly agent?: components["schemas"]["Equals"];
+            /** @description The agent config the session ran under, which stays the same when the agent is renamed. */
+            readonly config_id?: components["schemas"]["Equals"];
+            /** @description When the session began. */
+            readonly created_at?: components["schemas"]["TimeWindow"];
+            /** @description Labels the session's custom object holds, every one of them: {"origin": "test"} matches a session whose custom has origin set to the string "test". */
+            readonly custom?: {
+                readonly [key: string]: string;
+            };
             /** @description The project the session belongs to. */
             readonly project_id?: components["schemas"]["EqualsOrIn"];
             /** @description The score the review gave the conversation. A session with no review matches no condition on it. Only a server-side caller may use it. */
             readonly review_score?: components["schemas"]["ReviewScoreMatch"];
+            /** @description Whether the agent is still in the call. */
+            readonly state?: components["schemas"]["SessionStateEquals"];
             /** @description Full text over the title, description, project and agent name, sorted by relevance. Once per filter, at its top level or in a top-level $and, and never inside $or. */
             readonly text?: components["schemas"]["TextMatch"];
             /** @description Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for. Only at the top level of the filter or in a top-level $and. */
@@ -9593,6 +9805,10 @@ export type components = {
          * @enum {string}
          */
         readonly SessionState: "live" | "ended";
+        /** @description Matches live or ended: "live" is short for {"$eq": "live"}. */
+        readonly SessionStateEquals: components["schemas"]["SessionState"] | {
+            readonly $eq: components["schemas"]["SessionState"];
+        };
         /** @description One of the caller's own functions. The model is offered it by name and description; running it is the caller's business, over the events socket. */
         readonly SessionTool: {
             readonly approval?: components["schemas"]["SessionToolApproval"];
@@ -10244,7 +10460,7 @@ export type components = {
             /** @description The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
-            /** @description agent.yaml's floor_control: the model that controls the agent's floor, and how long a caller may wait once they stop. Sent, it replaces the stored choice whole, and an empty object is the default flow controller again; left out or null, the stored one stays, and an agent that never chose has the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400), and so is a max_wait_ms shorter than every point the chorus-asr server publishes, before anything is written. When the server cannot be asked the wait is kept and a warning says so, as it does of a point that fails the server's dictation guard. */
+            /** @description agent.yaml's floor_control: the model that controls the agent's floor, and how long a caller may wait once they stop. Sent, it replaces the stored choice whole, and an empty object is no choice again; left out or null, the stored one stays. An agent that chose none gets the router's default: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever that default. stream/chorus-asr on a router without a chorus-asr server is refused (400), and so is a max_wait_ms shorter than every point the chorus-asr server publishes, before anything is written. When the server cannot be asked the wait is kept and a warning says so, as it does of a point that fails the server's dictation guard. */
             readonly floor_control?: components["schemas"]["FloorControl"];
             readonly greeting?: components["schemas"]["Greeting"];
             /** @description The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered. */
@@ -10252,6 +10468,8 @@ export type components = {
             readonly harness?: components["schemas"]["Harness"];
             /** @description A fingerprint of the directory. A second sync with the same hash does nothing. */
             readonly hash: string;
+            /** @description agent.yaml's image: what the agent draws pictures with. Left out, the stored one stays; an empty string removes it. */
+            readonly image?: string;
             readonly instructions?: string;
             readonly keyterms?: readonly string[];
             readonly knowledge?: readonly components["schemas"]["KnowledgeDocument"][];
@@ -10508,6 +10726,13 @@ export type components = {
              */
             readonly tts_ttfb_ms?: number | null;
             readonly turn_id: string;
+        };
+        /** @description A window of time: $gte is its start, which it holds, and $lt its end, which it does not. Either may be left out, and $gte is before $lt. */
+        readonly TimeWindow: {
+            /** Format: date-time */
+            readonly $gte?: string;
+            /** Format: date-time */
+            readonly $lt?: string;
         };
         /** @description A person's answer to a call awaiting their approval, from a persistent text command. It changes only how the call is shown; the call still needs a tool_result. With allowed false and only tool_call_id it declines the sign-in a connector call waits for (awaiting_authorization) instead, and the router answers that call itself. For a connector call whose binding sets require_approval, the answer decides whether the router sends it, and names tool_call_id and request_id; turn_id may be left out. */
         readonly ToolApprovalCommand: {
@@ -16724,7 +16949,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
-            /** @description The request id was already accepted with different content */
+            /** @description The request id was already accepted with different content, or a regenerate or an edit found the conversation changed or out of room */
             readonly 409: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -16733,6 +16958,169 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description A regenerate or an edit found the conversation's queued messages cannot be written to Stream Chat now */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly activateResponse: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The session, as returned when it was created. */
+                readonly id: string;
+                /** @description A response of the branch to bring back. The branch ends at the newest response under it. */
+                readonly response_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The branch is the conversation */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ActivatedBranch"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description The conversation changed under the switch, or the branch is too long or out of room */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The branch's copies were deleted */
+            readonly 410: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description The conversation's queued messages cannot be written to Stream Chat now */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly getResponseBranch: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The `next_cursor` of the previous page. Omitted is the first page. */
+                readonly cursor?: string;
+                /** @description Up to 200. Omitted is 100. */
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                /** @description The session, as returned when it was created. */
+                readonly id: string;
+                /** @description A response of the branch, as listResponseSiblings names it. */
+                readonly response_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The branch's messages, oldest first */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BranchMessagePage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description The branch's copies were deleted */
+            readonly 410: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly listResponseSiblings: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page. */
+                readonly cursor?: string;
+                /** @description Up to 100. Omitted is 25. */
+                readonly limit?: number;
+                /** @description reply lists the answers to the response's question; question lists the questions asked in its place. Omitted is reply. */
+                readonly of?: "reply" | "question";
+            };
+            readonly header?: never;
+            readonly path: {
+                /** @description The session, as returned when it was created. */
+                readonly id: string;
+                /** @description The response whose alternatives to list, itself among them. */
+                readonly response_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The response's siblings, oldest first */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ResponseSiblingPage"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
             readonly 503: components["responses"]["Unavailable"];
         };
@@ -16810,6 +17198,15 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             readonly 500: components["responses"]["InternalError"];
             readonly 503: components["responses"]["Unavailable"];
         };
@@ -18983,6 +19380,100 @@ export interface operations {
                 content?: never;
             };
             /** @description The call is over 64 KiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly receiveTelnyxEvent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The event is counted */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The signed body is not a Telnyx event */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The event is not signed by Telnyx */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Telnyx events are not configured */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The event is over 64 KiB */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 500: components["responses"]["InternalError"];
+        };
+    };
+    readonly receiveTwilioEvent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The event is counted, or is an alert already counted in the last hour */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The signed form is not a Monitor alert or a usage trigger */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The event is not signed by Twilio */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Twilio events are not configured */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The event is over 1 MiB */
             readonly 413: {
                 headers: {
                     readonly [name: string]: unknown;

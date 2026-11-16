@@ -149,6 +149,17 @@ type writtenReply struct {
 // toolReplyEffort is how hard the model thinks before answering a tool result.
 const toolReplyEffort = "low"
 
+// raises reports whether asking for effort is a floor this model's own default sits
+// below: a model whose default already thinks harder (Claude's high) keeps it rather
+// than being turned down. ReasoningEfforts are listed weakest first.
+func raises(model llm.Capabilities, effort string) bool {
+	want := slices.Index(model.ReasoningEfforts, effort)
+	if want < 0 {
+		return false
+	}
+	return slices.Index(model.ReasoningEfforts, model.DefaultEffort) < want
+}
+
 type Turn struct {
 	// ID correlates the reply with the turn the agent is measuring.
 	ID string
@@ -496,7 +507,7 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	// while the tool ran, so it costs them nothing they notice, and without it a model can
 	// ask the caller to confirm a step the result already lets it take.
 	var reasoning llm.ReasoningParams
-	if turn.AfterTool && slices.Contains(model.ReasoningEfforts, toolReplyEffort) {
+	if turn.AfterTool && raises(model, toolReplyEffort) {
 		reasoning.Effort = toolReplyEffort
 	}
 

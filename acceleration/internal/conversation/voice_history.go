@@ -82,8 +82,8 @@ func messageFromThread(wire getstream.MessageResponse, thread bool) (Message, bo
 }
 
 // messageFromPerson reads a message as a person's, its author's, whatever custom data it
-// carries: in a channel of a type other than agent, every message not written as the agent
-// (writtenByAgent).
+// carries: in a channel of a type other than agent, every message not written as the agent,
+// and in any channel, a turn of the agent's somebody else wrote (readsAsWritten).
 func messageFromPerson(wire getstream.MessageResponse) (Message, bool) {
 	if wire.DeletedAt != nil || wire.CreatedAt.Time == nil || wire.ID == "" || len(wire.ID) > 128 || wire.User.ID == "" {
 		return Message{}, false
@@ -92,6 +92,9 @@ func messageFromPerson(wire getstream.MessageResponse) (Message, bool) {
 		StartedAt: *wire.CreatedAt.Time, authorID: wire.User.ID, written: true, Files: threadPhotos(wire.Attachments)}
 	if wire.User.Name != nil {
 		m.authorName = *wire.User.Name
+	}
+	for _, user := range wire.MentionedUsers {
+		m.mentioned = append(m.mentioned, user.ID)
 	}
 	return m, m.Text != "" || len(m.Files) > 0
 }

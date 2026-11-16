@@ -83,7 +83,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param team The team the session's work is counted under, its team spend limits included, as team:<name> is among a token's usage categories: 1 to 59 letters, digits, _ . and -. Left out, the session is counted under the team the caller's token names, else the agent config's team tag. A token naming another team is refused with a 400: the team a token was signed for is not moved. Server-side only: a device sending it is refused with a 403, since its team is the one its token was signed for.
  * @param timezone The end user's IANA timezone, such as Europe/Amsterdam, which a device knows and the router does not. It sets the zone the agent reads dates in for this session and, for a user the caller may name, is remembered as theirs for the scheduled tasks and sessions that follow. An unknown zone is refused with a 400 invalid_timezone.
  * @param title What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.
- * @param toolTimeoutMs How long the model waits for a tool result. Zero is the default.
+ * @param toolTimeoutMs How long the model waits for the result of a tool the caller or a worker runs, in milliseconds. Zero or omitted is 30 seconds. A tool's own timeout_ms replaces it for that tool, which is how one slow tool, such as one that draws a picture, gets longer without every tool waiting as long.
  * @param tools 
  * @param tts Omit it and the config decides, or en-low-latency when there is no config.
  * @param userId The name the agent joins the call as. It is not the owner of the session. The owner is the caller, from its auth. A backend opens a session for one of its end users with the query parameter user_id.
@@ -231,7 +231,7 @@ internal data class CreateSessionRequest (
     @SerialName(value = "title")
     val title: kotlin.String? = null,
 
-    /* How long the model waits for a tool result. Zero is the default. */
+    /* How long the model waits for the result of a tool the caller or a worker runs, in milliseconds. Zero or omitted is 30 seconds. A tool's own timeout_ms replaces it for that tool, which is how one slow tool, such as one that draws a picture, gets longer without every tool waiting as long. */
     @SerialName(value = "tool_timeout_ms")
     val toolTimeoutMs: kotlin.Int? = null,
 

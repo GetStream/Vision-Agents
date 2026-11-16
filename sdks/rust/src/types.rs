@@ -181,6 +181,19 @@ impl ::std::convert::TryFrom<::std::string::String> for AccountStatus {
         value.parse()
     }
 }
+///`ActivatedBranch`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ActivatedBranch {
+    ///The branch was already the conversation, and nothing changed.
+    pub already_active: bool,
+    ///The newest response of the branch, which the next question is answered after.
+    pub leaf_response_id: ::std::string::String,
+    ///How many messages were sent again.
+    pub resent: i64,
+    ///Where the channel was rewound to. Absent when nothing changed.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub rewound_to: ::std::option::Option<RewoundTo>,
+}
 ///`ActivityArea`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct ActivityArea {
@@ -471,6 +484,8 @@ pub struct AgentChannels {
 ///`AgentChatChannel`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct AgentChatChannel {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub answer: ::std::option::Option<ChatChannelAnswer>,
     ///The channel type's name, as it comes before the colon in a channel's cid.
     #[serde(rename = "type")]
     pub type_: ::std::string::String,
@@ -497,7 +512,7 @@ pub struct AgentConfig {
     ///What this agent does with episode cards. record and on write a card into the person's omni-channel for each phone call, app chat conversation and SMS, WhatsApp, iMessage or Slack thread under this agent. Only on has each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in start with the person's other cards. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub episode_cards: ::std::option::Option<EpisodeCardsMode>,
-    ///The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. Absent for the default flow controller.
+    ///The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop, as the agent chose it: stream/chorus-asr, or flow-controller for the flow controller whatever the router's default. Absent when it chose none, which the router's default rules.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub floor_control: ::std::option::Option<FloorControl>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -507,6 +522,8 @@ pub struct AgentConfig {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub harness: ::std::option::Option<Harness>,
     pub id: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub image: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub instructions: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -591,7 +608,7 @@ pub struct AgentConfigPatch {
     pub dispatch: ::std::option::Option<AgentDispatch>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub episode_cards: ::std::option::Option<EpisodeCardsMode>,
-    ///Replaces the choice whole. Left out or null, the stored choice stays; an empty object is the default flow controller again.
+    ///Replaces the choice whole. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules; {model: flow-controller} keeps the flow controller whatever that default.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub floor_control: ::std::option::Option<FloorControl>,
     ///Replaces the greeting whole. An empty text removes it.
@@ -602,6 +619,9 @@ pub struct AgentConfigPatch {
     pub guardrail: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub harness: ::std::option::Option<Harness>,
+    ///An empty string removes it, and the agent stops being offered generate_image.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub image: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub instructions: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -712,7 +732,7 @@ pub struct AgentConfigRequest {
     ///What this agent does with episode cards, for each phone call under it, each run of messages a Stream user writes to it in an agent channel of the app chat, and each thread of its SMS, WhatsApp, iMessage and Slack channel connections. record and on write the conversation's card, and its summary once it ends, into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number, the app chat's Stream user id or the Slack user. Only on reads them: a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any. off by default, and then a conversation writes no card and a session runs as it always did. Left out on an update, the stored setting stays.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub episode_cards: ::std::option::Option<EpisodeCardsMode>,
-    ///The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. A session request's wins over this. Left out or null on a create, the default flow controller; left out or null on an update, the stored choice stays; an empty object is the default flow controller again.
+    ///The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. A session request's wins over this. Left out or null on a create, no choice: the router's default rules, the flow controller or stream/chorus-asr where the router defaults every agent to it; left out or null on an update, the stored choice stays; an empty object is no choice again; {model: flow-controller} keeps the flow controller whatever the router's default.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub floor_control: ::std::option::Option<FloorControl>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -722,6 +742,9 @@ pub struct AgentConfigRequest {
     pub guardrail: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub harness: ::std::option::Option<Harness>,
+    ///What the agent draws pictures with, as a provider/model or a capability shortcut such as image-fast. Naming one offers a text agent with a Chat channel the generate_image tool, whose pictures are drawn after the turn and posted into the conversation when ready, billed like POST /v1/image/generations. Empty offers no such tool: unlike search there is no default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub image: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub instructions: ::std::option::Option<::std::string::String>,
     ///Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
@@ -1100,12 +1123,21 @@ impl ::std::convert::TryFrom<::std::string::String> for AgentMode {
 ///`AgentResponse`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct AgentResponse {
+    ///Where a regenerate or an edit stands among its alternatives, on the answer to one. Absent when it is the only one.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub branch: ::std::option::Option<ResponseBranch>,
     pub created_at: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub error: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub finished_at: ::std::option::Option<::std::string::String>,
     pub id: ::std::string::String,
+    ///The response this one was answered after, absent for a session's first.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub parent_response_id: ::std::option::Option<::std::string::String>,
+    ///Where a regenerate or an edit rewound the conversation's channel to, on the answer to one that hid something: the acting device drops that message, when inclusive, and every message after it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub rewound_to: ::std::option::Option<RewoundTo>,
     ///What the person asked, which is the first item of every response.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub said: ::std::option::Option<::std::string::String>,
@@ -1800,6 +1832,33 @@ pub struct AvailableNumber {
     pub region: ::std::option::Option<::std::string::String>,
     ///Who is offering it, which is also who to buy it from.
     pub vendor: ::std::string::String,
+}
+///`BranchMessage`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct BranchMessage {
+    pub attachments: ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+    pub created_at: ::std::string::String,
+    ///The message's custom data, as Stream Chat held it, with support_branch saying where it stands among its alternatives now.
+    pub custom: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    ///The id the message had in Stream Chat.
+    pub id: ::std::string::String,
+    ///user or assistant, for a message the router wrote. Absent for one somebody else wrote in the channel.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub role: ::std::option::Option<::std::string::String>,
+    pub text: ::std::string::String,
+    ///Who wrote it: the person, or the agent's Stream user.
+    pub user_id: ::std::string::String,
+}
+///`BranchMessagePage`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct BranchMessagePage {
+    ///The response is on the conversation, which the channel shows: there are no items.
+    pub active: bool,
+    pub has_more: bool,
+    pub items: ::std::vec::Vec<BranchMessage>,
+    ///Pass as `cursor` for the next page. Absent on the last one.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub next_cursor: ::std::option::Option<::std::string::String>,
 }
 ///Who the app is, and the brand a vendor registered it as.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -3060,6 +3119,52 @@ pub struct ChannelLink {
     pub code: ::std::string::String,
     ///When the code stops working.
     pub expires_at: ::std::string::String,
+}
+///Which messages in a channel of the type are answered. always answers every message. mentioned answers only a message that mentions the agent: its mentioned_users holds the Stream user whose id is the config's id, or its text has @ and that user's id or the config's name, as Stream's clients write a mention. A message that does not mention the agent gets no reply and starts no model; it stays in the channel, and the next answered message reads it as what was said before. Omitted is always.
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum ChatChannelAnswer {
+    #[serde(rename = "always")]
+    Always,
+    #[serde(rename = "mentioned")]
+    Mentioned,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for ChatChannelAnswer {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Always => f.write_str("always"),
+            Self::Mentioned => f.write_str("mentioned"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for ChatChannelAnswer {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "always" => Ok(Self::Always),
+            "mentioned" => Ok(Self::Mentioned),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ChatChannelAnswer {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ChatChannelAnswer {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`ChatToken`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -4699,6 +4804,9 @@ pub struct CreateResponseRequest {
     ///How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub reasoning_effort: ::std::option::Option<::std::string::String>,
+    ///An earlier response of a conversation kept in Stream Chat to regenerate or edit. With no text its question is answered again; with text, the text is asked in its place. Requires request_id, and takes no images, audio, videos, files or ui_action.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub replaces: ::std::option::Option<::std::string::String>,
     ///Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and the frames of videos are shown to the model alone. A retry with the same id, text, images and voice note starts no second turn, returns no id and does not fetch its videos again: videos are not part of what a retry is matched on. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub request_id: ::std::option::Option<::std::string::String>,
@@ -4795,7 +4903,7 @@ pub struct CreateSessionRequest {
     ///A longer note about the conversation, searched alongside the title.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub description: ::std::option::Option<::std::string::String>,
-    ///The model that controls the floor in this session, and how long a caller may wait once they stop, over the agent config's. Left out or null, the config's; an empty object is the default flow controller. The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide.
+    ///The model that controls the floor in this session, and how long a caller may wait once they stop, over the agent config's. Left out or null, the config's; an empty object is no choice, which the router's default rules; {model: flow-controller} keeps the flow controller whatever that default. A model the session was opened with, named here or the config's then, is its for its life, reopened included; no choice is stored as none, so a reopened session takes its config's choice as it is then, and the router's default after it. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub floor_control: ::std::option::Option<FloorControl>,
     ///What the agent opens the call with, over what the config says.
@@ -4875,7 +4983,7 @@ pub struct CreateSessionRequest {
     ///What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub title: ::std::option::Option<::std::string::String>,
-    ///How long the model waits for a tool result. Zero is the default.
+    ///How long the model waits for the result of a tool the caller or a worker runs, in milliseconds. Zero or omitted is 30 seconds. A tool's own timeout_ms replaces it for that tool, which is how one slow tool, such as one that draws a picture, gets longer without every tool waiting as long.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tool_timeout_ms: ::std::option::Option<i64>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -5755,7 +5863,7 @@ pub enum EqualsOrIn {
 ///`ErrorDetail`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct ErrorDetail {
-    ///What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), tier_limit_reached (the organization's tier limits refuse the work, and limit says which: a 403 for a call or a transfer, to a country the tier does not reach, past its minutes or recipients of the day, or past its calls at once; a 400 for an agent config whose sandbox is bigger or more open than the organization's sandbox limits allow. The message names the tier and the limit), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), document_too_large (a 413: a file sent with a response has more pages or text than one may, alone or with the files the conversation already holds, and the message names the limit), document_unreadable (a 400: a file sent with a response could not be read, such as one with a password, one that is damaged or one with no text in it, which retrying the same file does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+    ///What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), tier_limit_reached (the organization's tier limits refuse the work, and limit says which: a 403 for a call or a transfer, to a country the tier does not reach, past its minutes or recipients of the day, or past its calls at once; a 400 for an agent config whose sandbox is bigger or more open than the organization's sandbox limits allow. The message names the tier and the limit), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), document_too_large (a 413: a file sent with a response has more pages or text than one may, alone or with the files the conversation already holds, and the message names the limit), document_unreadable (a 400: a file sent with a response could not be read, such as one with a password, one that is damaged or one with no text in it, which retrying the same file does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), branch_limit_reached (a 409: the conversation has as many edit and regenerate points as Stream Chat keeps for it, 100, so a regenerate or an edit is refused and the conversation is continued in a new chat; asking and reading are unaffected), branch_too_long (a 409: the branch an activation would bring back is more than 100 messages to send again, so it is continued in a new chat), branch_unavailable (a 410: the copies of a hidden branch were deleted, as a memory truncate deletes them, so it can be neither read nor brought back), switch_unfinished (a 409: a regenerate, an edit or an activation of the session failed after Stream Chat may have rewound, and finishing it still fails because Stream Chat does not answer, so the session's questions, regenerates, edits and activations are refused meanwhile; try again: each one tries to finish it first, so it clears once Stream Chat answers), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
     pub code: ::std::string::String,
     ///Where the code is explained.
     pub doc_url: ::std::string::String,
@@ -5879,14 +5987,14 @@ pub struct FileSource {
     ///Public HTTP(S) URL or base64 data URI, such as data:application/pdf;base64,.... A PDF or a Word document (DOCX or DOC), told apart by its bytes. At most 20 MiB fetched, or 8 MiB as a data URI. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
     pub url: ::std::string::String,
 }
-///The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole.
+///The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default; anything else replaces the stored choice whole.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct FloorControl {
-    ///The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point.
+    ///The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point. It is stream/chorus-asr's: with flow-controller it is refused (400).
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub max_wait_ms: ::std::option::Option<i64>,
-    ///The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one there is. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured).
+    ///The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one model there is; flow-controller keeps the flow controller, which rules the floor where no model does, whatever the router defaults an agent that chose none to. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured).
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub model: ::std::option::Option<::std::string::String>,
 }
@@ -5916,6 +6024,9 @@ pub struct ForkSessionRequest {
     pub response_id: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub title: ::std::option::Option<::std::string::String>,
+    ///How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds, since its row does not keep one. Zero is 30 seconds, as on createSession.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub tool_timeout_ms: ::std::option::Option<i64>,
 }
 ///`GeneratedImage`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
@@ -6602,14 +6713,14 @@ pub struct IndexedKnowledgeDocument {
     ///The type the file was uploaded as, or text/markdown for text posted. Empty for a document written before types were kept.
     pub content_type: ::std::string::String,
     pub created_at: ::std::string::String,
-    ///Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good.
+    ///Why the uploaded file could not be read, or why the passages of posted text could not all be written, written for whoever sent it. Set while a read that failed is tried again, and once it has failed for good.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub error: ::std::option::Option<::std::string::String>,
     pub id: ::std::string::String,
     pub namespace: ::std::string::String,
     ///How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet.
     pub pages: i64,
-    ///How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read.
+    ///How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read. A document that is pending or failed can also count the passages of the version before, so that deleting it removes every passage either version wrote.
     pub passages: i64,
     ///What the document was posted as, and what its passages are keyed by.
     pub source: ::std::string::String,
@@ -6795,7 +6906,7 @@ pub struct KnowledgeDocument {
     ///The document, whole. It is cut into passages here.
     pub text: ::std::string::String,
 }
-///Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
+///Where the document has got to. Pending is an uploaded file waiting to be read or being read, or posted text whose passages are being written; text that stays pending was cut off and is fixed by posting it again. Failed is a file that could not be read, or posted text whose write stopped part way, and error says why: the passages written before the failure can still be looked up, and posting the document again or deleting it fixes it.
 #[derive(
     ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
@@ -9615,6 +9726,85 @@ pub struct RespondRequest {
     ///What to answer, as though it had been said. May be empty when photos or audio carry the question.
     pub text: ::std::string::String,
 }
+///`ResponseBranch`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct ResponseBranch {
+    ///How many there are.
+    pub count: i64,
+    ///Its place, from 1, oldest first.
+    pub index: i64,
+    ///reply counts the answers to one question, a regenerate's; question the questions asked at one point, an edit's.
+    pub of: ResponseBranchOf,
+}
+///reply counts the answers to one question, a regenerate's; question the questions asked at one point, an edit's.
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum ResponseBranchOf {
+    #[serde(rename = "reply")]
+    Reply,
+    #[serde(rename = "question")]
+    Question,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for ResponseBranchOf {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Reply => f.write_str("reply"),
+            Self::Question => f.write_str("question"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for ResponseBranchOf {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "reply" => Ok(Self::Reply),
+            "question" => Ok(Self::Question),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ResponseBranchOf {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ResponseBranchOf {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`ResponseSibling`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ResponseSibling {
+    ///Whether the conversation goes through this sibling now: for a question, through any answer to it.
+    pub active: bool,
+    pub created_at: ::std::string::String,
+    ///The response, which getResponseBranch reads and activateResponse brings back.
+    pub id: ::std::string::String,
+    ///Its place among the siblings, from 1, oldest first: the i of ‹ i/n ›.
+    pub index: i64,
+    ///The question the response answers.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub said: ::std::option::Option<::std::string::String>,
+}
+///`ResponseSiblingPage`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ResponseSiblingPage {
+    pub has_more: bool,
+    pub items: ::std::vec::Vec<ResponseSibling>,
+    ///Pass as `cursor` for the next page. Absent on the last one.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub next_cursor: ::std::option::Option<::std::string::String>,
+}
 ///How a conversation is handed back to the model when a session carries it on.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 pub struct ResumeHistory {
@@ -9811,6 +10001,14 @@ pub struct ReviewUseCaseRequest {
 pub struct RewindSessionRequest {
     ///The response to carry on from. It is kept; everything after it is not.
     pub response_id: ::std::string::String,
+}
+///`RewoundTo`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct RewoundTo {
+    ///The message itself is hidden too.
+    pub inclusive: bool,
+    ///The message the channel was rewound to. Every message after it is hidden.
+    pub message_id: ::std::string::String,
 }
 ///`RollupRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -10880,6 +11078,18 @@ pub struct SessionFilter {
         skip_serializing_if = "::std::option::Option::is_none"
     )]
     pub and: ::std::option::Option<::std::vec::Vec<SessionFilter>>,
+    ///The agent config the session ran under, which stays the same when the agent is renamed.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub config_id: ::std::option::Option<Equals>,
+    ///When the session began.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub created_at: ::std::option::Option<TimeWindow>,
+    ///Labels the session's custom object holds, every one of them: {"origin": "test"} matches a session whose custom has origin set to the string "test".
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub custom: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
     ///At least one of these filters holds. It chooses among the sessions the caller may see and never adds to them. text and user_id are refused inside it.
     #[serde(rename = "$or", skip_serializing_if = "::std::option::Option::is_none")]
     pub or: ::std::option::Option<::std::vec::Vec<SessionFilter>>,
@@ -10889,6 +11099,9 @@ pub struct SessionFilter {
     ///The score the review gave the conversation. A session with no review matches no condition on it. Only a server-side caller may use it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub review_score: ::std::option::Option<ReviewScoreMatch>,
+    ///Whether the agent is still in the call.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub state: ::std::option::Option<SessionStateEquals>,
     ///Full text over the title, description, project and agent name, sorted by relevance. Once per filter, at its top level or in a top-level $and, and never inside $or.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub text: ::std::option::Option<TextMatch>,
@@ -11380,6 +11593,21 @@ impl ::std::convert::TryFrom<::std::string::String> for SessionState {
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
+    }
+}
+///Matches live or ended: "live" is short for {"$eq": "live"}.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum SessionStateEquals {
+    SessionState(SessionState),
+    Object {
+        #[serde(rename = "$eq")]
+        eq: SessionState,
+    },
+}
+impl ::std::convert::From<SessionState> for SessionStateEquals {
+    fn from(value: SessionState) -> Self {
+        Self::SessionState(value)
     }
 }
 ///One of the caller's own functions. The model is offered it by name and description; running it is the caller's business, over the events socket.
@@ -12758,7 +12986,7 @@ pub struct SyncAgentRequest {
     pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
-    ///agent.yaml's floor_control: the model that controls the agent's floor, and how long a caller may wait once they stop. Sent, it replaces the stored choice whole, and an empty object is the default flow controller again; left out or null, the stored one stays, and an agent that never chose has the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400), and so is a max_wait_ms shorter than every point the chorus-asr server publishes, before anything is written. When the server cannot be asked the wait is kept and a warning says so, as it does of a point that fails the server's dictation guard.
+    ///agent.yaml's floor_control: the model that controls the agent's floor, and how long a caller may wait once they stop. Sent, it replaces the stored choice whole, and an empty object is no choice again; left out or null, the stored one stays. An agent that chose none gets the router's default: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever that default. stream/chorus-asr on a router without a chorus-asr server is refused (400), and so is a max_wait_ms shorter than every point the chorus-asr server publishes, before anything is written. When the server cannot be asked the wait is kept and a warning says so, as it does of a point that fails the server's dictation guard.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub floor_control: ::std::option::Option<FloorControl>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -12770,6 +12998,9 @@ pub struct SyncAgentRequest {
     pub harness: ::std::option::Option<Harness>,
     ///A fingerprint of the directory. A second sync with the same hash does nothing.
     pub hash: ::std::string::String,
+    ///agent.yaml's image: what the agent draws pictures with. Left out, the stored one stays; an empty string removes it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub image: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub instructions: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -13042,6 +13273,18 @@ impl ::std::convert::TryFrom<::std::string::String> for Tier {
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
+}
+///A window of time: $gte is its start, which it holds, and $lt its end, which it does not. Either may be left out, and $gte is before $lt.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TimeWindow {
+    #[serde(
+        rename = "$gte",
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub gte: ::std::option::Option<::std::string::String>,
+    #[serde(rename = "$lt", skip_serializing_if = "::std::option::Option::is_none")]
+    pub lt: ::std::option::Option<::std::string::String>,
 }
 ///`TimelineEntry`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]

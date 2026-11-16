@@ -1,11 +1,12 @@
 import 'dart:async';
 import 'dart:ui' show ImageFilter;
 
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 import 'package:stream_core_flutter/core.dart';
-import 'package:stream_agents_core/stream_agents_core.dart';
+import 'package:stream_agents/stream_agents.dart';
 
 import 'agent_chat.dart';
 import 'assistant.dart';
@@ -65,6 +66,9 @@ class _ChatScreenState extends State<ChatScreen> {
     approver: _approver,
     actions: AIConversationActions.rate,
   );
+
+  /// What the screen is built from, merged once rather than on every build.
+  late final _shown = Listenable.merge([_conversation, _chat.failure, _chat.sessionFailure]);
 
   /// Why the conversation could not be opened, or null.
   String? _failure;
@@ -221,7 +225,7 @@ class _ChatScreenState extends State<ChatScreen> {
     return StreamComponentFactory(
       builders: _components,
       child: ListenableBuilder(
-        listenable: Listenable.merge([_conversation, _chat.failure, _chat.sessionFailure]),
+        listenable: _shown,
         builder: (context, _) {
           final activity = _conversation.activity;
           final isWelcoming =

@@ -576,7 +576,11 @@ describe("sessions", () => {
     await sessions.startVoice("session-9");
     await sessions.stopVoice("session-9");
     await sessions.close("session-9");
-    const forking = sessions.fork("session-9", { title: "Trip, again", modelOverwrites: { llm: "openai/gpt-5" } });
+    const forking = sessions.fork("session-9", {
+      title: "Trip, again",
+      modelOverwrites: { llm: "openai/gpt-5" },
+      tool_timeout_ms: 180_000,
+    });
     const connection = await router.socket();
     const forked = await forking;
 
@@ -588,6 +592,7 @@ describe("sessions", () => {
     assert.deepEqual(router.requestsTo("POST", "/v1/agents/sessions/session-9/fork")[0]?.body, {
       title: "Trip, again",
       model_overwrites: { llm: "openai/gpt-5" },
+      tool_timeout_ms: 180_000,
     });
     assert.equal(forked.id, "session-10");
     assert.equal(connection.path, "/v1/agents/sessions/session-10/events");
@@ -1387,5 +1392,19 @@ describe("search", () => {
 
     await api.router().search("weather in Lisbon");
     assert.deepEqual(router.last.body, { query: "weather in Lisbon" });
+  });
+  it("lists a modality's routes in the order the router gave, which puts the default first", async () => {
+    // Not the order sorting by name or by the default would give, so a client that reordered
+    // would fail here.
+    router.serve("GET", "/v1/image/routes", {
+      body: [
+        { id: "image-quality", title: "Best images", description: "", candidates: [{ provider: "google", model: "gemini-3.1-flash-image" }] },
+        { id: "image-fast", title: "Fast images", description: "", candidates: [{ provider: "fal", model: "alibaba/qwen-image-3/text-to-image" }] },
+      ],
+    });
+
+    const routes = await api.router().routes("image");
+    assert.deepEqual(routes.map((route) => route.id), ["image-quality", "image-fast"]);
+    assert.equal(router.requestsTo("GET", "/v1/image/routes").length, 1);
   });
 });

@@ -1977,3 +1977,37 @@ func names(capabilities []Capability) []string {
 	}
 	return rendered
 }
+
+// HangUpUnanswered hangs up the call placed into the customer's Stream call callID when nobody
+// answered it, and keeps its outcome canceled. A call answered, ended or decided, and a Stream
+// call nothing was placed into, are left as they are.
+func (s *Service) HangUpUnanswered(ctx context.Context, customerID, callID string) error {
+	if s.outcomes == nil {
+		return nil
+	}
+	call, err := s.outcomes.Read(ctx, customerID, callID)
+	if errors.Is(err, outcome.ErrUnknownCall) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("phone: read the call to hang up: %w", err)
+	}
+	if call.AnsweredAt != nil || call.Outcome != "" || call.VendorCallID == "" {
+		return nil
+	}
+	provider, err := s.provider(call.Vendor)
+	if err != nil {
+		return err
+	}
+	hanger, ok := provider.(Hanger)
+	if !ok {
+		return stack.Wrap(fmt.Errorf("%w: %s cannot hang up a call it placed", ErrNotImplemented, call.Vendor))
+	}
+	if err := hanger.HangUp(ctx, call.VendorCallID); err != nil {
+		return err
+	}
+	if _, err := s.outcomes.Canceled(ctx, call.Key); err != nil {
+		return fmt.Errorf("phone: keep a hung-up call canceled: %w", err)
+	}
+	return nil
+}

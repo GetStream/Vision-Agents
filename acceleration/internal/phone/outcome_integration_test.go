@@ -557,6 +557,88 @@ func (s *OutcomeSuite) TestACallNeverAnsweredIsNoAnswerWhenItEnds() {
 	s.True(call.NobodyAnswered())
 }
 
+func (s *OutcomeSuite) TestARingingCallItsSessionLeftIsHungUpAndCanceled() {
+	placed := s.place()
+
+	s.Require().NoError(s.service.HangUpUnanswered(s.ctx, s.customer, placed.CallID))
+
+	s.Equal([]string{placed.VendorCallID}, s.vendor.hungUp)
+	call := s.read(placed.CallID)
+	s.Equal(outcome.Canceled, call.Outcome)
+	s.True(call.NobodyAnswered())
+}
+
+func (s *OutcomeSuite) TestAnAnsweredCallIsNotHungUp() {
+	placed := s.place()
+	s.answered(placed)
+
+	s.Require().NoError(s.service.HangUpUnanswered(s.ctx, s.customer, placed.CallID))
+
+	s.Empty(s.vendor.hungUp, "the person picked up")
+	s.NotEqual(outcome.Canceled, s.read(placed.CallID).Outcome)
+}
+
+func (s *OutcomeSuite) TestACallTheVendorAlreadyEndedIsNotHungUp() {
+	placed, token := s.placeReported()
+	s.Require().NoError(s.report(token, CallNoAnswer, "no-answer"))
+
+	s.Require().NoError(s.service.HangUpUnanswered(s.ctx, s.customer, placed.CallID))
+
+	s.Empty(s.vendor.hungUp, "nothing is ringing")
+	s.Equal(outcome.NoAnswer, s.read(placed.CallID).Outcome)
+}
+
+func (s *OutcomeSuite) TestAVendorThatCannotHangUpSaysSo() {
+	s.build(plainVendor{s.vendor}, "https://router.example")
+	placed := s.place()
+
+	err := s.service.HangUpUnanswered(s.ctx, s.customer, placed.CallID)
+
+	s.ErrorIs(err, ErrNotImplemented)
+	s.ErrorContains(err, "telnyx")
+	s.Empty(s.read(placed.CallID).Outcome, "the phone may still be ringing")
+}
+
+func (s *OutcomeSuite) TestARowNeverDialledIsNotHungUp() {
+	callID := uuid.NewString()
+	_, err := s.service.Outcomes().Placed(s.ctx, outcome.Call{
+		Key:    outcome.Key{CustomerID: s.customer, CallType: "default", CallID: callID, Local: s.e164, Remote: "+15125550123"},
+		Vendor: "telnyx",
+	})
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.service.HangUpUnanswered(s.ctx, s.customer, callID))
+
+	s.Empty(s.vendor.hungUp, "the vendor has no call to hang up")
+	s.Empty(s.read(callID).Outcome)
+}
+
+func (s *OutcomeSuite) TestAHangUpTheVendorRefusesKeepsNoOutcome() {
+	placed := s.place()
+	s.vendor.err = errors.New("vendor down")
+
+	err := s.service.HangUpUnanswered(s.ctx, s.customer, placed.CallID)
+
+	s.ErrorContains(err, "vendor down")
+	s.Empty(s.read(placed.CallID).Outcome, "the phone may still be ringing")
+}
+
+func (s *OutcomeSuite) TestASessionWithNoPlacedCallHangsUpNothing() {
+	s.Require().NoError(s.service.HangUpUnanswered(s.ctx, s.customer, "never-placed"))
+
+	s.Empty(s.vendor.hungUp)
+}
+
+func (s *OutcomeSuite) TestAVendorReportAfterTheHangUpKeepsCanceled() {
+	placed, token := s.placeReported()
+	s.Require().NoError(s.service.HangUpUnanswered(s.ctx, s.customer, placed.CallID))
+
+	s.Require().NoError(s.report(token, CallCompleted, "completed"))
+	s.Require().NoError(s.report(token, CallNoAnswer, "no-answer"))
+
+	s.Equal(outcome.Canceled, s.read(placed.CallID).Outcome)
+}
+
 func (s *OutcomeSuite) TestACallAtAVendorThatReportsNothingIsUnknownWhenUnanswered() {
 	s.build(silent{s.vendor}, "https://router.example")
 	placed := s.place()

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show OverflowBoxFit;
 import 'package:flutter/services.dart';
@@ -79,6 +80,8 @@ class PlaceCard extends StatefulWidget {
 }
 
 class _PlaceCardState extends State<PlaceCard> {
+  static const _photoSide = 88.0;
+
   WikipediaSummary? _summary;
   var _isLoading = true;
 
@@ -91,7 +94,12 @@ class _PlaceCardState extends State<PlaceCard> {
   @override
   void didUpdateWidget(PlaceCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.title != widget.title) _load();
+    if (oldWidget.title != widget.title) {
+      // The last place's photo and summary are not this one's.
+      _summary = null;
+      _isLoading = true;
+      _load();
+    }
   }
 
   Future<void> _load() async {
@@ -129,7 +137,7 @@ class _PlaceCardState extends State<PlaceCard> {
                   ClipRRect(
                     borderRadius: BorderRadius.circular(12),
                     child: SizedBox.square(
-                      dimension: 88,
+                      dimension: _photoSide,
                       child: AnimatedSwitcher(
                         duration: const Duration(milliseconds: 300),
                         child: summary?.thumbnail == null
@@ -139,8 +147,13 @@ class _PlaceCardState extends State<PlaceCard> {
                               )
                             : Image.network(
                                 summary!.thumbnail!,
-                                key: const ValueKey(true),
+                                key: ValueKey(summary.thumbnail),
                                 fit: BoxFit.cover,
+                                // Decoded at the size it shows at, not the photo's own.
+                                cacheWidth: (_photoSide * MediaQuery.devicePixelRatioOf(context))
+                                    .round(),
+                                errorBuilder: (context, _, _) =>
+                                    ColoredBox(color: colors.backgroundSurfaceStrong),
                               ),
                       ),
                     ),
@@ -185,20 +198,26 @@ typedef WikipediaSummary = ({String title, String? extract, String? thumbnail});
 
 /// Places' summaries on Wikipedia, kept while the app runs.
 abstract final class Wikipedia {
-  static final _summaries = <String, WikipediaSummary>{};
+  static final _summaries = <String, Future<WikipediaSummary?>>{};
 
-  /// The summary of the article titled [title], or null when it can't be loaded.
-  static Future<WikipediaSummary?> summary(String title) async {
-    if (_summaries[title] case final known?) return known;
+  /// The summary of the article titled [title], or null when it can't be loaded. Cards asking
+  /// for the same place at once share one request.
+  static Future<WikipediaSummary?> summary(String title) =>
+      _summaries[title] ??= _fetch(title).then((summary) {
+        // Asked for again next time, rather than kept as missing.
+        if (summary == null) _summaries.remove(title);
+        return summary;
+      });
+
+  static Future<WikipediaSummary?> _fetch(String title) async {
     final url = Uri.https(
       'en.wikipedia.org',
       '/api/rest_v1/page/summary/${title.replaceAll(' ', '_')}',
     );
     try {
-      final response = await http.get(
-        url,
-        headers: {'User-Agent': 'FlutterAssistant/1.0 (Stream Vision Agents example)'},
-      );
+      final response = await http
+          .get(url, headers: {'User-Agent': 'FlutterAssistant/1.0 (Stream Vision Agents example)'})
+          .timeout(const Duration(seconds: 10));
       if (response.statusCode != 200) return null;
       final json = jsonDecode(response.body) as Map<String, Object?>;
       final summary = (
@@ -206,7 +225,7 @@ abstract final class Wikipedia {
         extract: json['extract'] as String?,
         thumbnail: (json['thumbnail'] as Map<String, Object?>?)?['source'] as String?,
       );
-      return _summaries[title] = summary;
+      return summary;
     } on Object {
       return null;
     }

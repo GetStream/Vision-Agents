@@ -32,6 +32,7 @@ import (
 	sentryhttp "github.com/getsentry/sentry-go/http"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
+	"github.com/redis/rueidis"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -236,6 +237,9 @@ type Options struct {
 	// ChatInboundKeys check that a message delivered to the Stream Chat delivery endpoint
 	// came from Stream (ROUTER_CHAT_INBOUND_KEYS). Without one that endpoint answers 404.
 	ChatInboundKeys []ed25519.PublicKey
+	// TwilioAuthToken checks that a webhook came from Twilio (TWILIO_WEBHOOK_AUTH_TOKEN).
+	// Without it no Twilio webhook is believed.
+	TwilioAuthToken string
 	// TelnyxConnectionID is the TeXML application this router's Telnyx numbers are on
 	// (TELNYX_CONNECTION_ID). A call webhook for any other is hung up.
 	TelnyxConnectionID string
@@ -367,6 +371,8 @@ type Server struct {
 	hookSecret         string
 	telnyxPublicKey    ed25519.PublicKey
 	chatInboundKeys    []ed25519.PublicKey
+	twilioAuthToken    string
+	twilioAlertSids    rueidis.Client // nil without Redis: every copy of an alert is counted
 	telnyxConnectionID string
 	simulations        *simulation.Runner
 	knowledge          *metered.Knowledge
@@ -576,6 +582,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		hookSecret:         options.HookSecret,
 		telnyxPublicKey:    options.TelnyxPublicKey,
 		chatInboundKeys:    options.ChatInboundKeys,
+		twilioAuthToken:    options.TwilioAuthToken,
 		telnyxConnectionID: options.TelnyxConnectionID,
 		simulations:        options.Simulations,
 		knowledge:          options.Knowledge,
@@ -633,6 +640,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	server.proxyCallsPerMinute = options.ProxyCallsPerMinute
 	if options.Live != nil {
 		server.runSlots, server.runsPerApp = concurrency.New(options.Live.Redis(), nil), options.RunsPerApp
+		server.twilioAlertSids = options.Live.Redis()
 	}
 	server.imageHTTP = options.ImageHTTP
 	server.documents = options.Documents
@@ -758,6 +766,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
 	mux.HandleFunc("POST "+phone.CallHookPath+"/{app}", s.receiveCallEvent)
 	mux.HandleFunc("POST "+telnyxCallHookPath, s.receiveTelnyxCall)
+	mux.HandleFunc("POST "+telnyxEventsHookPath, s.receiveTelnyxEvent)
+	mux.HandleFunc("POST "+twilioEventsHookPath, s.receiveTwilioEvent)
 	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
 	mux.HandleFunc("POST "+chat.MessageHookPath+"/{app}", s.receiveMessageEvent)
 	mux.HandleFunc("POST "+chatInboundPath, s.receiveChatInbound)

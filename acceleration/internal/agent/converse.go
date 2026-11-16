@@ -133,6 +133,9 @@ type Action struct {
 	// Unanswered is what the same participant said in a turn queued before this one, which
 	// this answer is for too. Empty when nothing was waiting.
 	Unanswered string
+	// Aside is what was heard on the participant's line that the floor ruled no turn of
+	// theirs, kept for this answer to see (keepAside). Empty when nothing was kept.
+	Aside string
 	// Err is why a judgement could not be made.
 	Err error
 	// At is when a held reply may go out: the caller holds the floor until then.
@@ -262,6 +265,9 @@ type converse struct {
 	// greeted is the turn whose unheard reply each participant's lone greeting holds, until
 	// the greeting settles or they go on.
 	greeted map[string]string
+	// asides is, for each participant, what was heard on their line that the floor ruled was
+	// no turn of theirs, kept for the next reply to them to see (keepAside).
+	asides map[string]string
 }
 
 // stoppedOn is an utterance a stop over the agent was ruled on, and the words so far it was
@@ -365,6 +371,7 @@ func newConverse(
 		repeated:     map[string]string{},
 		stops:        map[string]stoppedOn{},
 		greeted:      map[string]string{},
+		asides:       map[string]string{},
 	}
 }
 
@@ -905,6 +912,19 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 		clarified = "the caller went quiet on an unfinished thought, so what was heard may not be what was said"
 	}
 
+	// A floor that heard the audio (chorus-asr, Ruler Heard) rules on when the agent speaks,
+	// never on whether the caller's words count. Its ignore says the words were no turn for
+	// the agent: a murmur over it ("yeah", "mm-hmm"), or a voice that was not the caller's
+	// (the room, a radio), over it or not. They are heard, as said, and kept for the next
+	// reply to the caller to see, as context and no turn of their own (keepAside): the agent
+	// is not interrupted, and nothing is said to them alone, as answering a radio is worse
+	// than hearing a caller's aside late. Made a turn to answer once the agent was quiet, as
+	// the default flow controller's queue is, a radio's "Thank you so much" over the agent
+	// was answered "You're welcome" while the caller spelled a name. A cough or a lone "uh"
+	// is no words, and stays ignored.
+	aside := ruling.Ruler == harness.Heard && ruling.Disposition == harness.Ignore &&
+		words(ready.Text) != "" && !overlapNoise(ready.Text)
+
 	queue := !state.Quiet && !overlapNoise(ready.Text) && ruling.Disposition != harness.Ignore &&
 		(state.Recovering || ruling.Floor != harness.Stop)
 	var resolved bool
@@ -933,6 +953,30 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 	switch {
 	case !state.Quiet && overlapNoise(ready.Text):
 		ignore = "a cough or other non-speech noise overlapping the reply, so the agent keeps talking"
+	case aside:
+		// Heard, as the caller said it, and the next reply to them sees it; nothing is said
+		// to it alone.
+		shown, line := c.closeLine(ready.Participant.ID, ready.Text, true)
+		c.keepAside(ready.Participant.ID, ready.Text)
+		sendHeard(c.emitter, c.onHeard, Heard{
+			Participant: ready.Participant,
+			Text:        shown,
+			Language:    ready.Language,
+			LineID:      line,
+		})
+		reason := "words the floor ruled were no turn for the agent: heard, and kept for the next reply to see, as no turn of their own"
+		if !state.Quiet {
+			reason = "words the floor let the agent talk through: heard, and kept for the next reply to see, as no turn of their own"
+		}
+		return []Action{c.decide(Action{
+			Kind:        ActIgnore,
+			Reason:      reason,
+			Candidate:   ready,
+			Participant: ready.Participant,
+			Text:        shown,
+			LatencyMs:   ruling.TookMs,
+			LineID:      line,
+		})}
 	case ruling.Disposition == harness.Ignore:
 		ignore = "this was background speech or meant for somebody else"
 	}
@@ -991,6 +1035,7 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 	}
 
 	if state.Quiet {
+		answer.Aside = c.takeAside(ready.Participant.ID)
 		return []Action{c.decide(answer)}
 	}
 
@@ -1013,6 +1058,8 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 			answering.Kind = ActQueue
 			answering.Reason = "the voice is being replaced, so the caller's answer waits until it is ready"
 			c.hold(queuedCandidate{candidate: ready, clarify: clarify, heard: true, line: line})
+		} else {
+			answering.Aside = c.takeAside(ready.Participant.ID)
 		}
 		return []Action{
 			c.decide(Action{
@@ -1311,6 +1358,7 @@ func (c *converse) Waiting(state floor) (Action, bool) {
 		Text:        held.candidate.Text,
 		Clarify:     held.clarify,
 		LineID:      line,
+		Aside:       c.takeAside(held.candidate.Participant.ID),
 	}), true
 }
 
@@ -1690,6 +1738,34 @@ func joinOverlapping(held, more string) string {
 		}
 	}
 	return held + " " + more
+}
+
+// keepAside keeps words heard on participant's line that the floor ruled were no turn of
+// theirs, for the next reply to them to see (takeAside): the newest missedWords of them, as a
+// dropped reply's note carries.
+func (c *converse) keepAside(participantID, text string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.asides[participantID] = newestWords(strings.TrimSpace(c.asides[participantID]+" "+strings.TrimSpace(text)), missedWords)
+}
+
+// takeAside is what was kept for the next reply to participant to see (keepAside), taken: a
+// reply sees it once. Empty when nothing was kept.
+func (c *converse) takeAside(participantID string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	aside := c.asides[participantID]
+	delete(c.asides, participantID)
+	return aside
+}
+
+// peekAside is what takeAside would take, left kept: for a line the agent says of its own
+// accord, a check-in after a silence, which sees it without spending it, as the reply to the
+// caller's next turn is still to see it.
+func (c *converse) peekAside(participantID string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.asides[participantID]
 }
 
 // hold keeps a turn until the agent has stopped talking. Only one is kept: a caller who

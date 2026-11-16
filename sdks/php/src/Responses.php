@@ -64,8 +64,8 @@ final readonly class Responses
      * Goes back to a response and carries on from there, as though nothing after it was said.
      *
      * An item stands for the response it belongs to, so what a transcript renders is enough to
-     * rewind to. A conversation kept in Stream Chat is refused, because the channel would still
-     * hold the later turns: fork it at the response instead.
+     * rewind to. A conversation kept in Stream Chat is rewound there too: the later turns are
+     * hidden in the channel and kept as a branch that can be brought back.
      */
     public function rewind(AgentResponse|ResponseRow|AgentResponseItem|string $to): void
     {
