@@ -65,6 +65,27 @@ func (s *LLMRouterSuite) TestARefusedDeploymentKeyRaisesKeyRefused() {
 	s.Equal(1.0, held["unknown/401"]["increase"], "the one refusal")
 }
 
+// An instance whose keys sit in its variable and its numbered ones is the router's own: a
+// refusal of its key raises key_refused. Random keys: what keypool read is process-global.
+func (s *LLMRouterSuite) TestKeysOfAnInstanceVariableAndItsNumberedOnesAreOurs() {
+	first, second := "sk-ant-first-"+rand.Text(), "sk-ant-second-"+rand.Text()
+	at := startVendor(s.T(), first, second)
+	config := keyedConfig(s.T(), at)
+	s.T().Setenv(deploymentKeyEnv, first)
+	s.T().Setenv(deploymentKeyEnv+"_1", second)
+	router := s.keyedRouter(config, nil, nil)
+	start := time.Now()
+	refused := s.keyRefusedAlert(start)
+
+	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: router.Config().Providers[0].Name()})
+	s.Require().NoError(err)
+	defer session.Close()
+	_, err = collected(s.ctx, session)
+
+	s.Error(err)
+	s.Contains(refused(start.Add(time.Second)), "unknown/401")
+}
+
 // A made-up key on a customer's own model, which the model's endpoint refuses, raises no
 // key_refused: it is the customer's key, the case found on staging as unknown/401.
 func (s *LLMRouterSuite) TestARefusedKeyOnACustomersOwnModelRaisesNoKeyRefusedAlert() {
