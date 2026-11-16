@@ -72,6 +72,15 @@ func (s *LogHandlerSuite) TestALineThatNamesTheAppItselfIsNotGivenASecondOne() {
 	s.Contains(lines[1], "app_id=1732479")
 }
 
+func (s *LogHandlerSuite) TestAFieldNamedAfterOthersIsFoundToo() {
+	ctx := WithLoggedApp(context.Background(), "1732479", "pubkey123")
+
+	s.logger.InfoContext(ctx, "probe", "x", 1, "y", 2, "app_id", "other", "api_key", "other")
+
+	s.Equal(1, strings.Count(s.out.String(), "app_id="))
+	s.Equal(1, strings.Count(s.out.String(), "api_key="))
+}
+
 func (s *LogHandlerSuite) TestALoggerThatAlreadyNamesTheAppIsNotGivenASecondOne() {
 	ctx := WithLoggedApp(context.Background(), "1732479", "pubkey123")
 
