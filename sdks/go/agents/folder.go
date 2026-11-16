@@ -184,6 +184,9 @@ type Settings struct {
 	// llm alone, and the router refuses one that names it.
 	Subagent string `yaml:"subagent"`
 	Search   string `yaml:"search"`
+	// Image is what the agent draws pictures with, such as image-fast. Nil, a file that names
+	// none, leaves the stored one; an empty string, image: "", turns drawing off.
+	Image *string `yaml:"image"`
 	// Greeting is what the agent opens the call with. Nil leaves the stored one.
 	Greeting *GreetingSettings `yaml:"greeting"`
 	Sandbox  string            `yaml:"sandbox"`
@@ -355,6 +358,9 @@ type ChannelsSettings struct {
 type ChatChannelSettings struct {
 	// Type is the channel type's name, as it comes before the colon in a channel's cid.
 	Type string `yaml:"type"`
+	// Answer is which messages there the agent answers: always, the default, or mentioned,
+	// only a message that mentions the agent.
+	Answer string `yaml:"answer"`
 }
 
 // SchedulingSettings is an agent's scheduled tasks: whether its users may ask
@@ -418,9 +424,11 @@ type TransferDestination struct {
 //
 // Each is nil when the file doesn't name it, and both are sent as written: which models there
 // are, and whether a wait needs one, is the router's to say, and it refuses stream/chorus-asr
-// when it has no chorus-asr server. An empty mapping is the default flow controller again.
+// when it has no chorus-asr server. An empty mapping is no choice again, which the router's
+// default rules; {model: flow-controller} keeps the flow controller whatever that default.
 type FloorControlSettings struct {
-	// Model is the model that controls the floor; stream/chorus-asr is the one there is.
+	// Model is the model that controls the floor: stream/chorus-asr, or flow-controller for the
+	// flow controller.
 	Model *string
 	// MaxWaitMs is the most a caller who has finished may wait for the answer, in
 	// milliseconds: the server's measured point with the fewest cut-ins within it.
@@ -770,6 +778,9 @@ type AgentSettings struct {
 	Description string `yaml:"description"`
 	// TimeoutMs is how long one call may take. Zero is the router's default, two minutes.
 	TimeoutMs int `yaml:"timeout_ms"`
+	// MaxToolRounds is the reply to a tool result the agent must answer at rather than call
+	// another tool. Zero is the router's default of 8; negative is no limit.
+	MaxToolRounds int `yaml:"max_tool_rounds"`
 }
 
 // declare reads agent.yaml. A key nobody knows is refused rather than dropped, since a

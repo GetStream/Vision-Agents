@@ -176,8 +176,8 @@ type Responses struct {
 }
 
 // Input is something sent along with what is asked: an Image or a Clip to show the agent, a
-// VoiceNote to answer, the RequestID it answers, or a MaxOutputTokens or ReasoningEffort for
-// this answer alone.
+// Document to answer from, a VoiceNote to answer, the RequestID it answers, or a
+// MaxOutputTokens or ReasoningEffort for this answer alone.
 type Input interface {
 	attachTo(request *acceleration.CreateResponseRequest)
 }
@@ -226,6 +226,36 @@ type VoiceNote struct {
 
 func (n VoiceNote) attachTo(request *acceleration.CreateResponseRequest) {
 	request.Audio = &acceleration.AudioSource{Url: n.URL}
+}
+
+// Document is a file to answer questions about: a PDF or a Word document (DOCX or DOC), by
+// HTTPS URL, at most 20 MiB, or as a base64 data URI, at most 8 MiB. The router reads it as
+// text before the agent answers, and the agent answers from it on this turn and every later
+// one of the conversation. One goes with a question, and not with a VoiceNote. A conversation
+// kept in Stream Chat shows it on the person's message.
+type Document struct {
+	URL string
+	// Name is what the file is called, shown on the person's message and to the model.
+	// Empty takes it from the URL.
+	Name string
+}
+
+func (d Document) attachTo(request *acceleration.CreateResponseRequest) {
+	source := acceleration.FileSource{Url: d.URL}
+	if d.Name != "" {
+		source.Name = &d.Name
+	}
+	request.Files = appended(request.Files, source)
+}
+
+// DocumentFile is a PDF or a Word document on disk, sent inline under its own name so the
+// router needs no way to reach it. The router reads what it is from its bytes.
+func DocumentFile(path string) (Document, error) {
+	file, err := os.ReadFile(path)
+	if err != nil {
+		return Document{}, fmt.Errorf("client: reading %s: %w", path, err)
+	}
+	return Document{URL: "data:application/octet-stream;base64," + base64.StdEncoding.EncodeToString(file), Name: filepath.Base(path)}, nil
 }
 
 // RequestID is the request a dispatch worker was handed, passed back with the text it was
@@ -288,21 +318,59 @@ func appended[T any](list *[]T, item T) *[]T {
 	return list
 }
 
-// Create asks the agent something and names the turn it answers as, showing it any images
-// and videos given.
+// Create asks the agent something and names the turn it answers as, showing it any images,
+// videos and document given.
 //
 // It returns once the agent has started answering. An incognito session records nothing, so
 // the turn it hands back has no id: there is nothing to read back afterwards, which is what
 // incognito means.
 func (r *Responses) Create(ctx context.Context, text string, inputs ...Input) (*AgentResponse, error) {
-	api, err := r.client.api()
-	if err != nil {
-		return nil, err
-	}
-
 	request := acceleration.CreateResponseRequest{Text: text}
 	for _, input := range inputs {
 		input.attachTo(&request)
+	}
+	return r.create(ctx, request)
+}
+
+// Regenerate answers the question of an earlier response again, as a new response beside it,
+// in a conversation kept in Stream Chat. The reply and everything after it are hidden in
+// Chat and kept as a branch, which Siblings lists, Branch reads and Activate brings back.
+//
+// The response it answers with says where it stands among its alternatives (Branch) and where
+// the channel was rewound to (RewoundTo), so a client drops the messages from there at once.
+// MaxOutputTokens, ReasoningEffort and RequestID may go with it; anything else is refused.
+func (r *Responses) Regenerate(ctx context.Context, responseID string, inputs ...Input) (*AgentResponse, error) {
+	return r.replace(ctx, responseID, "", inputs)
+}
+
+// Edit asks text in place of the question of an earlier response, as a new question beside
+// it, in a conversation kept in Stream Chat. The question, its reply and everything after
+// them are hidden in Chat and kept as a branch. The inputs are Regenerate's.
+func (r *Responses) Edit(ctx context.Context, responseID, text string, inputs ...Input) (*AgentResponse, error) {
+	if text == "" {
+		return nil, fmt.Errorf("client: editing %s in %s: an edit asks text; Regenerate answers the question again", responseID, r.sessionID)
+	}
+	return r.replace(ctx, responseID, text, inputs)
+}
+
+// replace is Regenerate, or Edit with text.
+func (r *Responses) replace(ctx context.Context, responseID, text string, inputs []Input) (*AgentResponse, error) {
+	if responseID == "" {
+		return nil, fmt.Errorf("client: replacing a response of %s: that response has no id, which is what a "+
+			"session that records nothing hands back; there is nothing to replace", r.sessionID)
+	}
+	request := acceleration.CreateResponseRequest{Text: text, Replaces: &responseID}
+	for _, input := range inputs {
+		input.attachTo(&request)
+	}
+	return r.create(ctx, request)
+}
+
+// create sends a question, under a request id of its own unless one was given.
+func (r *Responses) create(ctx context.Context, request acceleration.CreateResponseRequest) (*AgentResponse, error) {
+	api, err := r.client.api()
+	if err != nil {
+		return nil, err
 	}
 	// A request id is what makes a retried question answered once, and a personal conversation
 	// takes a question by one alone. Photos sent with one must be data URIs, so a question with
@@ -355,8 +423,9 @@ func (r *Responses) List(ctx context.Context, limit int, cursor string) (*accele
 // The reply being spoken is abandoned and the conversation continues as though nothing after
 // that response had been said: later turns are no longer listed, and the next question is
 // answered from that point. The response itself is kept. Pass a response's ID, or an item's
-// ResponseId to go back to the turn it was part of. A text conversation cannot be rewound,
-// because its transcript lives in Chat; fork it at the response instead.
+// ResponseId to go back to the turn it was part of. A conversation kept in Stream Chat is
+// rewound there too: the later turns are hidden in the channel and kept as a branch that can
+// be brought back.
 func (r *Responses) Rewind(ctx context.Context, responseID string) error {
 	if responseID == "" {
 		return fmt.Errorf("client: rewinding %s: that response has no id, which is what a "+
@@ -376,4 +445,69 @@ func (r *Responses) Rewind(ctx context.Context, responseID string) error {
 		return failure("rewinding "+r.sessionID, rewound.HTTPResponse, rewound.Body)
 	}
 	return nil
+}
+
+// Siblings is a page of the alternatives to a response, oldest first, itself among them: with
+// acceleration.ListResponseSiblingsParamsOfReply the answers to its question, its
+// regenerations; with ListResponseSiblingsParamsOfQuestion the questions asked in its place,
+// its edits. Each says its Index, the i of ‹ i/n ›, and whether it is Active, on the
+// conversation now. An empty of is reply. A limit of zero leaves the router's own; an empty
+// cursor is the first page, and the page's NextCursor the next.
+func (r *Responses) Siblings(ctx context.Context, responseID string, of acceleration.ListResponseSiblingsParamsOf, limit int, cursor string) (*acceleration.ResponseSiblingPage, error) {
+	api, err := r.client.api()
+	if err != nil {
+		return nil, err
+	}
+
+	params := acceleration.ListResponseSiblingsParams{Of: pointer(of), Limit: pointer(limit), Cursor: pointer(cursor)}
+	listed, err := api.ListResponseSiblingsWithResponse(ctx, r.sessionID, responseID, &params)
+	if err != nil {
+		return nil, fmt.Errorf("client: reading the siblings of %s in %s: %w", responseID, r.sessionID, err)
+	}
+	if listed.JSON200 == nil {
+		return nil, failure("reading the siblings of "+responseID+" in "+r.sessionID, listed.HTTPResponse, listed.Body)
+	}
+	return listed.JSON200, nil
+}
+
+// Branch is a page of the messages a hidden branch shows, oldest first, from where it leaves
+// the conversation down to the newest response under responseID, shaped as Stream Chat
+// messages, so a client shows them in place of the conversation's without writing anything.
+// A response on the conversation answers Active and no items. A branch whose copies were
+// deleted is a *stream.RouterError with code branch_unavailable.
+func (r *Responses) Branch(ctx context.Context, responseID string, limit int, cursor string) (*acceleration.BranchMessagePage, error) {
+	api, err := r.client.api()
+	if err != nil {
+		return nil, err
+	}
+
+	params := acceleration.GetResponseBranchParams{Limit: pointer(limit), Cursor: pointer(cursor)}
+	read, err := api.GetResponseBranchWithResponse(ctx, r.sessionID, responseID, &params)
+	if err != nil {
+		return nil, fmt.Errorf("client: reading the branch of %s in %s: %w", responseID, r.sessionID, err)
+	}
+	if read.JSON200 == nil {
+		return nil, failure("reading the branch of "+responseID+" in "+r.sessionID, read.HTTPResponse, read.Body)
+	}
+	return read.JSON200, nil
+}
+
+// Activate makes the hidden branch of responseID the conversation again, before asking
+// anything while it is shown: the branch on the conversation from where they part is hidden
+// and kept, and this one is sent again, ending at the newest response under responseID. A
+// branch already on the conversation changes nothing (AlreadyActive), so a retry is safe.
+func (r *Responses) Activate(ctx context.Context, responseID string) (*acceleration.ActivatedBranch, error) {
+	api, err := r.client.api()
+	if err != nil {
+		return nil, err
+	}
+
+	activated, err := api.ActivateResponseWithResponse(ctx, r.sessionID, responseID)
+	if err != nil {
+		return nil, fmt.Errorf("client: activating the branch of %s in %s: %w", responseID, r.sessionID, err)
+	}
+	if activated.JSON200 == nil {
+		return nil, failure("activating the branch of "+responseID+" in "+r.sessionID, activated.HTTPResponse, activated.Body)
+	}
+	return activated.JSON200, nil
 }

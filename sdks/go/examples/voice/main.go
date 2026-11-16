@@ -14,6 +14,10 @@
 // The default joins a Stream call and prints a link a person can open to talk to the agent
 // from a browser, which needs no telephony and costs nothing. The phone modes need a vendor
 // configured, and buying a number starts a monthly charge.
+//
+// It prints what the caller and the agent say to stdout, so you can follow the call from a
+// terminal. That is the caller's speech in plain text: take those lines out of anything
+// whose output is kept.
 package main
 
 import (
@@ -94,6 +98,7 @@ func run(ctx context.Context, number, dial string, buy bool, greeting string) er
 		case "joined":
 			fmt.Printf("%s is on the call\n", who(event.Participant))
 		case "heard":
+			// The caller's own words, on stdout.
 			fmt.Printf("caller: %s\n", event.Text)
 		case "responded":
 			if event.Text != "" {
