@@ -38,6 +38,11 @@ public struct Conversation: Sendable, Hashable {
     /// thrown, because nobody is awaiting the socket.
     public var failure: String?
 
+    /// What each agent turn's UI block wrote so far, by turn id: the deltas, or a patch before
+    /// it is merged. Kept apart from `Turn.ui`, which is what shows and is left unchanged by a
+    /// delta that shows nothing new.
+    private var uiWritten: [String: String] = [:]
+
     public init() {}
 
     public enum State: Sendable, Hashable {
@@ -91,18 +96,18 @@ public struct Conversation: Sendable, Hashable {
             let delta = event.string("delta")
             let format = event.string("format")
             guard !delta.isEmpty, !format.isEmpty else { return }
-            writeUI(event, format: format, to: event.turnID, at: now) { previous in
-                ((previous?.raw ?? "") + delta, true)
-            }
+            let written = uiWritten[event.turnID, default: ""] + delta
+            uiWritten[event.turnID] = written
+            writeUI(event, format: format, written: written, isStreaming: true, at: now)
             if case .working = state {} else { state = .responding }
 
         case .uiCompleted:
             let format = event.string("format")
             guard !format.isEmpty else { return }
             let content = event.string("content")
-            writeUI(event, format: format, to: event.turnID, at: now) { previous in
-                (content.isEmpty ? previous?.raw ?? "" : content, false)
-            }
+            let written = content.isEmpty ? uiWritten[event.turnID, default: ""] : content
+            uiWritten[event.turnID] = nil
+            writeUI(event, format: format, written: written, isStreaming: false, at: now)
 
         case .responded:
             // The final text is authoritative: the deltas are what was being written, this is
@@ -158,32 +163,35 @@ public struct Conversation: Sendable, Hashable {
         }
     }
 
-    /// Writes the UI of the agent turn a `ui_delta` or `ui_completed` belongs to, starting the
-    /// turn if the router sent UI for one we never saw begin. `next` gives what the turn wrote
-    /// so far, from its UI before, and whether it is still streaming. A patch is merged onto
-    /// the UI of the latest earlier turn in the same format.
+    /// Shows `written`, what the turn's UI block wrote so far, as the UI of the agent turn a
+    /// `ui_delta` or `ui_completed` belongs to, starting the turn if the router sent UI for one we
+    /// never saw begin. While OpenUI streams, only its finished statements show. A patch is merged
+    /// onto the UI of the latest earlier turn in the same format; with none in this transcript,
+    /// such as after a reload, it sets no UI, and Stream Chat's copy, which the router merged,
+    /// is the one to show.
     private mutating func writeUI(
         _ event: AgentEvent,
         format: String,
-        to turnID: String,
-        at now: Date,
-        _ next: (TurnUI?) -> (raw: String, isStreaming: Bool)
+        written: String,
+        isStreaming: Bool,
+        at now: Date
     ) {
-        let index = turns.lastIndex(where: { $0.id == turnID && $0.speaker.isAgent })
-        let (raw, isStreaming) = next(index.flatMap { turns[$0].ui })
-        var content = raw
-        if event.string("mode") == "patch", format == TurnUI.openUI,
-            let base = turns.last(where: {
-                $0.speaker.isAgent && $0.id != turnID && $0.ui?.format == TurnUI.openUI
-                    && $0.ui?.content.isEmpty == false
-            })?.ui
-        {
-            content = TurnUI.merge(base.content, patch: raw)
+        let turnID = event.turnID
+        var content = isStreaming && format == TurnUI.openUI ? TurnUI.finished(written) : written
+        if event.string("mode") == "patch", format == TurnUI.openUI {
+            guard
+                let base = turns.last(where: {
+                    $0.speaker.isAgent && $0.id != turnID && $0.ui?.format == TurnUI.openUI
+                        && $0.ui?.content.isEmpty == false
+                })?.ui
+            else { return }
+            content = TurnUI.merge(base.content, patch: content)
         }
         let version = event.string("version")
         let ui = TurnUI(
             format: format, version: version.isEmpty ? nil : version, isStreaming: isStreaming,
-            content: content, raw: raw)
+            content: content)
+        let index = turns.lastIndex(where: { $0.id == turnID && $0.speaker.isAgent })
         if let index {
             turns[index].ui = ui
         } else {
@@ -209,11 +217,11 @@ public struct TurnUI: Sendable, Hashable {
     public var version: String?
     /// Whether the model is still writing it.
     public var isStreaming: Bool
-    /// The UI to show. A patch, which changes only some statements of the turn before's OpenUI,
-    /// is already merged onto it here.
+    /// The UI to show. While OpenUI is written, that is its finished statements: one still being
+    /// written shows once a newline ends it, so the UI grows a part at a time rather than
+    /// changing with every delta, such as a gauge reading 8 before 86. A patch, which changes
+    /// only some statements of the turn before's OpenUI, is already merged onto it here.
     public var content: String
-    /// What the turn itself wrote so far, before a patch was merged.
-    var raw: String
 
     /// The UI as a message's `ai_ui` custom field holds it, the shape StreamChatAI's
     /// `AIUIDocument(customData:)` reads under that key.
@@ -256,15 +264,27 @@ public struct TurnUI: Sendable, Hashable {
         return order.compactMap { statements[$0] }.joined(separator: "\n")
     }
 
+    /// The statements of a program being written that are finished, the one still being written
+    /// left out.
+    static func finished(_ program: String) -> String {
+        openUIStatements(program, finishedOnly: true).joined(separator: "\n")
+    }
+
     /// A program's statements: each line, or the lines a bracket or a string left open joined
-    /// to the one that closes it. Blank and comment lines are left out.
-    private static func openUIStatements(_ program: String) -> [String] {
+    /// to the one that closes it. Blank and comment lines are left out. With `finishedOnly`, so
+    /// is a statement no newline has ended yet.
+    private static func openUIStatements(_ program: String, finishedOnly: Bool = false) -> [String] {
         var statements: [String] = []
         var current = ""
         var quote: Character?
         var escaped = false
         var depth = 0
-        for line in program.split(separator: "\n", omittingEmptySubsequences: false) {
+        var lines = program.split(separator: "\n", omittingEmptySubsequences: false)
+        if finishedOnly {
+            // What follows the last newline is still being written.
+            lines.removeLast()
+        }
+        for line in lines {
             if quote == nil, depth == 0 {
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
                 if trimmed.isEmpty || trimmed.hasPrefix("//") || trimmed.hasPrefix("#") { continue }
@@ -301,7 +321,7 @@ public struct TurnUI: Sendable, Hashable {
             }
         }
         let tail = current.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !tail.isEmpty { statements.append(tail) }
+        if !tail.isEmpty, !finishedOnly { statements.append(tail) }
         return statements
     }
 

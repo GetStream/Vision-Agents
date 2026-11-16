@@ -311,10 +311,12 @@ working. What the router writes is what it renders:
   `returnURL` sends the sign-in back to the dashboard, and the sheet never comes back.
 - A reply's interactive UI (`ai_ui`) reaches the session's socket first, as `ui_delta` and
   `ui_completed`, which `Conversation` folds onto the turn as `Turn.ui` (`TurnUI`), merging an
-  `openui` patch onto the turn before's card. `LiveUI` shows it on the reply until the message's
-  own `ai_ui` is complete: `observe` the conversation, and read each message's custom data
-  through `overlay(_:)` into `AIUIDocument(customData:)`. On a call there is no channel; show
-  the newest `Turn.ui` with an `AIUIHost` of its own.
+  `openui` patch onto the turn before's card. While OpenUI streams, `TurnUI.content` holds only
+  its finished statements, so a card grows a part at a time. `LiveUI` shows it on the reply while
+  Chat is writing it and its own `ai_ui` isn't complete, by the rules in the `generative-ui`
+  skill: `observe` the conversation, and read each message's custom data through `overlay(_:)`
+  into `AIUIDocument(customData:)`. On a call there is no channel; show the newest `Turn.ui`
+  with an `AIUIHost` of its own.
 - `ai_indicator.update` and `.clear` say what the agent is doing before the answer starts:
   `AITypingIndicatorView`. Read them from `chatClient.eventsController()`; a channel's events
   controller never sees them.

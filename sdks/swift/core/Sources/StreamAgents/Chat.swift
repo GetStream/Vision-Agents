@@ -130,11 +130,13 @@ public struct LiveReasoning: Sendable, Hashable {
 /// The router sends a turn's UI on the session's socket the moment the model writes it
 /// (`ui_delta`, then `ui_completed`), and writes it on the reply's message, as `ai_ui`, on a
 /// slower tick of its own. Fold the session's conversation in with `observe(_:)` as it changes,
-/// and read each reply's custom data through `overlay(_:)`: a reply whose own `ai_ui` is not
-/// complete yet shows the socket's, until the message settles and takes over.
+/// and read each reply's custom data through `overlay(_:)`: a reply Chat is still writing, whose
+/// own `ai_ui` is not complete yet, shows the socket's, until the message settles and takes over.
 public struct LiveUI: Sendable, Hashable {
     private var byTurn: [String: TurnUI] = [:]
-    private var latestTurnID: String?
+    /// The UI of the turn the agent is on: the conversation's newest turn's, when it is the
+    /// agent's.
+    public private(set) var latest: TurnUI?
 
     public init() {}
 
@@ -143,20 +145,21 @@ public struct LiveUI: Sendable, Hashable {
         byTurn[turnID]
     }
 
-    /// The UI of the agent turn that last streamed any, such as the reply being spoken on a
-    /// call.
-    public var latest: TurnUI? {
-        latestTurnID.flatMap { byTurn[$0] }
-    }
-
-    /// Takes in the UI of `conversation`'s agent turns, and says whether any of it changed.
+    /// Takes in the UI of `conversation`'s agent turns, and says whether what it shows changed.
+    /// The person's question and the agent's new turn clear `latest`, so a new reply never shows
+    /// the card of the one before it.
     @discardableResult
     public mutating func observe(_ conversation: Conversation) -> Bool {
         var changed = false
         for turn in conversation.turns where turn.speaker.isAgent {
             guard let ui = turn.ui, byTurn[turn.id] != ui else { continue }
             byTurn[turn.id] = ui
-            latestTurnID = turn.id
+            changed = true
+        }
+        let newest = conversation.turns.last
+        let latest = newest?.speaker.isAgent == true ? newest?.ui : nil
+        if latest != self.latest {
+            self.latest = latest
             changed = true
         }
         return changed
@@ -165,8 +168,10 @@ public struct LiveUI: Sendable, Hashable {
     /// The custom data of each agent reply in `messages` that shows the socket's UI, by message
     /// id: its own, with `ai_ui` replaced. A message missing from it shows its own custom data.
     ///
-    /// A reply is matched to its turn by the `turn_id` the router writes on it. The newest reply
-    /// still generating takes the latest UI before its turn id is known.
+    /// A reply Chat is still writing (`generating`), whose own `ai_ui` is not complete, shows its
+    /// turn's UI, matched by the `turn_id` the router writes on it. Before its turn id is in Chat,
+    /// the newest reply being written shows `latest`. Once Chat says a reply is written, what
+    /// Chat stored shows. A UI with no statement finished yet leaves the reply its text.
     public func overlay(_ messages: [ChatMessage]) -> [MessageId: [String: RawJSON]] {
         overlay(messages.map { (id: $0.id, custom: $0.extraData) })
     }
@@ -176,9 +181,14 @@ public struct LiveUI: Sendable, Hashable {
         guard !byTurn.isEmpty else { return [:] }
         let generating = messages.last { Self.isAgentReply($0.custom) && $0.custom["generating"]?.boolValue == true }?.id
         var overlaid: [String: [String: RawJSON]] = [:]
-        for message in messages where Self.isAgentReply(message.custom) && !Self.isSettled(message.custom) {
-            let ui = Self.turnID(of: message.custom).flatMap { byTurn[$0] } ?? (message.id == generating ? latest : nil)
-            guard let ui else { continue }
+        for message in messages where Self.isAgentReply(message.custom) && Self.showsLiveUI(message.custom) {
+            let ui: TurnUI? =
+                if let turnID = Self.turnID(of: message.custom) {
+                    byTurn[turnID]
+                } else {
+                    message.id == generating ? latest : nil
+                }
+            guard let ui, !ui.content.isEmpty else { continue }
             var custom = message.custom
             custom["ai_ui"] = ui.customData
             overlaid[message.id] = custom
@@ -191,13 +201,11 @@ public struct LiveUI: Sendable, Hashable {
             || custom["support_runtime"]?.dictionaryValue?["role"]?.stringValue == "assistant"
     }
 
-    /// Whether the reply's own `ai_ui` is complete. One too large for the message points at an
-    /// artifact instead (`overflow`), which the socket's stands in for.
-    private static func isSettled(_ custom: [String: RawJSON]) -> Bool {
-        guard let ui = custom["ai_ui"]?.dictionaryValue, ui["overflow"]?.boolValue != true else {
-            return false
-        }
-        return ui["status"]?.stringValue == "complete"
+    /// Whether a reply shows the socket's UI rather than what Chat stored: while Chat says it is
+    /// being written and its UI isn't complete there.
+    private static func showsLiveUI(_ custom: [String: RawJSON]) -> Bool {
+        custom["generating"]?.boolValue == true
+            && custom["ai_ui"]?.dictionaryValue?["status"]?.stringValue != "complete"
     }
 
     private static func turnID(of custom: [String: RawJSON]) -> String? {

@@ -15,7 +15,7 @@ import Testing
         var conversation = Conversation()
         conversation.apply(try event(#"{"type":"responding","turn_id":"t1"}"#))
         conversation.apply(
-            try event(#"{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"root = Card([hdr])\nhdr = CardHeader(\"Kaneo\")"}"#))
+            try event(#"{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"root = Card([hdr])\nhdr = CardHeader(\"Kaneo\")\n"}"#))
         return conversation
     }
 
@@ -44,7 +44,7 @@ import Testing
         var live = LiveUI()
         live.observe(try Self.streaming())
         let settled: [String: RawJSON] = [
-            "ai_generated": .bool(true), "generating": .bool(false), "turn_id": .string("t1"),
+            "ai_generated": .bool(true), "generating": .bool(true), "turn_id": .string("t1"),
             "ai_ui": .dictionary([
                 "v": .number(1), "format": .string("openui"), "status": .string("complete"),
                 "content": .string("root = Card([hdr])\nhdr = CardHeader(\"Kaneo Cliffside Kitchen\")"),
@@ -80,18 +80,55 @@ import Testing
         #expect(live.latest?.content == "root = Card([hdr])\nhdr = CardHeader(\"Kaneo\")")
     }
 
-    @Test func aReplyWhoseUIWasTooLargeForItsMessageShowsTheSockets() throws {
+    @Test func aNewReplyNeverShowsTheUIOfTheReplyBeforeIt() throws {
+        var conversation = try Self.streaming()
+        conversation.said("and for four people?")
+        conversation.apply(try Self.event(#"{"type":"responding","turn_id":"t2"}"#))
+        var live = LiveUI()
+        live.observe(conversation)
+        let named: [String: RawJSON] = [
+            "ai_generated": .bool(true), "generating": .bool(true),
+            "support_runtime": .dictionary(["role": .string("assistant"), "turn_id": .string("t2")]),
+        ]
+        let unnamed: [String: RawJSON] = ["ai_generated": .bool(true), "generating": .bool(true)]
+
+        #expect(live.overlay([(id: "m2", custom: named)]).isEmpty)
+        #expect(live.overlay([(id: "m2", custom: unnamed)]).isEmpty)
+    }
+
+    @Test func aUIWithNothingFinishedLeavesTheReplyItsText() throws {
+        var conversation = Conversation()
+        conversation.apply(try Self.event(#"{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"root = Card(["}"#))
+        var live = LiveUI()
+        live.observe(conversation)
+        let reply: [String: RawJSON] = ["ai_generated": .bool(true), "generating": .bool(true), "turn_id": .string("t1")]
+
+        #expect(live.overlay([(id: "m1", custom: reply)]).isEmpty)
+    }
+
+    @Test func aDeltaThatFinishesNoStatementChangesNothingShown() throws {
+        var conversation = try Self.streaming()
+        var live = LiveUI()
+        live.observe(conversation)
+
+        conversation.apply(try Self.event(#"{"type":"ui_delta","turn_id":"t1","format":"openui","delta":"tip = Callout(\"info\""}"#))
+        let unfinished = live.observe(conversation)
+        conversation.apply(try Self.event(#"{"type":"ui_delta","turn_id":"t1","format":"openui","delta":", \"Book\", \"Terrace\")\n"}"#))
+        let finished = live.observe(conversation)
+
+        #expect(!unfinished)
+        #expect(finished)
+    }
+
+    @Test func aReplyChatSaysIsWrittenShowsWhatChatStored() throws {
         var live = LiveUI()
         live.observe(try Self.streaming())
-        let spilled: [String: RawJSON] = [
-            "ai_generated": .bool(true), "turn_id": .string("t1"),
-            "ai_ui": .dictionary([
-                "v": .number(1), "format": .string("openui"), "status": .string("complete"),
-                "overflow": .bool(true), "artifact_id": .string("a1"),
-            ]),
+        // Such as a refused reply, which Chat keeps with no UI.
+        let written: [String: RawJSON] = [
+            "ai_generated": .bool(true), "generating": .bool(false), "turn_id": .string("t1"),
         ]
 
-        #expect(live.overlay([(id: "m1", custom: spilled)])["m1"]?["ai_ui"] == Self.streamedUI)
+        #expect(live.overlay([(id: "m1", custom: written)]).isEmpty)
     }
 
     @Test func thePersonsMessagesAreLeftAlone() throws {
