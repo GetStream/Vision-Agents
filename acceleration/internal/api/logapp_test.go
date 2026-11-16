@@ -3,15 +3,20 @@
 package api
 
 import (
+	"crypto/rand"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 )
@@ -39,8 +44,250 @@ func TestLogAppSuite(t *testing.T) {
 	runSuite(t, new(LogAppSuite))
 }
 
+// testRelease is the version LogAppSuite's router says it was built from.
+const testRelease = "v0.0.0-logtest"
+
+// loggedCap is how many bytes of a value the caller chose the access line keeps, as
+// acceleration/README.md documents it. Not maxLoggedValue, so a changed cap fails here.
+const loggedCap = 256
+
+func (s *LogAppSuite) SetupSuite() {
+	s.release = testRelease
+	s.appLogSuite.SetupSuite()
+}
+
 func (s *LogAppSuite) SetupTest() {
 	s.useFixture("standard")
+}
+
+// Defect: the path logged as the operation, which spreads one route over one value per id
+// (and a token route's over its secrets), or the route left off.
+func (s *LogAppSuite) TestTheAccessLineNamesTheRouteItServedRatherThanThePath() {
+	id := s.utils.uuid()
+
+	line := s.sent(s.serverClient, http.MethodGet, "/v1/agents/sessions/"+id, nil)
+
+	s.Equal("/v1/agents/sessions/{id}", s.field(line, "operation_type"))
+	s.Equal(1, strings.Count(line, "operation_type="))
+}
+
+// Defect: a refusal before the route (withServerSide) logged without its route.
+func (s *LogAppSuite) TestTheAccessLineOfARequestRefusedBeforeItsRouteNamesTheRoute() {
+	line := s.sent(s.client, http.MethodGet, "/v1/usage/events", nil)
+
+	s.Contains(line, "status=403")
+	s.Equal("/v1/usage/events", s.field(line, "operation_type"))
+}
+
+// Defect: "unmatched", the metrics' bucket, logged as if it were a route.
+func (s *LogAppSuite) TestTheAccessLineOfAPathNoRouteServesNamesNoOperation() {
+	line := s.sent(s.serverClient, http.MethodGet, "/v1/no-such-route/"+s.utils.uuid(), nil)
+
+	s.Contains(line, "status=404")
+	s.NotContains(line, "operation_type")
+}
+
+// Defect: the code left off a refusal, or another code than the one the caller was told.
+func (s *LogAppSuite) TestTheAccessLineOfARefusalNamesTheCodeTheCallerWasTold() {
+	for _, refused := range []struct {
+		client *testClient
+		path   string
+	}{
+		{s.unauthenticatedClient, "/v1/account"},
+		{s.client, "/v1/usage/events"},
+	} {
+		id := s.utils.uuid()
+		status, payload := refused.client.with(RequestIDHeader, id).call(http.MethodGet, refused.path, nil)
+		s.Require().GreaterOrEqual(status, http.StatusBadRequest, refused.path)
+
+		s.Equal(s.errorCode(payload), s.field(s.lineOf(id), "error_code"), refused.path)
+	}
+}
+
+func (s *LogAppSuite) TestTheAccessLineOfASuccessNamesNoErrorCode() {
+	line := s.sent(s.serverClient, http.MethodGet, "/v1/agents/skills", nil)
+
+	s.Contains(line, "status=200")
+	s.NotContains(line, "error_code")
+}
+
+// Defect: a header logged under another name, or not at all.
+func (s *LogAppSuite) TestTheAccessLineNamesTheClientItsAuthTypeAndItsUserAgent() {
+	caller := s.serverClient.with(clientHeader, "stream-cli 1.2").with("User-Agent", "probe agent/1.0")
+
+	line := s.servedAs(caller)
+
+	s.Equal("stream-cli 1.2", s.field(line, "x_stream_client"))
+	s.Equal(auth.AuthTypeServer, s.field(line, "stream_auth_type"))
+	s.Equal("probe agent/1.0", s.field(line, "user_agent"))
+}
+
+// Defect: an absent header logged empty.
+func (s *LogAppSuite) TestTheAccessLineOfARequestWithoutThoseHeadersNamesNone() {
+	caller := s.unauthenticatedClient.with(clientHeader, "")
+	// An empty User-Agent is how net/http is told to send none rather than its own.
+	caller.header["User-Agent"] = []string{""}
+
+	line := s.servedAs(caller)
+
+	s.NotContains(line, "x_stream_client")
+	s.NotContains(line, "stream_auth_type")
+	s.NotContains(line, "user_agent")
+}
+
+// Defect: a header the caller chose logged whole, so one request can write a megabyte line;
+// or cut inside a character, which the log then shows as bytes.
+func (s *LogAppSuite) TestAHeaderTheCallerChoseIsCutOnTheAccessLine() {
+	long := strings.Repeat("a", loggedCap+44)
+	// A two-byte character straddling the cap, which is cut before rather than in half.
+	straddling := strings.Repeat("b", loggedCap-1) + "éé"
+
+	line := s.servedAs(s.serverClient.with(clientHeader, long).with("User-Agent", straddling).with(auth.AuthTypeHeader, long))
+
+	s.Equal(strings.Repeat("a", loggedCap), s.field(line, "x_stream_client"))
+	s.Equal(strings.Repeat("b", loggedCap-1), s.field(line, "user_agent"))
+	s.Equal(strings.Repeat("a", loggedCap), s.field(line, "stream_auth_type"))
+}
+
+// Defect: the body's size left off, or the response's logged as it.
+func (s *LogAppSuite) TestTheAccessLineNamesTheSizeOfTheBodyItWasSent() {
+	body := `{"probe":"` + s.utils.uuid() + `"}`
+
+	line := s.sent(s.serverClient, http.MethodPost, "/v1/agents/sessions", strings.NewReader(body))
+
+	s.Equal(strconv.Itoa(len(body)), s.field(line, "request_size"))
+}
+
+// Defect: a body of unknown length logged as -1, or a request with no body as 0.
+func (s *LogAppSuite) TestTheAccessLineOfABodyOfUnknownLengthOrNoneNamesNoSize() {
+	// A reader whose length net/http cannot know, which it sends chunked.
+	chunked := io.MultiReader(strings.NewReader(`{"probe":"` + s.utils.uuid() + `"}`))
+
+	sentChunked := s.sent(s.serverClient, http.MethodPost, "/v1/agents/sessions", chunked)
+	sentNone := s.servedAs(s.serverClient)
+
+	s.NotContains(sentChunked, "request_size")
+	s.NotContains(sentNone, "request_size")
+}
+
+// Defect: the user of an end user's request left off.
+func (s *LogAppSuite) TestTheAccessLineOfAnEndUserNamesTheUser() {
+	s.Require().NotEmpty(s.client.userID)
+	s.Require().NotEmpty(s.anonymousClient.userID)
+
+	s.Equal(s.client.userID, s.field(s.servedAs(s.client), "user_id"))
+	s.Equal(s.anonymousClient.userID, s.field(s.servedAs(s.anonymousClient), "user_id"))
+}
+
+// Defect: a backend's request logged as the user it says it acts for, which it made for itself.
+func (s *LogAppSuite) TestTheAccessLineOfABackendNamesNoUserEvenActingForOne() {
+	s.NotContains(s.servedAs(s.serverClient), "user_id")
+	s.NotContains(s.servedAs(s.serverClient.actingFor(s.client)), "user_id")
+	s.NotContains(s.servedAs(s.unauthenticatedClient), "user_id")
+}
+
+// Defect: a user id the caller chose logged whole.
+func (s *LogAppSuite) TestAUserIDTheCallerChoseIsCutOnTheAccessLine() {
+	anonymous := s.data.claiming(strings.Repeat("u", loggedCap+10))
+
+	s.Equal(strings.Repeat("u", loggedCap), s.field(s.servedAs(anonymous), "user_id"))
+}
+
+// Defect: an end user who named nobody logged with an empty user id.
+func (s *LogAppSuite) TestTheAccessLineOfAnEndUserWhoNamedNobodyNamesNoUser() {
+	nameless := s.signedIn(jwt.MapClaims{}, auth.AuthTypeAnonymous, anonymous, "")
+
+	line := s.servedAs(nameless)
+
+	s.Contains(line, " app_id="+s.customerID()+" ")
+	s.NotContains(line, "user_id")
+}
+
+func (s *LogAppSuite) TestTheAccessLineNamesTheReleaseTheRouterWasBuiltFrom() {
+	line := s.servedAs(s.unauthenticatedClient)
+
+	s.Equal(testRelease, s.field(line, "build_version"))
+}
+
+// Defect: the trace left off, or another id than the request's span's.
+func (s *LogAppSuite) TestTheAccessLineNamesTheTraceOfTheRequestsSpan() {
+	var traceID trace.TraceID
+	var spanID trace.SpanID
+	_, _ = rand.Read(traceID[:])
+	_, _ = rand.Read(spanID[:])
+	span := trace.NewSpanContext(trace.SpanContextConfig{TraceID: traceID, SpanID: spanID, TraceFlags: trace.FlagsSampled})
+
+	line := s.servedWithin(func(r *http.Request) *http.Request {
+		return r.WithContext(trace.ContextWithSpanContext(r.Context(), span))
+	})
+
+	s.Equal(traceID.String(), s.field(line, "trace_id"))
+}
+
+// Defect: a request with tracing off logged with an empty or all-zero trace id.
+func (s *LogAppSuite) TestTheAccessLineOfARequestWithNoSpanNamesNoTrace() {
+	line := s.servedWithin(func(r *http.Request) *http.Request { return r })
+
+	s.NotContains(line, "trace_id")
+}
+
+// Defect: the sampler dropped the span, and the line named a trace that was never exported.
+func (s *LogAppSuite) TestTheAccessLineOfAnUnsampledRequestNamesNoTrace() {
+	var traceID trace.TraceID
+	var spanID trace.SpanID
+	traceID[0], spanID[0] = 1, 1
+	unsampled := trace.NewSpanContext(trace.SpanContextConfig{TraceID: traceID, SpanID: spanID})
+	s.Require().True(unsampled.IsValid())
+
+	line := s.servedWithin(func(r *http.Request) *http.Request {
+		return r.WithContext(trace.ContextWithSpanContext(r.Context(), unsampled))
+	})
+
+	s.NotContains(line, "trace_id")
+}
+
+// Defect: a socket declares its auth type in the query, which the line read only from the header.
+func (s *LogAppSuite) TestTheAccessLineNamesTheAuthTypeASocketDeclaresInItsQuery() {
+	s.Equal("jwt", s.field(s.sent(s.unauthenticatedClient, http.MethodGet, "/health?stream-auth-type=jwt", nil), "stream_auth_type"))
+	s.Equal("anonymous", s.field(s.sent(s.unauthenticatedClient, http.MethodGet, "/health?stream-auth-type=anonymous", nil), "stream_auth_type"))
+	s.NotContains(s.sent(s.unauthenticatedClient, http.MethodGet, "/health?stream-auth-type=server", nil), "stream_auth_type")
+}
+
+// servedWithin is the access line withRequestLog writes for a GET whose request was prepared
+// by within first, as withTrace prepares it with the request's span.
+func (s *LogAppSuite) servedWithin(within func(*http.Request) *http.Request) string {
+	path := "/probe-" + s.utils.uuid()
+	routes := chi.NewRouter()
+	routes.Get(path, func(http.ResponseWriter, *http.Request) {})
+	logged := s.router.withRequestLog(routes, routes)
+	node := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logged.ServeHTTP(w, within(r))
+	}))
+	s.T().Cleanup(node.Close)
+
+	response, err := node.Client().Get(node.URL + path)
+	s.Require().NoError(err)
+	s.Require().NoError(response.Body.Close())
+
+	var line string
+	s.Require().Eventually(func() bool {
+		for l := range strings.Lines(s.logged.String()) {
+			if strings.Contains(l, `msg="served a request"`) && strings.Contains(l, " path="+path+" ") {
+				line = l
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 20*time.Millisecond)
+	return line
+}
+
+// errorCode is the code of the failure payload answers with.
+func (s *LogAppSuite) errorCode(payload []byte) string {
+	var answered ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &answered), string(payload))
+	s.Require().NotEmpty(answered.Error.Code, string(payload))
+	return answered.Error.Code
 }
 
 func (s *LogAppSuite) TestTheAccessLineOfABackendNamesTheAppAndItsPublicKey() {
@@ -207,6 +454,41 @@ func (s *appLogSuite) servedAs(client *testClient) string {
 	return s.lineOf(id)
 }
 
+// sent is the access line of a request by client sending body as is, whatever it answered.
+func (s *appLogSuite) sent(client *testClient, method, path string, body io.Reader) string {
+	id := s.utils.uuid()
+	request, err := http.NewRequest(method, s.server.URL+path, body)
+	s.Require().NoError(err)
+	request.Header = client.header.Clone()
+	request.Header.Set(RequestIDHeader, id)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := s.server.Client().Do(request)
+	s.Require().NoError(err)
+	_, _ = io.Copy(io.Discard, response.Body)
+	s.Require().NoError(response.Body.Close())
+	return s.lineOf(id)
+}
+
+// field is the value line gives key, unquoted, or "" when it gives none.
+func (s *appLogSuite) field(line, key string) string {
+	at := strings.Index(line, " "+key+"=")
+	if at < 0 {
+		return ""
+	}
+	rest := strings.TrimSuffix(line[at+len(key)+2:], "\n")
+	if strings.HasPrefix(rest, `"`) {
+		quoted, err := strconv.QuotedPrefix(rest)
+		s.Require().NoError(err, line)
+		value, err := strconv.Unquote(quoted)
+		s.Require().NoError(err, line)
+		return value
+	}
+	if end := strings.IndexByte(rest, ' '); end >= 0 {
+		return rest[:end]
+	}
+	return rest
+}
+
 // lineOf is the access line of the request that carried id.
 func (s *appLogSuite) lineOf(id string) string {
 	var found string
@@ -248,6 +530,28 @@ func (s *LogAppProxiedSuite) TestTheAccessLineNamesTheKeyTheProxySaidTheCallerUs
 
 	s.Contains(line, " app_id="+s.customerID()+" ")
 	s.Contains(line, " api_key="+s.app.key)
+}
+
+// The control: a router built without a release (a local build) names none.
+func (s *LogAppProxiedSuite) TestTheAccessLineOfARouterWithNoReleaseNamesNone() {
+	line := s.servedAs(s.unauthenticatedClient)
+
+	s.NotContains(line, "build_version")
+}
+
+// The proxy says the caller's user in a header, which is the user the line names.
+func (s *LogAppProxiedSuite) TestTheAccessLineNamesTheUserTheProxySaidTheCallerIs() {
+	user := s.utils.uuid()
+	header := http.Header{}
+	header.Set(auth.AppHeader, s.customerID())
+	header.Set(auth.OrganizationHeader, s.app.organization.ID)
+	header.Set(auth.AuthTypeHeader, auth.AuthTypeJWT)
+	header.Set(auth.UserHeader, user)
+
+	line := s.servedAs(&testClient{suite: &s.RouterSuite, header: header})
+
+	s.Equal(user, s.field(line, "user_id"))
+	s.Equal(auth.AuthTypeJWT, s.field(line, "stream_auth_type"))
 }
 
 func (s *LogAppProxiedSuite) TestTheAccessLineOfACallerTheProxyNamedNoKeyForNamesNoKey() {

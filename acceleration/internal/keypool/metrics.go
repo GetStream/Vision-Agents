@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -33,7 +34,27 @@ var refusedAttempts = promauto.NewCounterVec(prometheus.CounterOpts{
 // the next key or fails over, and the key is to top up or replace.
 func Alerts(limit time.Duration) []alerts.Condition {
 	return []alerts.Condition{{Name: "key_refused", Level: alerts.Warn,
-		Items: alerts.IncreasedPer(refusedAttempts, limit, []string{"key_var", "status"}, nil)}}
+		Items:    alerts.IncreasedPer(refusedAttempts, limit, []string{"key_var", "status"}, nil),
+		Describe: describeRefusal}}
+}
+
+// refusalReasons say what each status of refusedAttempts means, for the person who acts on the
+// alert. The statuses are the ones refusedAttempts documents.
+var refusalReasons = map[string]string{
+	strconv.Itoa(http.StatusBadRequest):      "key not valid, replace it",
+	strconv.Itoa(http.StatusUnauthorized):    "key not valid or its quota spent, replace it or top it up",
+	outOfFundsStatus:                         "out of funds, top up the account",
+	strconv.Itoa(http.StatusForbidden):       "key not valid, replace it",
+	strconv.Itoa(http.StatusTooManyRequests): "rate limited or spend cap reached, wait, add keys or raise the cap",
+	quotaExceededStatus:                      "quota spent, wait for it to reset or raise it",
+	invalidKeyStatus:                         "key not valid, replace it",
+}
+
+// describeRefusal is the reason for an item of Alerts, key_var/status. A status with no reason,
+// or an item of another shape, gets none.
+func describeRefusal(item string) string {
+	_, status, _ := strings.Cut(item, "/")
+	return refusalReasons[status]
 }
 
 // The vendor metrics are kept only for a pool whose keys were read from a variable (Env), so

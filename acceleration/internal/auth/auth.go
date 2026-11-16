@@ -492,6 +492,15 @@ func authTypeOf(r *http.Request) string {
 	return strings.TrimSpace(r.Header.Get(AuthTypeHeader))
 }
 
+// DeclaredAuthType is what the caller declared as its kind of credential: the header, else a
+// socket's query parameter when it names an end user. It is read for logging, not trusted.
+func DeclaredAuthType(r *http.Request) string {
+	if declared := authTypeOf(r); declared != "" {
+		return declared
+	}
+	return endUserParam(r)
+}
+
 // endUserParam reads AuthTypeParam, and only when it names an end user.
 func endUserParam(r *http.Request) string {
 	declared := strings.TrimSpace(r.URL.Query().Get(AuthTypeParam))
