@@ -1138,6 +1138,21 @@ func (s *TakeoverSuite) TestARedisThatLostACallsKeysDoesNotEndIt() {
 	s.True(lapse.After(time.Now()))
 }
 
+// Defect: a call given back after its record is gone stays in the set, claimed by whoever scans it.
+func (s *TakeoverSuite) TestACallGivenBackWithNoRecordIsForgotten() {
+	b := s.node("b")
+	b.provider.StopTaking()
+	id := "no-record"
+	s.Require().NoError(s.redis.Do(context.Background(), s.redis.B().Set().Key(s.prefix+":owner:"+id).Value("b").
+		Px(time.Minute).Build()).Error())
+	b.provider.giveBack(context.Background(), id, slog.New(slog.DiscardHandler))
+	a := s.node("a")
+
+	s.Eventually(func() bool { return s.gone(id) }, 2*time.Second, 10*time.Millisecond, "a left the call with no record in the set")
+	s.Zero(a.takeover.resumes())
+	s.noReport(a.ended)
+}
+
 func (s *TakeoverSuite) TestANodeWhoseClaimWentMissingKeepsTheCall() {
 	a := s.node("a")
 	id := s.dial(a)
