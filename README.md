@@ -1,12 +1,27 @@
-![VisionAgents](assets/repo_image.png)
+![StreamAgents](assets/stream_agents.png)
 
+> [!NOTE]
+> Using Python for Agents no longer makes sense. 0.7 is a move to Go, with SDKs for other languages.
 
-Fast, Go based, backend for building voice, video and text agents. 
-Build AI/agentic apps like Muse, Decagon and Harvey in days.
+Stream Agents is a Go backend for building voice, video and text agents.
+You can build AI/agentic apps like Muse, Decagon and Harvey in a day.
 
-* Go: Python no longer makes sense now that we all write code in English with Claude
-* Build Quickly: The SDKs, routing, acceleration, connectors and other features make it fast to build complex agents.
-* Performance: Go, WARP and edge servers ensure excellent performance
+#### It's faster to build agents:
+
+1. Agents are defined in a folder structure + YAML
+2. SDKs handle chat/audio client and state
+3. All the components you need are integrated with sensible default. (Guardrails, Knowledge, Routing, Connectors, Sandboxes, skills, telephony)
+
+#### Performance is excellent:
+
+1. Go runs with high concurrency and raw performance
+2. The edge acceleration offloads your backend and lowers latency
+3. Audio forwarding is optimized with WARP similar to OpenAI
+
+#### Sovereign AI
+
+The combination of routing, persistence and memory makes it easy to switch the underlying models.
+Stay in control of how you use the frontier models, how costs scale and run on your own when it makes sense.
 
 ## SDKs
 
@@ -58,7 +73,7 @@ Note that you can also configure agents through the SDKs or dashboard.
 
 ## Tool Calling
 
-You can set up tool calling with any language.
+You can set up tool calling with any language. Here's a python example
 
 ```golang
 package main
@@ -117,6 +132,10 @@ dispatch = stream.Dispatch()
 dispatch.host(agent)
 asyncio.run(dispatch.run())
 ```
+
+## Examples / What can you build
+
+
 
 
 ## Features included
