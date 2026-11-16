@@ -80,6 +80,19 @@ func (s *LogAppSuite) TestTheAccessLineOfARequestNobodyAuthenticatedNamesNeither
 	s.NotContains(line, "api_key")
 }
 
+func (s *LogAppSuite) TestTheAccessLineOfAKeyWithABadTokenNamesNeither() {
+	forged := &testClient{suite: &s.RouterSuite, header: http.Header{}}
+	forged.header.Set(auth.APIKeyHeader, s.app.key)
+	forged.header.Set(auth.CustomerHeader, s.customerID())
+	forged.header.Set("Authorization", "Bearer not-a-token")
+
+	line := s.servedAs(forged)
+
+	s.Contains(line, "status=401")
+	s.NotContains(line, "app_id")
+	s.NotContains(line, "api_key")
+}
+
 func (s *LogAppSuite) TestTheAccessLineOfAHookNamesNeitherEvenWhenTheCallerSendsAnApp() {
 	hostile := *s.serverClient
 	hostile.header = s.serverClient.header.Clone()

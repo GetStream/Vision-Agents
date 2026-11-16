@@ -109,3 +109,25 @@ func (s *LogHandlerSuite) TestALoggerWithAFieldDoesNotHideTheAppFromItsSiblings(
 	s.Equal(1, strings.Count(lines[1], "app_id="))
 	s.Contains(lines[2], "app_id=1732479")
 }
+
+func (s *LogHandlerSuite) TestALineOfAGroupedLoggerNamesTheAppInsideTheGroup() {
+	ctx := WithLoggedApp(context.Background(), "1732479", "pubkey123")
+
+	s.logger.With("app_id", "other").WithGroup("g").InfoContext(ctx, "probe", "x", 1)
+	s.logger.WithGroup("g").With("app_id", "other").InfoContext(ctx, "probe")
+
+	lines := strings.Split(strings.TrimSpace(s.out.String()), "\n")
+	s.Require().Len(lines, 2)
+	s.Contains(lines[0], " app_id=other g.x=1 g.app_id=1732479 g.api_key=pubkey123")
+	s.Equal(1, strings.Count(lines[1], "g.app_id="))
+	s.Contains(lines[1], " g.app_id=other g.api_key=pubkey123")
+}
+
+func (s *LogHandlerSuite) TestALoggerThatAlreadyNamesTheKeyIsNotGivenASecondOne() {
+	ctx := WithLoggedApp(context.Background(), "1732479", "pubkey123")
+
+	s.logger.With("api_key", "other").InfoContext(ctx, "probe")
+
+	s.Equal(1, strings.Count(s.out.String(), "api_key="))
+	s.Contains(s.out.String(), "app_id=1732479")
+}
