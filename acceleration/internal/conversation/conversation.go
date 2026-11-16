@@ -282,8 +282,10 @@ type Conversation struct {
 	// reasoning is the model's thinking for the current reply. It is shown to watchers
 	// through ephemeral updates only and is never persisted.
 	reasoning liveReasoning
-	// lastPublished throttles intermediate conversation_updated snapshots during token streaming.
+	// lastPublished throttles intermediate conversation_updated snapshots during token streaming,
+	// and unpublished says one was held back, which the live loop then sends.
 	lastPublished time.Time
+	unpublished   bool
 	// lastUIFormat and lastUIContent keep the latest completed UI for openui-patch turns,
 	// and turnUIRaw accumulates raw UIDelta fragments for the active turn.
 	lastUIFormat  string
@@ -2010,10 +2012,27 @@ func (c *Conversation) Observe(event agent.Event) {
 		m.Saved = false
 	}
 	now := time.Now()
-	if !coalesce || now.Sub(c.lastPublished) >= answerEvery {
+	c.unpublished = coalesce && now.Sub(c.lastPublished) < answerEvery
+	if !c.unpublished {
 		c.lastPublished = now
 		c.publish(*m)
 	}
+}
+
+// publishHeld sends watchers the snapshot Observe held back while the reply streamed, so the
+// last words before a pause, such as ahead of a tool call, reach them without waiting for the
+// next event.
+func (c *Conversation) publishHeld() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	m := c.data.Current
+	// A tick runs a little early or late, so the pace allows half a tick either way.
+	if !c.unpublished || m == nil || time.Since(c.lastPublished) < answerEvery-liveTick/2 {
+		return
+	}
+	c.unpublished = false
+	c.lastPublished = time.Now()
+	c.publish(*m)
 }
 
 // refuse marks a reply the prompt injection screen refused. What streamed of the refused
@@ -2156,6 +2175,7 @@ func (c *Conversation) finish(state string) {
 	}
 	c.turnUIRaw = ""
 	c.lastPublished = time.Time{}
+	c.unpublished = false
 	for i := range m.Tools {
 		t := &m.Tools[i]
 		if t.FinishedAt == nil {
@@ -2509,6 +2529,8 @@ func (c *Conversation) run() {
 			}
 			return
 		case <-tick.C:
+			// Watchers are sent what was held back even while Stream is refusing writes.
+			c.publishHeld()
 			if time.Now().Before(retry) {
 				continue
 			}

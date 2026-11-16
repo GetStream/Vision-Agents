@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -342,4 +343,26 @@ func TestUIDeltaPatchTurnMergesIntoEarlierReplyUIAndCoalescesSnapshots(t *testin
 		reply1["custom"].(map[string]any)["ai_ui"].(map[string]any)["content"])
 	require.Equal(t, "$party = 4\nroot = Card([hdr])\nhdr = CardHeader(\"Kaneo\")",
 		reply2["custom"].(map[string]any)["ai_ui"].(map[string]any)["content"])
+}
+
+func TestWordsHeldBackWhileStreamingReachWatchersWhenTheReplyPauses(t *testing.T) {
+	_, client := newChat(t)
+	s := NewForChat(client)
+	defer s.Close()
+	c, _, _, err := s.Open(context.Background(), "customer", "juno", "")
+	require.NoError(t, err)
+	var shown atomic.Pointer[string]
+	c.Attach(func(u Updated) { shown.Store(&u.Message.Text) })
+
+	_, err = c.BeginCommand("cmd-1", "Check the weather", "")
+	require.NoError(t, err)
+	c.Observe(agent.Responding{TurnID: "t1"})
+	c.Observe(agent.ResponseDelta{TurnID: "t1", Text: "Let me check"})
+	c.Observe(agent.ResponseDelta{TurnID: "t1", Text: " that for you."})
+
+	// Nothing else comes, as while the model writes a tool call.
+	require.Eventually(t, func() bool {
+		text := shown.Load()
+		return text != nil && *text == "Let me check that for you."
+	}, 2*time.Second, 10*time.Millisecond, "the words after the last snapshot never reached watchers")
 }
