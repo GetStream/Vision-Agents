@@ -1092,12 +1092,14 @@ func (s *Server) accessFields(routes *chi.Mux, r *http.Request, answered *logged
 	}
 	for _, header := range []struct{ field, name string }{
 		{"x_stream_client", clientHeader},
-		{"stream_auth_type", auth.AuthTypeHeader},
 		{"user_agent", "User-Agent"},
 	} {
 		if value := trimmedTo(r.Header.Get(header.name), maxLoggedValue); value != "" {
 			fields = append(fields, header.field, value)
 		}
+	}
+	if declared := trimmedTo(auth.DeclaredAuthType(r), maxLoggedValue); declared != "" {
+		fields = append(fields, "stream_auth_type", declared)
 	}
 	if r.ContentLength > 0 {
 		fields = append(fields, "request_size", r.ContentLength)

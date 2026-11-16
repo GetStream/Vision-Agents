@@ -245,6 +245,13 @@ func (s *LogAppSuite) TestTheAccessLineOfAnUnsampledRequestNamesNoTrace() {
 	s.NotContains(line, "trace_id")
 }
 
+// Defect: a socket declares its auth type in the query, which the line read only from the header.
+func (s *LogAppSuite) TestTheAccessLineNamesTheAuthTypeASocketDeclaresInItsQuery() {
+	s.Equal("jwt", s.field(s.sent(s.unauthenticatedClient, http.MethodGet, "/health?stream-auth-type=jwt", nil), "stream_auth_type"))
+	s.Equal("anonymous", s.field(s.sent(s.unauthenticatedClient, http.MethodGet, "/health?stream-auth-type=anonymous", nil), "stream_auth_type"))
+	s.NotContains(s.sent(s.unauthenticatedClient, http.MethodGet, "/health?stream-auth-type=server", nil), "stream_auth_type")
+}
+
 // servedWithin is the access line withRequestLog writes for a GET whose request was prepared
 // by within first, as withTrace prepares it with the request's span.
 func (s *LogAppSuite) servedWithin(within func(*http.Request) *http.Request) string {
