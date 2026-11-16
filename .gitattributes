@@ -3,3 +3,4 @@ plugins/getstream/vision_agents/plugins/getstream/sfu_events.py linguist-generat
 .claude/skills/sdk/SKILL.md merge=union
 # Every PR adds a line under the same version heading; union keeps both sides on a local merge.
 CHANGELOG.md merge=union
+sdks/go/acceleration/generated.go linguist-generated=true
