@@ -1,0 +1,5 @@
+# Build backends `uv build --all` downloads in the pypi job, which holds the PyPI token.
+# Versions are the ones uv.lock resolves.
+hatchling==1.30.1
+hatch-vcs==0.5.0
+setuptools-scm==10.2.0

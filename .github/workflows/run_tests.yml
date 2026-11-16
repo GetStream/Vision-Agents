@@ -16,6 +16,11 @@ on:
         required: false
         default: false
         type: boolean
+      environment:
+        description: 'Environment the test job runs in, for its provider keys; empty runs it in none'
+        required: false
+        default: ""
+        type: string
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -63,6 +68,8 @@ jobs:
   test:
     name: Test "${{ inputs.marker }}"
     runs-on: ubuntu-latest
+    # The provider keys live in this environment, which only the branches that need them may enter.
+    environment: ${{ inputs.environment }}
     env:
       ASSEMBLYAI_API_KEY: ${{ secrets.ASSEMBLYAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
