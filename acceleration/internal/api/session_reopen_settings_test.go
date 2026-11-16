@@ -7,6 +7,8 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -144,6 +146,73 @@ func (s *SessionReopenSettingsSuite) TestADeviceDoesNotChangeHowLongItsBackendsT
 	s.Equal(60_000, s.heldSpec(running.Id).ToolTimeoutMs)
 }
 
+func (s *SessionReopenSettingsSuite) TestADeviceCarryingOnItsBackendsConversationLeavesTheBackendItsTools() {
+	user, opened := s.endedForUser(180_000, s.declared("refund_order"))
+	backend := s.serverClient.actingFor(user)
+
+	s.Require().Equal(http.StatusOK,
+		user.do(http.MethodPost, "/v1/agents/sessions/"+opened+"/resume", ResumeSessionRequest{}, nil))
+	backend.stopSession(opened)
+	s.Require().Equal(http.StatusOK,
+		backend.do(http.MethodPost, "/v1/agents/sessions/"+opened+"/resume", ResumeSessionRequest{}, nil))
+
+	held := s.heldSpec(opened)
+	s.Equal(s.harnessTools("refund_order"), held.Tools)
+	s.Equal(180_000, held.ToolTimeoutMs)
+}
+
+func (s *SessionReopenSettingsSuite) TestADeviceDoesNotSetTheToolsOrTimeoutItsBackendCarriesOnWith() {
+	user, opened := s.endedForUser(180_000, s.declared("refund_order"))
+	backend := s.serverClient.actingFor(user)
+
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, "/v1/agents/sessions/"+opened+"/resume",
+		ResumeSessionRequest{ToolTimeoutMs: pointerTo(1), Tools: s.declared("device_tool")}, nil))
+	s.Equal(1, s.heldSpec(opened).ToolTimeoutMs, "the device's own conversation runs with what it said")
+	backend.stopSession(opened)
+	s.Require().Equal(http.StatusOK,
+		backend.do(http.MethodPost, "/v1/agents/sessions/"+opened+"/resume", ResumeSessionRequest{}, nil))
+
+	held := s.heldSpec(opened)
+	s.Equal(s.harnessTools("refund_order"), held.Tools)
+	s.Equal(180_000, held.ToolTimeoutMs)
+}
+
+func (s *SessionReopenSettingsSuite) TestResumesOfAnEndedSessionAtOnceAllCarryItOn() {
+	ended := s.endedWith(180_000, s.declared("lookup_order"))
+
+	var wg sync.WaitGroup
+	statuses := make([]int, 6)
+	for i := range statuses {
+		wg.Go(func() {
+			statuses[i], _ = s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+ended+"/resume",
+				ResumeSessionRequest{ToolTimeoutMs: pointerTo((i + 1) * 1000)})
+		})
+	}
+	wg.Wait()
+
+	for _, status := range statuses {
+		s.Equal(http.StatusOK, status)
+	}
+	s.Require().NoError(s.manager.FlushRecords(context.Background()))
+	s.Equal(s.heldSpec(ended).ToolTimeoutMs, s.storedToolTimeout(ended), "the row says what the session runs with")
+}
+
+// A resume's timeout given to a running session just before it ended is read by the reopen
+// that follows, though its row write is slow to land.
+func (s *SessionReopenSettingsSuite) TestAReopenReadsTheTimeoutAResumeGaveJustBeforeTheSessionEnded() {
+	running := s.serverClient.createSession(textSession(nil))
+	s.Require().Eventually(func() bool { return s.stored(running.Id) }, settleFor, 20*time.Millisecond)
+	s.trigger("slow_resumed_timeout_"+strings.ReplaceAll(s.utils.uuid(), "-", ""), "agent_sessions", "UPDATE",
+		"NEW.id = '"+running.Id+"' AND NEW.tool_timeout_ms IS DISTINCT FROM OLD.tool_timeout_ms AND NEW.state = 'running'",
+		"PERFORM pg_sleep(1);")
+
+	s.resume(running.Id, ResumeSessionRequest{ToolTimeoutMs: pointerTo(60_000)})
+	s.serverClient.stopSession(running.Id)
+	s.respond(running.Id)
+
+	s.Equal(60_000, s.heldSpec(running.Id).ToolTimeoutMs)
+}
+
 func (s *SessionReopenSettingsSuite) TestAForkOfAnEndedSessionStillHasTheDefaultToolTimeout() {
 	ended := s.endedWith(180_000, nil)
 
@@ -186,6 +255,20 @@ func (s *SessionReopenSettingsSuite) endedWith(timeout int, tools *[]SessionTool
 		"the row is written")
 	s.serverClient.stopSession(opened.Id)
 	return opened.Id
+}
+
+// endedForUser is a conversation a backend opened for a new end user with timeout and tools,
+// whose row was written and which was then stopped.
+func (s *SessionReopenSettingsSuite) endedForUser(timeout int, tools *[]SessionTool) (*testClient, string) {
+	user := s.data.createUser()
+	request := textSession(nil)
+	request.ToolTimeoutMs = &timeout
+	request.Tools = tools
+	backend := s.serverClient.actingFor(user)
+	opened := backend.createSession(request)
+	s.Require().Eventually(func() bool { return s.stored(opened.Id) }, settleFor, 20*time.Millisecond)
+	backend.stopSession(opened.Id)
+	return user, opened.Id
 }
 
 // declared is one tool of the caller's own by name, with every setting a tool may carry.

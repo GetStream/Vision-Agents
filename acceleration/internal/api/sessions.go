@@ -632,14 +632,17 @@ func (s *Server) carryOn(ctx context.Context, id string, refuse func(error) erro
 	over.over(&spec)
 
 	reopened, err := s.sessions.Create(ctx, spec)
-	if errors.Is(err, session.ErrSessionExists) {
-		// Another message reopened it first. The row this one queued is written over with the
-		// winner's, and a resume's timeout is given to the winner rather than lost.
-		found, failure := s.session(ctx, id)
-		if failure == nil {
-			s.sessions.RecordAgain(found)
-			over.onto(ctx, found)
+	if errors.Is(err, session.ErrSessionExists) || errors.Is(err, conversation.ErrAlreadyOpen) {
+		// Another request carried it on first and met this one on the id or on the conversation,
+		// which the winner opens before it is held under the id. The one running is the answer,
+		// given a resume's timeout rather than losing it; its tools are its own.
+		if running := s.carriedOnBy(ctx, id); running != nil {
+			over.onto(ctx, running)
+			return running, func() {}, nil
 		}
+	}
+	if errors.Is(err, session.ErrSessionExists) {
+		found, failure := s.session(ctx, id)
 		return found, func() {}, failure
 	}
 	if errors.Is(err, streamapp.ErrDeploymentAppUnknown) {
@@ -650,6 +653,29 @@ func (s *Server) carryOn(ctx context.Context, id string, refuse func(error) erro
 	}
 	events, detach := reopened.Watch()
 	return reopened, func() { go holdUntilAnswered(reopened, events, detach) }, nil
+}
+
+// reopenRaceWait bounds how long a request that lost a reopen waits for the winner to be held.
+// A conversation open under another id is never held under this one, and is refused after it.
+const reopenRaceWait = 3 * time.Second
+
+// carriedOnBy is the session another request is carrying id on in, once it is held and still
+// running, or nil if none is within reopenRaceWait.
+func (s *Server) carriedOnBy(ctx context.Context, id string) *session.Session {
+	ctx, cancel := context.WithTimeout(ctx, reopenRaceWait)
+	defer cancel()
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if running, failure := s.session(ctx, id); failure == nil && running.State() != session.Ended {
+			return running
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+	}
 }
 
 // reopenedFromRow is the spec a text session that ended in another process is carried on
