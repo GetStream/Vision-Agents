@@ -449,6 +449,7 @@ from .response_branch_of import ResponseBranchOf
 from .response_sibling import ResponseSibling
 from .response_sibling_page import ResponseSiblingPage
 from .resume_history import ResumeHistory
+from .resume_session_request import ResumeSessionRequest
 from .review_actor import ReviewActor
 from .review_analysis import ReviewAnalysis
 from .review_cause import ReviewCause
@@ -1097,6 +1098,7 @@ __all__ = (
     "ResponseSibling",
     "ResponseSiblingPage",
     "ResumeHistory",
+    "ResumeSessionRequest",
     "ReviewActor",
     "ReviewAnalysis",
     "ReviewCause",
