@@ -688,6 +688,24 @@ func (e ChannelKind) Valid() bool {
 	}
 }
 
+// Defines values for ChatChannelAnswer.
+const (
+	Always    ChatChannelAnswer = "always"
+	Mentioned ChatChannelAnswer = "mentioned"
+)
+
+// Valid indicates whether the value is a known member of the ChatChannelAnswer enum.
+func (e ChatChannelAnswer) Valid() bool {
+	switch e {
+	case Always:
+		return true
+	case Mentioned:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ClassifyQuestionType.
 const (
 	Choice ClassifyQuestionType = "choice"
@@ -2173,6 +2191,24 @@ func (e RefusedReason) Valid() bool {
 	}
 }
 
+// Defines values for ResponseBranchOf.
+const (
+	ResponseBranchOfQuestion ResponseBranchOf = "question"
+	ResponseBranchOfReply    ResponseBranchOf = "reply"
+)
+
+// Valid indicates whether the value is a known member of the ResponseBranchOf enum.
+func (e ResponseBranchOf) Valid() bool {
+	switch e {
+	case ResponseBranchOfQuestion:
+		return true
+	case ResponseBranchOfReply:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReviewActor.
 const (
 	ReviewActorApp    ReviewActor = "app"
@@ -2587,12 +2623,15 @@ func (e SessionSettingsRequestVerbosity) Valid() bool {
 // Defines values for SessionSortDirection.
 const (
 	Minus1 SessionSortDirection = -1
+	N1     SessionSortDirection = 1
 )
 
 // Valid indicates whether the value is a known member of the SessionSortDirection enum.
 func (e SessionSortDirection) Valid() bool {
 	switch e {
 	case Minus1:
+		return true
+	case N1:
 		return true
 	default:
 		return false
@@ -2601,16 +2640,22 @@ func (e SessionSortDirection) Valid() bool {
 
 // Defines values for SessionSortField.
 const (
-	Relevance SessionSortField = "relevance"
-	UpdatedAt SessionSortField = "updated_at"
+	LastMessageAt SessionSortField = "last_message_at"
+	Pinned        SessionSortField = "pinned"
+	Relevance     SessionSortField = "relevance"
+	ReviewScore   SessionSortField = "review_score"
 )
 
 // Valid indicates whether the value is a known member of the SessionSortField enum.
 func (e SessionSortField) Valid() bool {
 	switch e {
+	case LastMessageAt:
+		return true
+	case Pinned:
+		return true
 	case Relevance:
 		return true
-	case UpdatedAt:
+	case ReviewScore:
 		return true
 	default:
 		return false
@@ -3238,6 +3283,24 @@ func (e ListScheduledTasksParamsState) Valid() bool {
 	}
 }
 
+// Defines values for ListResponseSiblingsParamsOf.
+const (
+	ListResponseSiblingsParamsOfQuestion ListResponseSiblingsParamsOf = "question"
+	ListResponseSiblingsParamsOfReply    ListResponseSiblingsParamsOf = "reply"
+)
+
+// Valid indicates whether the value is a known member of the ListResponseSiblingsParamsOf enum.
+func (e ListResponseSiblingsParamsOf) Valid() bool {
+	switch e {
+	case ListResponseSiblingsParamsOfQuestion:
+		return true
+	case ListResponseSiblingsParamsOfReply:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListSimulationRunsParamsState.
 const (
 	ListSimulationRunsParamsStateCancelled ListSimulationRunsParamsState = "cancelled"
@@ -3314,6 +3377,19 @@ type AccountBalanceWarningSource string
 
 // AccountStatus suspended: Stream refuses every request of the organization, free work included, until it restores it.
 type AccountStatus string
+
+// ActivatedBranch defines model for ActivatedBranch.
+type ActivatedBranch struct {
+	// AlreadyActive The branch was already the conversation, and nothing changed.
+	AlreadyActive bool `json:"already_active"`
+
+	// LeafResponseId The newest response of the branch, which the next question is answered after.
+	LeafResponseId string `json:"leaf_response_id"`
+
+	// Resent How many messages were sent again.
+	Resent    int        `json:"resent"`
+	RewoundTo *RewoundTo `json:"rewound_to,omitempty"`
+}
 
 // ActivityArea defines model for ActivityArea.
 type ActivityArea struct {
@@ -3516,6 +3592,9 @@ type AgentChannels struct {
 
 // AgentChatChannel defines model for AgentChatChannel.
 type AgentChatChannel struct {
+	// Answer Which messages in a channel of the type are answered. always answers every message. mentioned answers only a message that mentions the agent: its mentioned_users holds the Stream user whose id is the config's id, or its text has @ and that user's id or the config's name, as Stream's clients write a mention. A message that does not mention the agent gets no reply and starts no model; it stays in the channel, and the next answered message reads it as what was said before. Omitted is always.
+	Answer *ChatChannelAnswer `json:"answer,omitempty"`
+
 	// Type The channel type's name, as it comes before the colon in a channel's cid.
 	//
 	// Example: callouts
@@ -3546,7 +3625,7 @@ type AgentConfig struct {
 	// EpisodeCards What the agent does with episode cards, the same for every channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off writes none and reads none. record writes each conversation's card and its summary into the person's omni-channel, and no session reads them. on writes them as record does, and a session starts with the person's other cards. Turning record into on reads what record wrote.
 	EpisodeCards *EpisodeCardsMode `json:"episode_cards,omitempty"`
 
-	// FloorControl The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole.
+	// FloorControl The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default; anything else replaces the stored choice whole.
 	FloorControl *FloorControl `json:"floor_control,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
@@ -3556,6 +3635,7 @@ type AgentConfig struct {
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
 	Harness            *Harness  `json:"harness,omitempty"`
 	Id                 string    `json:"id"`
+	Image              *string   `json:"image,omitempty"`
 	Instructions       *string   `json:"instructions,omitempty"`
 	Keyterms           *[]string `json:"keyterms,omitempty"`
 	KnowledgeNamespace *string   `json:"knowledge_namespace,omitempty"`
@@ -3639,7 +3719,7 @@ type AgentConfigPatch struct {
 	// EpisodeCards What the agent does with episode cards, the same for every channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off writes none and reads none. record writes each conversation's card and its summary into the person's omni-channel, and no session reads them. on writes them as record does, and a session starts with the person's other cards. Turning record into on reads what record wrote.
 	EpisodeCards *EpisodeCardsMode `json:"episode_cards,omitempty"`
 
-	// FloorControl The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole.
+	// FloorControl The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default; anything else replaces the stored choice whole.
 	FloorControl *FloorControl `json:"floor_control,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
@@ -3649,7 +3729,10 @@ type AgentConfigPatch struct {
 	Guardrail *string `json:"guardrail,omitempty"`
 
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
-	Harness            *Harness  `json:"harness,omitempty"`
+	Harness *Harness `json:"harness,omitempty"`
+
+	// Image An empty string removes it, and the agent stops being offered generate_image.
+	Image              *string   `json:"image,omitempty"`
 	Instructions       *string   `json:"instructions,omitempty"`
 	Keyterms           *[]string `json:"keyterms,omitempty"`
 	KnowledgeNamespace *string   `json:"knowledge_namespace,omitempty"`
@@ -3753,7 +3836,7 @@ type AgentConfigRequest struct {
 	// EpisodeCards What the agent does with episode cards, the same for every channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off writes none and reads none. record writes each conversation's card and its summary into the person's omni-channel, and no session reads them. on writes them as record does, and a session starts with the person's other cards. Turning record into on reads what record wrote.
 	EpisodeCards *EpisodeCardsMode `json:"episode_cards,omitempty"`
 
-	// FloorControl The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole.
+	// FloorControl The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default; anything else replaces the stored choice whole.
 	FloorControl *FloorControl `json:"floor_control,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
@@ -3763,8 +3846,11 @@ type AgentConfigRequest struct {
 	Guardrail *string `json:"guardrail,omitempty"`
 
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
-	Harness      *Harness `json:"harness,omitempty"`
-	Instructions *string  `json:"instructions,omitempty"`
+	Harness *Harness `json:"harness,omitempty"`
+
+	// Image What the agent draws pictures with, as a provider/model or a capability shortcut such as image-fast. Naming one offers a text agent with a Chat channel the generate_image tool, whose pictures are drawn after the turn and posted into the conversation when ready, billed like POST /v1/image/generations. Empty offers no such tool: unlike search there is no default.
+	Image        *string `json:"image,omitempty"`
+	Instructions *string `json:"instructions,omitempty"`
 
 	// Keyterms Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
 	Keyterms *[]string `json:"keyterms,omitempty"`
@@ -3955,10 +4041,15 @@ type AgentMode string
 
 // AgentResponse defines model for AgentResponse.
 type AgentResponse struct {
-	CreatedAt  time.Time  `json:"created_at"`
-	Error      *string    `json:"error,omitempty"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
-	Id         string     `json:"id"`
+	Branch     *ResponseBranch `json:"branch,omitempty"`
+	CreatedAt  time.Time       `json:"created_at"`
+	Error      *string         `json:"error,omitempty"`
+	FinishedAt *time.Time      `json:"finished_at,omitempty"`
+	Id         string          `json:"id"`
+
+	// ParentResponseId The response this one was answered after, absent for a session's first.
+	ParentResponseId *string    `json:"parent_response_id,omitempty"`
+	RewoundTo        *RewoundTo `json:"rewound_to,omitempty"`
 
 	// Said What the person asked, which is the first item of every response.
 	Said      *string `json:"said,omitempty"`
@@ -4286,6 +4377,36 @@ type AvailableNumber struct {
 	//
 	// Example: telnyx
 	Vendor string `json:"vendor"`
+}
+
+// BranchMessage defines model for BranchMessage.
+type BranchMessage struct {
+	Attachments []map[string]interface{} `json:"attachments"`
+	CreatedAt   time.Time                `json:"created_at"`
+
+	// Custom The message's custom data, as Stream Chat held it, with support_branch saying where it stands among its alternatives now.
+	Custom map[string]interface{} `json:"custom"`
+
+	// Id The id the message had in Stream Chat.
+	Id string `json:"id"`
+
+	// Role user or assistant, for a message the router wrote. Absent for one somebody else wrote in the channel.
+	Role *string `json:"role,omitempty"`
+	Text string  `json:"text"`
+
+	// UserId Who wrote it: the person, or the agent's Stream user.
+	UserId string `json:"user_id"`
+}
+
+// BranchMessagePage defines model for BranchMessagePage.
+type BranchMessagePage struct {
+	// Active The response is on the conversation, which the channel shows: there are no items.
+	Active  bool            `json:"active"`
+	HasMore bool            `json:"has_more"`
+	Items   []BranchMessage `json:"items"`
+
+	// NextCursor Pass as `cursor` for the next page. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
 // BusinessProfile Who the app is, and the brand a vendor registered it as.
@@ -4903,6 +5024,9 @@ type ChannelLink struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
+// ChatChannelAnswer Which messages in a channel of the type are answered. always answers every message. mentioned answers only a message that mentions the agent: its mentioned_users holds the Stream user whose id is the config's id, or its text has @ and that user's id or the config's name, as Stream's clients write a mention. A message that does not mention the agent gets no reply and starts no model; it stays in the channel, and the next answered message reads it as what was said before. Omitted is always.
+type ChatChannelAnswer string
+
 // ChatToken defines model for ChatToken.
 type ChatToken struct {
 	// ApiKey The Stream app the channel is in, which the browser SDK connects to.
@@ -4938,6 +5062,9 @@ type ChildAgent struct {
 
 	// Description What the model is told the agent does, which is the whole of how it decides when to call it.
 	Description *string `json:"description,omitempty"`
+
+	// MaxToolRounds The reply to a tool result, counted since the agent was handed its input, that is offered no more tools and made to answer from what it has. Zero is the default of 8; a negative number never withdraws them, for an agent that chains many lookups.
+	MaxToolRounds *int64 `json:"max_tool_rounds,omitempty"`
 
 	// TimeoutMs How long one call may take, two minutes when left out. A call never outlasts the run that made it: it gets this or what is left of the run, whichever is less. A call that runs out of time, or whose agent fails, is answered to the model as a failed tool call, and the run goes on.
 	TimeoutMs *int64 `json:"timeout_ms,omitempty"`
@@ -5844,7 +5971,10 @@ type CreateOptOutRequestSource string
 
 // CreateResponseRequest defines model for CreateResponseRequest.
 type CreateResponseRequest struct {
-	Audio  *AudioSource   `json:"audio,omitempty"`
+	Audio *AudioSource `json:"audio,omitempty"`
+
+	// Files A file to answer questions about: a PDF or a Word document. The router reads it as text before the turn starts, and the agent answers from it on this turn and on every turn of the conversation after it, including a conversation carried on later or forked by the same person. In a conversation kept in Stream Chat the person's message shows the file. At most 100 pages, and at most 120,000 characters of text together with the files the conversation already holds, or a quarter of what the model reads at once. Only in a person's own conversation: refused in a thread, in a channel others write in, in a session a worker opened for a channel's message, and by a speech-to-speech session. Not with a voice note. Refused before any turn starts when it cannot be read, is too large, or reads as a prompt injection under the organization's policy.
+	Files  *[]FileSource  `json:"files,omitempty"`
 	Images *[]ImageSource `json:"images,omitempty"`
 
 	// MaxOutputTokens Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's.
@@ -5852,6 +5982,9 @@ type CreateResponseRequest struct {
 
 	// ReasoningEffort How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's.
 	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
+
+	// Replaces An earlier response of a conversation kept in Stream Chat to regenerate or edit. With no text its question is answered again; with text, the text is asked in its place. Requires request_id, and takes no images, audio, videos, files or ui_action.
+	Replaces *string `json:"replaces,omitempty"`
 
 	// RequestId Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and the frames of videos are shown to the model alone. A retry with the same id, text, images and voice note starts no second turn, returns no id and does not fetch its videos again: videos are not part of what a retry is matched on. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.
 	RequestId *string `json:"request_id,omitempty"`
@@ -5949,7 +6082,7 @@ type CreateSessionRequest struct {
 	// Description A longer note about the conversation, searched alongside the title.
 	Description *string `json:"description,omitempty"`
 
-	// FloorControl The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole.
+	// FloorControl The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default; anything else replaces the stored choice whole.
 	FloorControl *FloorControl `json:"floor_control,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
@@ -6029,7 +6162,7 @@ type CreateSessionRequest struct {
 	// Title What to call the conversation, for a list a person reads, until the router names a persistent one for what was said. Never shown to the model: what a conversation is called is a label on it rather than part of it.
 	Title *string `json:"title,omitempty"`
 
-	// ToolTimeoutMs How long the model waits for a tool result. Zero is the default.
+	// ToolTimeoutMs How long the model waits for the result of a tool the caller or a worker runs, in milliseconds. Zero or omitted is 30 seconds. A tool's own timeout_ms replaces it for that tool, which is how one slow tool, such as one that draws a picture, gets longer without every tool waiting as long.
 	ToolTimeoutMs *int           `json:"tool_timeout_ms,omitempty"`
 	Tools         *[]SessionTool `json:"tools,omitempty"`
 
@@ -6405,13 +6538,30 @@ type Equals1 struct {
 	Eq string `json:"$eq"`
 }
 
+// EqualsOrIn Matches one value exactly, written "value" or {"$eq": "value"}, or any of up to 50 values, written {"$in": ["a", "b"]}. An object holds one of $eq and $in.
+type EqualsOrIn struct {
+	union json.RawMessage
+}
+
+// EqualsOrIn0 defines model for EqualsOrIn.0.
+type EqualsOrIn0 = string
+
+// EqualsOrIn1 defines model for EqualsOrIn.1.
+type EqualsOrIn1 struct {
+	Eq *string   `json:"$eq,omitempty"`
+	In *[]string `json:"$in,omitempty"`
+}
+
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), tier_limit_reached (the organization's tier limits refuse the work, and limit says which: a 403 for a call or a transfer, to a country the tier does not reach, past its minutes or recipients of the day, or past its calls at once; a 400 for an agent config whose sandbox is bigger or more open than the organization's sandbox limits allow. The message names the tier and the limit), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), document_too_large (a 413: a file sent with a response has more pages or text than one may, alone or with the files the conversation already holds, and the message names the limit), document_unreadable (a 400: a file sent with a response could not be read, such as one with a password, one that is damaged or one with no text in it, which retrying the same file does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), branch_limit_reached (a 409: the conversation has as many edit and regenerate points as Stream Chat keeps for it, 100, so a regenerate or an edit is refused and the conversation is continued in a new chat; asking and reading are unaffected), branch_too_long (a 409: the branch an activation would bring back is more than 100 messages to send again, so it is continued in a new chat), branch_unavailable (a 410: the copies of a hidden branch were deleted, as a memory truncate deletes them, so it can be neither read nor brought back), switch_unfinished (a 409: a regenerate, an edit or an activation of the session failed after Stream Chat may have rewound, and finishing it still fails because Stream Chat does not answer, so the session's questions, regenerates, edits and activations are refused meanwhile; try again: each one tries to finish it first, so it clears once Stream Chat answers), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
 	DocUrl string `json:"doc_url"`
+
+	// Limit Which limit refused the work, present with tier_limit_reached only: country, per_day, recipients_per_day or concurrent for a call or a transfer, sandbox_network, sandbox_cpu, sandbox_memory_gb or sandbox_disk_gb for an agent config's sandbox. More may be added.
+	Limit *string `json:"limit,omitempty"`
 
 	// Message What went wrong, for a person to read. Its wording may change; branch on code.
 	Message string `json:"message"`
@@ -6428,14 +6578,23 @@ type ErrorResponse struct {
 // ErrorType The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, payment_required 402, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
 type ErrorType string
 
-// FloorControl The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole.
+// FileSource A file sent with a question. The router reads it as text once, and the agent answers from it on this turn and every turn of the conversation after it.
+type FileSource struct {
+	// Name What the file is called, shown on the person's message and to the model. Left out, the last part of the URL's path, or document for a data URI.
+	Name *string `json:"name,omitempty"`
+
+	// Url Public HTTP(S) URL or base64 data URI, such as data:application/pdf;base64,.... A PDF or a Word document (DOCX or DOC), told apart by its bytes. At most 20 MiB fetched, or 8 MiB as a data URI. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+	Url string `json:"url"`
+}
+
+// FloorControl The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default; anything else replaces the stored choice whole.
 type FloorControl struct {
-	// MaxWaitMs The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point.
+	// MaxWaitMs The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point. It is stream/chorus-asr's: with flow-controller it is refused (400).
 	//
 	// Example: 800
 	MaxWaitMs *int64 `json:"max_wait_ms,omitempty"`
 
-	// Model The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one there is. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured).
+	// Model The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one model there is; flow-controller keeps the flow controller, which rules the floor where no model does, whatever the router defaults an agent that chose none to. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured).
 	//
 	// Example: stream/chorus-asr
 	Model *string `json:"model,omitempty"`
@@ -6462,6 +6621,9 @@ type ForkSessionRequest struct {
 	// ResponseId Carry the parent's history only up to the end of this response, so the fork continues from that point rather than from where the parent is now. The history is read from what the parent recorded, which also lets a parent that kept no Chat transcript be forked with its history. Cannot be combined with messages false.
 	ResponseId *string `json:"response_id,omitempty"`
 	Title      *string `json:"title,omitempty"`
+
+	// ToolTimeoutMs How long the fork's model waits for the result of a tool the caller or a worker runs, in milliseconds, as on createSession. Omitted keeps a running parent's; a fork of a conversation that ended has 30 seconds, since its row does not keep one. Zero is 30 seconds, as on createSession.
+	ToolTimeoutMs *int `json:"tool_timeout_ms,omitempty"`
 }
 
 // GeneratedImage defines model for GeneratedImage.
@@ -6685,7 +6847,7 @@ type IndexedKnowledgeDocument struct {
 	ContentType string    `json:"content_type"`
 	CreatedAt   time.Time `json:"created_at"`
 
-	// Error Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good.
+	// Error Why the uploaded file could not be read, or why the passages of posted text could not all be written, written for whoever sent it. Set while a read that failed is tried again, and once it has failed for good.
 	Error     *string `json:"error,omitempty"`
 	Id        string  `json:"id"`
 	Namespace string  `json:"namespace"`
@@ -6693,7 +6855,7 @@ type IndexedKnowledgeDocument struct {
 	// Pages How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet.
 	Pages int `json:"pages"`
 
-	// Passages How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read.
+	// Passages How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read. A document that is pending or failed can also count the passages of the version before, so that deleting it removes every passage either version wrote.
 	Passages int `json:"passages"`
 
 	// Source What the document was posted as, and what its passages are keyed by.
@@ -6701,7 +6863,7 @@ type IndexedKnowledgeDocument struct {
 	// Example: pricing.md
 	Source string `json:"source"`
 
-	// State Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
+	// State Where the document has got to. Pending is an uploaded file waiting to be read or being read, or posted text whose passages are being written; text that stays pending was cut off and is fixed by posting it again. Failed is a file that could not be read, or posted text whose write stopped part way, and error says why: the passages written before the failure can still be looked up, and posting the document again or deleting it fixes it.
 	State KnowledgeDocumentState `json:"state"`
 
 	// Text The document as it was last posted, or as its file was read: Markdown, each page of a file opening with an <!-- page N --> comment. Only reading one document fills it in, and one written before its text was kept has none.
@@ -6783,7 +6945,7 @@ type KnowledgeDocument struct {
 	Text string `json:"text"`
 }
 
-// KnowledgeDocumentState Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
+// KnowledgeDocumentState Where the document has got to. Pending is an uploaded file waiting to be read or being read, or posted text whose passages are being written; text that stays pending was cut off and is fixed by posting it again. Failed is a file that could not be read, or posted text whose write stopped part way, and error says why: the passages written before the failure can still be looked up, and posting the document again or deleting it fixes it.
 type KnowledgeDocumentState string
 
 // KnowledgePassage defines model for KnowledgePassage.
@@ -8354,6 +8516,46 @@ type RespondRequest struct {
 	Text string `json:"text"`
 }
 
+// ResponseBranch defines model for ResponseBranch.
+type ResponseBranch struct {
+	// Count How many there are.
+	Count int `json:"count"`
+
+	// Index Its place, from 1, oldest first.
+	Index int `json:"index"`
+
+	// Of reply counts the answers to one question, a regenerate's; question the questions asked at one point, an edit's.
+	Of ResponseBranchOf `json:"of"`
+}
+
+// ResponseBranchOf reply counts the answers to one question, a regenerate's; question the questions asked at one point, an edit's.
+type ResponseBranchOf string
+
+// ResponseSibling defines model for ResponseSibling.
+type ResponseSibling struct {
+	// Active Whether the conversation goes through this sibling now: for a question, through any answer to it.
+	Active    bool      `json:"active"`
+	CreatedAt time.Time `json:"created_at"`
+
+	// Id The response, which getResponseBranch reads and activateResponse brings back.
+	Id string `json:"id"`
+
+	// Index Its place among the siblings, from 1, oldest first: the i of ‹ i/n ›.
+	Index int `json:"index"`
+
+	// Said The question the response answers.
+	Said *string `json:"said,omitempty"`
+}
+
+// ResponseSiblingPage defines model for ResponseSiblingPage.
+type ResponseSiblingPage struct {
+	HasMore bool              `json:"has_more"`
+	Items   []ResponseSibling `json:"items"`
+
+	// NextCursor Pass as `cursor` for the next page. Absent on the last one.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
 // ResumeHistory How a conversation is handed back to the model when a session carries it on.
 type ResumeHistory struct {
 	// IncludeTools Hand each reply back with the tool calls it made and what they returned, as they were recorded, so a resumed agent knows what it already looked up and does not run its tools again. Over max_characters the oldest results are replaced with [result trimmed] before any turn is left out, and the conversation's first message is kept. A reply whose calls were not recorded, have been removed with their session or redacted under a retention setting is handed back as text. Results are replayed as recorded: credentials redacted and any result over 8 KB cut to its first 2048 characters. False turns off what a broader level turned on. Off by default.
@@ -8413,6 +8615,23 @@ type ReviewQueue struct {
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
+// ReviewScoreMatch Matches a review score from 1 to 5: a number, which is short for $eq, or an object of $eq, $gt, $gte, $lt and $lte, every one of which has to hold.
+type ReviewScoreMatch struct {
+	union json.RawMessage
+}
+
+// ReviewScoreMatch0 defines model for ReviewScoreMatch.0.
+type ReviewScoreMatch0 = int
+
+// ReviewScoreMatch1 defines model for ReviewScoreMatch.1.
+type ReviewScoreMatch1 struct {
+	Eq  *int `json:"$eq,omitempty"`
+	Gt  *int `json:"$gt,omitempty"`
+	Gte *int `json:"$gte,omitempty"`
+	Lt  *int `json:"$lt,omitempty"`
+	Lte *int `json:"$lte,omitempty"`
+}
+
 // ReviewUseCaseRequest defines model for ReviewUseCaseRequest.
 type ReviewUseCaseRequest struct {
 	// Decision approve sends the use case to the vendor; request_changes hands it back to the app to edit; reject ends it.
@@ -8429,6 +8648,15 @@ type ReviewUseCaseRequest struct {
 type RewindSessionRequest struct {
 	// ResponseId The response to carry on from. It is kept; everything after it is not.
 	ResponseId string `json:"response_id"`
+}
+
+// RewoundTo defines model for RewoundTo.
+type RewoundTo struct {
+	// Inclusive The message itself is hidden too.
+	Inclusive bool `json:"inclusive"`
+
+	// MessageId The message the channel was rewound to. Every message after it is hidden.
+	MessageId string `json:"message_id"`
 }
 
 // RollupRequest defines model for RollupRequest.
@@ -8662,7 +8890,7 @@ type ScheduledTaskRun struct {
 	// DeliveredTo Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands.
 	DeliveredTo string `json:"delivered_to"`
 
-	// Error Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again; that call may have carried the task out, so the run does not count toward the five failures in a row), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached, spend_limit_reached or user_limit_reached, none of which is tried again, or spend_check_unavailable (the router could not check what the organization has spent, so the run is tried again); on a missed run, task_paused (a run's time came while its task was paused). The full error is in the router's logs. Null otherwise.
+	// Error Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again; that call may have carried the task out, so the run does not count toward the five failures in a row), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), tier_limit_reached (the organization's tier limits refuse the call or the text: tried again for a limit of the day or of calls at once, not for a country), or, refused for money, account_suspended, insufficient_credits, system_limit_reached, spend_limit_reached or user_limit_reached, none of which is tried again, or spend_check_unavailable (the router could not check what the organization has spent, so the run is tried again); on a missed run, task_paused (a run's time came while its task was paused). The full error is in the router's logs. Null otherwise.
 	Error      *string    `json:"error"`
 	FinishedAt *time.Time `json:"finished_at"`
 	Id         string     `json:"id"`
@@ -8867,7 +9095,10 @@ type Session struct {
 	// ModelOverwrites What to change about the models for one session, over whatever its agent config decided.
 	// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent. A backend sets one session's instructions with the instructions of CreateSessionRequest instead, which a device may not send.
 	ModelOverwrites *ModelOverwrites `json:"model_overwrites,omitempty"`
-	ProjectId       *string          `json:"project_id,omitempty"`
+
+	// PinnedAt When the session was pinned. Absent for one that is not pinned.
+	PinnedAt  *time.Time `json:"pinned_at,omitempty"`
+	ProjectId *string    `json:"project_id,omitempty"`
 
 	// ReviewNotes Why the review scored the conversation as it did. Read by a backend only.
 	ReviewNotes *string `json:"review_notes,omitempty"`
@@ -8956,32 +9187,36 @@ type SessionEndReason string
 // SessionEndStage How far a session had got when it ended: ringing, before a person was on the line of a phone call; conversation, once the session was open.
 type SessionEndStage string
 
-// SessionFilter Which sessions to list. A field not listed here is refused rather than ignored.
+// SessionFilter Which sessions to list. The keys of one object are ANDed. $and and $or each take 1 to 10 filters and nest up to 3 deep; a whole filter holds at most 30 field conditions. An empty filter lists every session the caller may see. Any other key, and any other operator, is refused with a 400 that names it and lists the fields that can be filtered.
 type SessionFilter struct {
+	// And Every one of these filters holds.
+	And *[]SessionFilter `json:"$and,omitempty"`
+
+	// Or At least one of these filters holds. It chooses among the sessions the caller may see and never adds to them. text and user_id are refused inside it.
+	Or *[]SessionFilter `json:"$or,omitempty"`
+
 	// Agent Matches one value exactly: "value" is short for {"$eq": "value"}.
 	Agent *Equals `json:"agent,omitempty"`
 
-	// AgentId Matches one value exactly: "value" is short for {"$eq": "value"}.
-	AgentId *Equals `json:"agent_id,omitempty"`
-
 	// ConfigId Matches one value exactly: "value" is short for {"$eq": "value"}.
-	ConfigId  *Equals    `json:"config_id,omitempty"`
-	CreatedAt *TimeRange `json:"created_at,omitempty"`
+	ConfigId *Equals `json:"config_id,omitempty"`
 
-	// Custom The session's custom object holds every one of these pairs, which is how a caller finds again what it labelled.
+	// CreatedAt A window of time: $gte is its start, which it holds, and $lt its end, which it does not. Either may be left out, and $gte is before $lt.
+	CreatedAt *TimeWindow `json:"created_at,omitempty"`
+
+	// Custom Labels the session's custom object holds, every one of them: {"origin": "test"} matches a session whose custom has origin set to the string "test".
 	Custom *map[string]string `json:"custom,omitempty"`
 
-	// Modality Matches one value exactly: "value" is short for {"$eq": "value"}.
-	Modality *Equals `json:"modality,omitempty"`
+	// ProjectId Matches one value exactly, written "value" or {"$eq": "value"}, or any of up to 50 values, written {"$in": ["a", "b"]}. An object holds one of $eq and $in.
+	ProjectId *EqualsOrIn `json:"project_id,omitempty"`
 
-	// ProjectId Matches one value exactly: "value" is short for {"$eq": "value"}.
-	ProjectId *Equals `json:"project_id,omitempty"`
+	// ReviewScore Matches a review score from 1 to 5: a number, which is short for $eq, or an object of $eq, $gt, $gte, $lt and $lte, every one of which has to hold.
+	ReviewScore *ReviewScoreMatch `json:"review_score,omitempty"`
 
-	// State Matches one value exactly: "value" is short for {"$eq": "value"}.
-	State *Equals `json:"state,omitempty"`
+	// State Matches live or ended: "live" is short for {"$eq": "live"}.
+	State *SessionStateEquals `json:"state,omitempty"`
 
-	// Team Matches one value exactly: "value" is short for {"$eq": "value"}.
-	Team *Equals    `json:"team,omitempty"`
+	// Text A full-text match, Stream's $q.
 	Text *TextMatch `json:"text,omitempty"`
 
 	// UserId Matches one value exactly: "value" is short for {"$eq": "value"}.
@@ -9035,13 +9270,13 @@ type SessionQuery struct {
 	// Cursor The next_cursor of the previous page, sent with the same filter and sort. Omitted is the first page.
 	Cursor *string `json:"cursor,omitempty"`
 
-	// Filter Which sessions to list. A field not listed here is refused rather than ignored.
+	// Filter Which sessions to list. The keys of one object are ANDed. $and and $or each take 1 to 10 filters and nest up to 3 deep; a whole filter holds at most 30 field conditions. An empty filter lists every session the caller may see. Any other key, and any other operator, is refused with a 400 that names it and lists the fields that can be filtered.
 	Filter *SessionFilter `json:"filter,omitempty"`
 
 	// Limit Up to 200. Omitted is 25.
 	Limit *int64 `json:"limit,omitempty"`
 
-	// Sort Omitted is updated_at, or relevance for a text search.
+	// Sort Omitted is last_message_at descending, or relevance for a text search. One of: last_message_at; pinned, then last_message_at, which lists the pinned sessions first; review_score, for a server-side caller; relevance, for a text search and nothing else.
 	Sort *[]SessionSort `json:"sort,omitempty"`
 }
 
@@ -9084,21 +9319,32 @@ type SessionSettingsRequestVerbosity string
 
 // SessionSort defines model for SessionSort.
 type SessionSort struct {
-	// Direction -1, descending. Ascending is not offered.
+	// Direction -1 is descending and 1 ascending. pinned and relevance only sort descending.
 	Direction *SessionSortDirection `json:"direction,omitempty"`
 
-	// Field updated_at is the most recently active first. relevance is the best match first, and only sorts a text search.
+	// Field last_message_at is when the agent last answered, or when the session began if it has not. pinned lists the pinned sessions first: it sorts descending only, comes first, and is followed by last_message_at, descending when left out. review_score is the review's score, sessions without one last either way, and is a server-side caller's only. relevance is the best match first, and is the one sort of a text search.
 	Field SessionSortField `json:"field"`
 }
 
-// SessionSortDirection -1, descending. Ascending is not offered.
+// SessionSortDirection -1 is descending and 1 ascending. pinned and relevance only sort descending.
 type SessionSortDirection int64
 
-// SessionSortField updated_at is the most recently active first. relevance is the best match first, and only sorts a text search.
+// SessionSortField last_message_at is when the agent last answered, or when the session began if it has not. pinned lists the pinned sessions first: it sorts descending only, comes first, and is followed by last_message_at, descending when left out. review_score is the review's score, sessions without one last either way, and is a server-side caller's only. relevance is the best match first, and is the one sort of a text search.
 type SessionSortField string
 
 // SessionState Whether the agent is still in the call.
 type SessionState string
+
+// SessionStateEquals Matches live or ended: "live" is short for {"$eq": "live"}.
+type SessionStateEquals struct {
+	union json.RawMessage
+}
+
+// SessionStateEquals1 defines model for SessionStateEquals.1.
+type SessionStateEquals1 struct {
+	// Eq Whether the agent is still in the call.
+	Eq SessionState `json:"$eq"`
+}
 
 // SessionTool One of the caller's own functions. The model is offered it by name and description; running it is the caller's business, over the events socket.
 type SessionTool struct {
@@ -9822,7 +10068,7 @@ type SyncAgentRequest struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// FloorControl The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole.
+	// FloorControl The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is no choice again, which the router's default rules: the flow controller, or stream/chorus-asr at the server's default point where the router defaults every agent to it; {model: flow-controller} keeps the flow controller whatever the router's default; anything else replaces the stored choice whole.
 	FloorControl *FloorControl `json:"floor_control,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
@@ -9835,7 +10081,10 @@ type SyncAgentRequest struct {
 	Harness *Harness `json:"harness,omitempty"`
 
 	// Hash A fingerprint of the directory. A second sync with the same hash does nothing.
-	Hash         string               `json:"hash"`
+	Hash string `json:"hash"`
+
+	// Image agent.yaml's image: what the agent draws pictures with. Left out, the stored one stays; an empty string removes it.
+	Image        *string              `json:"image,omitempty"`
 	Instructions *string              `json:"instructions,omitempty"`
 	Keyterms     *[]string            `json:"keyterms,omitempty"`
 	Knowledge    *[]KnowledgeDocument `json:"knowledge,omitempty"`
@@ -10021,7 +10270,7 @@ type TextContentPart struct {
 // TextContentPartType defines model for TextContentPart.Type.
 type TextContentPartType string
 
-// TextMatch defines model for TextMatch.
+// TextMatch A full-text match, Stream's $q.
 type TextMatch struct {
 	// Q Quoted phrases and bare words both work, and punctuation is taken rather than refused.
 	Q string `json:"$q"`
@@ -10030,13 +10279,10 @@ type TextMatch struct {
 // Tier What the model optimises for.
 type Tier string
 
-// TimeRange defines model for TimeRange.
-type TimeRange struct {
-	// Gte At or after this RFC3339 time.
+// TimeWindow A window of time: $gte is its start, which it holds, and $lt its end, which it does not. Either may be left out, and $gte is before $lt.
+type TimeWindow struct {
 	Gte *time.Time `json:"$gte,omitempty"`
-
-	// Lt Strictly before this RFC3339 time.
-	Lt *time.Time `json:"$lt,omitempty"`
+	Lt  *time.Time `json:"$lt,omitempty"`
 }
 
 // TimelineEntry defines model for TimelineEntry.
@@ -10440,7 +10686,7 @@ type UpdateScheduledTaskRequest struct {
 	Title *string `json:"title,omitempty"`
 }
 
-// UpdateSessionRequest What to change about one session. A field left out is left as it is. Title, description and custom can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller.
+// UpdateSessionRequest What to change about one session. A field left out is left as it is. Title, description, custom and pinned can change on a session that ended, and are all an end user's device may change; everything else needs the session running and a server-side caller.
 type UpdateSessionRequest struct {
 	// Custom Replaces the caller's labels whole. An empty object clears them.
 	Custom      *map[string]interface{} `json:"custom,omitempty"`
@@ -10449,6 +10695,9 @@ type UpdateSessionRequest struct {
 	// Llm The conversation model, a provider/model or a capability shortcut.
 	Llm             *string `json:"llm,omitempty"`
 	MaxOutputTokens *int    `json:"max_output_tokens,omitempty"`
+
+	// Pinned true pins the session and false unpins it. Pinning one that is already pinned keeps the time it was first pinned. A pin changes nothing else about the session, its place in a last_message_at sort included.
+	Pinned *bool `json:"pinned,omitempty"`
 
 	// Sts A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
 	Sts         *string                        `json:"sts,omitempty"`
@@ -11284,6 +11533,30 @@ type ListResponseItemsParams struct {
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// GetResponseBranchParams defines parameters for GetResponseBranch.
+type GetResponseBranchParams struct {
+	// Limit Up to 200. Omitted is 100.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The `next_cursor` of the previous page. Omitted is the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListResponseSiblingsParams defines parameters for ListResponseSiblings.
+type ListResponseSiblingsParams struct {
+	// Of reply lists the answers to the response's question; question lists the questions asked in its place. Omitted is reply.
+	Of *ListResponseSiblingsParamsOf `form:"of,omitempty" json:"of,omitempty"`
+
+	// Limit Up to 100. Omitted is 25.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The `next_cursor` of the previous page, sent with the same filters. Omitted is the first page.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListResponseSiblingsParamsOf defines parameters for ListResponseSiblings.
+type ListResponseSiblingsParamsOf string
+
 // ListSimulationRunsParams defines parameters for ListSimulationRuns.
 type ListSimulationRunsParams struct {
 	SimulationId *string                        `form:"simulation_id,omitempty" json:"simulation_id,omitempty"`
@@ -11344,7 +11617,7 @@ type SearchPhoneNumbersParams struct {
 	// Vendor One vendor to search. Absent searches every usable vendor.
 	Vendor *string `form:"vendor,omitempty" json:"vendor,omitempty"`
 
-	// Country ISO 3166-1 alpha-2 country code.
+	// Country ISO 3166-1 alpha-2 country code. Numbers are sold only in the US (US) and Canada (CA); any other country is refused.
 	Country  string  `form:"country" json:"country"`
 	AreaCode *string `form:"area_code,omitempty" json:"area_code,omitempty"`
 
@@ -12135,6 +12408,68 @@ func (t *Equals) UnmarshalJSON(b []byte) error {
 	return err
 }
 
+// AsEqualsOrIn0 returns the union data inside the EqualsOrIn as a EqualsOrIn0
+func (t EqualsOrIn) AsEqualsOrIn0() (EqualsOrIn0, error) {
+	var body EqualsOrIn0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromEqualsOrIn0 overwrites any union data inside the EqualsOrIn as the provided EqualsOrIn0
+func (t *EqualsOrIn) FromEqualsOrIn0(v EqualsOrIn0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeEqualsOrIn0 performs a merge with any union data inside the EqualsOrIn, using the provided EqualsOrIn0
+func (t *EqualsOrIn) MergeEqualsOrIn0(v EqualsOrIn0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsEqualsOrIn1 returns the union data inside the EqualsOrIn as a EqualsOrIn1
+func (t EqualsOrIn) AsEqualsOrIn1() (EqualsOrIn1, error) {
+	var body EqualsOrIn1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromEqualsOrIn1 overwrites any union data inside the EqualsOrIn as the provided EqualsOrIn1
+func (t *EqualsOrIn) FromEqualsOrIn1(v EqualsOrIn1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeEqualsOrIn1 performs a merge with any union data inside the EqualsOrIn, using the provided EqualsOrIn1
+func (t *EqualsOrIn) MergeEqualsOrIn1(v EqualsOrIn1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t EqualsOrIn) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *EqualsOrIn) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
 // AsMessageContent0 returns the union data inside the MessageContent as a MessageContent0
 func (t MessageContent) AsMessageContent0() (MessageContent0, error) {
 	var body MessageContent0
@@ -12193,6 +12528,130 @@ func (t MessageContent) MarshalJSON() ([]byte, error) {
 }
 
 func (t *MessageContent) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsReviewScoreMatch0 returns the union data inside the ReviewScoreMatch as a ReviewScoreMatch0
+func (t ReviewScoreMatch) AsReviewScoreMatch0() (ReviewScoreMatch0, error) {
+	var body ReviewScoreMatch0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromReviewScoreMatch0 overwrites any union data inside the ReviewScoreMatch as the provided ReviewScoreMatch0
+func (t *ReviewScoreMatch) FromReviewScoreMatch0(v ReviewScoreMatch0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeReviewScoreMatch0 performs a merge with any union data inside the ReviewScoreMatch, using the provided ReviewScoreMatch0
+func (t *ReviewScoreMatch) MergeReviewScoreMatch0(v ReviewScoreMatch0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsReviewScoreMatch1 returns the union data inside the ReviewScoreMatch as a ReviewScoreMatch1
+func (t ReviewScoreMatch) AsReviewScoreMatch1() (ReviewScoreMatch1, error) {
+	var body ReviewScoreMatch1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromReviewScoreMatch1 overwrites any union data inside the ReviewScoreMatch as the provided ReviewScoreMatch1
+func (t *ReviewScoreMatch) FromReviewScoreMatch1(v ReviewScoreMatch1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeReviewScoreMatch1 performs a merge with any union data inside the ReviewScoreMatch, using the provided ReviewScoreMatch1
+func (t *ReviewScoreMatch) MergeReviewScoreMatch1(v ReviewScoreMatch1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ReviewScoreMatch) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ReviewScoreMatch) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsSessionState returns the union data inside the SessionStateEquals as a SessionState
+func (t SessionStateEquals) AsSessionState() (SessionState, error) {
+	var body SessionState
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromSessionState overwrites any union data inside the SessionStateEquals as the provided SessionState
+func (t *SessionStateEquals) FromSessionState(v SessionState) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeSessionState performs a merge with any union data inside the SessionStateEquals, using the provided SessionState
+func (t *SessionStateEquals) MergeSessionState(v SessionState) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsSessionStateEquals1 returns the union data inside the SessionStateEquals as a SessionStateEquals1
+func (t SessionStateEquals) AsSessionStateEquals1() (SessionStateEquals1, error) {
+	var body SessionStateEquals1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromSessionStateEquals1 overwrites any union data inside the SessionStateEquals as the provided SessionStateEquals1
+func (t *SessionStateEquals) FromSessionStateEquals1(v SessionStateEquals1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeSessionStateEquals1 performs a merge with any union data inside the SessionStateEquals, using the provided SessionStateEquals1
+func (t *SessionStateEquals) MergeSessionStateEquals1(v SessionStateEquals1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t SessionStateEquals) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *SessionStateEquals) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
@@ -13688,15 +14147,51 @@ type ClientInterface interface {
 
 	// QuerySessionsWithBody List or search the caller's sessions
 	//
-	// Three queries are supported, each over the sessions still running and the ones that ended:
+	// Lists the caller's sessions, the ones still running and the ones that ended, narrowed by a filter and in the order of a sort.
 	//
-	// - every session, sorted by `updated_at`
-	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
-	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+	// A filter is an object of fields. The keys of one object are ANDed, and `$and` and `$or` each take a list of filters, so conditions combine and nest:
 	//
-	// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `team`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	// - `project_id`: a value, `{"$eq": value}` or `{"$in": [values]}`
+	// - `agent`: a value or `{"$eq": value}`, the agent name the session was opened against
+	// - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
+	// - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
+	// - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+	// - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename leaves alone
+	// - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+	// - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+	// - `custom`: an object of string labels the session's `custom` holds, every one of them
 	//
-	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+	// Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
+	//
+	// Every session, pinned first:
+	//
+	// ```json
+	// {"sort": [{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": -1}]}
+	// ```
+	//
+	// One agent's sessions in either of two projects:
+	//
+	// ```json
+	// {"filter": {"agent": "support", "$or": [{"project_id": "health"}, {"project_id": "billing"}]}}
+	// ```
+	//
+	// A search within one project:
+	//
+	// ```json
+	// {"filter": {"text": {"$q": "refund"}, "project_id": "billing"}}
+	// ```
+	//
+	// A backend's badly reviewed sessions and everything in two projects, the lowest score first:
+	//
+	// ```json
+	// {"filter": {"$or": [{"review_score": {"$lte": 2}}, {"project_id": {"$in": ["vip", "pilot"]}}]}, "sort": [{"field": "review_score", "direction": 1}]}
+	// ```
+	//
+	// `sort` is `last_message_at` (the default, descending: when the agent last answered, or when the session began), `pinned` followed by `last_message_at`, `review_score` for a server-side caller, with the sessions nobody reviewed last, or `relevance`, which is how a `text` search is sorted and the only way it is. A session is pinned and unpinned by updating it.
+	//
+	// A backend gets its customer's sessions; an end user gets their own, whatever the filter says: an `$or` chooses among the sessions the caller may see and never adds to them. An anonymous caller who named nobody gets none.
+	//
+	// The search reads what a person named the conversation, not what was said in it. Pages are followed by `next_cursor`, sent back with the same filter and sort. There is no total: counting every conversation costs more than the page.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -13705,15 +14200,51 @@ type ClientInterface interface {
 
 	// QuerySessions List or search the caller's sessions
 	//
-	// Three queries are supported, each over the sessions still running and the ones that ended:
+	// Lists the caller's sessions, the ones still running and the ones that ended, narrowed by a filter and in the order of a sort.
 	//
-	// - every session, sorted by `updated_at`
-	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
-	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+	// A filter is an object of fields. The keys of one object are ANDed, and `$and` and `$or` each take a list of filters, so conditions combine and nest:
 	//
-	// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `team`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	// - `project_id`: a value, `{"$eq": value}` or `{"$in": [values]}`
+	// - `agent`: a value or `{"$eq": value}`, the agent name the session was opened against
+	// - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
+	// - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
+	// - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+	// - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename leaves alone
+	// - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+	// - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+	// - `custom`: an object of string labels the session's `custom` holds, every one of them
 	//
-	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+	// Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
+	//
+	// Every session, pinned first:
+	//
+	// ```json
+	// {"sort": [{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": -1}]}
+	// ```
+	//
+	// One agent's sessions in either of two projects:
+	//
+	// ```json
+	// {"filter": {"agent": "support", "$or": [{"project_id": "health"}, {"project_id": "billing"}]}}
+	// ```
+	//
+	// A search within one project:
+	//
+	// ```json
+	// {"filter": {"text": {"$q": "refund"}, "project_id": "billing"}}
+	// ```
+	//
+	// A backend's badly reviewed sessions and everything in two projects, the lowest score first:
+	//
+	// ```json
+	// {"filter": {"$or": [{"review_score": {"$lte": 2}}, {"project_id": {"$in": ["vip", "pilot"]}}]}, "sort": [{"field": "review_score", "direction": 1}]}
+	// ```
+	//
+	// `sort` is `last_message_at` (the default, descending: when the agent last answered, or when the session began), `pinned` followed by `last_message_at`, `review_score` for a server-side caller, with the sessions nobody reviewed last, or `relevance`, which is how a `text` search is sorted and the only way it is. A session is pinned and unpinned by updating it.
+	//
+	// A backend gets its customer's sessions; an end user gets their own, whatever the filter says: an `$or` chooses among the sessions the caller may see and never adds to them. An anonymous caller who named nobody gets none.
+	//
+	// The search reads what a person named the conversation, not what was said in it. Pages are followed by `next_cursor`, sent back with the same filter and sort. There is no total: counting every conversation costs more than the page.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -13743,7 +14274,7 @@ type ClientInterface interface {
 	//
 	// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 	//
-	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	// An end user's device may change a session's title, description and custom, and pin or unpin it, so a person can tidy up their own conversations. `pinned` sets the session's `pinned_at`, which a query sorted by `pinned` lists first; it moves nothing else, and an incognito session, which nothing records, cannot be pinned: 400. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 	//
 	// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 	//
@@ -13758,7 +14289,7 @@ type ClientInterface interface {
 	//
 	// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 	//
-	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	// An end user's device may change a session's title, description and custom, and pin or unpin it, so a person can tidy up their own conversations. `pinned` sets the session's `pinned_at`, which a query sorted by `pinned` lists first; it moves nothing else, and an incognito session, which nothing records, cannot be pinned: 400. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 	//
 	// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 	//
@@ -13853,6 +14384,7 @@ type ClientInterface interface {
 	// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 	// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
 	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
+	// With replaces, in a conversation kept in Stream Chat, it regenerates or edits an earlier response instead of asking something new. No text answers the replaced response's question again, beside its reply; text asks it in place of that question. Chat hides the conversation from there on, which is kept as a branch (listResponseSiblings, getResponseBranch, activateResponse), and the answer says where the channel was rewound to (rewound_to), so the acting device prunes its view at once. A request_id is required, and images, audio, videos and ui_action cannot go with replaces. A conversation has at most 100 edit and regenerate points; past them it is a 409 branch_limit_reached.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -13864,6 +14396,7 @@ type ClientInterface interface {
 	// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 	// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
 	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
+	// With replaces, in a conversation kept in Stream Chat, it regenerates or edits an earlier response instead of asking something new. No text answers the replaced response's question again, beside its reply; text asks it in place of that question. Chat hides the conversation from there on, which is kept as a branch (listResponseSiblings, getResponseBranch, activateResponse), and the answer says where the channel was rewound to (rewound_to), so the acting device prunes its view at once. A request_id is required, and images, audio, videos and ui_action cannot go with replaces. A conversation has at most 100 edit and regenerate points; past them it is a 409 branch_limit_reached.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -13879,10 +14412,36 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/agents/sessions/{id}/responses/items (the `ListResponseItems` operationId).
 	ListResponseItems(ctx context.Context, id string, params *ListResponseItemsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ActivateResponse Make a hidden branch the conversation again
+	//
+	// The conversation from where the branch leaves it is hidden in Stream Chat and kept as a branch of its own, and the branch ending at the newest response under the one named is sent again: new messages, with new ids, sent with skip_push and carrying custom.resent_from, the id of the message each copies. The model answers from that branch from then on. Call it before asking anything while a hidden branch is shown.
+	// A branch already on the conversation changes nothing and answers already_active, so a retry is safe. rewound_to says where the channel was rewound to, which the acting device prunes its own view from: the message itself is gone too when inclusive.
+	// At most 100 messages are sent again; a longer branch is a 409 branch_too_long, and a conversation with no room left for another hidden range a 409 branch_limit_reached.
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/responses/{response_id}/activate (the `ActivateResponse` operationId).
+	ActivateResponse(ctx context.Context, id string, responseId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetResponseBranch The messages of a hidden branch, to show in place of the conversation's
+	//
+	// A regenerate or an edit hides the conversation from that point on in Stream Chat and keeps what it hid as a branch. This reads a branch back: its messages from where it leaves the conversation down to the newest response under the one named, oldest first, shaped as Chat messages so a client renders them the same way. Nothing is written to Chat and the model is not told.
+	// A response on the conversation is shown by the channel itself, so it answers active: true and no items. A branch whose copies were deleted, as a memory truncate deletes them, is a 410 branch_unavailable.
+	//
+	// Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/branch (the `GetResponseBranch` operationId).
+	GetResponseBranch(ctx context.Context, id string, responseId string, params *GetResponseBranchParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListResponseSiblings The alternatives to one response: its regenerations, or the edits of its question
+	//
+	// What a ‹ i/n › control pages through. of=reply lists every answer to the response's question, the response's own included; of=question lists the questions asked at the same point of the conversation, the original and its edits, each as the first response that answered it. Oldest first, which is the order of their index.
+	// active marks the one the conversation goes through now. Reading a sibling's messages is getResponseBranch, and making it the conversation is activateResponse. A response whose messages carry no branch mark, such as a turn spoken on a call, has no siblings but itself.
+	//
+	// Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/siblings (the `ListResponseSiblings` operationId).
+	ListResponseSiblings(ctx context.Context, id string, responseId string, params *ListResponseSiblingsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RewindSessionWithBody Go back to a response and carry on from there
 	//
 	// The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
-	// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
+	// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context.
+	// A conversation kept in Stream Chat is rewound there too, the way an edit of the turn after the named response is: every later message is hidden from every read of the channel, so reopening the conversation does not bring the rewound turns back, and they are kept as a branch that listResponseSiblings, getResponseBranch and activateResponse read and bring back. It counts toward the conversation's 100 edit and regenerate points (409 branch_limit_reached), and is refused as an edit is: in a thread, dispatched or shared conversation, on a call, for a response whose messages carry no branch mark, such as a turn spoken on a call, and while an earlier switch is unfinished (409 switch_unfinished). Rewinding to the newest response changes nothing.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -13892,7 +14451,8 @@ type ClientInterface interface {
 	// RewindSession Go back to a response and carry on from there
 	//
 	// The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
-	// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
+	// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context.
+	// A conversation kept in Stream Chat is rewound there too, the way an edit of the turn after the named response is: every later message is hidden from every read of the channel, so reopening the conversation does not bring the rewound turns back, and they are kept as a branch that listResponseSiblings, getResponseBranch and activateResponse read and bring back. It counts toward the conversation's 100 edit and regenerate points (409 branch_limit_reached), and is refused as an edit is: in a thread, dispatched or shared conversation, on a call, for a response whose messages carry no branch mark, such as a turn spoken on a call, and while an earlier switch is unfinished (409 switch_unfinished). Rewinding to the newest response changes nothing.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -14617,6 +15177,20 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/phone/hooks/telnyx (the `ReceiveTelnyxCall` operationId).
 	ReceiveTelnyxCall(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ReceiveTelnyxEvent Receive a Telnyx account event
+	//
+	// Where the Telnyx account's notification channel sends account events, such as a port-out or a number order. Unauthenticated because Telnyx is not a customer: each event is checked against the account's Ed25519 signature, then logged and counted in vendor_account_events_total by its type and level. A deployment with no Telnyx key answers 404, so nobody else can raise the count.
+	//
+	// Corresponds with POST /v1/phone/hooks/telnyx/events (the `ReceiveTelnyxEvent` operationId).
+	ReceiveTelnyxEvent(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReceiveTwilioEvent Receive a Twilio account event
+	//
+	// Where the Twilio account sends its Monitor alerts (the Debugger webhook) and its usage triggers' callbacks, as form posts. Unauthenticated because Twilio is not a customer: each event is checked against X-Twilio-Signature, made with the account's Auth Token over ROUTER_PUBLIC_URL and this path, then logged and counted in vendor_account_events_total by its error code or usage category and its level. An alert whose Sid was counted in the last hour is answered 204 and not counted again. A deployment with no Twilio webhook token or no public URL answers 404, so nobody else can raise the count.
+	//
+	// Corresponds with POST /v1/phone/hooks/twilio/events (the `ReceiveTwilioEvent` operationId).
+	ReceiveTwilioEvent(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ReceiveCallMachine Receive who picked up a placed call
 	//
 	// Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
@@ -14631,12 +15205,16 @@ type ClientInterface interface {
 
 	// BuyPhoneNumberWithBody Buy a number, which starts its monthly charge
 	//
+	// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/phone/numbers (the `BuyPhoneNumber` operationId).
 	BuyPhoneNumberWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// BuyPhoneNumber Buy a number, which starts its monthly charge
+	//
+	// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -18294,15 +18872,51 @@ func (c *Client) CreateSession(ctx context.Context, body CreateSessionJSONReques
 
 // QuerySessionsWithBody List or search the caller's sessions
 //
-// Three queries are supported, each over the sessions still running and the ones that ended:
+// Lists the caller's sessions, the ones still running and the ones that ended, narrowed by a filter and in the order of a sort.
 //
-// - every session, sorted by `updated_at`
-// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
-// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+// A filter is an object of fields. The keys of one object are ANDed, and `$and` and `$or` each take a list of filters, so conditions combine and nest:
 //
-// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `team`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+// - `project_id`: a value, `{"$eq": value}` or `{"$in": [values]}`
+// - `agent`: a value or `{"$eq": value}`, the agent name the session was opened against
+// - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
+// - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
+// - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+// - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename leaves alone
+// - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+// - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+// - `custom`: an object of string labels the session's `custom` holds, every one of them
 //
-// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+// Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
+//
+// Every session, pinned first:
+//
+// ```json
+// {"sort": [{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": -1}]}
+// ```
+//
+// One agent's sessions in either of two projects:
+//
+// ```json
+// {"filter": {"agent": "support", "$or": [{"project_id": "health"}, {"project_id": "billing"}]}}
+// ```
+//
+// A search within one project:
+//
+// ```json
+// {"filter": {"text": {"$q": "refund"}, "project_id": "billing"}}
+// ```
+//
+// A backend's badly reviewed sessions and everything in two projects, the lowest score first:
+//
+// ```json
+// {"filter": {"$or": [{"review_score": {"$lte": 2}}, {"project_id": {"$in": ["vip", "pilot"]}}]}, "sort": [{"field": "review_score", "direction": 1}]}
+// ```
+//
+// `sort` is `last_message_at` (the default, descending: when the agent last answered, or when the session began), `pinned` followed by `last_message_at`, `review_score` for a server-side caller, with the sessions nobody reviewed last, or `relevance`, which is how a `text` search is sorted and the only way it is. A session is pinned and unpinned by updating it.
+//
+// A backend gets its customer's sessions; an end user gets their own, whatever the filter says: an `$or` chooses among the sessions the caller may see and never adds to them. An anonymous caller who named nobody gets none.
+//
+// The search reads what a person named the conversation, not what was said in it. Pages are followed by `next_cursor`, sent back with the same filter and sort. There is no total: counting every conversation costs more than the page.
 //
 // Takes any type of body and a specified content type.
 //
@@ -18321,15 +18935,51 @@ func (c *Client) QuerySessionsWithBody(ctx context.Context, contentType string, 
 
 // QuerySessions List or search the caller's sessions
 //
-// Three queries are supported, each over the sessions still running and the ones that ended:
+// Lists the caller's sessions, the ones still running and the ones that ended, narrowed by a filter and in the order of a sort.
 //
-// - every session, sorted by `updated_at`
-// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
-// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+// A filter is an object of fields. The keys of one object are ANDed, and `$and` and `$or` each take a list of filters, so conditions combine and nest:
 //
-// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `team`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+// - `project_id`: a value, `{"$eq": value}` or `{"$in": [values]}`
+// - `agent`: a value or `{"$eq": value}`, the agent name the session was opened against
+// - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
+// - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
+// - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+// - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename leaves alone
+// - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+// - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+// - `custom`: an object of string labels the session's `custom` holds, every one of them
 //
-// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+// Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
+//
+// Every session, pinned first:
+//
+// ```json
+// {"sort": [{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": -1}]}
+// ```
+//
+// One agent's sessions in either of two projects:
+//
+// ```json
+// {"filter": {"agent": "support", "$or": [{"project_id": "health"}, {"project_id": "billing"}]}}
+// ```
+//
+// A search within one project:
+//
+// ```json
+// {"filter": {"text": {"$q": "refund"}, "project_id": "billing"}}
+// ```
+//
+// A backend's badly reviewed sessions and everything in two projects, the lowest score first:
+//
+// ```json
+// {"filter": {"$or": [{"review_score": {"$lte": 2}}, {"project_id": {"$in": ["vip", "pilot"]}}]}, "sort": [{"field": "review_score", "direction": 1}]}
+// ```
+//
+// `sort` is `last_message_at` (the default, descending: when the agent last answered, or when the session began), `pinned` followed by `last_message_at`, `review_score` for a server-side caller, with the sessions nobody reviewed last, or `relevance`, which is how a `text` search is sorted and the only way it is. A session is pinned and unpinned by updating it.
+//
+// A backend gets its customer's sessions; an end user gets their own, whatever the filter says: an `$or` chooses among the sessions the caller may see and never adds to them. An anonymous caller who named nobody gets none.
+//
+// The search reads what a person named the conversation, not what was said in it. Pages are followed by `next_cursor`, sent back with the same filter and sort. There is no total: counting every conversation costs more than the page.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -18389,7 +19039,7 @@ func (c *Client) GetSession(ctx context.Context, id string, reqEditors ...Reques
 //
 // Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 //
-// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
+// An end user's device may change a session's title, description and custom, and pin or unpin it, so a person can tidy up their own conversations. `pinned` sets the session's `pinned_at`, which a query sorted by `pinned` lists first; it moves nothing else, and an incognito session, which nothing records, cannot be pinned: 400. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 //
 // A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 //
@@ -18414,7 +19064,7 @@ func (c *Client) UpdateSessionWithBody(ctx context.Context, id string, contentTy
 //
 // Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 //
-// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
+// An end user's device may change a session's title, description and custom, and pin or unpin it, so a person can tidy up their own conversations. `pinned` sets the session's `pinned_at`, which a query sorted by `pinned` lists first; it moves nothing else, and an incognito session, which nothing records, cannot be pinned: 400. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 //
 // A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 //
@@ -18609,6 +19259,7 @@ func (c *Client) ListResponses(ctx context.Context, id string, params *ListRespo
 // The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 // It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
 // A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
+// With replaces, in a conversation kept in Stream Chat, it regenerates or edits an earlier response instead of asking something new. No text answers the replaced response's question again, beside its reply; text asks it in place of that question. Chat hides the conversation from there on, which is kept as a branch (listResponseSiblings, getResponseBranch, activateResponse), and the answer says where the channel was rewound to (rewound_to), so the acting device prunes its view at once. A request_id is required, and images, audio, videos and ui_action cannot go with replaces. A conversation has at most 100 edit and regenerate points; past them it is a 409 branch_limit_reached.
 //
 // Takes any type of body and a specified content type.
 //
@@ -18630,6 +19281,7 @@ func (c *Client) CreateResponseWithBody(ctx context.Context, id string, contentT
 // The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 // It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
 // A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
+// With replaces, in a conversation kept in Stream Chat, it regenerates or edits an earlier response instead of asking something new. No text answers the replaced response's question again, beside its reply; text asks it in place of that question. Chat hides the conversation from there on, which is kept as a branch (listResponseSiblings, getResponseBranch, activateResponse), and the answer says where the channel was rewound to (rewound_to), so the acting device prunes its view at once. A request_id is required, and images, audio, videos and ui_action cannot go with replaces. A conversation has at most 100 edit and regenerate points; past them it is a 409 branch_limit_reached.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -18665,10 +19317,66 @@ func (c *Client) ListResponseItems(ctx context.Context, id string, params *ListR
 	return c.Client.Do(req)
 }
 
+// ActivateResponse Make a hidden branch the conversation again
+//
+// The conversation from where the branch leaves it is hidden in Stream Chat and kept as a branch of its own, and the branch ending at the newest response under the one named is sent again: new messages, with new ids, sent with skip_push and carrying custom.resent_from, the id of the message each copies. The model answers from that branch from then on. Call it before asking anything while a hidden branch is shown.
+// A branch already on the conversation changes nothing and answers already_active, so a retry is safe. rewound_to says where the channel was rewound to, which the acting device prunes its own view from: the message itself is gone too when inclusive.
+// At most 100 messages are sent again; a longer branch is a 409 branch_too_long, and a conversation with no room left for another hidden range a 409 branch_limit_reached.
+//
+// Corresponds with POST /v1/agents/sessions/{id}/responses/{response_id}/activate (the `ActivateResponse` operationId).
+func (c *Client) ActivateResponse(ctx context.Context, id string, responseId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewActivateResponseRequest(c.Server, id, responseId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetResponseBranch The messages of a hidden branch, to show in place of the conversation's
+//
+// A regenerate or an edit hides the conversation from that point on in Stream Chat and keeps what it hid as a branch. This reads a branch back: its messages from where it leaves the conversation down to the newest response under the one named, oldest first, shaped as Chat messages so a client renders them the same way. Nothing is written to Chat and the model is not told.
+// A response on the conversation is shown by the channel itself, so it answers active: true and no items. A branch whose copies were deleted, as a memory truncate deletes them, is a 410 branch_unavailable.
+//
+// Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/branch (the `GetResponseBranch` operationId).
+func (c *Client) GetResponseBranch(ctx context.Context, id string, responseId string, params *GetResponseBranchParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetResponseBranchRequest(c.Server, id, responseId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListResponseSiblings The alternatives to one response: its regenerations, or the edits of its question
+//
+// What a ‹ i/n › control pages through. of=reply lists every answer to the response's question, the response's own included; of=question lists the questions asked at the same point of the conversation, the original and its edits, each as the first response that answered it. Oldest first, which is the order of their index.
+// active marks the one the conversation goes through now. Reading a sibling's messages is getResponseBranch, and making it the conversation is activateResponse. A response whose messages carry no branch mark, such as a turn spoken on a call, has no siblings but itself.
+//
+// Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/siblings (the `ListResponseSiblings` operationId).
+func (c *Client) ListResponseSiblings(ctx context.Context, id string, responseId string, params *ListResponseSiblingsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListResponseSiblingsRequest(c.Server, id, responseId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // RewindSessionWithBody Go back to a response and carry on from there
 //
 // The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
-// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
+// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context.
+// A conversation kept in Stream Chat is rewound there too, the way an edit of the turn after the named response is: every later message is hidden from every read of the channel, so reopening the conversation does not bring the rewound turns back, and they are kept as a branch that listResponseSiblings, getResponseBranch and activateResponse read and bring back. It counts toward the conversation's 100 edit and regenerate points (409 branch_limit_reached), and is refused as an edit is: in a thread, dispatched or shared conversation, on a call, for a response whose messages carry no branch mark, such as a turn spoken on a call, and while an earlier switch is unfinished (409 switch_unfinished). Rewinding to the newest response changes nothing.
 //
 // Takes any type of body and a specified content type.
 //
@@ -18688,7 +19396,8 @@ func (c *Client) RewindSessionWithBody(ctx context.Context, id string, contentTy
 // RewindSession Go back to a response and carry on from there
 //
 // The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
-// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
+// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context.
+// A conversation kept in Stream Chat is rewound there too, the way an edit of the turn after the named response is: every later message is hidden from every read of the channel, so reopening the conversation does not bring the rewound turns back, and they are kept as a branch that listResponseSiblings, getResponseBranch and activateResponse read and bring back. It counts toward the conversation's 100 edit and regenerate points (409 branch_limit_reached), and is refused as an edit is: in a thread, dispatched or shared conversation, on a call, for a response whose messages carry no branch mark, such as a turn spoken on a call, and while an earlier switch is unfinished (409 switch_unfinished). Rewinding to the newest response changes nothing.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -20203,6 +20912,40 @@ func (c *Client) ReceiveTelnyxCall(ctx context.Context, reqEditors ...RequestEdi
 	return c.Client.Do(req)
 }
 
+// ReceiveTelnyxEvent Receive a Telnyx account event
+//
+// Where the Telnyx account's notification channel sends account events, such as a port-out or a number order. Unauthenticated because Telnyx is not a customer: each event is checked against the account's Ed25519 signature, then logged and counted in vendor_account_events_total by its type and level. A deployment with no Telnyx key answers 404, so nobody else can raise the count.
+//
+// Corresponds with POST /v1/phone/hooks/telnyx/events (the `ReceiveTelnyxEvent` operationId).
+func (c *Client) ReceiveTelnyxEvent(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReceiveTelnyxEventRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReceiveTwilioEvent Receive a Twilio account event
+//
+// Where the Twilio account sends its Monitor alerts (the Debugger webhook) and its usage triggers' callbacks, as form posts. Unauthenticated because Twilio is not a customer: each event is checked against X-Twilio-Signature, made with the account's Auth Token over ROUTER_PUBLIC_URL and this path, then logged and counted in vendor_account_events_total by its error code or usage category and its level. An alert whose Sid was counted in the last hour is answered 204 and not counted again. A deployment with no Twilio webhook token or no public URL answers 404, so nobody else can raise the count.
+//
+// Corresponds with POST /v1/phone/hooks/twilio/events (the `ReceiveTwilioEvent` operationId).
+func (c *Client) ReceiveTwilioEvent(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReceiveTwilioEventRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ReceiveCallMachine Receive who picked up a placed call
 //
 // Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
@@ -20237,6 +20980,8 @@ func (c *Client) ListPhoneNumbers(ctx context.Context, params *ListPhoneNumbersP
 
 // BuyPhoneNumberWithBody Buy a number, which starts its monthly charge
 //
+// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/phone/numbers (the `BuyPhoneNumber` operationId).
@@ -20253,6 +20998,8 @@ func (c *Client) BuyPhoneNumberWithBody(ctx context.Context, contentType string,
 }
 
 // BuyPhoneNumber Buy a number, which starts its monthly charge
+//
+// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -28165,6 +28912,219 @@ func NewListResponseItemsRequest(server string, id string, params *ListResponseI
 	return req, nil
 }
 
+// NewActivateResponseRequest constructs an http.Request for the ActivateResponse method
+func NewActivateResponseRequest(server string, id string, responseId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "response_id", responseId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/responses/%s/activate", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetResponseBranchRequest constructs an http.Request for the GetResponseBranch method
+func NewGetResponseBranchRequest(server string, id string, responseId string, params *GetResponseBranchParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "response_id", responseId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/responses/%s/branch", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListResponseSiblingsRequest constructs an http.Request for the ListResponseSiblings method
+func NewListResponseSiblingsRequest(server string, id string, responseId string, params *ListResponseSiblingsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "response_id", responseId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/responses/%s/siblings", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Of != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "of", *params.Of, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewRewindSessionRequest calls the generic RewindSession builder with application/json body
 func NewRewindSessionRequest(server string, id string, body RewindSessionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -30434,6 +31394,60 @@ func NewReceiveTelnyxCallRequest(server string) (*http.Request, error) {
 	}
 
 	operationPath := fmt.Sprintf("/v1/phone/hooks/telnyx")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewReceiveTelnyxEventRequest constructs an http.Request for the ReceiveTelnyxEvent method
+func NewReceiveTelnyxEventRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/hooks/telnyx/events")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewReceiveTwilioEventRequest constructs an http.Request for the ReceiveTwilioEvent method
+func NewReceiveTwilioEventRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/hooks/twilio/events")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -35826,15 +36840,51 @@ type ClientWithResponsesInterface interface {
 
 	// QuerySessionsWithBodyWithResponse List or search the caller's sessions
 	//
-	// Three queries are supported, each over the sessions still running and the ones that ended:
+	// Lists the caller's sessions, the ones still running and the ones that ended, narrowed by a filter and in the order of a sort.
 	//
-	// - every session, sorted by `updated_at`
-	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
-	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+	// A filter is an object of fields. The keys of one object are ANDed, and `$and` and `$or` each take a list of filters, so conditions combine and nest:
 	//
-	// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `team`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	// - `project_id`: a value, `{"$eq": value}` or `{"$in": [values]}`
+	// - `agent`: a value or `{"$eq": value}`, the agent name the session was opened against
+	// - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
+	// - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
+	// - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+	// - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename leaves alone
+	// - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+	// - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+	// - `custom`: an object of string labels the session's `custom` holds, every one of them
 	//
-	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+	// Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
+	//
+	// Every session, pinned first:
+	//
+	// ```json
+	// {"sort": [{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": -1}]}
+	// ```
+	//
+	// One agent's sessions in either of two projects:
+	//
+	// ```json
+	// {"filter": {"agent": "support", "$or": [{"project_id": "health"}, {"project_id": "billing"}]}}
+	// ```
+	//
+	// A search within one project:
+	//
+	// ```json
+	// {"filter": {"text": {"$q": "refund"}, "project_id": "billing"}}
+	// ```
+	//
+	// A backend's badly reviewed sessions and everything in two projects, the lowest score first:
+	//
+	// ```json
+	// {"filter": {"$or": [{"review_score": {"$lte": 2}}, {"project_id": {"$in": ["vip", "pilot"]}}]}, "sort": [{"field": "review_score", "direction": 1}]}
+	// ```
+	//
+	// `sort` is `last_message_at` (the default, descending: when the agent last answered, or when the session began), `pinned` followed by `last_message_at`, `review_score` for a server-side caller, with the sessions nobody reviewed last, or `relevance`, which is how a `text` search is sorted and the only way it is. A session is pinned and unpinned by updating it.
+	//
+	// A backend gets its customer's sessions; an end user gets their own, whatever the filter says: an `$or` chooses among the sessions the caller may see and never adds to them. An anonymous caller who named nobody gets none.
+	//
+	// The search reads what a person named the conversation, not what was said in it. Pages are followed by `next_cursor`, sent back with the same filter and sort. There is no total: counting every conversation costs more than the page.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -35843,15 +36893,51 @@ type ClientWithResponsesInterface interface {
 
 	// QuerySessionsWithResponse List or search the caller's sessions
 	//
-	// Three queries are supported, each over the sessions still running and the ones that ended:
+	// Lists the caller's sessions, the ones still running and the ones that ended, narrowed by a filter and in the order of a sort.
 	//
-	// - every session, sorted by `updated_at`
-	// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
-	// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+	// A filter is an object of fields. The keys of one object are ANDed, and `$and` and `$or` each take a list of filters, so conditions combine and nest:
 	//
-	// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `team`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+	// - `project_id`: a value, `{"$eq": value}` or `{"$in": [values]}`
+	// - `agent`: a value or `{"$eq": value}`, the agent name the session was opened against
+	// - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
+	// - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
+	// - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+	// - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename leaves alone
+	// - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+	// - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+	// - `custom`: an object of string labels the session's `custom` holds, every one of them
 	//
-	// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+	// Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
+	//
+	// Every session, pinned first:
+	//
+	// ```json
+	// {"sort": [{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": -1}]}
+	// ```
+	//
+	// One agent's sessions in either of two projects:
+	//
+	// ```json
+	// {"filter": {"agent": "support", "$or": [{"project_id": "health"}, {"project_id": "billing"}]}}
+	// ```
+	//
+	// A search within one project:
+	//
+	// ```json
+	// {"filter": {"text": {"$q": "refund"}, "project_id": "billing"}}
+	// ```
+	//
+	// A backend's badly reviewed sessions and everything in two projects, the lowest score first:
+	//
+	// ```json
+	// {"filter": {"$or": [{"review_score": {"$lte": 2}}, {"project_id": {"$in": ["vip", "pilot"]}}]}, "sort": [{"field": "review_score", "direction": 1}]}
+	// ```
+	//
+	// `sort` is `last_message_at` (the default, descending: when the agent last answered, or when the session began), `pinned` followed by `last_message_at`, `review_score` for a server-side caller, with the sessions nobody reviewed last, or `relevance`, which is how a `text` search is sorted and the only way it is. A session is pinned and unpinned by updating it.
+	//
+	// A backend gets its customer's sessions; an end user gets their own, whatever the filter says: an `$or` chooses among the sessions the caller may see and never adds to them. An anonymous caller who named nobody gets none.
+	//
+	// The search reads what a person named the conversation, not what was said in it. Pages are followed by `next_cursor`, sent back with the same filter and sort. There is no total: counting every conversation costs more than the page.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -35885,7 +36971,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 	//
-	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	// An end user's device may change a session's title, description and custom, and pin or unpin it, so a person can tidy up their own conversations. `pinned` sets the session's `pinned_at`, which a query sorted by `pinned` lists first; it moves nothing else, and an incognito session, which nothing records, cannot be pinned: 400. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 	//
 	// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 	//
@@ -35900,7 +36986,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 	//
-	// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
+	// An end user's device may change a session's title, description and custom, and pin or unpin it, so a person can tidy up their own conversations. `pinned` sets the session's `pinned_at`, which a query sorted by `pinned` lists first; it moves nothing else, and an incognito session, which nothing records, cannot be pinned: 400. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 	//
 	// A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 	//
@@ -36005,6 +37091,7 @@ type ClientWithResponsesInterface interface {
 	// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 	// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
 	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
+	// With replaces, in a conversation kept in Stream Chat, it regenerates or edits an earlier response instead of asking something new. No text answers the replaced response's question again, beside its reply; text asks it in place of that question. Chat hides the conversation from there on, which is kept as a branch (listResponseSiblings, getResponseBranch, activateResponse), and the answer says where the channel was rewound to (rewound_to), so the acting device prunes its view at once. A request_id is required, and images, audio, videos and ui_action cannot go with replaces. A conversation has at most 100 edit and regenerate points; past them it is a 409 branch_limit_reached.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -36016,6 +37103,7 @@ type ClientWithResponsesInterface interface {
 	// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 	// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
 	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
+	// With replaces, in a conversation kept in Stream Chat, it regenerates or edits an earlier response instead of asking something new. No text answers the replaced response's question again, beside its reply; text asks it in place of that question. Chat hides the conversation from there on, which is kept as a branch (listResponseSiblings, getResponseBranch, activateResponse), and the answer says where the channel was rewound to (rewound_to), so the acting device prunes its view at once. A request_id is required, and images, audio, videos and ui_action cannot go with replaces. A conversation has at most 100 edit and regenerate points; past them it is a 409 branch_limit_reached.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -36033,10 +37121,42 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/sessions/{id}/responses/items (the `ListResponseItems` operationId).
 	ListResponseItemsWithResponse(ctx context.Context, id string, params *ListResponseItemsParams, reqEditors ...RequestEditorFn) (*ListResponseItemsResponse, error)
 
+	// ActivateResponseWithResponse Make a hidden branch the conversation again
+	//
+	// The conversation from where the branch leaves it is hidden in Stream Chat and kept as a branch of its own, and the branch ending at the newest response under the one named is sent again: new messages, with new ids, sent with skip_push and carrying custom.resent_from, the id of the message each copies. The model answers from that branch from then on. Call it before asking anything while a hidden branch is shown.
+	// A branch already on the conversation changes nothing and answers already_active, so a retry is safe. rewound_to says where the channel was rewound to, which the acting device prunes its own view from: the message itself is gone too when inclusive.
+	// At most 100 messages are sent again; a longer branch is a 409 branch_too_long, and a conversation with no room left for another hidden range a 409 branch_limit_reached.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/responses/{response_id}/activate (the `ActivateResponse` operationId).
+	ActivateResponseWithResponse(ctx context.Context, id string, responseId string, reqEditors ...RequestEditorFn) (*ActivateResponseResponse, error)
+
+	// GetResponseBranchWithResponse The messages of a hidden branch, to show in place of the conversation's
+	//
+	// A regenerate or an edit hides the conversation from that point on in Stream Chat and keeps what it hid as a branch. This reads a branch back: its messages from where it leaves the conversation down to the newest response under the one named, oldest first, shaped as Chat messages so a client renders them the same way. Nothing is written to Chat and the model is not told.
+	// A response on the conversation is shown by the channel itself, so it answers active: true and no items. A branch whose copies were deleted, as a memory truncate deletes them, is a 410 branch_unavailable.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/branch (the `GetResponseBranch` operationId).
+	GetResponseBranchWithResponse(ctx context.Context, id string, responseId string, params *GetResponseBranchParams, reqEditors ...RequestEditorFn) (*GetResponseBranchResponse, error)
+
+	// ListResponseSiblingsWithResponse The alternatives to one response: its regenerations, or the edits of its question
+	//
+	// What a ‹ i/n › control pages through. of=reply lists every answer to the response's question, the response's own included; of=question lists the questions asked at the same point of the conversation, the original and its edits, each as the first response that answered it. Oldest first, which is the order of their index.
+	// active marks the one the conversation goes through now. Reading a sibling's messages is getResponseBranch, and making it the conversation is activateResponse. A response whose messages carry no branch mark, such as a turn spoken on a call, has no siblings but itself.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/siblings (the `ListResponseSiblings` operationId).
+	ListResponseSiblingsWithResponse(ctx context.Context, id string, responseId string, params *ListResponseSiblingsParams, reqEditors ...RequestEditorFn) (*ListResponseSiblingsResponse, error)
+
 	// RewindSessionWithBodyWithResponse Go back to a response and carry on from there
 	//
 	// The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
-	// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
+	// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context.
+	// A conversation kept in Stream Chat is rewound there too, the way an edit of the turn after the named response is: every later message is hidden from every read of the channel, so reopening the conversation does not bring the rewound turns back, and they are kept as a branch that listResponseSiblings, getResponseBranch and activateResponse read and bring back. It counts toward the conversation's 100 edit and regenerate points (409 branch_limit_reached), and is refused as an edit is: in a thread, dispatched or shared conversation, on a call, for a response whose messages carry no branch mark, such as a turn spoken on a call, and while an earlier switch is unfinished (409 switch_unfinished). Rewinding to the newest response changes nothing.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -36046,7 +37166,8 @@ type ClientWithResponsesInterface interface {
 	// RewindSessionWithResponse Go back to a response and carry on from there
 	//
 	// The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
-	// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
+	// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context.
+	// A conversation kept in Stream Chat is rewound there too, the way an edit of the turn after the named response is: every later message is hidden from every read of the channel, so reopening the conversation does not bring the rewound turns back, and they are kept as a branch that listResponseSiblings, getResponseBranch and activateResponse read and bring back. It counts toward the conversation's 100 edit and regenerate points (409 branch_limit_reached), and is refused as an edit is: in a thread, dispatched or shared conversation, on a call, for a response whose messages carry no branch mark, such as a turn spoken on a call, and while an earlier switch is unfinished (409 switch_unfinished). Rewinding to the newest response changes nothing.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -36833,6 +37954,24 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/phone/hooks/telnyx (the `ReceiveTelnyxCall` operationId).
 	ReceiveTelnyxCallWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReceiveTelnyxCallResponse, error)
 
+	// ReceiveTelnyxEventWithResponse Receive a Telnyx account event
+	//
+	// Where the Telnyx account's notification channel sends account events, such as a port-out or a number order. Unauthenticated because Telnyx is not a customer: each event is checked against the account's Ed25519 signature, then logged and counted in vendor_account_events_total by its type and level. A deployment with no Telnyx key answers 404, so nobody else can raise the count.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/phone/hooks/telnyx/events (the `ReceiveTelnyxEvent` operationId).
+	ReceiveTelnyxEventWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReceiveTelnyxEventResponse, error)
+
+	// ReceiveTwilioEventWithResponse Receive a Twilio account event
+	//
+	// Where the Twilio account sends its Monitor alerts (the Debugger webhook) and its usage triggers' callbacks, as form posts. Unauthenticated because Twilio is not a customer: each event is checked against X-Twilio-Signature, made with the account's Auth Token over ROUTER_PUBLIC_URL and this path, then logged and counted in vendor_account_events_total by its error code or usage category and its level. An alert whose Sid was counted in the last hour is answered 204 and not counted again. A deployment with no Twilio webhook token or no public URL answers 404, so nobody else can raise the count.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/phone/hooks/twilio/events (the `ReceiveTwilioEvent` operationId).
+	ReceiveTwilioEventWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReceiveTwilioEventResponse, error)
+
 	// ReceiveCallMachineWithResponse Receive who picked up a placed call
 	//
 	// Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
@@ -36851,12 +37990,16 @@ type ClientWithResponsesInterface interface {
 
 	// BuyPhoneNumberWithBodyWithResponse Buy a number, which starts its monthly charge
 	//
+	// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/phone/numbers (the `BuyPhoneNumber` operationId).
 	BuyPhoneNumberWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BuyPhoneNumberResponse, error)
 
 	// BuyPhoneNumberWithResponse Buy a number, which starts its monthly charge
+	//
+	// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -50950,7 +52093,7 @@ type CreateResponseResponse struct {
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *Unavailable
+	JSON503 *ErrorResponse
 	// Headers202 the parsed response headers for an HTTP 202 response
 	Headers202 *CreateResponseResponse202Headers
 	// Headers402 the parsed response headers for an HTTP 402 response
@@ -50998,7 +52141,7 @@ func (r CreateResponseResponse) GetJSON500() *InternalError {
 }
 
 // GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r CreateResponseResponse) GetJSON503() *Unavailable {
+func (r CreateResponseResponse) GetJSON503() *ErrorResponse {
 	return r.JSON503
 }
 
@@ -51139,6 +52282,351 @@ func (r ListResponseItemsResponse) ContentType() string {
 	return ""
 }
 
+// ActivateResponseResponse200Headers the declared response headers of an HTTP 200 response for ActivateResponse
+type ActivateResponseResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// ActivateResponseResponse402Headers the declared response headers of an HTTP 402 response for ActivateResponse
+type ActivateResponseResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type ActivateResponseResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ActivatedBranch
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON410 the response for an HTTP 410 `application/json` response
+	JSON410 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *ActivateResponseResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *ActivateResponseResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ActivateResponseResponse) GetJSON200() *ActivatedBranch {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ActivateResponseResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ActivateResponseResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ActivateResponseResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ActivateResponseResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ActivateResponseResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ActivateResponseResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON410 returns the response for an HTTP 410 `application/json` response
+func (r ActivateResponseResponse) GetJSON410() *ErrorResponse {
+	return r.JSON410
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ActivateResponseResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ActivateResponseResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ActivateResponseResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ActivateResponseResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ActivateResponseResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ActivateResponseResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetResponseBranchResponse200Headers the declared response headers of an HTTP 200 response for GetResponseBranch
+type GetResponseBranchResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// GetResponseBranchResponse402Headers the declared response headers of an HTTP 402 response for GetResponseBranch
+type GetResponseBranchResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type GetResponseBranchResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BranchMessagePage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON410 the response for an HTTP 410 `application/json` response
+	JSON410 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetResponseBranchResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *GetResponseBranchResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetResponseBranchResponse) GetJSON200() *BranchMessagePage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetResponseBranchResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetResponseBranchResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetResponseBranchResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetResponseBranchResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetResponseBranchResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON410 returns the response for an HTTP 410 `application/json` response
+func (r GetResponseBranchResponse) GetJSON410() *ErrorResponse {
+	return r.JSON410
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetResponseBranchResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetResponseBranchResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetResponseBranchResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetResponseBranchResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetResponseBranchResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetResponseBranchResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListResponseSiblingsResponse200Headers the declared response headers of an HTTP 200 response for ListResponseSiblings
+type ListResponseSiblingsResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// ListResponseSiblingsResponse402Headers the declared response headers of an HTTP 402 response for ListResponseSiblings
+type ListResponseSiblingsResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type ListResponseSiblingsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ResponseSiblingPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *ListResponseSiblingsResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *ListResponseSiblingsResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListResponseSiblingsResponse) GetJSON200() *ResponseSiblingPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListResponseSiblingsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListResponseSiblingsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ListResponseSiblingsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListResponseSiblingsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListResponseSiblingsResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListResponseSiblingsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListResponseSiblingsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListResponseSiblingsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListResponseSiblingsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListResponseSiblingsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListResponseSiblingsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // RewindSessionResponse204Headers the declared response headers of an HTTP 204 response for RewindSession
 type RewindSessionResponse204Headers struct {
 	XStreamBalanceMicros  *int64
@@ -51166,6 +52654,8 @@ type RewindSessionResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON503 the response for an HTTP 503 `application/json` response
@@ -51199,6 +52689,11 @@ func (r RewindSessionResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r RewindSessionResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r RewindSessionResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -56646,6 +58141,88 @@ func (r ReceiveTelnyxCallResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ReceiveTelnyxCallResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReceiveTelnyxEventResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ReceiveTelnyxEventResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ReceiveTelnyxEventResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReceiveTelnyxEventResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReceiveTelnyxEventResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReceiveTelnyxEventResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReceiveTwilioEventResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ReceiveTwilioEventResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ReceiveTwilioEventResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReceiveTwilioEventResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReceiveTwilioEventResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReceiveTwilioEventResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -66546,15 +68123,51 @@ func (c *ClientWithResponses) CreateSessionWithResponse(ctx context.Context, bod
 
 // QuerySessionsWithBodyWithResponse List or search the caller's sessions
 //
-// Three queries are supported, each over the sessions still running and the ones that ended:
+// Lists the caller's sessions, the ones still running and the ones that ended, narrowed by a filter and in the order of a sort.
 //
-// - every session, sorted by `updated_at`
-// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
-// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+// A filter is an object of fields. The keys of one object are ANDed, and `$and` and `$or` each take a list of filters, so conditions combine and nest:
 //
-// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `team`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+// - `project_id`: a value, `{"$eq": value}` or `{"$in": [values]}`
+// - `agent`: a value or `{"$eq": value}`, the agent name the session was opened against
+// - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
+// - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
+// - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+// - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename leaves alone
+// - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+// - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+// - `custom`: an object of string labels the session's `custom` holds, every one of them
 //
-// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+// Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
+//
+// Every session, pinned first:
+//
+// ```json
+// {"sort": [{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": -1}]}
+// ```
+//
+// One agent's sessions in either of two projects:
+//
+// ```json
+// {"filter": {"agent": "support", "$or": [{"project_id": "health"}, {"project_id": "billing"}]}}
+// ```
+//
+// A search within one project:
+//
+// ```json
+// {"filter": {"text": {"$q": "refund"}, "project_id": "billing"}}
+// ```
+//
+// A backend's badly reviewed sessions and everything in two projects, the lowest score first:
+//
+// ```json
+// {"filter": {"$or": [{"review_score": {"$lte": 2}}, {"project_id": {"$in": ["vip", "pilot"]}}]}, "sort": [{"field": "review_score", "direction": 1}]}
+// ```
+//
+// `sort` is `last_message_at` (the default, descending: when the agent last answered, or when the session began), `pinned` followed by `last_message_at`, `review_score` for a server-side caller, with the sessions nobody reviewed last, or `relevance`, which is how a `text` search is sorted and the only way it is. A session is pinned and unpinned by updating it.
+//
+// A backend gets its customer's sessions; an end user gets their own, whatever the filter says: an `$or` chooses among the sessions the caller may see and never adds to them. An anonymous caller who named nobody gets none.
+//
+// The search reads what a person named the conversation, not what was said in it. Pages are followed by `next_cursor`, sent back with the same filter and sort. There is no total: counting every conversation costs more than the page.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -66569,15 +68182,51 @@ func (c *ClientWithResponses) QuerySessionsWithBodyWithResponse(ctx context.Cont
 
 // QuerySessionsWithResponse List or search the caller's sessions
 //
-// Three queries are supported, each over the sessions still running and the ones that ended:
+// Lists the caller's sessions, the ones still running and the ones that ended, narrowed by a filter and in the order of a sort.
 //
-// - every session, sorted by `updated_at`
-// - a text search, `{"text": {"$q": "billing"}}`, sorted by `relevance`
-// - one project's, `{"project_id": "health"}`, sorted by `updated_at`
+// A filter is an object of fields. The keys of one object are ANDed, and `$and` and `$or` each take a list of filters, so conditions combine and nest:
 //
-// `agent`, `agent_id`, `config_id`, `user_id`, `modality`, `state`, `team`, `created_at` and `custom` narrow any of them. A backend gets its customer's sessions; an end user gets their own, whatever they ask for, and an anonymous caller who named nobody gets none.
+// - `project_id`: a value, `{"$eq": value}` or `{"$in": [values]}`
+// - `agent`: a value or `{"$eq": value}`, the agent name the session was opened against
+// - `text`: `{"$q": "words"}`, full text over the title, description, project and agent name
+// - `review_score`: a number from 1 to 5, or `$eq`, `$gt`, `$gte`, `$lt` and `$lte`; a server-side caller's only
+// - `user_id`: a value or `{"$eq": value}`; a server-side caller's only
+// - `config_id`: a value or `{"$eq": value}`, the agent config the session ran under, which a rename leaves alone
+// - `state`: `live` or `ended`, as a value or `{"$eq": value}`
+// - `created_at`: `{"$gte": time, "$lt": time}`, either bound alone or both, as RFC 3339 times
+// - `custom`: an object of string labels the session's `custom` holds, every one of them
 //
-// The search reads what a person named the conversation, not what was said in it. There is no total: counting every conversation costs more than the page.
+// Nothing else can be filtered on: any other key or operator is a 400 that names it. `$and` and `$or` take 1 to 10 filters and nest 3 deep, `$in` takes up to 50 values, and a filter holds at most 30 field conditions. `text` appears once, at the top level or in a top-level `$and`, and never inside `$or`; `user_id` is placed the same way.
+//
+// Every session, pinned first:
+//
+// ```json
+// {"sort": [{"field": "pinned", "direction": -1}, {"field": "last_message_at", "direction": -1}]}
+// ```
+//
+// One agent's sessions in either of two projects:
+//
+// ```json
+// {"filter": {"agent": "support", "$or": [{"project_id": "health"}, {"project_id": "billing"}]}}
+// ```
+//
+// A search within one project:
+//
+// ```json
+// {"filter": {"text": {"$q": "refund"}, "project_id": "billing"}}
+// ```
+//
+// A backend's badly reviewed sessions and everything in two projects, the lowest score first:
+//
+// ```json
+// {"filter": {"$or": [{"review_score": {"$lte": 2}}, {"project_id": {"$in": ["vip", "pilot"]}}]}, "sort": [{"field": "review_score", "direction": 1}]}
+// ```
+//
+// `sort` is `last_message_at` (the default, descending: when the agent last answered, or when the session began), `pinned` followed by `last_message_at`, `review_score` for a server-side caller, with the sessions nobody reviewed last, or `relevance`, which is how a `text` search is sorted and the only way it is. A session is pinned and unpinned by updating it.
+//
+// A backend gets its customer's sessions; an end user gets their own, whatever the filter says: an `$or` chooses among the sessions the caller may see and never adds to them. An anonymous caller who named nobody gets none.
+//
+// The search reads what a person named the conversation, not what was said in it. Pages are followed by `next_cursor`, sent back with the same filter and sort. There is no total: counting every conversation costs more than the page.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -66629,7 +68278,7 @@ func (c *ClientWithResponses) GetSessionWithResponse(ctx context.Context, id str
 //
 // Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 //
-// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
+// An end user's device may change a session's title, description and custom, and pin or unpin it, so a person can tidy up their own conversations. `pinned` sets the session's `pinned_at`, which a query sorted by `pinned` lists first; it moves nothing else, and an incognito session, which nothing records, cannot be pinned: 400. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 //
 // A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 //
@@ -66650,7 +68299,7 @@ func (c *ClientWithResponses) UpdateSessionWithBodyWithResponse(ctx context.Cont
 //
 // Renames a session, relabels it or moves it onto other models, for this session only: the agent config it started from is untouched. A field left out is left as it is. The id, the call, incognito and the instructions are what the session is, so they cannot change: the instructions are the agent config's, and forking is how to get a session that differs in the rest.
 //
-// An end user's device may change a session's title, description and custom, so a person can tidy up their own conversations. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
+// An end user's device may change a session's title, description and custom, and pin or unpin it, so a person can tidy up their own conversations. `pinned` sets the session's `pinned_at`, which a query sorted by `pinned` lists first; it moves nothing else, and an incognito session, which nothing records, cannot be pinned: 400. Models and voice are the backend's to change, and a device asking for them is refused with a 403.
 //
 // A session that ended can still be renamed and relabelled. Models only mean something to a session that is running, so asking to change them on one that ended is refused.
 //
@@ -66815,6 +68464,7 @@ func (c *ClientWithResponses) ListResponsesWithResponse(ctx context.Context, id 
 // The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 // It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
 // A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
+// With replaces, in a conversation kept in Stream Chat, it regenerates or edits an earlier response instead of asking something new. No text answers the replaced response's question again, beside its reply; text asks it in place of that question. Chat hides the conversation from there on, which is kept as a branch (listResponseSiblings, getResponseBranch, activateResponse), and the answer says where the channel was rewound to (rewound_to), so the acting device prunes its view at once. A request_id is required, and images, audio, videos and ui_action cannot go with replaces. A conversation has at most 100 edit and regenerate points; past them it is a 409 branch_limit_reached.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -66832,6 +68482,7 @@ func (c *ClientWithResponses) CreateResponseWithBodyWithResponse(ctx context.Con
 // The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
 // It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
 // A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
+// With replaces, in a conversation kept in Stream Chat, it regenerates or edits an earlier response instead of asking something new. No text answers the replaced response's question again, beside its reply; text asks it in place of that question. Chat hides the conversation from there on, which is kept as a branch (listResponseSiblings, getResponseBranch, activateResponse), and the answer says where the channel was rewound to (rewound_to), so the acting device prunes its view at once. A request_id is required, and images, audio, videos and ui_action cannot go with replaces. A conversation has at most 100 edit and regenerate points; past them it is a 409 branch_limit_reached.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -66861,10 +68512,60 @@ func (c *ClientWithResponses) ListResponseItemsWithResponse(ctx context.Context,
 	return ParseListResponseItemsResponse(rsp)
 }
 
+// ActivateResponseWithResponse Make a hidden branch the conversation again
+//
+// The conversation from where the branch leaves it is hidden in Stream Chat and kept as a branch of its own, and the branch ending at the newest response under the one named is sent again: new messages, with new ids, sent with skip_push and carrying custom.resent_from, the id of the message each copies. The model answers from that branch from then on. Call it before asking anything while a hidden branch is shown.
+// A branch already on the conversation changes nothing and answers already_active, so a retry is safe. rewound_to says where the channel was rewound to, which the acting device prunes its own view from: the message itself is gone too when inclusive.
+// At most 100 messages are sent again; a longer branch is a 409 branch_too_long, and a conversation with no room left for another hidden range a 409 branch_limit_reached.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/{id}/responses/{response_id}/activate (the `ActivateResponse` operationId).
+func (c *ClientWithResponses) ActivateResponseWithResponse(ctx context.Context, id string, responseId string, reqEditors ...RequestEditorFn) (*ActivateResponseResponse, error) {
+	rsp, err := c.ActivateResponse(ctx, id, responseId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseActivateResponseResponse(rsp)
+}
+
+// GetResponseBranchWithResponse The messages of a hidden branch, to show in place of the conversation's
+//
+// A regenerate or an edit hides the conversation from that point on in Stream Chat and keeps what it hid as a branch. This reads a branch back: its messages from where it leaves the conversation down to the newest response under the one named, oldest first, shaped as Chat messages so a client renders them the same way. Nothing is written to Chat and the model is not told.
+// A response on the conversation is shown by the channel itself, so it answers active: true and no items. A branch whose copies were deleted, as a memory truncate deletes them, is a 410 branch_unavailable.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/branch (the `GetResponseBranch` operationId).
+func (c *ClientWithResponses) GetResponseBranchWithResponse(ctx context.Context, id string, responseId string, params *GetResponseBranchParams, reqEditors ...RequestEditorFn) (*GetResponseBranchResponse, error) {
+	rsp, err := c.GetResponseBranch(ctx, id, responseId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetResponseBranchResponse(rsp)
+}
+
+// ListResponseSiblingsWithResponse The alternatives to one response: its regenerations, or the edits of its question
+//
+// What a ‹ i/n › control pages through. of=reply lists every answer to the response's question, the response's own included; of=question lists the questions asked at the same point of the conversation, the original and its edits, each as the first response that answered it. Oldest first, which is the order of their index.
+// active marks the one the conversation goes through now. Reading a sibling's messages is getResponseBranch, and making it the conversation is activateResponse. A response whose messages carry no branch mark, such as a turn spoken on a call, has no siblings but itself.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/sessions/{id}/responses/{response_id}/siblings (the `ListResponseSiblings` operationId).
+func (c *ClientWithResponses) ListResponseSiblingsWithResponse(ctx context.Context, id string, responseId string, params *ListResponseSiblingsParams, reqEditors ...RequestEditorFn) (*ListResponseSiblingsResponse, error) {
+	rsp, err := c.ListResponseSiblings(ctx, id, responseId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListResponseSiblingsResponse(rsp)
+}
+
 // RewindSessionWithBodyWithResponse Go back to a response and carry on from there
 //
 // The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
-// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
+// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context.
+// A conversation kept in Stream Chat is rewound there too, the way an edit of the turn after the named response is: every later message is hidden from every read of the channel, so reopening the conversation does not bring the rewound turns back, and they are kept as a branch that listResponseSiblings, getResponseBranch and activateResponse read and bring back. It counts toward the conversation's 100 edit and regenerate points (409 branch_limit_reached), and is refused as an edit is: in a thread, dispatched or shared conversation, on a call, for a response whose messages carry no branch mark, such as a turn spoken on a call, and while an earlier switch is unfinished (409 switch_unfinished). Rewinding to the newest response changes nothing.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -66880,7 +68581,8 @@ func (c *ClientWithResponses) RewindSessionWithBodyWithResponse(ctx context.Cont
 // RewindSessionWithResponse Go back to a response and carry on from there
 //
 // The conversation continues as though nothing after the named response had been said: the reply being spoken is abandoned, the agent's history is cut back to the end of that response, and every later response is marked rewound, so neither the responses nor their items list them again. The named response itself is kept.
-// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context. A persistent conversation is refused as well, because its transcript lives in Chat and would bring the rewound turns back the next time it opened; fork it at the response instead.
+// The history is rebuilt from what the session recorded, the question and the answer of each turn, so a session that recorded nothing cannot be rewound: an incognito one, one on a deployment with no store, and a native speech-to-speech one, whose model keeps its own context.
+// A conversation kept in Stream Chat is rewound there too, the way an edit of the turn after the named response is: every later message is hidden from every read of the channel, so reopening the conversation does not bring the rewound turns back, and they are kept as a branch that listResponseSiblings, getResponseBranch and activateResponse read and bring back. It counts toward the conversation's 100 edit and regenerate points (409 branch_limit_reached), and is refused as an edit is: in a thread, dispatched or shared conversation, on a call, for a response whose messages carry no branch mark, such as a turn spoken on a call, and while an earlier switch is unfinished (409 switch_unfinished). Rewinding to the newest response changes nothing.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -68141,6 +69843,36 @@ func (c *ClientWithResponses) ReceiveTelnyxCallWithResponse(ctx context.Context,
 	return ParseReceiveTelnyxCallResponse(rsp)
 }
 
+// ReceiveTelnyxEventWithResponse Receive a Telnyx account event
+//
+// Where the Telnyx account's notification channel sends account events, such as a port-out or a number order. Unauthenticated because Telnyx is not a customer: each event is checked against the account's Ed25519 signature, then logged and counted in vendor_account_events_total by its type and level. A deployment with no Telnyx key answers 404, so nobody else can raise the count.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/phone/hooks/telnyx/events (the `ReceiveTelnyxEvent` operationId).
+func (c *ClientWithResponses) ReceiveTelnyxEventWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReceiveTelnyxEventResponse, error) {
+	rsp, err := c.ReceiveTelnyxEvent(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReceiveTelnyxEventResponse(rsp)
+}
+
+// ReceiveTwilioEventWithResponse Receive a Twilio account event
+//
+// Where the Twilio account sends its Monitor alerts (the Debugger webhook) and its usage triggers' callbacks, as form posts. Unauthenticated because Twilio is not a customer: each event is checked against X-Twilio-Signature, made with the account's Auth Token over ROUTER_PUBLIC_URL and this path, then logged and counted in vendor_account_events_total by its error code or usage category and its level. An alert whose Sid was counted in the last hour is answered 204 and not counted again. A deployment with no Twilio webhook token or no public URL answers 404, so nobody else can raise the count.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/phone/hooks/twilio/events (the `ReceiveTwilioEvent` operationId).
+func (c *ClientWithResponses) ReceiveTwilioEventWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReceiveTwilioEventResponse, error) {
+	rsp, err := c.ReceiveTwilioEvent(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReceiveTwilioEventResponse(rsp)
+}
+
 // ReceiveCallMachineWithResponse Receive who picked up a placed call
 //
 // Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
@@ -68171,6 +69903,8 @@ func (c *ClientWithResponses) ListPhoneNumbersWithResponse(ctx context.Context, 
 
 // BuyPhoneNumberWithBodyWithResponse Buy a number, which starts its monthly charge
 //
+// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/phone/numbers (the `BuyPhoneNumber` operationId).
@@ -68183,6 +69917,8 @@ func (c *ClientWithResponses) BuyPhoneNumberWithBodyWithResponse(ctx context.Con
 }
 
 // BuyPhoneNumberWithResponse Buy a number, which starts its monthly charge
+//
+// Numbers are sold only in the US and Canada. A number in any other country is refused, whatever `country` says: +1 is also the dial code of Jamaica, Puerto Rico and others.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -85057,7 +86793,7 @@ func ParseCreateResponseResponse(rsp *http.Response) (*CreateResponseResponse, e
 		response.JSON500 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest Unavailable
+		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -85245,6 +86981,405 @@ func ParseListResponseItemsResponse(rsp *http.Response) (*ListResponseItemsRespo
 	return response, nil
 }
 
+// ParseActivateResponseResponse parses an HTTP response from a ActivateResponseWithResponse call
+func ParseActivateResponseResponse(rsp *http.Response) (*ActivateResponseResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ActivateResponseResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ActivatedBranch
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers ActivateResponseResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers ActivateResponseResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetResponseBranchResponse parses an HTTP response from a GetResponseBranchWithResponse call
+func ParseGetResponseBranchResponse(rsp *http.Response) (*GetResponseBranchResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetResponseBranchResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BranchMessagePage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetResponseBranchResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers GetResponseBranchResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListResponseSiblingsResponse parses an HTTP response from a ListResponseSiblingsWithResponse call
+func ParseListResponseSiblingsResponse(rsp *http.Response) (*ListResponseSiblingsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListResponseSiblingsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ResponseSiblingPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers ListResponseSiblingsResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers ListResponseSiblingsResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseRewindSessionResponse parses an HTTP response from a RewindSessionWithResponse call
 func ParseRewindSessionResponse(rsp *http.Response) (*RewindSessionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -85296,6 +87431,13 @@ func ParseRewindSessionResponse(rsp *http.Response) (*RewindSessionResponse, err
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
@@ -91645,6 +93787,88 @@ func ParseReceiveTelnyxCallResponse(rsp *http.Response) (*ReceiveTelnyxCallRespo
 			return nil, err
 		}
 		response.XML200 = &dest
+
+	case rsp.StatusCode == 401:
+		break // No content-type
+
+	case rsp.StatusCode == 404:
+		break // No content-type
+
+	case rsp.StatusCode == 413:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReceiveTelnyxEventResponse parses an HTTP response from a ReceiveTelnyxEventWithResponse call
+func ParseReceiveTelnyxEventResponse(rsp *http.Response) (*ReceiveTelnyxEventResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReceiveTelnyxEventResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case rsp.StatusCode == 401:
+		break // No content-type
+
+	case rsp.StatusCode == 404:
+		break // No content-type
+
+	case rsp.StatusCode == 413:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReceiveTwilioEventResponse parses an HTTP response from a ReceiveTwilioEventWithResponse call
+func ParseReceiveTwilioEventResponse(rsp *http.Response) (*ReceiveTwilioEventResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReceiveTwilioEventResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case rsp.StatusCode == 400:
+		break // No content-type
 
 	case rsp.StatusCode == 401:
 		break // No content-type
