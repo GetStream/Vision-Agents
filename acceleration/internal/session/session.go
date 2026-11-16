@@ -314,6 +314,8 @@ type Session struct {
 	// with no store, which is what makes the flag safe: there is nowhere to write rather
 	// than a check to remember.
 	records recorder
+	// timeoutMu orders SetToolTimeout calls.
+	timeoutMu sync.Mutex
 	// recordMu guards recording and unwritten. Until the manager has queued the session's row,
 	// what the fan-out records, and what a turn changes on the row, is held rather than
 	// written, so no write reaches the writer ahead of the session it belongs to; the manager
@@ -1029,6 +1031,9 @@ func (s *Session) chose(name, connectionID string) {
 // with it when it is carried on after it ends. Zero is the default.
 func (s *Session) SetToolTimeout(milliseconds int) {
 	milliseconds = max(milliseconds, 0)
+	// Two resumes at once must leave the spec, the bridge and the row on the same value.
+	s.timeoutMu.Lock()
+	defer s.timeoutMu.Unlock()
 	s.labelMu.Lock()
 	s.spec.ToolTimeoutMs = milliseconds
 	s.labelMu.Unlock()

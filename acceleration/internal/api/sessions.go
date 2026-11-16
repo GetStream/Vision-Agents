@@ -589,8 +589,10 @@ func (r resumed) over(spec *session.Spec) {
 
 // onto gives a conversation that is still running what of r it can take while it runs: the
 // tool timeout. Its tools are the ones it was opened with until it ends and is carried on.
-func (r resumed) onto(running *session.Session) {
-	if r.toolTimeoutMs != nil {
+// Only the kind of caller that opened it changes it: a device does not set how long its
+// backend's tools are waited for.
+func (r resumed) onto(ctx context.Context, running *session.Session) {
+	if r.toolTimeoutMs != nil && running.Spec().CallerKind == KindFrom(ctx) {
 		running.SetToolTimeout(*r.toolTimeoutMs)
 	}
 }
@@ -604,7 +606,7 @@ func (s *Server) carryOn(ctx context.Context, id string, refuse func(error) erro
 	switch {
 	case failure == nil && (found.State() != session.Ended || !found.Spec().PersistConversation):
 		if found.State() != session.Ended {
-			over.onto(found)
+			over.onto(ctx, found)
 		}
 		return found, func() {}, nil
 	case failure == nil:
@@ -631,11 +633,12 @@ func (s *Server) carryOn(ctx context.Context, id string, refuse func(error) erro
 
 	reopened, err := s.sessions.Create(ctx, spec)
 	if errors.Is(err, session.ErrSessionExists) {
-		// Another message reopened it first, with what it ran with before, so a resume's
-		// timeout is given to the one running now rather than lost.
+		// Another message reopened it first. The row this one queued is written over with the
+		// winner's, and a resume's timeout is given to the winner rather than lost.
 		found, failure := s.session(ctx, id)
 		if failure == nil {
-			over.onto(found)
+			s.sessions.RecordAgain(found)
+			over.onto(ctx, found)
 		}
 		return found, func() {}, failure
 	}
@@ -652,6 +655,9 @@ func (s *Server) carryOn(ctx context.Context, id string, refuse func(error) erro
 // reopenedFromRow is the spec a text session that ended in another process is carried on
 // with: the config it was opened with, and what its row remembers about it.
 func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, error) {
+	// A resume's timeout given to the session just before it ended may still be on its way to
+	// the row. A failed flush reads the row as it is.
+	_ = s.sessions.FlushRecords(ctx)
 	stored, failure := s.storedOrLiveSession(ctx, id)
 	if failure != nil {
 		return session.Spec{}, failure
@@ -687,7 +693,11 @@ func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, 
 	// The caller's tools and how long they are waited for go on with the chat, as they do
 	// for one carried on in the process that held it (Spec.Written).
 	spec.ToolTimeoutMs = row.ToolTimeoutMs
-	spec.Tools = session.DeclaredTools(row.CallerTools)
+	// Tools only for the kind of caller that declared them: a backend's tool carried on by its
+	// end user's device would be the device's to answer (Session.seatRuns).
+	if row.CallerKind == string(KindFrom(ctx)) {
+		spec.Tools = session.DeclaredTools(row.CallerTools)
+	}
 	// The caller's connections go on with the chat; the session checks each against the
 	// config as it is now and the caller asking, as it did when the chat opened.
 	spec.ConnectorSelections = selectionsOf(*row)

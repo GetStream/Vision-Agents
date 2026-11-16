@@ -115,6 +115,35 @@ func (s *SessionReopenSettingsSuite) TestARunningSessionsResumedToolTimeoutOutli
 	s.Equal(60_000, s.heldSpec(running.Id).ToolTimeoutMs)
 }
 
+func (s *SessionReopenSettingsSuite) TestABackendsToolsAreNotCarriedOnByItsUsersDevice() {
+	user := s.data.createUser()
+	request := textSession(nil)
+	request.ToolTimeoutMs = pointerTo(180_000)
+	request.Tools = s.declared("refund_order")
+	opened := s.serverClient.actingFor(user).createSession(request)
+	s.Require().Eventually(func() bool { return s.stored(opened.Id) }, settleFor, 20*time.Millisecond)
+	s.serverClient.actingFor(user).stopSession(opened.Id)
+
+	s.Require().Equal(http.StatusOK,
+		user.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/resume", ResumeSessionRequest{}, nil))
+
+	held := s.heldSpec(opened.Id)
+	s.Empty(held.Tools, "the device would answer the backend's tool")
+	s.Equal(180_000, held.ToolTimeoutMs)
+}
+
+func (s *SessionReopenSettingsSuite) TestADeviceDoesNotChangeHowLongItsBackendsToolsAreWaitedFor() {
+	user := s.data.createUser()
+	request := textSession(nil)
+	request.ToolTimeoutMs = pointerTo(60_000)
+	running := s.serverClient.actingFor(user).createSession(request)
+
+	s.Require().Equal(http.StatusOK, user.do(http.MethodPost, "/v1/agents/sessions/"+running.Id+"/resume",
+		ResumeSessionRequest{ToolTimeoutMs: pointerTo(1)}, nil))
+
+	s.Equal(60_000, s.heldSpec(running.Id).ToolTimeoutMs)
+}
+
 func (s *SessionReopenSettingsSuite) TestAForkOfAnEndedSessionStillHasTheDefaultToolTimeout() {
 	ended := s.endedWith(180_000, nil)
 

@@ -1900,6 +1900,15 @@ func (m *Manager) Len() int {
 	return len(m.sessions) + m.closing
 }
 
+// RecordAgain queues found's row again, as it runs now. A reopen that lost the race to
+// another one has already queued the row it would have run with, which this writes over.
+func (m *Manager) RecordAgain(found *Session) {
+	if m.records == nil || found.records == nil {
+		return
+	}
+	found.afterRow(func() { m.records.Opened(sessionRow(found), toolRows(found)) })
+}
+
 // FlushRecords waits until every row queued so far is written, so a session that ended a
 // moment ago can be read back from the store.
 func (m *Manager) FlushRecords(ctx context.Context) error {
