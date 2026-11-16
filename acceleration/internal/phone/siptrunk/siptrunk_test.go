@@ -28,6 +28,10 @@ type fakeCall struct {
 	err      error
 	hungUp   bool
 	released bool
+	// hangupGate, when set, holds Hangup back until it is closed, and hangingUp, when set, hears
+	// that Hangup was entered.
+	hangupGate chan struct{}
+	hangingUp  chan struct{}
 }
 
 func newFakeCall() *fakeCall { return &fakeCall{done: make(chan struct{})} }
@@ -42,6 +46,15 @@ func (c *fakeCall) Media() sipbridge.MediaAddrs {
 	return c.media
 }
 func (c *fakeCall) Hangup(context.Context) error {
+	if c.hangingUp != nil {
+		select {
+		case c.hangingUp <- struct{}{}:
+		default:
+		}
+	}
+	if c.hangupGate != nil {
+		<-c.hangupGate
+	}
 	c.end(nil, func() { c.hungUp = true })
 	return nil
 }

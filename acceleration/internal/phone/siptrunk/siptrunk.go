@@ -370,6 +370,12 @@ func (p *Provider) hold(id string, held *heldCall, changed <-chan struct{}, log 
 			ctx, cancel := context.WithTimeout(context.Background(), hangupTimeout)
 			err := bridged.Hangup(ctx)
 			cancel()
+			if errors.Is(bridged.Err(), sipbridge.ErrReleased) {
+				// A renewal that found another node's claim let the call go first, so no BYE went
+				// out and the call is that node's now.
+				stopping = nil
+				continue
+			}
 			if err != nil {
 				log.Warn("could not hang up a call through a customer's sip trunk", "error", err)
 			} else {

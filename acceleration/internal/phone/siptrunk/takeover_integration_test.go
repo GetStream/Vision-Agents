@@ -1601,3 +1601,43 @@ func (s *TakeoverSuite) TestACallIsOfferedOnlyAfterAWriteInFlight() {
 	s.False(a.dialer.call.wasHungUp(), "a hung up a call it could have handed over")
 	s.Equal(1, b.takeover.resumes())
 }
+
+// Defect: a renewal that found another node's claim lets the call go while the stop hangs it up,
+// so no BYE goes out, yet the stop reports the call ended and deletes the keys the other node is
+// taking it with.
+func (s *TakeoverSuite) TestACallLetGoWhileItIsHungUpAtStopIsLeftToTheNodeHoldingIt() {
+	s.holdFor, s.renewEvery = time.Minute, time.Minute
+	a := s.node("a")
+	id := s.dial(a)
+	gate := make(chan struct{})
+	a.dialer.call.hangupGate = gate
+	a.dialer.call.hangingUp = make(chan struct{}, 1)
+	opened := false
+	closed := make(chan struct{})
+	defer func() {
+		if !opened {
+			close(gate)
+		}
+		<-closed
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	go func() {
+		defer close(closed)
+		_ = a.provider.Close(ctx)
+	}()
+	select {
+	case <-a.dialer.call.hangingUp:
+	case <-time.After(2 * time.Second):
+		s.FailNow("the stop never hung the call up")
+	}
+	a.dialer.call.Release()
+	close(gate)
+	opened = true
+	<-closed
+
+	s.noReport(a.ended)
+	s.NotEmpty(s.get("call:"+id), "deleted the record of a call another node holds")
+	s.False(a.dialer.call.wasHungUp())
+}
