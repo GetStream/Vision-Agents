@@ -59,7 +59,7 @@ func (r *heldRecorder) Described(string, string, string, string, map[string]any)
 
 func (r *heldRecorder) Chose(string, string, string, string) {}
 
-func (r *heldRecorder) ToolTimeout(string, int) {}
+func (r *heldRecorder) ToolTimeout(string, string, int) {}
 
 func (r *heldRecorder) SawVideo(id string) {
 	r.mu.Lock()

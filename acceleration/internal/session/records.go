@@ -87,8 +87,9 @@ type recorder interface {
 	Voiced(id, callID, callType string)
 	// Chose says a login in the conversation chose a connection for the binding called name.
 	Chose(customerID, id, name, connectionID string)
-	// ToolTimeout says the session was given a new tool_timeout_ms while it ran.
-	ToolTimeout(id string, milliseconds int)
+	// ToolTimeout says the session was given a new tool_timeout_ms while it ran, by a caller
+	// of kind.
+	ToolTimeout(id, kind string, milliseconds int)
 	// Flush waits until everything said so far has been written, which is what reading the
 	// conversation back straight after it happened needs.
 	Flush(ctx context.Context) error
@@ -175,14 +176,14 @@ func (r *sessionRecorder) Chose(customerID, id, name, connectionID string) {
 
 // timed is the tool_timeout_ms a running session was given.
 type timed struct {
-	id           string
+	id, kind     string
 	milliseconds int
 }
 
 // ToolTimeout queues a running session's new tool_timeout_ms behind the row it changes, so a
 // reopen's own row, written first, cannot write the old one back over it.
-func (r *sessionRecorder) ToolTimeout(id string, milliseconds int) {
-	r.queueWrite(recordWrite{timed: &timed{id, milliseconds}})
+func (r *sessionRecorder) ToolTimeout(id, kind string, milliseconds int) {
+	r.queueWrite(recordWrite{timed: &timed{id, kind, milliseconds}})
 }
 
 // SawVideo queues that a session became a video one, behind the row it changes.
@@ -402,7 +403,7 @@ func (r *sessionRecorder) write(write recordWrite) {
 		}
 	case write.timed != nil:
 		t := write.timed
-		if err := r.store.SetSessionToolTimeout(ctx, t.id, t.milliseconds); err != nil {
+		if err := r.store.SetSessionToolTimeout(ctx, t.id, t.kind, t.milliseconds); err != nil {
 			r.logger.Error("could not record the session's tool timeout", "session", t.id, "error", err)
 		}
 	case write.sawVideo != "":

@@ -66,10 +66,43 @@ func (s *StoreSuite) TestASessionSavedWithoutToolSettingsKeepsNone() {
 	s.Nil(tools, "no tools is NULL, as on a row from before they were kept")
 }
 
+func (s *StoreSuite) TestAnotherKindOfCallerSavingASessionAgainKeepsItsToolSettings() {
+	kept := []CallerTool{{Name: "refund_order", Description: "refund an order"}}
+	s.opened("one", "app", s.base, func(session *AgentSession) {
+		session.CallerKind = "server"
+		session.ToolTimeoutMs = 180_000
+		session.CallerTools = kept
+	})
+	s.opened("one", "app", s.base, func(session *AgentSession) {
+		session.CallerKind = "user"
+		session.ToolTimeoutMs = 1
+		session.CallerTools = []CallerTool{{Name: "device_tool", Description: "a device's"}}
+	})
+
+	found, err := s.store.StoredSession(s.ctx, "app", "one")
+	s.Require().NoError(err)
+	s.Equal("server", found.CallerKind)
+	s.Equal(180_000, found.ToolTimeoutMs)
+	s.Equal(kept, found.CallerTools)
+}
+
+func (s *StoreSuite) TestAnotherKindOfCallerDoesNotSetARunningSessionsToolTimeout() {
+	s.opened("one", "app", s.base, func(session *AgentSession) {
+		session.CallerKind = "server"
+		session.ToolTimeoutMs = 180_000
+	})
+
+	s.Require().NoError(s.store.SetSessionToolTimeout(s.ctx, "one", "user", 1))
+
+	found, err := s.store.StoredSession(s.ctx, "app", "one")
+	s.Require().NoError(err)
+	s.Equal(180_000, found.ToolTimeoutMs)
+}
+
 func (s *StoreSuite) TestARunningSessionsNewToolTimeoutIsKept() {
 	s.opened("one", "app", s.base, func(session *AgentSession) { session.ToolTimeoutMs = 180_000 })
 
-	s.Require().NoError(s.store.SetSessionToolTimeout(s.ctx, "one", 60_000))
+	s.Require().NoError(s.store.SetSessionToolTimeout(s.ctx, "one", "user", 60_000))
 
 	found, err := s.store.StoredSession(s.ctx, "app", "one")
 	s.Require().NoError(err)
