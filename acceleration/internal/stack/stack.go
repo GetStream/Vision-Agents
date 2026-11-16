@@ -43,6 +43,10 @@ func (w *withStack) Error() string { return w.err.Error() }
 
 func (w *withStack) Unwrap() error { return w.err }
 
+// StackTrace returns the program counters that Wrap recorded. sentry-go finds this method by
+// reflection and reads the stack of the error from it.
+func (w *withStack) StackTrace() []uintptr { return w.pcs }
+
 // Format prints the error alone for %s and %v, and the error followed by its stack for %+v.
 func (w *withStack) Format(f fmt.State, verb rune) {
 	switch {
