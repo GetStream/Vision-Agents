@@ -1498,7 +1498,7 @@ In an `agent` channel that people other than the session's caller can write in (
 
 ### An approval nobody answers in a group channel says so in the reply
 
-In a channel of a type an agent config answers in (`chat_channels`), a tool call waiting for its writer's approval when the router's two-minute turn ends no longer leaves an empty agent message: the reply ends with "The approval expired before anyone answered, so nothing ran. Ask again if you still need it." and the step shows "Not allowed in time" (AI-3302).
+In a channel of a type an agent config answers in (`chat_channels`), a tool call waiting for its writer's approval when the router's two-minute turn ends no longer leaves an empty agent message: the reply ends with "The approval expired before anyone answered, so that step did not run. Ask again if you still need it." and the step shows "Not allowed in time" (AI-3302).
 ### A member's line in a call's transcript is no longer read as the agent's
 
 A call's transcript, its timeline and a campaign's outcome read every line marked `source: agent` as the agent's, whoever wrote it, so a member of the channel the transcript is in could put words in the agent's mouth. A call now records the user the agent wrote as, and only that user's lines, or the agent id's, are the agent's; a person's typed turn reads as theirs too. A call from before this change reads as it did (AI-3265).

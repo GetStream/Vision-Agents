@@ -261,7 +261,7 @@ func (s *DisplaySuite) TestTheLiveUpdatesCopyKeepsItsOwnApproval() {
 
 // expiredLine is what a reply says once its session closed with its turn while a call waited
 // for a person to allow it (AI-3302).
-const expiredLine = "The approval expired before anyone answered, so nothing ran. Ask again if you still need it."
+const expiredLine = "The approval expired before anyone answered, so that step did not run. Ask again if you still need it."
 
 // heldReply is a reply to Anya's command that said text and then made crm's echo wait for her.
 func (s *DisplaySuite) heldReply(text string) (*Conversation, CommandReceipt) {
@@ -276,6 +276,26 @@ func (s *DisplaySuite) heldReply(text string) (*Conversation, CommandReceipt) {
 	_, _, asked := c.AwaitApproval("employee", "call-1", "", allowEcho)
 	s.Require().True(asked)
 	return c, receipt
+}
+
+// An earlier call of the reply was allowed and ran; only the one still waiting expires, so the
+// line must not say that nothing ran (a person may redo what did happen).
+func (s *DisplaySuite) TestTheExpiredLineSpeaksOfTheWaitingStepOnly() {
+	c, _ := s.heldReply("Let me check.")
+	s.Require().True(c.DecideApproval(agent.ToolApprovalDecided{ID: "call-1", Allowed: true}))
+	c.Observe(agent.ToolRan{ID: "call-1", Result: "written"})
+	s.Require().Equal("completed", current(c).Parts[0].Status)
+	c.Observe(agent.ToolStarted{ID: "call-2", Tool: "crm__echo", StartedAt: time.Now().UTC()})
+	_, _, asked := c.AwaitApproval("employee", "call-2", "", allowEcho)
+	s.Require().True(asked)
+
+	c.ExpireApprovals()
+	c.Release()
+
+	s.Equal("completed", current(c).Parts[0].Status, "the call that ran is left as it was")
+	s.Equal("Not allowed in time", current(c).Parts[1].Summary)
+	s.NotContains(current(c).Text, "nothing ran", "the first call ran")
+	s.Contains(current(c).Text, "that step did not run")
 }
 
 // The session of a reply waiting for Anya's approval closes with its turn: the step is

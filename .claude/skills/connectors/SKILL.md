@@ -175,8 +175,8 @@ writer has two minutes, not ten, when the Router opened the session for the mess
 unless a session opened through the API answers in the channel: it answers one message for at
 most two minutes (`askTimeout`, `api/messagehooks.go`) and then closes that session, which stops
 the call, and an answer after that is a 404 (`answerHosted`, `api/threadhooks.go`). The model gets
-no round to say why, so the reply ends with a line that the approval expired and the person can
-ask again, and the step says "Not allowed in time" (`ExpireApprovals`, `conversation/parts.go`, AI-3302). An entry must match a tool the
+no round to say why, so the reply ends with a line that the approval expired, that the step
+waiting did not run (an earlier call of the reply may have), and that the person can ask again, and the step says "Not allowed in time" (`ExpireApprovals`, `conversation/parts.go`, AI-3302). An entry must match a tool the
 binding grants, and `sandbox: true` is refused beside it (`session/connector_approval.go`).
 Beside a sensitive connector (Nessy), a binding's write tool needs `require_approval`: the
 config is refused unless each tool it grants only reads (`read_only_tools`) or is held, and a

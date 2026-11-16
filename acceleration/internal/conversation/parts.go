@@ -473,7 +473,7 @@ func (c *Conversation) DecideApproval(e agent.ToolApprovalDecided) bool {
 
 // approvalExpired is the line a reply ends with when it ended while a call still waited for a
 // person to allow it (ExpireApprovals): why the call did not run, and what to do next.
-const approvalExpired = "The approval expired before anyone answered, so nothing ran. Ask again if you still need it."
+const approvalExpired = "The approval expired before anyone answered, so that step did not run. Ask again if you still need it."
 
 // ExpireApprovals has the reply being written, if it ends with a call still waiting for a person
 // to allow it, decline that call as one nobody allowed in time and say so (expire). It is for a

@@ -145,7 +145,7 @@ func (s *ChannelTypeTurnSuite) TestAWritersApprovalAfterTheTurnEndsIsTooLate() {
 
 // expiredApproval is the line a reply ends with when its turn ended while a call still waited
 // for a person to allow it.
-const expiredApproval = "The approval expired before anyone answered, so nothing ran. Ask again if you still need it."
+const expiredApproval = "The approval expired before anyone answered, so that step did not run. Ask again if you still need it."
 
 // A call nobody allows within its own wait, ten seconds in this suite and shorter than the turn,
 // is declined while the turn runs, and the model is told to say so (session.holdForApproval), as
